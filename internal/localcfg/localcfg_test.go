@@ -1688,3 +1688,49 @@ func TestAProjectNamedLayerIsNotTheLayerFile(t *testing.T) {
 		t.Errorf("project foo-layer's layer file is %q", named)
 	}
 }
+
+// TestLocalcfgDecodesTheAccountChoiceBlockStrictly is D873's block (spec
+// §11.1): the project's default account, the per-stage overrides and the auto
+// switch decode by name, and the block is held to the same strict decode as
+// every other one — an unknown field inside it is an error, and so is a value
+// the file's own reference rule refuses, because a key that names an account
+// names a name a profile may carry. A name this file does not define is refused
+// on the same terms, and the valid case below therefore defines the account it
+// names.
+func TestLocalcfgDecodesTheAccountChoiceBlockStrictly(t *testing.T) {
+	defined := "claude_accounts:\n  team-b:\n    allow_data_to: [acme/web]\n"
+	c, err := Parse([]byte(sample + defined + "default_claude_account: team-b\nclaude_account_auto: true\nstages:\n  review:\n    claude_account: team-b\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DefaultClaudeAccount != "team-b" || !c.ClaudeAccountAuto {
+		t.Errorf("decoded = %q, %v", c.DefaultClaudeAccount, c.ClaudeAccountAuto)
+	}
+	if got := c.ClaudeAccountStages["review"].ClaudeAccount; got != "team-b" {
+		t.Errorf("stages.review.claude_account = %q, want team-b", got)
+	}
+	if c, err := Parse([]byte(sample)); err != nil {
+		t.Fatal(err)
+	} else if c.DefaultClaudeAccount != "" || c.ClaudeAccountAuto || len(c.ClaudeAccountStages) != 0 {
+		t.Errorf("unset must stay unset: %q, %v, %v", c.DefaultClaudeAccount, c.ClaudeAccountAuto, c.ClaudeAccountStages)
+	}
+	for name, y := range map[string]string{
+		"unknown field in the block":           "stages:\n  review:\n    account: team-b\n",
+		"unknown field beside the key":         "claude_accounts_auto: true\n",
+		"not a bool":                           "claude_account_auto: maybe\n",
+		"not a reference":                      "default_claude_account: Team-B\n",
+		"a reserved name":                      "stages:\n  review:\n    claude_account: bitbucket-token\n",
+		"an over-long name":                    "default_claude_account: " + strings.Repeat("a", 32) + "\n",
+		"an account this file does not define": "stages:\n  review:\n    claude_account: team-z\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(sample + defined + y))
+			if err == nil {
+				t.Fatal("accepted")
+			}
+			if name == "an account this file does not define" && !strings.Contains(err.Error(), "is not defined here") {
+				t.Errorf("the refusal does not say the account is undefined: %v", err)
+			}
+		})
+	}
+}

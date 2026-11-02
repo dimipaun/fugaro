@@ -30,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
 	"github.com/dimipaun/fugaro/internal/mirror"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -157,6 +158,24 @@ type Config struct {
 	// choose among by name (design docs/design/named-oauth-tokens.md).
 	// Only the owner sets them, here, never in fugaro.yaml.
 	ClaudeAccounts map[string]config.ClaudeAccount `yaml:"claude_accounts,omitempty"`
+	// DefaultClaudeAccount is the account every stage of a run uses when
+	// nothing more specific does (spec §11.1, D873). It names an account of
+	// claude_accounts, or "default" for the unsuffixed secret, and only this
+	// document may hold it: a reviewed repository and a published layer are
+	// writable by someone other than the owner, and a key there would be a
+	// way around the account's own allow_data_to.
+	DefaultClaudeAccount string `yaml:"default_claude_account,omitempty"`
+	// ClaudeAccountStages is the account one stage uses instead of the
+	// default, keyed by the run's own stage name — stages.review.claude_account
+	// is "the reviewer uses another account". A stage is not a role: the
+	// roles fold every stage but review into the coder's, so a role-keyed
+	// block could not give review_first an account implement does not use.
+	ClaudeAccountStages map[string]StageChoice `yaml:"stages,omitempty"`
+	// ClaudeAccountAuto is whether Fugaro may choose an account for the owner
+	// (spec §11.3, D874). Off is explicit-only, and off is the default: the
+	// switch ships dormant until the owner rules that one project may spread
+	// across several accounts (D875).
+	ClaudeAccountAuto bool `yaml:"claude_account_auto,omitempty"`
 	// ProjectSecrets are the reserved secret names (config.ReservedSecrets)
 	// the owner has opted into project-wide storage for, by allow-listed
 	// repository (design docs/design/project-secrets.md §3). Only the owner
@@ -327,6 +346,34 @@ type Config struct {
 	// notes are warnings added after parsing (AddWarning), such as a
 	// published shared config's dropped legacy base_images entries.
 	notes []string
+}
+
+// StageChoice is one stage's own choice of Claude account, the entry under
+// ClaudeAccountStages: the stage's name is the key of the block and the
+// account it uses is the value inside it.
+type StageChoice struct {
+	ClaudeAccount string `yaml:"claude_account,omitempty"`
+}
+
+// choiceRefProblem is why name may not stand as the value of an account-choice
+// key here, or "" when it may: the name's own rule first, then whether this
+// file actually defines the account. An undefined name is refused in the
+// sentence config.ValidateProfileClaudeAccounts already gives the same name in
+// a profile, because the two are the same reference and a second wording for
+// one rule is a second rule; a name no run can use would leave the key silently
+// never applying, which is what the keys are specified to refuse.
+func (c *Config) choiceRefProblem(name string) string {
+	if msg := config.ValidClaudeAccountRef(name); msg != "" {
+		return msg
+	}
+	if name == config.DefaultClaudeAccount {
+		return ""
+	}
+	if _, ok := c.ClaudeAccounts[name]; ok {
+		return ""
+	}
+	return fmt.Sprintf("the account %q is not defined here: this key names an account of this file's claude_accounts block, where the account's own allow_data_to decides which repositories may use its token, or %q for the unsuffixed default account — define it as claude_accounts: {%s: {allow_data_to: [owner/name]}}, or drop the key",
+		pluginwire.Printable(name), config.DefaultClaudeAccount, pluginwire.Printable(name))
 }
 
 // Mailbox is the mailbox block: what the mailbox consumer needs from the
@@ -1452,6 +1499,28 @@ func (c *Config) validate() error {
 	}
 	for _, p := range config.ValidateClaudeAccounts(c.ClaudeAccounts) {
 		bad("%s: %s", p.Path, p.Message)
+	}
+	// The account-choice keys are checked against the REFERENCE rule and not
+	// the definition's: each one names an account a run may use, and "default"
+	// is a legal name for the unsuffixed secret and only here — the
+	// definition's rule belongs to claude_accounts, which refuses it. Whether
+	// the named account is admitted for a repository is decided at launch
+	// against the account's own allow_data_to, where the repository is known.
+	// A name this file does not define is refused too (choiceRefProblem): the
+	// key would otherwise name an account no run can use, and a per-stage
+	// override that never applies is the state §11.1 refuses for a stage name
+	// that is not a stage.
+	if c.DefaultClaudeAccount != "" {
+		if msg := c.choiceRefProblem(c.DefaultClaudeAccount); msg != "" {
+			bad("default_claude_account: %s", msg)
+		}
+	}
+	for _, stage := range slices.Sorted(maps.Keys(c.ClaudeAccountStages)) {
+		if ref := c.ClaudeAccountStages[stage].ClaudeAccount; ref != "" {
+			if msg := c.choiceRefProblem(ref); msg != "" {
+				bad("stages.%s.claude_account: %s", pluginwire.Printable(stage), msg)
+			}
+		}
 	}
 	for _, p := range config.ValidateProjectSecrets(c.ProjectSecrets) {
 		bad("%s: %s", p.Path, p.Message)

@@ -32,10 +32,10 @@ func newAccountsCmd() *cobra.Command {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return userErr("unknown accounts subcommand; want ls or clear (see fugaro accounts --help)")
+			return userErr("unknown accounts subcommand; want ls, add or clear (see fugaro accounts --help)")
 		},
 	}
-	cmd.AddCommand(newAccountsLsCmd(), newAccountsClearCmd())
+	cmd.AddCommand(newAccountsLsCmd(), newAccountsAddCmd(), newAccountsClearCmd())
 	return cmd
 }
 

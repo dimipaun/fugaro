@@ -85,6 +85,11 @@ type Row struct {
 	Sensitive bool   // the value is never printed (spec §2.3)
 	Owner     string // the command family that writes it
 	Doc       string // the document that must state it
+	// TypedWhy is the sentence saying why turning this key ON is confirmed by
+	// the project's own name rather than y/N, and by --yes not at all (D846):
+	// the widening directions do not include every key, so the row carries its
+	// own. Empty is a key whose write is the ordinary confirmation.
+	TypedWhy string
 }
 
 // rows is the table. It is assembled once, at package initialization, because
@@ -375,6 +380,21 @@ func loc(key, def, owner, doc string) Row {
 	}
 }
 
+// locLocal is loc for a key the local config alone holds: no `shared`
+// stand-in, so `--layer local` is the whole of its Layers. It is the row of a
+// key only the owner may write — one whose presence where a launcher can
+// reach it would be a way around a rule this document states.
+func locLocal(key, def, owner, doc string) Row {
+	return Row{
+		Key:     key,
+		Layers:  []string{LayerLocal},
+		Merge:   Replace,
+		Default: unset(def),
+		Owner:   owner,
+		Doc:     doc,
+	}
+}
+
 // layerRows are the project layer's keys. They are written out rather than
 // derived because a struct field is not a setting until someone decides what
 // its absence means and who may write it; TestRegistryCoversEveryConfigField
@@ -600,6 +620,22 @@ var localRows = []Row{
 	loc("routing.claude.via", "direct: the model is called at its own provider", "models", docModels),
 	loc("routing.claude.models", "none", "models", docModels),
 	loc("claude_accounts.*.allow_data_to", "nobody", "accounts", docModels),
+	// The account choice: which account a run uses, and whether Fugaro may
+	// pick one. The local config is their only store — neither a reviewed
+	// repository nor a published layer may name an account, and a key that
+	// could would be a way around an account's own allow_data_to — and the
+	// generic path writes them, no family having been given one.
+	locLocal("default_claude_account", "none: the run's own chain decides (the repository's agent.oauth_token, then the unsuffixed default)", "settings set", docModels),
+	locLocal("stages.*.claude_account", "the project's default account", "settings set", docModels),
+	{
+		Key:      "claude_account_auto",
+		Layers:   []string{LayerLocal},
+		Merge:    Replace,
+		Default:  unset("false: nothing chooses an account for the owner"),
+		Owner:    "settings set",
+		Doc:      docModels,
+		TypedWhy: "this lets Fugaro choose an account for the owner: a run then spreads one project across several accounts, which is the owner's own decision about the terms the subscriptions are held under, so the project's own name is what confirms it, and --yes does not stand in",
+	},
 	loc("project_secrets.*.allow_data_to", "nobody", "secrets", docSetup),
 	loc("project_secrets.*.proxy", "none", "secrets", docSetup),
 

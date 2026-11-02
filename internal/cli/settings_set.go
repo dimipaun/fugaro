@@ -72,6 +72,12 @@ var settingsGenericKeys = map[string]bool{
 	"commit_name":              true,
 	"commit_email":             true,
 	"layer.default_profile":    true,
+	// D873's account choice (spec §11.1). They are here by name because they
+	// are not §4.4's list: §4.4 predates them, and a registry row no list
+	// carries is a key nobody can write.
+	"default_claude_account":  true,
+	"claude_account_auto":     true,
+	"stages.*.claude_account": true,
 }
 
 // settingsGenericPrefixes are the blocks spec §4.4 hands to the generic path
@@ -236,7 +242,7 @@ Every write ends with one line: next: fugaro update.`,
 // says a map-valued key has no generic form *always*, so `workflows.*.commands.
 // test` is refused as a map entry and not as a key nobody listed.
 func settingsWriteRow(key string) (settings.Row, error) {
-	row, ok := settings.Lookup(key)
+	row, registry, ok := settingsWriteLookup(key)
 	if !ok {
 		return settings.Row{}, userErr("%s: no setting has that name; the nearest are %s",
 			key, strings.Join(nearestSettings(key, settings.Rows()), ", "))
@@ -250,10 +256,52 @@ func settingsWriteRow(key string) (settings.Row, error) {
 	if strings.Contains(key, "*") {
 		return settings.Row{}, userErr("%s varies with a name this command does not take: a key with a * is a map entry, and a map has no generic form", key)
 	}
-	if !settingsGenericKey(key) {
-		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, credentials.*, clone_urls.* and the layer's defaults.*), and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
+	if !settingsGenericKey(registry) {
+		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, credentials.*, clone_urls.* and the layer's defaults.*) and the account choice (default_claude_account, claude_account_auto, stages.<stage>.claude_account), and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
 	}
 	return row, nil
+}
+
+// settingsWriteLookup is the row a write names, with the registry's own
+// spelling of that key beside it. The two differ for a key whose registry
+// spelling carries a varying segment: `stages.*.claude_account` is the row, and
+// `stages.review.claude_account` is the key a person writes. The row keeps the
+// key as written, because that is the path the edit lands on, and the registry
+// spelling is what the allowlist and the row's own sentences name.
+func settingsWriteLookup(key string) (settings.Row, string, bool) {
+	if row, found := settings.Lookup(key); found {
+		return row, key, true
+	}
+	for _, r := range settings.Rows() {
+		if !settingsPatternMatch(r.Key, key) {
+			continue
+		}
+		registry := r.Key
+		r.Key = key
+		return r, registry, true
+	}
+	return settings.Row{}, "", false
+}
+
+// settingsPatternMatch reports whether key is a spelling of the registry key
+// pattern: the same number of dotted segments, equal where the pattern names
+// one, and non-empty where it writes *.
+func settingsPatternMatch(pattern, key string) bool {
+	p, k := strings.Split(pattern, "."), strings.Split(key, ".")
+	if len(p) != len(k) {
+		return false
+	}
+	for i := range p {
+		switch {
+		case p[i] == "*":
+			if k[i] == "" {
+				return false
+			}
+		case p[i] != k[i]:
+			return false
+		}
+	}
+	return true
 }
 
 // settingsDefaultLayer is the target of a write that names no --layer: the
@@ -675,7 +723,8 @@ func settingsListSubset(a, b string) bool {
 // set, unset, add or remove. `remove` takes one member out of a list, which
 // narrows it, so it is never the typed form and has no case below; `unset`
 // always is, for a ceiling, because it hands the decision to a looser layer.
-func settingsTypedWrite(key, oldValue, newValue, mode string) (bool, string) {
+func settingsTypedWrite(row settings.Row, oldValue, newValue, mode string) (bool, string) {
+	key := row.Key
 	ceilingWhy := "this loosens a ceiling: the file it would edit decides the ceiling of every run this branch starts, so the project's own name is what confirms it, and --yes does not stand in"
 	followupWhy := "this turns a followup key on: a run then acts on comments from people it did not act on before, so the project's own name is what confirms it, and --yes does not stand in"
 	if settingsCeilingKey(key) {
@@ -692,6 +741,11 @@ func settingsTypedWrite(key, oldValue, newValue, mode string) (bool, string) {
 	}
 	if strings.HasPrefix(key, "followup.") && mode == "set" && settingsTrue(newValue) {
 		return true, followupWhy
+	}
+	// A row's own sensitive direction: turning the key on is the act D846
+	// reserves, and the row carries the sentence saying why.
+	if row.TypedWhy != "" && mode == "set" && settingsTrue(newValue) {
+		return true, row.TypedWhy
 	}
 	return false, ""
 }
@@ -787,7 +841,7 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	if settingsCeilingKey(key) {
 		oldValue = settingsCeilingBase(cmd.Context(), row, oldValue)
 	}
-	typed, why := settingsTypedWrite(key, oldValue, value, mode)
+	typed, why := settingsTypedWrite(row, oldValue, value, mode)
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
 		Path:     target.path,
 		Old:      old,
@@ -842,7 +896,7 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 	if err := settingsReparse(target, newData); err != nil {
 		return err
 	}
-	typed, why := settingsTypedWrite(key, settingsValueIn(old, target.keyPath), "", "unset")
+	typed, why := settingsTypedWrite(row, settingsValueIn(old, target.keyPath), "", "unset")
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
 		Path:     target.path,
 		Old:      old,
