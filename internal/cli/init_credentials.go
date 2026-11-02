@@ -430,7 +430,7 @@ func (s *credentialsStage) prepare(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	svc, err := infra.Credentials(e.lc, image)
+	svc, err := infra.Credentials(e.lc, image, nil)
 	if err != nil {
 		return userErr("%v", err)
 	}
