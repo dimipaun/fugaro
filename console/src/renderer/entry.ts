@@ -5744,7 +5744,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * **The pane's read is one of them** (K5): `coordinator intents --all
      * --json` goes out in this same turn, after the stored view and never after
      * an answer of it, and it is not gated by a source: the declarations are
-     * what the pane draws first, so nothing about them waits on the view.
+     * what the pane draws first, so nothing about them waits on the view. It is
+     * asked again on every `start`, a Refresh of the whole screen included: a
+     * control that reads everything again and left the declarations as they
+     * were would be a stamp this pane could not stand behind.
      */
     const start = (again = false): void => {
       const sources = QUEUE_SOURCES.filter((source) => wants(source, again))

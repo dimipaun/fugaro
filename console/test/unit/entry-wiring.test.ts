@@ -155,6 +155,7 @@ import {
   COORDINATOR_TOTALS_BUSY,
   COORDINATOR_TRANSCRIPT_BUSY,
   COORDINATOR_TRANSCRIPT_CLASS,
+  COORDINATOR_TRANSCRIPT_WORD,
   COORDINATOR_JOBS_BUSY,
   COORDINATOR_JOBS_CLASS,
   COORDINATOR_JOBS_EMPTY_WORD,
@@ -5338,7 +5339,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     const document = await boot(bridge, new FakeDocument())
     buttonFor(document, 'coordinator').click()
     await flush()
-    const pane = classed(panelOf(document), 'coordinator-transcript')[0]
+    const pane = classed(panelOf(document), COORDINATOR_TRANSCRIPT_CLASS)[0]
     if (pane === undefined) throw new Error('the Coordinator drew no transcript pane')
     expect(classed(pane, 'unavailable-operation')[0]?.textContent).toBe('coordinator.intents')
     expect(holdsText(pane, INTENTS_REFUSAL)).toBe(true)
