@@ -23,8 +23,12 @@
 // F33 is why the payload is an **allow-list**. A Go panic value, an Electron
 // error message and a JS exception string all carry repository names, branch
 // names, task text, URLs or a credential, and this repository's own redactor is
-// best-effort by its comment -- so a report here is the exception's type and its
-// frames, and the message is dropped rather than filtered.
+// best-effort by its comment -- so a report here is the exception's type, its
+// frames and the debug images a symbolicator looks a frame up by, and the message
+// is dropped rather than filtered. The images are the one field that came back to
+// the payload (the owner's ruling of 2026-11-02: crash symbolication has to work),
+// and they come back reduced: an id, a type and a path cut at the app root, which
+// is what symbolication needs and nothing that names the machine.
 //
 // The module is therefore pure and static, and it is deliberately importless:
 // it reads no environment, opens no file, makes no call, and holds no DSN, no
@@ -232,16 +236,23 @@ export interface CrashExceptionValue {
 /** CrashEvent is the part of an error event this module reads. The fields it
  * names are the ones it keeps, drops or relativises; a field the reporter also
  * carries and this type does not name (`user`, `contexts`, `tags`, `extra`,
- * `breadcrumbs`, `request`, `server_name`, `modules`, `environment`, `sdk`,
- * `debug_meta`, or a key a later SDK adds) is dropped by the same rule, because
- * the output is built from the allow-list rather than filtered against a
- * deny-list that would always be one key behind. */
+ * `breadcrumbs`, `request`, `server_name`, `modules`, `environment`, `sdk`, or a
+ * key a later SDK adds) is dropped by the same rule, because the output is built
+ * from the allow-list rather than filtered against a deny-list that would always
+ * be one key behind. */
 export interface CrashEvent {
   readonly event_id?: unknown
   readonly timestamp?: unknown
   readonly platform?: unknown
   readonly level?: unknown
   readonly release?: unknown
+  /** `debug_meta` is `unknown` rather than a shape, for the reason the SDK's own
+   * object is wider than this type everywhere: it is the one field whose *inside*
+   * this module has to read, and what a library put there is a list of objects it
+   * built from a stack, a decoded archive or a debug file -- so the module reads
+   * it through guards at both levels rather than through a type that would only
+   * move the refusal into a cast. What it does with it is in `scrubDebugMeta`. */
+  readonly debug_meta?: unknown
   /** The exception is `null`-able and its values may hold holes because the
    * reporter builds this: a library's event is not the shape its own types say
    * it is, and the scrubber reads every level of it through a guard rather than
@@ -270,6 +281,17 @@ export interface ScrubbedExceptionValue {
   readonly stacktrace?: { readonly frames: readonly ScrubbedFrame[] }
 }
 
+/** ScrubbedDebugImage is one debug image as the report carries it: the three
+ * fields a symbolicator looks a frame up by, and no others. The id names the build
+ * the frame came from, the type says what kind of image it is, and the file is
+ * app-relative for the reason a frame's is -- an absolute one names the operator's
+ * disk, and a debug image is a path like any other. */
+export interface ScrubbedDebugImage {
+  readonly type: string
+  readonly code_file: string
+  readonly debug_id: string
+}
+
 export interface ScrubbedCrashEvent {
   readonly event_id?: string
   readonly timestamp?: number
@@ -277,6 +299,9 @@ export interface ScrubbedCrashEvent {
   readonly level?: CrashLevel
   readonly release?: string
   readonly exception?: { readonly values: readonly ScrubbedExceptionValue[] }
+  /** Absent rather than empty when nothing survived: an empty image list is a
+   * claim about the build that no image supports. */
+  readonly debug_meta?: { readonly images: readonly ScrubbedDebugImage[] }
 }
 
 /** EXTERNAL is what a frame outside the app becomes. It is a fixed word rather
@@ -400,6 +425,31 @@ const CONTROL_RE = /[\p{Cc}\p{Cf}\u2028\u2029]/u
  * either of them being wrong. A *pair* is a character and is kept: the test is
  * the category `\p{Cs}`, which matches a code unit that is not part of one. */
 const SURROGATE_RE = /\p{Cs}/u
+
+/** MAX_DEBUG_IMAGES is how many debug images the report may carry. A real event
+ * cannot name more files than its stack has frames, and the pinned SDK's stack
+ * parser keeps 50 of them (`STACKTRACE_FRAME_LIMIT`) -- so a list longer than this
+ * is not a stack, it is a library's array, and the bound is what stops it from
+ * being forwarded whole. It is above 50 on purpose: a caller may raise the frame
+ * limit, and this is the bound of the *report*, not of the parser. */
+const MAX_DEBUG_IMAGES = 64
+
+/** DEBUG_ID_RE is the one shape a debug id has: a lower-case UUID as
+ * `sentry-cli sourcemaps inject` writes it into a file and its map, or the same
+ * 32 hexadecimal characters without the dashes, which is the form the service
+ * accepts them in. The version and the variant are not pinned -- an id generated
+ * by another tool is still an id, and what matters here is that a path, a sentence
+ * or a credential is not one. Case matters because the injector writes lower case
+ * and an id is a key: an upper-case copy of one is a string from somewhere else,
+ * and a lookup under it finds nothing. */
+const DEBUG_ID_RE = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32})$/
+
+/** IMAGE_TYPE_RE is the shape of an image type: the one lower-case word the SDK
+ * and the service agree on (`sourcemap`, `macho`, `elf`, `pe`, `wasm`,
+ * `proguard`), bounded at 16 characters. A type the service does not know is a
+ * value from somewhere else -- a sentence, a file name -- and it is not this
+ * module's to invent a meaning for. */
+const IMAGE_TYPE_RE = /^[a-z][a-z0-9_]{0,15}$/
 
 /** QUERY_MARKERS are where a URL's query and its fragment begin, and neither is
  * part of a file's name: `x.js?token=<x>` is a file name with a credential after
@@ -535,6 +585,65 @@ function scrubValue(
   return { ...kept, stacktrace: { frames: placed } }
 }
 
+/** scrubDebugImage is the image allow-list: the type, the id and the code file,
+ * rebuilt into a new object so that nothing else an image carried is copied --
+ * the SDK's own image has a `debug_file` and a `code_id` on some types and an
+ * `image_addr` and an `image_size` on others, and a `debug_file` is a path like
+ * any other, which is the thing this module exists to keep off the wire.
+ *
+ * An image whose fields are not the shapes above is *dropped* rather than
+ * repaired, and that is the one place this module refuses a value instead of
+ * replacing it with a fixed word. A frame cannot be dropped -- the shape of the
+ * stack is what the processor groups by -- but an image is a lookup key beside the
+ * frames rather than part of one: an image that cannot be placed is an image the
+ * symbolicator would not find anything under, and forwarding it with `<external>`
+ * in place of its path would be this module guessing at a build. The id is the
+ * exception: a wrong id is worse than no id, because it points at somebody else's
+ * build.
+ *
+ * Every field is read once, into a local, for the reason every other field in this
+ * file is: an image is a library's object, and a property of one answers as often
+ * as it is asked. */
+function scrubDebugImage(image: unknown, appRoot: string): ScrubbedDebugImage | undefined {
+  if (image === null || image === undefined || typeof image !== 'object') return undefined
+  const fields = image as { readonly type?: unknown; readonly code_file?: unknown; readonly debug_id?: unknown }
+  const type = fields.type
+  const codeFile = fields.code_file
+  const debugId = fields.debug_id
+  if (typeof type !== 'string' || !IMAGE_TYPE_RE.test(type)) return undefined
+  if (typeof debugId !== 'string' || !DEBUG_ID_RE.test(debugId)) return undefined
+  if (typeof codeFile !== 'string') return undefined
+  const relative = appRelative(codeFile, appRoot)
+  if (relative === EXTERNAL) return undefined
+  return { type, code_file: relative, debug_id: debugId }
+}
+
+/** scrubDebugMeta is what is left of the reporter's `debug_meta`: the images,
+ * each reduced by `scrubDebugImage`, and nothing else the field carried. It is the
+ * one thing in the payload that exists for symbolication -- the id an uploaded map
+ * is filed under, beside the file the frame was in -- so it is kept rather than
+ * dropped (the owner's ruling of 2026-11-02), and it is kept *reduced*, because
+ * the rest of what an image holds is where a machine's paths live.
+ *
+ * The list is cut at `MAX_DEBUG_IMAGES`, and the cut counts what is *kept* rather
+ * than what arrives: entries this module refuses do not use up the report's room
+ * for the ones it can place, and a real report cannot reach the bound anyway -- its
+ * list is one image per distinct frame file, and the SDK's frames are bounded at
+ * 50. When nothing survives there is no `debug_meta` at all: an empty list is a
+ * claim about the build, and no image supports it. */
+function scrubDebugMeta(meta: unknown, appRoot: string): { readonly images: readonly ScrubbedDebugImage[] } | undefined {
+  if (meta === null || meta === undefined || typeof meta !== 'object') return undefined
+  const images = (meta as { readonly images?: unknown }).images
+  if (!Array.isArray(images)) return undefined
+  const kept: ScrubbedDebugImage[] = []
+  for (const image of images) {
+    if (kept.length === MAX_DEBUG_IMAGES) break
+    const scrubbed = scrubDebugImage(image, appRoot)
+    if (scrubbed !== undefined) kept.push(scrubbed)
+  }
+  return kept.length === 0 ? undefined : { images: kept }
+}
+
 /** scrubCrashEvent is `beforeSend`, with the event the reporter built and the
  * app root as its only inputs. It returns a **new** event built from the kept
  * fields and never edits the one it was handed: the caller's object is the
@@ -565,13 +674,13 @@ export function scrubCrashEvent(event: CrashEvent | null | undefined, appRoot: s
   try {
     if (event === null || event === undefined || typeof event !== 'object') return {}
     const values = event.exception?.values
-    if (!Array.isArray(values)) return scrubFields(event)
+    if (!Array.isArray(values)) return scrubFields(event, appRoot)
     const kept: ScrubbedExceptionValue[] = []
     for (const value of values) {
       const scrubbed = scrubValue(value, appRoot)
       if (scrubbed !== null) kept.push(scrubbed)
     }
-    return { ...scrubFields(event), exception: { values: kept } }
+    return { ...scrubFields(event, appRoot), exception: { values: kept } }
   } catch {
     return {}
   }
@@ -606,16 +715,22 @@ const RELEASE_RE = /^[A-Za-z0-9][A-Za-z0-9.+-]{0,63}$/
  * may not make: the value arrives from a library, and a library that was handed a
  * path, a token or a sentence puts it in whichever field is nearest.
  *
+ * `debug_meta` is the one field here that is not a string or a number: it is the
+ * list of images, and it goes through `scrubDebugMeta`, which is the only part of
+ * this file that reads *inside* a value rather than deciding whether to keep it.
+ *
  * Each field is read exactly once, into a local, and the local is what the
  * allow-list checks and what the output copies -- a property read once for the
  * check and again for the copy is checked as one value and sent as another. */
-function scrubFields(event: CrashEvent): ScrubbedCrashEvent {
+function scrubFields(event: CrashEvent, appRoot: string): ScrubbedCrashEvent {
   const eventId = event.event_id
   const timestamp = event.timestamp
   const platform = event.platform
   const level = event.level
   const release = event.release
+  const debugMeta = scrubDebugMeta(event.debug_meta, appRoot)
   return {
+    ...(debugMeta === undefined ? {} : { debug_meta: debugMeta }),
     ...(typeof eventId === 'string' && EVENT_ID_RE.test(eventId) ? { event_id: eventId } : {}),
     ...(typeof timestamp === 'number' && Number.isFinite(timestamp) ? { timestamp } : {}),
     ...(typeof platform === 'string' && PLATFORM_RE.test(platform) ? { platform } : {}),
