@@ -5284,6 +5284,43 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     ).toEqual([null, null, null, 'budget.show'])
   })
 
+  it('draws a queue it cannot decode as `runs ls`’s own refusal, with no item and no button', async () => {
+    // The queue's reader is the console's one closed decoder (K4's follow-up):
+    // a row carrying a key `runview.Row` does not have refuses the **whole**
+    // document, and what is drawn is the section's own refusal -- the state a
+    // read that failed already draws, naming `runs ls` -- rather than the rows
+    // around it. A queue that dropped the row it could not read would draw a
+    // shorter list than the document holds, and the operator would have no way
+    // to tell that from a shorter day.
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: () => ({
+        ok: true,
+        data: { document: { runs: [{ ...QUEUE_RUN, widget: 'a key no run record has' }] } },
+      }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    await askForJobs(document)
+    const job = classed(panelOf(document), COORDINATOR_QUEUE_PART_CLASS)[1]
+    if (job === undefined) throw new Error('the queue drew no runs part')
+    expect(classed(job, 'unavailable-operation')[0]?.textContent).toBe('runs.list')
+    expect(classed(job, 'unavailable-sentence')[0]?.textContent).toBe(
+      'the runs list document is not one the console reads: runs[0].widget is unknown-key',
+    )
+    // The row the decoder refused reached neither the drawing nor an act: the
+    // runs part holds no item and no button, and the run's own id is nowhere on
+    // the screen. The plan read's ready task is still the one item drawn -- it
+    // was never the document that was refused.
+    expect(classed(job, 'coordinator-queue-item')).toEqual([])
+    expect(classed(job, 'coordinator-queue-button')).toEqual([])
+    expect(holdsText(panelOf(document), QUEUE_RUN_ID)).toBe(false)
+    expect(holdsText(panelOf(document), 'task-three')).toBe(true)
+  })
+
   it('draws the pane’s declared intents when the pane’s own read lands, and says when it read them', async () => {
     // K5: the pane has a read of its own -- `coordinator intents --all --json`
     // -- so it draws nothing until that read answers, and what it draws then

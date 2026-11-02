@@ -2434,10 +2434,13 @@ type RecordMemberKind = 'text' | 'count' | 'flag' | 'stamp' | 'block'
  *
  * A key of `RECORD_KEYS` that is not listed here is accepted and not read --
  * `RECORD_KEYS` is the struct's whole key set and this table holds the members
- * whose type this build knows how to check. `image_age_s`, `started_at` and
- * `pr_status_at` are pointers on the struct, so a `null` is what the CLI's own
- * "unknown" looks like and is never refused; every other key's `null` is a
- * shape this build does not know.
+ * whose type this build knows how to check.
+ *
+ * An absent member, and a `null` at one, both read as the CLI having nothing to
+ * say -- this module's house reading of a `null` (`optionalText`), and what the
+ * struct's three pointer members write. The four keys a row must carry are read
+ * through `required` instead and are refused when they are not there, so a
+ * `null` at one of those is a type error rather than an absence.
  */
 const RECORD_MEMBERS: Readonly<Record<string, RecordMemberKind>> = Object.freeze({
   run: 'text',

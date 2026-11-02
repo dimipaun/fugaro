@@ -1048,7 +1048,7 @@ function textAt(raw: unknown): string | null {
  * drawing.
  */
 export function queueRuns(document: unknown): Decoded<readonly CoordinatorRunRow[]> {
-  const decoded = decodeRunsList(document, 'the queue’s runs list')
+  const decoded = decodeRunsList(document)
   if (!decoded.ok) return decoded
   const waiting: CoordinatorRunRow[] = []
   for (const row of decoded.value.runs) {
