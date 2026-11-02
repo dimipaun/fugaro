@@ -656,6 +656,80 @@ func TestPricesShowsLocalOverrides(t *testing.T) {
 	}
 }
 
+// TestBudgetPricesJSONPinsTheFigures is the price pin M1 needs: the document
+// `budget prices --json` prints is held against rows written out here, field
+// for field — one embedded Claude row, one row the built-in provider price
+// catalog priced, and one the owner's own model_prices replaced. The figures
+// are the pin; comparing the command against the same builder the test calls
+// would agree with any figure that builder had come to produce.
+//
+// Mutation (run, restored): double CacheReadPerM in priceRowOf and this fails
+// on claude-opus-5-5's cache_read_per_m 0.4 against 0.2.
+func TestBudgetPricesJSONPinsTheFigures(t *testing.T) {
+	modelsFixture(t)
+
+	out, _, err := execute(t, "budget", "prices", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var doc pricesDoc
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	byID := map[string]priceRow{}
+	for _, r := range doc.Models {
+		byID[r.ID] = r
+	}
+	for _, want := range []struct{ id, row string }{
+		// The embedded table's own figures: $4/$20 a million, cache reads at
+		// 0.05x and cache writes at 1.25x and 2x, a search at $10 a thousand,
+		// and no source of its own (the document's is the table's).
+		{"claude-opus-5-5", `{"id":"claude-opus-5-5","input_per_m":4,"output_per_m":20,"cache_read_per_m":0.2,"cache_write_5m_per_m":5,"cache_write_1h_per_m":8,"web_search_per_1k":10,"local":false,"unverified":false}`},
+		// The catalog row the openrouter route claims: the zdr tier's cheapest
+		// end, its 15 endpoints (10 of them ZDR-eligible) and the dearest price
+		// the tier carries, which is the most a call it serves can be billed.
+		{"deepseek/deepseek-v4-flash", `{"id":"deepseek/deepseek-v4-flash","input_per_m":0.05,"output_per_m":0.17,"cache_read_per_m":0.013999999999999999,"cache_write_5m_per_m":0.0625,"cache_write_1h_per_m":0.1,"web_search_per_1k":0,"local":false,"unverified":false,"catalog":{"tier":"zdr","bound":"min","endpoints":15,"zdr_endpoints":10,"source":"https://openrouter.ai/api/v1/models","checked_at":"2026-10-23","stale":false,"tier_input_max_per_m":0.7,"tier_output_max_per_m":1.32}}`},
+		// The override: the owner's own numbers, marked local, with the cache
+		// multipliers the table's defaults give them.
+		{"vendor/model-y", `{"id":"vendor/model-y","input_per_m":1,"output_per_m":2,"cache_read_per_m":0.1,"cache_write_5m_per_m":1.25,"cache_write_1h_per_m":2,"web_search_per_1k":10,"local":true,"unverified":false}`},
+	} {
+		row, ok := byID[want.id]
+		if !ok {
+			t.Errorf("no row for %s:\n%s", want.id, out)
+			continue
+		}
+		if got := jsonOf(t, row); got != want.row {
+			t.Errorf("%s reads\n%s\nand the pin is\n%s", want.id, got, want.row)
+		}
+	}
+	// And the whole document is the shared builder's rows, in its order: the
+	// figures above are pinned, and no second row construction can grow beside
+	// the builder both commands call (D794).
+	table, ov, err := priceTable(selectedModelsConfig(t), budgetNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := priceRowsFor(table, ov)
+	if len(want) != len(doc.Models) {
+		t.Fatalf("the command prints %d rows and the shared builder has %d", len(doc.Models), len(want))
+	}
+	for i := range want {
+		got, wantJSON := jsonOf(t, doc.Models[i]), jsonOf(t, want[i])
+		if got != wantJSON {
+			t.Errorf("row %d is %s, and the shared builder makes %s", i, got, wantJSON)
+		}
+	}
+}
+
+func jsonOf(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
 func TestBudgetRefusesWithoutFirebaseConfig(t *testing.T) {
 	newBudgetFixture(t, "budget: { mode: observe, per_run_usd: 5 }\n")
 	for _, args := range [][]string{{"show"}, {"set", "--global", "--daily", "1", "--yes"}, {"kill", "--all", "--yes"}, {"resume", "--all", "--yes"}} {
