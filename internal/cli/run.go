@@ -665,7 +665,8 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// levels, resolved once for the two branches below (a derived image
 		// and a checkout: clone workflow), the way compressionGate is: a
 		// launch that asks nothing is never gated, whatever its image is.
-		levelsAsk := launchReviewLevelsAsk(ctx, env, spec, launchFileConfig(ctx, env, spec), launchRecipeForLevels(ctx, spec))
+		levelsRecipe, levelsRecipeUnknown := launchRecipeForLevels(ctx, spec)
+		levelsAsk := launchReviewLevelsAsk(ctx, env, spec, launchFileConfig(ctx, env, spec), levelsRecipe, levelsRecipeUnknown)
 		// checkRecipeImage and checkImageSince judge a workflow's derived
 		// image by its build record, which a checkout: clone workflow never
 		// has (it runs the installation's base image directly, not a

@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 func TestCheckRecipeImage(t *testing.T) {
@@ -302,7 +303,7 @@ func TestRecipesSkewRefusesReviewLevelsOnOldImage(t *testing.T) {
 	env := fileEnv(t, f)
 	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
 		ReviewLevels: &config.ReviewLevels{L2: &config.LevelSetting{Off: true}}}
-	ask := reviewLevelsAsk(config.Levels{}, spec.ReviewLevels, nil, nil)
+	ask := reviewLevelsAsk(config.Levels{}, spec.ReviewLevels, nil, nil, false)
 	if want := "the task's review_levels (l2.none)"; ask != want {
 		t.Fatalf("ask = %q, want %q", ask, want)
 	}
@@ -351,7 +352,7 @@ func TestRecipesSkewRefusesReviewLevelsOnOldImage(t *testing.T) {
 	// A launch that asks for no levels at all is never gated, whatever its
 	// image is: an empty block says nothing about any level
 	// (config.writesLevel), and neither does a task with no block.
-	if ask := reviewLevelsAsk(config.Levels{}, &config.ReviewLevels{L2: &config.LevelSetting{}}, nil, nil); ask != "" {
+	if ask := reviewLevelsAsk(config.Levels{}, &config.ReviewLevels{L2: &config.LevelSetting{}}, nil, nil, false); ask != "" {
 		t.Errorf("an empty block asked %q, want nothing", ask)
 	}
 	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
@@ -363,12 +364,12 @@ func TestRecipesSkewRefusesReviewLevelsOnOldImage(t *testing.T) {
 	// ignores what it says.
 	cfg := &config.Config{}
 	cfg.Agent.Levels.L1 = &config.LevelSetting{Model: "deepseek/deepseek-v4-pro"}
-	if ask := reviewLevelsAsk(config.Levels{}, nil, cfg, nil); ask != "fugaro.yaml's agent.levels (l1.model)" {
+	if ask := reviewLevelsAsk(config.Levels{}, nil, cfg, nil, false); ask != "fugaro.yaml's agent.levels (l1.model)" {
 		t.Errorf("agent.levels.l1.model asked %q", ask)
 	}
 	// The owner's floor is the third: it is read from the owner-only policy
 	// node (D722, G1) by a runner at reviewLevelsSince or later alone.
-	if ask := reviewLevelsAsk(config.Levels{}, nil, nil, []policy.Level{policy.LevelL2}); ask != "the owner's review-level floor" {
+	if ask := reviewLevelsAsk(config.Levels{}, nil, nil, []policy.Level{policy.LevelL2}, false); ask != "the owner's review-level floor" {
 		t.Errorf("the owner's floor asked %q", ask)
 	}
 }
@@ -391,13 +392,13 @@ func TestRecipesSkewRefusesResolvedL3OnOldImage(t *testing.T) {
 	if !levels.L3.On {
 		t.Fatal("critical resolved without level 3")
 	}
-	ask := reviewLevelsAsk(levels, spec.ReviewLevels, cfg, nil)
+	ask := reviewLevelsAsk(levels, spec.ReviewLevels, cfg, nil, false)
 	if want := "review level 3 (its adversarial step)"; ask != want {
 		t.Fatalf("ask = %q, want %q", ask, want)
 	}
 	// The task field alone would have missed it: this launch carries no
 	// block, and the run's own mode is what asks for the level.
-	if only := reviewLevelsAsk(config.Levels{}, spec.ReviewLevels, nil, nil); only != "" {
+	if only := reviewLevelsAsk(config.Levels{}, spec.ReviewLevels, nil, nil, false); only != "" {
 		t.Fatalf("the task field alone asked %q, want nothing", only)
 	}
 	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
@@ -426,8 +427,92 @@ func TestRecipesSkewRefusesResolvedL3OnOldImage(t *testing.T) {
 	if !levels.L1.Inserted {
 		t.Fatal("a recipe with no first-line step resolved without an inserted level 1")
 	}
-	if ask := reviewLevelsAsk(levels, nil, loop, nil); ask != "review level 1 (a first-line step the run inserts)" {
+	if ask := reviewLevelsAsk(levels, nil, loop, nil, false); ask != "review level 1 (a first-line step the run inserts)" {
 		t.Errorf("an inserted level 1 asked %q", ask)
+	}
+}
+
+// TestRecipesSkewJudgesAProjectOrCatalogRecipe: the L1 insertion ask is not
+// blind to a recipe the launcher did not read out of a checkout, because a
+// project or catalog recipe never needs one: the launcher embeds its text in
+// the task when it resolves the name (taskRecipeEmbedding), so the task's own
+// bytes are the recipe the run gets and its steps are judged from them, the
+// same as a repository recipe's.
+//
+// Mutation (drop the embedded text from the gate's read, so a project or
+// catalog recipe reaches config.ResolveLevels as nil): the 0.15.0 launch below
+// succeeds, silently dropping the first-line step the run would insert.
+func TestRecipesSkewJudgesAProjectOrCatalogRecipe(t *testing.T) {
+	for _, tc := range []struct{ name, recipe, text string }{
+		{"a project recipe", "mine", "version: 1\nname: mine\nsteps:\n  - review: {}\n"},
+		{"a catalog recipe", "solo", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			if tc.text != "" {
+				projectRecipesFixture(t, f, map[string]string{tc.recipe: tc.text})
+			}
+			checkoutWorkflows(t, "  first_line_review: \"on\"\n", "  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+			writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
+			_, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", tc.recipe, "--mode", "pro", "--run-id", "20261007-100000-abcd", "Fix it.")
+			if err == nil || !strings.Contains(err.Error(), "review level 1 (a first-line step the run inserts) needs a job image") || ExitCode(err) != ExitUserError {
+				t.Fatalf("0.15.0: err = %v, want the level 1 refusal", err)
+			}
+			writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.16.0")
+			if _, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", tc.recipe, "--mode", "pro", "--run-id", "20261007-100000-abce", "Fix it."); err != nil {
+				t.Fatalf("0.16.0: %v", err)
+			}
+		})
+	}
+}
+
+// TestRecipesSkewJudgesARecipeItCannotRead: a repository recipe carries its
+// name alone in the task (the runner reads the file at the ref), so a launch
+// whose checkout has not got that file leaves the recipe's steps unknown
+// rather than absent — config.ResolveLevels then reports Inserted false
+// because it was handed no recipe, and reading that as "no first-line step to
+// insert" would be the one direction this gate must not fail in: a 0.15.0
+// runner would drop the insertion in silence. Unknown asks, the conservative
+// way every other gate here treats a file it cannot read.
+func TestRecipesSkewJudgesARecipeItCannotRead(t *testing.T) {
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	ctx := context.Background()
+	// Not a checkout of acme/app at all, which is the shape of every way this
+	// read fails: repoRecipeForGate returns nil for each of them.
+	unread := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		Recipe: &task.Recipe{Name: "mine", Source: "repo"}}
+	rcp, unknown := launchRecipeForLevels(ctx, unread)
+	if rcp != nil || !unknown {
+		t.Fatalf("recipe = %+v, unknown = %v, want an unreadable repository recipe", rcp, unknown)
+	}
+	// The ask then says what it could not settle, rather than nothing.
+	cfg := &config.Config{}
+	cfg.Agent.FirstLineReview = "on"
+	levels, _, err := config.ResolveLevels(config.LevelInputs{Config: cfg, Mode: rigor.Pro})
+	if err != nil {
+		t.Fatalf("resolving a pro run's levels: %v", err)
+	}
+	if !levels.L1.On || levels.L1.Inserted {
+		t.Fatalf("levels = %+v, want level 1 on with no insertion known", levels)
+	}
+	if ask := reviewLevelsAsk(levels, nil, cfg, nil, unknown); ask !=
+		"review level 1 (a first-line step the run inserts unless its recipe carries one, and this checkout has not got that file)" {
+		t.Errorf("an unreadable recipe asked %q", ask)
+	}
+	// Two controls, so the ask is not simply always on: the runner's own
+	// choice carries no name to read (the catalog default, whose file writes
+	// a first_line step), and a recipe in the task's own text was read.
+	if rcp, unknown := launchRecipeForLevels(ctx, &task.Spec{Version: 1, Repo: "acme/app", Recipe: nil}); rcp != nil || unknown {
+		t.Errorf("the runner's own choice: recipe = %+v, unknown = %v", rcp, unknown)
+	}
+	embedded := &task.Spec{Version: 1, Repo: "acme/app", Recipe: &task.Recipe{Name: "mine", Source: "project",
+		YAML: "version: 1\nname: mine\nsteps:\n  - review: {}\n"}}
+	if rcp, unknown := launchRecipeForLevels(ctx, embedded); rcp == nil || unknown {
+		t.Errorf("a recipe the task carries: recipe = %+v, unknown = %v", rcp, unknown)
+	}
+	if ask := reviewLevelsAsk(levels, nil, cfg, nil, false); ask != "" {
+		t.Errorf("a recipe that was read asked %q, want nothing", ask)
 	}
 }
 

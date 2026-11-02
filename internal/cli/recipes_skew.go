@@ -1126,7 +1126,17 @@ func checkCloneRecipeImage(ctx context.Context, lc *localcfg.Config, spec *task.
 //
 // The owner's floor (D722, G1) is the third, and it is read from the
 // owner-only policy node by a runner at reviewLevelsSince or later alone.
-func reviewLevelsAsk(levels config.Levels, task *config.ReviewLevels, cfg *config.Config, floor []policy.Level) string {
+//
+// recipeUnknown is whether the launcher could not read the recipe the task
+// names, which leaves the insertion question unanswerable rather than
+// answered: config.ResolveLevels carries no recipe then and reports Inserted
+// false, and a first-line step the run's real recipe turns out to lack would
+// be inserted by a runner at reviewLevelsSince and dropped in silence by one
+// before it. The conservative direction is the one every other gate here
+// takes for a file it cannot read — ask, and let the refusal name the image
+// to refresh — and it costs a refusal only on an image older than the
+// release whose runner acts on levels.
+func reviewLevelsAsk(levels config.Levels, task *config.ReviewLevels, cfg *config.Config, floor []policy.Level, recipeUnknown bool) string {
 	var asks []string
 	if len(floor) > 0 {
 		asks = append(asks, "the owner's review-level floor")
@@ -1134,8 +1144,11 @@ func reviewLevelsAsk(levels config.Levels, task *config.ReviewLevels, cfg *confi
 	if levels.L3.On {
 		asks = append(asks, "review level 3 (its adversarial step)")
 	}
-	if levels.L1.Inserted {
+	switch {
+	case levels.L1.Inserted:
 		asks = append(asks, "review level 1 (a first-line step the run inserts)")
+	case levels.L1.On && recipeUnknown:
+		asks = append(asks, "review level 1 (a first-line step the run inserts unless its recipe carries one, and this checkout has not got that file)")
 	}
 	if s := levelsBlockAsk("the task's review_levels", task); s != "" {
 		asks = append(asks, s)
@@ -1198,15 +1211,13 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // The mode is the launcher's approximation of the run's: the ref's file with
 // the flag raised over it, as noteRigorRequest reads it, since the
 // authoritative resolution is the runner's at bootstrap. The recipe is the
-// one this launcher can read cheaply — the task's own text, else the
-// repository's file (repoRecipeForGate) — and nil for a project or catalog
-// recipe, whose steps this gate does not need: the only thing the recipe
-// decides for it is whether a first-line step is inserted. CatalogDefault is
-// read as false for the same reason: it decides level 1's own default alone,
-// which this gate does not judge.
-func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe) string {
+// one this launcher can read (launchRecipeForLevels), and recipeUnknown says
+// the one thing that read could not settle: whether that recipe writes a
+// first-line step of its own. CatalogDefault is read as false: it decides
+// level 1's own default alone, which this gate does not judge.
+func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, recipeUnknown bool) string {
 	if cfg == nil {
-		return reviewLevelsAsk(config.Levels{}, spec.ReviewLevels, nil, nil)
+		return reviewLevelsAsk(config.Levels{}, spec.ReviewLevels, nil, nil, false)
 	}
 	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}).Mode
 	var floor []policy.Level
@@ -1216,19 +1227,41 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 	levels, _, _ := config.ResolveLevels(config.LevelInputs{
 		Config: cfg, Mode: mode, Floor: floor, Task: spec.ReviewLevels, Recipe: rcp, Providers: env.lc.Providers,
 	})
-	return reviewLevelsAsk(levels, spec.ReviewLevels, cfg, floor)
+	return reviewLevelsAsk(levels, spec.ReviewLevels, cfg, floor, recipeUnknown)
 }
 
 // launchRecipeForLevels is the recipe launchReviewLevelsAsk judges the levels
-// on: the task's own text when it carries one, else this checkout's copy of a
-// repository recipe's file (repoRecipeForGate, the same read recipeForLaunch
-// and the recipe gates share). nil for a project or catalog recipe, which
-// this launcher reads by name alone.
-func launchRecipeForLevels(ctx context.Context, spec *task.Spec) *recipe.Recipe {
-	if r := embeddedRecipeOf(spec); r != nil {
-		return r
+// on, and whether that read could not settle it.
+//
+// A project or catalog recipe is not a gap here: the launcher embeds its text
+// in the task when it resolves the name (taskRecipeEmbedding), so the task's
+// own bytes are the recipe the run will get — the same bytes the runner reads
+// out of task.json. The task's text comes first for that reason; a repository
+// recipe carries its name alone (the runner reads the file at the ref), so
+// this checkout's copy is the second read (repoRecipeForGate, the same one
+// recipeForLaunch and the recipe gates make).
+//
+// Unknown — the second result — is a repository recipe whose file this
+// checkout has not got (a directory that is not the repository's, a file
+// that lives only at the ref, an unreadable one), and a task whose embedded
+// text does not parse, which is a launch the runner's bootstrap refuses. The
+// steps of a recipe nobody read are unknown, not absent, and the L1 ask says
+// so rather than reading Inserted false as "no first-line step".
+func launchRecipeForLevels(ctx context.Context, spec *task.Spec) (*recipe.Recipe, bool) {
+	if spec.Recipe == nil {
+		// The runner chooses, and only the catalog's own default can come
+		// out of that with no text in the task — the recipe this launcher
+		// would have embedded had it resolved a name itself. Its file is
+		// known here, and it writes a first_line step.
+		return nil, false
 	}
-	return repoRecipeForGate(ctx, spec)
+	if r := embeddedRecipeOf(spec); r != nil {
+		return r, false
+	}
+	if r := repoRecipeForGate(ctx, spec); r != nil {
+		return r, false
+	}
+	return nil, true
 }
 
 // checkReviewLevelsImage refuses a launch whose job image runs a fugaro older
