@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strings"
 	"text/tabwriter"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -177,21 +176,15 @@ func runModelsLs(cmd *cobra.Command, o *modelsLsOptions) error {
 }
 
 // modelsCatalogOf is the catalog provenance the models carry, taken from the
-// first catalog-priced row: every row priced from the catalog carries the same
-// source, date and staleness, and one header line states them for all of them.
+// first catalog-priced row (catalogProvenanceOf, the same read `budget prices`
+// makes): every row priced from the catalog carries the same source, date and
+// staleness, and one header line states them for all of them.
 func modelsCatalogOf(rows []priceRow) *modelsCatalog {
-	for _, r := range rows {
-		c := r.Catalog
-		if c == nil {
-			continue
-		}
-		doc := &modelsCatalog{Source: c.Source, CheckedAt: c.CheckedAt, Stale: c.Stale}
-		if t, err := time.Parse("2006-01-02", c.CheckedAt); err == nil {
-			doc.AgeDays = int(budgetNow().Sub(t).Hours() / 24)
-		}
-		return doc
+	p, ok := catalogProvenanceOf(rows)
+	if !ok {
+		return nil
 	}
-	return nil
+	return &modelsCatalog{Source: p.Source, CheckedAt: p.CheckedAt, Stale: p.Stale, AgeDays: p.AgeDays}
 }
 
 // directRoute is the Anthropic API itself: the route every Claude ID takes

@@ -388,6 +388,12 @@ func TestModelsLsEscapesTableCells(t *testing.T) {
 // characters.
 func TestModelsLsSanitisesAPin(t *testing.T) {
 	home := modelsFixture(t)
+	// The pin reaches the checkout in two steps, and both are needed: the Go
+	// raw string keeps \u202e and \x1b[31m as the six and eight characters
+	// they look like (a backquoted string processes no Go escape), and the
+	// YAML double-quoted scalar is what turns each into the character it
+	// names: U+202E and an ESC[31m. Spelling the characters literally here
+	// would work, and would put an invisible override in this file's source.
 	pin := `coder: "vendor/mo\u202edel\x1b[31m"`
 	modelsCheckout(t, home, "owner/repo-a", strings.Replace(modelsRepoYAML, "coder: deepseek/deepseek-v4-flash", pin, 1))
 

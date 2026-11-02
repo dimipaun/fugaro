@@ -183,16 +183,18 @@ func endpointsCell(e catalog.Entry, tier string) string {
 
 // rangeCell is one dimension's price range over a tier: the two ends when they
 // differ, one number when they do not, and a dash for a dimension no endpoint
-// of the tier prices.
+// of the tier prices. The bounds are strings out of the catalog file, so they
+// are escaped like every other value of this table: a bound carrying a newline
+// or a tab would break the row's columns (cellOneLine).
 func rangeCell(bounds map[string]catalog.Bound, dim string) string {
 	b, ok := bounds[dim]
 	if !ok {
 		return "—"
 	}
 	if b.Min == b.Max {
-		return "$" + b.Min
+		return "$" + cellOneLine(b.Min)
 	}
-	return "$" + b.Min + " – $" + b.Max
+	return "$" + cellOneLine(b.Min) + " – $" + cellOneLine(b.Max)
 }
 
 // modelsLimits is what the model accepts, in the units a reader compares

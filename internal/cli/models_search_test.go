@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 )
 
 // TestModelsSearchFindsACatalogRow: a substring of a catalog model ID finds
@@ -53,6 +54,36 @@ func TestModelsSearchFindsAnEmbeddedClaudeRow(t *testing.T) {
 	}
 	if !strings.Contains(out, "embedded") {
 		t.Errorf("the hit does not say its price is the embedded table's:\n%s", out)
+	}
+}
+
+// TestModelsSearchFindsAModelTheOwnerPriced: the owner's own model_prices is a
+// source of hits like the catalog and the embedded table, and it has to be: it
+// is what a miss tells a reader to write, so a model already priced that way is
+// found rather than reported missing. The row carries the owner's own numbers
+// and, when a route of this project serves the model, that route (D788, D782).
+func TestModelsSearchFindsAModelTheOwnerPriced(t *testing.T) {
+	modelsFixture(t)
+
+	out, _, err := execute(t, "models", "search", "vendor/model-y")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	row := ""
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "vendor/model-y") {
+			row = l
+		}
+	}
+	if row == "" {
+		t.Fatalf("a model the owner priced is not found:\n%s", out)
+	}
+	// The fixture prices it 1 in / 2 out, and no provider route of the project
+	// claims it.
+	for _, want := range []string{"local", "$1", "$2", "no route"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("the hit does not show %q: %q", want, row)
+		}
 	}
 }
 
@@ -152,13 +183,24 @@ func TestModelsSearchSanitisesTheTerm(t *testing.T) {
 // and a tab in it would open a column of its own and shift every column after
 // it. The value is a repo's pin, so it is escaped rather than trusted
 // (cellOneLine; TestModelsLsEscapesTableCells covers the same for `models ls`,
-// whose writer the config also keeps tabs out of).
+// whose writer the config also keeps tabs out of). The bounds are the catalog
+// file's own strings, escaped the same way.
 func TestModelsSearchEscapesItsCells(t *testing.T) {
 	if got := routeCell("vendor/tab\tbed"); got != "vendor/tab?bed" {
 		t.Errorf("a tab in a route name is not escaped: %q", got)
 	}
 	if got := routeCell(""); got != "no route" {
 		t.Errorf("a model no route serves reads %q", got)
+	}
+	bounds := map[string]catalog.Bound{"input_per_m": {Min: "1\n2", Max: "3\t4"}}
+	if got := rangeCell(bounds, "input_per_m"); got != "$1?2 – $3?4" {
+		t.Errorf("a bound's own newline and tab are not escaped: %q", got)
+	}
+	if got := rangeCell(map[string]catalog.Bound{"input_per_m": {Min: "1", Max: "1"}}, "input_per_m"); got != "$1" {
+		t.Errorf("one bound reads %q", got)
+	}
+	if got := rangeCell(bounds, "output_per_m"); got != "—" {
+		t.Errorf("a dimension the tier does not price reads %q", got)
 	}
 }
 

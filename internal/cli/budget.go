@@ -1602,6 +1602,36 @@ func priceRowsFor(table *pricing.Table, ov pricing.Overrides) []priceRow {
 	return rows
 }
 
+// catalogProvenance is the built-in provider price catalog's own provenance —
+// its source, the day it was last checked, its staleness and that date's age —
+// apart from the embedded Claude table's, which the rows and the document carry
+// separately.
+type catalogProvenance struct {
+	Source    string
+	CheckedAt string
+	Stale     bool
+	AgeDays   int
+}
+
+// catalogProvenanceOf reads that provenance off the first catalog-priced row of
+// rows: every row the catalog priced carries the same source, date and
+// staleness, so one header line states them for all of them (design §7). The
+// second result is false when no row is catalog-priced: there is nothing to
+// state, and a zero value would read as a catalog checked on no day at all.
+func catalogProvenanceOf(rows []priceRow) (catalogProvenance, bool) {
+	for _, r := range rows {
+		if r.Catalog == nil {
+			continue
+		}
+		p := catalogProvenance{Source: r.Catalog.Source, CheckedAt: r.Catalog.CheckedAt, Stale: r.Catalog.Stale}
+		if t, err := time.Parse("2006-01-02", p.CheckedAt); err == nil {
+			p.AgeDays = int(budgetNow().Sub(t).Hours() / 24)
+		}
+		return p, true
+	}
+	return catalogProvenance{}, false
+}
+
 type pricesDoc struct {
 	Source    string     `json:"source"`
 	CheckedAt string     `json:"checked_at"`
@@ -1652,16 +1682,8 @@ func runBudgetPrices(cmd *cobra.Command, o *budgetPricesOptions) error {
 	}
 	// The catalog's own provenance is the first catalog-priced row's, which is
 	// the row the header line below is about.
-	for _, r := range doc.Models {
-		c := r.Catalog
-		if c == nil {
-			continue
-		}
-		doc.CatalogSource, doc.CatalogCheckedAt, doc.CatalogStale = c.Source, c.CheckedAt, c.Stale
-		if t, err := time.Parse("2006-01-02", c.CheckedAt); err == nil {
-			doc.CatalogAgeDays = int(budgetNow().Sub(t).Hours() / 24)
-		}
-		break
+	if p, ok := catalogProvenanceOf(doc.Models); ok {
+		doc.CatalogSource, doc.CatalogCheckedAt, doc.CatalogStale, doc.CatalogAgeDays = p.Source, p.CheckedAt, p.Stale, p.AgeDays
 	}
 	// A model a route claims that the catalog cannot price has no row: the
 	// owner is told which and why, rather than left with a model missing
