@@ -218,24 +218,6 @@ func ReviewOf(id Identity) error {
 	return nil
 }
 
-// pairReview is the review class's pairing (spec §3.2 steps 1-3), and the
-// answer is the canonical repository every check after it is made against: the
-// repository is the run identity's own slug, the slug is resolved through the
-// installation's table, and the caller's account must be admitted to that
-// repository by the model path's own admission check.
-//
-// The admission is admittedAccounts and not a read of the repository's child
-// node: the child names the accounts an administrator admitted, and the
-// intersection also requires the shared node to define the account and to
-// offer it to this repository. Reading the child alone is the narrower
-// spelling that keeps admitting a repository the owner withdrew with `fugaro
-// project repos rm` — that command takes the repository out of the project's
-// allow-list and does not touch its child — so the pairing takes the whole
-// intersection and no second implementation of O4 exists.
-//
-// An absent child is an empty admission and never an error (a repository
-// admitted to nothing is admitted to nothing); an unreadable child or node is
-// a refusal, because fail closed is a refusal and not a silent nothing.
 // reviewAccount is the review row of the calling account: the table NewServer
 // built, looked up by the FOLDED account.
 //
@@ -258,6 +240,24 @@ func (s *Server) reviewAccount(email string) (ReviewJobAccount, bool) {
 	return ra, ok
 }
 
+// pairReview is the review class's pairing (spec §3.2 steps 1-3), and the
+// answer is the canonical repository every check after it is made against: the
+// repository is the run identity's own slug, the slug is resolved through the
+// installation's table, and the caller's account must be admitted to that
+// repository by the model path's own admission check.
+//
+// The admission is admittedAccounts and not a read of the repository's child
+// node: the child names the accounts an administrator admitted, and the
+// intersection also requires the shared node to define the account and to
+// offer it to this repository. Reading the child alone is the narrower
+// spelling that keeps admitting a repository the owner withdrew with `fugaro
+// project repos rm` — that command takes the repository out of the project's
+// allow-list and does not touch its child — so the pairing takes the whole
+// intersection and no second implementation of O4 exists.
+//
+// An absent child is an empty admission and never an error (a repository
+// admitted to nothing is admitted to nothing); an unreadable child or node is
+// a refusal, because fail closed is a refusal and not a silent nothing.
 func (s *Server) pairReview(ctx context.Context, id Identity) (string, error) {
 	// Step 4 comes first: the claim rule is a fact about the run identity
 	// alone, so it is asked before anything is read — before the table, before

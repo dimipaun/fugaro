@@ -444,7 +444,7 @@ func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, erro
 	}
 	id.Job, id.JobAccount, id.JobClass = req.Job, account, class
 	// The review claim rule (spec §3.3) is NOT asked here. It is the pairing's
-	// last step (pairReview), and that is where it is answered — because a
+	// first step (pairReview), and that is where it is answered — because a
 	// refusal from this function returns Identity{} and is answered by
 	// refuseIdentity, which writes no audit line, while the area rule holds a
 	// refusal to exactly one line once both identities are verified. Both are
