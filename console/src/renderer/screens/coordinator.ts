@@ -2412,10 +2412,10 @@ function floorNote(
   note: ScreenElement,
   wordClass: string,
   versionClass: string,
-  word: string,
+  sentence: string,
   version: string,
 ): ScreenElement {
-  literal(cell(note, factory, 'span', wordClass), word)
+  literal(cell(note, factory, 'span', wordClass), sentence)
   textCell(note, factory, 'span', version, 'label', 'cliVersion', versionClass)
   return note
 }
