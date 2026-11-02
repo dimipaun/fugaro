@@ -624,13 +624,14 @@ func settingsRefusedNames(hint string) []string {
 	return out
 }
 
-// settingsHintNeverNames pins the keys a write's hint must never name: the rows
-// this command refuses by name — budget.mode and budget.per_day_usd — the
-// installation's own plumbing an endpoints.* name is part of, and a row the
-// registry marks Sensitive, whose value the diff would print.
+// settingsHintNeverNames pins the keys a write's hint must never name: the
+// registry rows this command refuses although the read prints them — budget.mode
+// and budget.per_day_usd are other writers' keys, and every endpoints.* name is
+// the installation's own plumbing — and the rows the registry marks Sensitive,
+// whose value the diff a write shows would print.
 func settingsHintNeverNames(t *testing.T, hint string) {
 	t.Helper()
-	refused := []string{"budget.per_day_usd", "budget.mode", "budget.firebase_api_key"}
+	refused := []string{"budget.per_day_usd", "budget.mode"}
 	for _, row := range settings.Rows() {
 		if strings.HasPrefix(row.Key, "endpoints.") || row.Sensitive {
 			refused = append(refused, row.Key)
@@ -770,8 +771,15 @@ func TestSettingsAddHintListKeysAreTheKeysThatTakeAList(t *testing.T) {
 			t.Errorf("%s: --add lands = %v, the hint's list says %v", row.Key, got, want)
 		}
 	}
-	if accepted < len(settingsHintListKeys) {
-		t.Fatalf("probed %d accepted rows, fewer than the hint's own list carries", accepted)
+	if accepted == 0 {
+		t.Fatal("no row of the registry is one the write accepts: the probe checked nothing")
+	}
+	// The other direction: a name on the list the write refuses would be a key
+	// the loop above never reaches, so it is probed on its own.
+	for key := range settingsHintListKeys {
+		if !settingsAddLands(t, key) {
+			t.Errorf("%s: the hint's list names it, and --add does not land there", key)
+		}
 	}
 }
 

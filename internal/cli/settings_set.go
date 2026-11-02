@@ -365,11 +365,11 @@ func settingsHintRow(row settings.Row) bool {
 
 // settingsHintListKeys are the string-list keys of the accept set: the rows
 // `--add` and `--remove` edit, and so the only rows a hint drawn for those two
-// flags may name. The registry carries no key type, so the list stands here
-// beside the refusal that needs it, and
-// TestSettingsAddHintListKeysAreTheKeysThatTakeAList probes every row the write
-// path accepts and holds this table to the documents' own loaders: a list key
-// added later is that test's failure, not a hint that quietly stops naming it.
+// flags may name. The registry carries no key type, so the list stands beside
+// the refusal that needs it, and TestSettingsAddHintListKeysAreTheKeysThatTakeAList
+// probes every row the write path accepts and holds this table to the
+// documents' own loaders: a list key added later fails there, where a stale
+// table would leave the hint naming keys --add cannot edit.
 var settingsHintListKeys = map[string]bool{
 	"budget.allowed_models":        true, // config.Budget.AllowedModels
 	"followup.trusted":             true, // config.Followup.Trusted
