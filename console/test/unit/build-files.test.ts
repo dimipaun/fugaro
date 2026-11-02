@@ -328,6 +328,33 @@ describe('the packaged console carries what it loads', () => {
     }
   })
 
+  it('never packs a source map: the symbol upload reads them from the build tree', () => {
+    // Symbolication works from maps that are *uploaded* rather than shipped. The
+    // upload reads `dist/main` after the pack, which is where `npm run build` left
+    // the maps and where the inject stamped them; what goes into the app is the
+    // JavaScript carrying the debug ids. A map inside the archive would be the
+    // whole source of the running process on the operator's disk for no gain --
+    // the lookup happens in the service, not in the app -- and it is the file the
+    // scrubber's rules are about, comments and all.
+    //
+    // The patterns hold this by ending at `.js` (`dist/main/**/*.js` does not
+    // match `dist/main/index.js.map`), which is a property of a list that is easy
+    // to loosen: a `dist/main/**` added beside them, or a `.map` pattern added
+    // "so the maps get deleted", would carry every one of these into the app, and
+    // nothing else in this repository would notice.
+    const patterns = buildFiles() ?? []
+    expect(patterns.length, 'build.files must exist for this list to mean anything').toBeGreaterThan(20)
+    // The maps are read off the tree the same way the shipped files are:
+    // `tsconfig.build.json` sets `sourceMap: true` (`tsconfig.bundle-renderer.json`
+    // does the same for the renderer's bundle), so every emitted `.js` has one.
+    const maps = [...compiled, ...bundlerOutputs]
+      .filter((path) => path.endsWith('.js'))
+      .map((path) => `${path}.map`)
+    expect(maps.length, 'the map set is empty: the check below would be vacuous').toBeGreaterThan(10)
+    expect(maps).toContain('dist/main/index.js.map')
+    expect(uncovered(patterns, maps), 'these maps would be packed into the app').toEqual(maps)
+  })
+
   it('the matcher itself: a directory, a glob and a negation', () => {
     // The checker is tested against the shapes it must accept and the one it
     // must refuse, so a `covers` that answered `true` to everything could not

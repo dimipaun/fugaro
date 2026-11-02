@@ -125,6 +125,18 @@ not code. So the brief's four-word ladder is a *proposed* vocabulary, and the
 design has to say where it comes from — it cannot be "kept", because it is not
 there (D2).
 
+One format added since closes it, and the split is deliberate: the independent
+review artifact's `severity` is an `enum` of `blocker`, `major`, `minor`
+(`schemas/review.schema.json`, the CSR3 shape of docs/cloud-senior-review
+spec §3), while the in-run format keeps D2's free-form string. The in-run
+reader must go on reading every verdict a run already wrote, so it cannot
+start refusing words (D2); the artifact is a new format whose reader can be
+strict from its first version, and a job asked for the in-run five labels
+would answer `high` and have its whole review refused by the schema it was
+asked for. That is why the two reviewers get two severity clauses and the same
+three anchored axes (`internal/runner/prompts.go`: `inRunSeverity`,
+`artifactSeverity`, `scoringAxes`).
+
 **C3 — The owner's operating practice is not in `docs/coordinator/`.** The
 brief points at that folder for the merge-then-follow-up rule, the deferred
 ledger and the independent-review requirement. The three sentences are real, and
@@ -712,8 +724,8 @@ stale has found a merge that did not.
 | Fields of `task.Spec.Overrides` | 4 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
-| Files in `internal/runner` that mention `Severity` at all | 3 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 23 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
+| Image-skew `Since` constants | 24 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
 | Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 91 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |

@@ -3412,6 +3412,7 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | repository as owner/name (default: this checkout's origin) |
 | `--retry` | string | "" | no | launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started |
+| `--review-levels` | string | "" | no | read the run's own review levels from this YAML file, or - for stdin: the block the task stores as review_levels (l1, l2, l3, each of model, effort, none and focus), decoded strictly, with no key on no level meaning the configuration decides it. Asking for levels needs a job image whose runner acts on them, so a launch on an older one is refused and names fugaro image refresh; without the flag the run resolves its levels from its configuration and its mode alone |
 | `--run-id` | string | "" | no | run ID to use; repeating one reports its launch instead of starting another |
 | `--task-file` | string | "" | no | read the task from this file, or - for stdin |
 | `--tier` | string | "" | no | the expectation tier to dispatch this run at: trivial, small, medium, large. It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all |
@@ -3947,11 +3948,13 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--all-repos` | bool | `false` | no | read every repository this machine remembers |
 | `--changed` | bool | `false` | no | show only the rows a layer decides |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--grep` | string | "" | no | show only the rows whose key or a rendered column matches this regexp |
 | `-h`, `--help` | bool | `false` | no | help for settings |
 | `--json` | bool | `false` | no | print the versioned document |
 | `--layer` | stringSlice | `[]` | no | read only these layers (default, project, profile, repo, flag, local, shared, policy, caps, env) |
 | `--offline` | bool | `false` | no | read the offline layers only |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--repo` | string | "" | no | read this repository's fugaro.yaml (owner/name) |
 | `--why` | bool | `false` | no | show the winning level for each key |
 
@@ -3977,8 +3980,10 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `-h`, `--help` | bool | `false` | no | help for get |
 | `--json` | bool | `false` | no | print the versioned document |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--repo` | string | "" | no | read this repository's fugaro.yaml (owner/name) |
 
 Subcommands:
@@ -4018,8 +4023,10 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--add` | string | "" | no | add an item to a string-list key |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--remove` | string | "" | no | remove an item from a string-list key |
 | `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name) |
 | `--yes` | bool | `false` | no | confirm the write without a prompt |
@@ -4050,8 +4057,10 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `-h`, `--help` | bool | `false` | no | help for unset |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name) |
 | `--yes` | bool | `false` | no | confirm the write without a prompt |
 

@@ -106,6 +106,18 @@ function tokenPlaceholder(): string {
   return inert('gh', 'p_', 'a'.repeat(36))
 }
 
+/** DEBUG_ID is the shape `sentry-cli sourcemaps inject` writes into a file and
+ * its map: a version-5 UUID. It is invented rather than a real build's, because
+ * the test is about the shape and nothing else. */
+const DEBUG_ID = '0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9'
+
+/** MAX_DEBUG_IMAGES is how many images the module keeps, spelled here rather
+ * than imported: the number is the claim, and a test that read it from the
+ * source would follow the source wherever it went. It is above the SDK's own
+ * frame limit -- 50 -- because a caller may raise that, and it is a bound all
+ * the same, because the list arrives from a library. */
+const MAX_DEBUG_IMAGES = 64
+
 /** PROSE_A is a name-shaped string that is really a sentence: an exception's
  * `type` and a frame's `function` are strings a library filled in, and a library
  * can be handed a task title. */
@@ -911,11 +923,159 @@ describe('crash', () => {
     expect(scrubCrashEvent({ release: 'a'.repeat(64) }, APP_ROOT)).toEqual({ release: 'a'.repeat(64) })
   })
 
+  it('the debug images are kept, cut to an id and a file inside the app', () => {
+    // The one field a symbolicator reads: the id of the build a frame came from,
+    // and the file it was in. The reporter writes one image per file its frames
+    // come from (`@sentry/core`'s `applyDebugMeta`), with `code_file` as the
+    // frame's own path -- so it arrives absolute, and it is cut at the app root
+    // exactly as a frame is.
+    expect(
+      scrubCrashEvent(
+        { debug_meta: { images: [{ type: 'sourcemap', code_file: `${APP_ROOT}/dist/main/index.js`, debug_id: DEBUG_ID }] } },
+        APP_ROOT,
+      ),
+    ).toEqual({
+      debug_meta: { images: [{ type: 'sourcemap', code_file: 'dist/main/index.js', debug_id: DEBUG_ID }] },
+    })
+  })
+
+  it('the debug image keeps its three fields and drops every other one', () => {
+    // The SDK's own type carries more than symbolication needs (a `wasm` image
+    // has a `code_id` and a `debug_file`, a `macho` one an `image_addr`), and a
+    // library's object carries whatever a later version adds -- so the image is
+    // rebuilt from the three fields the lookup is made of, the same way a frame
+    // is rebuilt from four. `debug_file` is the field to watch: it is a path, and
+    // a path is the thing this module exists to keep off the wire.
+    expect(
+      scrubCrashEvent(
+        {
+          debug_meta: {
+            images: [
+              {
+                type: 'sourcemap',
+                code_file: `${PACKAGED_ROOT}/Fugaro Console.app/Contents/Resources/app.asar/dist/main/picker.js`,
+                debug_id: DEBUG_ID,
+                code_id: 'A1B2C3',
+                debug_file: `${HOME_PATH}/dev/acme-secret-repo/dist/main/picker.js`,
+                image_addr: '0x100000000',
+                image_size: 4096,
+                arch: 'arm64',
+              },
+            ],
+            extra: { note: 'anything else on debug_meta is dropped with it' },
+          },
+        },
+        APP_ROOT,
+      ),
+    ).toEqual({
+      debug_meta: { images: [{ type: 'sourcemap', code_file: 'dist/main/picker.js', debug_id: DEBUG_ID }] },
+    })
+  })
+
+  it('a debug image that fails a shape is dropped, and the ones that do not are kept', () => {
+    const image = (over: Record<string, unknown>): Record<string, unknown> => ({
+      type: 'sourcemap',
+      code_file: `${APP_ROOT}/dist/main/index.js`,
+      debug_id: DEBUG_ID,
+      ...over,
+    })
+    const scrubbed = scrubCrashEvent(
+      {
+        debug_meta: {
+          images: [
+            image({}),
+            // A path that names a home directory, a relative one, a URL this
+            // module cannot place, and one that walks back out of the app: none
+            // of them is a file inside the app, so none of them is kept.
+            image({ code_file: `${HOME_PATH}/dev/acme-secret-repo/dist/main/index.js` }),
+            image({ code_file: 'dist/main/index.js' }),
+            image({ code_file: 'https://example.invalid/index.js' }),
+            image({ code_file: `${APP_ROOT}/../../Users/person-1/index.js` }),
+            // A debug id that is not one: the injector writes a UUID, so
+            // anything else -- a sentence, a credential that reached the field,
+            // an id in another case -- is a value from somewhere else.
+            image({ debug_id: 'not-a-uuid' }),
+            image({ debug_id: DEBUG_ID.toUpperCase() }),
+            image({ debug_id: `${inert('gh', 'p_', 'a'.repeat(36))}` }),
+            image({ debug_id: undefined }),
+            // And a type that is not one of the six an image type may be.
+            image({ type: 'Source Map' }),
+            image({ type: 7 }),
+            // A value that is not an image at all.
+            null,
+            'dist/main/index.js',
+            { ...image({}), code_file: undefined },
+          ],
+        },
+      },
+      APP_ROOT,
+    )
+    // One image survives -- the well-formed one this list starts with -- and the
+    // thirteen after it are dropped, each for its own reason.
+    expect(scrubbed).toEqual({
+      debug_meta: { images: [{ type: 'sourcemap', code_file: 'dist/main/index.js', debug_id: DEBUG_ID }] },
+    })
+    expect(JSON.stringify(scrubbed)).not.toContain(HOME_PATH)
+    expect(JSON.stringify(scrubbed)).not.toContain('person-1')
+  })
+
+  it('the image type is one of the six the service has, and a word it does not know is dropped', () => {
+    // **The type is an exact list, not a shape.** A shape (`[a-z][a-z0-9_]{0,15}`)
+    // admits every lowercase word a library, a frame file or a sentence could put
+    // in the field, and the report would carry it: `dimi` is well formed and means
+    // nothing, and a symbolicator given a type it does not know has an image it
+    // cannot use -- while an operator reading the report sees a word that looks
+    // like a fact about their build. The six are the ones the service and the SDK
+    // agree on, and anything else is refused the way a malformed one is.
+    const image = (type: unknown): Record<string, unknown> => ({
+      type,
+      code_file: `${APP_ROOT}/dist/main/index.js`,
+      debug_id: DEBUG_ID,
+    })
+    const kept = ['sourcemap', 'macho', 'elf', 'pe', 'wasm', 'proguard']
+    const scrubbed = scrubCrashEvent({ debug_meta: { images: kept.map(image) } }, APP_ROOT)
+    expect(scrubbed.debug_meta?.images.map((one) => one.type)).toEqual(kept)
+    for (const type of ['dimi', 'sourcemaps', 'Sourcemap', 'sourcemap ', 'map', 'app', 'a', 'x86_64']) {
+      expect(
+        scrubCrashEvent({ debug_meta: { images: [image(type)] } }, APP_ROOT),
+        `${JSON.stringify(type)} is not a type the service has, so the image is not sent`,
+      ).toEqual({})
+      // And it is dropped from a list rather than taking the list with it: the
+      // images around it are still looked up.
+      expect(
+        scrubCrashEvent({ debug_meta: { images: [image(type), image('sourcemap')] } }, APP_ROOT),
+      ).toEqual({ debug_meta: { images: [{ type: 'sourcemap', code_file: 'dist/main/index.js', debug_id: DEBUG_ID }] } })
+    }
+  })
+
+  it('an oversized image list is cut, and a list with nothing usable in it is no field at all', () => {
+    // A library's list is not bounded by anything this module controls, and the
+    // processor reads what is sent -- so the list is cut at the most images a
+    // real event can carry: the SDK's stack parser keeps 50 frames by default
+    // and `applyDebugMeta` writes one image per distinct frame file, so a stack
+    // that is not truncated cannot name more than that.
+    const wellFormed = Array.from({ length: 200 }, () => ({
+      type: 'sourcemap',
+      code_file: `${APP_ROOT}/dist/main/index.js`,
+      debug_id: DEBUG_ID,
+    }))
+    const cut = scrubCrashEvent({ debug_meta: { images: wellFormed } }, APP_ROOT)
+    expect(cut.debug_meta?.images).toHaveLength(MAX_DEBUG_IMAGES)
+    // Nothing usable: the field is absent rather than an empty list, because an
+    // empty list is a claim about the build that no image supports.
+    expect(scrubCrashEvent({ debug_meta: { images: [{ code_file: `${HOME_PATH}/app` }] } }, APP_ROOT)).toEqual({})
+    expect(scrubCrashEvent({ debug_meta: { images: [] } }, APP_ROOT)).toEqual({})
+    expect(scrubCrashEvent({ debug_meta: { images: 'dist/main' } }, APP_ROOT)).toEqual({})
+    expect(scrubCrashEvent({ debug_meta: { images: null } }, APP_ROOT)).toEqual({})
+    expect(scrubCrashEvent({ debug_meta: 7 }, APP_ROOT)).toEqual({})
+  })
+
   it.each([
     ['the exception', proxyThrowingOn('exception')],
     ['the values', throwingValues()],
     ['a frame field', throwingFrameField()],
     ['an event field', proxyThrowingOn('event_id')],
+    ['the debug meta', proxyThrowingOn('debug_meta')],
   ] as [string, CrashEvent][])(
     'an event whose getter throws on %s comes back empty rather than throwing',
     (_position, event) => {
@@ -949,11 +1109,50 @@ describe('crash', () => {
       ['platform', 'node', { platform: 'node' }],
       ['level', 'error', { level: 'error' }],
       ['release', 'console-0.116.0', { release: 'console-0.116.0' }],
+      [
+        'debug_meta',
+        { images: [{ type: 'sourcemap', code_file: `${APP_ROOT}/dist/main/index.js`, debug_id: DEBUG_ID }] },
+        { debug_meta: { images: [{ type: 'sourcemap', code_file: 'dist/main/index.js', debug_id: DEBUG_ID }] } },
+      ],
     ]
     for (const [property, first, expected] of cases) {
       const scrubbed = scrubbedEvent(property, first)
       expect(scrubbed, property).toEqual(expected)
       expect(JSON.stringify(scrubbed), property).not.toContain(token)
+    }
+  })
+
+  it('every debug image field is read once too, at both levels below the event', () => {
+    // The same rule inside `debug_meta`: the `images` list and each image's own
+    // three fields. A list read twice is a list whose check and whose copy are
+    // different values, and an image's `code_file` read twice is a path checked
+    // as one the app root cuts and sent as whatever the second read answered.
+    const token = tokenPlaceholder()
+    const image = { type: 'sourcemap', code_file: `${APP_ROOT}/dist/main/index.js`, debug_id: DEBUG_ID }
+    const expected = {
+      debug_meta: { images: [{ type: 'sourcemap', code_file: 'dist/main/index.js', debug_id: DEBUG_ID }] },
+    }
+    const scrubbed = [
+      scrubCrashEvent(
+        { debug_meta: changingOnSecondRead('images', [image], token) } as unknown as CrashEvent,
+        APP_ROOT,
+      ),
+      scrubCrashEvent(
+        { debug_meta: { images: [changingOnSecondRead('code_file', image.code_file, token, { ...image })] } } as unknown as CrashEvent,
+        APP_ROOT,
+      ),
+      scrubCrashEvent(
+        { debug_meta: { images: [changingOnSecondRead('debug_id', image.debug_id, token, { ...image })] } } as unknown as CrashEvent,
+        APP_ROOT,
+      ),
+      scrubCrashEvent(
+        { debug_meta: { images: [changingOnSecondRead('type', image.type, token, { ...image })] } } as unknown as CrashEvent,
+        APP_ROOT,
+      ),
+    ]
+    for (const one of scrubbed) {
+      expect(one).toEqual(expected)
+      expect(JSON.stringify(one)).not.toContain(token)
     }
   })
 

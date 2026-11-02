@@ -253,7 +253,42 @@ export function runsListPageSupported(version: string): boolean {
 }
 
 /**
- * meetsCliFloor is the one patch-level comparison all three floors above are
+ * RUNS_SUMMARY_CLI_FLOOR is the oldest CLI that has the jobs-free totals read at
+ * all, `runs summary --json` (contract §6.17).
+ *
+ * **It is not a flag's floor, it is the command's.** `runs summary` landed after
+ * v0.15.0, so a 0.15.x CLI has no such verb and answers `unknown command "summary"`
+ * -- a failure the operator can do nothing about and one a screen would draw as a
+ * broken project. The floor is therefore asked before the read is offered at all,
+ * the way each of the three floors above it is asked before what it gates goes
+ * out -- a launch for `LAUNCH_CLI_FLOOR`, a flag for the other two -- and a
+ * console below it draws the section as unavailable with the version it needs
+ * rather than spawning a child that cannot answer.
+ *
+ * It is a patch-level floor rather than a range membership for the reason the
+ * three floors above it are: `0.15.2` is inside a minor this console reads and
+ * is below this one, so `SUPPORTED_CLI_MINORS` and `classifyCliVersion` cannot
+ * answer it.
+ */
+export const RUNS_SUMMARY_CLI_FLOOR = '0.16.0'
+
+/**
+ * runsSummarySupported answers whether one version line may be asked for the
+ * jobs-free totals read, by comparing it against `RUNS_SUMMARY_CLI_FLOOR` at the
+ * patch level.
+ *
+ * **No caller asks it yet.** The caller is the totals section the Project,
+ * Coordinator and Spend tabs are built from in `src/renderer/entry.ts`, and that
+ * section is the task after this one: no spawn passes `runs summary` today, so
+ * this predicate is the rule that task asks rather than a comparison it writes
+ * itself.
+ */
+export function runsSummarySupported(version: string): boolean {
+  return meetsCliFloor(version, RUNS_SUMMARY_CLI_FLOOR)
+}
+
+/**
+ * meetsCliFloor is the one patch-level comparison all four floors above are
  * asked by, so a rule learned on one of them cannot be missing from the others.
  *
  * The order of the tests is the rule, and each refusal is on the safe side of a

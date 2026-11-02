@@ -284,6 +284,13 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   // names of services -- a label, the class a name a repository wrote carries.
   files: 'path',
   services: 'label',
+  // The jobs-free totals read (contract §6.17). `notes` is the one text key it
+  // adds: the CLI's own lines about what the figures count and what the read
+  // could not cover, which can carry a source's own reason -- so it is a
+  // `sentence`, drawn through the sanitizer like every other reason string.
+  // The other strings of that document are classified already (`project`,
+  // `slug`, `repo`) or are days, which are `NON_TEXT_STRING_KEYS`' below.
+  notes: 'sentence',
 })
 
 /**
@@ -351,6 +358,14 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   // clock (`tools/scrub-fixture/scrub.ts`'s `instant` rule, beside `now` and a
   // kill's `at`), so a fixture's copy is a reading and not the wire's own value.
   'waiting_until',
+  // The jobs-free totals read (contract §6.17): `since` and `until` are the
+  // window's two UTC days and `days_unknown` the days neither source answered
+  // for. They are the same kind of value as `day` above -- a day the CLI
+  // computed and enumerated, which a screen draws and a reader sorts by, and
+  // **not** text a job wrote -- so they carry no class.
+  'since',
+  'until',
+  'days_unknown',
 ])
 
 /**
@@ -390,6 +405,8 @@ export type SchemaRefusalName =
   | 'not-a-boolean'
   /** a key that must be an RFC 3339 timestamp is not one */
   | 'not-a-timestamp'
+  /** a key that must be a UTC calendar day, `YYYY-MM-DD`, is not one */
+  | 'not-a-day'
   /** a key that must be a number is not one */
   | 'not-a-number'
   /** a key whose value must be one of a closed set of words carries none of them */
@@ -2378,4 +2395,196 @@ export function decodeCoordinatorIntents(
   where = 'the coordinator intents document',
 ): Decoded<CoordinatorIntentsView> {
   return at(where, () => coordinatorIntentsAt(objectAt(raw, 'the document', where), where))
+}
+
+// ---------------------------------------------------------------------------
+// The jobs-free totals read (console 0.119.0 "Pomelo"; contract §6.17).
+// ---------------------------------------------------------------------------
+
+/** RUNS_SUMMARY_VERSION is the only `v` this build reads. The contract promises
+ * a field is only ever *added* within a version (D784), so a version this build
+ * does not know is a document whose figures may have been re-meant rather than
+ * grown -- which is exactly the case a reader must refuse instead of drawing. */
+export const RUNS_SUMMARY_VERSION = 1
+
+/** RunsSummaryStates is the six counts the contract always writes, zero
+ * included: a screen reads one without a nil check, and a status outside the
+ * six is the CLI's `other` rather than a key of its own. */
+export interface RunsSummaryStates {
+  readonly succeeded: number
+  readonly failed: number
+  readonly halted: number
+  readonly cancelled: number
+  readonly infraError: number
+  readonly other: number
+}
+
+/** RunsSummaryFigures is the six figures a repository row and `totals` carry.
+ * `spentMicros` and `notionalMicros` are **two separate facts** and are never
+ * summed: the first is the model money the caps count, the second the part a
+ * subscription paid, which is nobody's bill. `computeMicros` is `null` when the
+ * row has runs and no run's compute is known -- "not estimated" is not "free"
+ * -- and `0` only when the row has no run at all, which is a fact. */
+export interface RunsSummaryFigures {
+  readonly runs: number
+  readonly states: RunsSummaryStates
+  readonly spentMicros: number
+  readonly notionalMicros: number
+  readonly computeMicros: number | null
+  readonly computeRuns: number
+}
+
+/** RunsSummaryRepository is one repository row: the two names the sources hold
+ * it under, plus the figures. `slug` is the storage key (a hash, not a name to
+ * draw) and `repo` is the `owner/name` a day record carried, which falls back
+ * to the slug for a repository nothing recorded a display name for. */
+export interface RunsSummaryRepository extends RunsSummaryFigures {
+  readonly slug: string
+  readonly repo: string
+}
+
+/** RunsSummaryView is the whole document. `since` and `until` are UTC days --
+ * a summary is per UTC day, so the window is always bounded -- and
+ * `daysUnknown` names the days **neither source answered for**: their runs and
+ * their spend are counted in no figure, so a screen shows the window as partly
+ * unknown rather than as a small one. */
+export interface RunsSummaryView {
+  readonly v: number
+  readonly project: string
+  readonly since: string
+  readonly until: string
+  readonly repositories: readonly RunsSummaryRepository[]
+  readonly totals: RunsSummaryFigures
+  readonly daysUnknown: readonly string[]
+  readonly notes: readonly string[]
+}
+
+/** SUMMARY_DAY_RE is a UTC calendar day as the contract's own pattern spells
+ * one, and the shape `since`, `until` and every member of `days_unknown`
+ * carries. It is the shape and not the calendar: the CLI is the one that
+ * enumerated the window, so a day it wrote is a day it has. */
+const SUMMARY_DAY_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/** summaryDayAt is one UTC day, refused by name when it is not that shape. */
+function summaryDayAt(raw: unknown, field: string, where: string): string {
+  const day = stringAt(raw, field, where)
+  if (!SUMMARY_DAY_RE.test(day)) return refuse('not-a-day', field, where)
+  return day
+}
+
+/** summaryCountAt is one of the document's counts: a whole number and never a
+ * negative one. It is `intAt` with the schema's own `minimum: 0`, because a
+ * count below zero is a document this console does not know rather than a
+ * figure it withholds. */
+function summaryCountAt(raw: unknown, field: string, where: string): number {
+  const count = intAt(raw, field, where)
+  if (count < 0) return refuse('not-a-number', field, where)
+  return count
+}
+
+/** summaryComputeMicrosAt is `compute_micros`, the one key of the document that
+ * may be `null` -- and the reason this decoder is strict about it: a `null`
+ * read as `0` would draw "not estimated" as "free", which is the one wrong
+ * figure this read exists to avoid. */
+function summaryComputeMicrosAt(raw: unknown, field: string, where: string): number | null {
+  if (raw === null) return null
+  return summaryCountAt(raw, field, where)
+}
+
+function summaryStatesAt(raw: unknown, field: string, where: string): RunsSummaryStates {
+  const states = objectAt(raw, field, where)
+  return {
+    succeeded: summaryCountAt(required(states, 'succeeded', field, where), `${field}.succeeded`, where),
+    failed: summaryCountAt(required(states, 'failed', field, where), `${field}.failed`, where),
+    halted: summaryCountAt(required(states, 'halted', field, where), `${field}.halted`, where),
+    cancelled: summaryCountAt(required(states, 'cancelled', field, where), `${field}.cancelled`, where),
+    infraError: summaryCountAt(required(states, 'infra_error', field, where), `${field}.infra_error`, where),
+    other: summaryCountAt(required(states, 'other', field, where), `${field}.other`, where),
+  }
+}
+
+function summaryFiguresAt(raw: unknown, field: string, where: string): RunsSummaryFigures {
+  const figures = objectAt(raw, field, where)
+  return {
+    runs: summaryCountAt(required(figures, 'runs', field, where), `${field}.runs`, where),
+    states: summaryStatesAt(required(figures, 'states', field, where), `${field}.states`, where),
+    spentMicros: summaryCountAt(
+      required(figures, 'spent_micros', field, where),
+      `${field}.spent_micros`,
+      where,
+    ),
+    notionalMicros: summaryCountAt(
+      required(figures, 'notional_micros', field, where),
+      `${field}.notional_micros`,
+      where,
+    ),
+    computeMicros: summaryComputeMicrosAt(
+      required(figures, 'compute_micros', field, where),
+      `${field}.compute_micros`,
+      where,
+    ),
+    computeRuns: summaryCountAt(
+      required(figures, 'compute_runs', field, where),
+      `${field}.compute_runs`,
+      where,
+    ),
+  }
+}
+
+function summaryRepositoryAt(raw: unknown, index: number, where: string): RunsSummaryRepository {
+  const field = `repositories[${String(index)}]`
+  const repository = objectAt(raw, field, where)
+  return {
+    slug: stringAt(required(repository, 'slug', field, where), `${field}.slug`, where),
+    // `repo` is a day record's own string, so it is carried as text and never
+    // as a link: a hostile name is a value this console draws, not one it acts
+    // on (design §5.1 rule 2). It falls back to the slug when nothing recorded
+    // a display name, so `''` is not a shape the CLI prints.
+    repo: stringAt(required(repository, 'repo', field, where), `${field}.repo`, where),
+    ...summaryFiguresAt(repository, field, where),
+  }
+}
+
+/** runsSummaryAt decodes §6.17's `v: 1` document field by field. Unknown keys
+ * are ignored, per this module's header rule (the owner's ruling of
+ * 2026-10-30): a key outside the shape is a field a newer CLI added, and it
+ * reaches no screen, no sanitizer and no sum. */
+function runsSummaryAt(raw: Record<string, unknown>, where: string): RunsSummaryView {
+  const v = intAt(required(raw, 'v', '', where), 'v', where)
+  if (v !== RUNS_SUMMARY_VERSION) return refuse('unknown-value', 'v', where)
+  return {
+    v,
+    project: stringAt(required(raw, 'project', '', where), 'project', where),
+    since: summaryDayAt(required(raw, 'since', '', where), 'since', where),
+    until: summaryDayAt(required(raw, 'until', '', where), 'until', where),
+    repositories: arrayAt(required(raw, 'repositories', '', where), 'repositories', where).map(
+      (item, index) => summaryRepositoryAt(item, index, where),
+    ),
+    totals: summaryFiguresAt(required(raw, 'totals', '', where), 'totals', where),
+    daysUnknown: arrayAt(required(raw, 'days_unknown', '', where), 'days_unknown', where).map(
+      (item, index) => summaryDayAt(item, `days_unknown[${String(index)}]`, where),
+    ),
+    // A note is a line the CLI wrote about what it could not cover, and it may
+    // carry a source's own reason -- text like every other drawn string, so it
+    // is carried as data and classified in `WIRE_TEXT_CLASSES`.
+    notes: arrayAt(required(raw, 'notes', '', where), 'notes', where).map((item, index) =>
+      stringAt(item, `notes[${String(index)}]`, where),
+    ),
+  }
+}
+
+/**
+ * decodeRunsSummary admits `runs summary --json` and nothing else (contract
+ * §6.17). It is a door of its own for `decodePlanStatus`'s reason: the document
+ * carries no marker a feed document has, so a feed handed here is refused for
+ * the keys it is missing and this document handed to the feed's door is refused
+ * as an unknown shape. Neither is read as the other.
+ *
+ * **Nothing here reaches a run object or the runs bucket.** The read is the
+ * budget database's day nodes and the spend history's daily documents, so the
+ * document holds counts and money and no task, result or transcript -- which is
+ * why no key of it is a path, a URL or a run id.
+ */
+export function decodeRunsSummary(raw: unknown, where = 'the runs summary document'): Decoded<RunsSummaryView> {
+  return at(where, () => runsSummaryAt(objectAt(raw, 'the document', where), where))
 }

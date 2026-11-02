@@ -206,6 +206,23 @@ export const REPORT_MAX_WEEKS = 522
 export const RUNS_LIST_MAX_LIMIT = 200
 
 /**
+ * SUMMARY_SINCE_WINDOWS is the closed set of windows `runs summary --since` may
+ * be asked for from here, and **it is the console's own set rather than the
+ * CLI's**. The command takes every form `parseSince` reads -- `7d`, `36h`,
+ * `90m`, a year of days -- but the screens this read exists for need exactly
+ * two: the day they open on, and the week the budget's own live window covers,
+ * which is also the command's default (`summaryDefaultSince`, `internal/cli/
+ * runs_summary.go`). The read is per UTC day, so the CLI enumerates the window's
+ * days and refuses a span with no lower bound; a renderer that could ask for any
+ * window could ask for the whole history under another name. The set is
+ * therefore stated once, here, and both the schema and the argv builder read it.
+ *
+ * `7d` is first because it is the command's own default: a caller that asks for
+ * no window gets it, and one that asks names one of the two.
+ */
+export const SUMMARY_SINCE_WINDOWS: readonly string[] = Object.freeze(['7d', '1d'])
+
+/**
  * ArgumentKind is the closed set of things an operation's argument may be. Every
  * kind is a value the CLI's own flags already accept *in that position*, and
  * none of them is a path, a command, a flag name or a free-form string: a
@@ -250,6 +267,13 @@ export const RUNS_LIST_MAX_LIMIT = 200
  *     It is a separate kind from `runId` for the reason the two `--since`s are
  *     separate kinds: the *position* differs -- this one is emitted as the `=`
  *     form `--after=<id>`, one word, so a value can never read as a flag;
+ *   - `summarySince` -- `runs summary --since`'s window: one of
+ *     `SUMMARY_SINCE_WINDOWS` and nothing else. It is a closed set rather than
+ *     `parseSince`'s grammar (`runSince`) because the screens this read serves
+ *     need two windows and no more, and it is its own kind rather than a reuse
+ *     of `runSince` because the *position* differs as well: the row emits it as
+ *     the `=` form `--since=<window>`, one word, so a value can never read as a
+ *     flag;
  *   - `reportDimension` -- `report --by`'s closed set of eight words;
  *   - `secretScope` -- `secrets ls`'s two mutually exclusive scopes;
  *   - `pullRequest` -- a pull request number, a positive integer;
@@ -296,6 +320,7 @@ export type ArgumentKind =
   | 'runSince'
   | 'runLimit'
   | 'runAfter'
+  | 'summarySince'
   | 'reportDimension'
   | 'secretScope'
   | 'pullRequest'
@@ -408,7 +433,7 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Twenty-five operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Twenty-eight operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -432,6 +457,14 @@ export const LAUNCH_PAYLOAD_WIDTH =
  * credential of the host's. Its own comment below says why `--from-store` and
  * `--all` are fixed words of its argv rather than arguments, and
  * `console/docs/json-contract.md` §6.13 describes its document.
+ *
+ * **`runs summary --json` is this surface's nineteenth argv** (console
+ * 0.119.0's jobs-free totals read; the CLI half is B4, #1580, and
+ * `console/docs/json-contract.md` §6.17 describes its document). It is the one
+ * read here that answers from the budget database and the spend history alone,
+ * so its child opens no runs bucket, no compute backend and no provider. Its own
+ * comment below says why its one argument is the console's closed set of windows
+ * and why it is withheld with the Spend screen's reads.
  *
  * The thirteenth **operation** (the row, not an argv) is the startup
  * handshake's answer (`startup.compatibility`, the console's own state, which
@@ -654,6 +687,44 @@ export const CONSOLE_OPERATIONS = [
         kind: 'runSince',
         required: false,
         why: 'the design allow-list admits `--since` on this command, in `runs stats`’s own forms (parseSince): 7d, 36h, 90m or 0 — never a date, and never `report`’s `12w`.',
+      },
+    ],
+  },
+  // The Project, Coordinator and Spend tabs' totals read (console 0.119.0's
+  // jobs-free totals read, `fugaro runs summary --json`, the CLI half of which
+  // is B4, #1580). It is the read those tabs paint **first**: run counts per
+  // repository and per state, and the spend, from the budget database's day
+  // nodes and the spend history's daily documents, **without reading a run
+  // object or listing the runs bucket** -- so its child opens no bucket, no
+  // compute backend and no provider, and it is the one read here whose cost does
+  // not grow with the window.
+  //
+  // **`since` is the console's own closed set and not the command's grammar.**
+  // `runs summary` reads a window in `parseSince`'s forms the way `runs stats`
+  // does, but this surface admits exactly `SUMMARY_SINCE_WINDOWS` -- the day a
+  // screen opens on and the week the budget's own live window covers, which is
+  // also the command's default -- because a window is the one thing about this
+  // read that a renderer chooses and the whole history is the one window the
+  // read exists to make unnecessary. The word is emitted as the `=` form
+  // `--since=<window>` (`src/main/spawn.ts`'s `summarySince` kind): one word, so
+  // a window can never be read as a flag.
+  //
+  // **It is the third operation on the surface that carries spend figures**
+  // (`spend.report` and `runs.stats` are the other two), so it is withheld with
+  // them in the reduced mode: `spent_micros` and `notional_micros` are the same
+  // quantities under another name (`REDUCED_VIEW_OPERATIONS` below).
+  {
+    name: 'runs.summary',
+    method: 'summaryRuns',
+    command: 'runs summary',
+    flags: ['--json'],
+    summary: 'the window’s runs counted by repository and by state, and what they spent',
+    args: [
+      {
+        key: 'since',
+        kind: 'summarySince',
+        required: false,
+        why: 'the design allow-list admits `--since` on this command, in the console’s own closed set of windows (SUMMARY_SINCE_WINDOWS): 7d, which is the command’s default and the window the budget’s live counters cover, or 1d for a screen that opens on today. The command itself needs CLI 0.16.0, the release that carries #1580 — `RUNS_SUMMARY_CLI_FLOOR`, `src/shared/version.ts` — because in the 0.15 line it does not exist at all. No caller passes this argument yet: the screens that will are drawn by a later task, and each will pass one of these two words.',
       },
     ],
   },
@@ -2056,6 +2127,18 @@ function validateValue(
         )
       }
       return { ok: true, value }
+    case 'summarySince':
+      // `runs summary --since`, and **the console's own set rather than the
+      // command's grammar**: the command reads `parseSince`'s forms the way
+      // `runs stats` does, and this surface admits exactly the windows the
+      // screens need (`SUMMARY_SINCE_WINDOWS`). A window outside it -- a longer
+      // one, a date, a Go duration, `0` -- is refused before a child exists, so
+      // the read the operation exists for cannot be turned into a whole-history
+      // read by another spelling of the same flag.
+      if (!SUMMARY_SINCE_WINDOWS.includes(value)) {
+        return refuse(`${spec.key} must be one of ${SUMMARY_SINCE_WINDOWS.join(', ')}`)
+      }
+      return { ok: true, value }
     case 'reportDimension':
       if (!REPORT_DIMENSIONS.includes(value)) return refuse(`${spec.key} must be one of ${REPORT_DIMENSIONS.join(', ')}`)
       return { ok: true, value }
@@ -2178,6 +2261,12 @@ function kindLimit(kind: ArgumentKind): number {
       // decided by `isRunsSince`, as `time.ParseDuration` and `strconv.Atoi`
       // decide it.
       return LONGEST_RUNS_SINCE.length
+    case 'summarySince':
+      // The longest window in the closed set, read off the set rather than
+      // spelled as a digit: membership is what decides, and a third window
+      // longer than these two cannot be refused by the bound before its own
+      // membership check sees it.
+      return Math.max(...SUMMARY_SINCE_WINDOWS.map((window) => window.length))
     case 'reportDimension':
       return 8
     case 'secretScope':
@@ -2912,11 +3001,16 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
  * that can say which operation reads spend is this table. Three consequences a
  * reviewer should check:
  *
- *   - **`spend` names both of the Spend screen's reads.** `runs.stats` (the
- *     by-person panel, console L5b) publishes per-person `counted_usd` and
- *     `notional_usd` -- the same spend figures the reduced mode withholds (D7),
- *     under another name -- so withholding `spend.report` while answering it
- *     would put the withheld dollars on screen through the by-person panel;
+ *   - **`spend` names both of the Spend screen's reads, and the totals read
+ *     with them.** `runs.stats` (the by-person panel, console L5b) publishes
+ *     per-person `counted_usd` and `notional_usd` -- the same spend figures the
+ *     reduced mode withholds (D7), under another name -- so withholding
+ *     `spend.report` while answering it would put the withheld dollars on
+ *     screen through the by-person panel. `runs.summary` (console 0.119.0's
+ *     jobs-free totals read) carries the same two quantities again, as
+ *     `spent_micros` and `notional_micros` over the window and over each
+ *     repository, so it is withheld with them for the same reason: a totals
+ *     read answered in reduced mode is the withheld figure by another name;
  *   - **`kill` is empty, and that is the answer rather than a gap.** There is no
  *     kill-switch operation in the surface: the controls live in the live feed's
  *     own fields (design C10, and `src/shared/version.ts`'s `HIDDEN_VIEW_WORDS`
@@ -2932,7 +3026,7 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
  */
 export const REDUCED_VIEW_OPERATIONS: Readonly<Record<ReducedView, readonly OperationName[]>> =
   Object.freeze({
-    spend: Object.freeze(['spend.report', 'runs.stats'] as const),
+    spend: Object.freeze(['spend.report', 'runs.stats', 'runs.summary'] as const),
     caps: Object.freeze(['budget.show'] as const),
     kill: Object.freeze([] as const),
   })

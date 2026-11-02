@@ -436,8 +436,15 @@ func (r *run) reviewModePrompt(ctx context.Context) string {
 		// The base the reviewed pull request targets now, read from the
 		// provider at bootstrap (checkReviewPRs), never the run's own --ref
 		// assumed to be it: a pull request retargeted at an integration
-		// branch must be reviewed against that branch (diffbase.go).
-		p = ReviewPrompt("", r.reviewFile, rev, r.reviewDiffSize(ctx), r.baseUnreadable())
+		// branch must be reviewed against that branch (diffbase.go). The
+		// independent review job is asked for its own artifact's shape and
+		// every other review stage for the in-run verdict's (D890): the
+		// brief is the same and only the ask differs.
+		if r.reviewJob() {
+			p = reviewArtifactPrompt("", r.reviewFile, rev, r.reviewDiffSize(ctx), r.baseUnreadable())
+		} else {
+			p = ReviewPrompt("", r.reviewFile, rev, r.reviewDiffSize(ctx), r.baseUnreadable())
+		}
 	} else {
 		nums := make([]int, len(r.reviewHeads))
 		dirs := make([]string, len(r.reviewHeads))
@@ -583,13 +590,7 @@ func (r *run) reviewMode(ctx context.Context) {
 	if len(r.reviewHeads) == 1 {
 		prompt = r.reviewPromptWithInput(ctx, prompt)
 	}
-	req := agent.Request{Prompt: prompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema,
-		// The two flags that keep the reviewed head's own configuration out
-		// of the session, which the managed file cannot do on its own
-		// (D894(a)): setting-source selection is a flag and not a settings
-		// key, and a project-scoped MCP server loads under `claude -p`
-		// whether or not a settings file asks for it.
-		SettingSources: agent.ReviewSettingSources, StrictMCPConfig: true}
+	req := r.reviewStageRequest(prompt)
 	res, ok, _ := r.stage(ctx, "review", req, stageOpts{})
 	r.countTokens(res)
 	if !ok {
@@ -609,6 +610,23 @@ func (r *run) reviewMode(ctx context.Context) {
 	}
 	if reviewStageDoneSeam != nil {
 		reviewStageDoneSeam()
+	}
+	// The independent review job's result is the artifact, and it is decoded
+	// by the artifact's own reader (D890, F23): the code below reads a verdict
+	// with ParseVerdict, which would answer this shape with a synthesized
+	// blocker finding about the parser and record a complete review as an
+	// unreadable one. The job also writes no comment and no pull request --
+	// its verdict is the artifact, and the coordinator owns every word of what
+	// reaches the pull request (spec §2) -- so this branch replaces the whole
+	// tail rather than one step of it. A halt still decides the run whatever
+	// else is true, the same priority every other branch here gives it.
+	if r.reviewJob() {
+		if h := r.haltValue(); h != nil {
+			r.endReviewHalted(ctx, h)
+			return
+		}
+		r.finishReviewJob(ctx, res)
+		return
 	}
 	v := ParseVerdict(res)
 	// r.stage already checked haltValue() right before returning ok=true,

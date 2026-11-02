@@ -38,6 +38,11 @@ describe('the stub’s command keys', () => {
       'report',
       'runs ls',
       'runs stats',
+      // Console 0.119.0's jobs-free totals read (`runs.summary` /
+      // `summaryRuns`, B4's console half): the one row here whose child reads
+      // neither a run object nor a listing -- the budget database's day
+      // counters and the spend history's daily documents are the whole read.
+      'runs summary',
       'plan status',
       'diagnose',
       'logs',
