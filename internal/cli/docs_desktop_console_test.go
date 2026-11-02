@@ -1292,6 +1292,54 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 	}
 }
 
+// TestDocsDesktopConsoleDesignCoordinatorCutNamesThePageTheRowAdmits: the
+// Coordinator tab's twenty-row cut is the console's own because the read it
+// makes passes no --limit, and not because the command has none. C2 put
+// `--limit=N` and `--after=RUN-ID` on §5.1's `runs ls` row and on the cobra
+// command behind it, so the sentence that justified the cut with "this tree's
+// `runs ls` has no `--limit`" is false: a reader who believes it does not know
+// the page exists, and the slice that moves the cut to the command would be
+// written against a document saying it cannot. The claim is in this design
+// document, whose §5.1 row is C2's own; the same words sit in
+// `.claude/rules/console.md`'s rule 5, which no run may edit.
+//
+// Mutation caught: a later edit that puts the old justification back, or a
+// document whose row drops one of the two words while the code keeps it.
+func TestDocsDesktopConsoleDesignCoordinatorCutNamesThePageTheRowAdmits(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+
+	// The command's half, read off newLsCmd rather than a list kept here: the
+	// two words the row admits are the command's, and the cut's justification
+	// is about the command.
+	for _, flag := range []string{"limit", "after"} {
+		if newLsCmd().Flags().Lookup(flag) == nil {
+			t.Errorf("`runs ls` has no --%s, which §5.1's row admits: the two paging words (C2) left the command", flag)
+		}
+	}
+
+	// The document's half, both ways: the row still names the pair, and no
+	// sentence still claims the command lacks one.
+	row := ""
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "| `runs ls --json`") {
+			row = line
+			break
+		}
+	}
+	if row == "" {
+		t.Fatalf("%s has no §5.1 row starting \"| `runs ls --json`\"", path)
+	}
+	for _, want := range []string{"`--limit=N`", "`--after=RUN-ID`"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("%s no longer names %s on the runs ls row, which is where the console's paging words are declared", path, want)
+		}
+	}
+	if stale := "this tree's `runs ls` has no `--limit`"; strings.Contains(doc, stale) {
+		t.Errorf("%s still says %q: `runs ls` has had --limit and --after since C2, so the twenty is the console's cut because its own read passes neither, not because the command has none", path, stale)
+	}
+}
+
 // TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode: §5.1 rule 6's
 // table is the console's whole read-only guarantee — D14 rests it on the
 // exact-argv table, because the CLI cannot tell an admin's identity from
