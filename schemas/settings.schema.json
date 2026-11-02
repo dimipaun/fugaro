@@ -390,6 +390,9 @@
         "build.service_account": {
           "default": "unset = the project's default service account"
         },
+        "claude_account_auto": {
+          "default": "unset = false: nothing chooses an account for the owner"
+        },
         "claude_accounts.*.allow_data_to": {
           "default": "unset = nobody"
         },
@@ -407,6 +410,9 @@
         },
         "credentials_service.url": {
           "default": "unset = none: the credentials service is not deployed"
+        },
+        "default_claude_account": {
+          "default": "unset = none: the run's own chain decides (the repository's agent.oauth_token, then the unsuffixed default)"
         },
         "endpoints.api_keys": {
           "default": "unset = the global API Keys endpoint"
@@ -997,6 +1003,9 @@
         },
         "setup_pending": {
           "default": "unset = none: setup ran to the end"
+        },
+        "stages.*.claude_account": {
+          "default": "unset = the project's default account"
         },
         "terraform.alert_email": {
           "default": "unset = none: no budget alert is mailed"

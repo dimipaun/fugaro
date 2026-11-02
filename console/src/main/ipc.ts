@@ -192,6 +192,20 @@ export const REPORT_MAX_DAYS = 3660
 export const REPORT_MAX_WEEKS = 522
 
 /**
+ * RUNS_LIST_MAX_LIMIT bounds the page `runs ls --limit=<n>` may be asked for
+ * from here, and **it is the console's own bound rather than the CLI's**: the
+ * command takes any count `strconv.Atoi` reads up to int, and a page exists
+ * because reading and holding a whole window is what the job list was built to
+ * avoid (the console coordinator-v2 reconciliation's D818 and its F5 behind it).
+ * A renderer that could ask for more than this could ask for the window by
+ * another name -- `runs ls --since 0` is one argv and no page at all -- so the
+ * ceiling is stated once, here, and both the schema and the argv builder read
+ * it: the second would otherwise let `1e21` through as the word `1e+21`, which
+ * cobra's `IntVar` refuses only after a child exists.
+ */
+export const RUNS_LIST_MAX_LIMIT = 200
+
+/**
  * ArgumentKind is the closed set of things an operation's argument may be. Every
  * kind is a value the CLI's own flags already accept *in that position*, and
  * none of them is a path, a command, a flag name or a free-form string: a
@@ -224,6 +238,18 @@ export const REPORT_MAX_WEEKS = 522
  *     child exists. The two commands disagree about `--since` and one kind
  *     cannot say both: `report` refuses `3h` and a bare `0` (its `reportRange`
  *     has no duration branch), and `runs ls` refuses `12w` and every date;
+ *   - `runLimit` -- `runs ls --limit`'s own page size: a positive integer, at
+ *     most `RUNS_LIST_MAX_LIMIT`. **`0` is not one of its values** even though
+ *     the CLI takes it (`--limit 0` is "every row of the window"), because that
+ *     is exactly what omitting the argument means here: a payload that asks for
+ *     it asks for nothing, and a value that is a string (`"50"`), fractional
+ *     (`1.5`) or past the cap is refused before a child exists rather than by a
+ *     spawned CLI's flag parser;
+ *   - `runAfter` -- `runs ls --after`'s cursor: a run id in `runId`'s own
+ *     grammar, and it is the id the same read printed (`runview.Row.run_id`).
+ *     It is a separate kind from `runId` for the reason the two `--since`s are
+ *     separate kinds: the *position* differs -- this one is emitted as the `=`
+ *     form `--after=<id>`, one word, so a value can never read as a flag;
  *   - `reportDimension` -- `report --by`'s closed set of eight words;
  *   - `secretScope` -- `secrets ls`'s two mutually exclusive scopes;
  *   - `pullRequest` -- a pull request number, a positive integer;
@@ -268,6 +294,8 @@ export type ArgumentKind =
   | 'day'
   | 'reportSince'
   | 'runSince'
+  | 'runLimit'
+  | 'runAfter'
   | 'reportDimension'
   | 'secretScope'
   | 'pullRequest'
@@ -553,6 +581,39 @@ export const CONSOLE_OPERATIONS = [
         kind: 'flag',
         required: false,
         why: 'the design allow-list admits `--all` on this command.',
+      },
+      // The page and its cursor (D818, the console coordinator-v2 plan's C2).
+      // They are the two arguments the job list was waiting for: the read is
+      // about 248 KB for a day of runs, so the screen asks for a page and walks
+      // it with the cursor rather than holding a window it cannot draw.
+      //
+      // **A page shrinks the bytes and not the seconds.** Since #1545 `--limit`
+      // cuts what is *printed*: the command still reads the whole window it
+      // prints from, so a day of runs costs its six seconds whether the screen
+      // asks for fifty rows or all of them. What the page buys is a document
+      // the console can hold and a first row it can draw -- the six seconds are
+      // the read's and are paid either way. Both words are emitted as one
+      // `=`-form word each (`spawn.ts`), which is what keeps a value from ever
+      // reading as a flag.
+      //
+      // **`--limit`'s ceiling is the console's** (`RUNS_LIST_MAX_LIMIT`) and
+      // not the CLI's: the command takes any count it can parse, and a
+      // renderer that could ask for more than the cap could ask for the window
+      // under another name. `--after` is the id the same read printed, held to
+      // the run id's own grammar; an id the window does not hold is the CLI's
+      // refusal and not this one's, because only the CLI can know what the
+      // window held.
+      {
+        key: 'limit',
+        kind: 'runLimit',
+        required: false,
+        why: 'the design allow-list admits `--limit=N` on this command: the newest N rows of the window, at most RUNS_LIST_MAX_LIMIT. It needs CLI 0.16.0, the release that carries #1545: in the 0.15 line `--limit` means "read only the newest N", so its totals are the page’s and not the window’s. The caller is the Coordinator screen’s job list (`showCoordinator`, `src/renderer/entry.ts`), which passes it only above `RUNS_LIST_PAGE_CLI_FLOOR`; the queue’s own runs part passes neither word.',
+      },
+      {
+        key: 'after',
+        kind: 'runAfter',
+        required: false,
+        why: 'the design allow-list admits `--after=RUN-ID` on this command: the cursor pages on the row’s own run_id. It needs CLI 0.16.0, the release that carries #1545: a 0.15.x CLI refuses the word outright. The caller is the Coordinator screen’s job list (`showCoordinator`, `src/renderer/entry.ts`), which sends the last row it drew and only above `RUNS_LIST_PAGE_CLI_FLOOR`.',
       },
     ],
   },
@@ -1017,6 +1078,72 @@ export const CONSOLE_OPERATIONS = [
     summary: 'every repository of the installation, from the coordinator’s stored view',
     args: [],
   },
+  // The pull request read (coordinator v2 C3, D816): `fugaro coordinator show
+  // --repo <owner/name> --pr <n> --json`, one pull request as the host has it
+  // **with its description**, which the stored view above drops by design (a
+  // body is unbounded text written by whoever opened the pull request, and one
+  // per record would ride in the document every reader of the view fetches).
+  //
+  // **It is the second operation here whose child mints a credential of the
+  // host's.** The first is `run.launch` above, and the two are not alike: a
+  // launched run holds the App's private key and mints installation tokens that
+  // carry `contents: write` and `pull_requests: write`, because it pushes and
+  // opens the pull request (`internal/gitprov/github/apptoken.go`), while the set
+  // this operation's child mints is the read-only one: pull requests read and
+  // metadata read, no `write` of any kind
+  // (`github.CoordinatorTokenPermissions`), minted for the one repository and
+  // revoked when the command is done. That is why the two arguments below are
+  // the whole of what a renderer can influence about this argv: there is no key
+  // for a token, a host, a path, an endpoint or a flag, and the row in
+  // `src/main/spawn.ts` declares the same two keys and no other word. Under
+  // `FUGARO_CREDENTIALS_SERVICE_URL` the command refuses -- the service holds
+  // the App's key and this read is not a run -- which the screen draws as its
+  // own refusal.
+  {
+    name: 'coordinator.show',
+    method: 'coordinatorShow',
+    command: 'coordinator show',
+    flags: ['--json'],
+    summary: 'one pull request as the host has it, the description included',
+    args: [
+      {
+        key: 'repo',
+        kind: 'repository',
+        required: true,
+        why: 'the repository the pull request is in, as the CLI’s own canonical `owner/name`. The read resolves the repository’s provider from it — the local config’s entry, else the checkout’s own config file, the same resolution the stored view above makes — and mints the installation token for it, so it is the one word that decides whose credential is used. It is a repository, never a host, a URL or a path.',
+      },
+      {
+        key: 'pr',
+        kind: 'pullRequest',
+        required: true,
+        why: 'the pull request number, a positive integer, which the CLI’s `IntVar --pr` reads as digits. A pull request the host does not have is the host’s own failure and reaches the screen as a refusal, never as an empty document.',
+      },
+    ],
+  },
+  // The declarations read (coordinator v2 C4, D827): `fugaro coordinator intents
+  // --all --json`, what the fleet's writers have stored, newest first.
+  //
+  // **It has no argument at all**, which is the strongest form of this file's
+  // rule: the whole argv is the row's own words (`src/main/spawn.ts`), so there
+  // is no field a renderer could fill and no way to steer the child anywhere.
+  // `--all` is fixed rather than a control, the way `coordinator status`'s two
+  // are: the screen draws every repository the local config lists, and no
+  // control turns that off.
+  //
+  // Like the stored view beside it, this read asks nothing of the host: the
+  // declarations are the caller's own database node (`roles/firebasedatabase.
+  // viewer`), so no App key is read, no installation token is minted, no
+  // provider is opened and no host is reached. `declared_by` is a *declaration*
+  // -- the string a writer put in its own record -- and never an identity the
+  // host or this console establishes (`src/shared/schema.ts`).
+  {
+    name: 'coordinator.intents',
+    method: 'coordinatorIntents',
+    command: 'coordinator intents',
+    flags: ['--all', '--json'],
+    summary: 'what the fleet’s writers have declared, newest first',
+    args: [],
+  },
 ] as const satisfies readonly ConsoleOperation[]
 
 /** OperationName is the closed union of the surface's operation names. */
@@ -1033,9 +1160,10 @@ export const CONSOLE_OPERATION_NAMES: readonly OperationName[] = Object.freeze(
 
 /** ALLOWED_OPERATION_FLAGS is the whole of what an operation may fix. `--json`
  * asks for the document the console draws; `--url` is `logs RUN --url`, which is
- * its own argv; `--from-store` and `--all` are `coordinator status`'s two, fixed
- * together because the stored view and the project-wide wrapper are one question
- * and no screen control turns either off. Anything else an operation might want
+ * its own argv; `--from-store` is `coordinator status`'s, and `--all` is the
+ * project-wide wrapper that read fixes together with it and that
+ * `coordinator intents` fixes on its own -- in both cases no screen control
+ * turns it off. Anything else an operation might want
  * to fix is on `NEVER_REACHABLE`'s flag rows. */
 export const ALLOWED_OPERATION_FLAGS: readonly string[] = Object.freeze([
   '--json',
@@ -1845,6 +1973,15 @@ function validateValue(
     }
     return { ok: true, value }
   }
+  if (spec.kind === 'runLimit') {
+    // The digits cobra's `IntVar` reads, and nothing else: `0` is the CLI's own
+    // "every row of the window", which is what omitting the argument already
+    // means here, and the cap is this surface's (`RUNS_LIST_MAX_LIMIT`).
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > RUNS_LIST_MAX_LIMIT) {
+      return refuse(`${spec.key} must be a page size between 1 and ${RUNS_LIST_MAX_LIMIT}`)
+    }
+    return { ok: true, value }
+  }
   if (typeof value !== 'string') return refuse(`${spec.key} must be a string`)
   const limit = kindLimit(spec.kind)
   if (value.length > limit) return refuse(`${spec.key} is longer than ${limit} characters`)
@@ -1875,6 +2012,14 @@ function validateValue(
       if (value.endsWith('.git')) return refuse(`${spec.key} must be the canonical repository, without .git`)
       return { ok: true, value }
     case 'runId':
+      if (!RUN_ID_RE.test(value)) return refuse(`${spec.key} must be a run id`)
+      return { ok: true, value }
+    case 'runAfter':
+      // The same grammar in a different position: the cursor is an id this same
+      // read printed, and a value that is not one (`--watch`, a path, a
+      // truncated id) is refused before a child exists. The `=` form the row
+      // emits is what makes a value's own leading dashes impossible to read as
+      // a flag, and this grammar is what makes them impossible to send.
       if (!RUN_ID_RE.test(value)) return refuse(`${spec.key} must be a run id`)
       return { ok: true, value }
     case 'day':
@@ -2019,6 +2164,7 @@ function kindLimit(kind: ArgumentKind): number {
     case 'repository':
       return MAX_REPOSITORY_LENGTH
     case 'runId':
+    case 'runAfter':
       return MAX_RUN_ID_LENGTH
     case 'day':
       return 10

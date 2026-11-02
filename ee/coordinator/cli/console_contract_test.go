@@ -231,7 +231,7 @@ func TestConsoleContractNamesOnlyRealCoordinatorFlags(t *testing.T) {
 	// §8's inventory row, the one the core's own test skips: the console may
 	// spawn this command with --project and --config like every other read, and
 	// the row is where that is written.
-	row := coordinatorInventoryRow(t)
+	row := coordinatorInventoryRow(t, "coordinator status")
 	for _, want := range []string{"--from-store", "--project", "--config"} {
 		if !strings.Contains(row, want) {
 			t.Errorf("%s's §8 row for coordinator status no longer names %s: %q", coordinatorContractPath, want, row)
@@ -245,16 +245,16 @@ func TestConsoleContractNamesOnlyRealCoordinatorFlags(t *testing.T) {
 	}
 }
 
-// coordinatorInventoryRow is §8's flag-inventory row for this command: the
-// document's own account of what the console may pass it.
-func coordinatorInventoryRow(t *testing.T) string {
+// coordinatorInventoryRow is §8's flag-inventory row for one of this package's
+// two commands: the document's own account of what the console may pass it.
+func coordinatorInventoryRow(t *testing.T, command string) string {
 	t.Helper()
 	for _, line := range strings.Split(readFileString(t, coordinatorContractPath), "\n") {
-		if strings.HasPrefix(line, "| `coordinator status`") {
+		if strings.HasPrefix(line, "| `"+command+"`") {
 			return line
 		}
 	}
-	t.Fatalf("%s's flag inventory has no `coordinator status` row: the console spawns it, and §8 is where its flags are stated", coordinatorContractPath)
+	t.Fatalf("%s's flag inventory has no `%s` row: the console spawns it, and §8 is where its flags are stated", coordinatorContractPath, command)
 	return ""
 }
 
@@ -273,7 +273,9 @@ func TestConsoleContractCitesThisPackagesFilesAndSymbols(t *testing.T) {
 
 	var designRow string
 	for _, line := range strings.Split(readFileString(t, coordinatorDesignPath), "\n") {
-		if strings.Contains(line, "`coordinator status --from-store --all --json`") {
+		if strings.Contains(line, "`coordinator status --from-store --all --json`") ||
+			strings.Contains(line, "`coordinator show --json --repo <owner/name> --pr <n>`") ||
+			strings.Contains(line, "`coordinator intents --all --json`") {
 			designRow += line + "\n"
 		}
 	}
@@ -297,7 +299,7 @@ func TestConsoleContractCitesThisPackagesFilesAndSymbols(t *testing.T) {
 				if _, err := os.Stat(filepath.Join("../../..", cite)); err != nil {
 					t.Errorf("%s cites %q, which is not in the tree: %v", doc.path, cite, err)
 				}
-			case strings.HasPrefix(cite, "coordinator.") && cite != coordinatorOperation:
+			case strings.HasPrefix(cite, "coordinator.") && !coordinatorOperations[cite]:
 				cited++
 				name := strings.TrimPrefix(cite, "coordinator.")
 				if !slices.Contains(decls, name) {
@@ -311,10 +313,18 @@ func TestConsoleContractCitesThisPackagesFilesAndSymbols(t *testing.T) {
 	}
 }
 
-// coordinatorOperation is the console's own name for the read (its IPC
-// operation), not a symbol of the library: the documents write it in the same
-// `coordinator.`-qualified shape a citation takes.
-const coordinatorOperation = "coordinator.status"
+// coordinatorOperations are the console's own names for its three reads of this
+// package's commands (their IPC operations), not symbols of the library: the
+// documents write them in the same `coordinator.`-qualified shape a citation
+// takes, so without this list the check above would read each one as a citation
+// of a symbol ee/coordinator does not declare. Each is written on the design's
+// own §5.1 row and on `console/docs/json-contract.md` (§6.13, §6.15 and §6.16),
+// one per command, and `console/src/main/ipc.ts` is where each name is declared.
+var coordinatorOperations = map[string]bool{
+	"coordinator.status":  true,
+	"coordinator.show":    true,
+	"coordinator.intents": true,
+}
 
 // coordinatorDecls appends every top-level name declared by the non-test Go
 // files of the package at dir: the functions, types and values a citation can
@@ -391,7 +401,7 @@ func coordinatorShowSection(t *testing.T) string {
 		t.Fatalf("%s no longer carries the %q section `coordinator show` is documented in", coordinatorContractPath, head)
 	}
 	body := doc[i:]
-	if j := strings.Index(body[1:], "\n## "); j >= 0 {
+	if j := strings.Index(body[1:], "\n##"); j >= 0 {
 		body = body[:j+1]
 	}
 	if len(body) < 1000 {
@@ -476,5 +486,152 @@ func TestConsoleContractNamesOnlyRealShowFlags(t *testing.T) {
 	}
 	if named == 0 {
 		t.Fatalf("%s's §6.15 no longer names newCoordinatorShowCmd: these checks would pass vacuously", coordinatorContractPath)
+	}
+
+	// §8's inventory row, as §6.13's check reads its own: the console may spawn
+	// this command too (coordinator v2 C3's console half wrote the row), and the
+	// two flags it fixes are the operation's arguments -- so the row names them
+	// and the cloud group's two, and every flag it does name is one the command
+	// has.
+	row := coordinatorInventoryRow(t, "coordinator show")
+	for _, want := range []string{"--repo", "--pr", "--project", "--config"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("%s's §8 row for coordinator show no longer names %s: %q", coordinatorContractPath, want, row)
+		}
+	}
+	for _, m := range coordinatorFlagRE.FindAllStringSubmatch(row, -1) {
+		name := strings.TrimRight(m[1], "-")
+		if name != "" && !real[name] {
+			t.Errorf("%s's §8 row names --%s, which coordinator show has no flag for", coordinatorContractPath, name)
+		}
+	}
+}
+
+// coordinatorIntentsSection is the contract's §6.16, from its heading to the
+// next heading of its level or above: `coordinator intents`'s document
+// (coordinator v2 C4). It is read apart from §6.13 and §6.15 because the three
+// document different reads of different shapes, and a check that read the whole
+// document would pass on a field named in any of them.
+func coordinatorIntentsSection(t *testing.T) string {
+	t.Helper()
+	doc := readFileString(t, coordinatorContractPath)
+	const head = "### 6.16 "
+	i := strings.Index(doc, head)
+	if i < 0 {
+		t.Fatalf("%s no longer carries the %q section `coordinator intents` is documented in", coordinatorContractPath, head)
+	}
+	body := doc[i:]
+	if j := strings.Index(body[1:], "\n##"); j >= 0 {
+		body = body[:j+1]
+	}
+	if len(body) < 1000 {
+		t.Fatalf("%s's §6.16 is %d bytes: the section boundary moved and these checks would read almost nothing", coordinatorContractPath, len(body))
+	}
+	return body
+}
+
+// TestConsoleContractNamesEveryIntentsField: §6.16's field tables list exactly
+// the json keys the three intents shapes carry, in both directions — the same
+// check §6.13 and §6.15 get, for the same reason. A key the code writes and the
+// document does not name is a field the console's decoder was never told about,
+// and a key the document names and no shape carries is a reader written against
+// a field no command emits.
+func TestConsoleContractNamesEveryIntentsField(t *testing.T) {
+	listed := coordinatorListedKeys(t, coordinatorIntentsSection(t))
+	if len(listed) < 10 {
+		t.Fatalf("%s's §6.16 tables list %d key-shaped names: the table shape changed and this test stopped looking", coordinatorContractPath, len(listed))
+	}
+	real := map[string]bool{}
+	// Intent is in the list beside the three shapes that carry it: an intent
+	// record's fields are inlined into coordinator.StoredIntent (it embeds
+	// Intent), and a walk that stopped at the outer struct would not see them.
+	for _, rt := range []reflect.Type{
+		reflect.TypeOf(coordinator.StoredProjectIntents{}),
+		reflect.TypeOf(coordinator.RepoIntents{}),
+		reflect.TypeOf(coordinator.StoredIntent{}),
+		reflect.TypeOf(coordinator.Intent{}),
+	} {
+		for i := 0; i < rt.NumField(); i++ {
+			tag := rt.Field(i).Tag.Get("json")
+			if tag == "" || tag == "-" {
+				continue
+			}
+			key := strings.Split(tag, ",")[0]
+			real[key] = true
+			if !listed[key] {
+				t.Errorf("%s's §6.16 tables never list the json field %q, which the shapes the section documents carry", coordinatorContractPath, key)
+			}
+		}
+	}
+	for key := range listed {
+		if !real[key] {
+			t.Errorf("%s's §6.16 field table names %q, which is not a json key of any shape it documents: a field invented rather than read", coordinatorContractPath, key)
+		}
+	}
+}
+
+// TestConsoleContractNamesOnlyRealIntentsFlags: every --flag §6.16 writes on a
+// line naming its command is a flag of newCoordinatorIntentsCmd, read off cobra
+// rather than against a list kept here, and the heading's argv is the command
+// the console's row will pass. It is the check that keeps the document from
+// promising a flag the command does not have.
+func TestConsoleContractNamesOnlyRealIntentsFlags(t *testing.T) {
+	body := coordinatorIntentsSection(t)
+	cmd := newCoordinatorIntentsCmd()
+	real := map[string]bool{}
+	cmd.Flags().VisitAll(func(f *pflag.Flag) { real[f.Name] = true })
+	for _, want := range []string{"repo", "all", "since", "json", "project", "config"} {
+		if !real[want] {
+			t.Errorf("coordinator intents has no --%s, and %s documents it as one of the command's flags", want, coordinatorContractPath)
+		}
+	}
+
+	const head = "### 6.16 `fugaro coordinator intents"
+	if i := strings.Index(body, head); i < 0 {
+		t.Fatalf("%s's §6.16 heading is not the command's argv any more: want %q", coordinatorContractPath, head)
+	}
+	for _, want := range []string{"--all", "--repo", "--since", "--json"} {
+		if !strings.Contains(body[:strings.Index(body, "\n")], want) {
+			t.Errorf("%s's §6.16 heading no longer names %s: the row the console spawns is what the console passes", coordinatorContractPath, want)
+		}
+	}
+
+	named := 0
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.Contains(line, "newCoordinatorIntentsCmd") {
+			continue
+		}
+		named++
+		for _, m := range coordinatorFlagRE.FindAllStringSubmatch(line, -1) {
+			name := strings.TrimRight(m[1], "-")
+			if name == "" {
+				continue
+			}
+			if !real[name] {
+				t.Errorf("%s's §6.16 names --%s as a flag of newCoordinatorIntentsCmd, and the command has no such flag", coordinatorContractPath, name)
+			}
+		}
+	}
+	if named == 0 {
+		t.Fatalf("%s's §6.16 no longer names newCoordinatorIntentsCmd: these checks would pass vacuously", coordinatorContractPath)
+	}
+
+	// §8's inventory row, the console's own account of what it may pass: the
+	// two words its spawn row fixes, and the `--project`/`--config` every cloud
+	// read carries. `--repo` and `--since` are flags of the command that no
+	// console row passes, so the row is not required to name them -- but a flag
+	// it does name and the command does not have is a row promising an argv the
+	// console could not build.
+	row := coordinatorInventoryRow(t, "coordinator intents")
+	for _, want := range []string{"--all", "--json", "--project", "--config"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("%s's §8 row for coordinator intents no longer names %s: %q", coordinatorContractPath, want, row)
+		}
+	}
+	for _, m := range coordinatorFlagRE.FindAllStringSubmatch(row, -1) {
+		name := strings.TrimRight(m[1], "-")
+		if name != "" && !real[name] {
+			t.Errorf("%s's §8 row names --%s, which coordinator intents has no flag for", coordinatorContractPath, name)
+		}
 	}
 }

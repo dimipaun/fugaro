@@ -223,6 +223,32 @@ export interface FugaroSource {
    * `--from-store` would be a host call this console has no credential for.
    */
   coordinatorStatus(args: ValidatedArguments): Promise<Snapshot>
+  /** coordinatorShow is one pull request as the host has it, the description
+   * included (`coordinator show --json --repo <owner/name> --pr <n>`,
+   * coordinator v2 C3, D816; `console/docs/json-contract.md` §6.15). The two
+   * arguments are the operation's own and both required, and an implementation
+   * must add no word of its own to that argv: this is the second read whose
+   * child mints a credential of the host's: `run.launch` is the first, and its
+   * child is a run whose token can write. This one's is the coordinator's own
+   * read-only installation token -- so what it is asked and nothing else is what
+   * it may send. It has no precondition of its own beyond the two arguments: the CLI
+   * resolves the repository's provider itself and the credential with it, and
+   * under `FUGARO_CREDENTIALS_SERVICE_URL` the command refuses rather than
+   * reading. */
+  coordinatorShow(args: ValidatedArguments): Promise<Snapshot>
+  /** coordinatorIntents is what the fleet's writers have declared, newest first
+   * (`coordinator intents --all --json`, coordinator v2 C4, D827;
+   * `console/docs/json-contract.md` §6.16). It has **no argument at all**: the
+   * whole argv is the spawn row's own words, so an implementation must add no
+   * word of its own to it and has nothing a caller could influence. Like the
+   * stored view beside it, the read is the caller's own database node -- no App
+   * key, no installation token, no provider and no host -- so it has no
+   * precondition of its own and succeeds under `FUGARO_CREDENTIALS_SERVICE_URL`
+   * where `coordinatorShow`'s host read refuses: the reads that ask the host
+   * are the ones the service URL turns away, and this one is not among them --
+   * neither is `coordinatorStatus`, which is the stored view and needs no host
+   * credential either. */
+  coordinatorIntents(args: ValidatedArguments): Promise<Snapshot>
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot>
   readRunLogs(args: ValidatedArguments): Promise<Snapshot>
   runLogLink(args: ValidatedArguments): Promise<TextSnapshot>
@@ -393,6 +419,8 @@ export function handlersFor(
     'runs.stats': (args) => source.statsRuns(args),
     'plan.status': (args) => source.planStatus(args),
     'coordinator.status': (args) => source.coordinatorStatus(args),
+    'coordinator.show': (args) => source.coordinatorShow(args),
+    'coordinator.intents': (args) => source.coordinatorIntents(args),
     'run.diagnose': (args) => source.diagnoseRun(args),
     'run.logs': (args) => source.readRunLogs(args),
     'run.logLink': async (args) => (await source.runLogLink(args)).text,

@@ -88,6 +88,7 @@ import {
   sanitizeText,
 } from '../../src/shared/sanitize'
 import type { SanitizeFlag, TextClass } from '../../src/shared/sanitize'
+import { COORDINATOR_PR_DOCUMENT_KEYS, wireTextClass } from '../../src/shared/schema'
 import { DESTINATION_ATTRIBUTE, putLink, putReading, putText } from '../../src/renderer/app'
 import type { ElementLike } from '../../src/renderer/app'
 import * as fake from '../support/fakeSecrets'
@@ -1527,5 +1528,65 @@ describe('the writers', () => {
     expect(target.textContent).toBe(URL_MARKER)
     expect(target.getAttribute(DESTINATION_ATTRIBUTE)).toBeNull()
     expect(target.getAttribute('title')).toContain('redaction')
+  })
+})
+
+describe('the coordinator\u2019s pull request document (coordinator v2 C3)', () => {
+  // The nine keys of `coordinator show`'s document (`ee/coordinator/view.go`,
+  // `PRDocument`). Two of them are not strings; the seven that are must each
+  // name a class in `schema.ts`, because this document is drawn by a screen that
+  // has no class of its own to spell: the description is the whole reason the
+  // read exists, and the state is the *host's* word rather than one of the CLI's
+  // constant tables -- so `state` is classed here rather than left beside the
+  // enums in `NON_TEXT_STRING_KEYS`, where a key means "the console compares or
+  // sorts this, it never draws it".
+  it('classes every string key of the document, the description included', () => {
+    const strings = COORDINATOR_PR_DOCUMENT_KEYS.filter(
+      (key) => key !== 'number' && key !== 'draft',
+    )
+    expect(strings).toHaveLength(7)
+    for (const key of strings) expect(wireTextClass(key), key).toBeDefined()
+    expect(wireTextClass('body')).toBe('sentence')
+    expect(wireTextClass('title')).toBe('sentence')
+    expect(wireTextClass('url')).toBe('url')
+    expect(wireTextClass('base')).toBe('branch')
+    expect(wireTextClass('branch')).toBe('branch')
+    expect(wireTextClass('state')).toBe('label')
+    // `author` is the host's own account id -- GitHub's numeric user id,
+    // Bitbucket's `account_id` -- and **not** a login: the `person` class takes
+    // a login and refuses anything else (`LOGIN_RE`), so Bitbucket's
+    // `<digits>:<uuid>` would draw a refusal where a label is the honest answer.
+    expect(wireTextClass('author')).toBe('label')
+  })
+
+  it('draws a hostile description as inert text, through the class the map gives it', () => {
+    // A description is written by whoever opened the pull request, and it is the
+    // one field this read adds to the stored view: a terminal escape, an OSC-8
+    // hyperlink sequence, a bidi override and a line break, in one value. The
+    // screen passes the class the map gives the key and nothing else, which is
+    // the property this test holds.
+    const hostile = [
+      'a description the host holds: \u001b[31mred\u001b[0m and \u001b[2J',
+      'a bidi override: evil/\u202egpj.exe',
+      'an OSC-8 hyperlink: \u001b]8;;https://example.invalid/pull/1\u0007click here\u001b]8;;\u0007',
+      'and a fourth line that is not a line',
+    ].join('\n')
+    const target = element()
+    const textClass = wireTextClass('body')
+    expect(textClass).toBe('sentence')
+    putText(target, hostile, textClass, 'body')
+    // The whole claim: the only write was a text write, so nothing here became
+    // markup, an attribute or a link the renderer would follow.
+    expect(target.writes).toEqual(['textContent'])
+    expect(target.attributes.size).toBe(0)
+    const drawn = target.textContent ?? ''
+    expect(drawn).not.toBe(UNAVAILABLE_MARK)
+    // The description is drawn, and it is one line of visible text: the escape
+    // sequences and the bidi override are gone, the newlines are flattened, and
+    // the sentence itself survives.
+    expect(drawn).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/)
+    expect(drawn).not.toContain('\u202e')
+    expect(drawn).toContain('and a fourth line that is not a line')
+    expect(drawn).not.toContain('click here\u001b')
   })
 })

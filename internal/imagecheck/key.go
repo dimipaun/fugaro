@@ -20,10 +20,10 @@ import (
 // from a key file to these facts is the caller's (§2.3): this file takes
 // the reduced set and hashes it.
 
-// KeyVersion is the reduction's version, the canonical form's `key v2`
+// KeyVersion is the reduction's version, the canonical form's `key v3`
 // line (§2.4). A change to the reduction's rules starts a new key universe
 // instead of silently reusing images built under the old ones.
-const KeyVersion = 2
+const KeyVersion = 3
 
 // Resolved is one repository's dependency set, already reduced per
 // ecosystem (§2.3): the packages its key files name, at the versions they

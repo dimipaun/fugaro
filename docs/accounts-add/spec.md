@@ -663,7 +663,8 @@ walk begins where the explicit chain's floor already was.
 nothing chooses for the owner. Turning it on is the owner's own act, and it is the act D875 waits for —
 **the owner himself** confirming that the subscription terms allow one project to spread across several
 accounts. That is why the switch is also a sensitive direction (§11.1): the confirmation is a typed
-project name, not a flag a script sets.
+project name, not a flag a script sets. **D1107 (owner, 2026-11-01)** lets `settings set --yes` answer it outside a
+coding agent's session; in an agent's session it is still refused, `--yes` or not.
 
 The switch exists so that the answer, when it comes, is one setting rather than another design: `auto`
 is written down here, built by A7 behind the switch, and off.

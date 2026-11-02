@@ -398,6 +398,10 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(plan.StateStream{}),
 		reflect.TypeOf(planStatusDoc{}),
 		reflect.TypeOf(planStatusTotals{}),
+		// §6.17, the jobs-free totals read (CLI 0.15.0).
+		reflect.TypeOf(summaryDoc{}),
+		reflect.TypeOf(summaryRepo{}),
+		reflect.TypeOf(summaryTotals{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command:
 		// ee/coordinator/cli/console_contract_test.go pins them against the
 		// tagged tree, which is the tree that still serves the console.
@@ -528,15 +532,17 @@ var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
 // §6.15 is the coordinator's too — coordinator v2 C3's `coordinator show`, whose
 // document and command are both under ee/ — and it is a heading of its own
 // rather than a part of §6.13 because the two document different reads of
-// different shapes.
-var consoleMovedSections = []string{"### 6.13 ", "### 6.15 ", "## 4. `fugaro report --json`"}
+// different shapes. §6.16 is coordinator v2 C4's `coordinator intents`, under
+// ee/ for the same reason.
+var consoleMovedSections = []string{"### 6.13 ", "### 6.15 ", "### 6.16 ", "## 4. `fugaro report --json`"}
 
 // consoleMovedRows are the document's individual lines that name a flag of a
 // moved command without sitting under a moved heading: §8's inventory carries
-// one row per command the console may spawn, and the coordinator's and the
-// report's rows state their flags there. Like consoleMovedSections, the moved
+// one row per command the console may spawn, and the coordinator's two rows
+// (the project view's `coordinator status` and C3's `coordinator show`) and the
+// report's row state their flags there. Like consoleMovedSections, the moved
 // packages check the same lines against the tagged tree.
-var consoleMovedRows = []string{"| `coordinator status`", "| `report`"}
+var consoleMovedRows = []string{"| `coordinator status`", "| `coordinator show`", "| `coordinator intents`", "| `report`"}
 
 // inMovedSection answers whether heading opens one of consoleMovedSections.
 func inMovedSection(heading string) bool {
@@ -615,6 +621,9 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(plan.StatePlan{}), reflect.TypeOf(plan.StateNode{}),
 		reflect.TypeOf(plan.StateRelease{}), reflect.TypeOf(plan.StateStream{}),
 		reflect.TypeOf(planStatusDoc{}), reflect.TypeOf(planStatusTotals{}),
+		// §6.17, the same three shapes as the test above (CLI 0.15.0).
+		reflect.TypeOf(summaryDoc{}), reflect.TypeOf(summaryRepo{}),
+		reflect.TypeOf(summaryTotals{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -921,6 +930,12 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// ones, which this command carries and `plan graph` does not — are checked
 	// against this constructor like any other command's.
 	"plan status": newPlanStatusCmd,
+	// §6.17 documents the jobs-free totals read (CLI 0.15.0). Like §6.11, the
+	// console does not spawn it yet -- the Project, Coordinator and Spend
+	// screens are the task that follows -- but the document describes its
+	// flags, so they are checked against this constructor like any other
+	// command's.
+	"runs summary": newRunsSummaryCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
@@ -1233,6 +1248,19 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// it prints the view the sweep stored -- and `--all` is every
 		// repository the installation's config lists.
 		"coordinator status --from-store --all --json",
+		// The pull request read (coordinator v2 C3, the `coordinator.show`
+		// operation): one pull request as the host has it, the description
+		// included. `--repo` and `--pr` are arguments the operation's own schema
+		// fills (both required, `src/main/ipc.ts`), so the table spells them in
+		// the order the console emits them -- the row's fixed words, then the
+		// arguments -- and this list spells that back.
+		"coordinator show --json --repo <owner/name> --pr <n>",
+		// The declarations read (coordinator v2 C4c, the `coordinator.intents`
+		// operation): what the fleet's writers have declared, newest first.
+		// It has no argument of its own -- `--all` and `--json` are the row's
+		// fixed words -- so this list spells the whole argv back with nothing
+		// an operation's schema fills.
+		"coordinator intents --all --json",
 		// The launch (console v2 plan V2.5.1a, the `run.launch` operation):
 		// the console's one write and the one thing this table is a fence
 		// against, spelled as rule 11's exact argv and nothing else.
@@ -1284,6 +1312,54 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 	}
 }
 
+// TestDocsDesktopConsoleDesignCoordinatorCutNamesThePageTheRowAdmits: the
+// Coordinator tab's twenty-row cut is the console's own because the read it
+// makes passes no --limit, and not because the command has none. C2 put
+// `--limit=N` and `--after=RUN-ID` on §5.1's `runs ls` row and on the cobra
+// command behind it, so the sentence that justified the cut with "this tree's
+// `runs ls` has no `--limit`" is false: a reader who believes it does not know
+// the page exists, and the slice that moves the cut to the command would be
+// written against a document saying it cannot. The claim is in this design
+// document, whose §5.1 row is C2's own; the same words sit in
+// `.claude/rules/console.md`'s rule 5, which no run may edit.
+//
+// Mutation caught: a later edit that puts the old justification back, or a
+// document whose row drops one of the two words while the code keeps it.
+func TestDocsDesktopConsoleDesignCoordinatorCutNamesThePageTheRowAdmits(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+
+	// The command's half, read off newLsCmd rather than a list kept here: the
+	// two words the row admits are the command's, and the cut's justification
+	// is about the command.
+	for _, flag := range []string{"limit", "after"} {
+		if newLsCmd().Flags().Lookup(flag) == nil {
+			t.Errorf("`runs ls` has no --%s, which §5.1's row admits: the two paging words (C2) left the command", flag)
+		}
+	}
+
+	// The document's half, both ways: the row still names the pair, and no
+	// sentence still claims the command lacks one.
+	row := ""
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "| `runs ls --json`") {
+			row = line
+			break
+		}
+	}
+	if row == "" {
+		t.Fatalf("%s has no §5.1 row starting \"| `runs ls --json`\"", path)
+	}
+	for _, want := range []string{"`--limit=N`", "`--after=RUN-ID`"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("%s no longer names %s on the runs ls row, which is where the console's paging words are declared", path, want)
+		}
+	}
+	if stale := "this tree's `runs ls` has no `--limit`"; strings.Contains(doc, stale) {
+		t.Errorf("%s still says %q: `runs ls` has had --limit and --after since C2, so the twenty is the console's cut because its own read passes neither, not because the command has none", path, stale)
+	}
+}
+
 // TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode: §5.1 rule 6's
 // table is the console's whole read-only guarantee — D14 rests it on the
 // exact-argv table, because the CLI cannot tell an admin's identity from
@@ -1323,13 +1399,16 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Fifteen commands: the twelve dashboard reads (logs has two argvs), the
+	// Seventeen commands: the twelve dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the project view's
 	// `coordinator status --from-store --all --json` (Bitbucket credentials
-	// T1.2) and the launch `fugaro run` (V2.5.1a).
-	if len(allowed) != 15 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 15 (logs has two argvs)", path, argvs, len(allowed))
+	// T1.2), the pull request read `coordinator show --json --repo <owner/name>
+	// --pr <n>` (coordinator v2 C3), the declarations read
+	// `coordinator intents --all --json` (coordinator v2 C4c) and the launch
+	// `fugaro run` (V2.5.1a).
+	if len(allowed) != 17 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 17 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -9186,8 +9265,8 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 			"a ten-second cool-down"},
 		{"the WSL wrapper is what makes an `=`-form word safe there",
 			"quotes every word of the CLI's argv with `shellQuoteWord`"},
-		{"and the argv check takes the two prefixes on this row alone",
-			"accept exactly the `--title=` and `--plan-task=` prefixes, for the `run.launch` row alone"},
+		{"and the argv check takes each row's own `=`-form prefixes alone",
+			"accept exactly the `=`-form prefixes its own table declares for a row, and no others"},
 		{"and the task still arrives there",
 			"on the same stdin the cell pipe carries"},
 		{"the spawn log records the launch and still no task text",
@@ -9232,8 +9311,8 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 		t.Errorf("%s §5.1 rule 11 still bounds the task at 64 KiB: the operator confirms by reading it, so the bound is 16 KiB", path)
 	}
 
-	if !strings.Contains(doc, "**The dashboard's surface is twenty-five operations**") {
-		t.Errorf("%s no longer says the surface is twenty-five operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five), and the two cannot disagree", path)
+	if !strings.Contains(doc, "**The dashboard's surface is twenty-six operations**") {
+		t.Errorf("%s no longer says the surface is twenty-six operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six), and the two cannot disagree", path)
 	}
 
 	var neverRows [][]string

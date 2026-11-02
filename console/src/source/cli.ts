@@ -498,6 +498,32 @@ export class CliSource implements FugaroSource {
     return this.#readDocument('coordinator.status', args)
   }
 
+  /** coordinatorShow reads `coordinator show --json --repo <owner/name> --pr
+   * <n>`: one pull request as the host has it, the description included (C3,
+   * D816). It is the second read here whose child mints a credential of the
+   * host's: `run.launch` is the first, and its child is a run whose token can
+   * write. This one's is the coordinator's own read-only installation token,
+   * which the CLI resolves from the repository's provider, exactly as it does
+   * for the stored view above -- and no credential of the host's passes through
+   * this process:
+   * the argv carries the repository and the number, and the reply carries the
+   * host's own document. */
+  coordinatorShow(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('coordinator.show', args)
+  }
+
+  /** coordinatorIntents reads `coordinator intents --all --json`: what the
+   * fleet's writers have declared, newest first (C4, D827). It takes no
+   * argument at all -- the whole argv is the spawn row's, `--all --json` -- and
+   * like the stored view above its child asks nothing of the host: the
+   * declarations are the caller's own database node, read through the same
+   * store and the same ADC, so this read succeeds with
+   * `FUGARO_CREDENTIALS_SERVICE_URL` set where `coordinatorShow`'s host read
+   * refuses. */
+  coordinatorIntents(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('coordinator.intents', args)
+  }
+
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot> {
     return this.#readDocument('run.diagnose', args)
   }
@@ -1013,6 +1039,19 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * directory to refuse for and nothing to be gained by holding a floor
      * between two calls. */
     coordinatorStatus: (args) => read('coordinator.status', (source) => source.coordinatorStatus(args)),
+    /** coordinatorShow has no precondition and no cadence of its own: the
+     * repository and the number in the argv are the whole question, the CLI
+     * resolves the repository's provider and mints the coordinator's own
+     * read-only installation token for it, and there is nothing on this machine
+     * for this process to refuse a read for. Two calls with the same arguments
+     * are two host reads, which is what the caller asked for. */
+    coordinatorShow: (args) => read('coordinator.show', (source) => source.coordinatorShow(args)),
+    /** coordinatorIntents has no precondition and no cadence, for
+     * coordinatorStatus's reason: the read is the caller's own database node,
+     * so there is no directory on this machine to refuse for, and the store
+     * replaces the records in place as declarations arrive, so holding a floor
+     * between two calls would hide the newest one for no gain. */
+    coordinatorIntents: (args) => read('coordinator.intents', (source) => source.coordinatorIntents(args)),
     diagnoseRun: (args) => read('run.diagnose', (source) => source.diagnoseRun(args)),
     readRunLogs: (args) => read('run.logs', (source) => source.readRunLogs(args)),
     runLogLink: (args) => read('run.logLink', (source) => source.runLogLink(args)),

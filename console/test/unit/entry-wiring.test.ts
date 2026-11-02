@@ -137,6 +137,11 @@ import {
 } from '../../src/renderer/skeleton'
 import {
   COORDINATOR_BUSY,
+  COORDINATOR_DESCRIPTION_BUSY,
+  COORDINATOR_DESCRIPTION_CLASS,
+  COORDINATOR_DESCRIPTION_HIDE_WORD,
+  COORDINATOR_DESCRIPTION_LINE_CLASS,
+  COORDINATOR_DESCRIPTION_SHOW_WORD,
   COORDINATOR_LAUNCH_WORD,
   COORDINATOR_NO_AGE_WORD,
   COORDINATOR_OPEN_SPEND_WORD,
@@ -148,6 +153,18 @@ import {
   COORDINATOR_RETRY_WORD,
   COORDINATOR_SOURCE_LINE,
   COORDINATOR_TOTALS_BUSY,
+  COORDINATOR_JOBS_BUSY,
+  COORDINATOR_JOBS_CLASS,
+  COORDINATOR_JOBS_EMPTY_WORD,
+  COORDINATOR_JOBS_FLOOR_WORD,
+  COORDINATOR_JOBS_HEAD_CLASS,
+  COORDINATOR_JOBS_LIST_CLASS,
+  COORDINATOR_JOBS_LOAD_WORD,
+  COORDINATOR_JOBS_OLDER_WORD,
+  COORDINATOR_JOBS_PAGE,
+  COORDINATOR_JOBS_RUNS_WORD,
+  COORDINATOR_JOBS_WINDOW_WORD,
+  COORDINATOR_JOB_DETAIL_CLASS,
 } from '../../src/renderer/screens/coordinator'
 import { PROJECTS_BUSY } from '../../src/renderer/screens/projects'
 import type { SkeletonShape } from '../../src/renderer/skeleton'
@@ -176,10 +193,10 @@ import {
  * and the built tree are read from. */
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
-/** READ_METHODS is the ten reads `entry.ts` may reach for (`ReadBridge`, the
- * same ten), by the name the preload exposes. Every one of them is on the fake
- * bridge below, and every one records its call -- so "this read was never made"
- * is a claim this suite can make about any of them. */
+/** READ_METHODS is the eleven reads `entry.ts` may reach for (`ReadBridge`, the
+ * same eleven), by the name the preload exposes. Every one of them is on the
+ * fake bridge below, and every one records its call -- so "this read was never
+ * made" is a claim this suite can make about any of them. */
 const READ_METHODS = [
   'subscribeLive',
   'showBudget',
@@ -187,6 +204,7 @@ const READ_METHODS = [
   'listRuns',
   'statsRuns',
   'coordinatorStatus',
+  'coordinatorShow',
   'diagnoseRun',
   'readRunLogs',
   'runLogLink',
@@ -2274,7 +2292,15 @@ function queueBridge(
   // The base's list is the same array its own reads append to; it is typed
   // `readonly` because a case reads it, and this helper is the one writer.
   const calls = base.calls as { name: string; args: unknown }[]
-  for (const name of ['coordinatorStatus', 'listRuns', 'planStatus', 'showBudget', 'launchRun', 'openPullRequest']) {
+  for (const name of [
+    'coordinatorStatus',
+    'coordinatorShow',
+    'listRuns',
+    'planStatus',
+    'showBudget',
+    'launchRun',
+    'openPullRequest',
+  ]) {
     base.bridge[name] = (args: unknown): unknown => {
       calls.push({ name, args })
       const answer = answers[name]
@@ -3210,6 +3236,23 @@ function operationOf(document: FakeDocument): string | null {
 /** holdsText is whether any node under a root draws exactly this text. */
 function holdsText(root: FakeNode, text: string): boolean {
   return everyNode(root).some((node) => node.textContent === text)
+}
+
+/** textIn is the text of the single node carrying one class under a root: the
+ * drawn value of one cell of a screen this suite is reading. */
+function textIn(root: FakeNode, className: string): string {
+  const found = classed(root, className)
+  expect(found, `expected exactly one .${className}`).toHaveLength(1)
+  return found[0]?.textContent ?? ''
+}
+
+/** figureOfIn is one count cell's word and its drawn figure, in the order they
+ * are drawn: the two halves are one cell, and a case reads them as a reader
+ * does -- together. */
+function figureOfIn(root: FakeNode, className: string): readonly [string, string] {
+  const cell = classed(root, className)[0]
+  if (cell === undefined) throw new Error(`no .${className}`)
+  return [textIn(cell, 'coordinator-count-word'), textIn(cell, 'coordinator-count-value')]
 }
 
 /** readingOf is the panel's placeholder sentence, or `null` when the panel holds
@@ -4759,6 +4802,198 @@ const QUEUE_PLAN: unknown = {
   repo: QUEUE_REPO,
 }
 
+/** jobsBridge is `queueBridge` with one thing a case about the job list's floor
+ * needs and it cannot give: **the CLI version line the handshake answered with**.
+ * The paged read is gated on `RUNS_LIST_PAGE_CLI_FLOOR`, so both sides of that
+ * gate are cases about the handshake's own answer. */
+function jobsBridge(
+  answers: Readonly<Record<string, AReply>>,
+  cliVersion = '1.2.3',
+): FakeBridge {
+  const base = queueBridge(answers)
+  base.bridge['getCompatibility'] = (): unknown => ({
+    ok: true,
+    data: { ...anOkCompatibility(), cliVersion },
+  })
+  return base
+}
+
+/** LS_ROWS is the id suffix the job list's fixture rows carry, so the fixture's
+ * rows are distinguishable in a claim about which page drew which row. */
+const LS_ROW_A = '20261101-090000-aa01'
+const LS_LAST_ID = '20261101-090000-zz50'
+
+/** HOSTILE_CLI_VERSION is a handshake version line that carries markup: the
+ * console draws it as the text it is, and this is the string a case reads back
+ * out of the drawing rather than the element it names. */
+const HOSTILE_CLI_VERSION = '0.15.3<img src=x onerror=alert(1)>'
+
+/** lsRow is one `runs ls --json` row of the job list: a run the CLI printed. */
+function lsRow(run: string): Readonly<Record<string, unknown>> {
+  return {
+    run,
+    repo: QUEUE_REPO,
+    status: 'succeeded',
+    stage: 'implement',
+    outcome: 'implemented',
+    title: 'a job somebody ran',
+    created: '2026-11-01T09:00:00Z',
+    terminal: true,
+    cost: { total_usd: 1.25, model_usd: 1, compute_usd: 0.25, compute_estimated: true },
+  }
+}
+
+/** lsPage is one page of the job list: the rows the CLI printed and the
+ * **window's** own `totals`. `window` is deliberately far above the row count in
+ * every case that uses it -- the CLI cuts what it prints and sums what it read. */
+function lsPage(window: number, spent: number, rows: readonly string[]): Readonly<Record<string, unknown>> {
+  return {
+    project: 'acme',
+    runs: rows.map(lsRow),
+    totals: { runs: window, model_usd: spent, model_notional_usd: 0, compute_usd: 0, total_usd: spent },
+    warnings: [],
+  }
+}
+
+/** aFullPage is `COORDINATOR_JOBS_PAGE` rows, the last of them `LS_LAST_ID`: the
+ * only page length on which the console knows the window is longer than what it
+ * drew, and therefore the only one that offers the Older control. */
+function aFullPage(): readonly string[] {
+  const rows: string[] = []
+  for (let index = 0; index < COORDINATOR_JOBS_PAGE - 1; index += 1) {
+    rows.push(`20261101-090000-${String(index).padStart(4, '0')}`)
+  }
+  rows.push(LS_LAST_ID)
+  return rows
+}
+
+/** aPullRequest is one `coordinator show --json` document: one pull request as
+ * the host has it, whole. `body` is the field the read exists for. */
+function aPullRequest(body: string): Readonly<Record<string, unknown>> {
+  return {
+    number: 7,
+    url: 'https://example.invalid/owner/repo-a/pull/7',
+    title: 'a title someone wrote',
+    body,
+    state: 'open',
+    draft: true,
+    branch: 'feat/a-thing',
+    base: 'main',
+    author: 'person-1',
+  }
+}
+
+/** descriptionBlock is the block one record's row drew, which is the element the
+ * description is painted into. */
+function descriptionBlock(document: FakeDocument): FakeNode {
+  const block = classed(panelOf(document), COORDINATOR_DESCRIPTION_CLASS)[0]
+  if (block === undefined) throw new Error('the row drew no description block')
+  return block
+}
+
+/** coordinatorBridge is the Coordinator screen's own reads, with the description
+ * read answered by the case: the committed fixture's one pull request is
+ * `owner/repo-a`'s #7. */
+function coordinatorBridge(answers: Readonly<Record<string, AReply>>): FakeBridge {
+  return queueBridge({
+    coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+    planStatus: () => planStatusReply(QUEUE_PLAN),
+    showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+    ...answers,
+  })
+}
+
+describe('the description the entry reads on demand (K3)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** land is one read and the chunk the screen draws its records on: the
+   * microtasks a landing settles, and then the clock the queued detail runs on
+   * (a `setTimeout(…, 0)` per repository, which is the freeze the chunks are
+   * for). */
+  async function land(): Promise<void> {
+    await flush()
+    await vi.advanceTimersByTimeAsync(10)
+    await flush()
+  }
+
+  it('reads one pull request on the first expand, and draws what it read on the second', async () => {
+    const asked: Record<string, unknown>[] = []
+    const { bridge } = coordinatorBridge({
+      coordinatorShow: (args) => {
+        asked.push(args as Record<string, unknown>)
+        return { ok: true, data: { document: aPullRequest('the first line\nthe second line') } }
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await land()
+
+    // Nothing is read until the operator asks: the row is drawn with its
+    // disclosure and the block that disclosure opens, hidden.
+    expect(asked, 'the description was read without being asked for').toEqual([])
+    const block = descriptionBlock(document)
+    expect(block.attributes.get('hidden')).toBe('')
+    expect(classed(block, COORDINATOR_DESCRIPTION_LINE_CLASS)).toEqual([])
+
+    // The press is the read, and the pair is the row's own repository and number
+    // -- nothing the console read back out of the DOM.
+    const head = buttonLabelled(panelOf(document), COORDINATOR_DESCRIPTION_SHOW_WORD)
+    head.click()
+    expect(asked).toEqual([{ repo: 'owner/repo-a', pr: 7 }])
+    // A press is answered in the frame it happened in: the block is revealed and
+    // the section's own mark is up in it.
+    expect(block.attributes.get('hidden')).toBeUndefined()
+    expect(head.textContent).toBe(COORDINATOR_DESCRIPTION_HIDE_WORD)
+    expect(holdsText(block, COORDINATOR_DESCRIPTION_BUSY)).toBe(true)
+
+    await land()
+    // The description, one line at a time, in the block the row already drew --
+    // with the stamp that says when it was read.
+    expect(classed(block, COORDINATOR_DESCRIPTION_LINE_CLASS).map((line) => line.textContent)).toEqual([
+      'the first line',
+      'the second line',
+    ])
+    expect(classed(block, STAMP_CLASS)).toHaveLength(1)
+    expect(holdsText(block, COORDINATOR_DESCRIPTION_BUSY)).toBe(false)
+
+    // An expand/collapse cycle is not a second read: the second expand draws the
+    // document the first one read.
+    head.click()
+    expect(block.attributes.get('hidden')).toBe('')
+    expect(head.textContent).toBe(COORDINATOR_DESCRIPTION_SHOW_WORD)
+    head.click()
+    expect(asked, 'the second expand read the description again').toHaveLength(1)
+    expect(block.attributes.get('hidden')).toBeUndefined()
+    expect(classed(block, COORDINATOR_DESCRIPTION_LINE_CLASS)).toHaveLength(2)
+  })
+
+  it('draws a refused description read as its own sentence, naming the operation it refused', async () => {
+    // The credentials-service refusal is the CLI's own sentence
+    // (`ee/coordinator/cli/coordinator.go`), and this block draws it as it came:
+    // the console adds no words of its own to a refusal, and what names the read
+    // is the operation id every `refusedScreen` draws -- `coordinator.show`, not
+    // the command line and not the console's word for either.
+    const credentials = 'the credentials service holds the GitHub App key and this command holds none'
+    const { bridge } = coordinatorBridge({ coordinatorShow: () => ({ ok: false, reason: credentials }) })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await land()
+    buttonLabelled(panelOf(document), COORDINATOR_DESCRIPTION_SHOW_WORD).click()
+    await land()
+
+    const block = descriptionBlock(document)
+    expect(classed(block, 'unavailable-operation')[0]?.textContent).toBe('coordinator.show')
+    expect(holdsText(block, credentials)).toBe(true)
+    // A refusal is not a block with an empty description in it.
+    expect(classed(block, COORDINATOR_DESCRIPTION_LINE_CLASS)).toEqual([])
+  })
+})
+
 describe('the frame a tab answers in, and the read it does not wait for', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -4988,6 +5223,347 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
         (part) => classed(part, 'unavailable-operation')[0]?.textContent ?? null,
       ),
     ).toEqual([null, null, null, 'budget.show'])
+  })
+
+  it('spawns no runs ls for the job list until Load jobs is pressed, and pages from the last row it drew', async () => {
+    // The jobs rule, twice over (rule 5 of §6.2's opening). **No `runs ls` of
+    // this tab's own goes out on entry**: the job list is a section of its own
+    // with a read the operator asks for, so a screen that warmed it would be the
+    // one change that breaks this. And the page after the first is asked with
+    // **the last row the console drew** -- D818's cursor -- so the console never
+    // holds a list of ids to page from.
+    const first = holding()
+    const second = holding()
+    const asked: unknown[] = []
+    const { bridge, calls } = jobsBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: (args) => {
+        // The Live screen makes a `runs ls` read of its own; the job list's is
+        // the only one that passes a page, which is what this case counts.
+        if ((args as Record<string, unknown>)['limit'] === undefined) {
+          return { ok: true, data: { document: { runs: [] } } }
+        }
+        asked.push(args)
+        return asked.length === 1 ? first.reply() : second.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const before = calls.length
+    buttonFor(document, 'coordinator').click()
+    await flush()
+
+    expect(
+      calls.slice(before).filter((call) => call.name === 'listRuns'),
+      'the job list read the run list without being asked',
+    ).toEqual([])
+    expect(busyLabels(document)).toEqual([])
+    // The section is on screen with exactly one control: the one that asks.
+    expect(classed(panelOf(document), COORDINATOR_JOBS_LIST_CLASS)).toHaveLength(1)
+    expect(classed(panelOf(document), 'coordinator-jobs-older')).toEqual([])
+
+    // The press is the read, and it is one read, carrying the page the console
+    // asks for and nothing else: no cursor yet, because there is no row drawn.
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_LOAD_WORD).click()
+    expect(asked).toEqual([{ since: RUNS_SINCE, limit: COORDINATOR_JOBS_PAGE }])
+    // A press is answered in the frame it happened in: the section's own mark is
+    // up over the control that asked.
+    expect(busyLabels(document)).toContain(COORDINATOR_JOBS_BUSY)
+
+    first.release({ ok: true, data: { document: lsPage(41, 12.5, [LS_ROW_A]) } })
+    await flush()
+    // The head is the **window's** own figure and the list is the page's: the two
+    // numbers are different in this fixture, which is what tells a section that
+    // drew `totals` from one that summed its rows.
+    expect(textIn(panelOf(document), 'coordinator-jobs-window-word')).toBe(COORDINATOR_JOBS_WINDOW_WORD)
+    expect(figureOfIn(panelOf(document), 'coordinator-jobs-window-runs')).toEqual([
+      COORDINATOR_JOBS_RUNS_WORD,
+      '41',
+    ])
+    expect(classed(panelOf(document), 'coordinator-job')).toHaveLength(1)
+    expect(busyLabels(document)).toEqual([])
+
+    // The row expands in place, and the press is a toggle rather than a read:
+    // nothing is spawned by opening a row.
+    const row = classed(panelOf(document), 'coordinator-job')[0]
+    if (row === undefined) throw new Error('the list drew no row')
+    const head = classed(row, 'coordinator-job-head')[0]
+    if (head === undefined) throw new Error('the row drew no head')
+    const detail = classed(row, COORDINATOR_JOB_DETAIL_CLASS)[0]
+    expect(detail?.attributes.get('hidden')).toBe('')
+    head.click()
+    expect(detail?.attributes.get('hidden')).toBeUndefined()
+    expect(asked).toHaveLength(1)
+
+    // A page that came back short is the state in which the console knows the
+    // window ends where the drawing does, so the control that asked is gone and
+    // the one that asks for more is not offered: `Older 50` is a button for a
+    // page there may be, and this page says there is not.
+    expect(classed(panelOf(document), 'coordinator-jobs-load')).toEqual([])
+    expect(classed(panelOf(document), 'coordinator-jobs-older')).toEqual([])
+  })
+
+  it('asks for the page after the one on screen with --after the last row it drew, and stops when a page comes back short', async () => {
+    const first = holding()
+    const second = holding()
+    const asked: Record<string, unknown>[] = []
+    const { bridge } = jobsBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: (args) => {
+        const page = args as Record<string, unknown>
+        if (page['limit'] === undefined) return { ok: true, data: { document: { runs: [] } } }
+        asked.push(page)
+        return asked.length === 1 ? first.reply() : second.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_LOAD_WORD).click()
+    // A full page: `COORDINATOR_JOBS_PAGE` rows, so the Older control is offered.
+    first.release({ ok: true, data: { document: lsPage(41, 12.5, aFullPage()) } })
+    await flush()
+
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_OLDER_WORD).click()
+    // The cursor is **the last row's own id** (`LS_LAST_ID`) and nothing the
+    // console computed: the two words are the page's and the cursor's.
+    expect(asked).toHaveLength(2)
+    expect(asked[1]).toEqual({ since: RUNS_SINCE, limit: COORDINATOR_JOBS_PAGE, after: LS_LAST_ID })
+    expect(busyLabels(document)).toContain(COORDINATOR_JOBS_BUSY)
+
+    // A short page: the window ends where the drawing does, so the control that
+    // asked for more is not offered again -- and the rows already read stay.
+    second.release({ ok: true, data: { document: lsPage(41, 12.5, [LS_ROW_A]) } })
+    await flush()
+    expect(classed(panelOf(document), 'coordinator-job')).toHaveLength(COORDINATOR_JOBS_PAGE + 1)
+    expect(classed(panelOf(document), 'coordinator-jobs-older')).toEqual([])
+    // The head is still the window's, and it was not rewritten from the second
+    // page's own `totals`.
+    expect(figureOfIn(panelOf(document), 'coordinator-jobs-window-runs')).toEqual([
+      COORDINATOR_JOBS_RUNS_WORD,
+      '41',
+    ])
+  })
+
+  it('keeps the rows already drawn when the page after them is refused', async () => {
+    // The rows are **appended, never redrawn**, and a refusal is no exception: the
+    // page the operator asked for failed, and the page they were reading did not.
+    // Taking the list down to say so would take their own reading of it -- the
+    // rows they had expanded -- down with the sentence.
+    const first = holding()
+    const second = holding()
+    const asked: Record<string, unknown>[] = []
+    const { bridge } = jobsBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: (args) => {
+        const page = args as Record<string, unknown>
+        if (page['limit'] === undefined) return { ok: true, data: { document: { runs: [] } } }
+        asked.push(page)
+        return asked.length === 1 ? first.reply() : second.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_LOAD_WORD).click()
+    first.release({ ok: true, data: { document: lsPage(41, 12.5, aFullPage()) } })
+    await flush()
+    expect(classed(panelOf(document), 'coordinator-job')).toHaveLength(COORDINATOR_JOBS_PAGE)
+
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_OLDER_WORD).click()
+    second.release({ ok: false, reason: RUNS_REFUSAL })
+    await flush()
+
+    // The rows the first page drew are still there, one refusal and no more is
+    // drawn beside them, and the sentence is the CLI's own words for the read
+    // that failed -- the section's refusal names the operation it made.
+    expect(classed(panelOf(document), 'coordinator-job')).toHaveLength(COORDINATOR_JOBS_PAGE)
+    const refusals = classed(panelOf(document), 'unavailable-operation')
+    expect(refusals).toHaveLength(1)
+    expect(refusals.map((node) => node.textContent)).toContain('runs.list')
+    expect(holdsText(panelOf(document), RUNS_REFUSAL)).toBe(true)
+    expect(busyLabels(document)).toEqual([])
+    // No control offers the same failure again; the head's own refresh is the one
+    // press left, and it reads the window from the top.
+    expect(classed(panelOf(document), 'coordinator-jobs-load')).toEqual([])
+    expect(classed(panelOf(document), 'coordinator-jobs-older')).toEqual([])
+  })
+
+  it('stamps the page it drew, and reads the window again from the top when the stamp’s Refresh is pressed', async () => {
+    const first = holding()
+    const again = holding()
+    const asked: Record<string, unknown>[] = []
+    const { bridge } = jobsBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: (args) => {
+        const page = args as Record<string, unknown>
+        if (page['limit'] === undefined) return { ok: true, data: { document: { runs: [] } } }
+        asked.push(page)
+        return asked.length === 1 ? first.reply() : again.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+
+    // Nothing has been read, so there is nothing to stamp: the line says when a
+    // page was read, and a section nothing answered draws neither it nor a
+    // figure.
+    expect(classed(panelOf(document), STAMP_AT_CLASS)).toEqual([])
+
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_LOAD_WORD).click()
+    first.release({ ok: true, data: { document: lsPage(41, 12.5, aFullPage()) } })
+    await flush()
+
+    // The head says when the list on screen was read -- a page of a moving
+    // `--since 24h` window is a snapshot, and the words are the console's.
+    const head = classed(panelOf(document), COORDINATOR_JOBS_HEAD_CLASS)[0]
+    if (head === undefined) throw new Error('the section drew no head')
+    expect(textIn(head, STAMP_AT_CLASS)).toMatch(/^as of \d\d:\d\d$/)
+
+    // Its own control reads the window **again from the top**: the pages drawn
+    // and the cursor go with it, because a cursor belongs to the window those
+    // rows came from, and the read that replaces it is the first page's.
+    const refresh = classed(head, STAMP_REFRESH_CLASS)[0]
+    if (refresh === undefined) throw new Error('the stamp drew no refresh control')
+    refresh.click()
+    expect(asked).toHaveLength(2)
+    expect(asked[1]).toEqual({ since: RUNS_SINCE, limit: COORDINATOR_JOBS_PAGE })
+    expect(classed(panelOf(document), 'coordinator-job')).toEqual([])
+
+    again.release({ ok: true, data: { document: lsPage(41, 12.5, [LS_ROW_A]) } })
+    await flush()
+    expect(classed(panelOf(document), 'coordinator-job')).toHaveLength(1)
+  })
+
+  it('draws a refused job list as the CLI’s own sentence for runs ls, with no control beside it', async () => {
+    const { bridge } = jobsBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: () => ({ ok: false, reason: RUNS_REFUSAL }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_LOAD_WORD).click()
+    await flush()
+    // The refusal names its own command -- `runs ls`, which is the operation this
+    // read is -- in the section that read owns, and the reads that answered are
+    // not taken down for it.
+    // The refusal names the operation this read is, which is the console's own
+    // name for `runs ls` -- the same name the queue's runs part draws.
+    const refusals = classed(panelOf(document), 'unavailable-operation')
+    expect(refusals.map((node) => node.textContent)).toContain('runs.list')
+    expect(holdsText(panelOf(document), RUNS_REFUSAL)).toBe(true)
+    // No control beside it: a button that asks again for a read just refused
+    // offers the same failure.
+    expect(classed(panelOf(document), 'coordinator-jobs-load')).toEqual([])
+    expect(classed(panelOf(document), 'coordinator-jobs-older')).toEqual([])
+    expect(busyLabels(document)).toEqual([])
+    // The queue's own read is a different one and its parts are still drawn.
+    expect(classed(panelOf(document), COORDINATOR_QUEUE_PART_CLASS).length).toBeGreaterThan(0)
+  })
+
+  it('draws the console’s own sentence, naming the version, for a CLI older than the paged read', async () => {
+    // `runs ls --limit` cut after the sort and `--after` are both #1545's, in
+    // 0.16.0. Below the floor the console spawns nothing at all: a `--after` the
+    // CLI refuses is a failure the operator cannot act on, and a `--limit` whose
+    // `totals` are the page's would draw the page's count under the window's
+    // word -- the one wrong number this section could draw.
+    const { bridge, calls } = jobsBridge(
+      {
+        coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+        planStatus: () => planStatusReply(QUEUE_PLAN),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      },
+      '0.15.3',
+    )
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    const before = calls.length
+    expect(textIn(panelOf(document), 'coordinator-jobs-floor-word')).toBe(COORDINATOR_JOBS_FLOOR_WORD)
+    expect(textIn(panelOf(document), 'coordinator-jobs-floor-version')).toBe('0.15.3')
+    // No control to press, and no read behind one: the sentence is the whole of
+    // what this section can say.
+    expect(classed(panelOf(document), 'coordinator-jobs-load')).toEqual([])
+    expect(classed(panelOf(document), 'coordinator-job')).toEqual([])
+    expect(calls.slice(before).filter((call) => call.name === 'listRuns')).toEqual([])
+
+    // The version line is **main's own answer** and it is text wherever it came
+    // from. `coordinator.test.ts` makes that claim about the note itself; this is
+    // the handshake's string through the whole round trip -- the bridge's answer,
+    // the entry's decode and the drawing -- so a version line carrying markup is
+    // the characters on the screen and no element of the tag it names, and the
+    // floor is read the same way for it as for a well-formed one.
+    const hostile = jobsBridge(
+      {
+        coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+        planStatus: () => planStatusReply(QUEUE_PLAN),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      },
+      HOSTILE_CLI_VERSION,
+    )
+    const planted = await boot(hostile.bridge, new FakeDocument())
+    buttonFor(planted, 'coordinator').click()
+    await flush()
+    const section = classed(panelOf(planted), COORDINATOR_JOBS_CLASS)[0]
+    if (section === undefined) throw new Error('the job list drew no section')
+    expect(textIn(section, 'coordinator-jobs-floor-version')).toBe(HOSTILE_CLI_VERSION)
+    expect(
+      everyNode(section).map((node) => node.tagName).filter((tag) => tag === 'IMG'),
+      'the version line was drawn as an element',
+    ).toEqual([])
+    expect(classed(section, 'coordinator-jobs-load')).toEqual([])
+
+    // At the floor the section is the one it is built to be: a control, a read on
+    // the press, and the window's figures when it answers.
+    const at = jobsBridge(
+      {
+        coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+        planStatus: () => planStatusReply(QUEUE_PLAN),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listRuns: () => ({ ok: true, data: { document: lsPage(41, 12.5, [LS_ROW_A]) } }),
+      },
+      '0.16.0',
+    )
+    const floored = await boot(at.bridge, new FakeDocument())
+    buttonFor(floored, 'coordinator').click()
+    await flush()
+    expect(classed(panelOf(floored), 'coordinator-jobs-floor-word')).toEqual([])
+    buttonLabelled(panelOf(floored), COORDINATOR_JOBS_LOAD_WORD).click()
+    await flush()
+    expect(figureOfIn(panelOf(floored), 'coordinator-jobs-window-runs')).toEqual([
+      COORDINATOR_JOBS_RUNS_WORD,
+      '41',
+    ])
+  })
+
+  it('draws the console’s own sentence for a window a read answered with no run', async () => {
+    const { bridge } = jobsBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: (args) =>
+        (args as Record<string, unknown>)['limit'] === undefined
+          ? { ok: true, data: { document: { runs: [] } } }
+          : { ok: true, data: { document: { runs: [], totals: { runs: 0, total_usd: 0 } } } },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_LOAD_WORD).click()
+    await flush()
+    expect(holdsText(panelOf(document), COORDINATOR_JOBS_EMPTY_WORD)).toBe(true)
+    expect(classed(panelOf(document), 'coordinator-jobs-older')).toEqual([])
   })
 
   it('opens the launch confirmation on a queue item’s own repository and plan task, and spawns nothing until the operator submits', async () => {

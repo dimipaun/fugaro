@@ -83,8 +83,13 @@ import { formatReading, measured, notional, readNumber, unavailable } from '../s
 import type { Reading } from '../shared/availability'
 import { rigorIndex } from '../shared/rigor'
 import type { RigorView } from '../shared/rigor'
-import { decodeCoordinatorStatus, decodePlanStatus, decodeSnapshot } from '../shared/schema'
-import type { CoordinatorStatusView, PlanStatusView } from '../shared/schema'
+import {
+  decodeCoordinatorPullRequest,
+  decodeCoordinatorStatus,
+  decodePlanStatus,
+  decodeSnapshot,
+} from '../shared/schema'
+import type { CoordinatorPullRequestDocument, CoordinatorStatusView, PlanStatusView } from '../shared/schema'
 import { sanitizeRefusal } from '../shared/sanitize'
 import { LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from './screens/live'
 import type { FeedHealth, LiveModel } from './screens/live'
@@ -131,15 +136,37 @@ import {
   queueRuns,
   renderCoordinatorFrame,
   repoDetail,
+  COORDINATOR_JOB_DETAIL_CLASS,
+  COORDINATOR_JOBS_BUSY,
+  COORDINATOR_JOBS_PAGE,
+  COORDINATOR_JOBS_SHAPE,
+  coordinatorJobsFloorNote,
+  coordinatorLoadJobsControl,
+  coordinatorOlderJobsControl,
+  fillCoordinatorDescription,
+  fillCoordinatorJobs,
+  fillCoordinatorJobsEmpty,
+  fillCoordinatorJobsHead,
+  jobsDocument,
+  COORDINATOR_DESCRIPTION_BUSY,
+  COORDINATOR_DESCRIPTION_HIDE_WORD,
+  COORDINATOR_DESCRIPTION_SHAPE,
+  COORDINATOR_DESCRIPTION_SHOW_WORD,
 } from './screens/coordinator'
 import type {
+  CoordinatorDescriptionRequest,
+  CoordinatorDescriptionTarget,
+  CoordinatorJobs,
   CoordinatorModel,
   CoordinatorPullButton,
   CoordinatorQueueAction,
   CoordinatorQueueSource,
   CoordinatorRunRow,
+  DrawnCoordinatorDetail,
   DrawnCoordinatorFrame,
+  ScreenElement,
 } from './screens/coordinator'
+import type { SectionRead } from './section'
 import { PROJECTS_BUSY, buildProjectsModel, fillProjects, renderProjectsFrame } from './screens/projects'
 import type { DrawnProjectsFrame, ProjectsModel } from './screens/projects'
 import {
@@ -182,7 +209,7 @@ import {
 } from './screens/graph'
 import type { GraphScreen } from './screens/graph'
 import type { GraphTab } from './graph/model'
-import { SKEW_HEADLINES, hidesView, launchSupported } from '../shared/version'
+import { SKEW_HEADLINES, hidesView, launchSupported, runsListPageSupported } from '../shared/version'
 import type { ReducedView, SkewElement, SkewFactory, SkewTheme } from '../shared/version'
 import { NOTICE_HIDE_DETAILS, NOTICE_SHOW_DETAILS } from '../shared/notice'
 import type { DrawnNotice } from '../shared/notice'
@@ -402,9 +429,10 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
 }
 
 /**
- * ReadBridge is the ten reads the screens make (Task 3.4c; console L5b added
+ * ReadBridge is the eleven reads the screens make (Task 3.4c; console L5b added
  * `statsRuns`, Bitbucket credentials T1.2 added `coordinatorStatus`, GV2.3b
- * added `planStatus`), named one by one
+ * added `planStatus`, coordinator v2 K3 added `coordinatorShow`), named one by
+ * one
  * for the reason `CompatibilityBridge` names one: this file should reach for
  * exactly the operations it draws, and a reader should be able to see which
  * those are without reading the preload.
@@ -421,13 +449,14 @@ export interface ReadBridge {
   listRuns(args: Readonly<Record<string, unknown>>): Promise<unknown>
   statsRuns(args: Readonly<Record<string, unknown>>): Promise<unknown>
   coordinatorStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  coordinatorShow(args: Readonly<Record<string, unknown>>): Promise<unknown>
   diagnoseRun(args: Readonly<Record<string, unknown>>): Promise<unknown>
   readRunLogs(args: Readonly<Record<string, unknown>>): Promise<unknown>
   runLogLink(args: Readonly<Record<string, unknown>>): Promise<unknown>
   planStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
 }
 
-/** readBridgeFrom is the ten reads over the structural bridge. A missing
+/** readBridgeFrom is the eleven reads over the structural bridge. A missing
  * member answers `null` rather than rejecting, and so does a member that fails
  * to answer -- by throwing before it returns, or by returning a promise that
  * rejects, which is what `invoke` does on a channel with nothing behind it.
@@ -456,6 +485,7 @@ export function readBridgeFrom(fugaro: unknown): ReadBridge {
     listRuns: (args) => ask('listRuns', args),
     statsRuns: (args) => ask('statsRuns', args),
     coordinatorStatus: (args) => ask('coordinatorStatus', args),
+    coordinatorShow: (args) => ask('coordinatorShow', args),
     diagnoseRun: (args) => ask('diagnoseRun', args),
     readRunLogs: (args) => ask('readRunLogs', args),
     runLogLink: (args) => ask('runLogLink', args),
@@ -2321,6 +2351,41 @@ function spendViewKey(project: string, controls: SpendControls): string {
  * without either being read as a local time. */
 function nowStamp(): string {
   return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
+}
+
+/**
+ * CoordinatorDescriptionState is one pull request's description as the visit on
+ * screen holds it (K3).
+ *
+ * **The read is made once per pull request and the answer is kept**, which is
+ * what the four fields are for: `asked` is whether the disclosure has ever been
+ * pressed (the press is what makes the read, and a second one makes none),
+ * `document` is what the CLI answered with, `at` is the console clock it was read
+ * at -- the stamp beside it -- and `sentence` is the refusal it left instead.
+ * `open` and `showAll` are the block's two states and belong to the operator
+ * rather than to the read.
+ *
+ * `read` is the section's own lifecycle, one per description, for the reason the
+ * screen's other sections have one each: a description's mark belongs to the
+ * block it was drawn for and to nothing else. `target` is the drawing it is bound
+ * to, held here rather than in the map's key because a repaint of the panel draws
+ * the row -- and therefore the button and the block -- again.
+ */
+interface CoordinatorDescriptionState {
+  open: boolean
+  asked: boolean
+  showAll: boolean
+  document: CoordinatorPullRequestDocument | null
+  at: number
+  sentence: string | null
+  attempt: number
+  token: number
+  readonly read: SectionRead
+  /** the row this read was made from. It is the one the press came from and it
+   * never moves: a repaint draws new rows and clears every state with them
+   * (`paintBody`), so a state is only ever reached again by a second press on
+   * the row it was made for. */
+  readonly target: CoordinatorDescriptionTarget
 }
 
 /**
@@ -4544,6 +4609,21 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   const coordinatorQueueRead = sectionRead({ factory, theme })
   const coordinatorTotalsRead = sectionRead({ factory, theme })
   const coordinatorBodyRead = sectionRead({ factory, theme })
+  /** The job list's own read (K4). It is the one section of this screen whose
+   * read is not started on entry: nothing is in flight for it until the operator
+   * presses `Load jobs`, so its mark is only ever put up by a press. */
+  const coordinatorJobsRead = sectionRead({ factory, theme })
+
+  /** coordinatorDescriptions is the visit on screen's description reads (K3),
+   * keyed by the repository and the pull request number.
+   *
+   * It is held here rather than inside `showCoordinator` for the job list's own
+   * reason: **leaving the tab has to end every read it started**, and each
+   * description has a lifecycle of its own rather than one of the four shared
+   * sections -- nothing is in flight for a description until its disclosure is
+   * pressed, so a single mark for all of them would put a section's busy state
+   * on blocks nobody asked about. */
+  const coordinatorDescriptions = new Map<string, CoordinatorDescriptionState>()
 
   /** coordinatorChunk is the timer the detail is drawn on. It is held here
    * rather than inside a visit because leaving the tab has to stop it: the
@@ -4565,6 +4645,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     coordinatorQueueRead.end()
     coordinatorTotalsRead.end()
     coordinatorBodyRead.end()
+    // The job list's read ends with the tab for the section's own reason: a page
+    // asked for by a screen the operator has left is a read nothing will draw,
+    // and the token that would have drawn it is what makes it a read this visit
+    // no longer owns.
+    coordinatorJobsRead.end()
+    // Every description the visit read, for that reason and one of its own: a
+    // description's mark lives in a block of the row that asked for it, and the
+    // row is gone with the tab.
+    for (const state of coordinatorDescriptions.values()) state.read.end()
+    coordinatorDescriptions.clear()
   }
 
   /**
@@ -4662,6 +4752,46 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     let queueToken = 0
     let totalsToken = 0
     let bodyToken = 0
+
+    /** The job list's own state (K4): the pages drawn so far, the window's own
+     * figures off the first page's `totals` (written once), how many rows are on
+     * screen, whether a page is out, and the sentence a refused read left. */
+    let jobsListed: CoordinatorJobs = { rows: [], window: null, cursor: '' }
+    let jobsDrawn = 0
+    let jobsHeadDrawn = false
+    let jobsOut = false
+    /** jobsAt is the console clock the page on screen was read at, and
+     * jobsStamped whether the head already says so. The list is a snapshot of a
+     * moving window (`--since 24h`), so the line that says **when** it was read
+     * is the difference between "this is the window" and "this is the window as
+     * of 14:05" -- and the control beside it is the door the operator's own
+     * doubt goes through. */
+    let jobsAt = 0
+    let jobsStamped = false
+    /** jobsListedAsked is whether **this** list has been asked for a page. It is
+     * this section's own flag and not the queue's `jobsAsked`: the two are
+     * separate sections of the same screen (the queue's runs part and the job
+     * list), each with its own read and its own control, and a press on one must
+     * not draw the other as if it had been read. */
+    let jobsListedAsked = false
+    let jobsAttempts = 0
+    let jobsToken = 0
+    /** jobsSentence is the section's own refusal, for this visit and no longer:
+     * the sentence is drawn beside the rows already read, and the controls are
+     * not drawn beside it -- a control that asks again for a read the CLI has
+     * just refused would be a button offering the same failure. */
+    let jobsSentence: string | null = null
+    /** jobsRefusalDrawn is whether that sentence is on screen. The refusal is
+     * appended like a row rather than painted over the list, so it is drawn once
+     * per refusal: the list is a host the entry appends to, and a second paint of
+     * the same refusal would be a second sentence. It is cleared with the list. */
+    let jobsRefusalDrawn = false
+    /** jobsTooOld is whether the CLI in use is older than the release the paged
+     * read needs (`runsListPageSupported`), and it is asked **before** either
+     * word goes out: a 0.15.x CLI refuses `--after` outright and sums `--limit`'s
+     * page rather than the window, so the section's own sentence naming the
+     * version is the honest drawing for it. */
+    const jobsTooOld = !runsListPageSupported(gate.compatibility.cliVersion ?? '')
 
     /** refusalOperation is the command each of the four reads is, and it is what
      * a refused part names: a refusal names its own command and nothing else, so
@@ -4804,6 +4934,171 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       }
     }
 
+    /** descriptionKey is the row a description belongs to: the repository and
+     * the number the press carried, and nothing read back out of the DOM. */
+    const descriptionKey = (request: CoordinatorDescriptionRequest): string =>
+      cacheKey([request.repo, String(request.number)])
+
+    /**
+     * stateFor is one row's description read, made on that row's first press and
+     * kept for the rest of the visit -- which is what makes an expand/collapse
+     * cycle a redraw of what was read rather than a second read of the host
+     * (K3). A state is never re-pointed at another row: the map is emptied by
+     * every repaint (`paintBody`), so the rows a held state was drawn for are
+     * gone before another set of them exists, and the only press that reaches a
+     * held state is a second one on its own row.
+     */
+    const stateFor = (target: CoordinatorDescriptionTarget): CoordinatorDescriptionState => {
+      const held = coordinatorDescriptions.get(descriptionKey(target.request))
+      if (held !== undefined) return held
+      const made: CoordinatorDescriptionState = {
+        open: false,
+        asked: false,
+        showAll: false,
+        document: null,
+        at: 0,
+        sentence: null,
+        attempt: 0,
+        token: 0,
+        read: sectionRead({ factory, theme }),
+        target,
+      }
+      coordinatorDescriptions.set(descriptionKey(target.request), made)
+      return made
+    }
+
+    /** bindDescriptions makes every disclosure the screen drew a press. */
+    const bindDescriptions = (targets: readonly CoordinatorDescriptionTarget[]): void => {
+      for (const target of targets) {
+        surface.nodeOf(target.element).addEventListener('click', () => {
+          toggleDescription(target)
+        })
+      }
+    }
+
+    /**
+     * toggleDescription is the disclosure's press: it opens or closes the block
+     * the row drew, and **the first press on a row is the read** (K3). A row
+     * already read draws what it read, stamp and all, so the operator's second
+     * look is answered out of the visit rather than out of the host.
+     *
+     * The label and `aria-expanded` are written here rather than redrawn,
+     * because the disclosure is a control of the row and the row is not
+     * rebuilt: a press must be answered in the frame it happened in.
+     */
+    const toggleDescription = (target: CoordinatorDescriptionTarget): void => {
+      const state = stateFor(target)
+      state.open = !state.open
+      const control = surface.nodeOf(target.element)
+      control.setAttribute('aria-expanded', state.open ? 'true' : 'false')
+      control.textContent = state.open ? COORDINATOR_DESCRIPTION_HIDE_WORD : COORDINATOR_DESCRIPTION_SHOW_WORD
+      const block = surface.nodeOf(target.block)
+      if (!state.open) {
+        block.setAttribute('hidden', '')
+        return
+      }
+      block.removeAttribute('hidden')
+      if (state.asked) {
+        paintDescription(state)
+        return
+      }
+      state.asked = true
+      askForDescription(state)
+    }
+
+    /**
+     * askForDescription makes one pull request's read: `coordinator show` with
+     * the repository and the number the row was drawn from, and no other word.
+     * It is made from a press and never from `start`, for the job list's own
+     * reason -- nothing is in flight for a description nobody asked for.
+     */
+    const askForDescription = (state: CoordinatorDescriptionState): void => {
+      state.attempt += 1
+      state.token = state.read.start()
+      state.read.mark(
+        state.token,
+        state.target.block,
+        state.target.slot,
+        COORDINATOR_DESCRIPTION_BUSY,
+        COORDINATOR_DESCRIPTION_SHAPE,
+      )
+      // Nothing is painted here, and that is the rule the mark is for: a block
+      // being read for the first time holds the mark alone, and one being read
+      // again keeps the description already in it, dimmed under the mark. A
+      // paint would clear the slot the mark is in.
+      void loadDescription(state, state.attempt)
+    }
+
+    /** reReadDescription is the stamp's own control: it drops what was drawn and
+     * reads the pull request again. The first press's read is the same read, so
+     * a refresh is not a second kind of it. */
+    const reReadDescription = (state: CoordinatorDescriptionState): void => {
+      state.document = null
+      state.sentence = null
+      state.at = 0
+      askForDescription(state)
+    }
+
+    /** loadDescription makes the read and draws what it answered.
+     *
+     * The attempt is checked before anything is drawn, and the row is looked up
+     * again after the await: a press a later one superseded -- or a row a
+     * repaint has dropped -- must never have an answer drawn into the tree the
+     * operator is looking at. */
+    const loadDescription = async (state: CoordinatorDescriptionState, attempt: number): Promise<void> => {
+      const { repo, number } = state.target.request
+      const answer = documentOf(await bridge.coordinatorShow({ repo, pr: number }))
+      if (state.attempt !== attempt) return
+      if (stale(mine)) return
+      if (coordinatorDescriptions.get(descriptionKey(state.target.request)) !== state) return
+      if (!answer.ok) {
+        state.sentence = answer.sentence
+      } else {
+        const decoded = decodeCoordinatorPullRequest(answer.data, 'coordinator.show')
+        if (!decoded.ok) {
+          state.sentence = decoded.skew.because
+        } else {
+          state.sentence = null
+          state.document = decoded.value
+          state.at = Date.now()
+        }
+      }
+      state.read.settle(state.token)
+      surface.nodeOf(state.target.slot).replaceChildren()
+      paintDescription(state)
+    }
+
+    /**
+     * paintDescription draws the block one row's description is drawn in: the
+     * refusal if the read refused, else the lines and the stamp if it answered,
+     * else nothing at all under the mark of a read still in flight.
+     *
+     * The block is emptied to its slot and never to nothing (`clearSection`),
+     * because the mark of the read belongs in that slot and a repaint that took
+     * the slot with it would take the mark too -- a read in flight would then be
+     * a block that looks like an empty description.
+     */
+    const paintDescription = (state: CoordinatorDescriptionState): void => {
+      const target = state.target
+      clearSection(target.block, target.slot)
+      if (state.sentence !== null) {
+        appendTo(target.block, refusedScreen(factory, 'coordinator.show', state.sentence, theme))
+        return
+      }
+      if (state.document === null) return
+      const stamp = renderStamp(factory, state.at)
+      appendTo(target.block, stamp.root)
+      surface.nodeOf(stamp.refresh).addEventListener('click', () => {
+        reReadDescription(state)
+      })
+      const control = fillCoordinatorDescription(factory, state.document.body, target.block, state.showAll)
+      if (control === null) return
+      surface.nodeOf(control).addEventListener('click', () => {
+        state.showAll = true
+        paintDescription(state)
+      })
+    }
+
     /**
      * paintQueue fills the action queue: its own count and words, one part per
      * read, and the blind-spot line under them.
@@ -4888,6 +5183,237 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       void loadRuns(attempts.runs)
     }
 
+    /**
+     * bindJobRows makes each row's own head the row's expansion, and nothing
+     * else. The list is a list: no row opens a run, and no value the console read
+     * reaches an attribute -- the press flips the `hidden` of the detail drawn
+     * under the row and the `aria-expanded` of the head that flipped it, which is
+     * the same pair the launch control's reveal is. The head is a real button, so
+     * the press is one event and the keyboard reaches it the way it reaches every
+     * other control here: no `role`, no `tabindex` and no key handler of its own.
+     *
+     * The detail is drawn with the row and hidden here rather than built on the
+     * press, so the press is a toggle and never a rendering: every string in the
+     * detail is a document's, and a second place this screen reads one is a
+     * second place that can fail.
+     */
+    const bindJobRows = (items: readonly ScreenElement[]): void => {
+      for (const item of items) {
+        const detail = classed(item, COORDINATOR_JOB_DETAIL_CLASS)[0]
+        const head = classed(item, 'coordinator-job-head')[0]
+        if (detail === undefined || head === undefined) continue
+        const node = surface.nodeOf(head)
+        node.setAttribute('aria-expanded', 'false')
+        node.addEventListener('click', () => {
+          const open = node.getAttribute('aria-expanded') === 'true'
+          node.setAttribute('aria-expanded', open ? 'false' : 'true')
+          const body = surface.nodeOf(detail)
+          if (open) body.setAttribute('hidden', '')
+          else body.removeAttribute('hidden')
+        })
+      }
+    }
+
+    /**
+     * paintJobs fills the job list's section: the window's figures in the head,
+     * the rows the pages drawn so far hold, and the one control the section
+     * offers at that moment.
+     *
+     * **The rows are appended, never redrawn.** A page that lands under a list
+     * the operator has been reading is drawn at the end of it, and a row they
+     * expanded stays open: the section holds what they paged to, and taking the
+     * list down to say that more had arrived would take their own reading of it
+     * with it. The head is written once for the mirror of that reason -- the
+     * window's figures are the **first** page's `totals` and belong to the read
+     * -- and it is never rewritten from a later page, whose `totals` are the same
+     * window's.
+     *
+     * The head also carries the line that says **when** the list was read, with
+     * the one control that reads the window again: a page of a moving window is a
+     * snapshot, and a snapshot with no stamp is a figure the operator cannot tell
+     * from a live one. `Load jobs` and `Older 50` are the section's own controls
+     * and stand under the list, which is where the press that fills them belongs.
+     *
+     * The section offers exactly one of those two at a time: `Load jobs` until
+     * the ask has been made, `Older 50` while the page last read filled every row
+     * it asked for, and neither once that page came back short -- the only state
+     * in which the console knows the window ends where the drawing does. A refused
+     * read draws the CLI's own sentence under the rows already read and no control
+     * at all, because a button that asks again for a read just refused offers the
+     * same failure; an installation whose CLI is older than the paged read draws
+     * the console's own sentence naming the version it needs, and spawns nothing.
+     */
+    const paintJobs = (): void => {
+      const section = mount(false).jobs
+      const list = surface.nodeOf(section.list)
+      const head = surface.nodeOf(section.head)
+      surface.nodeOf(section.controls).replaceChildren()
+      if (jobsTooOld) {
+        head.replaceChildren(surface.nodeOf(section.slot))
+        list.replaceChildren()
+        appendTo(section.list, coordinatorJobsFloorNote(factory, gate.compatibility.cliVersion ?? ''))
+        return
+      }
+      if (jobsSentence !== null) {
+        // **The refusal stands beside the kept rows, not in their place.** The
+        // page the operator asked for was refused; the page they were reading was
+        // not, and a list taken down to say so would take their own reading of it
+        // -- the rows they had expanded -- down with the sentence. It is the only
+        // press left after a refusal that reads again (the head's own refresh),
+        // and that one drops the list and this with it.
+        if (!jobsRefusalDrawn) {
+          appendTo(section.list, refusedScreen(factory, 'runs.list', jobsSentence, theme))
+          jobsRefusalDrawn = true
+        }
+        return
+      }
+      if (!jobsHeadDrawn && jobsListed.window !== null) {
+        // The slot stays: it is where this section's own mark goes, and a head
+        // rebuilt without it would be a mark with nowhere to land.
+        head.replaceChildren(surface.nodeOf(section.slot))
+        fillCoordinatorJobsHead(factory, jobsListed.window, section.head)
+        jobsHeadDrawn = true
+      }
+      if (jobsHeadDrawn && !jobsStamped) {
+        // The stamp is the head's, drawn once with the figures it belongs to and
+        // wired to the one thing a reader who doubts it can do: read the window
+        // again from the top. Both the pages and the cursor go with it -- a
+        // refresh that kept the old cursor would page under a window that is no
+        // longer the one those rows came from.
+        const stamp = renderStamp(factory, jobsAt)
+        appendTo(section.head, stamp.root)
+        surface.nodeOf(stamp.refresh).addEventListener('click', () => {
+          reReadJobs()
+        })
+        jobsStamped = true
+      }
+      const fresh = jobsListed.rows.slice(jobsDrawn)
+      if (fresh.length > 0) {
+        bindJobRows(fillCoordinatorJobs(factory, fresh, section.list))
+        jobsDrawn = jobsListed.rows.length
+      } else if (jobsListedAsked && !jobsOut && jobsListed.rows.length === 0 && jobsListed.window !== null) {
+        // A page that was read and printed no row: the only state in which the
+        // console may say the window holds nothing. `window !== null` is what
+        // says a page answered at all, so a read still out draws neither.
+        list.replaceChildren()
+        fillCoordinatorJobsEmpty(factory, section.list)
+      }
+      if (!jobsListedAsked) {
+        const control = coordinatorLoadJobsControl(factory)
+        appendTo(section.controls, control)
+        surface.nodeOf(control).addEventListener('click', () => {
+          askForJobPage(null)
+        })
+        return
+      }
+      if (jobsOut) return
+      if (lastFullPage) {
+        const older = coordinatorOlderJobsControl(factory)
+        appendTo(section.controls, older)
+        surface.nodeOf(older).addEventListener('click', () => {
+          askForJobPage(jobsListed.cursor)
+        })
+      }
+    }
+
+    /**
+     * reReadJobs is the stamp's own control: it drops what the pages drew and
+     * reads the window again from the top. The first page is the one that
+     * carries the window's own `totals`, so a refresh is the same read as the
+     * operator's first press and not a second kind of read.
+     */
+    const reReadJobs = (): void => {
+      if (jobsOut) return
+      const section = mount(false).jobs
+      // The head and the rows go with the pages they came from. `jobsHeadDrawn`
+      // alone would rebuild the figures **over** the old ones -- the head is
+      // filled, not replaced -- and a stamp beside a window that is now being
+      // read again would be a claim about a read that no longer stands.
+      surface.nodeOf(section.head).replaceChildren(surface.nodeOf(section.slot))
+      surface.nodeOf(section.list).replaceChildren()
+      jobsListed = { rows: [], window: null, cursor: '' }
+      jobsDrawn = 0
+      jobsHeadDrawn = false
+      jobsStamped = false
+      jobsSentence = null
+      jobsRefusalDrawn = false
+      lastFullPage = false
+      askForJobPage(null)
+    }
+
+    /**
+     * askForJobPage reads one page of the job list: the first when `after` is
+     * `null`, and the page after the last row drawn when it is that row's id.
+     *
+     * **This is the read the jobs rule is about** (rule 5 of §6.2's opening): it
+     * is made from a press -- `Load jobs` or `Older 50` -- and never from
+     * `start`, so opening this tab spawns no `runs ls` of this section's own. It
+     * carries `--limit` (the page the section asks for) and, for a later page,
+     * `--after` (the cursor the console read out of the last row it drew), which
+     * is why the floor is asked before either word goes out rather than after a
+     * refusal comes back.
+     */
+    const askForJobPage = (after: string | null): void => {
+      if (jobsOut || jobsTooOld) return
+      const section = mount(false).jobs
+      jobsOut = true
+      jobsListedAsked = true
+      jobsAttempts += 1
+      jobsToken = coordinatorJobsRead.start()
+      coordinatorJobsRead.mark(
+        jobsToken,
+        section.section,
+        section.slot,
+        COORDINATOR_JOBS_BUSY,
+        COORDINATOR_JOBS_SHAPE,
+      )
+      paintJobs()
+      void loadJobPage(jobsAttempts, after)
+    }
+
+    /** lastFullPage is whether the page last read filled every row it asked for,
+     * which is the only ground on which the console knows the window holds more
+     * than what it has drawn. */
+    let lastFullPage = false
+
+    /** loadJobPage makes one page's read and draws what it answered.
+     *
+     * The attempt counter is checked before anything is drawn and `stale(mine)`
+     * after it, so a page asked for by a press a later one superseded -- or by a
+     * visit the operator has left -- never lands under another screen. */
+    const loadJobPage = async (attempt: number, after: string | null): Promise<void> => {
+      const answer = documentOf(
+        await bridge.listRuns({
+          since: RUNS_SINCE,
+          limit: COORDINATOR_JOBS_PAGE,
+          ...(after === null ? {} : { after }),
+        }),
+      )
+      if (jobsAttempts !== attempt) return
+      jobsOut = false
+      if (stale(mine)) return
+      if (!answer.ok) {
+        jobsSentence = answer.sentence
+      } else {
+        const page = jobsDocument(answer.data)
+        jobsSentence = null
+        jobsAt = Date.now()
+        // The rows accumulate and the window is written once: a later page's
+        // `totals` are the same window's, and a page that carried none must not
+        // take the first page's away.
+        jobsListed = {
+          rows: [...jobsListed.rows, ...page.rows],
+          window: jobsListed.window ?? page.window,
+          cursor: page.cursor === '' ? jobsListed.cursor : page.cursor,
+        }
+        lastFullPage = page.rows.length >= COORDINATOR_JOBS_PAGE
+      }
+      const section = mount(false).jobs
+      coordinatorJobsRead.settle(jobsToken)
+      surface.nodeOf(section.slot).replaceChildren()
+      paintJobs()
+    }
+
     /** paintTotals fills the fleet's strip: the figures off the stored view and
      * the plan read, and the money off `budget show`. The slot stays, because it
      * is where the section's own mark goes. */
@@ -4907,6 +5433,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      */
     const paintBody = (cached: boolean): void => {
       stopCoordinatorChunks()
+      // Every description read ends here with the rows that asked for it: the
+      // block a description is drawn in belongs to a row this paint is about to
+      // replace, and an answer landing in a tree the operator can no longer see
+      // is a read nothing will draw. The view itself is re-read below, so the
+      // descriptions of a new view are reads of their own rather than the old
+      // view's answers drawn under a new stamp.
+      for (const state of coordinatorDescriptions.values()) state.read.end()
+      coordinatorDescriptions.clear()
       const drawn = mount(false)
       clearSection(drawn.body, drawn.slot)
       if (view === null) {
@@ -4939,7 +5473,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         // The repository's numbers are bound in the chunk that drew them, so a
         // press is answered by the visit that is on screen -- and the chunk's
         // own staleness check above covers them with the rows they belong to.
-        bindPulls(repoDetail(detail.host, factory, detail.panel))
+        // The rows' description disclosures are bound here with them: they are
+        // controls of the same row, and the chunk is what drew the row.
+        const detailDrawn = repoDetail(detail.host, factory, detail.panel)
+        bindPulls(detailDrawn.pulls)
+        bindDescriptions(detailDrawn.descriptions)
         if (next < details.length) coordinatorChunk = setTimeout(step, 0)
       }
       if (details.length > 0) coordinatorChunk = setTimeout(step, 0)
@@ -5070,6 +5608,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       totalsToken = coordinatorTotalsRead.start()
       bodyToken = coordinatorBodyRead.start()
       mount(true)
+      // The job list is drawn with the rest of the frame and marked busy by
+      // nobody: its read has not been asked for, and the control it draws is the
+      // whole of what says so. It is filled here rather than in `markPending`
+      // because a section that is not being read still has a control to draw.
+      paintJobs()
       for (const source of sources) {
         const attempt = attempts[source]
         if (source === 'document') void loadDocument(attempt)
@@ -5145,6 +5688,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       paintQueue()
       paintTotals()
       paintBody(true)
+      paintJobs()
     }
     start()
   }

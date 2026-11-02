@@ -61,6 +61,12 @@ import type { ElectronApplication, Page } from '@playwright/test'
 import {
   COORDINATOR_BLIND_WORD,
   COORDINATOR_BUSY,
+  COORDINATOR_DESCRIPTION_CLASS,
+  COORDINATOR_DESCRIPTION_HEAD_CLASS,
+  COORDINATOR_DESCRIPTION_HIDE_WORD,
+  COORDINATOR_DESCRIPTION_LINE_CLASS,
+  COORDINATOR_DESCRIPTION_SHOW_WORD,
+  COORDINATOR_JOBS_FLOOR_WORD,
   COORDINATOR_NO_AGE_WORD,
   COORDINATOR_QUEUE_BUSY,
   COORDINATOR_QUEUE_JOBS_WORD,
@@ -71,6 +77,7 @@ import {
   COORDINATOR_TOTAL_IN_FLIGHT_WORD,
   COORDINATOR_TOTAL_REPOS_WORD,
 } from '../../src/renderer/screens/coordinator'
+import { CLI_VERSION_BUILT_AGAINST } from '../../src/shared/version'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
 import { expectGolden, expectGrounded } from '../support/goldens'
@@ -680,6 +687,75 @@ test.describe('the Coordinator view in the dashboard', () => {
     const repos = await totals.locator('span.coordinator-total-repos .coordinator-count-value').textContent()
     expect(Number(repos), 'the stored view lists no repository').toBeGreaterThan(0)
     await expect(page.locator(`${THE_VIEW} section.coordinator-repo`)).toHaveCount(Number(repos))
+  })
+
+  test('says which CLI the job list needs, and spawns no read for one older than that', async () => {
+    // K4's floor, read in a window: this window's stub prints the version the
+    // console is built against (`CLI_VERSION_BUILT_AGAINST`), which is below
+    // `RUNS_LIST_PAGE_CLI_FLOOR` ('0.16.0', the release carrying #1545), so the
+    // section draws the console's own sentence naming the version it needs and
+    // the handshake's own version line beside it -- and does nothing else.
+    //
+    // **The absence is the claim.** No control is drawn, so no press can spawn a
+    // read this CLI would answer wrongly (`--after` is refused outright in the
+    // 0.15 line and `--limit` reads only the newest N, whose own `totals` would
+    // then be the page's); no row is drawn, because nothing was read; and no
+    // refusal is drawn either, because a read that was never made has no
+    // sentence to show. The section is a section of the queue's kind and not the
+    // whole screen: the records under it are still there.
+    const jobs = page.locator(`${THE_VIEW} section.coordinator-jobs`)
+    await expect(jobs).toHaveCount(1)
+    // The two words are the sentence, separator included: what a browser gives
+    // this paragraph is the word -- which carries the space -- and the version,
+    // so the fixture builds the expectation the same way the drawing does.
+    await expect(jobs.locator('p.coordinator-jobs-note')).toHaveText(
+      `${COORDINATOR_JOBS_FLOOR_WORD}${CLI_VERSION_BUILT_AGAINST}`,
+    )
+    await expect(jobs.locator('button.coordinator-jobs-load')).toHaveCount(0)
+    await expect(jobs.locator('button.coordinator-jobs-older')).toHaveCount(0)
+    await expect(jobs.locator('li.coordinator-job')).toHaveCount(0)
+    await expect(jobs.locator('.unavailable-operation')).toHaveCount(0)
+    // No window was read either, so the head draws no figure: a window the
+    // console has not read is not a window of zero runs.
+    await expect(jobs.locator('span.coordinator-jobs-window-word')).toHaveCount(0)
+    await expect(page.locator(`${THE_VIEW} li.coordinator-record`).first()).toBeVisible()
+  })
+
+  test('reads one pull request’s description on the press, and draws the refusal naming its own command', async () => {
+    // K3. This window's stub answers `coordinator status` and refuses everything
+    // else (`test/fixtures/bin/fugaro`), so the description read is a real spawn
+    // the CLI answers with its own refusal -- and what the block must do with
+    // that is name the command it is the refusal of, rather than draw a pull
+    // request with no description in it, which is a different fact.
+    //
+    // What a real browser adds here is the press, the spawn behind it and the
+    // stylesheet: the description drawn as text and its twenty-line bound are
+    // `coordinator.test.ts`'s, and the read-once rule is
+    // `entry-wiring.test.ts`'s.
+    const record = page.locator(`${THE_VIEW} li.coordinator-record`).first()
+    const head = record.locator(`button.${COORDINATOR_DESCRIPTION_HEAD_CLASS}`)
+    const block = record.locator(`div.${COORDINATOR_DESCRIPTION_CLASS}`)
+    // Drawn with the row and hidden: the press is a toggle, not a rendering.
+    await expect(head).toHaveText(COORDINATOR_DESCRIPTION_SHOW_WORD)
+    await expect(head).toHaveAttribute('aria-expanded', 'false')
+    await expect(block).toBeHidden()
+    await expect(block.locator('div.console-busy-slot')).toHaveCount(1)
+
+    await head.click()
+    await expect(block).toBeVisible()
+    await expect(head).toHaveText(COORDINATOR_DESCRIPTION_HIDE_WORD)
+    await expect(block.locator('span.unavailable-operation')).toHaveText('coordinator.show')
+    await expect(block.locator(`div.${COORDINATOR_DESCRIPTION_LINE_CLASS}`)).toHaveCount(0)
+
+    // The second press is the toggle, and the block it brings back is the one it
+    // already has: the refusal stands, and no second sentence is drawn beside it.
+    await head.click()
+    await expect(block).toBeHidden()
+    await expect(head).toHaveText(COORDINATOR_DESCRIPTION_SHOW_WORD)
+    await head.click()
+    await expect(block).toBeVisible()
+    await expect(block.locator('span.unavailable-operation')).toHaveCount(1)
+    await expect(block.locator('span.unavailable-operation')).toHaveText('coordinator.show')
   })
 
   test('draws the committed fixture’s numbers as text, and puts no destination on any of them', async () => {

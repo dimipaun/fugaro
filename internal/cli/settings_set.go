@@ -72,11 +72,19 @@ var settingsGenericKeys = map[string]bool{
 	"commit_name":              true,
 	"commit_email":             true,
 	"layer.default_profile":    true,
+	// D873's account choice (spec §11.1). They are here by name because they
+	// are not §4.4's list: §4.4 predates them, and a registry row no list
+	// carries is a key nobody can write.
+	"default_claude_account":  true,
+	"claude_account_auto":     true,
+	"stages.*.claude_account": true,
 }
 
 // settingsGenericPrefixes are the blocks spec §4.4 hands to the generic path
-// whole. A prefix covers the block's scalars and string lists; a key with a
-// varying segment is still refused below, so no entry here can reach a map.
+// whole. A prefix covers the block's scalars and string lists: no entry here
+// carries a varying segment, and settingsWriteLookup reaches a wildcard
+// registry row only for a spelling settingsGenericKeys names, so a prefix is
+// never the reason a map entry resolves.
 // `credentials.` and `clone_urls.` are §4.4's own names for the blocks §5.6's
 // family adds: they are listed now so the generic path does not refuse a name
 // the spec hands it once that family lands.
@@ -175,10 +183,12 @@ A string-list key takes --add V or --remove V instead of a value. A list
 emptied by --remove is refused: an absent key and an empty list mean different
 things to the loader, so use unset to remove the key.
 
-Loosening a ceiling key (budget.*, governance.*) or turning a followup.* key
-on asks for the project's name rather than y/N, and --yes never answers that
-form. Writing outside a repository is refused in a coding agent's session,
---yes included; a ceiling loosened at --layer repo is refused there too.
+Loosening a ceiling key (budget.*, governance.*, the agent caps
+agent.max_budget_usd and agent.max_run_tokens with the layer's own spellings),
+adding a name to a followup.* list or turning one of those keys on, is
+confirmed by the project's name typed at a terminal, or by --yes. Writing
+outside a repository is refused in a coding agent's session, --yes included,
+and so is the typed form at any layer: --yes never lifts that fence.
 
 Every write ends with one line: next: fugaro update.`,
 		Args: cobra.ArbitraryArgs,
@@ -210,8 +220,8 @@ indistinguishable from a deliberate pin and silently wrong the day the built-in
 changes. Nothing to remove is a no-op with a sentence and exit 0, so an
 idempotent script does not fail.
 
-Removing a ceiling key asks for the project's name rather than y/N, and --yes
-never answers that form.
+Removing a ceiling key is confirmed by the project's name typed at a terminal,
+or by --yes outside a coding agent's session.
 
 Every write ends with one line: next: fugaro update.`,
 		Args: cobra.ArbitraryArgs,
@@ -236,10 +246,10 @@ Every write ends with one line: next: fugaro update.`,
 // says a map-valued key has no generic form *always*, so `workflows.*.commands.
 // test` is refused as a map entry and not as a key nobody listed.
 func settingsWriteRow(key string) (settings.Row, error) {
-	row, ok := settings.Lookup(key)
+	row, registry, ok := settingsWriteLookup(key)
 	if !ok {
 		return settings.Row{}, userErr("%s: no setting has that name; the nearest are %s",
-			key, strings.Join(nearestSettings(key, settings.Rows()), ", "))
+			key, strings.Join(nearestSettings(key, settingsWriteHintRows()), ", "))
 	}
 	if row.Sensitive {
 		return settings.Row{}, userErr("%s is a sensitive setting, and the generic path never writes one: its value would be printed in the diff this command shows (spec §2.3)", key)
@@ -250,10 +260,83 @@ func settingsWriteRow(key string) (settings.Row, error) {
 	if strings.Contains(key, "*") {
 		return settings.Row{}, userErr("%s varies with a name this command does not take: a key with a * is a map entry, and a map has no generic form", key)
 	}
-	if !settingsGenericKey(key) {
-		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, credentials.*, clone_urls.* and the layer's defaults.*), and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
+	if !settingsGenericKey(registry) {
+		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, credentials.*, clone_urls.* and the layer's defaults.*) and the account choice (default_claude_account, claude_account_auto, stages.<stage>.claude_account), and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
 	}
 	return row, nil
+}
+
+// settingsWriteLookup is the row a write names, with the registry's own
+// spelling of that key beside it. The two differ for a key whose registry
+// spelling carries a varying segment: `stages.*.claude_account` is the row, and
+// `stages.review.claude_account` is the key a person writes. The row keeps the
+// key as written, because that is the path the edit lands on, and the registry
+// spelling is what the allowlist and the row's own sentences name.
+//
+// Only a wildcard row settingsGenericKeys carries by name is matched, which is
+// how `stages.*.claude_account` is reachable at all. The registry's other
+// wildcard rows — the project layer's `workflows.*.*`, the project family's
+// `repos.*.*`, the models family's `providers.*.*` and the accounts family's
+// `claude_accounts.*.allow_data_to` — are other paths' keys: matching one would
+// hand back a row this command does not write, and the refusal a person gets
+// should be the one about the name, not a row that was never theirs.
+func settingsWriteLookup(key string) (settings.Row, string, bool) {
+	if row, found := settings.Lookup(key); found {
+		return row, key, true
+	}
+	for _, r := range settings.Rows() {
+		if !settingsGenericKeys[r.Key] {
+			continue
+		}
+		if !settingsPatternMatch(r.Key, key) {
+			continue
+		}
+		registry := r.Key
+		r.Key = key
+		return r, registry, true
+	}
+	return settings.Row{}, "", false
+}
+
+// settingsPatternMatch reports whether key is a spelling of the registry key
+// pattern: the same number of dotted segments, equal where the pattern names
+// one, and non-empty where it writes *. It answers the spelling and nothing
+// else: which patterns may be matched at all is settingsWriteLookup's, and
+// that is where the generic allowlist is asked.
+func settingsPatternMatch(pattern, key string) bool {
+	p, k := strings.Split(pattern, "."), strings.Split(key, ".")
+	if len(p) != len(k) {
+		return false
+	}
+	for i := range p {
+		switch {
+		case p[i] == "*":
+			if k[i] == "" {
+				return false
+			}
+		case p[i] != k[i]:
+			return false
+		}
+	}
+	return true
+}
+
+// settingsWriteHintRows are the registry rows a write's unknown-key refusal may
+// name as its nearest. The read's own hint names every row, which is right
+// there: a read covers the whole registry. A write covers the allowlist, so a
+// hint drawn from the whole registry sends a person from one refusal to the
+// next — `budget.per_day_usd` and `budget.mode` are rows the read prints and
+// the write refuses by name, and answering a misspelling of one with it is a
+// name this command was never able to write.
+func settingsWriteHintRows() []settings.Row {
+	rows := settings.Rows()
+	out := make([]settings.Row, 0, len(rows))
+	for _, row := range rows {
+		if settingsGenericKey(row.Key) {
+			out = append(out, row)
+		}
+	}
+	return out
 }
 
 // settingsDefaultLayer is the target of a write that names no --layer: the
@@ -493,15 +576,30 @@ func settingsListGoneOrEmpty(data []byte, path []string) bool {
 	return ok && len(s) == 0
 }
 
-// settingsCeilingKey is the prefix test D846 names: budget.* and governance.*
-// are the keys whose loosening crosses the boundary the typed name guards.
+// settingsCeilingAgentKeys are the agent block's own caps. D846's prefix test
+// reaches budget.* and governance.*, and these two are ceilings of the same
+// kind under a third name: agent.max_budget_usd is one stage's spend cap and
+// agent.max_run_tokens a whole run's token cap, so raising either crosses the
+// boundary the typed name guards exactly as raising budget.per_run_usd does.
+var settingsCeilingAgentKeys = []string{"agent.max_budget_usd", "agent.max_run_tokens"}
+
+// settingsCeilingKey is the test D846 names: budget.* and governance.* are the
+// keys whose loosening crosses the boundary the typed name guards, and the
+// agent block's caps are the same boundary under their own names.
+//
 // The project layer's own block is the same setting under the `layer.` prefix
 // (SD14), so `layer.governance.review_ratio` is typed exactly as
-// `governance.review_ratio` is: the file it would edit decides the ceiling of
-// every run the project's branches start, which is the fact D846 guards.
+// `governance.review_ratio` is, and the layer's `defaults.` block is that
+// setting one word deeper: `layer.defaults.agent.max_budget_usd` is the cap
+// every repository the layer templates runs with. All of them are the same
+// fact — the file it would edit decides the ceiling of every run the project's
+// branches start — which is what D846 guards.
 func settingsCeilingKey(key string) bool {
 	key = strings.TrimPrefix(key, "layer.")
-	return strings.HasPrefix(key, "budget.") || strings.HasPrefix(key, "governance.")
+	if strings.HasPrefix(key, "budget.") || strings.HasPrefix(key, "governance.") {
+		return true
+	}
+	return slices.Contains(settingsCeilingAgentKeys, strings.TrimPrefix(key, "defaults."))
 }
 
 // settingsTrue is the value a followup key is turned on with: a YAML boolean
@@ -516,6 +614,11 @@ func settingsTrue(value string) bool {
 
 // settingsModeRank orders budget.mode's values loosest first, so a write that
 // lowers the rank is a loosening (policy.Merge's order: enforce > observe > off).
+// `settings set` never writes budget.mode — the allowlist refuses it — but this
+// comparison has a second caller, the publish door: policyCeilingMembers names
+// budget.mode and policyLoosening hands each member to settingsLoosens, so a
+// node republished at a weaker mode is a loosening there and one republished at
+// a stronger mode is not.
 func settingsModeRank(mode string) int {
 	switch mode {
 	case "enforce":
@@ -545,13 +648,9 @@ func settingsCeilingBase(ctx context.Context, row settings.Row, raw string) stri
 	effective := settingsEffectiveCeiling(ctx, row)
 	if effective == "" {
 		// No layer resolves a value, so what a run gets is the key's own
-		// default. For a cap that is no cap — a state, not a value to compare
-		// against — but `budget.mode`'s default is a decision: its registry row
-		// is unset("observe"), and the mode an unset key runs with is observe
-		// (config.BudgetObserve). A base of "" made a write of `off` read as a
-		// first write and skip the typed name although it takes the run from
-		// observe to off, which is the loosening D846 types (F2).
-		effective = settingsCeilingDefault(row)
+		// built-in default: a number for the agent block's spend cap, and
+		// nothing to compare against for every other ceiling key.
+		effective = settingsCeilingBuiltIn(row.Key)
 	}
 	switch {
 	case raw == "":
@@ -567,6 +666,30 @@ func settingsCeilingBase(ctx context.Context, row settings.Row, raw string) stri
 	default:
 		return raw
 	}
+}
+
+// settingsCeilingBuiltIn is what a run gets for an agent cap no layer resolves a
+// value for. `agent.max_budget_usd`'s default is a number and not a state: a
+// repository that writes no budget of its own starts under
+// config.DefaultMaxBudgetUSD, which applyDefaults applies and the registry's row
+// for the key reads. A base of "" read a write over that default as a first
+// write and skipped the typed name a raise asks for, so an agent session could
+// name its own spend cap far above the one it started under, from a file it may
+// edit anyway (F2).
+//
+// Every other ceiling key answers "" there, and that is not the same blind spot.
+// `agent.max_run_tokens`'s unset means the deployed ceiling, which this binary
+// holds nowhere as a value, so there is no number to compare against; a
+// `budget.*` or `governance.*` key no layer sets has no cap to raise, and the
+// two writes that take a cap away — 0 and `unset` — are typed on their own. The
+// project layer spells the same agent cap one block deeper (SD14), which is the
+// `defaults.` prefix and the same number.
+func settingsCeilingBuiltIn(key string) string {
+	key = strings.TrimPrefix(key, "layer.")
+	if strings.TrimPrefix(key, "defaults.") == "agent.max_budget_usd" {
+		return strconv.Itoa(config.DefaultMaxBudgetUSD)
+	}
+	return ""
 }
 
 // settingsEffectiveCeiling is the value a run gets for row from the read's own
@@ -591,19 +714,6 @@ func settingsEffectiveCeiling(ctx context.Context, row settings.Row) string {
 	}
 	if s := r.projectRow(row); s.Wins != settings.LayerDefault {
 		return s.Value
-	}
-	return ""
-}
-
-// settingsCeilingDefault is what a run gets for a ceiling key no layer sets,
-// for the one key whose default is a value rather than "no cap". `budget.mode`
-// is the exception: its registry row is unset("observe"), so a run with the key
-// set nowhere runs as observe (config.BudgetObserve, policy.ModeObserve), and a
-// write of `off` over it lowers the mode a run gets. Every other ceiling key's
-// unset means the cap is absent — a state, not a value — so the answer is "".
-func settingsCeilingDefault(row settings.Row) string {
-	if row.Key == "budget.mode" {
-		return config.BudgetObserve
 	}
 	return ""
 }
@@ -675,13 +785,15 @@ func settingsListSubset(a, b string) bool {
 // set, unset, add or remove. `remove` takes one member out of a list, which
 // narrows it, so it is never the typed form and has no case below; `unset`
 // always is, for a ceiling, because it hands the decision to a looser layer.
-func settingsTypedWrite(key, oldValue, newValue, mode string) (bool, string) {
-	ceilingWhy := "this loosens a ceiling: the file it would edit decides the ceiling of every run this branch starts, so the project's own name is what confirms it, and --yes does not stand in"
-	followupWhy := "this turns a followup key on: a run then acts on comments from people it did not act on before, so the project's own name is what confirms it, and --yes does not stand in"
+func settingsTypedWrite(row settings.Row, oldValue, newValue, mode string) (bool, string) {
+	key := row.Key
+	ceilingWhy := "this raises a limit: the file it would edit decides the ceiling of every run this branch starts, so the project's own name is what confirms it, or --yes outside a coding agent's session"
+	followupWhy := "this turns a followup key on: a run then acts on comments from people it did not act on before, so the project's own name is what confirms it, or --yes outside a coding agent's session"
+	followupAddWhy := "this widens who is trusted: a run then acts on comments from an account it did not act on before, so the project's own name is what confirms it, or --yes outside a coding agent's session"
 	if settingsCeilingKey(key) {
 		switch mode {
 		case "unset":
-			return true, "removing a ceiling hands the decision back to a looser layer, so the project's own name is what confirms it, and --yes does not stand in"
+			return true, "removing a ceiling hands the decision back to a looser layer, so the project's own name is what confirms it, or --yes outside a coding agent's session"
 		case "add":
 			return true, ceilingWhy
 		case "set":
@@ -690,8 +802,28 @@ func settingsTypedWrite(key, oldValue, newValue, mode string) (bool, string) {
 			}
 		}
 	}
-	if strings.HasPrefix(key, "followup.") && mode == "set" && settingsTrue(newValue) {
-		return true, followupWhy
+	if strings.HasPrefix(key, "followup.") {
+		switch mode {
+		case "set":
+			if settingsTrue(newValue) {
+				return true, followupWhy
+			}
+		case "add":
+			// A name added to a followup list widens who can steer a run that
+			// holds the repository's credentials, which is the same widening as
+			// turning one of these keys on: `--add` is the typed direction on
+			// this block and `--remove` the tightening one, which has no case
+			// here for the reason a ceiling's own remove has none. It carries
+			// its own sentence all the same: the person reading the prompt is
+			// adding an account to a list, and a sentence about a key being
+			// turned on names neither the list nor the account.
+			return true, followupAddWhy
+		}
+	}
+	// A row's own sensitive direction: turning the key on is the act D846
+	// reserves, and the row carries the sentence saying why.
+	if row.TypedWhy != "" && mode == "set" && settingsTrue(newValue) {
+		return true, row.TypedWhy
 	}
 	return false, ""
 }
@@ -787,7 +919,7 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	if settingsCeilingKey(key) {
 		oldValue = settingsCeilingBase(cmd.Context(), row, oldValue)
 	}
-	typed, why := settingsTypedWrite(key, oldValue, value, mode)
+	typed, why := settingsTypedWrite(row, oldValue, value, mode)
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
 		Path:     target.path,
 		Old:      old,
@@ -842,7 +974,7 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 	if err := settingsReparse(target, newData); err != nil {
 		return err
 	}
-	typed, why := settingsTypedWrite(key, settingsValueIn(old, target.keyPath), "", "unset")
+	typed, why := settingsTypedWrite(row, settingsValueIn(old, target.keyPath), "", "unset")
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
 		Path:     target.path,
 		Old:      old,
