@@ -56,7 +56,7 @@ them and renames none of them.
 | 1 | C3.9b | C3.9a, and **CSR1 merged** (the set it serves) |
 | 2 | C3.9d, C3.9e | C3.9c (the entry's name, kind and read path); C3.9e also C3.9a **and U7 returned** (D1074) |
 | 3 | C3.9f | C3.9a, C3.9c, C3.9e (the frame the verify route recomputes) |
-| 4 | C3.9g1, C3.9g2, C3.9g3 | C3.9e, C3.9f; the three are one pull request because a test holds the module's names and the CLI's equal (see C3.9g1), and g3 is g1's source (see C3.9g3); the live check C3.9g2 names is not run until **CSR7 and CSR2** are on `main` |
+| 4 | C3.9g1, C3.9g2, C3.9g3 | C3.9e, C3.9f; the three are one pull request because a test holds the module's names and the CLI's equal (see C3.9g1), and g3 is g1's source and carries the release's one `### For operators` entry (see C3.9g3); the live check C3.9g2 names is not run until **CSR7 and CSR2** are on `main` |
 
 ## Where each decision lands
 
@@ -294,7 +294,7 @@ is stated here so neither reads as the other's:** the **route's unreachability f
 this task's, held by `TestSignRouteIsUnreachableFromTheMutantEnvironment` (the live check §8 step 9
 re-observes it), while the **environment's own emptiness** — that the subprocess carries no token in its
 environment at all — is **CSR4b's**, held by `TestMutationSubprocessCarriesNoTokenInItsEnvironment`
-(`docs/cloud-senior-review/implementation-plan.md:480`). This task does not restate CSR4b's pin and does
+(`docs/cloud-senior-review/implementation-plan.md:511`). This task does not restate CSR4b's pin and does
 not weaken it: it starts its child the way that test does, and asserts what its own route owes.
 
 `POST /v1/review/sign` takes a digest and answers the HMAC-SHA-256 of the **framed message** under the
@@ -496,8 +496,8 @@ for review size, not for sequencing.
   same one `CredentialsJobAccounts` (`:343`) reads the job table from — so the value is not an operator's
   new act. **D1075 is answered** (2026-11-01) as exactly this derivation — the published policy, so **no
   operator step** — and it records the two rejected readings with their costs. **The field itself is C3.9g3's**, below: it is
-the node key this bullet's writer reads, and this task's nine files are already at the cap this plan holds
-a task to.
+the node key this bullet's writer reads, and this task's nine files leave no room under the ten a task may
+touch here (`:8`).
 - **One allow-list grows by exactly one, and it refuses a name it does not know**:
   `internal/infra/tf/cover.go`'s `credentialsServiceEnv` (`:792`), which is what one `fugaro update`
   confirmation covers and which must name the entry the module can now render.
@@ -540,8 +540,8 @@ a task to.
 
 ## C3.9g3. The published field the verifier list comes from (D1063, D1070, F2)
 
-C3.9g1's source, and the one field this slice adds to a published format. C3.9g1's nine files are at the cap
-this plan holds a task to, so the field is a task of its own; the three land as **one pull request**, for
+C3.9g1's source, and the one field this slice adds to a published format. C3.9g1's nine files leave the
+ten-file rule (`:8`) no room for it, so the field is a task of its own; the three land as **one pull request**, for
 the reason C3.9g1 gives for g2 being one change with g1.
 
 - **What the operator writes, and where it is published.** The local configuration's top-level
@@ -559,23 +559,57 @@ the reason C3.9g1 gives for g2 being one change with g1.
   `operators` and `budget_admins` are written with, which are IAM bindings rather than identity claims
   (`internal/infra/tfvars.go:59`). A misspelt entry is refused where the operator can see it, rather than
   read as a list that admits nobody.
-- **No `Version` bump, and no schema file.** The key is **top-level**, so a reader older than the field
-  lists it in `Policy.UnknownKeys` and decodes past it (`internal/projectpolicy/policy.go:255`–`268`,
-  `:724`, P8); `Version` is the one field that refuses a node and it moves for what a reader must
-  **enforce** (`internal/projectpolicy/version.go:9`–`15`, `:36`–`45`), and nothing enforces this key from
-  the node — the service reads its own environment, and C3.9g1 keeps that read optional and inert.
-  `schemas/` gains nothing: the policy node is not one of the JSON Schemas there (they pin `fugaro.yaml`
-  and the project layer, the task, the result, the recipe and the settings), and its members are held by
-  `internal/projectpolicy`'s own decode, which is where the key is added.
-- **Files (5):** `internal/localcfg/localcfg.go` (the member and its shape check),
-  `internal/projectpolicy/policy.go` (the key, its member list and its validation),
-  `internal/cli/init_policy_publish.go` (the copy from the config into the node),
+- **No `Version` bump, and a skew that is the CLI's and the operator's.** The key is **top-level**, so it is
+  not a member inside a block (a newer member is what a bump is for, `internal/projectpolicy/version.go:36`–`45`),
+  and `Version` stays 4: that field refuses a node for a reader that must **enforce** a key, and nothing
+  enforces this one from the node — the service reads its own environment, and C3.9g1 keeps that read
+  optional and inert. What the key does cost is stated rather than wished away, and it is a **CLI** cost:
+  a **runner** older than the field tolerates it and logs it (`internal/runner/projectpolicy.go:125`–`:131`,
+  "the project's policy lists keys this Fugaro does not know; they have no effect"), while **every CLI
+  reader older than the field refuses the node** — `fugaro run`'s launch gate
+  (`internal/cli/launch_budget.go:156`), publishing and the update's own policy stage
+  (`internal/cli/project_cmd.go:499`), `policy show`, `project show` and `repos ls`
+  (`refuseUnknownPolicyKeys`, `project_cmd.go:2823`) and the migration (`refuseMigrationUnknownKeys`,
+  `internal/cli/init_policy_migrate.go:578`) — because the operator is the one who can fix a misspelling
+  (`internal/projectpolicy/policy.go:261`: "the runner logs them … the CLI refuses them"). **So once a
+  verifier is published, every teammate on an older CLI cannot launch until they upgrade**, and the task's
+  test holds **both** postures rather than the tolerant one alone
+  (`TestVerifierAccountsIsToleratedByTheRunnerAndRefusedByTheCLI`: the runner decodes the node and warns,
+  the launch gate refuses it and names the upgrade).
+- **The key is omitted when the list is empty, and that is what keeps the others whole.** An installation
+  that does not use the reviewer publishes **no member at all**, so its node is byte for byte what it was
+  before the key existed — the rule `review_floor` already follows (`internal/cli/project_cmd.go:797`–`:798`:
+  "A project that sets none publishes no member at all") — and no teammate of it meets the refusal above.
+  The release's `### For operators` therefore carries one entry, named here so the release cannot ship
+  without it: **upgrade every launcher (every machine that runs `fugaro run`) before naming a verifier — an
+  older CLI refuses a policy node that carries `verifier_accounts`.**
+- **The key is operator-only, and the published shared config may not carry it** (**SEC**).
+  `internal/cli/sharedcfg.go:204`'s `sharedForbidden` gains it: that file is writable by any launcher
+  holding objectAdmin on the runs bucket, and a launcher who could write this list could admit its own
+  address to the verify route — the reason `bitbucket_api_roots` and `review_floor` sit in that list and
+  the reason `ParseShared` refuses a section it finds there by name, before `localcfg.Parse`
+  (`internal/cli/sharedcfg.go:236`–`:242`). `TestSharedConfigRefusesTheVerifierList` holds it.
+- **`schemas/` gains nothing.** The policy node is not one of the JSON Schemas there (they pin
+  `fugaro.yaml` and the project layer, the task, the result, the recipe and the settings), and its members
+  are held by `internal/projectpolicy`'s own decode, which is where the key is added.
+- **Files (9):** `internal/localcfg/localcfg.go` (the member and its shape check),
+  `internal/projectpolicy/policy.go` (the key, the member list at `:269`–`276` and its validation),
+  `internal/cli/project_cmd.go` (the node is built here: the struct literal at `:819`, with the copy beside
+  `bitbucket_api_roots` at `:829`), `internal/cli/init_policy_publish.go` (the drift list that names a
+  member the node is missing, `policyConfigDrift`, `:61`), `internal/cli/init_policy_migrate.go` (the
+  migration's own copy, the shape `bitbucketAPIRootsKey` has: the key at `:514`, the copy at `:560` and the
+  list of members it reports as derived at `:499`), `internal/cli/sharedcfg.go` (`sharedForbidden`),
+  `internal/settings/registry.go` (the key's row: without it `TestRegistryCoversEveryConfigField`,
+  `internal/settings/registry_test.go:98`, is red for any new `localcfg.Config` key),
   `internal/projectpolicy/policy_test.go` and `internal/cli/init_policy_publish_test.go` (the round trip,
-  the older-reader case that must decode past it, and the copy).
-- **Red step:** the round-trip test fails while the config's member has no node key to land in, and the
-  copy test fails while the node is built without it.
-- **Tests:** `GOFLAGS=-p=2 go test ./internal/projectpolicy/ -count=1`; `GOFLAGS=-p=2 go test ./internal/cli/
-  -run 'Policy|Publish' -count=1`.
+  the two reader postures, the omitted-when-empty node and the copy).
+- **Red step:** the round-trip test fails while the config's member has no node key to land in, the
+  settings registry is red until the key has its row, and the copy test fails while the node is built
+  without it.
+- **Tests:** `GOFLAGS=-p=2 go test ./internal/projectpolicy/ -count=1`; `GOFLAGS=-p=2 go test
+  ./internal/settings/ -count=1` (the registry row, and the test that counts the config's keys); `GOFLAGS=-p=2
+  go test ./internal/cli/ -run 'Policy|Publish|Shared' -count=1` (the node build, the copy, the omitted key
+  and the shared file's refusal).
 
 ## C3.9g2. The `credentials_serve` wiring, the amendment, the docs, and the named live check (D1063, D1070, F2)
 
@@ -701,5 +735,8 @@ created, enabled or deleted outside the sandbox.
 - **`fugaro update` carries it whole.** An opted-in installation converges with the one documented command:
   the image pin moves, the classes and the routes arrive in the code, and the key is the credentials
   service's own documented `creds set` step, named by `doctor` and by the service's refusal when it is
-  missing. Nothing in this plan asks an operator to run anything else, and no task adds an operator step to
-  a release's `### For operators` — the one variable C3.9g1 adds is null by default.
+  missing. Nothing in this plan asks an operator to run anything else, and the release's `### For operators` carries
+  **one** entry from this work, and only for the installation that names a verifier: **upgrade every
+  launcher before naming one** (C3.9g3's skew: an older CLI refuses a policy node carrying
+  `verifier_accounts`). An installation that names none takes no step at all — the one variable C3.9g1 adds
+  is null by default, and C3.9g3's key is omitted when the list is empty.

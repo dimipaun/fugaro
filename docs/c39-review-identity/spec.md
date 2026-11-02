@@ -440,7 +440,10 @@ the list is what an operator writes, and the path that reads it is new:
   top-level `verifier_accounts`, which `fugaro update`'s policy stage copies into `config/policy/shared` as
   the key of the same name (C3.9g3) — the pattern `bitbucket_api_roots` already travels by, and for the
   same reason: the node is written only by the owner while the published shared config is writable by any
-  launcher. Each entry is a bare address (the `email` claim this list is matched against), never an IAM
+  launcher — and the published shared file may not carry it at all: the key joins `sharedForbidden`
+  (`internal/cli/sharedcfg.go:204`), where `bitbucket_api_roots` and `review_floor` sit for the same reason,
+  because a launcher who could write this list could admit its own address to the verify route. Each entry
+  is a bare address (the `email` claim this list is matched against), never an IAM
   member spelling. One config edit, the same publication the owner already makes, and no second command.
 
 ### 5.5 What the audit line says
@@ -822,16 +825,25 @@ is *another command*. This slice's reading of it, stated because a reviewer must
 - **The review job cannot be launched before the key exists**, because CSR6's doctor check and CSR2's launcher
   refuse the launch rather than shipping one the service refuses. That is the same posture E7's other half
   has, and it is why no user meets a half-configured review.
-- **A version gate, not a silent ignore — and the one field this slice adds needs none**: this slice adds
+- **A version gate, not a silent ignore — and the one field this slice adds is refused by an older CLI, not by its runner**: this slice adds
   no `fugaro.yaml`, task or run-record *field*, so `internal/cli/recipes_skew.go`'s `…Since` gates are not
   needed for it: the two routes are new paths and an older job image never calls them. The one field it
   adds is the verifier list's, on the **published policy node** (`verifier_accounts`, C3.9g3), and it is a
-  **top-level** key of that node for a reason that is the whole of its skew answer: a reader older than the
-  field merely lists a top-level key it does not know in `Policy.UnknownKeys` and decodes past it
-  (`internal/projectpolicy/policy.go:255`–`268`, `:724`, P8), so the key is additive for a reader; and
-  `Version` is the field that refuses a node and it moves for what a reader must **enforce**
-  (`internal/projectpolicy/version.go:9`–`15`, `:36`–`45`), which nothing does from the node — the service
-  reads its own **environment** (C3.9g1). `schemas/` gains nothing: the policy node is not one of the JSON
+  **top-level** key of that node, and the skew it costs is stated rather than wished away. A **runner**
+  older than the field tolerates it and logs it (`internal/runner/projectpolicy.go:125`–`:131`); **every CLI
+  older than the field refuses the node** — `fugaro run` (`internal/cli/launch_budget.go:156`), publishing
+  and the update's own policy stage (`internal/cli/project_cmd.go:499`), the readers `policy show`,
+  `project show` and `repos ls` (`refuseUnknownPolicyKeys`, `project_cmd.go:2823`) and the migration
+  (`init_policy_migrate.go:578`) — because the operator is the one who can fix a misspelling
+  (`internal/projectpolicy/policy.go:261`). So **once a verifier is published, every teammate on an older
+  CLI cannot launch until they upgrade**, which is why its publisher **omits the key when the list is
+  empty**: an installation that does not use the reviewer publishes no member at all, and its node is byte
+  for byte what it was before the key existed (`internal/cli/project_cmd.go:797`–`:798`, the rule `review_floor`
+  already follows). The release notes carry that as an operator step — **`### For operators`: upgrade every
+  launcher before naming a verifier** — and an installation that names none takes no step at all. **No
+  `Version` bump**: `Version` refuses a node for a reader that must **enforce** a key
+  (`internal/projectpolicy/version.go:36`–`45`), nothing enforces this one from the node (the service reads
+  its own **environment**, C3.9g1), and the key's own refusal already names the upgrade as the move. `schemas/` gains nothing: the policy node is not one of the JSON
   Schemas there, and its members are held by `internal/projectpolicy`'s own decode. Where the review work
   adds fields, E6 is that work's rule.
 - **The review variant's own environment is CSR7's, and this slice asks for one change in it**: under ruling
