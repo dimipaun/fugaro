@@ -573,6 +573,10 @@ function queueInputs(inputs: Partial<CoordinatorInputs>): CoordinatorInputs {
     // state every case that is not about the pane is in: a document here would
     // draw intent lines under assertions that are about the queue or a record.
     intents: null,
+    // `null` is the same for the fleet's window (console 0.119.0): the strip's
+    // second read has not answered, and a window here would put eleven figures in
+    // front of every assertion about the strip's own six.
+    summary: null,
     ...inputs,
   }
 }
