@@ -226,6 +226,46 @@ func TestModelsUseRefusesAProviderModelUnderOAuth(t *testing.T) {
 	}
 }
 
+// TestModelsUsePinsTheBackgroundRole: background is the third key
+// agent.models has — Claude Code's own small requests — and it is a pin this
+// command writes like the other two, as the one line it adds.
+func TestModelsUsePinsTheBackgroundRole(t *testing.T) {
+	modelsUseHome(t)
+	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
+
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "background", "deepseek/deepseek-v4-pro", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	want := strings.Replace(modelsUseCommentedYAML,
+		"    reviewer: claude-sonnet-5-5\n",
+		"    reviewer: claude-sonnet-5-5\n    background: deepseek/deepseek-v4-pro\n", 1)
+	if got := readFileString(t, path); got != want {
+		t.Errorf("the edit is not the one line, under the role it names:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestModelsUseJudgesTheBackgroundRoleAsALaunchWould: the background pin is
+// checked like the coder's and the reviewer's, so a repository whose auth
+// cannot carry a provider model is refused it too — a background model that
+// slipped through would reach another provider on the run's own credential.
+func TestModelsUseJudgesTheBackgroundRoleAsALaunchWould(t *testing.T) {
+	modelsUseHome(t)
+	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseOAuthYAML)
+	before := readFileString(t, path)
+
+	_, _, err := execute(t, "models", "use", "owner/repo-a", "background", "deepseek/deepseek-v4-pro", "--yes")
+	if err == nil {
+		t.Fatal("a provider model was accepted for background under oauth")
+	}
+	if !strings.Contains(err.Error(), "api-key") {
+		t.Errorf("the refusal does not say which auth the model needs: %v", err)
+	}
+	if got := readFileString(t, path); got != before {
+		t.Errorf("the refused switch wrote the file:\n%s", got)
+	}
+}
+
 // TestModelsUsePinsAClaudeModelWithNoRoute: a Claude ID needs no route of the
 // project config — it goes to Anthropic — so the missing-route refusal is for a
 // vendor/model ID a route has not opened, never for one of these. The pin is
