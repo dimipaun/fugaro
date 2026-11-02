@@ -187,6 +187,17 @@ The pull request body must state which credential path it reuses and that the to
 is the coordinator's own read-only one (`github.CoordinatorTokenPermissions`, no `write` anywhere),
 that no credential reaches the console, and that the read refuses under the credentials service.
 
+**Bitbucket, 2026-11-01.** `show` reads GitHub only today: a Bitbucket repository is refused with
+`coordinator.ErrBitbucket`, exactly as `coordinator status` is. The owner ruled on 2026-11-01 that
+it gains a Bitbucket path, and the design of that path is not here — it is in
+[bitbucket-credentials](../bitbucket-credentials/implementation-plan.md), whose **BB4** adds a
+**person caller class** to the credentials service's read mint and opens the provider with the
+service's read consumer instead of refusing. BB4 follows the review-identity design's verifier class
+(C3.9f, PR #1514) and comes after it, after BB1, BB2 and the owner-run Check 145. Nothing in this
+task changes: the argv, the document and the console rows are the same for both providers, and the
+red step below still holds for GitHub. What changes for a Bitbucket repository is only which
+credential the read is opened with, and the read still refuses with no service configured.
+
 ---
 
 ### C4. `coordinator intents`: what the fleet has declared
