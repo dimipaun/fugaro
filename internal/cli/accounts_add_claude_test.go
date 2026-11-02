@@ -402,10 +402,11 @@ func TestAccountsAddClaudeRefusesAHostileClaude(t *testing.T) {
 
 // TestAccountsAddClaudeRefusedInEveryAgentSession is the owner's ruling of
 // 2026-11-01 (the A0 review's finding 1, option (b)): a coding agent's session
-// never runs Anthropic's login, --yes included (D868). Three things are
-// asserted for each marker, and the third is the one a fence placed only on the
-// write would fail: the refusal names the marker, nothing is written, and the
-// fake login's marker file is absent, so the login never ran.
+// never runs Anthropic's login, --yes included (D868). Four things are
+// asserted for each marker: the refusal is the login's own (a refusal from the
+// settings write, which also stops the session, would not name the login, so a
+// fence placed only on the write fails here), it names the marker, nothing is
+// written, and the fake login's marker file is absent, so the login never ran.
 func TestAccountsAddClaudeRefusedInEveryAgentSession(t *testing.T) {
 	for _, marker := range agentenv.Markers {
 		t.Run(marker, func(t *testing.T) {
@@ -424,6 +425,9 @@ func TestAccountsAddClaudeRefusedInEveryAgentSession(t *testing.T) {
 			}
 			if ExitCode(err) != ExitUserError {
 				t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+			}
+			if !strings.Contains(err.Error(), "refusing to run Anthropic's login") {
+				t.Errorf("the refusal is not the login's own, so the dedicated fence is unpinned: %v", err)
 			}
 			if !strings.Contains(err.Error(), marker) {
 				t.Errorf("the refusal does not name %s, so nobody knows which variable to unset: %v", marker, err)
