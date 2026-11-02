@@ -511,29 +511,29 @@ func TestRecipesSkewRefusesLevelsCarriedByTheTaskLayerOutsideACheckout(t *testin
 
 // TestRecipesSkewRefusesAResolutionThatRefused: config.ResolveLevels returns
 // zero levels beside its refusal, and zero reads as "no level is on" — the
-// fail-open direction. A resolution that refuses is a configuration the run's
-// own bootstrap stops on, but a 0.15.0 runner resolves no levels and stops on
-// nothing: it runs without the level 3 the mode's row asks for, and the
-// launcher would report that launch as the one it asked for.
-//
-// The configuration here is the L1 = L2 guard's (D721): first_line_review on
-// with agent.models naming the coder and the reviewer the same model, so
-// level 1 and level 2 resolve to it and the resolution refuses.
+// fail-open direction. Since L3.2 the launch refuses on that refusal itself,
+// before the task is written, and on every image: a run this launcher may not
+// make is not a launch whose image is worth judging, and a runner older than
+// reviewLevelsSince is never handed it at all. The configuration here is the
+// L1 = L2 guard's (D721): first_line_review on with agent.models naming the
+// coder and the reviewer the same model, so level 1 and level 2 resolve to it,
+// and the run's own bootstrap refuses the same task (L4.2).
 //
 // Mutation (read the refusal's zero levels as its answer, as `levels, _, _ :=
-// config.ResolveLevels(...)` does): the 0.15.0 launch below succeeds.
+// config.ResolveLevels(...)` does): the launches below succeed.
 func TestRecipesSkewRefusesAResolutionThatRefused(t *testing.T) {
 	f := newCloudFixture(t)
 	checkoutWorkflows(t, "  first_line_review: \"on\"\n  models: { coder: deepseek/deepseek-v4-pro, reviewer: deepseek/deepseek-v4-pro }\n",
 		"  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
-	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
-	_, _, err := execute(t, "run", "--repo", "acme/app", "--mode", "critical", "--run-id", "20261007-100000-abcd", "Fix it.")
-	if err == nil || !strings.Contains(err.Error(), "review level 3 (its adversarial step)") || ExitCode(err) != ExitUserError {
-		t.Fatalf("0.15.0: err = %v, want the level 3 refusal", err)
+	for _, image := range []string{"ghcr.io/dimipaun/fugaro-base:0.15.0", "ghcr.io/dimipaun/fugaro-base:0.16.0"} {
+		writeBuildRecord(t, f, appSlug, "web", image)
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--mode", "critical", "--run-id", "20261007-100000-abcd", "Fix it.")
+		if err == nil || !strings.Contains(err.Error(), "l2.model and l1.model are both deepseek/deepseek-v4-pro") || ExitCode(err) != ExitUserError {
+			t.Fatalf("%s: err = %v, want the same-model refusal", image, err)
+		}
 	}
-	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.16.0")
-	if _, _, err := execute(t, "run", "--repo", "acme/app", "--mode", "critical", "--run-id", "20261007-100000-abce", "Fix it."); err != nil {
-		t.Fatalf("0.16.0: %v", err)
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("the refused launches started %d executions, want none", n)
 	}
 }
 

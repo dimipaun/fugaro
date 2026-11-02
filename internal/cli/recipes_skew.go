@@ -1197,7 +1197,11 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // launchReviewLevelsAsk is reviewLevelsAsk for the launch about to be made:
 // the run's levels resolved the way the run resolves them (config.ResolveLevels,
 // the call L4.2's bootstrap makes), from the file the run will read, the mode
-// it resolves and the owner's floor.
+// it resolves and the owner's floor. The second result is that resolution's
+// own refusal: L3.2 refuses the launch on it, before the task is written, so a
+// configuration the run's bootstrap would refuse (L1 = L2, a level a layer
+// turns off under the owner's floor, an effort a provider route would drop)
+// costs no job and leaves nothing in the bucket.
 //
 // A policy node the launcher cannot read is one the launch's own policy gate
 // refuses (launchPolicyGates), and inventing a floor off it would refuse a
@@ -1207,11 +1211,7 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // what this launch knows without it is resolved rather than skipped: the mode
 // --mode asked for, the owner's floor, and the project layer the task carries
 // (launchLayerConfig), which is the configuration half no checkout was needed
-// to read. A resolution that refuses (L1 = L2, an effort a provider route
-// would drop) keeps its own refusal to make — the runner's bootstrap and
-// L3.2's launch check — but its zero levels are not read as its answer: the
-// mode's own row is the part a refusal cannot take away, and the level it
-// turns on is asked for from it.
+// to read.
 //
 // The mode is the launcher's approximation of the run's: the ref's file with
 // the flag raised over it, as noteRigorRequest reads it, since the
@@ -1220,7 +1220,7 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // the one thing that read could not settle: whether that recipe writes a
 // first-line step of its own. CatalogDefault is read as false: it decides
 // level 1's own default alone, which this gate does not judge.
-func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, recipeUnknown bool) string {
+func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, recipeUnknown bool) (string, error) {
 	if cfg == nil {
 		// No configuration file was read, because the launcher stands
 		// outside the repository's checkout and this run's ref is not in one
@@ -1242,18 +1242,15 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 		Config: cfg, Mode: mode, Floor: floor, Task: spec.ReviewLevels, Recipe: rcp, Providers: env.lc.Providers,
 	})
 	if err != nil {
-		// A refusal comes back with zero levels, and zero reads as "no
-		// level is on": acting on it would ask nothing of an image for the
-		// very run the resolution would not answer for. Only the mode's own
-		// row survives the refusal (rigor.DefaultLevels), so the level it
-		// turns on is asked for still; the refusal itself, and every level
-		// the layers decided, stay where they are made — the run's
-		// bootstrap, and the blocks this launch reads directly below.
-		if row, rowErr := rigor.DefaultLevels(mode); rowErr == nil && row.L3 == rigor.LevelOn {
-			levels.L3.On = true
-		}
+		// Nothing is asked of the image and no task is written: the launch is
+		// the resolution's to refuse, and a refusal carries no levels to read
+		// an ask off (config.ResolveLevels answers with the zero Levels).
+		// Refusing here rather than leaving it to the run's bootstrap is what
+		// G2 means by "never launches", and the alternative is a job paid for
+		// a run whose first act is to refuse the task it was given.
+		return "", userErr("%v", err)
 	}
-	return reviewLevelsAsk(levels, spec.ReviewLevels, cfg, floor, recipeUnknown)
+	return reviewLevelsAsk(levels, spec.ReviewLevels, cfg, floor, recipeUnknown), nil
 }
 
 // launchLayerConfig is the configuration a launch from outside the
