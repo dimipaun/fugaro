@@ -249,8 +249,12 @@ In order:
 6. **Hand off.** `next: fugaro update`.
 
 **The sensitive directions ask for the typed project name** (`confirmTypedStrict`, D846): loosening
-a ceiling key (`budget.*`, `governance.*`), removing a `review_floor` entry, turning a `followup.*`
-key on, or writing a key the registry marks as a floor. **D1107 (owner, 2026-11-01) amends this for
+a ceiling key (`budget.*`, the agent caps `agent.max_budget_usd` and `agent.max_run_tokens` — with
+the layer's own `defaults.agent.max_budget_usd`, the cap every repository the layer templates runs
+with — and `governance.*`), removing a `review_floor` entry, turning a `followup.*` key on or adding
+a name to one of its lists (`--add` on `followup.trusted` widens who may steer a run; `--remove`
+takes a name off and is the ordinary write), or writing a key the registry marks as a floor.
+**D1107 (owner, 2026-11-01) amends this for
 `set` and `unset` alone:** these two take `--yes` for that form outside a coding agent's session,
 and the typed name is still what a real terminal asks for; `fugaro project repos rm` and `fugaro
 update`'s publish of a looser node are the doors where nothing stands in for it.
@@ -276,6 +280,16 @@ allowed_models,unreachable_grace}`, `base_branch`, `repos.<r>.base_branch`, `max
 `defaults.agent.*`, the repository's `agent.*`, `git.*`, `followup.*`, `governance.*` scalars,
 `default_profile`, and the new `credentials.*` and `clone_urls.*` scalars whose family is §5.6. A key
 with a family is refused with a pointer, never written twice by two paths.
+
+The **ceiling keys** among them, whose loosening §4.2 types, are `budget.*`, `governance.*` and the
+agent block's two caps, `agent.max_budget_usd` and `agent.max_run_tokens` — each of them also typed
+under the project layer's own spellings, `layer.governance.*` and `layer.defaults.agent.*`, of which
+the second is the spend cap every repository the layer templates runs with.
+
+A name none of these matches is refused with the nearest of **these** keys, and never with a registry
+row this path refuses: `budget.mode` and `budget.per_day_usd` are rows the read prints and this path
+refuses by name, so a hint that answered a misspelling of one with it would send the person from this
+refusal to the next.
 
 ## 5. The dedicated families
 
