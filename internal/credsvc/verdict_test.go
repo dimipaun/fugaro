@@ -27,6 +27,7 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1160,5 +1161,457 @@ func TestVerifyRouteRefusesAnEmptyVerifierList(t *testing.T) {
 	}
 	if s.audit.Len() != 0 {
 		t.Errorf("a caller no verifier list admits wrote an audit line: %q", s.audit.String())
+	}
+}
+
+// signFor is the signature the sign route would have answered for one run of
+// one repository: the HMAC of C3.9e's framed message under the fixture's
+// review-signing key. A test that verifies a signature recomputes it from the
+// three parts rather than taking it from the service, so what is checked is the
+// frame's own bytes.
+func signFor(t *testing.T, slug, run, digest string) string {
+	t.Helper()
+	mac := hmac.New(sha256.New, signKey(t))
+	mac.Write([]byte(frameVersion + "\n" + slug + "\n" + run + "\n" + digest))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// TestVerifyRouteAnswersATypedRefusalWhenTheKeyIsUnreadable: the distinction
+// §5.3 exists for. An account this installation holds no review-signing entry
+// for, and a bundle the service cannot read at all, are answers the service
+// CANNOT GIVE — and a bare `false` would tell a coordinator that a verdict is
+// not ours when the truth is that we could not tell. So both are typed
+// refusals, and a coordinator reads both as "do not ship" without ever reading
+// them as "the artifact is not that account's".
+func TestVerifyRouteAnswersATypedRefusalWhenTheKeyIsUnreadable(t *testing.T) {
+	t.Run("an account with no key", func(t *testing.T) {
+		s := verifySvc(t, []string{testVerifierSA})
+		resp, body := s.verifyCall(t, verifyBody("another-account", s.run, s.slug, testDigest(t, "no-key"), strings.Repeat("0", 64)))
+		if resp.StatusCode != StatusUnavailable {
+			t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+		}
+		if got := refusal(t, resp.StatusCode, body); got.Error != ErrorStateUnavailable {
+			t.Errorf("the refusal is %q, want %q", got.Error, ErrorStateUnavailable)
+		}
+		if strings.Contains(string(body), `"valid"`) {
+			t.Errorf("an unreadable key was answered with the bit: %s", body)
+		}
+		lines := parseAuditLines(t, s.audit.String())
+		if len(lines) != 1 {
+			t.Fatalf("the refusal wrote %d audit lines, want exactly one", len(lines))
+		}
+		if got := lines[0]["status"]; got != ErrorStateUnavailable {
+			t.Errorf("the line's status is %v, want %q", got, ErrorStateUnavailable)
+		}
+		if got := lines[0]["credential"]; got != "" {
+			t.Errorf("the line names credential %v, want none: no entry was chosen", got)
+		}
+	})
+
+	t.Run("a bundle that cannot be read", func(t *testing.T) {
+		s := verifySvc(t, []string{testVerifierSA})
+		s.src.docs = [][]byte{[]byte("{not json")}
+		resp, body := s.verifyCall(t, verifyBody(testReviewAccount, s.run, s.slug, testDigest(t, "unreadable"), strings.Repeat("0", 64)))
+		if resp.StatusCode != StatusUnavailable {
+			t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+		}
+		if got := refusal(t, resp.StatusCode, body); got.Error != ErrorStateUnavailable {
+			t.Errorf("the refusal is %q, want %q", got.Error, ErrorStateUnavailable)
+		}
+	})
+}
+
+// TestVerifyRouteRefusesAnAccountTheCallerMayNotAskAbout: the account a verify
+// call names is held to the rule a bundle entry's NAME is held to (spec §5.3),
+// and a name that could not be one is `request_refused` — "your call was bad" —
+// and never `valid:false`, which keeps the bit's one meaning: the service
+// recomputed the HMAC and it differs.
+func TestVerifyRouteRefusesAnAccountTheCallerMayNotAskAbout(t *testing.T) {
+	for _, tc := range []struct{ name, account string }{
+		{"empty", ""},
+		{"a name with a space", "two words"},
+		{"a name with a newline", "line\nbreak"},
+		{"a name over the bundle's bound", strings.Repeat("a", maxCredentialNameBytes+1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := verifySvc(t, []string{testVerifierSA})
+			resp, body := s.verifyCall(t, verifyBody(tc.account, s.run, s.slug, testDigest(t, "account"), strings.Repeat("0", 64)))
+			if resp.StatusCode != StatusRequestRefused {
+				t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusRequestRefused, body)
+			}
+			if got := refusal(t, resp.StatusCode, body); got.Error != ErrorRequestRefused {
+				t.Errorf("the refusal is %q, want %q", got.Error, ErrorRequestRefused)
+			}
+			if n := s.src.readCount(); n != 0 {
+				t.Errorf("the bundle was read %d times, want none: a name this contract refuses reads no key", n)
+			}
+		})
+	}
+}
+
+// TestVerifyRouteDoesNotEchoTheAccountOrAKeyID: the answer is the one bit and
+// NOTHING else — no reason, no key id, no account echo, and no distinguisher
+// between "wrong key" and "wrong bytes" (§5.3). The account is the caller's own
+// text and the key's entry name is derived from it, so a route that echoed
+// either would be handing back a name it was asked about and, worse, telling a
+// caller which entry the service looked for.
+func TestVerifyRouteDoesNotEchoTheAccountOrAKeyID(t *testing.T) {
+	s := verifySvc(t, []string{testVerifierSA})
+	account := "another-account"
+	digest := testDigest(t, "no-echo")
+
+	for _, call := range []struct {
+		name string
+		body string
+	}{
+		{"a served call", verifyBody(account, s.run, s.slug, digest, strings.Repeat("0", 64))},
+		{"a refused call", verifyBody(account, s.run, s.slug, digest, "not-a-signature")},
+	} {
+		t.Run(call.name, func(t *testing.T) {
+			resp, body := s.verifyCall(t, call.body)
+			haystack := string(body) + s.audit.String() + s.logs.String()
+			for what, value := range map[string]string{
+				"the account":            account,
+				"the key's entry name":   config.ReviewSigningKeySecret(account),
+				"the previous entry":     config.ReviewSigningKeyPreviousSecret(account),
+				"the account of the key": config.ReviewSigningKeySecret(testReviewAccount),
+			} {
+				if strings.Contains(haystack, value) {
+					t.Errorf("the %s (%d) carries %s: %s", call.name, resp.StatusCode, what, haystack)
+				}
+			}
+		})
+	}
+}
+
+// TestVerifyRouteRefusesASignatureMadeForAnotherRunOrRepository: the frame is
+// what makes a signature valid for exactly one run of one repository (D1073),
+// and the verify route refuses a cross-run or cross-repository replay BY ITSELF
+// — the service recomputes the HMAC over the frame the caller names, so naming
+// different bytes is `valid:false` and not a match. No coordinator check is
+// involved: this is the service's own answer about its own signature.
+func TestVerifyRouteRefusesASignatureMadeForAnotherRunOrRepository(t *testing.T) {
+	s := verifySvc(t, []string{testVerifierSA})
+	digest := testDigest(t, "replay")
+	signature := signFor(t, s.slug, s.run, digest)
+
+	resp, body := s.verifyCall(t, verifyBody(testReviewAccount, s.run, s.slug, digest, signature))
+	verifyValid(t, resp, body, true)
+
+	for _, tc := range []struct{ name, run, repository string }{
+		{"another run of the same repository", "20261102-120000-ffff", s.slug},
+		{"another repository", s.run, "aurora-other"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, body := s.verifyCall(t, verifyBody(testReviewAccount, tc.run, tc.repository, digest, signature))
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("the answer is %d, want the one bit: %s", resp.StatusCode, body)
+			}
+			verifyValid(t, resp, body, false)
+		})
+	}
+
+	t.Run("the digest is bound too", func(t *testing.T) {
+		resp, body := s.verifyCall(t, verifyBody(testReviewAccount, s.run, s.slug, testDigest(t, "another"), signature))
+		verifyValid(t, resp, body, false)
+	})
+}
+
+// TestVerifyRouteIsAnsweredAheadOfTheSharedParse: the ordering is the whole of
+// why the class exists (spec §5.4). RequestFromHTTP reads the two identity
+// headers and Verify refuses a call with no run identity BEFORE ServeHTTP
+// branches on the path — and a verifier holds no run identity, so a route left
+// behind that parse refuses every verifier before the class is ever consulted,
+// and the whole route is dead configuration.
+//
+// The call below carries the verifier's Google ID token and NOTHING else: no
+// run identity, no reported job name. It is answered. The contrast case is the
+// same omission on a route the shared parse does reach, which is still refused
+// exactly as it was.
+func TestVerifyRouteIsAnsweredAheadOfTheSharedParse(t *testing.T) {
+	s := verifySvc(t, []string{testVerifierSA})
+	digest := testDigest(t, "ordering")
+	body := verifyBody(testReviewAccount, s.run, s.slug, digest, signFor(t, s.slug, s.run, digest))
+
+	resp, answer := s.verifyCall(t, body)
+	verifyValid(t, resp, answer, true)
+
+	// The same call, with the two headers the shared parse wants filled in with
+	// a run identity that is not a verifier's: it is still the class's answer,
+	// because the class is the whole of this route's admission.
+	resp, answer = s.verifyCall(t, body, func(r *http.Request) {
+		r.Header.Set(HeaderRunIdentity, s.runToken())
+		r.Header.Set(HeaderRunJob, s.job)
+	})
+	verifyValid(t, resp, answer, true)
+
+	t.Run("a route the shared parse reaches still needs a run identity", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodPost, s.http.URL+SignPath, strings.NewReader(signBody(digest)))
+		if err != nil {
+			t.Fatalf("building the call: %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+verifierToken(t, s, testVerifierSA))
+		resp, err := s.http.Client().Do(req)
+		if err != nil {
+			t.Fatalf("the call failed: %v", err)
+		}
+		defer resp.Body.Close()
+		raw, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("reading the answer: %v", err)
+		}
+		if resp.StatusCode != StatusUnverified {
+			t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, raw)
+		}
+		if got := refusal(t, resp.StatusCode, raw); got.Error != ErrorUnverifiedRunIdentity {
+			t.Errorf("the refusal is %q, want %q", got.Error, ErrorUnverifiedRunIdentity)
+		}
+	})
+}
+
+// TestVerifyComparesTheSignatureInConstantTime: F7's rule. The signature is an
+// attacker-supplied value, so the comparison must not stop at the first
+// differing byte — a `==` on the hex strings, or a byte loop of the caller's
+// own, would let a caller learn a valid prefix from how long the answer took.
+//
+// The test wraps the comparison the route makes and asserts it is reached with
+// two 32-byte MACs, which is what makes hmac.Equal's guarantee apply: it is
+// constant-time for equal lengths. A same-length wrong signature is then a plain
+// `valid:false`, and the wrapper delegates to hmac.Equal, so what is observed is
+// the route's behaviour and not a comment about it.
+func TestVerifyComparesTheSignatureInConstantTime(t *testing.T) {
+	s := verifySvc(t, []string{testVerifierSA})
+	digest := testDigest(t, "constant-time")
+
+	var (
+		mu      sync.Mutex
+		lengths [][2]int
+	)
+	original := verifyEqual
+	verifyEqual = func(a, b []byte) bool {
+		mu.Lock()
+		lengths = append(lengths, [2]int{len(a), len(b)})
+		mu.Unlock()
+		return hmac.Equal(a, b)
+	}
+	t.Cleanup(func() { verifyEqual = original })
+
+	resp, body := s.verifyCall(t, verifyBody(testReviewAccount, s.run, s.slug, digest, signFor(t, s.slug, s.run, digest)))
+	verifyValid(t, resp, body, true)
+
+	// A signature of exactly the shape and length a real one has, and wrong: it
+	// is a `valid:false` and not a refusal, so it reaches the comparison.
+	wrong := strings.Repeat("a", 64)
+	resp, body = s.verifyCall(t, verifyBody(testReviewAccount, s.run, s.slug, digest, wrong))
+	verifyValid(t, resp, body, false)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(lengths) != 2 {
+		t.Fatalf("the comparison was reached %d times, want once per served call", len(lengths))
+	}
+	for _, l := range lengths {
+		if l[0] != sha256.Size || l[1] != sha256.Size {
+			t.Errorf("the comparison was handed %d and %d bytes, want two %d-byte MACs", l[0], l[1], sha256.Size)
+		}
+	}
+}
+
+// TestVerifyRouteRefusesACallerOutsideTheVerifierList: the list is the ROUTE's
+// admission and not the installation's job set. An address that is one of the
+// installation's job service accounts — even one whose review class is
+// configured — is not a verifier until it is written into this list, and the
+// refusal is the class's own typed one, with no audit line, because nothing was
+// verified.
+func TestVerifyRouteRefusesACallerOutsideTheVerifierList(t *testing.T) {
+	s := verifySvc(t, []string{testVerifierSA})
+	digest := testDigest(t, "outside")
+	body := verifyBody(testReviewAccount, s.run, s.slug, digest, signFor(t, s.slug, s.run, digest))
+
+	resp, answer := s.verifyTokens(t, body, s.jobToken())
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, answer)
+	}
+	if got := refusal(t, resp.StatusCode, answer); got.Error != ErrorUnverifiedJobIdentity {
+		t.Errorf("the refusal is %q, want %q", got.Error, ErrorUnverifiedJobIdentity)
+	}
+	if s.audit.Len() != 0 {
+		t.Errorf("a caller the list does not hold wrote an audit line: %q", s.audit.String())
+	}
+	if n := s.src.readCount(); n != 0 {
+		t.Errorf("the bundle was read %d times, want none: nothing is verified yet", n)
+	}
+}
+
+// TestReviewAccountCannotUseTheVerifyRoute: the two classes are two lists on
+// purpose. The fixture's review job account is configured as a review caller —
+// it may sign and it may call the model path — and it may NOT verify: a
+// verifier's answer is about a verdict the coordinator launched, and an account
+// that produced a verdict must not be the one that answers whether it is
+// genuine. The class is the route's own gate, so this is the same refusal a
+// stranger's address gets.
+func TestReviewAccountCannotUseTheVerifyRoute(t *testing.T) {
+	s := verifySvc(t, []string{testVerifierSA})
+	digest := testDigest(t, "review-account")
+	body := verifyBody(testReviewAccount, s.run, s.slug, digest, signFor(t, s.slug, s.run, digest))
+
+	resp, answer := s.verifyTokens(t, body, s.reviewJobToken())
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, answer)
+	}
+	if got := refusal(t, resp.StatusCode, answer); got.Error != ErrorUnverifiedJobIdentity {
+		t.Errorf("the refusal is %q, want %q", got.Error, ErrorUnverifiedJobIdentity)
+	}
+	if s.audit.Len() != 0 {
+		t.Errorf("a review account's verify attempt wrote an audit line: %q", s.audit.String())
+	}
+}
+
+// TestVerifyRouteRefusesAnUnknownFieldAndAnOversizeBody: the body decodes
+// strictly and is bounded, as every body of this contract is (Convention 6).
+// The bound is checked before the bundle is read, so a body that is not a verify
+// call reads no key.
+func TestVerifyRouteRefusesAnUnknownFieldAndAnOversizeBody(t *testing.T) {
+	t.Run("an unknown field", func(t *testing.T) {
+		s := verifySvc(t, []string{testVerifierSA})
+		body := `{"account":"` + testReviewAccount + `","digest":"` + testDigest(t, "unknown") +
+			`","signature":"` + strings.Repeat("0", 64) + `","run":"r","repository":"s","alg":"MD5"}`
+		resp, answer := s.verifyCall(t, body)
+		if resp.StatusCode != StatusRequestRefused {
+			t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusRequestRefused, answer)
+		}
+		if got := refusal(t, resp.StatusCode, answer); got.Error != ErrorRequestRefused {
+			t.Errorf("the refusal is %q, want %q", got.Error, ErrorRequestRefused)
+		}
+	})
+
+	t.Run("an oversize body", func(t *testing.T) {
+		s := verifySvc(t, []string{testVerifierSA})
+		big := `{"account":"` + testReviewAccount + `","digest":"` + testDigest(t, "oversize") +
+			`","signature":"` + strings.Repeat("0", 64) + `","run":"r","repository":"s","x":"` +
+			strings.Repeat("a", maxMintRequestBytes) + `"}`
+		resp, answer := s.verifyCall(t, big)
+		if resp.StatusCode != StatusRequestRefused {
+			t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusRequestRefused, answer)
+		}
+		if n := s.src.readCount(); n != 0 {
+			t.Errorf("the bundle was read %d times, want none: the bound is checked before a key is read", n)
+		}
+	})
+
+	t.Run("a signature that is not 64 lowercase hex", func(t *testing.T) {
+		s := verifySvc(t, []string{testVerifierSA})
+		resp, answer := s.verifyCall(t, verifyBody(testReviewAccount, s.run, s.slug, testDigest(t, "short"), "ABCDEF"))
+		if resp.StatusCode != StatusRequestRefused {
+			t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusRequestRefused, answer)
+		}
+		if strings.Contains(string(answer), `"valid"`) {
+			t.Errorf("a malformed signature was answered with the bit rather than refused: %s", answer)
+		}
+	})
+}
+
+// TestVerifyRouteRegistersItsOwnIdentityTokenForRedaction: §5.6's rule for the
+// one route the shared parse never reaches. readCall builds the call-scoped
+// scrub the model path and the sign route use, and it is requested by THIS
+// handler with the one Google ID token the verifier carries, and with that one
+// only: the shared parse that would have gathered it never runs for this path.
+//
+// Neither the verifier's token nor its signature reaches the answer, the audit
+// line, a log line or the text of a refusal. TestReviewRoutesNeverPrintEitherIdentityToken
+// is not a substitute: it drives the routes the shared parse does reach, which
+// is why this route needs one of its own.
+func TestVerifyRouteRegistersItsOwnIdentityTokenForRedaction(t *testing.T) {
+	const marker = "verify-route-identity-token"
+	s := verifySvc(t, []string{testVerifierSA})
+	tok := verifierToken(t, s, testVerifierSA, func(c map[string]any) { c["nonce"] = marker })
+	if tok == verifierToken(t, s, testVerifierSA) {
+		t.Fatal("the marker did not reach the token, so this test would prove nothing")
+	}
+	digest := testDigest(t, "redaction")
+	signature := signFor(t, s.slug, s.run, digest)
+
+	// A call the service serves, a call it refuses for what was sent, and a
+	// call it cannot answer — the three paths an echo could happen on. The
+	// refused one carries the token AS the account name, which is the one field
+	// a caller controls that the service reads and then reports on.
+	served, answer := s.verifyTokens(t, verifyBody(testReviewAccount, s.run, s.slug, digest, signature), tok)
+	if served.StatusCode != http.StatusOK {
+		t.Fatalf("the served verify call was answered %d: %s", served.StatusCode, answer)
+	}
+	refused, refusalBody := s.verifyTokens(t, verifyBody(tok, s.run, s.slug, digest, signature), tok)
+	if refused.StatusCode != StatusUnavailable {
+		t.Fatalf("the refused verify call was answered %d", refused.StatusCode)
+	}
+	_, malformed := s.verifyTokens(t, `{"account":`, tok)
+
+	for where, haystack := range map[string]string{
+		"the served answer":     string(answer),
+		"the refusal":           string(refusalBody),
+		"the malformed refusal": string(malformed),
+		"the audit log":         s.audit.String(),
+		"the service's own log": s.logs.String(),
+	} {
+		if strings.Contains(haystack, tok) {
+			t.Errorf("%s carries the verifier's identity token: %s", where, haystack)
+		}
+		if strings.Contains(haystack, signature) {
+			t.Errorf("%s carries the signature: %s", where, haystack)
+		}
+	}
+}
+
+// TestVerifyRouteAuditsTheActAndNeverTheDigestOrTheSignature: the line carries
+// the verifier as its caller and the review-signing key as its credential, and
+// neither a run nor a job (§5.5) — a verifier holds no run identity and is not a
+// job of this installation, so the act is the purpose, the credential and the
+// status. The digest, the signature and the key's bytes reach no field: a field
+// that is a caller's bytes is what the closed field set exists to keep out, and
+// a line that carried the signature would invite one to carry the key.
+func TestVerifyRouteAuditsTheActAndNeverTheDigestOrTheSignature(t *testing.T) {
+	s := verifySvc(t, []string{testVerifierSA})
+	digest := testDigest(t, "audited")
+	signature := signFor(t, s.slug, s.run, digest)
+
+	resp, body := s.verifyCall(t, verifyBody(testReviewAccount, s.run, s.slug, digest, signature))
+	verifyValid(t, resp, body, true)
+
+	lines := parseAuditLines(t, s.audit.String())
+	if len(lines) != 1 {
+		t.Fatalf("the verify wrote %d audit lines, want exactly one", len(lines))
+	}
+	line := lines[0]
+	checkAuditShape(t, line)
+	for field, want := range map[string]string{
+		"run":        "",
+		"repository": "",
+		"job":        "",
+		"caller":     testVerifierSA,
+		"credential": config.ReviewSigningKeySecret(testReviewAccount),
+		"purpose":    PurposeReviewVerify,
+		"tier":       "",
+		"status":     StatusOK,
+	} {
+		if got := line[field]; got != want {
+			t.Errorf("%s = %v, want %q", field, got, want)
+		}
+	}
+
+	raw := s.audit.String()
+	for what, value := range map[string]string{
+		"the digest":           digest,
+		"the signature":        signature,
+		"the key's bytes":      reviewKey(t, "current"),
+		"the previous key":     reviewKey(t, "previous"),
+		"the previous entry":   config.ReviewSigningKeyPreviousSecret(testReviewAccount),
+		"the account's token":  fakeCred(t, testReviewAccount),
+		"the verifier's token": verifierToken(t, s, testVerifierSA),
+	} {
+		if strings.Contains(raw, value) {
+			t.Errorf("the audit line carries %s: %s", what, raw)
+		}
+	}
+	if s.logs.Len() != 0 {
+		t.Errorf("a served verify wrote a service log line: %q", s.logs.String())
 	}
 }
