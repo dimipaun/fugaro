@@ -110,6 +110,56 @@ func TestLevelsL3BounceSkipsL2(t *testing.T) {
 	}
 }
 
+// TestLevelsL3BounceNeverDecidesWithoutL2: level 2 can be off while level 3 is
+// on — a task writes `l2: none` under a repository that added level 3 — and
+// then level 3 is the deciding level even though no level 2 round exists. The
+// bounce level 3 sends the first line into must not become the round the mode's
+// findings policy is read off: it would split level 1's findings against a
+// level 3 round the mode never tolerated, and the run would report level 1's
+// finding as the one it left open.
+//
+// The run here stops inside the bounce: level 3's last round produces no
+// parseable verdict after its retry, which ends the loop without failing the
+// run, so the round left behind is the bounce's own. A run that stops is a
+// draft either way — finalize reports ready for no halt, failure or cancel —
+// so the record's tolerated findings are where the wrong round shows.
+func TestLevelsL3BounceNeverDecidesWithoutL2(t *testing.T) {
+	cfg := modeCfg(t, "startup", 1, "  first_line_review: on\n  recipe: levels\n  adversarial_rounds: 2\n")
+	spec := &task.Spec{
+		Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature",
+		ReviewLevels: &config.ReviewLevels{
+			L2: &config.LevelSetting{Off: true},
+			L3: &config.LevelSetting{Model: "senior-model"},
+		},
+	}
+	h := newHarnessFiles(t, cfg, spec, levelsFiles)
+	// Startup's table tolerates this finding and blocks the unscored one
+	// (TestDecideToleratedRoundOpensAReadyPR, D4).
+	tolerated := map[string]any{"summary": "fix it", "likelihood": 2, "impact": 2, "fix_cost": 1, "class": "correctness"}
+	rec, err := h.run(t,
+		implement("feature"),
+		review("ship", 0),                  // review_first: level 1's own round
+		review("changes", 1),               // adversarial round 1: an unscored finding, which blocks in every mode (D4)
+		fixStep,                            // its fix
+		reviewScored("changes", tolerated), // review_first: the bounce, the round that must not decide
+		fixStep,                            // the bounce's fix
+		noVerdictStep,                      // adversarial round 2
+		noVerdictStep,                      // and its retry: level 3 leaves no verdict
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "adversarial", "fix", "review_first", "fix", "adversarial", "adversarial") {
+		t.Fatalf("stages = %v", got)
+	}
+	if rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("outcome = %s, want draft (reason %q)", rec.Outcome, rec.Reason)
+	}
+	if rec.Tolerated != nil {
+		t.Errorf("the record's tolerated findings = %+v, want none: level 3 is the deciding level, and the finding it left blocks in every mode (D4)", rec.Tolerated)
+	}
+}
+
 // TestLevelsReadinessHighestLevel: readiness is decided by the highest enabled
 // level that ran, and only when every enabled outer level's last verdict is
 // ship (D727, G4). At Critical all three levels run, so the rule can end a run

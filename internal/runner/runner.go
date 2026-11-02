@@ -2954,14 +2954,15 @@ func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string
 // ends it. It reports the session to go on with, and whether the run may
 // go on to the senior review.
 //
-// A run whose level 2 does not run at all has no outer level, so the first line
-// is what decides readiness (D723, rigor.defaultLevels' POC row): its last
-// round is kept as the deciding round exactly as a senior round would be. In a
-// run with an outer level the cheap loop is never the decider, and a bounce's
-// extra rounds must not overwrite the senior round the mode's findings policy
-// is read off (outcome.go, findingsPolicy).
+// A run in which level 2 does not run at all has no outer level only when level
+// 3 is off too, so the first line is what decides readiness (D723,
+// rigor.defaultLevels' POC row): its last round is kept as the deciding round
+// exactly as a senior round would be. In a run with an outer level the cheap
+// loop is never the decider, and a bounce's extra rounds must not overwrite the
+// senior round the mode's findings policy is read off (outcome.go,
+// findingsPolicy).
 func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sessionID string) (string, bool) {
-	decides := !levelOn(r.levels, policy.LevelL2)
+	decides := !levelOn(r.levels, policy.LevelL2) && !levelOn(r.levels, policy.LevelL3)
 	for round := 1; round <= rounds; round++ {
 		head := r.reviewedHead(ctx)
 		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
