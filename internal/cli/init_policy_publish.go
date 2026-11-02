@@ -91,6 +91,16 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 			add("review_floor", floor, p.ReviewFloor, false)
 		}
 	}
+	// The verifier list is compared the same way and for the same reason: the
+	// node is where the credentials service's list comes from, so a config edit
+	// that names a verifier and a node that carries none is exactly the gap
+	// this stage exists to close. A config silent about the list names nothing
+	// — it keeps the node's (localcfg's rule) — and a written empty one differs
+	// from a node that still carries a list, which is the removal an operator
+	// has to see.
+	if lc.VerifierAccounts != nil {
+		add("verifier_accounts", lc.VerifierAccounts, p.VerifierAccounts, false)
+	}
 	// The members a publish DERIVES from the local config are compared too, by
 	// their own derivation: the accounts block, which is the operator's
 	// claude_accounts.<name>.allow_data_to qualified with the provider of the

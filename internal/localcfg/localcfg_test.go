@@ -1734,3 +1734,106 @@ func TestLocalcfgDecodesTheAccountChoiceBlockStrictly(t *testing.T) {
 		})
 	}
 }
+
+// TestVerifierAccountsDecode is the member's own shape: the operator's list of
+// the addresses that may ask the credentials service's verify route, written
+// where the policy node is built from and never in a reviewed repository's
+// fugaro.yaml. The entries are bare addresses, and the node's rule — the one
+// check both writers are held to — refuses the member spellings the
+// installation's IAM lists are written with.
+func TestVerifierAccountsDecode(t *testing.T) {
+	c, err := Parse([]byte(sample + "verifier_accounts: [person-1@example.com, fugaro-coordinator@proj-1234.iam.gserviceaccount.com]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"person-1@example.com", "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"}
+	if !slices.Equal(c.VerifierAccounts, want) {
+		t.Errorf("VerifierAccounts = %v, want %v", c.VerifierAccounts, want)
+	}
+	// The key absent is not the same value as the key written empty: the first
+	// keeps what the node publishes, the second clears it (the rule below).
+	silent, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if silent.VerifierAccounts != nil {
+		t.Errorf("a config that says nothing about the list = %v, want nil", silent.VerifierAccounts)
+	}
+	empty, err := Parse([]byte(sample + "verifier_accounts: []\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.VerifierAccounts == nil || len(empty.VerifierAccounts) != 0 {
+		t.Errorf("VerifierAccounts = %v, want a written empty list", empty.VerifierAccounts)
+	}
+	for _, body := range []string{
+		"verifier_accounts: [serviceAccount:person-1@example.com]\n",
+		"verifier_accounts: [person-1]\n",
+	} {
+		if _, err := Parse([]byte(sample + body)); err == nil || !strings.Contains(err.Error(), "verifier_accounts") {
+			t.Errorf("Parse(%q) = %v, want a refusal naming the entry", body, err)
+		}
+	}
+}
+
+// TestVerifierAccountsRuleKeepsTheNodesListWhenTheConfigIsSilent is one half of
+// the one rule both writers apply (C3.9g1's tfvars writer and C3.9g3's
+// publisher), stated once because the list reaches the service by two paths: a
+// second operator whose config predates the key must neither publish a node
+// without the list nor render the service's variable null, which would empty a
+// route another machine set up. The other half is below: deletion is not how a
+// route is turned off, so a written empty list is the spelling that clears it.
+func TestVerifierAccountsRuleKeepsTheNodesListWhenTheConfigIsSilent(t *testing.T) {
+	published := []string{"person-1@example.com"}
+	silent, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := silent.VerifierAccountsEffective(published); !slices.Equal(got, published) {
+		t.Errorf("a silent config takes %v, want the published %v", got, published)
+	}
+	stated, err := Parse([]byte(sample + "verifier_accounts: [person-2@example.com]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := stated.VerifierAccountsEffective(published), []string{"person-2@example.com"}; !slices.Equal(got, want) {
+		t.Errorf("a config that states a list takes %v, want %v", got, want)
+	}
+}
+
+func TestVerifierAccountsRuleTakesAnExplicitEmptyList(t *testing.T) {
+	empty, err := Parse([]byte(sample + "verifier_accounts: []\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := empty.VerifierAccountsEffective([]string{"person-1@example.com"}); len(got) != 0 {
+		t.Errorf("a written empty list takes %v, want none: it is how the route is turned off on purpose", got)
+	}
+}
+
+// TestVerifierAccountsNotInShared: the list is the operator's own, and the
+// shared config is the file any launcher with objectAdmin on the runs bucket
+// can write — a launcher who could write this list could admit its own address
+// to the verify route. It is dropped here for bitbucket_api_roots' reason, and
+// internal/cli's ParseShared refuses the key besides.
+func TestVerifierAccountsNotInShared(t *testing.T) {
+	c, err := Parse([]byte(sample + "verifier_accounts: [person-1@example.com]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, got := range map[string]*Config{"shared": c.Shared(), "merged": MergeShared(nil, c)} {
+		if got.VerifierAccounts != nil {
+			t.Errorf("%s: verifier_accounts = %v", name, got.VerifierAccounts)
+		}
+		out, err := got.Marshal()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(string(out), "verifier_accounts") {
+			t.Errorf("%s: output carries verifier_accounts:\n%s", name, out)
+		}
+	}
+	if len(c.VerifierAccounts) != 1 {
+		t.Error("Shared/MergeShared cleared the local list")
+	}
+}
