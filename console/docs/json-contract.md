@@ -2097,11 +2097,16 @@ is `0`: every declaration the store holds. The node is already bounded — the
 sweep keeps the newest few hundred records and prunes by age — so a window that
 defaulted to hiding the rest would be a fact a reader never sees.
 
-**The console's row is a later task.** This section is the CLI's half of
-coordinator v2 C4: the spawn row, the operation and the decoder are C4c and are
-**not** in this document's scope, so nothing here authorises a spawn — §5.1's
-table and the allow-lists are where a row is admitted, and no row, operation or
-decoder is added by this section.
+**The console's row landed in C4c.** This section is the CLI's half of
+coordinator v2 C4, and the console's half is the same task's part c: the spawn
+row, the operation, the preload row and the decoder. Where §5.1's table and the
+allow-lists are is where a row is admitted, and what they admit is **one argv and
+only one** — `coordinator intents --all --json`, the fixed words of
+`console/src/main/spawn.ts`'s row, with an empty argument schema
+(`console/src/main/ipc.ts`) so that no field a renderer sends can reach the
+child. This document states what the CLI prints; it authorises no spawn, and the
+row it now has is the `--all` document alone: the single-repository form below is
+a shape no console row asks for, and the decoder refuses it.
 
 **Version skew.** Every field is additive. A CLI older than this command has no
 such read at all, and the console shows the section as unavailable (the
@@ -2290,6 +2295,7 @@ and **not** off this document or the design:
 | `plan status` | yes (`newPlanStatusCmd`, §6.12) — a task's state is a *run's* state, so it reads the runs bucket too |
 | `coordinator status` | yes (`newCoordinatorStatusCmd`, §6.13) — with `--from-store` it is the one read here that asks nothing of the host (the stored view, through the caller's own credentials), and it is a cloud read all the same: the view lives in the project's database, so it carries `--project` and `--config` like the rest |
 | `coordinator show` | yes (`newCoordinatorShowCmd`, §6.15) — the pull request read (coordinator v2 C3, D816): `--repo` and `--pr` are its own two arguments, both required, and it carries `--project` and `--config` like the rest because it resolves the repository's provider the way the project view does. **The second row here whose child mints a credential of the host's** — the first is `run`'s below, whose child is a run and mints the write-capable token it pushes and opens the pull request with; this row's is the coordinator's own read-only installation token, revoked when the command is done — so its argv is the whole of what a renderer may influence about it |
+| `coordinator intents` | yes (`newCoordinatorIntentsCmd`, §6.16) — the declarations read (coordinator v2 C4, D827): it has **no argument of its own** (`--all` and `--json` are the console row's fixed words), and it carries `--project` and `--config` like the rest because it resolves the local config the way the project view does. **The one row here whose child asks nothing of the host at all**: the declarations are the caller's own database node, read through the same credentials §6.13's stored read uses, so there is no App key, no installation token and no provider anywhere in it |
 | **`run`** | yes (`newRunCmd`, §6.14) — **the one row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
 
 So the console passes `--project <name>` (and `--config <path>` when the
@@ -2309,7 +2315,8 @@ table against the live constructors.
    is by exact argv (design §5.1 rule 6), and the write is on it: `run.launch` is
    the one operation of the surface that writes (V2.5.1a, 2026-10-28/29, the
    surface's twenty-fourth; K2a's `link.openPullRequest` took the surface to
-   twenty-five and writes nothing), and no other argv that writes is reachable
+   twenty-five and writes nothing, and C4c's `coordinator.intents` took it to
+   twenty-six and writes nothing), and no other argv that writes is reachable
    from a renderer. Two further commands this file
    describes are writes, and **neither is in the console's set**: `fugaro cancel
    RUN --json` (§6.3), which is on the design's "never" table and which no v1

@@ -609,6 +609,13 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   // argv is pinned (the repository, the number and `--json`, and no token field
   // anywhere).
   { command: 'coordinator show', kind: 'allowed', where: 'ee/coordinator/cli/coordinator_show.go:46' },
+  // Coordinator v2 C4: the declarations the fleet's writers stored. It is
+  // `allowed` and not `unused` because the surface drives it, and unlike C3's
+  // row its argv is the row's own fixed words -- `--all --json` and nothing a
+  // caller fills -- so this list's convention leaves it whole and the child has
+  // no argument it could be steered with. It mints nothing of the host's: the
+  // read is the caller's own database node (design §5.1 rule 6).
+  { command: 'coordinator intents', kind: 'allowed', where: 'ee/coordinator/cli/coordinator_intents.go:66' },
   // **The console's one write** (design §5.1 rule 11, D22). `run` was the
   // first writer in this list and the one no argv could drive; since V2.5.1a it
   // is a command the allow-list admits, in exactly one argv, so it is `allowed`
@@ -723,6 +730,12 @@ const DESIGN_ARGV: readonly string[] = [
   // out -- leaves the row as it is written here. The design's own row states
   // the whole argv, `--repo <owner/name> --pr <n> --json` and all.
   'coordinator show --json',
+  // The declarations read (coordinator v2 C4, D827). This row is the
+  // whole argv and there is nothing left over: `--all` is a fixed word of
+  // the command, not a control, so the convention above has nothing to take
+  // out -- and with no argument to fill, no caller word can reach the child
+  // (`src/main/spawn.ts`'s empty `args`).
+  'coordinator intents --all --json',
   // Rule 11's argv, `--task-file -` and all: the literal `-` is the word that
   // sends the task down the child's stdin rather than onto a command line.
   'run --task-file - --json',
@@ -1126,6 +1139,11 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // `url`, no `path` and no token field -- the read mints its own credential in
   // the child and says so in the console's own words.
   'coordinator.show': { repo: 'acme/app', pr: 42 },
+  // The empty payload: the declarations read has no argument at all, so what a
+  // renderer may say to it is nothing (coordinator v2 C4). `--all` is the
+  // command's own fixed word and not a field here, which is why there is no
+  // `all: true` and why the pin below refuses every key.
+  'coordinator.intents': {},
   // The five fields, with the two optional ones left out -- which is the argv
   // rule 11 writes for a launch the operator gave no title and no plan task.
   'run.launch': { installation: 'sandbox', repository: 'acme/app', task: 'do the thing' },
@@ -1535,6 +1553,31 @@ describe('the argument schemas', () => {
     expect(validateArguments('coordinator.show', { repo: 'acme/app', pr: 0 }).ok).toBe(false)
     expect(validateArguments('coordinator.show', { repo: 'acme/app', pr: 1.5 }).ok).toBe(false)
     expect(validateArguments('coordinator.show', WELL_FORMED['coordinator.show']).ok).toBe(true)
+  })
+
+  it('pins `coordinator.intents`’s empty schema, which is the whole of what it may send', () => {
+    // **C4's read has no argument at all** (coordinator v2 C4, D827), so its
+    // argv is entirely the row's own words: `--all` and `--json`. This is the
+    // strongest form of the argv pin -- there is no field a renderer could fill,
+    // so the operation is not a way to steer the child anywhere. The read is the
+    // caller's own database node and mints nothing of the host's, which is what
+    // the empty schema is for.
+    expect(operationFor('coordinator.intents').command).toBe('coordinator intents')
+    expect(operationFor('coordinator.intents').flags).toEqual(['--all', '--json'])
+    expect(operationFor('coordinator.intents').args).toEqual([])
+    // The empty payload is accepted, and it is the only accepted payload: every
+    // key is refused, whether it names a real flag of this command (`--repo`,
+    // `--since`), the command's own fixed word, or a transport word.
+    expect(validateArguments('coordinator.intents', WELL_FORMED['coordinator.intents']).ok).toBe(true)
+    for (const key of ['repo', 'since', 'all', 'json', 'project', 'path', 'command', 'token', 'fromStore']) {
+      const decision = validateArguments('coordinator.intents', { [key]: key === 'all' ? true : 'x' })
+      expect(decision.ok, `coordinator.intents accepted ${key}`).toBe(false)
+      expect(decision.ok ? '' : decision.reason).toBe(`coordinator.intents takes no ${key}`)
+    }
+    // `--project` is not a key here and never could be: it is the row's own
+    // fixed word, filled from the screened context and never from a payload
+    // (`src/main/spawn.ts`), so the operation cannot ask for another project's
+    // node. `spawn.test.ts` pins that word into the argv.
   })
 
   it('takes no key it does not declare, for every operation', () => {
@@ -2061,7 +2104,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these twenty-six, and no others".
+ * channel. The claim is "these twenty-seven, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -2101,7 +2144,14 @@ describe('the spend read’s arguments', () => {
  * operation here whose child mints a credential of the host's (`run.launch`
  * below is the first), and the only one whose credential is read-only by
  * construction; it is next to `coordinator.status`
- * in this list because the two are the same subject asked two ways.
+ * in this list because the two are the same subject asked two ways. **The
+ * coordinator-v2 plan's C4 added the twenty-seventh** (`coordinator.intents` /
+ * `coordinatorIntents`: what the fleet's writers have declared, newest first,
+ * D827) and left the other twenty-six exactly where they were. It is the first
+ * operation here with no argument at all -- its argv is the row's own words,
+ * `--all --json`, and nothing a caller fills -- and it mints nothing of the
+ * host's: the read is the caller's own database node. It sits next to `coordinator.status`,
+ * which is the same store asked a different question.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -2129,6 +2179,7 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['installation.open', 'openInstallations'],
   ['coordinator.status', 'coordinatorStatus'],
   ['coordinator.show', 'coordinatorShow'],
+  ['coordinator.intents', 'coordinatorIntents'],
   ['run.launch', 'launchRun'],
 ]
 
@@ -2160,7 +2211,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these twenty-six, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these twenty-seven, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -2177,11 +2228,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A twenty-seventh channel: what each task added must stay one row, and the
+    // A twenty-eighth channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
-    const twentySeventh = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(twentySeventh).toContain('fleet.report: a channel this console does not ship')
-    expect(twentySeventh).toContain('27 rows, and this console ships 26')
+    const twentyEighth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(twentyEighth).toContain('fleet.report: a channel this console does not ship')
+    expect(twentyEighth).toContain('28 rows, and this console ships 27')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -2195,7 +2246,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('25 rows, and this console ships 26')
+    expect(withoutTheNewRow).toContain('26 rows, and this console ships 27')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -2210,8 +2261,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the twenty-six methods and nothing else', () => {
-    // The bridge the window is handed: the twenty-six methods and the names,
+  it('is frozen, and hands the window a bridge with the twenty-seven methods and nothing else', () => {
+    // The bridge the window is handed: the twenty-seven methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -3365,7 +3416,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: twenty-two of the surface's twenty-six operations,
+    // The non-vacuity half: twenty-three of the surface's twenty-seven operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
@@ -3382,7 +3433,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // list. **`link.openPullRequest` is too, and for the same reason**: a pull
     // request number is repository state rather than money, so the mode has
     // nothing to withhold from it.
-    expect(THE_OPEN_OPERATIONS.length).toBe(22)
+    expect(THE_OPEN_OPERATIONS.length).toBe(23)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(

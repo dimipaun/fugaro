@@ -512,6 +512,18 @@ export class CliSource implements FugaroSource {
     return this.#readDocument('coordinator.show', args)
   }
 
+  /** coordinatorIntents reads `coordinator intents --all --json`: what the
+   * fleet's writers have declared, newest first (C4, D827). It takes no
+   * argument at all -- the whole argv is the spawn row's, `--all --json` -- and
+   * like the stored view above its child asks nothing of the host: the
+   * declarations are the caller's own database node, read through the same
+   * store and the same ADC, so this read succeeds with
+   * `FUGARO_CREDENTIALS_SERVICE_URL` set where `coordinatorShow`'s host read
+   * refuses. */
+  coordinatorIntents(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('coordinator.intents', args)
+  }
+
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot> {
     return this.#readDocument('run.diagnose', args)
   }
@@ -1034,6 +1046,12 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * for this process to refuse a read for. Two calls with the same arguments
      * are two host reads, which is what the caller asked for. */
     coordinatorShow: (args) => read('coordinator.show', (source) => source.coordinatorShow(args)),
+    /** coordinatorIntents has no precondition and no cadence, for
+     * coordinatorStatus's reason: the read is the caller's own database node,
+     * so there is no directory on this machine to refuse for, and the store
+     * replaces the records in place as declarations arrive, so holding a floor
+     * between two calls would hide the newest one for no gain. */
+    coordinatorIntents: (args) => read('coordinator.intents', (source) => source.coordinatorIntents(args)),
     diagnoseRun: (args) => read('run.diagnose', (source) => source.diagnoseRun(args)),
     readRunLogs: (args) => read('run.logs', (source) => source.readRunLogs(args)),
     runLogLink: (args) => read('run.logLink', (source) => source.runLogLink(args)),
