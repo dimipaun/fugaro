@@ -250,8 +250,10 @@ In order:
 
 **The sensitive directions ask for the typed project name** (`confirmTypedStrict`, D846): loosening
 a ceiling key (`budget.*`, `governance.*`), removing a `review_floor` entry, turning a `followup.*`
-key on, or writing a key the registry marks as a floor. `--yes` does not stand in for the typed
-form, exactly as `fugaro project repos rm` already does not.
+key on, or writing a key the registry marks as a floor. **D1107 (owner, 2026-11-01) amends this for
+`set` and `unset` alone:** these two take `--yes` for that form outside a coding agent's session,
+and the typed name is still what a real terminal asks for; `fugaro project repos rm` and `fugaro
+update`'s publish of a looser node are the doors where nothing stands in for it.
 
 **A value is never written as an empty list.** A list key emptied by `--remove` is refused, or the
 key is removed when the caller asked for that, because the loader refuses a written-but-empty list
