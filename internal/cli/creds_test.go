@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -1375,4 +1376,336 @@ func accessVersion(t *testing.T, f *credsFixture, version string) error {
 		return fmt.Errorf("access version %s: %d", version, resp.StatusCode)
 	}
 	return nil
+}
+
+// The rest of this file is C3.9d: `fugaro creds set --generate NAME`, the
+// review-signing key's bytes and the rotation window (D1071, D1069,
+// docs/c39-review-identity/spec.md §6.3). An HMAC key has no upstream to paste
+// from, so the CLI draws it at the owner's terminal and writes it straight into
+// the bundle — and the two properties the mode is held to here are the two the
+// whole command is: no value ever comes from an argument, a flag or the
+// environment and is never printed, and the write is the one read-modify-write
+// of one document whose other entries keep their bytes.
+
+// fixtureBundle is the document this fixture's container holds, read through
+// the service's own loader: what the tests below compare against is what the
+// sign and verify routes would read, never a re-parse of the YAML by hand.
+func fixtureBundle(t *testing.T, f *credsFixture) *credsvc.Bundle {
+	t.Helper()
+	b, err := credsvc.ParseBundle(f.Latest(f.id))
+	if err != nil {
+		t.Fatalf("the service's loader refuses the document this command wrote: %v", err)
+	}
+	return b
+}
+
+// reviewSigningWindow is the pair the service accepts for account, in the order
+// §6.3 gives it: the current entry first, then the rotation window's previous
+// one. An entry the document does not hold, or one whose value is not a usable
+// key, is absent from the pair — which is what the verify route does with it
+// (fail closed, §6.4), so a value the pair does not carry is a value nothing
+// accepts.
+func reviewSigningWindow(t *testing.T, f *credsFixture, account string) []string {
+	t.Helper()
+	b := fixtureBundle(t, f)
+	var pair []string
+	for _, previous := range []bool{false, true} {
+		if _, key, err := b.ReviewSigningKey(account, previous); err == nil {
+			pair = append(pair, hex.EncodeToString(key))
+		}
+	}
+	return pair
+}
+
+// TestCredsSetGenerateWritesAFreshValueAndNeverPrintsIt: the mode carries no
+// value, reads nothing — stdin included — and the bytes it writes are never
+// printed, which is the rule this command keeps of every value it stores and
+// the reason the mode is a flag that can carry none.
+func TestCredsSetGenerateWritesAFreshValueAndNeverPrintsIt(t *testing.T) {
+	f := credsFixtureFor(t)
+	name := config.ReviewSigningKeySecret("alice")
+	first := reviewSigningKeyValue(t, "first")
+	stdin := credsValue(t, "stdin")
+	f.seed(t, []byte(name+": "+first+"\n"))
+
+	out, errOut, err := executeStdin(t, stdin+"\n", "creds", "set", "--generate", name)
+	if err != nil {
+		t.Fatalf("%v (stderr %q)", err, errOut)
+	}
+	if n := f.writes(); n != 1 {
+		t.Fatalf("%d version(s) were written, want one read-modify-write", n)
+	}
+	if !strings.Contains(out, "version 2") || !strings.Contains(out, "replaced version 1") {
+		t.Errorf("the write was not reported as a replacement: %q", out)
+	}
+	pair := reviewSigningWindow(t, f, "alice")
+	if len(pair) != 2 {
+		t.Fatalf("the document serves %d entr(ies) for the account, want the generated key and the one it replaced", len(pair))
+	}
+	if pair[0] == first {
+		t.Errorf("the current entry is the value this run replaced: no key was generated")
+	}
+	if pair[0] == stdin {
+		t.Errorf("the value on stdin was written")
+	}
+	if strings.Contains(f.value(t), stdin) {
+		t.Errorf("the value on stdin was read: it is in the document this run wrote")
+	}
+	assertNoValue(t, out+errOut, pair[0], first, stdin)
+
+	// The flag carries no value at all: --generate=<anything> is a malformed
+	// flag, the refusal pflag's own error is replaced with, and what was typed
+	// is not echoed back.
+	out, errOut, err = execute(t, "creds", "set", "--generate="+stdin, name)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("creds set --generate=%s = %v, want a refusal", stdin, err)
+	}
+	if leak := out + errOut + err.Error(); strings.Contains(leak, stdin) {
+		t.Fatalf("the flag's text was echoed back: %q", leak)
+	}
+	if n := f.writes(); n != 1 {
+		t.Fatalf("a refused flag wrote %d version(s) in all, want the one above", n)
+	}
+}
+
+// TestCredsSetGenerateWritesALegalBundleKey: the bytes are one the service's
+// own loader reads — 32, in the hex spelling the entry holds — so the document
+// a first run produces is one the sign route can compute a MAC with, and the
+// mode is reachable from a container that holds no credential at all.
+func TestCredsSetGenerateWritesALegalBundleKey(t *testing.T) {
+	f := credsFixtureFor(t)
+	f.seed(t, nil) // the container C1.18's Terraform creates: no version yet
+	name := config.ReviewSigningKeySecret("alice")
+
+	out, errOut, err := executeStdin(t, "", "creds", "set", "--generate", name)
+	if err != nil {
+		t.Fatalf("%v (stderr %q)", err, errOut)
+	}
+	b := fixtureBundle(t, f)
+	gotName, key, err := b.ReviewSigningKey("alice", false)
+	if err != nil {
+		t.Fatalf("the service's loader refuses the key this command wrote: %v", err)
+	}
+	if gotName != name {
+		t.Errorf("the entry the loader answers is %q, want %q", gotName, name)
+	}
+	if len(key) != credsvc.ReviewSigningKeyBytes {
+		t.Errorf("the key is %d bytes, want %d", len(key), credsvc.ReviewSigningKeyBytes)
+	}
+	if _, kind, tier, ok := credsvc.CredentialKey(name); !ok || kind != credsvc.KindReviewSigning || tier != "" {
+		t.Errorf("CredentialKey(%q) = %q, %q, %v: the entry this mode writes is a review-signing key and no model credential", name, kind, tier, ok)
+	}
+	// The first generate replaces nothing, so the window's own entry is not in
+	// the document: the verify route reads that as "no rotation has run yet".
+	if _, _, err := b.ReviewSigningKey("alice", true); !errors.Is(err, credsvc.ErrReviewSigningKeyAbsent) {
+		t.Errorf("the first generate wrote a window entry: %v", err)
+	}
+	assertNoValue(t, out+errOut, hex.EncodeToString(key))
+}
+
+// TestCredsSetGenerateTwiceRotatesAndKeepsThePreviousEntry is the second red
+// step: the second run carries the value it replaced under the window's name
+// instead of overwriting it, so there is no instant in which the service holds
+// neither (spec §6.3), and the run after that moves the window on rather than
+// growing it.
+func TestCredsSetGenerateTwiceRotatesAndKeepsThePreviousEntry(t *testing.T) {
+	f := credsFixtureFor(t)
+	name := config.ReviewSigningKeySecret("alice")
+	window := config.ReviewSigningKeyPreviousSecret("alice")
+	first := reviewSigningKeyValue(t, "first")
+	f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "oauth")+"\n"+name+": "+first+"\n"))
+
+	if _, errOut, err := executeStdin(t, "", "creds", "set", "--generate", name); err != nil {
+		t.Fatalf("%v (stderr %q)", err, errOut)
+	}
+	afterFirst := reviewSigningWindow(t, f, "alice")
+	if len(afterFirst) != 2 {
+		t.Fatalf("the document serves %d entr(ies) for the account, want the generated key and the one it replaced", len(afterFirst))
+	}
+	if afterFirst[1] != first {
+		t.Errorf("the entry %s does not hold the value this run replaced", window)
+	}
+	second := afterFirst[0]
+	if second == first {
+		t.Errorf("the run wrote the value it replaced back: no key was generated")
+	}
+
+	if _, errOut, err := executeStdin(t, "", "creds", "set", "--generate", name); err != nil {
+		t.Fatalf("%v (stderr %q)", err, errOut)
+	}
+	afterSecond := reviewSigningWindow(t, f, "alice")
+	if len(afterSecond) != 2 {
+		t.Fatalf("the document serves %d entr(ies) for the account, want two", len(afterSecond))
+	}
+	if afterSecond[0] == first || afterSecond[0] == second {
+		t.Errorf("the current entry is not a freshly generated key")
+	}
+	if afterSecond[1] != second {
+		t.Errorf("the window does not hold the value this run replaced")
+	}
+	if strings.Contains(f.value(t), first) {
+		t.Errorf("the key the first run replaced is still in the document: the window grew instead of moving on")
+	}
+	// The entries are the document's own two: nothing accumulates beside them.
+	if names := fixtureBundle(t, f).Names(); !slices.Equal(names, []string{config.DefaultClaudeAccount, name, window}) {
+		t.Errorf("the document holds %q, want the three entries it started with and the window's", names)
+	}
+}
+
+// TestCredsSetGenerateTwiceRevokesTheOriginalKey: the revoke mode is two
+// consecutive generates and the task writes no mode for it (D1069, §6.3). What
+// is signed here is signed with the key the document holds; what verifies it is
+// the pair the document serves, the current entry and the window's — the
+// signature the verify route (C3.9f) recomputes, over a fixture message. One
+// generate carries the original into the window and it still verifies; the
+// second moves the window past it, and it verifies no more.
+func TestCredsSetGenerateTwiceRevokesTheOriginalKey(t *testing.T) {
+	f := credsFixtureFor(t)
+	name := config.ReviewSigningKeySecret("alice")
+	original := reviewSigningKeyValue(t, "original")
+	f.seed(t, []byte(name+": "+original+"\n"))
+	message := []byte("fugaro review fixture: " + t.Name())
+	signed := hmacOf(t, original, message)
+
+	accepts := func() bool {
+		for _, key := range reviewSigningWindow(t, f, "alice") {
+			if hmac.Equal(hmacOf(t, key, message), signed) {
+				return true
+			}
+		}
+		return false
+	}
+	if !accepts() {
+		t.Fatal("the document's own key does not reproduce the signature made with it")
+	}
+	for run, want := range []bool{true, false} {
+		if _, errOut, err := executeStdin(t, "", "creds", "set", "--generate", name); err != nil {
+			t.Fatalf("generate %d: %v (stderr %q)", run+1, err, errOut)
+		}
+		if got := accepts(); got != want {
+			t.Errorf("after %d generate(s) the original key verifies = %v, want %v", run+1, got, want)
+		}
+	}
+}
+
+// hmacOf is the one signature the routes compute, over a fixture message: a
+// string comparison of two hex values would hold the entry's spelling, and what
+// the revoke is about is that a signature stops verifying.
+func hmacOf(t *testing.T, key string, message []byte) []byte {
+	t.Helper()
+	raw, err := hex.DecodeString(key)
+	if err != nil {
+		t.Fatal("a fixture key is not hex")
+	}
+	mac := hmac.New(sha256.New, raw)
+	mac.Write(message)
+	return mac.Sum(nil)
+}
+
+// TestCredsSetGenerateKeepsEveryOtherEntryByteForByte: the mode travels the
+// write path a typed value travels, so every entry this command was not asked
+// about keeps its bytes — its comments, its quoting, its order.
+func TestCredsSetGenerateKeepsEveryOtherEntryByteForByte(t *testing.T) {
+	f := credsFixtureFor(t)
+	name := config.ReviewSigningKeySecret("alice")
+	oauth := credsValue(t, "oauth")
+	quoted := credsValue(t, "quoted")
+	pem := credsValue(t, "pem")
+	first := reviewSigningKeyValue(t, "first")
+	f.seed(t, []byte("# the service's credentials\n"+
+		config.ClaudeOAuthToken+": "+oauth+"\n"+
+		config.AnthropicSecret+": \""+quoted+"\"\n"+
+		"claude-oauth-token-team: |\n  -----BEGIN FAKE-----\n  "+pem+"\n  -----END FAKE-----\n"+
+		name+": "+first+"\n"))
+
+	if _, errOut, err := executeStdin(t, "", "creds", "set", "--generate", name); err != nil {
+		t.Fatalf("%v (stderr %q)", err, errOut)
+	}
+	got := f.value(t)
+	for _, want := range []string{
+		"# the service's credentials",
+		config.ClaudeOAuthToken + ": " + oauth,
+		config.AnthropicSecret + ": \"" + quoted + "\"",
+		"claude-oauth-token-team: |\n  -----BEGIN FAKE-----\n  " + pem + "\n  -----END FAKE-----",
+		config.ReviewSigningKeyPreviousSecret("alice") + ": " + first,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the written document no longer holds %q", want)
+		}
+	}
+	if names := fixtureBundle(t, f).Names(); !slices.Equal(names, []string{config.DefaultClaudeAccount, config.AnthropicSecret, "team", config.ReviewSigningKeySecret("alice"), config.ReviewSigningKeyPreviousSecret("alice")}) {
+		t.Errorf("the document holds %q, want the same entries with the window's beside the account's", names)
+	}
+}
+
+// TestCredsSetGenerateIsRefusedInACodingAgentsSession: the new mode is the same
+// owner-only command, refused before anything is read and before the cloud is
+// opened — a generated key is no more writable from an agent's session than a
+// typed one.
+func TestCredsSetGenerateIsRefusedInACodingAgentsSession(t *testing.T) {
+	f := credsFixtureFor(t)
+	f.seed(t, []byte(config.ReviewSigningKeySecret("alice")+": "+reviewSigningKeyValue(t, "first")+"\n"))
+	t.Setenv("CLAUDECODE", "1")
+
+	_, _, err := executeStdin(t, "", "creds", "set", "--generate", config.ReviewSigningKeySecret("alice"))
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("creds set --generate in an agent's session = %v, want a refusal", err)
+	}
+	if !strings.Contains(err.Error(), "nothing was written") || !strings.Contains(err.Error(), "CLAUDECODE") {
+		t.Errorf("the refusal does not name the marker: %v", err)
+	}
+	if n := len(f.Requests()); n != 0 {
+		t.Fatalf("%d request(s) were made from an agent's session", n)
+	}
+	if n := f.writes(); n != 0 {
+		t.Fatalf("%d version(s) were written from an agent's session", n)
+	}
+}
+
+// TestCredsSetGenerateRefusesANameOutsideTheReviewSigningFamily: the mode is
+// not a general generator. Every other credential in the bundle has an upstream
+// to copy its value from, and the window's own name is not one this mode writes
+// either — it writes the CURRENT entry and derives the window's from it. A
+// value pasted into the NAME position is refused without being echoed, which is
+// the rule the position is held to everywhere in this command.
+func TestCredsSetGenerateRefusesANameOutsideTheReviewSigningFamily(t *testing.T) {
+	f := credsFixtureFor(t)
+	f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "oauth")+"\n"))
+
+	for _, name := range []string{
+		config.ClaudeOAuthToken,
+		config.ClaudeOAuthTokenPrefix + "alice",
+		config.AnthropicSecret,
+		config.GitHubAppKeySecret,
+		config.BitbucketSecret,
+		config.GitHubAppKeySecret + config.ReviewSigningKeySuffix,
+		config.ReviewSigningKeyPreviousSecret("alice"),
+	} {
+		_, _, err := executeStdin(t, "", "creds", "set", "--generate", name)
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Errorf("creds set --generate %s = %v, want a refusal", name, err)
+			continue
+		}
+		if want := config.ReviewSigningKeySecret(config.DefaultClaudeAccount); !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal for %s does not name the mode's own family (%s): %v", name, want, err)
+		}
+		if !strings.Contains(err.Error(), "--generate") {
+			t.Errorf("the refusal for %s does not name the flag it is about: %v", name, err)
+		}
+	}
+	if n := f.writes(); n != 0 {
+		t.Fatalf("%d version(s) were written for a refused name", n)
+	}
+	if n := f.reads(); n != 0 {
+		t.Fatalf("the bundle was read %d time(s) for a refused name: the refusal comes before the cloud", n)
+	}
+
+	pasted := credsValue(t, "pasted")
+	out, errOut, err := executeStdin(t, "", "creds", "set", "--generate", pasted)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("a value in the NAME position = %v, want a refusal", err)
+	}
+	if leak := out + errOut + err.Error(); strings.Contains(leak, pasted) {
+		t.Fatalf("the NAME was echoed back: %q", leak)
+	}
 }

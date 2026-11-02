@@ -3,7 +3,9 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -124,6 +126,10 @@ func credsOwnerOnly(getenv func(string) string, did string) error {
 
 func newCredsSetCmd() *cobra.Command {
 	var o credsOptions
+	// generate is the review-signing key's mode (C3.9d): a flag that carries no
+	// value, so this command's rule — no value from an argument, a flag or the
+	// environment — is kept rather than narrowed.
+	var generate bool
 	cmd := &cobra.Command{
 		Use:   "set NAME",
 		Short: "Set or replace one credential in the credentials service's bundle secret (the owner)",
@@ -140,14 +146,37 @@ NAME is a credential the service can issue, in the document's own spelling:
   ` + config.AnthropicSecret + `                the project's Anthropic API key (tier B)
   ` + config.GitHubAppKeySecret + `                  the GitHub App's private key (no tier: the mint signs with it)
   ` + config.BitbucketSecret + `                   the upstream Bitbucket token (no tier: held for the git proxy a later release adds; a Bitbucket run's job still uses its own mounted token)
+  ` + config.ReviewSigningKeySecret(config.DefaultClaudeAccount) + `  the default account's review-signing key (no tier: the service's sign
+                                     route computes a MAC with it; written by --generate below)
+  ` + config.ClaudeOAuthTokenPrefix + `<account>` + config.ReviewSigningKeySuffix + `     a named account's review-signing key (no tier, and --generate's NAME too)
 
 The value is read only from stdin: pipe or redirect it in
 (fugaro creds set ` + config.ClaudeOAuthToken + ` < token-file), or, when stdin is a terminal, paste it
 at a hidden prompt. It is never taken from an argument, a flag or the
-environment, and never printed. One trailing newline (\n or \r\n) is dropped,
-and the command says so. A value must be 4 bytes to ` + strconv.Itoa(credsvc.MaxBundleValueBytes) + `, on one line, with
+environment, and never printed. --generate changes WHERE the bytes come from
+and nothing else: they are drawn in this process, and they are never printed
+either. One trailing newline (\n or \r\n) is dropped, and the command says so.
+A value must be 4 bytes to ` + strconv.Itoa(credsvc.MaxBundleValueBytes) + `, on one line, with
 no whitespace at either end; a longer value is a document the service's loader
 would refuse, so it is refused here instead.
+
+--generate writes a review-signing key and takes no value of its own
+(--generate=anything is a malformed flag): a review-signing key is an HMAC key
+with no upstream to paste one from, so this process draws ` + strconv.Itoa(credsvc.ReviewSigningKeyBytes) + ` bytes from
+crypto/rand and writes them into the bundle. It is refused for every other
+NAME, the review-signing names are the only ones it takes, and it never writes
+a NAME that is the rotation window's own entry — asked to, it refuses.
+
+Two runs ROTATE the key. The first writes a fresh value where the entry was;
+the second writes a fresh one again and carries the value it replaced, byte for
+byte, under the same name with ` + config.ReviewSigningKeyPreviousSuffix + ` appended. The service signs with
+the current entry and verifies against the current and the previous one, and
+against nothing older, so there is no instant in which it holds neither.
+
+Two consecutive generates REVOKE the key that was current before the first of
+them: the second run's window holds the first run's key, and the original is in
+neither entry, so a signature made with it stops verifying. It is not escrowed
+and it is not re-signable, and the honest remedy is a re-review of the head.
 
 ` + config.GitHubAppKeySecret + ` is the ONE multi-line entry: it is an RSA private key in a PEM,
 so it has to come in on stdin, from the key file the App's page downloads
@@ -196,10 +225,11 @@ form.`,
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return credsSet(cmd, o, args[0])
+			return credsSet(cmd, o, args[0], generate)
 		},
 	}
 	o.addFlags(cmd)
+	cmd.Flags().BoolVar(&generate, "generate", false, "generate a fresh review-signing key instead of reading a value (the review-signing names only)")
 	return cmd
 }
 
@@ -528,7 +558,7 @@ func writeForms(doc, value []byte) []string {
 // the project, that the container is there, that the document it holds is one
 // the service accepts — and only then the value, the write and its
 // verification.
-func credsSet(cmd *cobra.Command, o credsOptions, name string) error {
+func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) error {
 	ctx := cmd.Context()
 	if err := credsOwnerOnly(os.Getenv, "written"); err != nil {
 		return err
@@ -542,6 +572,14 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string) error {
 	_, kind, _, ok := credsvc.CredentialKey(name)
 	if !ok {
 		return credsNameRefusal()
+	}
+	// The generated mode writes one family and only one: an HMAC key has no
+	// upstream to paste from, every other credential does. It writes the
+	// CURRENT entry and derives the window's entry from it, so the window's own
+	// name is refused too rather than written as if it were an account's key.
+	account, previous, reviewSigning := config.ReviewSigningKeyAccount(name)
+	if generate && (!reviewSigning || previous) {
+		return credsGenerateNameRefusal()
 	}
 	_, lc, err := selectProject(ctx, o.cloud)
 	if err != nil {
@@ -571,12 +609,26 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string) error {
 			return credsDocRefusal(store.id, err)
 		}
 	}
-	value, err := readBundleValue(ctx, cmd.InOrStdin(), cmd.ErrOrStderr(), name, kind)
+	var value []byte
+	if generate {
+		value, err = generateReviewSigningValue()
+	} else {
+		value, err = readBundleValue(ctx, cmd.InOrStdin(), cmd.ErrOrStderr(), name, kind)
+	}
 	if err != nil {
 		return err
 	}
 	defer clear(value)
-	doc, err := setBundleEntry(before.raw, name, string(value))
+	// A generated write is two entries of one document: the fresh value under
+	// NAME and the value it replaced under the window's name, so the window
+	// exists in the version that retires the old key rather than a version
+	// later (spec §6.3).
+	doc, window := before.raw, ""
+	if generate {
+		doc, window, err = setReviewSigningRotation(doc, name, config.ReviewSigningKeyPreviousSecret(account), string(value))
+	} else {
+		doc, err = setBundleEntry(doc, name, string(value))
+	}
 	if err != nil {
 		return err
 	}
@@ -636,6 +688,12 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string) error {
 		_, err = fmt.Fprintf(w, "wrote %s, version %s (replaced version %s, now disabled)\n", safetext.Field(store.id), safetext.Field(version), safetext.Field(replaced))
 	default:
 		_, err = fmt.Fprintf(w, "wrote %s, version %s (replaced version %s, which is still ENABLED: see the warning on stderr)\n", safetext.Field(store.id), safetext.Field(version), safetext.Field(replaced))
+	}
+	if err == nil && window != "" {
+		// The window is named for the operator: the value this run replaced is
+		// still ACCEPTED, and a rotation whose window nobody knows about is one
+		// that reads as a key that retired when the first signature verifies.
+		_, err = fmt.Fprintf(w, "%s now holds the value this run replaced, which the service verifies against and never signs with\n", safetext.Field(window))
 	}
 	return err
 }
@@ -715,8 +773,36 @@ func credsDisabledRefusal(id, did string) error {
 // pasted value can land in (the rule `fugaro secrets set`'s own name check
 // follows), and nothing this command prints may carry a value.
 func credsNameRefusal() error {
-	return userErr("the NAME must be a credential the credentials service holds: %s (the project's Anthropic API key, tier B), %s (the default Claude account's OAuth token, tier A), %s<account> for a named account, where <account> is a Claude account name (lower case, at most %d characters), or %s (the upstream Bitbucket token). Nothing was read and nothing was written",
-		config.AnthropicSecret, config.ClaudeOAuthToken, config.ClaudeOAuthTokenPrefix, config.MaxClaudeAccountNameLen, config.BitbucketSecret)
+	return userErr("the NAME must be a credential the credentials service holds: %s (the project's Anthropic API key, tier B), %s (the default Claude account's OAuth token, tier A), %s<account> for a named account, where <account> is a Claude account name (lower case, at most %d characters), %s (the upstream Bitbucket token), or the review-signing names %s and %s<account>%s, which --generate writes. Nothing was read and nothing was written",
+		config.AnthropicSecret, config.ClaudeOAuthToken, config.ClaudeOAuthTokenPrefix, config.MaxClaudeAccountNameLen, config.BitbucketSecret,
+		config.ReviewSigningKeySecret(config.DefaultClaudeAccount), config.ClaudeOAuthTokenPrefix, config.ReviewSigningKeySuffix)}
+
+// credsGenerateNameRefusal refuses --generate for a NAME that is not an
+// account's review-signing key. The mode is refused rather than widened,
+// because every other credential of the bundle has an upstream somebody copies
+// its value from and this command reads that value from stdin or a terminal;
+// the window's own entry is refused because the mode writes the CURRENT entry
+// and derives the window's from it, so a generate into the window's name would
+// write an entry the next rotation overwrites. The name is not echoed, for
+// credsNameRefusal's reason.
+func credsGenerateNameRefusal() error {
+	return userErr("--generate writes an account's review-signing key and takes no other NAME: %s (the default account's) or %s<account>%s (a named account's), where <account> is a Claude account name (lower case, at most %d characters). The rotation window's own entry is not one it writes — it writes the current entry and derives the window's from it — and every other credential of the bundle has a value that comes from somewhere else (a provider's page, the App's page), which is set by piping it in, without --generate. Nothing was read and nothing was written",
+		config.ReviewSigningKeySecret(config.DefaultClaudeAccount), config.ClaudeOAuthTokenPrefix, config.ReviewSigningKeySuffix, config.MaxClaudeAccountNameLen)
+}
+
+// generateReviewSigningValue draws a review-signing key at the owner's terminal
+// and answers the value the bundle entry holds: ReviewSigningKeyBytes from
+// crypto/rand, in the hex spelling the loader decodes (credsvc's
+// reviewSigningKeyBytes). The bytes leave this process only into the document —
+// nothing prints them, no error carries them — and a failed draw is a refusal
+// rather than a shorter key, a zero one or a retry.
+func generateReviewSigningValue() ([]byte, error) {
+	key := make([]byte, credsvc.ReviewSigningKeyBytes)
+	if _, err := io.ReadFull(rand.Reader, key); err != nil {
+		return nil, userErr("generating a review-signing key failed and nothing was written: %v", err)
+	}
+	defer clear(key)
+	return []byte(hex.EncodeToString(key)), nil
 }
 
 // credsDocRefusal is the document the container holds not being one the
@@ -867,26 +953,94 @@ func validateAppKeyPEM(raw []byte) error {
 // its quoting, its order — and the writer cannot be the thing that rewrites a
 // credential nobody touched.
 func setBundleEntry(raw []byte, key, value string) ([]byte, error) {
+	doc, root, err := bundleNodes(raw)
+	if err != nil {
+		return nil, err
+	}
+	setBundleNode(root, key, value)
+	return marshalBundle(doc)
+}
+
+// setReviewSigningRotation is the generated half of the read-modify-write, and
+// the whole of a rotation: raw with key set to the freshly generated value AND
+// the entry the window's name holds set to the value that entry had before, in
+// one document. The window's name is answered when it was written, and empty
+// when there was nothing to carry over — a first generate for an account has no
+// predecessor, and an empty window's name would be a name the caller prints for
+// an entry that does not exist.
+//
+// Both entries travel in ONE version because a version that holds the fresh key
+// without its predecessor is a version whose signatures the service cannot
+// verify against the key the clients still hold, and a version that holds the
+// predecessor without the fresh key is a version the service signs nothing new
+// with: the two entries are one state transition, and a state that is half of
+// it is a service that refuses to sign (spec §6.3).
+//
+// The predecessor is copied from the document, not from any value the caller
+// read: what the service verifies against is what the previous version actually
+// holds, so a value edited into the window by hand is carried as it is.
+func setReviewSigningRotation(raw []byte, key, window, value string) ([]byte, string, error) {
+	doc, root, err := bundleNodes(raw)
+	if err != nil {
+		return nil, "", err
+	}
+	carried, ok := bundleNodeValue(root, key)
+	setBundleNode(root, key, value)
+	if ok {
+		setBundleNode(root, window, carried)
+	} else {
+		window = ""
+	}
+	out, err := marshalBundle(doc)
+	if err != nil {
+		return nil, "", err
+	}
+	return out, window, nil
+}
+
+// bundleNodes reads a document into the node tree the two writers above edit:
+// the document and its root mapping. An unmarshalling failure is unreachable
+// (the caller parsed raw with the loader first, and the loader refuses a body
+// yaml cannot read) and its message is not wrapped and not quoted — a yaml
+// error carries the document it failed on, and the document is credentials.
+func bundleNodes(raw []byte) (*yaml.Node, *yaml.Node, error) {
 	var doc yaml.Node
 	if len(raw) > 0 {
 		if err := yaml.Unmarshal(raw, &doc); err != nil {
-			// Unreachable: the caller parsed raw with the loader first, and
-			// the loader refuses a body yaml cannot read. The error is not
-			// wrapped and not quoted — a yaml error carries the document it
-			// failed on, and the document is credentials.
-			return nil, userErr("the bundle is not a document this command can edit; nothing was written")
+			return nil, nil, userErr("the bundle is not a document this command can edit; nothing was written")
 		}
 	}
-	root := bundleMapping(&doc)
+	return &doc, bundleMapping(&doc), nil
+}
+
+// setBundleNode sets key to value in root, replacing the entry's value node
+// where the key is already there and appending both where it is not.
+func setBundleNode(root *yaml.Node, key, value string) {
 	valueNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		if root.Content[i].Value == key {
 			root.Content[i+1] = valueNode
-			return marshalBundle(&doc)
+			return
 		}
 	}
 	root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, valueNode)
-	return marshalBundle(&doc)
+}
+
+// bundleNodeValue is the value root holds under key, and whether it holds one.
+// A key mapped to something that is not a scalar counts as absent rather than
+// as its rendering: the loader refuses such a document, so a value read out of
+// one would be a value the service never held.
+func bundleNodeValue(root *yaml.Node, key string) (string, bool) {
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value != key {
+			continue
+		}
+		if node := root.Content[i+1]; node.Kind == yaml.ScalarNode {
+			return node.Value, true
+		}
+		return "", false
+	}
+	return "", false
 }
 
 // bundleMapping is doc's root mapping, made one when the document has none: an
