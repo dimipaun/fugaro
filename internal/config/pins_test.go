@@ -364,12 +364,14 @@ func TestPinWarningsCoverALevelModel(t *testing.T) {
 	if ws[0].Code != CodeUnverifiedPrice || !strings.Contains(ws[0].Message, "level l3") || !strings.Contains(ws[0].Message, "unverified") {
 		t.Errorf("the level model's warning: %+v", ws[0])
 	}
-	// A level left on its role's model has nothing of its own to warn about,
-	// and a level model the table prices cleanly warns of nothing at all.
+	// A level with no model of its own, and a level whose model is one of the
+	// run's pins, are that pin: the run resolves every level that runs onto a
+	// model (the runner's setLevelModel), so a warning of their own would say
+	// the background pin's sentence again for the level.
 	b := pinnedAgent()
 	b.Levels = ReviewLevels{L1: &LevelSetting{Model: "claude-haiku-4-5"}, L3: &LevelSetting{Effort: "high"}}
 	if ws := PinWarnings(b, pricing.Embedded()); len(ws) != 0 {
-		t.Errorf("a priced level model, and a level with no model of its own: %v", ws)
+		t.Errorf("a level on a pin, and a level with no model of its own: %v", ws)
 	}
 	// The stale-catalog warning reaches a level model too.
 	b = pinnedAgent()
@@ -381,11 +383,11 @@ func TestPinWarningsCoverALevelModel(t *testing.T) {
 	if ws[0].Code != CodeCatalogPrice || !strings.Contains(ws[0].Message, "stale") || !strings.Contains(ws[0].Message, "level l2") {
 		t.Errorf("the stale level model's warning: %+v", ws[0])
 	}
-	// A level model that is also one of the run's pins keeps its own warning:
-	// a warning is about a key the owner writes, and a level key is one.
+	// ...which is the same answer for a provider model the pins already carry:
+	// the level's copy is not a second pin.
 	c := providerAgent("deepseek/deepseek-v4-flash")
 	c.Levels = ReviewLevels{L3: &LevelSetting{Model: "deepseek/deepseek-v4-flash"}}
-	if got := paths(PinWarnings(c, placeholderPrices())); got != "agent.models.coder,agent.models.background,agent.levels.l3.model" {
+	if got := paths(PinWarnings(c, placeholderPrices())); got != "agent.models.coder,agent.models.background" {
 		t.Errorf("a level model that is a pin warned under %q", got)
 	}
 }

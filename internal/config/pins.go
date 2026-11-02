@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -31,25 +32,28 @@ func pins(a Agent) []pin {
 	return out
 }
 
-// levelPins are the review levels' own models (L3.1), one per level whose
-// block names a model of its own, under the key the owner wrote it: a level
-// left on the model its role resolves to has no model of its own, and is that
-// role's pin. A level's own model is a model the run charges — its stage runs
-// it and the cap counts it — so PinWarnings warns about it as a pin, under
-// exactly the path the run's own model checks rename a problem about a level
-// to (internal/runner/gateway.go's levelModelPath).
+// levelPins are the review levels' own models (L3.1), one per level that names
+// a model of its own, under the key the owner wrote it — which is also the path
+// the run's own model checks rename a problem about a level to
+// (internal/runner/gateway.go's levelModelPath). A level's own model is a model
+// the run charges: its stage runs it and the cap counts it, exactly as it
+// counts a role pin.
 //
-// A level whose own model is also a role pin keeps its pin here rather than
-// being folded into it: a warning is about a key an owner writes, and a level
-// key is one — the same reason a coder and a background of one model are two
-// pins and get two warnings.
+// A level left on the model its role resolves to, and a level whose own model
+// is one of the three pins, are that pin: the run resolves every level that
+// runs onto a model and writes it into the level's block
+// (internal/runner/routing.go's setLevelModel), so a pin of its own for those
+// would print the coder's or the reviewer's warning once more for every level
+// of every run. This is the rule the run's own model checks already follow
+// (checkLevels, over levelAgents).
 func levelPins(a Agent) []pin {
+	pinned := a.PinnedModels()
 	var out []pin
 	for _, l := range []struct {
 		name string
 		set  *LevelSetting
 	}{{"l1", a.Levels.L1}, {"l2", a.Levels.L2}, {"l3", a.Levels.L3}} {
-		if l.set == nil || l.set.Model == "" {
+		if l.set == nil || l.set.Model == "" || slices.Contains(pinned, l.set.Model) {
 			continue
 		}
 		out = append(out, pin{path: "agent.levels." + l.name + ".model", model: l.set.Model, level: l.name})
