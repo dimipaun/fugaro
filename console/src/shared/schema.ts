@@ -234,6 +234,37 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   next: 'label',
   tag_prefix: 'label',
   mark: 'sentence',
+  // The coordinator's pull request documents (coordinator v2 C3, D816): the nine
+  // keys of `coordinator show`'s document and the six of the stored view's
+  // reduced record beside it (`ee/coordinator/view.go`; §6.13, §6.15). `title`
+  // and `branch` are already above, as the run shapes' keys; the five here are
+  // the ones only those two documents carry, and every one of them is the
+  // **host's own answer** rather than a value this console or the CLI composed
+  // -- which is why each is text and goes through the sanitizer.
+  //
+  // `body` is the description, the whole reason the read exists: unbounded prose
+  // written by whoever opened the pull request, and the key a screen must never
+  // spell a class for itself.
+  body: 'sentence',
+  // `state` is the host's own word (`open`, `merged`, `closed`), not one of the
+  // CLI's constant tables -- so it is a label here, and it is no longer a member
+  // of `NON_TEXT_STRING_KEYS`, where it sat beside `status` and `outcome`. The
+  // CLI's own state words are drawn by their own tables and spell `label` at the
+  // call site already (`connection.state` on the Live screen, a plan node's
+  // through `PLAN_STATES`), so nothing drawn changes; and a key whose meaning
+  // differs between two documents takes the **drawn** reading, which is the
+  // direction deny-by-default has to fail in.
+  state: 'label',
+  // `author` is the host's identity for whoever opened the pull request: an
+  // account id (GitHub's numeric user id, Bitbucket's `account_id`) and never a
+  // display name. A `label` rather than `person`: that class validates a login
+  // and would draw a refusal for Bitbucket's `<digits>:<uuid>`.
+  author: 'label',
+  // `base` is the branch the pull request targets now, the class `base_branch`
+  // carries, and `url` is its own URL, the class `pr_url` and `log_url` carry --
+  // carried as data, with no link built from it (design section 4.3 gap 7).
+  base: 'branch',
+  url: 'url',
 })
 
 /**
@@ -244,12 +275,18 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
  * a key in this list must not be in `WIRE_TEXT_CLASSES`, and every other string
  * key of the corpus must be.
  *
- * `mode`, `state`, `health`, `status`, `outcome`, `auth` and `deadline` are
+ * `mode`, `health`, `status`, `outcome`, `auth` and `deadline` are
  * enums the CLI writes from its own constant tables; `day`, `now`, `at` and
  * `created` are timestamps; `model_basis` is the spend basis (`subscription`
  * or `api-list`) and is therefore a *value* the console compares and never a
  * label it draws -- and since C1.16 the split itself is `model_notional_usd`,
  * with the basis only the fallback for a row that carries none (P12).
+ *
+ * **`state` left this list in coordinator v2 C3** (D816), and it is the one key
+ * with two readings: the enums above are still the CLI's own, but the
+ * coordinator's stored view and `coordinator show` carry the **host's** word for
+ * a pull request under the same key, and that word is text. A key that can be
+ * either takes the drawn reading, and `WIRE_TEXT_CLASSES` carries it.
  */
 export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   'mode',
@@ -259,7 +296,6 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   // which is that same `mode` vocabulary again. `rigor.at` and the moments of
   // `rigor.areas[]` are `at`, already below.
   'from',
-  'state',
   'health',
   'status',
   // `derived` is the read side's own derivation for a run whose record was

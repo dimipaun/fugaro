@@ -1979,9 +1979,11 @@ describe('the pull request document (coordinator v2 C3)', () => {
     expect(decoded({ ...PULL_REQUEST, draft: true }).draft).toBe(true)
   })
 
-  it('ignores a key no field of the document is, and refuses the number it needs', () => {
-    // The rule every document here is held to: a key this console has no field
-    // for is a field a newer CLI added, and it does not reach a screen.
+  it('ignores, rather than refuses, a key no field of the document is, and refuses the number it needs', () => {
+    // The rule every document here is held to (the module header, the owner's
+    // ruling of 2026-10-30): a key this console has no field for is a field a
+    // newer CLI added, and it is **ignored** -- not a refusal -- and it does not
+    // reach a screen. Only a key the document must carry can refuse it.
     ignoring(PULL_REQUEST, { ...PULL_REQUEST, colour: 'red' }, (raw) => decodeCoordinatorPullRequest(raw))
     // `number` is the one key the document must carry, and the one that must be
     // a whole number: it is structure rather than a reading, so an absent or
