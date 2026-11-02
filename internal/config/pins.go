@@ -111,9 +111,10 @@ func CheckPins(a Agent, prices *pricing.Table) []Problem {
 //
 // A review level's own model is a pin as well, and is warned about as one, in
 // the same words and with its level named (levelPins): the cap counts it at a
-// guess exactly like a role's, and a check that read only the three role keys
-// would leave a run whose level 3 names a model of its own warned about a
-// price nobody set (L4.5).
+// guess exactly like a role's, and this check reading only the three role keys
+// left a run whose level names a model of its own — a catalog-priced row as
+// much as an unverified one — warned about a price nobody set (the L4.5
+// follow-up).
 func PinWarnings(a Agent, prices *pricing.Table) []Problem {
 	var ps []Problem
 	seen := map[string]bool{}
