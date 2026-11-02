@@ -104,10 +104,17 @@ func modelsSearchRows(lc *localcfg.Config, text string) ([]modelsSearchRow, erro
 	if err != nil {
 		return nil, err
 	}
-	local := map[string]priceRow{}
-	for _, r := range priceRowsFor(table, ov) {
-		if r.Local {
-			local[r.ID] = r
+	// The models the owner's own model_prices replaced, and the price each was
+	// replaced by, read off the overrides rather than out of priceRowsFor: the
+	// search needs two fields of those rows, and the builder would allocate a
+	// full row for every model in the table to answer it. A key is resolved
+	// through the table exactly as the builder resolves it, so an alias key
+	// marks the model it names and a key the table does not have is a model the
+	// override added.
+	local := map[string]pricing.Model{}
+	for k := range ov {
+		if m, ok := table.Lookup(k); ok {
+			local[m.ID] = m
 		}
 	}
 	for _, id := range slices.Sorted(maps.Keys(cat.Models)) {
@@ -149,9 +156,9 @@ func modelsSearchRows(lc *localcfg.Config, text string) ([]modelsSearchRow, erro
 		if !strings.Contains(strings.ToLower(id), needle) {
 			continue
 		}
-		r := local[id]
+		m := local[id]
 		out = append(out, modelsSearchRow{
-			ID: id, Source: "local", Input: priceUSD(r.InputPerM), Output: priceUSD(r.OutputPerM),
+			ID: id, Source: "local", Input: priceUSD(m.Rates.InputPerM), Output: priceUSD(m.Rates.OutputPerM),
 			Route: modelsRouteOf(lc, id),
 		})
 	}

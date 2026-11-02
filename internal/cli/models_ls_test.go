@@ -313,6 +313,57 @@ func TestModelsLsUnknownWithoutACheckout(t *testing.T) {
 	}
 }
 
+// TestModelsLsWithoutAProjectConfig: run where no project config is selected,
+// the read still answers — the built-in prices and the direct route are this
+// binary's own tables, and a reader with no project config is the one who most
+// needs to see what a model costs (spec §2, D788). The header says there is no
+// project, the route table is the direct route alone, and a Claude ID on it is
+// still open to every repository: no allow_data_to governs a call to Anthropic
+// and there is no project's allowed_models to narrow it.
+func TestModelsLsWithoutAProjectConfig(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+
+	out, _, err := execute(t, "models", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "no project config selected") {
+		t.Errorf("the read does not say it has no project config:\n%s", out)
+	}
+	routes := modelsSection(t, out, "ROUTES")
+	if !strings.Contains(routes, config.RouteDirect) {
+		t.Errorf("the route table does not carry the direct route:\n%s", routes)
+	}
+	if strings.Contains(routes, "openrouter") {
+		t.Errorf("the route table carries a provider of a project that is not selected:\n%s", routes)
+	}
+	models := modelsSection(t, out, "MODELS")
+	if !strings.Contains(models, "claude-opus-5-5") || !strings.Contains(models, modelsSourceEmbedded) {
+		t.Errorf("the models table does not carry the embedded Claude rows:\n%s", models)
+	}
+	if allow := modelsSection(t, out, "ALLOW-LISTS"); !strings.Contains(allow, "every repository") {
+		t.Errorf("a Claude ID on the direct route is not open to every repository with no project config:\n%s", allow)
+	}
+
+	raw, _, err := execute(t, "models", "ls", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, raw)
+	}
+	var doc modelsLsDoc
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, raw)
+	}
+	if doc.Project != "" {
+		t.Errorf("the document names project %q, and none is selected", doc.Project)
+	}
+	if len(doc.Routes) != 1 || doc.Routes[0].Name != config.RouteDirect {
+		t.Errorf("the document's routes are %+v, and with no project config the direct route is the only one", doc.Routes)
+	}
+	if len(doc.Repos) != 0 {
+		t.Errorf("the document carries %d repositories, and no project config records any", len(doc.Repos))
+	}
+}
+
 // TestModelsLsShowsCatalogAgeAndSpread: a catalog-priced row carries the
 // catalog's own date and age, and the spread the row is charged over — the
 // dearest endpoint of the tier against the price charged (design D6, P11) —

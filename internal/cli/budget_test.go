@@ -667,6 +667,13 @@ func TestPricesShowsLocalOverrides(t *testing.T) {
 // on claude-opus-5-5's cache_read_per_m 0.4 against 0.2.
 func TestBudgetPricesJSONPinsTheFigures(t *testing.T) {
 	modelsFixture(t)
+	// A clock inside the catalog's 30-day window, because the figures below are
+	// the fresh catalog's: past 2026-11-22 the catalog is stale, every
+	// catalog-priced row is charged the dearest end of its tier instead of the
+	// cheapest, and this pin would break on a date no change to the code marked.
+	old := budgetNow
+	t.Cleanup(func() { budgetNow = old })
+	budgetNow = func() time.Time { return time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC) }
 
 	out, _, err := execute(t, "budget", "prices", "--json")
 	if err != nil {
