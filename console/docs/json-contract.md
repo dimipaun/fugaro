@@ -717,8 +717,31 @@ compute is unknown: their `compute_usd` 0 means "not estimated", so the sums
 are a lower bound** — the console renders that, it does not hide it).
 
 **Flags** (`f := cmd.Flags()`, `newLsCmd`): `--repo`, `--all`, `--mine`, `--since`, `--batch`,
-`--limit`, `--state`, `--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud flags. The
-allow-list excludes `--watch` (it is `watch` under another name).
+`--limit`, `--after`, `--state`, `--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud
+flags. The allow-list excludes `--watch` (it is `watch` under another name).
+
+**`--limit=N` and `--after=RUN-ID` are the page and its cursor, and they are the two
+flags the console's `runs ls` row adds to the list above** (D818, the console
+coordinator-v2 plan's C2). `--limit=N` prints the **newest** `N` rows of the window;
+`--after=RUN-ID` starts the listing after that run, in the listing's own order, so a
+page is what the previous page's last row hands on — the two are the console's one
+way to walk a window a row at a time. **Both travel in the `=` form**, one word each,
+the value inside the flag's own word and never a word of its own, so a value can never
+be read as a flag (`--after=--watch` is a cursor the grammar below refuses, not a
+second flag on this argv); and **both are held before a child exists**: the limit is a
+positive integer of at most `RUNS_LIST_MAX_LIMIT` (**200**, this console's own
+ceiling rather than the command's — `--limit 0` is the command's own "every row",
+which is the read the page exists to avoid asking for), and the cursor is a run id in
+the `run_id` grammar of this very section, which is the id a page prints. An id the
+window does not hold stays the command's refusal and not this console's business: only
+the command knows what its window held.
+
+**A page is not a total: `totals` is the whole window's, never the page's.** `--limit`
+shortens what is printed and shortens nothing else — the window is read either way, so
+a page costs what the window costs — and therefore `totals.runs`, the counts behind it
+and every dollar figure in it stay the window's however small the page is. A reader
+that divided one of those figures by the rows it drew would print a number this
+document does not carry, which is the one wrong answer the two flags could produce.
 
 ## 6. The other documents
 
