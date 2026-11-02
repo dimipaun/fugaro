@@ -1660,7 +1660,7 @@ func TestShortGitHead(t *testing.T) {
 // TestDiagnoseSaysWhenTheReviewListIsCut: a record with more rounds than the
 // document prints says so in one line, and the line claims only what a cut
 // list leaves knowable — that it is at most that many. The wording is pinned
-// here because console/docs/json-contract.md's `reviews` row quotes it: the
+// here because the console's json contract quotes it in the `reviews` row: the
 // row said the line named how many rounds it left out, which no list can say
 // after the cut.
 func TestDiagnoseSaysWhenTheReviewListIsCut(t *testing.T) {
