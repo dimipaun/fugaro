@@ -47,7 +47,12 @@ func runClaudeLogin(in io.Reader, out, errOut io.Writer) error {
 		}
 	}
 	if !stdinIsTerminal(in) || !writerIsTerminal(out) {
-		return userErr("%s, or pass the token with `%s accounts add <name> --token-stdin` where this is scripted", initflow.NeedsTerminal("--claude"), selfCommand())
+		// The alternative is the command without this flag, which is a path the
+		// command already has: without a terminal the value is read from stdin
+		// (§2.2 step 3). It is not a flag of its own — `accounts add` carries no
+		// flag that takes a value (spec §2.1) — so the sentence names the other
+		// command rather than a `--token-stdin` that does not exist.
+		return userErr("%s; to script this, run it without --claude and pipe the token on stdin", initflow.NeedsTerminal("--claude"))
 	}
 	bin, err := claudeplugin.Find(claudeLookPath)
 	switch {

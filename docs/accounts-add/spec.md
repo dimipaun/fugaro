@@ -266,9 +266,11 @@ the owner performs two acts rather than one.
    absolute path is printed and confirmed before it runs. The binary is executed **directly, with an
    argument vector** — never through a shell, never with `-c`.
 2. **Require a terminal.** The login is interactive and the paste that follows is hidden, so `--claude`
-   is refused when the owner's stdin or stdout is not a terminal, and the refusal names `--token-stdin`
-   for the case that is genuinely scripted. Nothing else about the command needs a terminal; this flag
-   does.
+   is refused when the owner's stdin or stdout is not a terminal, and the refusal names the way out for
+   the case that is genuinely scripted: the same command **without** `--claude`, which is the path that
+   already reads the token from stdin when there is no terminal (§2.2 step 3). It does not name a flag
+   of its own, because `accounts add` has no flag that carries a value (§2.1). Nothing else about the
+   command needs a terminal; this flag does.
 3. **The environment is the owner's, minus anything Fugaro added.** In particular the child is not
    given the token (it does not exist yet) and no variable is set for it. Two variables are *checked*
    first and, when either is present, the command stops and says so: an exported

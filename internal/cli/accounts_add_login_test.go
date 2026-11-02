@@ -254,7 +254,9 @@ func TestAccountsAddClaudeRefusesAnExportedCredential(t *testing.T) {
 
 // TestAccountsAddClaudeRefusesWithoutATerminal: the login is interactive and
 // the paste that follows is hidden, so --claude without one is a named
-// refusal that names --token-stdin, and no child runs (spec §3.1 step 2).
+// refusal, and no child runs (spec §3.1 step 2). The way out it names is the
+// command without this flag, whose value read is already stdin when there is no
+// terminal — and never a `--token-stdin`, which is not a flag this command has.
 func TestAccountsAddClaudeRefusesWithoutATerminal(t *testing.T) {
 	unsetClaudeLoginCredentials(t)
 	fake := fakeClaude(t, t.TempDir())
@@ -266,8 +268,11 @@ func TestAccountsAddClaudeRefusesWithoutATerminal(t *testing.T) {
 	if err == nil {
 		t.Fatal("the login ran without a terminal")
 	}
-	if !strings.Contains(err.Error(), "--token-stdin") {
-		t.Errorf("the refusal does not name --token-stdin: %v", err)
+	if !strings.Contains(err.Error(), "without --claude") || !strings.Contains(err.Error(), "pipe the token on stdin") {
+		t.Errorf("the refusal does not name the way out — the same command without --claude, reading the token from stdin: %v", err)
+	}
+	if strings.Contains(err.Error(), "--token-stdin") {
+		t.Errorf("the refusal names --token-stdin, which this command does not have: %v", err)
 	}
 	if _, statErr := os.Stat(fake.marker); statErr == nil {
 		t.Error("a child ran")
