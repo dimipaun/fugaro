@@ -162,6 +162,13 @@ func runCoordinatorReport(cmd *cobra.Command, o *coordinatorReportOptions) error
 	if err != nil {
 		return err
 	}
+	// The database is this installation's before one record is written into
+	// it: a declaration is read back by THIS project's coordinator, so a
+	// record landing in another installation's database is one nobody here
+	// ever sees, written into a project that never asked for it.
+	if err := ownCoordinatorDB(ctx, env.Config(), "nothing was reported"); err != nil {
+		return err
+	}
 	rec, path, err := (&coordinator.Reporter{Store: store}).Report(ctx, slug, coordinator.Intent{
 		DeclaredBy: me,
 		Branch:     o.branch,
@@ -212,6 +219,26 @@ func coordinatorReportErr(lc *localcfg.Config, err error) error {
 		return fcli.UserErr("project %s's database refused the write: /coordinator is readable by a signed-in reader and writable by nobody through the rules, so a report is written under the database role its caller holds (roles/firebasedatabase.admin, which terraform.budget_admins have); ask an owner to add you, or report through the coordinator's front door once it is deployed (%v)", lc.Name, err)
 	}
 	return fcli.RemoteErr(err)
+}
+
+// ownCoordinatorDB asks the ONE ownership question about the database the
+// coordinator writes into (docs/design/upgrade.md, "Every writer into that
+// database"): the core's own refusal (fcli.RequireOwnBudgetDB, the predicate
+// `fugaro update`'s stages and every command of the audit ask through
+// budgetDBUnadopted), so this door and those cannot answer "is this database
+// ours" differently. It asks it of the config and of the mark, in the core's
+// order, and it is a call and never a second check worded alike.
+//
+// The coordinator's state is the budget's database — the same URL, the same
+// credential — so what makes a database this installation's there makes it
+// this installation's here. declined is what this writer would have written,
+// which is what the refusal's sentence ends on.
+func ownCoordinatorDB(ctx context.Context, lc *localcfg.Config, declined string) error {
+	db, err := fcli.NewBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
+	if err != nil {
+		return err
+	}
+	return fcli.RequireOwnBudgetDB(ctx, lc, db, declined)
 }
 
 // openCoordinatorStore opens the coordinator's store over the project's own
