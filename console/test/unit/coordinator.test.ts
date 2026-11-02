@@ -26,12 +26,17 @@
 // never a derived "5 minutes ago", which would compare two things that are not
 // on the same scale.
 
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
-import { CONSOLE_OPERATIONS } from '../../src/main/ipc'
+import { CONSOLE_OPERATIONS, validateArguments } from '../../src/main/ipc'
 import { SPAWN_COMMANDS, argvFor, assertSpawnSurface } from '../../src/main/spawn'
 import type { SpawnCommand } from '../../src/main/spawn'
+import { PULL_REQUEST_PROVIDERS, pullRequestUrl } from '../../src/main/window'
 import { putText } from '../../src/renderer/app'
+import { asciiLower } from '../../src/renderer/screens/coordinator'
 import { capsOf } from '../../src/renderer/screens/spend'
 import {
   COORDINATOR_BLIND_STALE_WORD,
@@ -76,6 +81,7 @@ import {
   COORDINATOR_TOTAL_PLANS_WORD,
   COORDINATOR_TOTAL_REPOS_WORD,
   COORDINATOR_UNREAD_WORD,
+  PULL_PROVIDERS,
   QUEUE_SOURCES,
   buildCoordinatorModel,
   coordinatorJobsControl,
@@ -89,7 +95,7 @@ import type {
   ScreenFactory,
 } from '../../src/renderer/screens/coordinator'
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
-import { PATH_PLACEHOLDER, type TextClass } from '../../src/shared/sanitize'
+import { PATH_PLACEHOLDER, sanitizeText, type TextClass } from '../../src/shared/sanitize'
 import { decodeCoordinatorStatus, decodePlanStatus } from '../../src/shared/schema'
 import type { CoordinatorStatusView, PlanStatusView } from '../../src/shared/schema'
 import type { JSONDoc } from '../../src/source/source'
@@ -347,10 +353,20 @@ function aRecord(options: {
 
 /** aStore is a coordinator document: one stored repository holding the records
  * a case hands it. */
-function aStore(records: readonly unknown[]): unknown {
+function aStore(records: readonly unknown[], options: { provider?: string; repo?: string } = {}): unknown {
+  const repo = options.repo ?? 'owner/repo-a'
   return {
     repos: [
-      { repo: 'owner/repo-a', stored: true, view: { repo: 'owner/repo-a', records, collisions: [] } },
+      {
+        repo,
+        // `provider` is C1's field on the node (D814). A store without it is
+        // what a CLI older than C1 answers, which is the node K2 draws its
+        // numbers as text on -- so a case that wants a button writes one, and
+        // every case that does not stays a case about the older CLI.
+        ...(options.provider === undefined ? {} : { provider: options.provider }),
+        stored: true,
+        view: { repo, records, collisions: [] },
+      },
     ],
   }
 }
@@ -914,7 +930,7 @@ describe('the Coordinator screen in the Flight Deck look (console redesign, step
     const node = renders({ repos: [STORED] })
     const row = one(node, 'coordinator-record')
     const head = one(row, 'coordinator-record-head')
-    expect(head.nodes[0], 'the number does not open the row').toBe(one(head, 'coordinator-record-label'))
+    expect(head.nodes[0], 'the number leads the row').toBe(one(head, 'coordinator-record-label'))
     expect(textOf(head, 'coordinator-record-label')).toBe('#7')
     expect(textOf(head, 'coordinator-record-title')).toBe('a title someone wrote')
     expect(textOf(head, 'coordinator-record-branch')).toBe('feat/a-thing')
@@ -1311,6 +1327,167 @@ describe('the action queue (K1)', () => {
       // are the ones a document's strings reach, and this is the whole tree
       // saying so rather than the four kinds saying it one at a time.
       expect(drawn(node), `${value} reached the screen as itself`).not.toContain('\u202E')
+    }
+  })
+})
+
+/** COORDINATOR_SOURCE and WINDOW_SOURCE are the two modules whose copies of one
+ * rule the K2 cases below hold together. */
+const COORDINATOR_SOURCE = join(__dirname, '..', '..', 'src', 'renderer', 'screens', 'coordinator.ts')
+const WINDOW_SOURCE = join(__dirname, '..', '..', 'src', 'main', 'window.ts')
+
+/** patternLiteralOf is the regex literal a module declares one name with, read
+ * out of the source rather than taken off the module: main does not export
+ * `PULL_REQUEST_REPO_RE`, and what the two comments claim is about the
+ * **characters** of the pattern -- two spellings of one rule are the same value,
+ * so comparing the values could not see the drift in the text. */
+function patternLiteralOf(source: string, name: string): string {
+  const found = new RegExp(`^const ${name} = (.+)$`, 'm').exec(source)?.[1]?.trim()
+  if (found === undefined) throw new Error(`no \`const ${name} = ...\` in the source it is declared in`)
+  return found
+}
+
+describe('the numbers that open a pull request (K2)', () => {
+  /** A_GOOD_NODE is the one node K2 draws a button for: a provider the console
+   * has a route for, and the `owner/name` the store's own key is. Everything
+   * below is that node with one thing taken away. */
+  const A_GOOD_NODE = { provider: 'github' }
+
+  it('draws the number as a button when the node can form a triple, and as text when it cannot', () => {
+    // The tag is the whole of the rule: a number the console can form a
+    // `(provider, owner/name, number)` for is a button the entry binds to the
+    // operation that opens it, and a number it cannot is the text K1 drew --
+    // never a button that would do nothing, which is a control a reader is owed
+    // an explanation for and cannot get from a press that never happens.
+    const buttoned = drawsQueue({ view: decodes(aStore([aRecord({})], A_GOOD_NODE)) })
+    const subject = one(itemOf(buttoned, COORDINATOR_QUEUE_PR_WORD), 'coordinator-queue-subject')
+    expect(subject.tag).toBe('button')
+    expect(subject.getAttribute('type')).toBe('button')
+    expect(subject.textContent).toBe('#1458')
+    const label = one(buttoned, 'coordinator-record-label')
+    expect(label.tag).toBe('button')
+    expect(label.getAttribute('type')).toBe('button')
+    expect(label.textContent).toBe('#1458')
+
+    // The four shapes a triple cannot be formed from: no provider at all (a CLI
+    // older than C1), the empty provider the decoder answers for the absent key,
+    // a provider this console has no route for, and a repository that is not
+    // `owner/name` -- which is where a value that would become part of a URL has
+    // to be stopped, because a document writes it.
+    const textOnly: readonly (readonly [string, { provider?: string; repo?: string }])[] = [
+      ['no provider at all', {}],
+      ['the empty provider', { provider: '' }],
+      ['a provider with no route', { provider: 'gitlab' }],
+      ['a repository with no owner', { provider: 'github', repo: 'owner' }],
+      ['a repository with a traversal', { provider: 'github', repo: 'owner/../evil' }],
+      ['a repository with a space', { provider: 'github', repo: 'owner/repo a' }],
+      ['a repository with a query', { provider: 'github', repo: 'owner/repo?x=1' }],
+    ]
+    for (const [because, options] of textOnly) {
+      const plain = drawsQueue({ view: decodes(aStore([aRecord({})], options)) })
+      const drawnSubject = one(itemOf(plain, COORDINATOR_QUEUE_PR_WORD), 'coordinator-queue-subject')
+      expect([drawnSubject.tag, drawnSubject.textContent], because).toEqual(['span', '#1458'])
+      expect(one(plain, 'coordinator-record-label').tag, because).toBe('span')
+    }
+  })
+
+  it('names the button with the pull request and the repository, and puts no destination on it', () => {
+    // A number that is the same in two repositories is two different things to
+    // open, so the name carries both halves -- and it is an `aria-label` rather
+    // than more text, because the row is already dense.
+    const node = drawsQueue({ view: decodes(aStore([aRecord({})], A_GOOD_NODE)) })
+    const name = 'open pull request #1458 in owner/repo-a'
+    expect(one(itemOf(node, COORDINATOR_QUEUE_PR_WORD), 'coordinator-queue-subject').getAttribute('aria-label')).toBe(
+      name,
+    )
+    expect(one(node, 'coordinator-record-label').getAttribute('aria-label')).toBe(name)
+
+    // The pull request's own `url` is in the document `aRecord` builds, and it
+    // is nowhere on the screen: not as text, and -- because `FakeScreen` refuses
+    // `href`, `src` and the rest outright -- not as a destination either. The
+    // entry hands the operation the triple and never a URL.
+    expect(drawn(node)).not.toContain('example.invalid')
+  })
+
+  it('draws the number as text when the repository is one the row itself refuses to draw', () => {
+    // A button acts on a string the reader can see: a number whose cell draws
+    // `n/a` because the `repository` class refused the value must not be a
+    // control that opens something built from it. So the class is asked, and
+    // these two are what it refuses while the host's own alphabet would allow
+    // them -- a walk inside a segment, and a repository past the class's bound.
+    const long = `${'a'.repeat(150)}/${'b'.repeat(150)}`
+    const refused: readonly (readonly [string, string])[] = [
+      ['a walk inside a segment', 'owner/a..b'],
+      ['a repository past the class\u2019s bound', long],
+    ]
+    for (const [because, repo] of refused) {
+      const node = drawsQueue({ view: decodes(aStore([aRecord({})], { provider: 'github', repo })) })
+      const label = one(node, 'coordinator-record-label')
+      expect([label.tag, label.textContent], because).toEqual(['span', '#1458'])
+      expect(label.getAttribute('aria-label'), because).toBeNull()
+      expect(drawn(node), because).not.toContain(repo)
+    }
+  })
+
+  it('lists the providers the main process has a route for, in the main process’s own order', () => {
+    // The screen cannot ask main before it draws, so its own list is a second
+    // copy of the builder's, and a copy is only safe while it is still a copy.
+    // Drift is silent in both directions: a provider main gained and the screen
+    // did not is a number drawn as text that nobody can press, and one the screen
+    // gained and main did not is a button that opens nothing. Main's list is read
+    // off its own module rather than out of its source, because it is
+    // `PULL_REQUEST_ROUTES`' keys and has no literal of its own.
+    expect(PULL_PROVIDERS).toEqual(PULL_REQUEST_PROVIDERS)
+  })
+
+  it('holds the main process’s own repository pattern, character for character', () => {
+    // The doc comment beside `PULL_REPO` claims the pattern is main's "character
+    // for character", and this is where that claim is a fact about two strings
+    // rather than a reader's eye. The pattern is the half that decides whether a
+    // repository a document wrote becomes part of a URL, so a copy that drifted
+    // in one alternative would be a rule the two halves of the console disagree
+    // about -- and neither would say so.
+    const mine = patternLiteralOf(readFileSync(COORDINATOR_SOURCE, 'utf8'), 'PULL_REPO')
+    const theirs = patternLiteralOf(readFileSync(WINDOW_SOURCE, 'utf8'), 'PULL_REQUEST_REPO_RE')
+    expect(mine.startsWith('/') && mine.endsWith('/'), 'the literal was not read as a pattern').toBe(true)
+    expect(mine, 'the screen’s repository pattern is no longer main’s').toBe(theirs)
+  })
+
+  it('draws a button for exactly the repositories the main process would open and the row can draw', () => {
+    // The two cases above hold the copies equal; this one holds the **decision**
+    // equal, which is what a reader of the screen is affected by. Making a number
+    // a button is the conjunction of two authorities that are not this file's:
+    // main's own builder (which answers a destination only for a provider with a
+    // route, an `owner/name` in the host's alphabet and a whole positive number)
+    // and the `repository` text class (which is what the cell beside the number
+    // draws). A repository this screen refuses and main would open is a number
+    // that could have been pressable -- a gap, and the safe direction. A button
+    // main would refuse is the other direction, and it is the one this case
+    // exists for: a press that opens nothing is a control no reader can tell from
+    // a broken console.
+    const long = `${'a'.repeat(150)}/${'b'.repeat(150)}`
+    const table: readonly (readonly [string, string])[] = [
+      ['the store’s own repository', 'owner/repo-a'],
+      ['a repository with a dot and a dash', 'owner/repo.b-c'],
+      ['a repository with an underscore and a digit', 'owner_1/repo-2'],
+      ['a walk inside a segment', 'owner/a..b'],
+      ['a repository past the class’s bound', long],
+      ['a traversal', 'owner/../evil'],
+      ['a repository with a space', 'owner/repo a'],
+      ['a repository with a query', 'owner/repo?x=1'],
+      ['a repository with no owner', 'owner'],
+      ['a mixed-case repository (main takes lowercase only)', 'Owner/Repo-A'],
+    ]
+    for (const [because, repo] of table) {
+      const node = drawsQueue({ view: decodes(aStore([aRecord({})], { provider: 'github', repo })) })
+      const drawnAsButton = one(node, 'coordinator-record-label').tag === 'button'
+      const mainWouldOpen =
+        validateArguments('link.openPullRequest', { provider: 'github', repo: asciiLower(repo), number: 1458 }).ok &&
+        pullRequestUrl('github', asciiLower(repo), 1458) !== null
+      const rowCanDraw = sanitizeText(repo, 'repository', 'repos[].repo').ok
+      expect(drawnAsButton, `${because}: ${String(mainWouldOpen)} and ${String(rowCanDraw)}`).toBe(
+        mainWouldOpen && rowCanDraw,
+      )
     }
   })
 })
