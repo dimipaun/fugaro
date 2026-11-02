@@ -360,6 +360,13 @@ func summaryLive(ctx context.Context, lc *localcfg.Config, days []int64, warn fu
 	if err != nil {
 		return nil, err
 	}
+	// The database must be this project's own, the check every other reader of
+	// it makes: a budget.rtdb_url pointing at another project's database would
+	// have this read print that project's counts and spend under this project's
+	// name, which is a wrong answer rather than a missing one.
+	if err := checkDBProject(ctx, db, lc); err != nil {
+		return nil, err
+	}
 	recs, err := budget.LiveDays(ctx, db, nil, days, warn)
 	if err != nil {
 		return nil, dbErr(lc, err, false)
