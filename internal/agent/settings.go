@@ -55,6 +55,8 @@ var deniedBinaryReads = []string{
 	"Read(**/*.heic)", "Read(**/*.tiff)",
 }
 
+var deniedReviewTools = []string{}
+
 // DenyRules is the permissions deny list a stage's managed settings carry:
 // the web tools when denyWeb, and the review stage's binary reads when
 // review. The two are independent, and how a stage is recognised as a review
@@ -67,6 +69,7 @@ func DenyRules(denyWeb, review bool) []string {
 	}
 	if review {
 		deny = append(deny, deniedBinaryReads...)
+		deny = append(deny, deniedReviewTools...)
 	}
 	return deny
 }
