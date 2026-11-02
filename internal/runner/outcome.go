@@ -176,8 +176,12 @@ func (r *run) heldBackLevel() *runstore.ReviewSummary {
 	if decided == nil || decided.Verdict != "ship" {
 		return nil
 	}
-	for _, l := range []policy.Level{policy.LevelL2, policy.LevelL3} {
-		if !levelOn(r.levels, l) || l == reviewLevelOf(*decided) {
+	// Level 1 is skipped by name rather than by leaving it out of the slice
+	// walked here: it is never a candidate whatever order the levels are read
+	// in (below), and the code says so rather than the reader having to know
+	// that level 2 is the only level it sits under.
+	for _, l := range []policy.Level{policy.LevelL1, policy.LevelL2, policy.LevelL3} {
+		if l == policy.LevelL1 || !levelOn(r.levels, l) || l == reviewLevelOf(*decided) {
 			continue
 		}
 		if rs := lastRoundOf(r.rec.Reviews, l); rs != nil && rs.Verdict != "ship" {
