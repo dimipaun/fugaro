@@ -1,10 +1,15 @@
 package runner_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // levelPinned is gwConfig with one review level's own model set and the
@@ -93,4 +98,56 @@ func TestLevelModelNotInTheAllowListRefused(t *testing.T) {
 func TestLevelModelAliasRefused(t *testing.T) {
 	g := providerGW(t, levelPinned(t, "l3", "opus"), "acme/app")
 	refusedBeforeAnyCall(t, g, "agent.levels.l3.model", "opus is an alias")
+}
+
+// levelCall is a stage that makes one call on the model the runner asked for —
+// what Claude Code does with the --model the runner passes it — and records
+// that model with the call's status and body.
+func levelCall(model *string, status *int, body *string, inner step) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		*model = req.Model
+		*status, *body = post(t, req, req.Model, 4096)
+		return inner(t, ctx, req)
+	}
+}
+
+// TestLevelModelIsTheModelTheStageAsksFor: the model a stage asks the agent
+// for is the model the gateway admits for that stage. The gateway admits a
+// call on the stage's own model and nothing else (gateway.Stage.Model, which
+// stageModel answers), so a review level whose model a layer named has to be
+// the model its stage requests. Where the two disagree every call of the stage
+// is refused as not pinned for it, and the run dies in its review — the pins
+// name the level's model, the set the gateway holds names the level's model,
+// and only the request is left asking for the role's.
+//
+// The level 2 model here is Claude's own opus, a model the built-in table
+// prices, so the run needs no route: what this test is about is the stage's
+// request, not the provider half.
+func TestLevelModelIsTheModelTheStageAsksFor(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500}
+	cfg := gwConfig(t, "  first_line_review: off\n  levels: { l2: { model: "+opus+" } }\n")
+	g := newGW(t, cfg, "enforce", "50",
+		anthropicfake.MessageOK(sonnet, use), anthropicfake.MessageOK(opus, use))
+
+	var coderModel, reviewModel string
+	var coderStatus, reviewStatus int
+	var reviewBody string
+	rec, err := g.run(t,
+		levelCall(&coderModel, &coderStatus, new(string), implement("feature")),
+		levelCall(&reviewModel, &reviewStatus, &reviewBody, review("ship", 0)))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if coderModel != sonnet {
+		t.Errorf("the implement stage asked for %q, want the coder's own model %q", coderModel, sonnet)
+	}
+	if reviewModel != opus {
+		t.Errorf("the review stage asked for %q, want the level's own model %q: the stage must ask for the model the gateway admits for it", reviewModel, opus)
+	}
+	if coderStatus != 200 || reviewStatus != 200 {
+		t.Fatalf("statuses = %d, %d: a stage's own call was not admitted\nreviewer: %s", coderStatus, reviewStatus, reviewBody)
+	}
+	if n := g.fake.Count(); n != 2 {
+		t.Errorf("Anthropic saw %d calls, want the two stages'", n)
+	}
 }
