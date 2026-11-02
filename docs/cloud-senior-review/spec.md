@@ -647,6 +647,20 @@ advice is about, and a pull request whose head has moved since gets no merge on 
 signature comes first** (D892(a), below): the coordinator verifies it before it reads the verdict at
 all, and a verdict that does not verify is never a `ship`.
 
+**A review at the final head by a model on the approved list may stand in for an independent
+review.** The rule turns on a pair rather than on a name: **what** reviewed the round and **which
+head** it read. CLI 0.16.0 makes both facts things the run's own record states — every review round
+writes the model it ran on, the reasoning effort it ran at and the commit it read
+(`runstore.ReviewSummary.Model`, `.Effort` and `.Head`, beside the round, the tier and the verdict),
+and the run's pull request status line and `fugaro diagnose` print them — so the coordinator compares
+a review's head with the pull request's final head, and its model with the list, rather than
+inferring either from who launched the job. The final-head half is the rule this section already
+takes: a head that has moved since gets no merge on that verdict. **What the approved list is —
+which models are strong enough to stand in, and where the list is set — is a project or policy
+decision this design does not make**: the shape and the default are still open, and until the
+decision is answered the rule reads nothing and no review stands in, which is the fail-closed
+posture the rest of this section takes.
+
 **`fix first` → the coordinator launches a fix round whose brief is the findings.** This is the
 part that must not need a human copying anything. The fix round is an ordinary follow-up —
 `fugaro run --pr N --recipe <the repository's recipe>` — and the findings reach **its brief** from
