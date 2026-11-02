@@ -14,6 +14,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -397,5 +399,47 @@ func TestAccountsAddFailsWhenAStageIsLeftForTheOwner(t *testing.T) {
 	// account.
 	if names := r.policy(t).AccountNames(); len(names) != 0 {
 		t.Errorf("the published node names %v, and the Policy stage never ran", names)
+	}
+}
+
+// TestAccountsAddDeployLineOnlyClaimsADeploymentForChanged is F2: the deploy row
+// names the job this run wrote, so it says `+ <job>` for the one state that
+// applied — Changed — and for no other. Every other state is the stage's own
+// answer, in its own words: a job named over needs-you or blocked claims a
+// deployment that did not happen, and the last line of the command then invites
+// the owner to start a run on a job that is not there.
+func TestAccountsAddDeployLineOnlyClaimsADeploymentForChanged(t *testing.T) {
+	lc := &localcfg.Config{Profiles: map[string]config.JobProfile{"standard": {Provider: "github"}}}
+	job := gcp.ProjectJobName("standard", "github", "team-a")
+	line := func(state initflow.State, detail string) string {
+		return accountsAddDeployLine(lc, "standard", "team-a", initflow.StageResult{Name: initflow.Installation, State: state, Detail: detail})
+	}
+
+	got := line(initflow.Changed, "deployed the job set")
+	if !strings.HasPrefix(got, "+ ") || !strings.Contains(got, job) {
+		t.Errorf("changed: %q, want the + <job> line naming %s", got, job)
+	}
+	for _, tc := range []struct {
+		state  initflow.State
+		detail string
+	}{
+		{initflow.NeedsYou, "type the project's name at each apply"},
+		{initflow.Blocked, "waits for Repository"},
+		{initflow.BillingPending, "the billing account is not active yet"},
+		{initflow.Done, "the job set is current"},
+		{initflow.Skipped, "no budget backend: the stage does not apply"},
+	} {
+		t.Run(string(tc.state), func(t *testing.T) {
+			got := line(tc.state, tc.detail)
+			if contains := strings.Contains(got, job); contains {
+				t.Errorf("%s: %q names the job, and the stage did not deploy it", tc.state, got)
+			}
+			if !strings.HasPrefix(got, string(tc.state)+": ") {
+				t.Errorf("%s: %q, want the stage's own state and reason", tc.state, got)
+			}
+			if !strings.Contains(got, tc.detail) {
+				t.Errorf("%s: %q does not carry the stage's reason %q", tc.state, got, tc.detail)
+			}
+		})
 	}
 }

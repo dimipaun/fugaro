@@ -399,10 +399,16 @@ func accountsAddDeployLine(lc *localcfg.Config, profile, name string, st initflo
 	switch st.State {
 	case "":
 		return "not run: the stage reported no result"
-	case initflow.Skipped:
-		return "skipped: " + oneLine(st.Detail)
-	case initflow.Done:
-		return "already current"
+	case initflow.Changed:
+		// The one state that applied: the job set was written by this run, and
+		// the line that names the job is the line that says so.
+	default:
+		// Every other state is the stage's own answer, in its own words —
+		// needs-you, blocked, billing-pending, done, will-do. A `+ <job>` line
+		// over one of them would claim a deployment that did not happen, and
+		// the last line of this command then tells the owner to start a run on
+		// a job that is not there.
+		return string(st.State) + ": " + oneLine(st.Detail)
 	}
 	if profile == "" {
 		return "no job: no profile serves " + pluginwire.Printable(name) + " yet"
