@@ -89,7 +89,7 @@ export const BRIDGE_VERSION = 1
  * nothing failing, because the runtime tests in `test/unit/ipc.test.ts` pin the
  * same sets against the table and the object is built from that table anyway.
  * `satisfies` checks each row's shape without widening anything, so a row that
- * is not a name and a method is still a compile error, and the twenty-five names
+ * is not a name and a method is still a compile error, and the twenty-six names
  * stay literal -- which is what makes `ExposedName`, `ExposedMethod` and
  * `ConsoleBridge` below the closed things their comments say they are.
  *
@@ -161,6 +161,14 @@ export const BRIDGE_VERSION = 1
  * **Coordinator v2 K2a added the twenty-fifth** (`link.openPullRequest` /
  * `openPullRequest`, D814 and D815) and left the other twenty-four exactly where
  * they were. The twenty-fourth is above it in this list.
+ *
+ * **Coordinator v2 C3 added the twenty-sixth** (`coordinator.show` /
+ * `coordinatorShow`, one pull request as the host has it, the description
+ * included -- D816) and left the other twenty-five exactly where they were. It
+ * sits directly under `coordinator.status` because the two are the same subject
+ * asked two ways, and it is the second row here whose child mints a credential
+ * of the host's -- the coordinator's own read-only installation token, which is
+ * what its two arguments and no third key are for (`src/main/ipc.ts`).
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -207,6 +215,19 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // spawn.ts`'s row, not arguments a renderer sends -- the row here declares
   // none.
   ['coordinator.status', 'coordinatorStatus'],
+  // The pull request read (coordinator v2 C3, D816): `coordinator show --repo
+  // <owner/name> --pr <n> --json`, one pull request as the host has it, the
+  // description included -- which the project view's row above cannot carry,
+  // because the stored view drops a body by design (reconciliation F3). One row
+  // here for the same reason as every other: the two arguments are the
+  // operation's own closed schema (`src/main/ipc.ts`), and a method that took
+  // the operation as an argument is the shape rule 5 forbids. **It is the second
+  // row whose
+  // child mints a credential of the host's** -- the coordinator's own read-only
+  // installation token -- so its two arguments are the whole of what a renderer
+  // can influence about the argv, and no credential of the host's reaches this
+  // surface, the reply or a log line.
+  ['coordinator.show', 'coordinatorShow'],
   // The launch, and the surface's **one write** (V2.5.1a, design section 5.1
   // rule 11, D22). One row, like every other: the five fields are the
   // operation's own closed schema. What this method *does* is ask the main
@@ -220,7 +241,7 @@ export const EXPOSED_OPERATIONS = Object.freeze([
 
 /**
  * ExposedName is the closed union of the operation names this file exposes --
- * twenty-five string literals, not `string`. It is the type of the `operations` list
+ * twenty-six string literals, not `string`. It is the type of the `operations` list
  * a screen switches on, so the closure is what lets a screen be exhaustive.
  */
 export type ExposedName = (typeof EXPOSED_OPERATIONS)[number][0]
@@ -340,9 +361,9 @@ async function invokeOperation(
  *
  * The returned object is not cast into `ConsoleBridge`: it is checked against
  * it, like any other value, and that is the point of the accumulator's type. It
- * is `Record<ExposedMethod, ConsoleMethod>` -- twenty-five *named* properties,
+ * is `Record<ExposedMethod, ConsoleMethod>` -- twenty-six *named* properties,
  * because `ExposedMethod` is a union of literals -- so spreading it gives the
- * object literal those twenty-five properties as properties rather than as an index
+ * object literal those twenty-six properties as properties rather than as an index
  * signature. (Before that type was literal, this line needed `as ConsoleBridge`
  * to silence the compiler, which is what made the claim untested rather than
  * checked.) The loop is what actually writes them, and a loop is a thing the
@@ -371,7 +392,7 @@ export function createConsoleBridge(ipcRenderer: RendererLike): ConsoleBridge {
  * `exposeInMainWorld` is what keeps rule 5's promise concrete: the renderer gets
  * a copy of this object, in its own world, with `contextIsolation` in between.
  * It cannot reach the preload's scope, `ipcRenderer`, or Node -- only these
- * twenty-five methods.
+ * twenty-six methods.
  */
 export function exposeConsoleBridge(
   contextBridge: ContextBridgeLike,

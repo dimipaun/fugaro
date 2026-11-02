@@ -601,6 +601,12 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   // Bitbucket credentials T1.2: the project view's read, the one command here
   // whose subject is the coordinator's *stored* view rather than a live read.
   { command: 'coordinator status', kind: 'allowed', where: 'ee/coordinator/cli/coordinator.go:565' },
+  // Coordinator v2 C3: the pull request read, next to the stored view's. It is
+  // `allowed` and not `unused` because the surface drives it -- and it is the
+  // one command here that mints a credential of the host's, which is exactly
+  // why its argv is pinned (the repository, the number and `--json`, and no
+  // token field anywhere).
+  { command: 'coordinator show', kind: 'allowed', where: 'ee/coordinator/cli/coordinator_show.go:46' },
   // **The console's one write** (design §5.1 rule 11, D22). `run` was the
   // first writer in this list and the one no argv could drive; since V2.5.1a it
   // is a command the allow-list admits, in exactly one argv, so it is `allowed`
@@ -705,6 +711,12 @@ const DESIGN_ARGV: readonly string[] = [
   'config list --json',
   'plan status --json',
   'coordinator status --from-store --all --json',
+  // The pull request read (coordinator v2 C3, D816): `--repo R` and `--pr N`
+  // are the operation's two declared arguments, so this file's convention --
+  // the command and the flags it *fixes*, with what an argument fills taken
+  // out -- leaves the row as it is written here. The design's own row states
+  // the whole argv, `--repo <owner/name> --pr <n> --json` and all.
+  'coordinator show --json',
   // Rule 11's argv, `--task-file -` and all: the literal `-` is the word that
   // sends the task down the child's stdin rather than onto a command line.
   'run --task-file - --json',
@@ -1102,6 +1114,12 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // repository set, from the view the coordinator already stored, so this
   // payload is empty on purpose (Bitbucket credentials T1.2).
   'coordinator.status': {},
+  // The two arguments the pull request read is asked with (coordinator v2 C3):
+  // the repository as the CLI's own canonical `owner/name`, and the number as
+  // the plain positive integer the `pullRequest` kind exists for. There is no
+  // `url`, no `path` and no token field -- the read mints its own credential in
+  // the child and says so in the console's own words.
+  'coordinator.show': { repo: 'acme/app', pr: 42 },
   // The five fields, with the two optional ones left out -- which is the argv
   // rule 11 writes for a launch the operator gave no title and no plan task.
   'run.launch': { installation: 'sandbox', repository: 'acme/app', task: 'do the thing' },
@@ -1483,6 +1501,34 @@ describe('the argument schemas', () => {
         checkout: '/home/operator/src/aurora',
       }).ok,
     ).toBe(true)
+  })
+
+  it('pins `coordinator.show`’s two arguments, which are the whole of what it may send', () => {
+    // **C3's read is the second operation here that mints a credential of the
+    // host's** (the coordinator's own read-only installation token, D816), so
+    // its payload is the whole of what a renderer can influence about the argv:
+    // the repository and the number, both required, and no third key. A token, a
+    // host, a path or a flag name is not a key of this schema, and a key it does
+    // not declare is refused by name (`takes no key it does not declare` above);
+    // the two it does declare are kinds that refuse what they are not.
+    expect(operationFor('coordinator.show').command).toBe('coordinator show')
+    expect(operationFor('coordinator.show').flags).toEqual(['--json'])
+    expect(operationFor('coordinator.show').args.map((spec) => [spec.key, spec.kind, spec.required])).toEqual([
+      ['repo', 'repository', true],
+      ['pr', 'pullRequest', true],
+    ])
+    // Both are required: the CLI refuses an argv missing either (`--repo %q must
+    // look like owner/name`, `--pr %d is not a pull request number`), so a
+    // payload missing one is refused here, before a child exists.
+    expect(validateArguments('coordinator.show', {}).ok).toBe(false)
+    expect(validateArguments('coordinator.show', { repo: 'acme/app' }).ok).toBe(false)
+    expect(validateArguments('coordinator.show', { pr: 42 }).ok).toBe(false)
+    // ...and what each kind refuses: a repository that is not the CLI's own
+    // `owner/name`, and a number that is not a pull request number.
+    expect(validateArguments('coordinator.show', { repo: 'acme', pr: 42 }).ok).toBe(false)
+    expect(validateArguments('coordinator.show', { repo: 'acme/app', pr: 0 }).ok).toBe(false)
+    expect(validateArguments('coordinator.show', { repo: 'acme/app', pr: 1.5 }).ok).toBe(false)
+    expect(validateArguments('coordinator.show', WELL_FORMED['coordinator.show']).ok).toBe(true)
   })
 
   it('takes no key it does not declare, for every operation', () => {
@@ -1956,7 +2002,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these twenty-five, and no others".
+ * channel. The claim is "these twenty-six, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -1989,7 +2035,13 @@ describe('the spend read’s arguments', () => {
  * added the twenty-fifth** (`link.openPullRequest` / `openPullRequest`: the pull
  * request link, built in the main process from three fields and never read out
  * of a document's `url`, D814/D815) and left the other twenty-four exactly where
- * they were.
+ * they were. **The coordinator-v2 plan's C3 added the twenty-sixth**
+ * (`coordinator.show` / `coordinatorShow`: one pull request as the host has it,
+ * the description included, which the stored view drops by design -- D816) and
+ * left the other twenty-five exactly where they were. It is the second
+ * operation here that mints a credential of the host's, and the only one whose
+ * credential is read-only by construction; it is next to `coordinator.status`
+ * in this list because the two are the same subject asked two ways.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -2016,6 +2068,7 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['installation.reveal', 'revealInstallation'],
   ['installation.open', 'openInstallations'],
   ['coordinator.status', 'coordinatorStatus'],
+  ['coordinator.show', 'coordinatorShow'],
   ['run.launch', 'launchRun'],
 ]
 
@@ -2047,7 +2100,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these twenty-five, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these twenty-six, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -2064,11 +2117,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A twenty-sixth channel: what each task added must stay one row, and the
+    // A twenty-seventh channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
-    const twentySixth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(twentySixth).toContain('fleet.report: a channel this console does not ship')
-    expect(twentySixth).toContain('26 rows, and this console ships 25')
+    const twentySeventh = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(twentySeventh).toContain('fleet.report: a channel this console does not ship')
+    expect(twentySeventh).toContain('27 rows, and this console ships 26')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -2082,7 +2135,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('24 rows, and this console ships 25')
+    expect(withoutTheNewRow).toContain('25 rows, and this console ships 26')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -2097,8 +2150,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the twenty-five methods and nothing else', () => {
-    // The bridge the window is handed: the twenty-five methods and the names,
+  it('is frozen, and hands the window a bridge with the twenty-six methods and nothing else', () => {
+    // The bridge the window is handed: the twenty-six methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -3252,7 +3305,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: twenty-one of the surface's twenty-five operations,
+    // The non-vacuity half: twenty-two of the surface's twenty-six operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
@@ -3269,7 +3322,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // list. **`link.openPullRequest` is too, and for the same reason**: a pull
     // request number is repository state rather than money, so the mode has
     // nothing to withhold from it.
-    expect(THE_OPEN_OPERATIONS.length).toBe(21)
+    expect(THE_OPEN_OPERATIONS.length).toBe(22)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(
