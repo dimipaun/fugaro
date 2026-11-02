@@ -172,22 +172,31 @@ func TestManagedSettingsDenyWebTools(t *testing.T) {
 var denyExtensions = []string{"png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "pdf", "heic", "tiff"}
 
 // TestDenyRulesPerStage: the two parts of the deny list are independent, and
-// a review stage's is the web tools plus one Read rule per binary kind plus
-// D891(a)'s five. That list is what makes the review stage's prompt rule
-// enforced rather than merely said: the reviewer runs with
-// --dangerously-skip-permissions and a full Read tool, and one Read of a
-// changed PNG is the whole of the failure run 20261021-002046-31cc ended on
-// (`images aren't priced for model ...`).
+// a review stage's is the web tools plus one Read rule per binary kind. That
+// list is what makes the review stage's prompt rule enforced rather than
+// merely said: the reviewer runs with --dangerously-skip-permissions and a
+// full Read tool, and one Read of a changed PNG is the whole of the failure
+// run 20261021-002046-31cc ended on (`images aren't priced for model ...`).
+//
+// D891(a)'s five tools are deliberately NOT part of it: a review stage is not
+// the independent review job, and a coding run's own review rounds keep their
+// tools (the runner's agentenv.go is where the two are told apart, and its
+// TestManagedSettingsDenyBinaryReadsInReviewStages is what holds the launch).
+// ReviewJobDenyRules carries them, and this test holds the two lists apart in
+// both directions: none of the five may appear in a stage's list, and the
+// job's list is exactly the five.
 //
 // Mutation (return deniedWebTools alone whatever review says): the review
 // assertion fails. Mutation (return the binary reads for every stage): the
 // non-review assertion fails. Mutation (drop one extension from
 // deniedBinaryReads): the list assertion fails. Mutation (add a rule the
 // specifier of which is not a Read of a file kind, e.g. "Read(/etc/**)"):
-// the list assertion fails. Mutation (return deniedReviewTools for every
-// stage): the non-review assertion fails.
+// the list assertion fails. Mutation (return deniedReviewTools from DenyRules
+// for every stage, which is where this list was before the review job was
+// told apart from a review stage): the non-review assertion and the row below
+// fail.
 func TestDenyRulesPerStage(t *testing.T) {
-	reviewRules := append(denyExtensionsOf(), deniedReviewTools...)
+	reviewRules := denyExtensionsOf()
 	for _, c := range []struct {
 		name    string
 		denyWeb bool
@@ -203,6 +212,21 @@ func TestDenyRulesPerStage(t *testing.T) {
 			t.Errorf("%s: DenyRules(%v, %v) = %v, want %v", c.name, c.denyWeb, c.review, got, c.want)
 		}
 	}
+	if got := ReviewJobDenyRules(); !slices.Equal(got, deniedReviewTools) {
+		t.Errorf("ReviewJobDenyRules() = %v, want %v", got, deniedReviewTools)
+	}
+	for _, rule := range DenyRules(true, true) {
+		if slices.Contains(deniedReviewTools, rule) {
+			t.Errorf("a review stage's list carries %q, which is the review job's rule", rule)
+		}
+	}
+	// A copy, not the list: a caller that appends to what it was given must
+	// not be able to change what the next stage is denied.
+	got := ReviewJobDenyRules()
+	got[0] = ""
+	if slices.Contains(deniedReviewTools, "") {
+		t.Error("ReviewJobDenyRules returns the package's own list, so a caller can empty a rule for every later run")
+	}
 }
 
 // denyExtensionsOf is the Read rule per binary kind a review stage carries,
@@ -215,13 +239,15 @@ func denyExtensionsOf() []string {
 	return reads
 }
 
-// reviewStageDeny carries the rule a review stage's own settings file holds:
-// the literal list read back out of the file WriteManagedSettings wrote, so
-// what is pinned is the launch and not the function's answer alone.
-func reviewStageDeny(t *testing.T) []string {
+// reviewJobDeny carries the rule the independent review job's own settings
+// file holds: the two lists the runner composes for that job (agentenv.go's
+// writeManagedSettings), read back out of the file WriteManagedSettings wrote,
+// so what is pinned is the launch and not the functions' answers alone.
+func reviewJobDeny(t *testing.T) []string {
 	t.Helper()
+	deny := append(DenyRules(true, true), ReviewJobDenyRules()...)
 	path := filepath.Join(t.TempDir(), "managed-settings.json")
-	if err := WriteManagedSettings(path, map[string]string{"A": "1"}, DenyRules(true, true)); err != nil {
+	if err := WriteManagedSettings(path, map[string]string{"A": "1"}, deny); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -237,63 +263,68 @@ func reviewStageDeny(t *testing.T) []string {
 	return got.Permissions.Deny
 }
 
-// TestReviewStageDeniesBashForTheRestOfTheStage: D891(a)'s own rule, and the
-// red step of the task that adds it. The reviewer's shell is the general
+// TestReviewJobDeniesBashForTheRestOfTheStage: D891(a)'s own rule, and the red
+// step of the task that adds it. The reviewer's shell is the general
 // exfiltration path a token in the stage's environment would leave open —
 // `denyWeb` denies Claude Code's WebSearch/WebFetch tools and does not stop
-// `curl` from Bash — so the review stage is launched with Bash denied
-// outright, and the runner applies and reverts the mutant itself rather than
-// through it (F24). The rule is the review stage's alone: an implement or fix
-// stage is a container that runs the repository's own commands by design.
+// `curl` from Bash — so the independent review job is launched with Bash
+// denied outright, and the runner applies and reverts the mutant itself rather
+// than through it (F24). The rule is that job's alone: a coding run's own
+// review rounds — and `fugaro run --pr N`'s — are stages of the repository's
+// own run, and an implement or fix stage is a container that runs the
+// repository's own commands by design.
 //
-// Mutation (drop "Bash" from deniedReviewTools): this test fails, and so does
-// TestDenyRulesPerStage.
-func TestReviewStageDeniesBashForTheRestOfTheStage(t *testing.T) {
-	if deny := reviewStageDeny(t); !slices.Contains(deny, "Bash") {
-		t.Fatalf("the review stage's settings do not deny Bash: %v", deny)
+// Mutation (add "Bash" to DenyRules for every review stage rather than to
+// ReviewJobDenyRules): this test still passes and the runner's own
+// TestManagedSettingsDenyBinaryReadsInReviewStages fails, which is the pair
+// that keeps the rule where it belongs. Mutation (drop "Bash" from
+// deniedReviewTools): this test fails, and so does TestDenyRulesPerStage.
+func TestReviewJobDeniesBashForTheRestOfTheStage(t *testing.T) {
+	if deny := reviewJobDeny(t); !slices.Contains(deny, "Bash") {
+		t.Fatalf("the review job's settings do not deny Bash: %v", deny)
 	}
 	if deny := DenyRules(true, false); slices.Contains(deny, "Bash") {
 		t.Fatalf("every stage denies Bash: %v", deny)
 	}
 }
 
-// TestReviewStageDeniesEditForTheRestOfTheStage: the reviewer must not rewrite
+// TestReviewJobDeniesEditForTheRestOfTheStage: the reviewer must not rewrite
 // the tree it is being checked against. The mutation check applies a mutant
 // and reverts it from the runner's own memory, so the agent's Edit tool has
 // nothing to do with the head and everything to do with hiding what a second
 // look would find.
-func TestReviewStageDeniesEditForTheRestOfTheStage(t *testing.T) {
-	if deny := reviewStageDeny(t); !slices.Contains(deny, "Edit") {
-		t.Fatalf("the review stage's settings do not deny Edit: %v", deny)
+func TestReviewJobDeniesEditForTheRestOfTheStage(t *testing.T) {
+	if deny := reviewJobDeny(t); !slices.Contains(deny, "Edit") {
+		t.Fatalf("the review job's settings do not deny Edit: %v", deny)
 	}
 	if deny := DenyRules(true, false); slices.Contains(deny, "Edit") {
 		t.Fatalf("every stage denies Edit: %v", deny)
 	}
 }
 
-// TestReviewStageDeniesWriteForTheRestOfTheStage: the same rule for the tool
+// TestReviewJobDeniesWriteForTheRestOfTheStage: the same rule for the tool
 // that creates a file rather than changing one.
-func TestReviewStageDeniesWriteForTheRestOfTheStage(t *testing.T) {
-	if deny := reviewStageDeny(t); !slices.Contains(deny, "Write") {
-		t.Fatalf("the review stage's settings do not deny Write: %v", deny)
+func TestReviewJobDeniesWriteForTheRestOfTheStage(t *testing.T) {
+	if deny := reviewJobDeny(t); !slices.Contains(deny, "Write") {
+		t.Fatalf("the review job's settings do not deny Write: %v", deny)
 	}
 	if deny := DenyRules(true, false); slices.Contains(deny, "Write") {
 		t.Fatalf("every stage denies Write: %v", deny)
 	}
 }
 
-// TestReviewStageDeniesNotebookEditForTheRestOfTheStage: and for the notebook
+// TestReviewJobDeniesNotebookEditForTheRestOfTheStage: and for the notebook
 // editor, which is a Write by another name and is denied with it.
-func TestReviewStageDeniesNotebookEditForTheRestOfTheStage(t *testing.T) {
-	if deny := reviewStageDeny(t); !slices.Contains(deny, "NotebookEdit") {
-		t.Fatalf("the review stage's settings do not deny NotebookEdit: %v", deny)
+func TestReviewJobDeniesNotebookEditForTheRestOfTheStage(t *testing.T) {
+	if deny := reviewJobDeny(t); !slices.Contains(deny, "NotebookEdit") {
+		t.Fatalf("the review job's settings do not deny NotebookEdit: %v", deny)
 	}
 	if deny := DenyRules(true, false); slices.Contains(deny, "NotebookEdit") {
 		t.Fatalf("every stage denies NotebookEdit: %v", deny)
 	}
 }
 
-// TestReviewStageDeniesProcReadsForTheRestOfTheStage: /proc is where the
+// TestReviewJobDeniesProcReadsForTheRestOfTheStage: /proc is where the
 // job's own environment and its one-hour read-only installation token are
 // readable from, which is the residual the fence does not close for the
 // agent's own stage (caveat 3: it cannot be fenced, because its model calls
@@ -301,9 +332,9 @@ func TestReviewStageDeniesNotebookEditForTheRestOfTheStage(t *testing.T) {
 // /proc is denied as a rule of its own — the mutation's fenced child gets a
 // /proc of its own instead, and this rule is the half that covers the
 // reviewer.
-func TestReviewStageDeniesProcReadsForTheRestOfTheStage(t *testing.T) {
-	if deny := reviewStageDeny(t); !slices.Contains(deny, "Read(/proc/**)") {
-		t.Fatalf("the review stage's settings do not deny Read(/proc/**): %v", deny)
+func TestReviewJobDeniesProcReadsForTheRestOfTheStage(t *testing.T) {
+	if deny := reviewJobDeny(t); !slices.Contains(deny, "Read(/proc/**)") {
+		t.Fatalf("the review job's settings do not deny Read(/proc/**): %v", deny)
 	}
 	if deny := DenyRules(true, false); slices.Contains(deny, "Read(/proc/**)") {
 		t.Fatalf("every stage denies Read(/proc/**): %v", deny)

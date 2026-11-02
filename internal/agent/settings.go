@@ -55,18 +55,28 @@ var deniedBinaryReads = []string{
 	"Read(**/*.heic)", "Read(**/*.tiff)",
 }
 
-// deniedReviewTools are denied in a review stage's managed settings, for the
-// whole of the stage (D891(a), F24). The independent review job runs a mutant
-// of the reviewed head's own code (internal/runner's mutation check), and the
-// one thing that must not be reachable from inside the reviewer is a way to
-// run anything: Bash is the shell every other tool can be spelled in, Edit,
-// Write and NotebookEdit are the file writes that would let the reviewer edit
-// the head it is judging rather than report on it, and Read(/proc/**) is the
-// runner's own process — its environment, its command lines, its file
+// deniedReviewTools are denied in the managed settings of the independent
+// review JOB, for the whole of its stage (D891(a), F24). That job runs a
+// mutant of the reviewed head's own code (internal/runner's mutation check),
+// and the one thing that must not be reachable from inside the reviewer is a
+// way to run anything: Bash is the shell every other tool can be spelled in,
+// Edit, Write and NotebookEdit are the file writes that would let the reviewer
+// edit the head it is judging rather than report on it, and Read(/proc/**) is
+// the runner's own process — its environment, its command lines, its file
 // descriptors — which a reviewed pull request's text must never be able to
-// ask the reviewer to fetch. The stage's own runner applies, runs and reverts
+// ask the reviewer to fetch. The job's own runner applies, runs and reverts
 // the mutant with a subprocess of its own (D891(a)), so nothing here is
 // needed to do the review's work.
+//
+// Every other review stage — a coding run's own rounds, and `fugaro run --pr N
+// --recipe review-only` — is a stage of the repository's own run and keeps its
+// tools: the review job is the one whose stage is fenced against the head it
+// reads (ReviewSettingSources, the review home), and taking a coder's shell
+// away for a round that reports on a change in its own worktree would end the
+// run's work rather than protect anything. What separates the two is the
+// caller's (the runner's run.reviewJob), not the stage's name, which is why
+// ReviewJobDenyRules is a function of its own rather than a parameter of the
+// stage's list.
 //
 // The posture that makes these rules a control rather than a sentence is
 // CSR4a's (ReviewSettingSources, the managed file, the review home): a project
@@ -77,7 +87,9 @@ var deniedReviewTools = []string{"Bash", "Edit", "Write", "NotebookEdit", "Read(
 // the web tools when denyWeb, and the review stage's binary reads when
 // review. The two are independent, and how a stage is recognised as a review
 // stage is the caller's business (the runner's config.IsReviewStage): this
-// package knows what a stage may not do, not what a stage is.
+// package knows what a stage may not do, not what a stage is. deniedReviewTools
+// is not here: it is the review job's, and ReviewJobDenyRules is what carries
+// it to the one caller that has that job.
 func DenyRules(denyWeb, review bool) []string {
 	var deny []string
 	if denyWeb {
@@ -85,9 +97,16 @@ func DenyRules(denyWeb, review bool) []string {
 	}
 	if review {
 		deny = append(deny, deniedBinaryReads...)
-		deny = append(deny, deniedReviewTools...)
 	}
 	return deny
+}
+
+// ReviewJobDenyRules are the rules the independent review job's managed
+// settings add to a review stage's list (deniedReviewTools, D891(a)). A copy
+// rather than the list itself, so that a caller appending to what it gets back
+// cannot change what the next one is denied.
+func ReviewJobDenyRules() []string {
+	return slices.Clone(deniedReviewTools)
 }
 
 // ReviewSettingSources are the setting sources a review-mode stage is

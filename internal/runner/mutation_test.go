@@ -16,6 +16,7 @@ import (
 
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -539,5 +540,70 @@ func TestMutationObservedVocabularyIsClosed(t *testing.T) {
 		} else if !in && err == nil {
 			t.Errorf("recordMutationCheck accepted %q, and the four words are the whole vocabulary", word)
 		}
+	}
+}
+
+// TestMutationDenyRulesBelongToTheReviewJob: the five rules D891(a) names are
+// the independent review job's, and they reach no other stage's settings. A
+// review STAGE is not the review job — a coding run's own first-line and senior
+// rounds are stages of the repository's own run, and `fugaro run --pr N
+// --recipe review-only` is the same run reviewing someone else's head — so
+// denying them a shell, an edit or a write for the whole stage would take the
+// run's own work away and protect nothing: the one whose stage reads a head
+// that is not its own is the job.
+//
+// This is the launch, not the list: it reads what writeManagedSettings writes
+// for each kind of run, which is where the two were conflated. The review job's
+// arm is built here rather than in agentenv_test.go because the job is told
+// apart by its own environment and the file's harness cannot reach a run's
+// gateway.
+func TestMutationDenyRulesBelongToTheReviewJob(t *testing.T) {
+	cases := []struct {
+		name   string
+		stage  string
+		review bool
+		job    bool
+		want   bool
+	}{
+		{"a coding run's implement stage", "implement", false, false, false},
+		{"a coding run's own first-line review", "review_first", false, false, false},
+		{"a coding run's own senior review", "review", false, false, false},
+		{"fugaro run --pr N --recipe review-only", "review", true, false, false},
+		{"the independent review job", "review", true, true, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "managed-settings.json")
+			r := svcRun(t, config.AuthCascade, func(r *run) {
+				r.gwAgent = &agent.Gateway{BaseURL: "http://127.0.0.1:1", Token: "gateway-token-for-tests"}
+				r.review = c.review
+				r.d.Env = nil
+				if c.job {
+					r.d.Env = []string{EnvReviewJob + "=1"}
+				}
+				r.d.ManagedSettingsPath = path
+			})
+			if err := r.writeManagedSettings(c.stage, nil); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got struct {
+				Permissions struct{ Deny []string }
+			}
+			if err := json.Unmarshal(data, &got); err != nil {
+				t.Fatal(err)
+			}
+			for _, rule := range agent.ReviewJobDenyRules() {
+				if have := slices.Contains(got.Permissions.Deny, rule); have != c.want {
+					t.Errorf("%s: settings deny %q = %v, want %v: %v", c.name, rule, have, c.want, got.Permissions.Deny)
+				}
+			}
+			if !c.want && config.IsReviewStage(c.stage) && !slices.Contains(got.Permissions.Deny, "Read(**/*.png)") {
+				t.Errorf("%s: the stage lost its binary reads too: %v", c.name, got.Permissions.Deny)
+			}
+		})
 	}
 }
