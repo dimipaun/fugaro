@@ -13,8 +13,8 @@ answers approve the reconciliation. Each task of the plan still needs the owner'
 - **O7 is answered:** review-only and artifact runs get no write token. That is the rule for when
   S3 returns.
 - **T1 is moot** until S3 returns.
-- The active plan is **S0–S2**: the key-free stored-view read, and Bitbucket in the coordinator
-  read through the service's read consumer.
+- The active plan is **S0–S2**: the key-free stored-view read, and Bitbucket in the coordinator's
+  reads through the service's read consumer.
 - **Still waiting on the owner:**
   - whether the read half of Check 148 (the read consumer's rotation drill) should come back into
     S2.

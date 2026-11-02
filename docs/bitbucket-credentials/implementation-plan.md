@@ -457,7 +457,9 @@ T2.3's coordinator-account half returns in BB5.
     `ee/coordinator/cli/coordinator_show_test.go` beside it;
   - `deploy/terraform/gcp/modules/installation/credentials.tf` and `variables.tf`, for the person
     invoker grant;
-  - `internal/infra/tf/cover.go`, deliberately, for a role granted to a new kind of principal.
+  - `internal/infra/tf/cover.go` and `internal/infra/tf/cover_golden_test.go`, deliberately, for a
+    role granted to a new kind of principal, and the regenerated
+    `internal/infra/tf/testdata/golden/installation-*.plan.json` for the same grant.
 - **Not in this list, and why.** No file above writes the variable, because BB4 publishes nothing
   new: the writer it reads from already exists — `credentialsServiceBlock`
   (`internal/cli/init.go`), which writes the published `credentials_service` block on the machine
@@ -486,15 +488,16 @@ T2.3's coordinator-account half returns in BB5.
   - `TestReadMintRefusedWhenStopped`: the global kill switch (`Kills.Stop`) also stops the person
     class, which has no slug;
   - `TestPersonClassEmptyListAdmitsNobody`, for the service on with no operators configured;
-  - `TestNewRoutesAuditConsumerKind`: `routeAct` and the route list name the new path, so a refusal
-    before the branch audits the consumer kind, never the App key's name;
+  - `TestNewRoutesAuditConsumerKind`: `routeAct` and the route list name the new path — singular
+    here, because BB4 adds one route and the coordinator class's route joins it in BB5 — so a
+    refusal before the branch audits the consumer kind, never the App key's name;
   - `TestCoordinatorShowBitbucketThroughService`;
   - `TestCoordinatorShowGitHubUnchanged`;
   - `TestCoordinatorShowGitHubUnchangedWithReadServiceURL`: the person's new variable does not turn
     their GitHub read off, which is the whole reason it is not `FUGARO_CREDENTIALS_SERVICE_URL`;
   - `TestServicePathRefusesAPIRootOverride`;
   - `TestServiceReadTokensRedacted`.
-- **Command:** `go test ./internal/credsvc -run 'PersonCaller|PersonClass|ReadMint|NewRoutesAuditConsumerKind|RunIdentityRefusedOnRead' -count=1 && go test ./internal/gitprov/bitbucket -run 'ServiceRead|ServicePath' -count=1 && GOFLAGS=-p=2 go test ./ee/coordinator/... -count=1 -timeout 40m`.
+- **Command:** `go test ./internal/credsvc -run 'PersonCaller|PersonClass|ReadMint|NewRoutesAuditConsumerKind' -count=1 && go test ./internal/gitprov/bitbucket -run 'ServiceRead|ServicePath' -count=1 && GOFLAGS=-p=2 go test ./ee/coordinator/... -count=1 -timeout 40m`.
 - **Depends on:** BB1, BB2 and BB3 (Check 145 passed, B3/O4), and the C3.9 chain's **C3.9f/g**
   (B2).
 - **Red step:** run `TestPersonCallerOnlyOnReadRoute` against an admission that returns a generic
@@ -1015,8 +1018,8 @@ changes.
 | `ee/coordinator/project.go` | BB5 (L3) |
 | `docs/credentials-service/runbook.md`, `docs/git-providers.md` | T2.6 (L3) |
 | `docs/gcp-live-checklist.md` | T0.2 (L0) |
-| `deploy/terraform/gcp/modules/installation/*`, `internal/infra/tf/cover.go`, `internal/infra/tf/testdata/golden/*` | BB4 (L2), BB5 (L3) |
-| `roots/installation/*`, `internal/infra/firebase.go`, `projectjobs.go`, `tfvars.go`, `internal/cli/init_firebase.go` | BB5 (L3) |
+| `deploy/terraform/gcp/modules/installation/credentials.tf`, `variables.tf`, `internal/infra/tf/cover.go`, `internal/infra/tf/testdata/golden/*` | BB4 (L2), BB5 (L3) |
+| `deploy/terraform/gcp/modules/installation/coordinator.tf`, `roots/installation/*`, `internal/infra/firebase.go`, `projectjobs.go`, `tfvars.go`, `internal/cli/init_firebase.go` | BB5 (L3) |
 | `SECURITY.md`, `website/content/security.md`, `internal/cli/docs_bitbucket_security_test.go` | T2.11 (L4) |
 | `console/**`, `console/docs/json-contract.md`, `docs/design/desktop-console.md` | T1.2 (L1) |
 

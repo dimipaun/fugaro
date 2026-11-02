@@ -196,7 +196,10 @@ service's read consumer instead of refusing. BB4 follows the review-identity des
 (C3.9f, PR #1514) and comes after it, after BB1, BB2 and the owner-run Check 145. Nothing in this
 task changes: the argv, the document and the console rows are the same for both providers, and the
 red step below still holds for GitHub. What changes for a Bitbucket repository is only which
-credential the read is opened with, and the read still refuses with no service configured.
+credential the read is opened with, and the read still refuses with no service configured. The
+Bitbucket path is pinned by BB4's own test beside this task's GitHub ones
+(`TestCoordinatorShowBitbucketThroughService`, in the coordinator command's test file); this task's
+tests stay the GitHub ones named below.
 
 ---
 
