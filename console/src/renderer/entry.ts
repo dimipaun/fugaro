@@ -2381,7 +2381,11 @@ interface CoordinatorDescriptionState {
   attempt: number
   token: number
   readonly read: SectionRead
-  target: CoordinatorDescriptionTarget
+  /** the row this read was made from. It is the one the press came from and it
+   * never moves: a repaint draws new rows and clears every state with them
+   * (`paintBody`), so a state is only ever reached again by a second press on
+   * the row it was made for. */
+  readonly target: CoordinatorDescriptionTarget
 }
 
 /**
@@ -4939,15 +4943,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * stateFor is one row's description read, made on that row's first press and
      * kept for the rest of the visit -- which is what makes an expand/collapse
      * cycle a redraw of what was read rather than a second read of the host
-     * (K3). A repaint draws the row again as new elements, so a state already
-     * held is re-pointed at the row now on screen.
+     * (K3). A state is never re-pointed at another row: the map is emptied by
+     * every repaint (`paintBody`), so the rows a held state was drawn for are
+     * gone before another set of them exists, and the only press that reaches a
+     * held state is a second one on its own row.
      */
     const stateFor = (target: CoordinatorDescriptionTarget): CoordinatorDescriptionState => {
       const held = coordinatorDescriptions.get(descriptionKey(target.request))
-      if (held !== undefined) {
-        held.target = target
-        return held
-      }
+      if (held !== undefined) return held
       const made: CoordinatorDescriptionState = {
         open: false,
         asked: false,
