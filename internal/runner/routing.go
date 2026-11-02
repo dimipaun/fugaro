@@ -457,11 +457,29 @@ func resolvedLevel(levels config.Levels, level policy.Level) config.ResolvedLeve
 //
 // It is the levels' half of the runner: reading the task's review_levels, the
 // owner's floor and the recipe is L4.2's, and it calls this with the inputs it
-// has. It has to run before applyRouting (resolvePolicy), which rewrites the
-// pins of the models the switch names: a level written after that rewrite
-// would keep the canonical ID its own role slot had already moved off.
+// has. Two of them the run answers for itself, and it fills them in when the
+// caller leaves them out, because a caller that forgot one would not fail: a
+// nil AllowedModels means "every model is allowed" and a nil Providers skips
+// the provider-effort refusal (D725), so both would be a rule silently not
+// applied. The mode is not one of them: the resolver's first layer is the
+// run's rigor mode, which is L4.2's to pass.
+//
+// It has to run before applyRouting (resolvePolicy), which rewrites the pins
+// of the models the switch names: a level written after that rewrite would
+// keep the canonical ID its own role slot had already moved off.
 func (r *run) applyLevels(in config.LevelInputs) (config.Levels, []config.Warning, error) {
 	in.Config = r.cfg
+	if in.AllowedModels == nil {
+		// The ceiling's list is the effective one (resolvePolicy stores it on
+		// both), and the policy's is the fallback for a run built without it.
+		in.AllowedModels = r.spend.AllowedModels
+		if in.AllowedModels == nil && r.policy.HasAllowList() {
+			in.AllowedModels = r.policy.AllowedModels
+		}
+	}
+	if in.Providers == nil {
+		in.Providers = r.modelProviders()
+	}
 	levels, warns, err := config.ResolveLevels(in)
 	if err != nil {
 		return levels, warns, err

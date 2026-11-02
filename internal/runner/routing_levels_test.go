@@ -216,3 +216,47 @@ func TestStageRoleAgreesWithConfig(t *testing.T) {
 		t.Errorf("the adversarial stage is %q: it is the recipe step's own name", stageAdversarial)
 	}
 }
+
+// TestRoutingApplyLevelsDefaultsTheRunsOwnInputs: applyLevels answers for two
+// of its inputs itself — the run's allow-list and the run's routes — because a
+// caller that left them out would not fail: a nil AllowedModels means every
+// model is allowed and a nil Providers skips the provider-effort refusal
+// (D725), so a forgotten input would be a rule silently not applied rather
+// than an error. The mode is not one of them, which is why it is the only
+// input these cases pass: the resolver's first layer is the run's rigor mode,
+// and reading it is L4.2's.
+//
+// The ceiling's list is the effective one — resolvePolicy stores it on the
+// spend and on the policy alike — and the policy's own list is the fallback
+// for a run built without the ceiling.
+func TestRoutingApplyLevelsDefaultsTheRunsOwnInputs(t *testing.T) {
+	const coder, reviewer, adversarial = "claude-sonnet-5-5", "claude-opus-5", "deepseek/deepseek-v4-pro"
+	agent := func() config.Agent {
+		return config.Agent{Auth: "api-key", Models: config.ModelRoles{Coder: coder, Reviewer: reviewer}}
+	}
+	inputs := func() config.LevelInputs {
+		return config.LevelInputs{
+			Mode: rigor.Critical,
+			Task: &config.ReviewLevels{L3: &config.LevelSetting{Model: adversarial}},
+		}
+	}
+	for _, c := range []struct {
+		name string
+		set  func(r *run)
+	}{
+		{"the ceiling's allow-list", func(r *run) { r.spend.AllowedModels = []string{coder, reviewer} }},
+		{"the policy's allow-list", func(r *run) { r.policy = policy.Effective{AllowedModels: []string{coder, reviewer}} }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := levelsRun(agent(), levelRoutes())
+			c.set(r)
+			_, _, err := r.applyLevels(inputs())
+			if err == nil {
+				t.Fatalf("%s (%s, %s) does not name %s and the level was accepted", c.name, coder, reviewer, adversarial)
+			}
+			if want := "l3.model " + adversarial + " is not in the run's allowed_models"; !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal is %q, want it to say %q", err, want)
+			}
+		})
+	}
+}
