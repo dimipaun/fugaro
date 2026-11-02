@@ -185,6 +185,47 @@ func TestCredentialsServeStartsWithoutTheVerifierList(t *testing.T) {
 	}
 }
 
+// TestCredentialsServiceVerifierListReachesTheAuthenticator is the one test
+// that can tell the list the environment carries from no list at all, which a
+// surviving mutant showed was not covered: the configuration can build, and the
+// service can start, with the verifier list quietly dropped on the way to
+// AuthConfig -- the empty list and the installation that named nobody look
+// identical from the outside, and only the route's answer would differ
+// (C3.9g2, D1068).
+//
+// The entry below is one credsvc's own fold refuses: a verifier account is a
+// printable-ASCII email address, because it is matched against a Google ID
+// token's email claim. So the refusal is reachable ONLY if the entry arrived at
+// NewAuthenticator -- a service built with the list dropped starts, and one
+// built with the list refuses -- which is what makes this a test of the wiring
+// and not of the refusal.
+//
+// The second half is the same no-echo rule the other refusals are held to: this
+// process's log is a line an operator reads, so the refusal names no account.
+//
+// Mutation (verified, run and restored): VerifierAccounts: verifiers[:0] in
+// credentialsServiceConfig -- this test fails, the service starting with no
+// verifier at all instead of refusing the entry it cannot fold.
+func TestCredentialsServiceVerifierListReachesTheAuthenticator(t *testing.T) {
+	const entry = "pérson-1@example.com"
+	for _, n := range credentialsServiceEnvNames {
+		t.Setenv(n, credentialsServeEnv[n])
+	}
+	t.Setenv(envVerifierAccounts, `["`+entry+`"]`)
+	fakeCredentialsService(t)
+
+	_, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: an entry the verifier cannot fold must refuse the process rather than be dropped on the way to it", err)
+	}
+	if !strings.Contains(err.Error(), "cannot verify its callers") {
+		t.Fatalf("err = %v, want the refusal that says the service cannot verify its callers, which is reachable only if %s reached the authenticator", err, envVerifierAccounts)
+	}
+	if strings.Contains(err.Error(), entry) {
+		t.Errorf("err = %v, which carries the verifier entry itself: the refusal names the variable and never an account", err)
+	}
+}
+
 // TestCredentialsServiceConfigBuildsFromAFullEnvironment is the headline: the
 // whole of this task is that the service can be configured at all, so a
 // complete environment must build a credsvc.Config that NewServer accepts --
