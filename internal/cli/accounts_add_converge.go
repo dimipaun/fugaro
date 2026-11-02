@@ -342,7 +342,12 @@ func accountsAddReport(cmd *cobra.Command, lc *localcfg.Config, stages map[strin
 	} else {
 		row("account", name, secret+" (project-wide)")
 	}
-	row("repos", strings.Join(repos, ", "), "claude_accounts."+pluginwire.Printable(name)+".allow_data_to")
+	// The list the account ENDS UP with, read back from the config this command
+	// wrote, and not the --repos it was given: re-declaring an account adds to
+	// the list it already has, so a line naming the flag would print a shorter
+	// list than the file now holds. It is A1's confirmation's own source, for
+	// A1's reason (accountsAddWhat).
+	row("repos", strings.Join(lc.ClaudeAccounts[name].AllowDataTo, ", "), "claude_accounts."+pluginwire.Printable(name)+".allow_data_to")
 	profile := accountsAddProfileOf(lc, name)
 	if profile != "" {
 		row("profile", profile, "profiles."+pluginwire.Printable(profile)+".claude_accounts += "+pluginwire.Printable(name))

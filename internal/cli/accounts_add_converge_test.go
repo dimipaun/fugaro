@@ -323,3 +323,34 @@ func TestAccountsAddNamesTheRepositoriesItCouldNotConverge(t *testing.T) {
 		t.Errorf("the command's last line is %q, and a repository that needs an update in another checkout does not stop the run that is ready here", last)
 	}
 }
+
+// TestAccountsAddReportNamesTheListTheAccountEndsUpWith: a rotation re-declares
+// an account that already exists, and its allow_data_to is the list it had plus
+// the repositories this run adds — the declare never replaces the list. The
+// block's repos line is that list, read back from the config the command just
+// wrote and not from the --repos it was given: printing the flag would print a
+// shorter list than the file now holds, which is the one thing a line that
+// names claude_accounts.<name>.allow_data_to may not do.
+func TestAccountsAddReportNamesTheListTheAccountEndsUpWith(t *testing.T) {
+	// The account is already there, reaching one repository, and the profile
+	// serves it: the shape every rotation starts from.
+	r := newAddRigWith(t, addRigLocal+"claude_accounts:\n  team-a:\n    allow_data_to:\n      - owner/repo-a\n")
+	out, _ := r.add(t, "team-a", "--repos", "owner/repo-b")
+
+	lc := r.addLocal(t)
+	want := []string{"owner/repo-a", "owner/repo-b"}
+	if got := lc.ClaudeAccounts["team-a"].AllowDataTo; !slices.Equal(got, want) {
+		t.Fatalf("claude_accounts.team-a.allow_data_to = %v, want %v: a rotation merges the list", got, want)
+	}
+	line := accountsAddRow(t, out, "repos")
+	if !strings.Contains(line, strings.Join(want, ", ")) {
+		t.Errorf("the repos line is %q, want the list the account ends up with (%s)", line, strings.Join(want, ", "))
+	}
+	// And the account the node carries reaches both: the line the command reads
+	// back is the same list the publish derived.
+	if acc, ok := r.policy(t).Accounts["team-a"]; !ok {
+		t.Errorf("the published node names no account team-a")
+	} else if want := []string{"github/owner/repo-a", "github/owner/repo-b"}; !slices.Equal(acc.AllowRepos, want) {
+		t.Errorf("the published accounts.team-a.allow_repos = %v, want %v", acc.AllowRepos, want)
+	}
+}
