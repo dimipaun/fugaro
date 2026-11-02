@@ -681,4 +681,30 @@ test.describe('the Coordinator view in the dashboard', () => {
     expect(Number(repos), 'the stored view lists no repository').toBeGreaterThan(0)
     await expect(page.locator(`${THE_VIEW} section.coordinator-repo`)).toHaveCount(Number(repos))
   })
+
+  test('draws the committed fixture’s numbers as text, and puts no destination on any of them', async () => {
+    // K2, in the one state this window can be in: **no node of the committed
+    // document carries a provider** -- it is what a CLI older than C1 answers --
+    // so the console can form no triple for any number, and every one of them is
+    // the text K1 drew. What a real browser adds to `coordinator.test.ts`'s claim
+    // is the stylesheet and the entry: the numbers keep the class they are drawn
+    // with, no press reaches an operation, and there is no anchor anywhere on
+    // this view -- so nothing here is a destination, and the `pr.url` fields the
+    // fixture carries are on the screen nowhere at all.
+    //
+    // The other half -- a node that **does** name a provider, whose number is a
+    // button that opens the triple -- needs a document this stub does not answer
+    // with, and it is `entry-wiring.test.ts`'s (the bridge call is recorded
+    // there, with no window).
+    const fixture = JSON.parse(readFileSync(COORDINATOR_FIXTURE, 'utf8')) as {
+      repos: { view?: { records?: readonly unknown[] } }[]
+    }
+    const records = fixture.repos.reduce((total, repo) => total + (repo.view?.records?.length ?? 0), 0)
+    expect(records, 'the committed document holds no record').toBeGreaterThan(0)
+
+    await expect(page.locator(`${THE_VIEW} span.coordinator-record-label`)).toHaveCount(records)
+    await expect(page.locator(`${THE_VIEW} button.coordinator-record-label`)).toHaveCount(0)
+    await expect(page.locator(`${THE_VIEW} a`)).toHaveCount(0)
+    await expect(page.locator(THE_BODY)).not.toContainText('example.invalid')
+  })
 })

@@ -24,7 +24,8 @@ package cli
 //    sentences a reader has to have before they trust anything in them: the
 //    index's status, that an answer is not an approval, the owner's block of
 //    decision numbers and the check number claimed, and the plan's own "nothing
-//    here is approved" with the two gates outside this design named.
+//    here is approved", the gate outside this design named beside the
+//    observation that used to be the second.
 //  * TestDocsCloudSeniorReviewDecisionsAreAnswered -- D880-D894 are written and
 //    answered, D895-D899 reserved and unused, and the four the later rounds
 //    raised (D891, D892, D893, D894) each carry the option the owner took, in
@@ -157,18 +158,21 @@ func TestDocsCloudSeniorReviewIsWritten(t *testing.T) {
 			t.Errorf("%s no longer says %q: answered decisions are not an approval, and this folder's whole status rests on the difference", csrReadme, want)
 		}
 	}
-	// The plan carries the same status in its own words, plus the two gates
-	// that are not decisions at all: E7 blocks CSR7, CSR2 and the coordinator's
-	// merge path, and U7 gates CSR4b's launch. Both are outside this design, and
-	// the task ids are the CSR-prefixed ones the plan settled on.
+	// The plan carries the same status in its own words, plus the one gate
+	// that is not a decision at all: E7 blocks CSR7, CSR2 and the coordinator's
+	// merge path. U7 was the other one, and the probe it asked for has returned,
+	// so the plan's row pins the answer rather than the gate -- a document that
+	// drifted back to "gates CSR4b's launch" would be a gate this design has
+	// already cleared, and CSR4b would be held behind work that is done. The
+	// task ids are the CSR-prefixed ones the plan settled on.
 	plan := flattenDoc(readDoc(t, csrPlan))
 	for _, want := range []string{
 		"**Nothing here is approved.**",
 		"**The task ids are prefixed `CSR`, and that is deliberate.**",
 		"**E7** (the credentials service enabled and admitting a project-scoped job) blocks CSR7, CSR2 and the coordinator's merge path",
-		"**U7** (an owner-run live observation) gates CSR4b's launch",
+		"**U7** (the owner-run live observation of the deployed fence) **is ANSWERED (2026-11-01)**",
 		"**CSR4a carries D894(a)'s configuration posture and waits on nothing**",
-		"**CSR4b carries D885's mutation machinery and does not start until U7's probe has returned**",
+		"**CSR4b carries D885's mutation machinery and U7's probe has returned, so it waits on CSR3 alone**",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s no longer says %q", csrPlan, want)

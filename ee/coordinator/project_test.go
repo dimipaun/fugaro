@@ -311,6 +311,51 @@ func TestCoordinatorRedactsItsMintedToken(t *testing.T) {
 	}
 }
 
+// The single read keeps the view's own rule: a failure of the host goes through
+// Redact with the values the opener held and the token this reader minted, so a
+// host that echoes the Authorization header back in its own error body cannot
+// put the installation token in front of whoever reads the failure
+// (Project.PullRequest).
+//
+// The opener hands back no secret at all here, so the only place the value
+// exists is this reader's cache — the half a redactor built from the opener's
+// values alone would miss, and the reason minted() exists.
+func TestCoordinatorRedactsAHostTokenOnTheSingleRead(t *testing.T) {
+	minted := hostToken(t)
+	p := &Project{
+		Mint: func(context.Context, string) (string, time.Time, error) {
+			return minted, time.Now().Add(time.Hour), nil
+		},
+		Open: func(_ context.Context, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
+			return tokenHost{Provider: &fake.Provider{Repo: repo, SelfID: "1"}, src: src}, nil, nil
+		},
+		Redact: agent.Redact,
+	}
+	doc, err := p.PullRequest(context.Background(), gitprov.KindGitHub, "acme/web", 12)
+	if err == nil {
+		t.Fatal("the host failed the read and PullRequest succeeded")
+	}
+	if strings.Contains(err.Error(), minted) {
+		t.Errorf("the minted token reached the failure: %v", err)
+	}
+	if !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Errorf("the failure is %v, want the token redacted in it", err)
+	}
+	if doc != (PRDocument{}) {
+		t.Errorf("a failed read returned a document: %+v", doc)
+	}
+}
+
+// hostToken is the token-shaped value the redaction tests look for, built at
+// run time from a prefix and the test's own name (Convention 2: no
+// secret-shaped literal, ever). The value a failure must not carry is one this
+// test invented rather than a pattern it guessed at, which is the only claim a
+// search for it can honestly make.
+func hostToken(t *testing.T) string {
+	t.Helper()
+	return "ghs_" + strings.ReplaceAll(t.Name(), "/", "_")
+}
+
 // A reader with no redactor panics rather than reading: a forgotten one would
 // ship the provider's own text, which is where a credential would arrive
 // (internal/followup's rule for the same reason).

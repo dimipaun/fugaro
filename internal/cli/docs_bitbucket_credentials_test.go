@@ -308,19 +308,20 @@ func bitbucketCitedPaths(doc string) []string {
 // commit that registered the checks, and T1.1's two files left it after T1.1
 // landed, so all of them are checked like every other cited path now.
 var bitbucketWillCreate = map[string]string{
-	// S2: Bitbucket in the coordinator job, through the service.
-	"internal/gitprov/bitbucket/oauth.go":              "T2.1",
-	"internal/gitprov/bitbucket/oauth_test.go":         "T2.1",
-	"internal/credsvc/bitbucket.go":                    "T2.3",
-	"internal/credsvc/bitbucket_test.go":               "T2.3",
-	"internal/cli/coordinator_sweep_bitbucket_test.go": "T2.5",
-	"internal/gitprov/bitbucket/service.go":            "T2.5",
-	"internal/gitprov/bitbucket/service_test.go":       "T2.5",
+	// S2, retargeted 2026-11-01: `coordinator show` reads Bitbucket through the
+	// service's read consumer.
+	"internal/gitprov/bitbucket/oauth.go":              "BB1",
+	"internal/gitprov/bitbucket/oauth_test.go":         "BB1",
+	"scripts/live-checks/check145.sh":                  "BB3",
+	"scripts/live-checks/check145_test.sh":             "BB3",
+	"internal/credsvc/bitbucket.go":                    "BB4",
+	"internal/credsvc/bitbucket_test.go":               "BB4",
+	"internal/gitprov/bitbucket/service.go":            "BB4",
+	"internal/gitprov/bitbucket/service_test.go":       "BB4",
+	"internal/cli/coordinator_sweep_bitbucket_test.go": "BB5",
+	"scripts/live-checks/check146.sh":                  "BB5",
+	"scripts/live-checks/check146_test.sh":             "BB5",
 	"internal/cli/docs_bitbucket_runbook_test.go":      "T2.6",
-	"scripts/live-checks/check145.sh":                  "T2.7",
-	"scripts/live-checks/check145_test.sh":             "T2.7",
-	"scripts/live-checks/check146.sh":                  "T2.9",
-	"scripts/live-checks/check146_test.sh":             "T2.9",
 	"internal/cli/docs_bitbucket_security_test.go":     "T2.11",
 	// Parked with S3, and still absent for as long as S3 is.
 	"internal/gitprov/bitbucket/comments_test.go": "T3.3 (parked)",
@@ -337,13 +338,14 @@ var bitbucketWillCreate = map[string]string{
 // or the entry is excusing a citation that is gone.
 //
 // The coordinator's library and command left `internal/` for `ee/` in E2.1b
-// (ee-reorg, D434), the move that put these eight here.
+// (ee-reorg, D434), the move that put these here. `internal/coordinator/project_test.go`
+// was the eighth: the 2026-11-01 retarget rewrote the one S2 task that named it, so
+// the folder cites the live path now and the entry left with the citation.
 var bitbucketMoved = map[string]string{
 	"internal/cli/coordinator.go":           "ee/coordinator/cli/coordinator.go",
 	"internal/cli/coordinator_view.go":      "ee/coordinator/cli/coordinator_view.go",
 	"internal/cli/coordinator_view_test.go": "ee/coordinator/cli/coordinator_view_test.go",
 	"internal/coordinator/project.go":       "ee/coordinator/project.go",
-	"internal/coordinator/project_test.go":  "ee/coordinator/project_test.go",
 	"internal/coordinator/state.go":         "ee/coordinator/state.go",
 	"internal/coordinator/state_test.go":    "ee/coordinator/state_test.go",
 	"internal/coordinator/sweep.go":         "ee/coordinator/sweep.go",
