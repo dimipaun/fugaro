@@ -384,7 +384,7 @@ async function invokeOperation(
  * it, like any other value, and that is the point of the accumulator's type. It
  * is `Record<ExposedMethod, ConsoleMethod>` -- twenty-seven *named* properties,
  * because `ExposedMethod` is a union of literals -- so spreading it gives the
- * object literal those twenty-six properties as properties rather than as an index
+ * object literal those twenty-seven properties as properties rather than as an index
  * signature. (Before that type was literal, this line needed `as ConsoleBridge`
  * to silence the compiler, which is what made the claim untested rather than
  * checked.) The loop is what actually writes them, and a loop is a thing the
@@ -413,7 +413,7 @@ export function createConsoleBridge(ipcRenderer: RendererLike): ConsoleBridge {
  * `exposeInMainWorld` is what keeps rule 5's promise concrete: the renderer gets
  * a copy of this object, in its own world, with `contextIsolation` in between.
  * It cannot reach the preload's scope, `ipcRenderer`, or Node -- only these
- * twenty-six methods.
+ * twenty-seven methods.
  */
 export function exposeConsoleBridge(
   contextBridge: ContextBridgeLike,
