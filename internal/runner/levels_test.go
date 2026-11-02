@@ -118,11 +118,18 @@ func TestLevelsL3BounceSkipsL2(t *testing.T) {
 // level 3 round the mode never tolerated, and the run would report level 1's
 // finding as the one it left open.
 //
-// The run here stops inside the bounce: level 3's last round produces no
-// parseable verdict after its retry, which ends the loop without failing the
-// run, so the round left behind is the bounce's own. A run that stops is a
-// draft either way — finalize reports ready for no halt, failure or cancel —
-// so the record's tolerated findings are where the wrong round shows.
+// The run here stops inside the bounce — its fix stage fails, which ends the
+// loop before level 3 is asked for another round — so the last round left
+// behind is the bounce's own. Stopping there is the point: a level 3 round
+// after the bounce would set the deciding round itself, whatever the first line
+// did, and a stop before the bounce would leave level 3's own round last. Only
+// a stop in between reads the first line's round, and only the run's own
+// condition decides what that round does to readiness.
+//
+// A run that stops is a draft either way — finalize reports ready for no halt,
+// failure or cancel — so the record's tolerated findings are where the wrong
+// round shows: level 1's finding is one Startup tolerates, and level 3's
+// unscored one blocks in every mode (D4).
 func TestLevelsL3BounceNeverDecidesWithoutL2(t *testing.T) {
 	cfg := modeCfg(t, "startup", 1, "  first_line_review: on\n  recipe: levels\n  adversarial_rounds: 2\n")
 	spec := &task.Spec{
@@ -142,15 +149,16 @@ func TestLevelsL3BounceNeverDecidesWithoutL2(t *testing.T) {
 		review("changes", 1),               // adversarial round 1: an unscored finding, which blocks in every mode (D4)
 		fixStep,                            // its fix
 		reviewScored("changes", tolerated), // review_first: the bounce, the round that must not decide
-		fixStep,                            // the bounce's fix
-		noVerdictStep,                      // adversarial round 2
-		noVerdictStep,                      // and its retry: level 3 leaves no verdict
+		failStep,                           // the bounce's fix fails: the run stops inside the bounce
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := stageNames(rec); !eq(got, "implement", "review_first", "adversarial", "fix", "review_first", "fix", "adversarial", "adversarial") {
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "adversarial", "fix", "review_first", "fix") {
 		t.Fatalf("stages = %v", got)
+	}
+	if n := countStage(rec, "adversarial"); n != 1 {
+		t.Fatalf("adversarial reviews = %d, want 1: the run stops inside the bounce, before level 3 runs again", n)
 	}
 	if rec.Outcome != runstore.OutcomeDraft {
 		t.Fatalf("outcome = %s, want draft (reason %q)", rec.Outcome, rec.Reason)
