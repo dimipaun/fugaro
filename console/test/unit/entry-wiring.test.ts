@@ -2274,7 +2274,7 @@ function queueBridge(
   // The base's list is the same array its own reads append to; it is typed
   // `readonly` because a case reads it, and this helper is the one writer.
   const calls = base.calls as { name: string; args: unknown }[]
-  for (const name of ['coordinatorStatus', 'listRuns', 'planStatus', 'showBudget', 'launchRun']) {
+  for (const name of ['coordinatorStatus', 'listRuns', 'planStatus', 'showBudget', 'launchRun', 'openPullRequest']) {
     base.bridge[name] = (args: unknown): unknown => {
       calls.push({ name, args })
       const answer = answers[name]
@@ -2302,6 +2302,13 @@ function rowNamed(document: FakeDocument, project: string): FakeNode {
 async function askForJobs(document: FakeDocument): Promise<void> {
   buttonLabelled(panelOf(document), COORDINATOR_QUEUE_JOBS_WORD).click()
   await flush()
+}
+
+/** pullButtons is one class of the numbers the screen drew as **buttons**, in
+ * document order. A number whose triple the screen could not form is a span of
+ * text, so this is also what tells the two apart. */
+function pullButtons(root: FakeNode, className: string): readonly FakeNode[] {
+  return classed(root, className).filter((node) => node.tagName === 'BUTTON')
 }
 
 function buttonLabelled(root: FakeNode, label: string): FakeNode {
@@ -4705,6 +4712,40 @@ const QUEUE_RUN: Readonly<Record<string, unknown>> = {
   plan_task: QUEUE_RUN_PLAN_TASK,
 }
 
+/**
+ * k2Status is the committed stored view with the two things the K2 cases need
+ * and the fixture predates: the `provider` C1 added to every node (D814), and a
+ * run behind the open pull request the queue waits for -- the fixture's `#11` is
+ * open and is not a draft, but the queue takes only a pull request a run stands
+ * behind, and its own `runs` is empty.
+ *
+ * `url` is written on that pull request and is the value the console may never
+ * use: whatever the document says, the destination is built by main from the
+ * triple, so a hostile `url` here is a case that can only pass by the console
+ * sending the triple and nothing else.
+ */
+function k2Status(provider: string, url: string): unknown {
+  type Node = {
+    provider?: string
+    view: { records: { pr: { number: number; url: string } | null; runs: Record<string, unknown>[] }[] }
+  }
+  const status = JSON.parse(JSON.stringify(COORDINATOR_STATUS)) as { repos: Node[] }
+  for (const repo of status.repos) {
+    if (provider === '') delete repo.provider
+    else repo.provider = provider
+  }
+  const first = status.repos[0]
+  const held = first?.view.records[0]
+  const waits = first?.view.records[1]
+  const run = held?.runs[0]
+  if (waits === undefined || waits.pr === null || run === undefined) {
+    throw new Error('the fixture no longer holds the two records and the run this case is written against')
+  }
+  waits.pr.url = url
+  waits.runs = [{ ...run, id: '20261031-101502-9f11', pr: waits.pr.number }]
+  return status
+}
+
 /** QUEUE_PLAN_TASK is the plan task of the one item `QUEUE_PLAN` holds: the
  * plan's own id and the task's own id, joined the way the flag spells it. */
 const QUEUE_PLAN_TASK = 'plans/2026-10-01-example-graph/task-three'
@@ -5002,6 +5043,51 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     })
   })
 
+  it('opens the pull request a number names, with the triple the console formed and nothing a document wrote', async () => {
+    // K2: every pull request number the Coordinator draws is a button, and a
+    // press hands `link.openPullRequest` the three values the main process
+    // builds the destination from -- the provider, the repository's `owner/name`
+    // and the number. **The pull request's own `url` is not one of them**: the
+    // document below carries a `javascript:` one, and the presses are the whole
+    // of what this console may send.
+    const { bridge, calls } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: k2Status('github', 'javascript:alert(1)') } }),
+      listRuns: () => ({ ok: true, data: { document: {} } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+
+    // The queue's own item: the pull request waiting for a person, whose one
+    // button opens the run -- and whose number is a second button, this one
+    // opening the pull request itself.
+    const inQueue = pullButtons(panelOf(document), 'coordinator-queue-subject')
+    expect(inQueue.map((node) => node.textContent), 'the queue’s pull request is not a button').toEqual(['#11'])
+    expect(inQueue[0]?.attributes.get('aria-label')).toBe('open pull request #11 in owner/repo-a')
+    inQueue[0]?.click()
+    await flush()
+
+    // And the record rows, drawn by the other half of the screen once its chunks
+    // have run: `#7` is the draft no queue item stands for and `#11` the open
+    // one, and both are numbers a person can open.
+    await vi.advanceTimersByTimeAsync(10)
+    const rows = pullButtons(panelOf(document), 'coordinator-record-label')
+    expect(rows.map((node) => node.textContent), 'a record’s number is not a button').toEqual(['#7', '#11'])
+    rows[1]?.click()
+    await flush()
+
+    const opened = calls.filter((call) => call.name === 'openPullRequest').map((call) => call.args)
+    expect(opened, 'the two presses did not send the two triples').toEqual([
+      { provider: 'github', repo: 'owner/repo-a', number: 11 },
+      { provider: 'github', repo: 'owner/repo-a', number: 11 },
+    ])
+    // Nothing the document wrote is in what was sent: the case's own url is a
+    // `javascript:` one, and no part of it reached the operation.
+    expect(JSON.stringify(opened)).not.toContain('javascript')
+  })
+
   it('clears the repository when two of the installation’s identities name the item’s repository', async () => {
     // The same repository can be recorded on two providers -- a provider is part
     // of the identity and not of the `owner/name` the documents carry -- and
@@ -5059,6 +5145,62 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       'the form kept the repository of an item it has no option for',
     ).toBe('')
     expect(valueOf(launchField(document, LAUNCH_PLAN_TASK_CLASS))).toBe(QUEUE_PLAN_TASK)
+  })
+
+  it('reads an item’s repository as the installation’s own when the two differ only in ASCII case', async () => {
+    // The prefill joins two spellings of one repository: the documents carry
+    // `owner/name` and the form offers the installation's `provider/owner/name`,
+    // and the fold they are compared under is the CLI's own -- `task.ASCIILower`,
+    // behind `CanonicalRepo`, which folds A-Z and nothing else. A run that
+    // recorded `Owner/Repo-A` therefore names the identity the installation
+    // holds, and the form is filled rather than cleared.
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      listRuns: () => ({ ok: true, data: { document: { runs: [{ ...QUEUE_RUN, repo: 'Owner/Repo-A' }] } } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    await askForJobs(document)
+
+    buttonLabelled(panelOf(document), COORDINATOR_RETRY_WORD).click()
+    expect(
+      valueOf(launchField(document, LAUNCH_REPOSITORY_CLASS)),
+      'the same repository in another case was read as a repository the installation does not record',
+    ).toBe(QUEUE_OFFER)
+    expect(valueOf(launchField(document, LAUNCH_PLAN_TASK_CLASS))).toBe(QUEUE_RUN_PLAN_TASK)
+  })
+
+  it('does not fold a Kelvin sign to a `k`, which would launch on a repository nobody named', async () => {
+    // U+212A KELVIN SIGN is `k` to `toLowerCase` and is **not** `k` to the CLI,
+    // so an item naming `owner/Key` with a Kelvin sign names a repository the
+    // installation does not record: the form is cleared, and the GitHub identity
+    // a Unicode fold would have matched it to is left alone. The case is the
+    // half of the fold above that a `toLowerCase` would pass while breaking.
+    const { bridge } = queueBridge(
+      {
+        coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+        // Spelled as an escape rather than as the character: U+212A is a `k` to
+        // the eye as well as to `toLowerCase`, and a case about a fold that must
+        // not happen is one whose input a reader has to be able to check.
+        listRuns: () => ({ ok: true, data: { document: { runs: [{ ...QUEUE_RUN, repo: 'owner/\u212Aey' }] } } }),
+        planStatus: () => planStatusReply(QUEUE_PLAN),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      },
+      ['github/owner/key'],
+    )
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    await askForJobs(document)
+
+    buttonLabelled(panelOf(document), COORDINATOR_RETRY_WORD).click()
+    expect(
+      valueOf(launchField(document, LAUNCH_REPOSITORY_CLASS)),
+      'a Kelvin sign was folded to a `k`, and the form was given an identity the item does not name',
+    ).toBe('')
   })
 
   it('answers a budget alert by opening Spend, and names the ground the alert stands on', async () => {
