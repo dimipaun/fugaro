@@ -464,9 +464,21 @@ func vertexLocations(env []string) []string {
 
 // beginGatewayStage tells the gateway which models the stage may use.
 func (r *run) beginGatewayStage(name string) {
-	role := config.StageRole(name)
-	a := r.cfg.Agent
-	r.gw.BeginStage(gateway.Stage{Name: name, Model: a.ModelFor(role), Background: r.backgroundModel(), MaxOutputTokens: a.MaxOutputFor(role)})
+	r.gw.BeginStage(r.stageSpec(name))
+}
+
+// stageSpec is the set the gateway admits while a stage runs: the model the
+// stage's own pins name (stageModel — a review level's own model is its
+// stage's, L4.5), the background model, and the stage's output limit per call.
+// A set that named the role slot where the pins name a level's own model would
+// refuse every call of the stage as not pinned for it.
+func (r *run) stageSpec(name string) gateway.Stage {
+	return gateway.Stage{
+		Name:            name,
+		Model:           r.stageModel(name),
+		Background:      r.backgroundModel(),
+		MaxOutputTokens: r.cfg.Agent.MaxOutputFor(stageRole(name)),
+	}
 }
 
 // endGatewayStage closes the stage in the gateway, takes its figures into
