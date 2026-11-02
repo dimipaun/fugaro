@@ -494,6 +494,13 @@ func TestMutationSubprocessCarriesNoTokenInItsEnvironment(t *testing.T) {
 // exits 1 for a build failure as well as for a failing test, and exits 0 when
 // -run matched nothing at all — which recorded as the mutant surviving would
 // report the one finding a coordinator acts on when in fact no test ran.
+//
+// The build-failure arm keeps its word whatever else the child's output holds,
+// because a compile error in ANY test file of the package stops the test binary
+// from being produced, so the named test cannot also have run: the two cases
+// below are the measured output of a package whose other test file does not
+// compile (no `--- FAIL` line is printed at all) and, beside it, the words a
+// head that wanted a verdict out of this check could print instead.
 func TestMutationObservedVocabularyIsClosed(t *testing.T) {
 	four := []string{"pass", "fail", "error", "timeout"}
 	if !slices.Equal(reviewObserved, four) {
@@ -513,6 +520,8 @@ func TestMutationObservedVocabularyIsClosed(t *testing.T) {
 		{"a package with no test files", 0, "?   \texample.invalid/head\t[no test files]\n", false, "error"},
 		{"a child this code's deadline killed", 0, "", true, "timeout"},
 		{"a go tool that failed outright", 2, "go: cannot find main module\n", false, "error"},
+		{"another test file of the package does not compile, as go test prints it", 1, "# example.invalid/mix [example.invalid/mix.test]\n./broken_test.go:6:2: undefined: undefinedSymbol\nFAIL\texample.invalid/mix [build failed]\nFAIL\n", false, "error"},
+		{"a head printing both a failure and a build failure", 1, "--- FAIL: TestStrict (0.00s)\nFAIL\texample.invalid/head [build failed]\n", false, "error"},
 	}
 	for _, c := range cases {
 		got := mutationObservedOf(c.exit, []byte(c.output), c.timedOut)

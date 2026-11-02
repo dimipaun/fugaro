@@ -240,6 +240,17 @@ func (w *mutationOutput) Bytes() []byte { return w.buf.Bytes() }
 // nothing about the test that was supposed to kill it; and it exits 0 when
 // -run matched no test at all, which would otherwise be recorded as the mutant
 // SURVIVING — the finding a coordinator reports — when in fact no test ran.
+//
+// A build failure is the package's, whole, and that is what makes "error" the
+// answer for it whatever else the child's output carries: `go test` compiles
+// every test file of the package before it runs one, so a compile error
+// anywhere in it (measured: another test file with an undefined symbol, and a
+// vet diagnostic, both print `FAIL <pkg> [build failed]` and no `--- FAIL`
+// line at all) means no test binary was produced and the named test never ran.
+// A word is also read out of the child's own text, which a head can print
+// either phrase in, so the phrase that is not a verdict is the one to fall
+// back to: recorded as "error" a reader sees that the check showed nothing,
+// where "fail" is the finding a coordinator acts on.
 func mutationObservedOf(exit int, output []byte, timedOut bool) string {
 	text := string(output)
 	switch {
