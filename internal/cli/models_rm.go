@@ -114,7 +114,7 @@ func runModelsRm(cmd *cobra.Command, id string, o *modelsRmOptions) error {
 	if changed && claim.by != "" {
 		fmt.Fprintf(out, "%s is still claimed by %s on route %s: a pattern is not this command's to remove\n", oneLine(id), oneLine(claim.by), oneLine(claim.route))
 	}
-	if claim.route == "" && claim.by == "" {
+	if !changed && claim.route == "" && claim.by == "" {
 		fmt.Fprintf(out, "%s is not a model of this project's config or of its price table: nothing to remove\n", oneLine(id))
 	}
 	return nil

@@ -117,6 +117,33 @@ func TestModelsRmWarnsNothingWhenThereIsNothingToRemove(t *testing.T) {
 	}
 }
 
+// TestModelsRmDoesNotSayNothingToRemoveAfterRemovingAPrice: a model that only
+// model_prices names is a model of the config, and removing its price is a
+// write. The line that says there was nothing to remove is for an ID of neither
+// the config nor its price table, so it must not follow a write.
+func TestModelsRmDoesNotSayNothingToRemoveAfterRemovingAPrice(t *testing.T) {
+	home, path := modelsWriteHomeWith(t, `
+model_prices:
+  vendor/model-z:
+    input_per_m: 1
+    output_per_m: 2
+repos:
+  owner/repo-a: {}
+`)
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("deepseek/deepseek-v4-flash", "claude-sonnet-5-5", ""))
+
+	out, _, err := execute(t, "models", "rm", "vendor/model-z", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.Contains(out, "nothing to remove") {
+		t.Errorf("a removal that wrote the file said there was nothing to remove:\n%s", out)
+	}
+	if _, ok := modelsWriteLocalConfig(t, path).ModelPrices["vendor/model-z"]; ok {
+		t.Errorf("model_prices still prices the model")
+	}
+}
+
 // TestModelsRmWarnsWithoutTheNoProviderLineWhileAPatternStillClaimsIt: removing
 // the exact entry and the allow-list entry is a change, so the warning is due —
 // but a provider still serves the model, through the pattern the command
