@@ -2756,6 +2756,11 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 			return false
 		}
 		if !parsed {
+			// The deciding round is this one, whatever it answered: the round
+			// is kept so the policy is read off the level that ran and never
+			// off the round the bounce before it left behind (seniorLoop does
+			// the same).
+			r.lastSenior = seniorRound{Round: round}
 			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: "none", Head: head})
 			r.save(ctx)
 			r.d.Log.Warn("the adversarial review round returned no parseable verdict after a retry; the run carries on and ends a draft", "round", round)
