@@ -702,6 +702,11 @@ export const CONSOLE_REPORTING = Object.freeze({
     // A frame is the file and the line, and both statements say so; what a reader would
     // otherwise be left to guess is that the function the code was in travels too.
     'its function name',
+    // The two fields the owner's ruling of 2026-11-02 added, held here for the same reason as
+    // the scrubbing sentence: a report that named neither would be a page saying the console
+    // sends nothing but frames, and the console sends the release and the build's images.
+    "the console's own version",
+    "the build's debug images",
   ]),
   /** The design's own wording for the rule, in a list of its own because the page states the rule
    * and not this sentence: the page hands the reader the two facts that make reporting opt-in —
