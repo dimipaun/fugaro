@@ -704,6 +704,11 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		Execution: "projects/p/locations/r/jobs/j/executions/e",
 		Status:    runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
 		Reason: "tests failing on the final commit", Branch: "fugaro/add-a-feature", BaseBranch: "main", HeadSHA: "abcdef1234567",
+		// D876's additive per-stage accounts (docs/accounts-add spec §11.5):
+		// the account that served each stage, beside the scalar oauth_account
+		// that names the account the run used last.
+		OAuthAccount:  "team-a",
+		StageAccounts: map[string]string{"implement": "team-b", "review": "team-a"},
 		// The commit the run was cut from, which its guards compare against
 		// (design v1.md §4.6).
 		StartSHA: strings.Repeat("c", 40),
