@@ -204,6 +204,73 @@ func TestModelsSearchEscapesItsCells(t *testing.T) {
 	}
 }
 
+// TestModelsSearchEscapesAHitRowsIDCell: the MODEL cell of a hit is a model ID,
+// and an ID is a string a catalog file wrote. A local config refuses one
+// carrying a control or a bidi character as it loads (model_prices: an alias),
+// so the row here is the catalog's: a regenerated file whose key carries U+202E,
+// an ESC[31m and a tab, under the shipped deepseek row's prices. Each of the
+// three is escaped rather than printed — the override would let the ID read
+// backwards, the sequence would colour the rest of the table, and the tab would
+// open a column of its own and shift SOURCE and every column after it
+// (cellOneLine, the row's first cell).
+//
+// Mutation (run, restored): print the ID raw (drop cellOneLine at
+// models_search.go:79) and this fails on the raw characters and on the columns.
+func TestModelsSearchEscapesAHitRowsIDCell(t *testing.T) {
+	modelsFixture(t)
+	cat := shippedCatalog(t)
+	const id = "vendor/mo‮del\x1b[31m\tbed"
+	cat.Models[id] = cat.Models["deepseek/deepseek-v4-flash"]
+	old := loadCatalog
+	loadCatalog = func() (*catalog.File, error) { return cat, nil }
+	t.Cleanup(func() { loadCatalog = old })
+
+	out, _, err := execute(t, "models", "search", "vendor/mo")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, raw := range []string{"‮", "\x1b"} {
+		if strings.Contains(out, raw) {
+			t.Errorf("the hit table carries a raw %q from the model ID:\n%q", raw, out)
+		}
+	}
+	// What the cell shows instead: the bidi override and the tab are marked,
+	// and the whole ANSI sequence is dropped (safetext skips it).
+	if !strings.Contains(out, "vendor/mo?del?bed") {
+		t.Errorf("the escaped ID is not in the read at all:\n%s", out)
+	}
+	// The columns, against the header's own: the ID's two rows are the
+	// catalog's two tiers, and their SOURCE cell has to sit where the header
+	// puts SOURCE. A raw tab in the ID is a cell separator, so the ID splits,
+	// "catalog" lands in the TIER column, and the index moves.
+	lines := strings.Split(out, "\n")
+	header := ""
+	for _, l := range lines {
+		if strings.HasPrefix(l, "MODEL ") {
+			header = l
+		}
+	}
+	if header == "" {
+		t.Fatalf("the read has no hit table:\n%s", out)
+	}
+	want := strings.Index(header, "SOURCE")
+	rows := 0
+	for _, l := range lines {
+		// The ID's own rows, whichever way the ID was written: they are the
+		// two the catalog priced, and the local row below them is not one.
+		if !strings.HasPrefix(l, "vendor/mo") || !strings.Contains(l, "catalog") {
+			continue
+		}
+		rows++
+		if got := strings.Index(l, "catalog"); got != want {
+			t.Errorf("a tab in a model ID shifted the row's columns: SOURCE at %d and the header's at %d\n%s", got, want, out)
+		}
+	}
+	if rows != 2 {
+		t.Errorf("the ID's rows are %d, and the catalog prices two tiers:\n%s", rows, out)
+	}
+}
+
 // TestModelsSearchIsOffline: the search reads this binary's own tables and the
 // selected project config, and reaches nothing (D788). An empty PATH is not
 // enough to say so — it stops git and gcloud, and not a Go SDK client — so the
