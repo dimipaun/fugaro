@@ -146,8 +146,9 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * called from each of those constructors), including the two log operations
  * that share the `logs` command -- console L5b's `runs.stats` is the eleventh,
  * plan GV2.1's `plan.status` the twelfth, Bitbucket credentials T1.2's
- * `coordinator.status` the thirteenth, and the console's one write, V2.5.1a's
- * `run.launch`, the fourteenth. The complement -- the commands
+ * `coordinator.status` the thirteenth, the console's one write, V2.5.1a's
+ * `run.launch`, the fourteenth, and coordinator v2 C3's `coordinator.show` the
+ * fifteenth. The complement -- the commands
  * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
  * command words the CLI itself uses (`version` and the rail's `config list`),
@@ -168,6 +169,7 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'accounts.inventory',
   'environment.report',
   'coordinator.status',
+  'coordinator.show',
   'run.launch',
 ]
 /** freshDirectory is a temporary directory this test owns, one per call. */
@@ -457,15 +459,17 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: sixteen argvs, fifteen commands, fourteen of them with --project', () => {
+  it('fixes the design allow-list exactly: seventeen argvs, sixteen commands, fifteen of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
     // plan GV2.1's `plan status --json` is the fourteenth, and Bitbucket
     // credentials T1.2's `coordinator status --from-store --all --json` the
-    // fifteenth, and V2.5.1a's launch the sixteenth -- the one row here that is
-    // a write, and the one whose words carry `--task-file -` (the literal word
-    // `-` puts the task on the child's stdin). The Go side pins
+    // fifteenth, V2.5.1a's launch the sixteenth -- the one row here that is a
+    // write, and the one whose words carry `--task-file -` (the literal word
+    // `-` puts the task on the child's stdin) -- and coordinator v2 C3's pull
+    // request read the seventeenth, whose two arguments (the repository and the
+    // number) are filled by the caller and so are not words of this list. The Go side pins
     // the document's list (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
     // console's; the two are held in step by hand on purpose.
@@ -485,11 +489,12 @@ describe('the spawn table and the argv it builds', () => {
       'doctor --json',
       'config list --json',
       'coordinator status --from-store --all --json',
+      'coordinator show --json',
       'run --task-file - --json',
     ])
-    // The twelve *commands* that take the flag (addCloudFlags, internal/cli/
-    // cloud.go:51) are thirteen rows plus one: `logs` has two rows, `--json`
-    // and `--url`, and neither of them may be the one that forgets --project.
+    // The commands that take the flag (addCloudFlags, internal/cli/cloud.go:51)
+    // are fifteen rows plus one: `logs` has two rows, `--json` and `--url`, and
+    // neither of them may be the one that forgets --project.
     // A word is a flag or a separator if it begins with `-`, which is what
     // keeps the launch's literal `-` -- the argv word that means "read the task
     // from stdin" -- out of the command path it is compared as.
@@ -510,10 +515,11 @@ describe('the spawn table and the argv it builds', () => {
         'accounts ls',
         'doctor',
         'coordinator status',
+        'coordinator show',
         'run',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(14)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(15)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -686,6 +692,57 @@ describe('the spawn table and the argv it builds', () => {
         args.all === true ? ['--json', '--all', '--project'] : ['--json', '--project'],
       )
     }
+  })
+
+  it('spawns `coordinator show` with the repository, the number and nothing else', () => {
+    // **C3's row, word for word** (coordinator v2 C3, D816; the design
+    // allow-list's `coordinator show --json --repo <owner/name> --pr <n>`). The
+    // child this argv starts mints a credential of the host's -- the
+    // coordinator's own read-only installation token -- so what the console may
+    // put in the argv is the whole question, and it is written out here rather
+    // than read off the row. The order is `argvFor`'s for every row: the row's
+    // fixed words, then the arguments the schema declares, then `--project`.
+    expect(
+      argvFor('coordinator.show', { repo: 'acme/app', pr: 1458 }, safeContext({ project: 'chosen' })),
+    ).toEqual([
+      'coordinator',
+      'show',
+      '--json',
+      '--repo',
+      'acme/app',
+      '--pr',
+      '1458',
+      '--project',
+      'chosen',
+    ])
+    // Both arguments are the operation's own and both are required by its
+    // schema (`src/main/ipc.ts`; the argument-schema case there pins the two).
+    // What this row adds is the argv spelling: the repository as the CLI's own
+    // `owner/name`, and the number as the digits `IntVar --pr` reads. So a
+    // number that is not a pull request number is refused here rather than
+    // spelled into argv, which is the whole of what the `pullRequest` kind buys
+    // on a row whose child mints a credential.
+    expect(() => argvFor('coordinator.show', { repo: 'acme/app', pr: 0 }, safeContext())).toThrow(
+      /not a pull request number/,
+    )
+    expect(() => argvFor('coordinator.show', { repo: 'acme/app', pr: 1.5 }, safeContext())).toThrow(
+      /not a pull request number/,
+    )
+    // ...and a key the row does not declare never reaches an element, which is
+    // the rule that keeps a payload from smuggling a flag in.
+    expect(() => argvFor('coordinator.show', { repo: 'acme/app', pr: 1, token: 'x' }, safeContext())).toThrow(
+      /does not declare/,
+    )
+    // **No token, no host and no path**, in any position: the credential is the
+    // child's own and nothing a renderer sends may name one. The flags the argv
+    // carries are exactly the schema's two plus the console's own.
+    const argv = argvFor('coordinator.show', { repo: 'acme/app', pr: 1458 }, safeContext())
+    expect(argv.filter((word) => word.startsWith('--'))).toEqual([
+      '--json',
+      '--repo',
+      '--pr',
+      '--project',
+    ])
   })
 
   it('emits one array element per value, in the operation’s own order', () => {

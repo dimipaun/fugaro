@@ -293,6 +293,12 @@ var consoleReadPaths = map[string]bool{
 	// writes nothing -- but it is a cloud read like the rest, so it goes
 	// through the resolver every cloud command does and has to be here.
 	"fugaro coordinator status": true,
+	// The pull request read (coordinator v2 C3, D816): one pull request as the
+	// host has it, through the coordinator's own read-only installation token.
+	// It resolves the repository's checkout the way the view does -- to tell
+	// the repository's provider -- and writes nothing, the remembered checkouts
+	// included.
+	"fugaro coordinator show": true,
 	// The one the design names and §5.1 has not carried a row for yet (the
 	// console task adds it); it resolves no checkout today.
 	"fugaro plan graph": true,
