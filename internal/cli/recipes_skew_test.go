@@ -461,6 +461,34 @@ func TestRecipesSkewRefusesResolvedL3OutsideACheckout(t *testing.T) {
 	}
 }
 
+// TestRecipesSkewRefusesAResolutionThatRefused: config.ResolveLevels returns
+// zero levels beside its refusal, and zero reads as "no level is on" — the
+// fail-open direction. A resolution that refuses is a configuration the run's
+// own bootstrap stops on, but a 0.15.0 runner resolves no levels and stops on
+// nothing: it runs without the level 3 the mode's row asks for, and the
+// launcher would report that launch as the one it asked for.
+//
+// The configuration here is the L1 = L2 guard's (D721): first_line_review on
+// with agent.models naming the coder and the reviewer the same model, so
+// level 1 and level 2 resolve to it and the resolution refuses.
+//
+// Mutation (read the refusal's zero levels as its answer, as `levels, _, _ :=
+// config.ResolveLevels(...)` does): the 0.15.0 launch below succeeds.
+func TestRecipesSkewRefusesAResolutionThatRefused(t *testing.T) {
+	f := newCloudFixture(t)
+	checkoutWorkflows(t, "  first_line_review: \"on\"\n  models: { coder: deepseek/deepseek-v4-pro, reviewer: deepseek/deepseek-v4-pro }\n",
+		"  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--mode", "critical", "--run-id", "20261007-100000-abcd", "Fix it.")
+	if err == nil || !strings.Contains(err.Error(), "review level 3 (its adversarial step)") || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.15.0: err = %v, want the level 3 refusal", err)
+	}
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.16.0")
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--mode", "critical", "--run-id", "20261007-100000-abce", "Fix it."); err != nil {
+		t.Fatalf("0.16.0: %v", err)
+	}
+}
+
 // TestRecipesSkewJudgesAProjectOrCatalogRecipe: the L1 insertion ask is not
 // blind to a recipe the launcher did not read out of a checkout, because a
 // project or catalog recipe never needs one: the launcher embeds its text in

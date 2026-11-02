@@ -1207,8 +1207,10 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // the two things this launch knows without it (the mode --mode asked for and
 // the owner's floor) are resolved against an empty configuration rather than
 // skipped. A resolution that refuses (L1 = L2, an effort a provider route
-// would drop) leaves its own refusal to the runner and to L3.2's launch
-// check, and the levels it did not return are the blocks read here anyway.
+// would drop) keeps its own refusal to make — the runner's bootstrap and
+// L3.2's launch check — but its zero levels are not read as its answer: the
+// mode's own row is the part a refusal cannot take away, and the level it
+// turns on is asked for from it.
 //
 // The mode is the launcher's approximation of the run's: the ref's file with
 // the flag raised over it, as noteRigorRequest reads it, since the
@@ -1232,9 +1234,21 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 	if p, found, err := env.policy.read(ctx, env.lc); err == nil && found && p != nil {
 		floor = p.ReviewFloor[mode]
 	}
-	levels, _, _ := config.ResolveLevels(config.LevelInputs{
+	levels, _, err := config.ResolveLevels(config.LevelInputs{
 		Config: cfg, Mode: mode, Floor: floor, Task: spec.ReviewLevels, Recipe: rcp, Providers: env.lc.Providers,
 	})
+	if err != nil {
+		// A refusal comes back with zero levels, and zero reads as "no
+		// level is on": acting on it would ask nothing of an image for the
+		// very run the resolution would not answer for. Only the mode's own
+		// row survives the refusal (rigor.DefaultLevels), so the level it
+		// turns on is asked for still; the refusal itself, and every level
+		// the layers decided, stay where they are made — the run's
+		// bootstrap, and the blocks this launch reads directly below.
+		if row, rowErr := rigor.DefaultLevels(mode); rowErr == nil && row.L3 == rigor.LevelOn {
+			levels.L3.On = true
+		}
+	}
 	return reviewLevelsAsk(levels, spec.ReviewLevels, cfg, floor, recipeUnknown)
 }
 
