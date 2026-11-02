@@ -367,9 +367,13 @@ type Spec struct {
 	// which is every launch until the flag that writes it lands (CSR2).
 	//
 	// A runner before the release that reads this field refuses the whole
-	// spec (Parse decodes with DisallowUnknownFields), so the launcher gates a
-	// launch that would set it (mutateSince) rather than let the run fail at
-	// bootstrap after the task was written.
+	// spec (Parse decodes with DisallowUnknownFields). No launch writes the
+	// field yet: the command that would is CSR2's, and the launcher-side gate
+	// it needs — the `…Since` constant that refuses a job image whose runner
+	// predates the release, internal/cli/recipes_skew.go's shape — is CSR6's,
+	// so there is no such constant to name here yet and nothing today that
+	// could be gated. The gate lands with the flag, before any launch can
+	// write the field.
 	Mutate []Mutate `json:"mutate,omitempty"`
 }
 
