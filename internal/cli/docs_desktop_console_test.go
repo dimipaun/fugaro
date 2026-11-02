@@ -525,7 +525,11 @@ var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
 // they cannot import. The same checks run over these sections against the
 // tagged tree, where the code is in the build
 // (ee/coordinator/cli/console_contract_test.go, ee/report/cli/console_contract_test.go).
-var consoleMovedSections = []string{"### 6.13 ", "## 4. `fugaro report --json`"}
+// §6.15 is the coordinator's too — coordinator v2 C3's `coordinator show`, whose
+// document and command are both under ee/ — and it is a heading of its own
+// rather than a part of §6.13 because the two document different reads of
+// different shapes.
+var consoleMovedSections = []string{"### 6.13 ", "### 6.15 ", "## 4. `fugaro report --json`"}
 
 // consoleMovedRows are the document's individual lines that name a flag of a
 // moved command without sitting under a moved heading: §8's inventory carries
