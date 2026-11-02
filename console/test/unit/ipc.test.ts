@@ -624,6 +624,25 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   // no argument it could be steered with. It mints nothing of the host's: the
   // read is the caller's own database node (design §5.1 rule 6).
   { command: 'coordinator intents', kind: 'allowed', where: 'ee/coordinator/cli/coordinator_intents.go:66' },
+  // Console 0.119.0's read-only models panel (the owner's ruling of
+  // 2026-11-02): the selected project's routes, the models a run can name and
+  // each repository's pins, from the project's own configuration and the price
+  // catalog -- `fugaro models ls --json`, which the CLI's own comment says
+  // reaches no bucket, no database and no host. `allowed` because the surface
+  // drives it; its one row of argv is the command and `--json`, with no
+  // argument of any kind (cobra's `NoArgs`).
+  { command: 'models ls', kind: 'allowed', where: 'internal/cli/models_ls.go:47' },
+  // **The rest of the models group, classified by what each word does.** The
+  // three writers edit a configuration a reviewer signed off on -- the project
+  // config's routes and allowed models, or one repository's `agent.models`
+  // -- and the fourth is a read the surface does not carry: `search` takes a
+  // **positional** `<text>`, the caller-filled word this surface has nowhere
+  // to put. Each of the four is on `NEVER_REACHABLE` below, both as a command
+  // and as a word of `models`, so no argv but `models ls --json` is reachable.
+  { command: 'models add', kind: 'mutating', where: 'internal/cli/models_add.go:27' },
+  { command: 'models rm', kind: 'mutating', where: 'internal/cli/models_rm.go:20' },
+  { command: 'models use', kind: 'mutating', where: 'internal/cli/models_use.go:24' },
+  { command: 'models search', kind: 'unused', where: 'internal/cli/models_search.go:21' },
   // **The console's one write** (design §5.1 rule 11, D22). `run` was the
   // first writer in this list and the one no argv could drive; since V2.5.1a it
   // is a command the allow-list admits, in exactly one argv, so it is `allowed`
@@ -702,7 +721,7 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * is still `runs ls --json` and rule 6's row carries the two words in its
  * parenthetical.
  *
- * **It is nineteen argvs, and this surface is the same nineteen.** The thirteenth is
+ * **It is twenty argvs, and this surface is the same twenty.** The thirteenth is
  * `config list --json`, the rail's own read (owner's design ruling of
  * 2026-10-25): until that ruling there were twelve here and it was pinned where
  * the picker's table was, and the ruling made the read the dashboard's own
@@ -718,7 +737,10 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * rows after it are C3's pull request read (`coordinator show --json`, D816),
  * C4c's declarations read (`coordinator intents --all --json`, D827) and
  * console 0.119.0's totals read (`runs summary --json`, B4's console half) --
- * the seventeenth, eighteenth and nineteenth.
+ * the seventeenth, eighteenth and nineteenth. The twentieth is the same
+ * release's models read (`models ls --json`, the Project tab's read-only
+ * panel): the command and its one fixed flag and nothing else, because the
+ * command takes no argument at all.
  */
 const DESIGN_ARGV: readonly string[] = [
   'watch --json',
@@ -757,6 +779,12 @@ const DESIGN_ARGV: readonly string[] = [
   // key becomes (`src/main/spawn.ts`'s `summarySince` kind) -- so the row is
   // the command and its one fixed flag, exactly as `runs stats` above is.
   'runs summary --json',
+  // The models read (console 0.119.0, the owner's ruling of 2026-11-02). This
+  // row is the whole argv: the command takes no argument (`cobra.NoArgs`), so
+  // this file's convention has nothing to take out, and the row's `args` is
+  // empty (`src/main/spawn.ts`), which is what makes that true rather than
+  // merely stated.
+  'models ls --json',
 ]
 
 /** argvOf is an operation's command and the flags it fixes, as one string. */
@@ -887,9 +915,16 @@ describe("the allow-list's read-only invariant", () => {
       // the command it belongs to is what has to exist. The positional-TEXT row
       // names no word at all, and its command is the one it is refused on.
       if (row.shape === 'flag') continue
+      // An argv row's command is `models`, a group and not a leaf, so a row
+      // whose command is a *parent* of leaves this tree has is known too: the
+      // words below it are what the table refuses, and a group with no leaf
+      // under it would fail here on the leaves' own rows.
       const known =
         row.shape === 'argv'
-          ? CLI_COMMANDS.some((entry) => entry.command === row.command)
+          ? CLI_COMMANDS.some(
+              (entry) =>
+                entry.command === row.command || entry.command.startsWith(`${row.command} `),
+            )
           : CLI_COMMANDS.some((entry) => entry.command === row.value)
       expect(known || NOT_ON_THIS_TREE.includes(row.value), `${row.value} (${row.where})`).toBe(true)
     }
@@ -948,6 +983,76 @@ describe("the allow-list's read-only invariant", () => {
     // `runs ls` is not `run`: the command rows match exactly, and the allow-list
     // is by exact argv.
     expect(isNeverReachable({ command: 'runs ls', flags: ['--json'] })).toBeNull()
+  })
+
+  it('reaches no `models` word but `ls`, and refuses each write and the search in both shapes', () => {
+    // **The models group's fence** (console 0.119.0, the owner's ruling of
+    // 2026-11-02). `fugaro models ls --json` is the one word of this group the
+    // console may drive, and the table draws that in two shapes: three `command`
+    // rows for the writers, and four `argv` rows for the words themselves.
+    // Both are read back here in the form an argv could actually take, because
+    // the command rows alone would not cover a future operation whose command
+    // path continues the command (`models add <id>`, the shape the launch has).
+    const refusedBy = (command: string, flags: readonly string[]): string | null =>
+      isNeverReachable({ command, flags })?.value ?? null
+
+    // The read is the surface's own row, and it is clear of every row of the
+    // table -- the sentence this test exists for.
+    expect(CONSOLE_OPERATIONS.filter((operation) => operation.name === 'models.list').map(argvOf)).toEqual([
+      'models ls --json',
+    ])
+    expect(refusedBy('models ls', ['--json'])).toBeNull()
+    expect(refusedBy('models ls', ['--json', '--project', 'chosen'])).toBeNull()
+
+    for (const word of ['add', 'rm', 'use']) {
+      // The command path the design's never list names.
+      expect(refusedBy(`models ${word}`, ['--json']), word).toBe(`models ${word}`)
+      // The same word spelled into a longer command path...
+      expect(refusedBy(`models ls ${word}`, ['--json']), word).toBe(word)
+      // ...and into the flags, which is the half a command row cannot see.
+      expect(refusedBy('models ls', ['--json', word]), word).toBe(word)
+    }
+    // `search` is a read and has no command row of its own -- it is simply a
+    // word this surface may not spell -- so the row it matches is the argv one,
+    // in each shape the word can take.
+    for (const [command, flags] of [
+      ['models search', ['--json']],
+      ['models ls search', ['--json']],
+      ['models ls', ['--json', 'search']],
+    ] as const) {
+      expect(refusedBy(command, flags), command).toBe('search')
+    }
+
+    // The whole-table control: an operation driving a models write cannot be
+    // added to the surface at all, and the refusal names it.
+    expect(() =>
+      assertReachableSurface([
+        ...CONSOLE_OPERATIONS,
+        {
+          name: 'models.add',
+          method: 'addModel',
+          command: 'models add',
+          flags: ['--json'],
+          summary: 'a write this console must not have',
+          args: [],
+        },
+      ]),
+    ).toThrow(/models\.add drives models add/)
+    // ...and the same operation with the word moved into the flags is refused
+    // too, so the fence does not depend on where a later edit spells it.
+    expect(() =>
+      assertReachableSurface([
+        ...CONSOLE_OPERATIONS,
+        {
+          name: 'models.add',
+          method: 'addModel',
+          command: 'models ls',
+          flags: ['--json', 'add'],
+          summary: 'the same write, spelled as a flag',
+          args: [],
+        },
+      ]),
+    ).toThrow(/models\.add drives add/)
   })
 
   it('drives no command whose argv carries a never-table flag', () => {
@@ -1175,6 +1280,10 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   'run.logLink': { run: '20261016-121029-4a1b' },
   'secrets.inventory': { scope: 'repo', repo: 'acme/app' },
   'accounts.inventory': { repo: 'acme/app' },
+  // The empty payload again: the models read takes no argument at all (console
+  // 0.119.0), so there is no key a renderer could fill -- which the pin below
+  // reads back as well.
+  'models.list': {},
   'cli.version': {},
   'startup.compatibility': {},
   'installation.current': {},
@@ -2181,7 +2290,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these twenty-eight, and no others".
+ * channel. The claim is "these twenty-nine, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -2235,7 +2344,14 @@ describe('the spend read’s arguments', () => {
  * half) and left the other twenty-seven exactly where they were. It is next to
  * `runs.stats` because the two are the runs family's reads of what the budget
  * recorded, and it is the second operation here whose whole argv is the row's
- * own words plus one optional window.
+ * own words plus one optional window. **Console 0.119.0 also added the
+ * twenty-ninth** (`models.list` / `listModels`, the Project tab's read-only
+ * models panel -- `fugaro models ls --json`, the owner's ruling of 2026-11-02)
+ * and left the other twenty-eight exactly where they were. It is next to
+ * `accounts.inventory`, the other read of what a project's own configuration
+ * says, and it is the third operation here with no argument at all -- and the
+ * first whose command belongs to a group the console may otherwise not touch,
+ * which is why its four sibling words are pinned on the never table above.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -2250,6 +2366,7 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['run.logLink', 'runLogLink'],
   ['secrets.inventory', 'listSecrets'],
   ['accounts.inventory', 'listAccounts'],
+  ['models.list', 'listModels'],
   ['cli.version', 'cliVersion'],
   ['startup.compatibility', 'getCompatibility'],
   ['installation.current', 'getInstallation'],
@@ -2296,7 +2413,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these twenty-eight, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these twenty-nine, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -2313,11 +2430,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A twenty-ninth channel: what each task added must stay one row, and the
+    // A thirtieth channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
-    const twentyNinth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(twentyNinth).toContain('fleet.report: a channel this console does not ship')
-    expect(twentyNinth).toContain('29 rows, and this console ships 28')
+    const thirtieth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(thirtieth).toContain('fleet.report: a channel this console does not ship')
+    expect(thirtieth).toContain('30 rows, and this console ships 29')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -2331,7 +2448,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('27 rows, and this console ships 28')
+    expect(withoutTheNewRow).toContain('28 rows, and this console ships 29')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -2346,8 +2463,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the twenty-eight methods and nothing else', () => {
-    // The bridge the window is handed: the twenty-eight methods and the names,
+  it('is frozen, and hands the window a bridge with the twenty-nine methods and nothing else', () => {
+    // The bridge the window is handed: the twenty-nine methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -3508,7 +3625,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: twenty-three of the surface's twenty-eight operations,
+    // The non-vacuity half: twenty-four of the surface's twenty-nine operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
@@ -3524,8 +3641,12 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // floor, which is a comparison against the handshake's version and not this
     // list. **`link.openPullRequest` is too, and for the same reason**: a pull
     // request number is repository state rather than money, so the mode has
-    // nothing to withhold from it.
-    expect(THE_OPEN_OPERATIONS.length).toBe(23)
+    // nothing to withhold from it. **`models.list` (console 0.119.0) is the
+    // twenty-fourth**: the model prices its panel draws are the catalog's own
+    // per-million-token figures and not what this project spent, so the reduced
+    // mode has nothing to withhold from it either -- there is no
+    // `spent_micros`, no `notional_micros` and no cap anywhere in its document.
+    expect(THE_OPEN_OPERATIONS.length).toBe(24)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(

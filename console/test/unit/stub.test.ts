@@ -49,6 +49,11 @@ describe('the stub’s command keys', () => {
       'logs --url',
       'secrets ls',
       'accounts ls',
+      // Console 0.119.0's offline models read (`models.list` / `listModels`,
+      // the read-only models panel, the owner's ruling of 2026-11-02): the one
+      // key here whose command path is also a group the never table refuses,
+      // so `models ls` is the whole of what the stub may be asked for.
+      'models ls',
       'version',
       'doctor',
       'config list',

@@ -402,6 +402,16 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(summaryDoc{}),
 		reflect.TypeOf(summaryRepo{}),
 		reflect.TypeOf(summaryTotals{}),
+		// §6.18, the offline models read (CLI 0.16.0): its own document and the
+		// four shapes under it, plus the price catalog a catalog-priced row
+		// carries -- `budget prices --json`'s own row shape, which this
+		// document names here rather than in a section of its own.
+		reflect.TypeOf(modelsLsDoc{}),
+		reflect.TypeOf(modelsCatalog{}),
+		reflect.TypeOf(modelsRoute{}),
+		reflect.TypeOf(modelsModel{}),
+		reflect.TypeOf(modelsRepo{}),
+		reflect.TypeOf(priceCatalog{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command:
 		// ee/coordinator/cli/console_contract_test.go pins them against the
 		// tagged tree, which is the tree that still serves the console.
@@ -624,6 +634,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		// §6.17, the same three shapes as the test above (CLI 0.16.0).
 		reflect.TypeOf(summaryDoc{}), reflect.TypeOf(summaryRepo{}),
 		reflect.TypeOf(summaryTotals{}),
+		// §6.18, the same six shapes as the test above (CLI 0.16.0).
+		reflect.TypeOf(modelsLsDoc{}), reflect.TypeOf(modelsCatalog{}),
+		reflect.TypeOf(modelsRoute{}), reflect.TypeOf(modelsModel{}),
+		reflect.TypeOf(modelsRepo{}), reflect.TypeOf(priceCatalog{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -935,6 +949,12 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// document describes its flags, so they are checked against this
 	// constructor like any other command's.
 	"runs summary": newRunsSummaryCmd,
+	// §6.18 documents the offline models read (CLI 0.16.0), and the console
+	// spawns it since 0.119.0, as §5.1 rule 6's `models ls --json` row (the
+	// read-only models panel, the owner's ruling of 2026-11-02). The document
+	// describes its flags, so they are checked against this constructor like
+	// any other command's.
+	"models ls": newModelsLsCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
@@ -1238,6 +1258,14 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		"logs RUN --url",
 		"secrets ls --json",
 		"accounts ls --json",
+		// The read-only models panel (console 0.119.0, the `models.list`
+		// operation, the owner's ruling of 2026-11-02): the project's routes,
+		// the models a run can name and each repository's pins, read offline.
+		// It has no argument at all -- the command is cobra's `NoArgs` -- and
+		// it is the one argv here whose *group* the console may otherwise not
+		// touch: the never table below refuses `search`, `add`, `rm` and
+		// `use` on this command, so this row is the group's whole argv.
+		"models ls --json",
 		"version",
 		"doctor --json",
 		// The installation rail's read (`installation.list`), which the picker
@@ -1404,17 +1432,18 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Eighteen commands: the thirteen dashboard reads (logs has two argvs), the
+	// Nineteen commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the project view's
 	// `coordinator status --from-store --all --json` (Bitbucket credentials
 	// T1.2), the pull request read `coordinator show --json --repo <owner/name>
 	// --pr <n>` (coordinator v2 C3), the declarations read
 	// `coordinator intents --all --json` (coordinator v2 C4c), the jobs-free
-	// totals read `runs summary --json` (console 0.119.0, B4/#1580) and the
-	// launch `fugaro run` (V2.5.1a).
-	if len(allowed) != 18 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 18 (logs has two argvs)", path, argvs, len(allowed))
+	// totals read `runs summary --json` (console 0.119.0, B4/#1580), the models
+	// read `models ls --json` (console 0.119.0, the owner's ruling of
+	// 2026-11-02) and the launch `fugaro run` (V2.5.1a).
+	if len(allowed) != 19 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 19 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -9464,8 +9493,8 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 		t.Errorf("%s §5.1 rule 11 still bounds the task at 64 KiB: the operator confirms by reading it, so the bound is 16 KiB", path)
 	}
 
-	if !strings.Contains(doc, "**The dashboard's surface is twenty-eight operations**") {
-		t.Errorf("%s no longer says the surface is twenty-eight operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull request read to twenty-seven and console 0.119.0's totals read to twenty-eight), and the two cannot disagree", path)
+	if !strings.Contains(doc, "**The dashboard's surface is twenty-nine operations**") {
+		t.Errorf("%s no longer says the surface is twenty-nine operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull request read to twenty-seven, console 0.119.0's totals read to twenty-eight and console 0.119.0's models read to twenty-nine), and the two cannot disagree", path)
 	}
 
 	var neverRows [][]string
