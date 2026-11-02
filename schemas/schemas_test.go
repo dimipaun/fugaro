@@ -4581,6 +4581,24 @@ func TestModelsSearchSchema(t *testing.T) {
 			t.Errorf("$defs.hit: required is %v, and a hit always carries %q", hitReq, key)
 		}
 	}
+	// The two endpoint counts are the catalog's own, so they are optional here
+	// and 0 is a figure: a model whose endpoints are none of them ZDR-eligible
+	// carries a real 0, and a consumer must be able to tell that from a row the
+	// catalog does not price, which carries neither member.
+	zdr := nodeOf(t, doc, "$defs", "hit", "properties", "zdr_endpoints")
+	if zdr["minimum"] != float64(0) {
+		t.Errorf("$defs.hit.zdr_endpoints: minimum = %v, and 0 ZDR endpoints is a count a model may carry", zdr["minimum"])
+	}
+	for _, key := range []string{"endpoints", "zdr_endpoints"} {
+		if slices.Contains(hitReq, key) {
+			t.Errorf("$defs.hit: required is %v, and %q is a catalog row's own member", hitReq, key)
+		}
+	}
+	// The count is the column the read prints it in: a consumer told to look at
+	// another one would read the wrong figure off the table.
+	if got, _ := zdr["description"].(string); !strings.Contains(got, "ENDPOINTS") || strings.Contains(got, "TIER") {
+		t.Errorf("$defs.hit.zdr_endpoints: the description is %q, and the count is the read's ENDPOINTS column", got)
+	}
 }
 
 // TestSummarySchema pins schemas/summary.schema.json against the command that

@@ -57,8 +57,10 @@ type modelsSearchRow struct {
 	InputPerM, OutputPerM float64
 	// Endpoints is how many endpoints serve the model, and ZDREndpoints how
 	// many of them are ZDR-eligible: the two numbers behind the read's "N of M
-	// endpoints". Both 0 on a row the catalog does not price.
-	Endpoints, ZDREndpoints int
+	// endpoints". Both are the catalog's own and are nil on a row it does not
+	// price, so a model no endpoint of which is ZDR-eligible keeps its real 0
+	// all the way to the document.
+	Endpoints, ZDREndpoints *int
 	// Route is the route of this project that claims the model, or "" when
 	// no route serves it.
 	Route     string
@@ -98,9 +100,12 @@ type modelsSearchHit struct {
 	OutputPerM *modelsSearchRange `json:"output_per_m,omitempty"`
 	// Endpoints is how many endpoints the model is served by, and
 	// ZDREndpoints how many of them are ZDR-eligible: the read's "N of M" is
-	// these two. Both absent on a row the catalog does not price.
-	Endpoints    int `json:"endpoints,omitempty"`
-	ZDREndpoints int `json:"zdr_endpoints,omitempty"`
+	// these two. Both are absent on a row the catalog does not price, and a 0
+	// is written where the catalog counts none: a consumer cannot tell the two
+	// apart otherwise, and a member that meant either would draw a wrong
+	// figure with no error.
+	Endpoints    *int `json:"endpoints,omitempty"`
+	ZDREndpoints *int `json:"zdr_endpoints,omitempty"`
 	// Route is the route of this project that claims the model, and "" when no
 	// route serves it: a launch refuses such a hit, and the read says "no
 	// route" where the document leaves the member empty.
@@ -241,7 +246,7 @@ func modelsSearchRows(lc *localcfg.Config, text string) ([]modelsSearchRow, erro
 			}
 			out = append(out, modelsSearchRow{
 				ID: id, Source: modelsSourceCatalog, Tier: tier, Bounds: bounds,
-				Endpoints: e.Endpoints, ZDREndpoints: e.ZDREndpoints, Route: modelsRouteOf(lc, id),
+				Endpoints: &e.Endpoints, ZDREndpoints: &e.ZDREndpoints, Route: modelsRouteOf(lc, id),
 				Context: e.ContextTokens, MaxOutput: e.MaxOutputTokens,
 			})
 		}
@@ -290,14 +295,13 @@ func tierBounds(e catalog.Entry, tier string) (map[string]catalog.Bound, bool) {
 // the model is served by: the two differ on the zdr tier, which is the whole
 // reason both numbers are shown.
 func endpointsCell(r modelsSearchRow) string {
-	switch r.Tier {
-	case "zdr":
-		return fmt.Sprintf("%d of %d endpoints", r.ZDREndpoints, r.Endpoints)
-	case "":
+	if r.Endpoints == nil || r.ZDREndpoints == nil {
 		return dash("")
-	default:
-		return fmt.Sprintf("%d endpoints", r.Endpoints)
 	}
+	if r.Tier == "zdr" {
+		return fmt.Sprintf("%d of %d endpoints", *r.ZDREndpoints, *r.Endpoints)
+	}
+	return fmt.Sprintf("%d endpoints", *r.Endpoints)
 }
 
 // dimCell is one dimension's price cell: the range the row's tier prices when

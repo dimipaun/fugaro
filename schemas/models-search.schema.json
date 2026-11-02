@@ -71,7 +71,7 @@
         "zdr_endpoints": {
           "type": "integer",
           "minimum": 0,
-          "description": "How many of those endpoints are ZDR-eligible: the read's TIER column shows `N of M endpoints` out of this and endpoints. Absent on a row the catalog does not price."
+          "description": "How many of those endpoints are ZDR-eligible, and the read's ENDPOINTS column shows `N of M endpoints` out of this and endpoints. Written even where the count is 0 — a model whose endpoints are none of them ZDR-eligible carries a real 0 — and absent only on a row the catalog does not price, which is a different thing."
         },
         "route": {
           "type": "string",

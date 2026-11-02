@@ -520,3 +520,81 @@ func TestModelsSearchJSONKeepsItsValuesAsData(t *testing.T) {
 	}
 	t.Errorf("the document does not carry the ID the table holds (%q):\n%s", id, out)
 }
+
+// TestModelsSearchJSONCarriesTheEndpointCounts: a catalog row's two counts are
+// the row's own, and a model whose endpoints are none of them ZDR-eligible has
+// a real 0 there. A consumer that read the member's absence as "not a catalog
+// row" would draw a wrong figure with no error, so the absence carries no
+// meaning: a row the catalog does not price is the one with neither member.
+// The shipped catalog holds both — qwen/qwen3.8-flash is served by endpoints
+// no one of which is ZDR-eligible, and the embedded table's rows are the
+// catalog's to price not at all.
+func TestModelsSearchJSONCarriesTheEndpointCounts(t *testing.T) {
+	modelsFixture(t)
+
+	var doc struct {
+		Models []struct {
+			ID           string `json:"id"`
+			Source       string `json:"source"`
+			Tier         string `json:"tier"`
+			Endpoints    *int   `json:"endpoints"`
+			ZDREndpoints *int   `json:"zdr_endpoints"`
+		} `json:"models"`
+	}
+
+	out, _, err := execute(t, "models", "search", "qwen/qwen3.8-flash", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	rows := 0
+	for _, m := range doc.Models {
+		if m.ID != "qwen/qwen3.8-flash" {
+			continue
+		}
+		rows++
+		if m.Source != modelsSourceCatalog || m.Tier != "all" {
+			t.Errorf("%s: the hit is %s/%s, and the catalog prices it on the all tier alone", m.ID, m.Source, m.Tier)
+		}
+		if m.Endpoints == nil || *m.Endpoints < 1 {
+			t.Errorf("%s: endpoints = %v, and the catalog counts the endpoints that serve it", m.ID, m.Endpoints)
+		}
+		if m.ZDREndpoints == nil {
+			t.Errorf("%s: the hit carries no zdr_endpoints member, so its 0 ZDR endpoints read as a row the catalog does not price", m.ID)
+			continue
+		}
+		if *m.ZDREndpoints != 0 {
+			t.Errorf("%s: zdr_endpoints = %d, and no endpoint of the row is ZDR-eligible", m.ID, *m.ZDREndpoints)
+		}
+	}
+	if rows != 1 {
+		t.Fatalf("the shipped catalog prices qwen/qwen3.8-flash on %d hits, and it carries one all-tier row:\n%s", rows, out)
+	}
+
+	// A row the catalog does not price carries neither member.
+	priced := 0
+	for _, q := range []string{"claude-haiku-4-5", "vendor/model-y"} {
+		out, _, err := execute(t, "models", "search", q, "--json")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		doc.Models = nil
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		for _, m := range doc.Models {
+			if m.Source == modelsSourceCatalog {
+				continue
+			}
+			priced++
+			if m.Endpoints != nil || m.ZDREndpoints != nil {
+				t.Errorf("%s: a %s row carries endpoints %v and zdr_endpoints %v, and the catalog does not price it", m.ID, m.Source, m.Endpoints, m.ZDREndpoints)
+			}
+		}
+	}
+	if priced == 0 {
+		t.Fatalf("the search found no row the catalog does not price, so nothing above was checked")
+	}
+}
