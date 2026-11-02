@@ -1379,6 +1379,12 @@ func TestVerifyRouteIsAnsweredAheadOfTheSharedParse(t *testing.T) {
 // constant-time for equal lengths. A same-length wrong signature is then a plain
 // `valid:false`, and the wrapper delegates to hmac.Equal, so what is observed is
 // the route's behaviour and not a comment about it.
+//
+// The count is the pair's own shape (§6.3): a signature the live entry makes is
+// compared once, and one it does not is compared again under the previous entry
+// — the same way, with the same two 32-byte MACs — so the two served calls below
+// are three comparisons, and a run that read the second entry for a match would
+// show a fourth.
 func TestVerifyComparesTheSignatureInConstantTime(t *testing.T) {
 	s := verifySvc(t, []string{testVerifierSA})
 	digest := testDigest(t, "constant-time")
@@ -1407,8 +1413,8 @@ func TestVerifyComparesTheSignatureInConstantTime(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(lengths) != 2 {
-		t.Fatalf("the comparison was reached %d times, want once per served call", len(lengths))
+	if len(lengths) != 3 {
+		t.Fatalf("the comparison was reached %d times, want 3: the live entry's match stops there and the miss compares §6.3's pair", len(lengths))
 	}
 	for _, l := range lengths {
 		if l[0] != sha256.Size || l[1] != sha256.Size {
@@ -1613,5 +1619,157 @@ func TestVerifyRouteAuditsTheActAndNeverTheDigestOrTheSignature(t *testing.T) {
 	}
 	if s.logs.Len() != 0 {
 		t.Errorf("a served verify wrote a service log line: %q", s.logs.String())
+	}
+}
+
+// reviewKeyBytes is one of the fixture document's review-signing entries as the
+// service's own accessor decodes it — the current entry, the rotation window's
+// previous one, or a seed no entry holds, for the key two rotations have pushed
+// out of the pair.
+func reviewKeyBytes(t *testing.T, what string) []byte {
+	t.Helper()
+	raw, err := hex.DecodeString(reviewKey(t, what))
+	if err != nil {
+		t.Fatalf("the fixture's own review-signing key is not hex: %v", err)
+	}
+	return raw
+}
+
+// signWith is the signature the sign route would have answered for one run of
+// one repository under the key bytes given, and not under whichever entry the
+// fixture happens to treat as current: the rotation window is the whole of what
+// the verify route's second read is for, so a test has to be able to sign under
+// the entry it means.
+func signWith(t *testing.T, key []byte, slug, run, digest string) string {
+	t.Helper()
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(frameVersion + "\n" + slug + "\n" + run + "\n" + digest))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// TestVerifyRouteAcceptsThePreviousKeyWithinTheRotationWindow: spec §6.3's
+// window, and the reason the route reads two entries rather than one.
+// `creds set --generate` writes the new key as the current entry and the one it
+// replaced beside it as `…-previous`, in the same document version (C3.9d), so
+// a verdict signed a moment before a rotation is a verdict this service made:
+// a route that recomputed under the current entry alone would answer
+// `valid:false` for every artifact signed under the key an operator has just
+// retired, and a coordinator reads `false` as "not ours" and ships nothing.
+//
+// The third case is the other half of the window: the pair is the current entry
+// and the previous one and NOTHING older (D1069's revoke is two consecutive
+// generates), so a key the pair no longer holds is a plain `false` — an answer
+// about the artifact — and never a refusal. The line names the entry the answer
+// was computed with, so an operator reads which half of the pair verified.
+func TestVerifyRouteAcceptsThePreviousKeyWithinTheRotationWindow(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		seed       string
+		want       bool
+		credential string
+	}{
+		{"the current entry", "current", true, config.ReviewSigningKeySecret(testReviewAccount)},
+		{"the rotation's previous entry", "previous", true, config.ReviewSigningKeyPreviousSecret(testReviewAccount)},
+		{"a key two rotations old", "retired", false, config.ReviewSigningKeySecret(testReviewAccount)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := verifySvc(t, []string{testVerifierSA})
+			digest := testDigest(t, "rotation")
+			signature := signWith(t, reviewKeyBytes(t, tc.seed), s.slug, s.run, digest)
+
+			resp, body := s.verifyCall(t, verifyBody(testReviewAccount, s.run, s.slug, digest, signature))
+			verifyValid(t, resp, body, tc.want)
+
+			lines := parseAuditLines(t, s.audit.String())
+			if len(lines) != 1 {
+				t.Fatalf("the verify wrote %d audit lines, want exactly one", len(lines))
+			}
+			if got := lines[0]["credential"]; got != tc.credential {
+				t.Errorf("the line names credential %v, want %q: the name is the entry the answer was computed with", got, tc.credential)
+			}
+			if got := lines[0]["status"]; got != StatusOK {
+				t.Errorf("the line's status is %v, want %q: a false is an answer and not a refusal", got, StatusOK)
+			}
+		})
+	}
+}
+
+// TestVerifyRouteRefusesWhenThePreviousEntryIsUnusable: §6.4's fail-closed rule
+// holds for the second entry as much as the first. A previous entry whose value
+// is not a key means the service cannot tell whether the artifact was made under
+// it, and `valid:false` would answer "not this account's" to a question it could
+// not answer — the conflation §5.3 exists to prevent. So the pair's unreadable
+// half is a typed refusal.
+//
+// The same document's live entry is untouched by that: a signature the current
+// key made is answered `true` and never reaches the second read at all, which is
+// what keeps one bad entry in a rotation window from breaking every verdict the
+// account has yet to sign.
+func TestVerifyRouteRefusesWhenThePreviousEntryIsUnusable(t *testing.T) {
+	s := verifySvc(t, []string{testVerifierSA}, func(s *svc, _ *Config) {
+		s.src.docs = [][]byte{[]byte("claude-oauth-token-alice: " + fakeCred(t, "alice") + "\n" +
+			config.ReviewSigningKeySecret("alice") + ": " + reviewKey(t, "current") + "\n" +
+			config.ReviewSigningKeyPreviousSecret("alice") + ": zz\n")}
+	})
+	digest := testDigest(t, "unusable-previous")
+
+	retired := signWith(t, reviewKeyBytes(t, "retired"), s.slug, s.run, digest)
+	resp, body := s.verifyCall(t, verifyBody(testReviewAccount, s.run, s.slug, digest, retired))
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+	}
+	if got := refusal(t, resp.StatusCode, body); got.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %q, want %q", got.Error, ErrorStateUnavailable)
+	}
+	if strings.Contains(string(body), `"valid"`) {
+		t.Errorf("an unreadable previous entry was answered with the bit: %s", body)
+	}
+
+	live := signWith(t, reviewKeyBytes(t, "current"), s.slug, s.run, digest)
+	resp, body = s.verifyCall(t, verifyBody(testReviewAccount, s.run, s.slug, digest, live))
+	verifyValid(t, resp, body, true)
+}
+
+// TestVerifyRouteAnswersOneBitAndNoStoreWhicheverEntryVerified: the answer's
+// shape does not depend on which half of the pair answered it (§5.3). It is the
+// one bit and no echo — the previous entry's name is a thing the service looked
+// for and must not hand back, exactly as the account's is not — and it is
+// no-store for the reason the current key's is: the answer is about one artifact
+// at one instant, and a cached one would be handed to the next caller as if the
+// service had recomputed it for them.
+func TestVerifyRouteAnswersOneBitAndNoStoreWhicheverEntryVerified(t *testing.T) {
+	for _, tc := range []struct {
+		seed string
+		want bool
+	}{
+		{"current", true},
+		{"previous", true},
+		{"retired", false},
+	} {
+		t.Run(tc.seed, func(t *testing.T) {
+			s := verifySvc(t, []string{testVerifierSA})
+			digest := testDigest(t, "one-bit")
+			signature := signWith(t, reviewKeyBytes(t, tc.seed), s.slug, s.run, digest)
+
+			resp, body := s.verifyCall(t, verifyBody(testReviewAccount, s.run, s.slug, digest, signature))
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("the answer is %d, want 200: %s", resp.StatusCode, body)
+			}
+			verifyValid(t, resp, body, tc.want)
+			if got := resp.Header.Get("Cache-Control"); got != "no-store" {
+				t.Errorf("Cache-Control is %q, want no-store", got)
+			}
+			for what, value := range map[string]string{
+				"the account":          testReviewAccount,
+				"the key's entry name": config.ReviewSigningKeySecret(testReviewAccount),
+				"the previous entry":   config.ReviewSigningKeyPreviousSecret(testReviewAccount),
+				"the digest":           digest,
+				"the signature":        signature,
+			} {
+				if strings.Contains(string(body), value) {
+					t.Errorf("the answer carries %s: %s", what, body)
+				}
+			}
+		})
 	}
 }

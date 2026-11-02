@@ -111,6 +111,18 @@ func signFrame(slug, run, digest string) ([]byte, error) {
 	return []byte(frameVersion + "\n" + slug + "\n" + run + "\n" + digest), nil
 }
 
+// frameMAC is the service's signature over one frame under one key: the bytes
+// the sign route renders as lowercase hex and the value a verify call is
+// compared with. It is written once because the three places that need it — the
+// sign route, and the verify route's two reads of §6.3's pair — have to compute
+// the SAME bytes, and a second spelling of the HMAC would be a signature this
+// service makes and refuses to read.
+func frameMAC(key, frame []byte) []byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write(frame)
+	return mac.Sum(nil)
+}
+
 // readSignRequest reads a sign call's body out of the call ServeHTTP already
 // read (readCall), which is where the caller's own two tokens were registered
 // with the service's redaction for the length of this call (D1074).
@@ -336,9 +348,7 @@ func (s *Server) sign(ctx context.Context, w http.ResponseWriter, r *http.Reques
 			"the one-signature mark could not be taken, so the service signed nothing")
 		return
 	}
-	mac := hmac.New(sha256.New, key)
-	mac.Write(frame)
-	body, err := json.Marshal(SignResponse{Alg: signAlgorithm, Signature: hex.EncodeToString(mac.Sum(nil))})
+	body, err := json.Marshal(SignResponse{Alg: signAlgorithm, Signature: hex.EncodeToString(frameMAC(key, frame))})
 	if err != nil {
 		// Unreachable: the answer is two strings, and a body the service
 		// cannot build is refused rather than answered with half of itself.
@@ -607,9 +617,34 @@ func (s *Server) verify(ctx context.Context, w http.ResponseWriter, r *http.Requ
 		s.refuseVerify(ctx, w, caller, name, StatusRequestRefused, ErrorRequestRefused, requestRefused+err.Error())
 		return
 	}
-	mac := hmac.New(sha256.New, key)
-	mac.Write(frame)
-	valid := signatureMatches(mac.Sum(nil), req.Signature)
+	valid := signatureMatches(frameMAC(key, frame), req.Signature)
+	if !valid {
+		// §6.3's window: a document may hold the key a rotation replaced beside
+		// the current one, and a verdict signed a moment before that rotation is
+		// still this account's. Only a signature the live entry does not make
+		// pays for the second read — a rotation is rare and a match is the
+		// common case.
+		previousName, previousKey, err := b.ReviewSigningKey(req.Account, true)
+		switch {
+		case err == nil:
+			if signatureMatches(frameMAC(previousKey, frame), req.Signature) {
+				name, valid = previousName, true
+			}
+		case errors.Is(err, ErrReviewSigningKeyAbsent):
+			// No entry older than the current one: the window never opened, or
+			// two generates have closed it (D1069). A signature neither entry
+			// makes is not this account's, which is an answer about the
+			// artifact and not a refusal.
+		default:
+			// An entry whose value is not a key: the second half of the pair
+			// cannot be read, so the service cannot tell whether the artifact
+			// was made under it, and `false` would say "not this account's" to
+			// a question it could not answer (§6.4). The line names the entry
+			// the answer would have been computed with, as a `false` line does.
+			s.refuseVerify(ctx, w, caller, name, StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
+			return
+		}
+	}
 	body, err := json.Marshal(VerifyResponse{Valid: valid})
 	if err != nil {
 		// Unreachable: the answer is one bit, and a body the service cannot
