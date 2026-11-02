@@ -2992,18 +2992,30 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		return consoleStepNamed(t, job, "release", name)
 	}
 
-	// **Secrets are in exactly one step's `env:`** of the release job, each
-	// bound to its own name; the publish job holds none, and `GH_TOKEN` is in
-	// exactly two steps: the release gate (read-only token, check-runs) and the
-	// publish job's release step.
+	// **The Apple secrets are in exactly one step's `env:`** of the release job,
+	// each bound to its own name; the publish job holds none, and `GH_TOKEN` is
+	// in exactly two steps: the release gate (read-only token, check-runs) and
+	// the publish job's release step.
+	//
+	// The staged symbol change (2026-11-01, re-cut 2026-11-02) adds the one
+	// *other* secret this file may name, `SENTRY_AUTH_TOKEN`, in two steps of its
+	// own -- never in the signing step, which is the point of splitting them: the
+	// stamping step holds it before the key material exists and the upload step
+	// after the signing step has removed it. The state is read off the text
+	// rather than off a file's existence, because this test reads
+	// console-release.yml both before that copy-in and after it.
+	symbolsApplied := strings.Contains(text, consoleReleaseSymbolsSecret)
+	isSymbolsStep := func(name string) bool {
+		return name == consoleReleaseSymbolsStep || name == consoleReleaseSymbolsStampStep
+	}
 	signIdx, sign := stepNamed(consoleReleaseSigningStep)
 	gateIdx, gate := stepNamed("The tag is strict, on main, and its checks passed")
 	_, publish := consoleStepNamed(t, pub, "publish", consoleReleasePublishStep)
 	for _, j := range jobs {
 		for i, step := range j.job.Steps {
 			for name, value := range step.Env {
-				if strings.Contains(value, "secrets.") && !(j.name == "release" && i == signIdx) {
-					t.Errorf("%s's step %q reads %s from a secret: secrets are in exactly one step's env, %q", consoleReleaseWorkflowPath, step.Name, name, consoleReleaseSigningStep)
+				if strings.Contains(value, "secrets.") && !(j.name == "release" && (i == signIdx || (symbolsApplied && isSymbolsStep(step.Name)))) {
+					t.Errorf("%s's step %q reads %s from a secret: the Apple material is in exactly one step's env, %q, and the symbol change's own token in the two steps it adds -- nowhere else", consoleReleaseWorkflowPath, step.Name, name, consoleReleaseSigningStep)
 				}
 				if strings.Contains(value, "github.token") || name == "GH_TOKEN" || name == "GITHUB_TOKEN" {
 					// The gate step is the one that runs the gate, whichever job
@@ -3049,8 +3061,12 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		}
 		refs++
 	}
-	if refs != len(consoleReleaseSecrets) {
-		t.Errorf("%s has %d secret references, want exactly %d (one each, in the signing step)", consoleReleaseWorkflowPath, refs, len(consoleReleaseSecrets))
+	wantRefs := len(consoleReleaseSecrets)
+	if symbolsApplied {
+		wantRefs += consoleReleaseSymbolsTokenRefs
+	}
+	if refs != wantRefs {
+		t.Errorf("%s has %d secret references, want exactly %d (one each in the signing step, plus the symbol change's token in the two steps it adds)", consoleReleaseWorkflowPath, refs, wantRefs)
 	}
 
 	// **The order: on main, a strict tag, the gate, then every install and
@@ -3252,20 +3268,31 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		}
 	}
 
-	// The team, on the certificate, before packing; the signature after.
-	//
-	// The first pack reads two ways and both are right: `npm run package` while
-	// the symbols change is staged, and `npm run package:targets --` once its
-	// copy-in has landed, because that change runs the build and the debug-id
-	// stamp in a step of its own before this one, and a `npm run package` here
-	// would rebuild `dist/main` over the stamp. What the line has to be in either
-	// state is the pinned local packer, `--dir`, the tag's version and the
-	// packer's own notarisation off -- which is what the checks below hold it to.
-	teamBefore := at(`*"($APPLE_TEAM_ID)\""*) ;;`, false)
-	pack := at(`npm run package -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`, false)
-	if pack < 0 {
-		pack = at(`npm run package:targets -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`, false)
+	// **The bundle-only pack reads two ways, and both are right.** It is
+	// `npm run package -- --dir` while the symbol change is staged, and
+	// `npm run package:targets -- --dir` once that change's copy-in has landed,
+	// because it runs the build and the debug-id stamp in a step of its own
+	// before this one -- a `npm run package` here would rebuild `dist/main` and
+	// throw the ids away. Either spelling is the pinned local packer, the bundle
+	// alone, the tag's version and the packer's own notarisation off, which is
+	// what the checks below hold every pack line to.
+	bundlePackLine := func() int {
+		t.Helper()
+		for _, want := range []string{
+			`npm run package -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`,
+			`npm run package:targets -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`,
+		} {
+			if i := consoleLineIndex(lines, want, false); i >= 0 {
+				return i
+			}
+		}
+		t.Errorf("%s's signing step does not pack the bundle alone, in either spelling (%q or its `package:targets` form)", consoleReleaseWorkflowPath, `npm run package -- --dir`)
+		return -1
 	}
+
+	// The team, on the certificate, before packing; the signature after.
+	teamBefore := at(`*"($APPLE_TEAM_ID)\""*) ;;`, false)
+	pack := bundlePackLine()
 	if teamBefore < 0 || pack < 0 || teamBefore > pack {
 		t.Errorf("%s's signing step does not check the certificate's team before packing", consoleReleaseWorkflowPath)
 	}
@@ -3298,13 +3325,8 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	// in the one step that holds the unlocked keychain and the exported `.p8`
 	// path. `npm run package:targets` is the same packer without the build
 	// (mutation: this line back to plain `npm run package --`, which the
-	// exact-line lookup below misses -- the first pack's line is not it). And the
-	// first pack is looked up in both of its spellings for the reason given
-	// above: the symbols change writes `package:targets` there once it is applied.
-	bundlePack := at(`npm run package -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`, false)
-	if bundlePack < 0 {
-		bundlePack = at(`npm run package:targets -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`, false)
-	}
+	// exact-line lookup below misses -- the first pack's line is not it).
+	bundlePack := bundlePackLine()
 	appScript := at(`scripts/notarize-and-staple.sh app "$APP"`, false)
 	targetsPack := at(`npm run package:targets -- --prepackaged "$APP" -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`, false)
 	if bundlePack < 0 || appScript < 0 || targetsPack < 0 || !(bundlePack < appScript && appScript < targetsPack) {
@@ -3368,8 +3390,23 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 			t.Errorf("%s's verification step does not run %q", consoleReleaseWorkflowPath, want)
 		}
 	}
-	if verifyIdx+1 >= len(job.Steps) || !strings.Contains(job.Steps[verifyIdx+1].Uses, "actions/upload-artifact@") ||
-		job.Steps[verifyIdx+1].With["name"] != "console-release-assets" || job.Steps[verifyIdx+1].With["if-no-files-found"] != "error" {
+	// The verified assets go up as the console-release-assets artifact **right
+	// after verifying them** -- the symbol change's upload step is the one thing
+	// allowed in between, since it files the maps the stamp left in `dist/main`
+	// and has to run while the runner still holds them. Nothing else may come
+	// between the verification and the upload: an artifact is the record of a
+	// run that passed.
+	assetsIdx := -1
+	for i := verifyIdx + 1; i < len(job.Steps); i++ {
+		if strings.Contains(job.Steps[i].Uses, "actions/upload-artifact@") {
+			assetsIdx = i
+			break
+		}
+		if !(symbolsApplied && job.Steps[i].Name == consoleReleaseSymbolsStep) {
+			break
+		}
+	}
+	if assetsIdx < 0 || job.Steps[assetsIdx].With["name"] != "console-release-assets" || job.Steps[assetsIdx].With["if-no-files-found"] != "error" {
 		t.Errorf("%s does not upload the verified assets as the console-release-assets artifact right after verifying them", consoleReleaseWorkflowPath)
 	}
 
