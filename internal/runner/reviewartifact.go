@@ -598,8 +598,11 @@ func DecodeReviewArtifact(data []byte) (ReviewArtifact, error) {
 // object.
 func checkReviewIssue(is ReviewIssue) error {
 	switch {
-	case is.Severity == "":
-		return errors.New("no severity")
+	// One check, not two: the empty string is not one of the three words, so
+	// a severity that is absent and one that is a fourth word are the same
+	// refusal. Nothing here branches on what the word is (D2) -- this shape
+	// carries the vocabulary and a reader routes on the score, not on the
+	// label.
 	case !slices.Contains(reviewSeverity, is.Severity):
 		return fmt.Errorf("severity is %q, and the three words are %s", is.Severity, strings.Join(reviewSeverity, ", "))
 	case !slices.Contains(reviewClasses, is.Class):
