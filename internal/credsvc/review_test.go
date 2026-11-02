@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -24,18 +25,45 @@ const (
 	// fixture's bundle holds it, and the fixture's admissions offer it to the
 	// fixture's repository.
 	testReviewAccount = testAccount
-	// testReviewSA is the review job's own service account, by the spelling
-	// internal/infra deploys the variant's account with. It is a name and not
-	// a credential.
-	testReviewSA = "fugaro-p-profile-one-anthropic-alice-review-2f0a5c19@aurora-dev.iam.gserviceaccount.com"
+	// testReviewProfile is the profile the fixture's review job is of, and
+	// testReviewSA the service account it runs as: the variant's own spelling
+	// (ReviewServiceAccountID), which is what makes the account the deployer
+	// would create the account this fixture's verifier admits. It is a name and
+	// not a credential.
+	testReviewProfile = "profile-one"
 )
 
+// testReviewSA is the review job's service account, derived the one way the
+// deployer derives it.
+var testReviewSA = serviceAccountEmail(ReviewServiceAccountID(testReviewProfile, "anthropic", testReviewAccount), testFirebase)
+
 // newReviewSvc is the fixture with the one review job account this class is
-// about: the account the caller is verified as, and the table that resolves
-// the run identity's slug.
+// about: the account the caller is verified as, the row that names the Claude
+// account a call of it is served by, and the table that resolves the run
+// identity's slug.
 func newReviewSvc(t *testing.T) *svc {
 	t.Helper()
-	return newSvcWith(t, nil)
+	row := ReviewJobAccount{Email: testReviewSA, Account: testReviewAccount}
+	return newSvcWith(t, func(s *svc, cfg *Config) {
+		auth, err := NewAuthenticator(AuthConfig{
+			Project:           testProject,
+			FirebaseProject:   testFirebase,
+			Audience:          testAudience,
+			JobAccounts:       []string{testJobSA},
+			Keys:              s.keys,
+			JobKeys:           s.jobKeys,
+			Outcomes:          RTDBOutcomes{DB: s.db},
+			SharedJobAccounts: []string{testSharedSA},
+			ReviewJobAccounts: []ReviewJobAccount{row},
+			Now:               func() time.Time { return s.now },
+		})
+		if err != nil {
+			t.Fatalf("the fixture's own verifier configuration is not one NewAuthenticator accepts: %v", err)
+		}
+		cfg.Auth = auth
+		cfg.ReviewAccounts = []ReviewJobAccount{row}
+		cfg.Repos = map[string]string{s.slug: testRepo}
+	})
 }
 
 // reviewRunToken is the run identity of a review run: it pushes nothing (no

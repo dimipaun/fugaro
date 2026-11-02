@@ -30,13 +30,24 @@ import (
 // one: a repository with no shared token is never given tier A, and an
 // installation whose bundle holds no tier-A credential never consults an
 // admission at all (Global Constraint 4's drop, if it had applied).
-func (s *Server) candidates(ctx context.Context, slug, canonical string, b *Bundle) ([]creds.Credential, []Tried, error) {
+//
+// A review caller is the one caller whose candidate list is not this
+// narrowing: the pairing has already resolved the ONE account it may be served
+// by, and the class buys no other (reviewCandidates). It is asked here rather
+// than after the selector because this function is the one place that decides
+// which credentials a call may be offered — a review caller's list must never
+// contain an entry the cascade could fall to.
+func (s *Server) candidates(ctx context.Context, id Identity, canonical string, b *Bundle) ([]creds.Credential, []Tried, error) {
 	// b.Credentials() and never b.Entries(): the bundle holds the GitHub App
 	// key (C2.1) and the upstream Bitbucket token (D506) as well, and neither
 	// is a candidate for anything. A cascade that offered one would attach an
 	// App private key, or the caller's own git token, to an Anthropic call as
 	// its credential, so the filter is the accessor's rather than this loop's.
 	all := b.Credentials()
+	if id.JobClass == ClassReview {
+		out, skipped := reviewCandidates(all, s.review[id.JobAccount].Account)
+		return out, skipped, nil
+	}
 	hasA := false
 	for _, c := range all {
 		if c.Tier == creds.TierA {
@@ -47,7 +58,7 @@ func (s *Server) candidates(ctx context.Context, slug, canonical string, b *Bund
 	admitted := map[string]bool{}
 	if hasA {
 		var err error
-		admitted, err = s.admittedAccounts(ctx, slug, canonical)
+		admitted, err = s.admittedAccounts(ctx, id.Slug, canonical)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -62,6 +73,35 @@ func (s *Server) candidates(ctx context.Context, slug, canonical string, b *Bund
 		out = append(out, c)
 	}
 	return out, skipped, nil
+}
+
+// reviewCandidates is the candidate list of a review caller: the pairing's ONE
+// account at tier A, and nothing else at all.
+//
+// The class buys three routes and no privilege beyond them (spec §2.3), and on
+// the model path that is exactly this list: a review call is served by the
+// account its job is of, never by another tier-A account's entry, and never by
+// a tier B or C one — so a review call has nothing for the cascade's ladder to
+// fall to even where the policy's `fallback` would allow one (spec §10). The
+// account is the one the pairing resolved, and the tier-A credential's name in
+// the bundle is the name the published admissions spell the account with, so
+// the two are the same string by construction and not by a second lookup.
+//
+// Every credential it did not offer is reported as not admitted, which is what
+// that reason means for a caller: this call may not be served by it. A new
+// reason would be a value this contract's closed set does not carry, and the
+// runner reads that set to build a run's halt message.
+func reviewCandidates(all []creds.Credential, account string) ([]creds.Credential, []Tried) {
+	var out []creds.Credential
+	var skipped []Tried
+	for _, c := range all {
+		if c.Tier == creds.TierA && c.Name == account {
+			out = append(out, c)
+			continue
+		}
+		skipped = append(skipped, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonNotAdmitted})
+	}
+	return out, skipped
 }
 
 // admittedAccounts is O4's admission, and it is an intersection of three
