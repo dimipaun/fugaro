@@ -106,7 +106,7 @@ func TestModelsAddAppendsTheExactIDNeverAPattern(t *testing.T) {
 	}
 	lc := modelsWriteLocalConfig(t, path)
 	models := lc.Providers["openrouter"].Models
-	if !containsString(models, "vendor/model-z") {
+	if !slices.Contains(models, "vendor/model-z") {
 		t.Errorf("the route does not claim the ID it was given: %v", models)
 	}
 	for _, m := range models {
@@ -201,7 +201,7 @@ func TestModelsAddAppendsToASetAllowList(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	lc := modelsWriteLocalConfig(t, path)
-	if !containsString(lc.Budget.AllowedModels, "vendor/model-z") {
+	if !slices.Contains(lc.Budget.AllowedModels, "vendor/model-z") {
 		t.Errorf("the allow-list does not name the added model: %v", lc.Budget.AllowedModels)
 	}
 }
@@ -369,14 +369,4 @@ func modelsWriteHomeDir(t *testing.T, path string) string {
 	t.Helper()
 	home := filepath.Dir(filepath.Dir(filepath.Dir(path)))
 	return home
-}
-
-// containsString reports whether s holds v.
-func containsString(s []string, v string) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }

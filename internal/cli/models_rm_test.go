@@ -70,7 +70,7 @@ func TestModelsRmWarnsNamingEachPinningRepository(t *testing.T) {
 	if _, ok := lc.ModelPrices["vendor/model-x"]; ok {
 		t.Errorf("model_prices still prices the model: %v", lc.ModelPrices)
 	}
-	if containsString(lc.Budget.AllowedModels, "vendor/model-x") {
+	if slices.Contains(lc.Budget.AllowedModels, "vendor/model-x") {
 		t.Errorf("budget.allowed_models still names the model: %v", lc.Budget.AllowedModels)
 	}
 }
@@ -112,7 +112,7 @@ func TestModelsRmLeavesAClaimingPatternAndSaysSo(t *testing.T) {
 	if models := lc.Providers["openrouter"].Models; !slices.Equal(models, []string{"deepseek/*", "vendor/model-x"}) {
 		t.Errorf("the route's claims changed though only a pattern covers the model: %v", models)
 	}
-	if containsString(lc.Budget.AllowedModels, "deepseek/deepseek-v4-flash") {
+	if slices.Contains(lc.Budget.AllowedModels, "deepseek/deepseek-v4-flash") {
 		t.Errorf("the allow-list still names the model: %v", lc.Budget.AllowedModels)
 	}
 }

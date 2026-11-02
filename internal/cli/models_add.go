@@ -154,7 +154,7 @@ func modelsPriceFlags(o *modelsAddOptions) error {
 	if o.priceOutSet {
 		missing = "--price-in"
 	}
-	return userErr("%s without %s: write both rates (dollars per million tokens), or neither and let the built-in catalog price the model", flagSpelling(o), missing)
+	return userErr("%s without %s: write both rates (dollars per million tokens), or neither and let the built-in catalog price the model", modelsPriceFlagGiven(o), missing)
 }
 
 // modelsPriceRange refuses a rate the price table cannot carry, before the file
@@ -186,8 +186,9 @@ func modelsRateCarries(v float64) bool {
 	return !math.IsNaN(v) && !math.IsInf(v, 0) && v > 0 && v <= pricing.MaxPerM
 }
 
-// flagSpelling is the flag the owner did pass, for the message above.
-func flagSpelling(o *modelsAddOptions) string {
+// modelsPriceFlagGiven is the half of the price pair the owner did type, so the
+// refusal of a half-given price names what was passed beside what was not.
+func modelsPriceFlagGiven(o *modelsAddOptions) string {
 	if o.priceOutSet {
 		return "--price-out"
 	}
