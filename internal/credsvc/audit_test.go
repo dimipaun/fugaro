@@ -700,10 +700,6 @@ func TestAuditOnRefusal(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// The verify purpose's three relaxed rules (C3.9f, spec §5.5)
-// ---------------------------------------------------------------------------
-
 // TestVerifyLineCarriesACredentialAndNoTier: the verify purpose is the third
 // case of the shape the mint and the sign purposes already are (audit.go's
 // credentialWithoutTier). The key a verify line names is the key the answer was
