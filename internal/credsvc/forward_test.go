@@ -336,8 +336,11 @@ func TestForwardRefusesARunTokenOfAnotherRepository(t *testing.T) {
 
 // TestServiceHasNoAdminRoutes: D143's "no admin surface" is kept by there being
 // nothing to reach rather than by a check inside a handler. Every path but the
-// two Anthropic ones is a 404, including the ones an operator's CLI uses —
-// which is why those live in internal/cli and not here.
+// ones the service serves is a 404 — including the ones an operator's CLI uses,
+// which is why those live in internal/cli and not here — and the sign route is
+// held to it the same way: the path is in the set only as the exact string it
+// is, so a trailing slash, a subpath and another method are all nothing to
+// reach.
 func TestServiceHasNoAdminRoutes(t *testing.T) {
 	paths := []struct{ method, path string }{
 		{http.MethodPost, "/admin/kill"},
@@ -352,6 +355,9 @@ func TestServiceHasNoAdminRoutes(t *testing.T) {
 		{http.MethodPost, MessagesPath + "/"},
 		{http.MethodPost, CountTokensPath + "/x"},
 		{http.MethodPost, MessagesPath + "/../admin"},
+		{http.MethodGet, SignPath},
+		{http.MethodPost, SignPath + "/"},
+		{http.MethodPost, SignPath + "/x"},
 	}
 	for _, tc := range paths {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
@@ -362,7 +368,7 @@ func TestServiceHasNoAdminRoutes(t *testing.T) {
 				r.Header.Set(HeaderRunJob, s.job)
 			})
 			if resp.StatusCode != http.StatusNotFound {
-				t.Fatalf("the answer is %d, want 404: this service serves two paths", resp.StatusCode)
+				t.Fatalf("the answer is %d, want 404: this service serves no other path", resp.StatusCode)
 			}
 			if got := refusal(t, resp.StatusCode, body); got.Error != "not_found" {
 				t.Errorf("the refusal is %q, want not_found", got.Error)

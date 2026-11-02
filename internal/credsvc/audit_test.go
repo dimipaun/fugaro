@@ -149,6 +149,31 @@ func TestAuditVocabulary(t *testing.T) {
 	}
 }
 
+// TestValidPurposeNamesTheReviewSignPurpose: the sign route's purpose is a
+// member of the line's closed purpose set (C3.9e). Its spelling is an
+// operator's vocabulary — the word a run's halt message and the line both carry
+// — so it is pinned as a literal here like the rest of the vocabulary, and the
+// two rules that read a purpose are pinned together: the set admits it (a
+// purpose outside the set is refused rather than recorded), and it is one of
+// the purposes whose credential has no tier (credentialWithoutTier), which is
+// what lets a sign line carry the account's review-signing key and no tier.
+func TestValidPurposeNamesTheReviewSignPurpose(t *testing.T) {
+	if PurposeReviewSign != "review_sign" {
+		t.Errorf("the sign purpose is spelled %q, want %q: it is a word an operator greps", PurposeReviewSign, "review_sign")
+	}
+	if !ValidPurpose(PurposeReviewSign) {
+		t.Errorf("ValidPurpose refuses %q: the signature would be unrecordable", PurposeReviewSign)
+	}
+	if !credentialWithoutTier(PurposeReviewSign) {
+		t.Error("the sign purpose is not one of the purposes whose credential has no tier: the sign line would be refused for naming the key correctly")
+	}
+	for _, purpose := range []string{PurposeForward, PurposeProbe} {
+		if credentialWithoutTier(purpose) {
+			t.Errorf("the exemption reaches %q: a credential of the cascade has a tier, and its line still has to carry it", purpose)
+		}
+	}
+}
+
 // TestAuditCarriesNamesOnly is C1.13's red step: an audit line carries the
 // names of what the service did — the run, the repository, the job, the
 // caller, the credential's name, the purpose, the tier and the status — and
