@@ -30,20 +30,25 @@ import (
 var claudeLoginCredentialEnv = []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"}
 
 // runClaudeLogin runs Anthropic's own login, `claude setup-token`, on the
-// owner's own terminal: the child inherits in, out and errOut, runs in
-// fugaro's own process group, and fugaro holds its own SIGINT for the
-// duration, so the owner's keystrokes and the terminal's signals reach the
-// login directly and the login's own handling of a cancel decides. Nothing of
-// what it prints is read, kept or reprinted (spec §3.1 steps 1, 4 and 5).
-//
-// A login that ran and exited non-zero comes back as *claudeLoginStatus: the
-// status is the child's own and not a failure of the command that called this
-// (§3.3). A child that could not start at all is a refusal, because there is
-// no status to report and nothing the owner could have answered.
+// owner's own terminal: every precondition, the binary they resolve to, and the
+// child itself (spec §3.1 steps 1, 4 and 5).
 func runClaudeLogin(in io.Reader, out, errOut io.Writer) error {
+	bin, err := claudeLoginReady(in, out)
+	if err != nil {
+		return err
+	}
+	return runClaudeLoginBinary(bin, in, out, errOut)
+}
+
+// claudeLoginReady is every precondition act one has, and the claude they are
+// about. It answers the resolved absolute path, which the command's one
+// confirmation names before the login runs (spec §3.1 step 1), and it is
+// separate from the run itself so that everything which can refuse the login
+// happens before the person is asked to answer for it.
+func claudeLoginReady(in io.Reader, out io.Writer) (string, error) {
 	for _, name := range claudeLoginCredentialEnv {
 		if os.Getenv(name) != "" {
-			return userErr("%s is set in this environment, and it decides which account `claude setup-token` logs in to, so the token it prints may be for an account you did not mean to store: unset it and run this again (no login was started)", name)
+			return "", userErr("%s is set in this environment, and it decides which account `claude setup-token` logs in to, so the token it prints may be for an account you did not mean to store: unset it and run this again (no login was started)", name)
 		}
 	}
 	if !stdinIsTerminal(in) || !writerIsTerminal(out) {
@@ -52,15 +57,39 @@ func runClaudeLogin(in io.Reader, out, errOut io.Writer) error {
 		// (§2.2 step 3). It is not a flag of its own — `accounts add` carries no
 		// flag that takes a value (spec §2.1) — so the sentence names the other
 		// command rather than a `--token-stdin` that does not exist.
-		return userErr("%s; to script this, run it without --claude and pipe the token on stdin", initflow.NeedsTerminal("--claude"))
+		return "", userErr("%s; to script this, run it without --claude and pipe the token on stdin", initflow.NeedsTerminal("--claude"))
 	}
 	bin, err := claudeplugin.Find(claudeLookPath)
 	switch {
 	case errors.Is(err, claudeplugin.ErrNoClaude):
-		return userErr("claude is not on PATH: --claude runs Anthropic's own `claude setup-token` on your terminal, so mint the token another way and paste it at the prompt")
+		return "", userErr("claude is not on PATH: --claude runs Anthropic's own `claude setup-token` on your terminal, so mint the token another way and paste it at the prompt")
 	case err != nil:
-		return userErr("%v", err)
+		return "", userErr("%v", err)
 	}
+	// A path the lookup resolves to and nothing can run — a directory, which is
+	// the standing §3.1 case — is refused here rather than by the child: the
+	// confirmation below is answered for a login that will run, and this is the
+	// last refusal that can be made before the person is asked. A path that
+	// disappears between this and the run is the child's own start error, which
+	// is why that path stays a refusal of its own.
+	if info, statErr := os.Stat(bin); statErr == nil && info.IsDir() {
+		return "", userErr("claude resolves to %s, which is a directory and not a program; fugaro does not run it from there", pluginwire.Printable(bin))
+	}
+	return bin, nil
+}
+
+// runClaudeLoginBinary runs claude setup-token at bin on the owner's own
+// terminal: the child inherits in, out and errOut, runs in fugaro's own process
+// group, and fugaro holds its own SIGINT for the duration, so the owner's
+// keystrokes and the terminal's signals reach the login directly and the
+// login's own handling of a cancel decides. Nothing of what it prints is read,
+// kept or reprinted (spec §3.1 steps 4 and 5).
+//
+// A login that ran and exited non-zero comes back as *claudeLoginStatus: the
+// status is the child's own and not a failure of the command that called this
+// (§3.3). A child that could not start at all is a refusal, because there is
+// no status to report and nothing the owner could have answered.
+func runClaudeLoginBinary(bin string, in io.Reader, out, errOut io.Writer) error {
 	fmt.Fprintf(out, "  running: %s setup-token\n", pluginwire.Printable(bin))
 
 	// Holding the signal is the whole point and nothing reads the channel:
@@ -81,7 +110,7 @@ func runClaudeLogin(in io.Reader, out, errOut io.Writer) error {
 	child.Env = os.Environ()
 	// No Setpgid: the child stays in fugaro's own process group, so it is the
 	// terminal's foreground job and nothing sits between the owner and it.
-	err = child.Run()
+	err := child.Run()
 	var exited *exec.ExitError
 	if errors.As(err, &exited) {
 		return &claudeLoginStatus{err: err}
@@ -106,10 +135,11 @@ type claudeLoginStatus struct{ err error }
 func (e *claudeLoginStatus) Error() string { return e.err.Error() }
 func (e *claudeLoginStatus) Unwrap() error { return e.err }
 
-// accountsAddClaudeLogin is --claude's act one and the handover to act two
-// (spec §3): it runs the login on the owner's own terminal, reports one that
-// did not finish without failing the command, and leaves the token itself to
-// the hidden prompt below, which is the only path a value ever takes.
+// accountsAddClaudePrepare is act one's first half: everything that can refuse
+// the login, and the resolved path the command's one confirmation then names.
+// It runs before the diff and before that confirmation (the owner's ruling of
+// 2026-11-02), so a person is never asked to answer for a login that cannot
+// happen, and every refusal it can make leaves the file exactly as it was.
 //
 // It refuses in a coding agent's session before anything runs (D868, the
 // owner's ruling of 2026-11-01). The fence is here rather than only on the
@@ -117,12 +147,21 @@ func (e *claudeLoginStatus) Unwrap() error { return e.err }
 // prints a credential on a terminal that a session's transcript may hold, and
 // the command around it stores that credential project-wide. A session writes
 // nothing here, and --yes does not lift it.
-func accountsAddClaudeLogin(cmd *cobra.Command, path, what, command string) error {
+func accountsAddClaudePrepare(cmd *cobra.Command, path, what, command string) (string, error) {
 	if marker := agentMarker(os.Getenv); marker != "" {
-		return userErr("refusing to run Anthropic's login for %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
+		return "", userErr("refusing to run Anthropic's login for %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
 			path, marker, what, command)
 	}
-	err := runClaudeLogin(cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+	return claudeLoginReady(cmd.InOrStdin(), cmd.OutOrStdout())
+}
+
+// accountsAddClaudeRun is the login itself, run after that one confirmation and
+// before the token is stored: it runs Anthropic's login on the owner's own
+// terminal, reports one that did not finish without failing the command, and
+// leaves the token itself to the hidden prompt below, which is the only path a
+// value ever takes (spec §3).
+func accountsAddClaudeRun(cmd *cobra.Command, bin string) error {
+	err := runClaudeLoginBinary(bin, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 	var status *claudeLoginStatus
 	if errors.As(err, &status) {
 		// The status only: what the login printed is the login's and is never

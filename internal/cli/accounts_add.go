@@ -149,16 +149,21 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	command := accountsAddCommand(name, repos, profile, o.claude)
 	changed := yamledit.Changed(old, next)
 
-	// §3's act one, and the order is the point of it: the login runs before the
-	// diff and before anything is written, so every refusal it can make — a
-	// coding agent's session, a terminal that is not there, a claude fugaro will
-	// not run — leaves the file exactly as it was. The token itself is read
-	// later, at the hidden prompt the converge's store performs, which is the
-	// only path a value takes.
+	// §3's act one is screened here and run below, and the split is the owner's
+	// ruling of 2026-11-02: everything that can refuse the login — a coding
+	// agent's session, a terminal that is not there, an exported credential, a
+	// claude fugaro will not run — happens before the diff and before the
+	// confirmation, so nobody is asked to answer for a login that cannot happen
+	// and every refusal leaves the file exactly as it was.
+	var claudeBin string
 	if o.claude {
-		if err := accountsAddClaudeLogin(cmd, sel.Path, what, command); err != nil {
+		if claudeBin, err = accountsAddClaudePrepare(cmd, sel.Path, what, command); err != nil {
 			return err
 		}
+		// The block a person answers names the program it is about to run, at
+		// the path it resolved to, so the answer is for the login itself and not
+		// for a sentence about it (spec §3.1 step 1).
+		what += fmt.Sprintf("; run %s setup-token on this terminal", pluginwire.Printable(claudeBin))
 	}
 
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
@@ -186,6 +191,15 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 				sel.Path, marker, what, command)
 		}
 		if err := confirmSettingsWrite(cmd, lc, sel.Path, o.yes, what); err != nil {
+			return err
+		}
+	}
+	// §3's act one itself, after the one confirmation and before the token is
+	// stored below: the login runs on the owner's own terminal because they
+	// answered for it, and what it prints is still not the value that is kept —
+	// the hidden prompt below remains the only token path.
+	if o.claude {
+		if err := accountsAddClaudeRun(cmd, claudeBin); err != nil {
 			return err
 		}
 	}

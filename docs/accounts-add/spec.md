@@ -243,7 +243,16 @@ Nothing else to run: fugaro run --token team-a is ready.
 ## 3. `--claude`: Anthropic's own login, then one paste
 
 `--claude` puts Anthropic's own login into the command without Fugaro ever reading the login's output.
-It is **two acts**, and the second is the path the command already has:
+It is **two acts**, and the second is the path the command already has. The command's **one**
+confirmation (§2.6) comes **before** the login and names the resolved `claude` path, so the person
+answers once, for the whole command, knowing which program is about to run — and answering it with
+anything but `y` (or `--yes`) mints nothing and stores nothing:
+
+1. **Act one — the login, in the owner's own terminal.** Fugaro finds the binary, confirms it, and runs
+   `claude setup-token` as a child that **inherits the owner's own stdin, stdout and stderr**. Nothing
+   sits between the owner and the login: no pseudo-terminal, no copier, no raw-mode switch, no parse of
+   what it prints. The owner answers whatever Anthropic asks — a browser, a code, a prompt — exactly as
+   if they had typed `claude setup-token` themselves, because that is what is running.
 
 1. **Act one — the login, in the owner's own terminal.** Fugaro finds the binary, confirms it, and runs
    `claude setup-token` as a child that **inherits the owner's own stdin, stdout and stderr**. Nothing
