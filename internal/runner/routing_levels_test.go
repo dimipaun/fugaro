@@ -198,13 +198,13 @@ func TestRoutingRoutesALevelsOwnModel(t *testing.T) {
 	}
 }
 
-// TestStageRoleAgreesWithConfig: the runner's own answer for the stages
-// config.StageRole knows is that function's, and the adversarial stage — the
-// one it does not know — is the reviewer's, because level 3 is a review. A
-// stage whose role disagreed with its pins would take its output limit and its
-// model from two different answers.
+// TestStageRoleAgreesWithConfig: the runner's answer for a stage is
+// config.StageRole's, the adversarial stage included — that function knows it
+// since L4.2 — because level 3 is a review. A stage whose role disagreed with
+// its pins would take its output limit and its model from two different
+// answers.
 func TestStageRoleAgreesWithConfig(t *testing.T) {
-	for _, stage := range []string{"review_first", "review", "implement", "fix", "plan"} {
+	for _, stage := range []string{"review_first", "review", "implement", "fix", "plan", stageAdversarial} {
 		if got, want := stageRole(stage), config.StageRole(stage); got != want {
 			t.Errorf("stageRole(%q) = %q, config.StageRole says %q", stage, got, want)
 		}
@@ -217,47 +217,48 @@ func TestStageRoleAgreesWithConfig(t *testing.T) {
 	}
 }
 
-// TestRoutingApplyLevelsDefaultsTheRunsOwnInputs: applyLevels answers for two
-// of its inputs itself — the run's allow-list and the run's routes — because a
-// caller that left them out would not fail: a nil AllowedModels means every
-// model is allowed and a nil Providers skips the provider-effort refusal
-// (D725), so a forgotten input would be a rule silently not applied rather
-// than an error. The mode is not one of them, which is why it is the only
-// input these cases pass: the resolver's first layer is the run's rigor mode,
-// and reading it is L4.2's.
+// TestRoutingApplyLevelsLeavesTheAllowListToTheRun: applyLevels answers for one
+// of its inputs itself — the run's routes — because a caller that left them out
+// would not fail: a nil Providers skips the provider-effort refusal (D725), so
+// a forgotten input would be a rule silently not applied rather than an error
+// (TestRoutingRefusesAProviderLevelModelWithAnEffort pins that half). The mode
+// is not one of them, which is why it is the only input these cases pass: the
+// resolver's first layer is the run's rigor mode, and reading it is L4.2's.
 //
-// The ceiling's list is the effective one — resolvePolicy stores it on the
-// spend and on the policy alike — and the policy's own list is the fallback
-// for a run built without the ceiling.
-func TestRoutingApplyLevelsDefaultsTheRunsOwnInputs(t *testing.T) {
-	const coder, reviewer, adversarial = "claude-sonnet-5-5", "claude-opus-5", "deepseek/deepseek-v4-pro"
-	agent := func() config.Agent {
-		return config.Agent{Auth: "api-key", Models: config.ModelRoles{Coder: coder, Reviewer: reviewer}}
+// The allow-list is deliberately not one of them. The resolver's list is a
+// membership test; the list that bounds a run is config.CheckAllowed's, which
+// admits a route ID where the switch routes the model to it and names the key
+// the owner wrote — a level's own model as agent.levels.lN.model (checkLevels,
+// levelModelPath). Filled in here it would refuse a routed level model the run
+// may use, and refuse it before checkBudget judged it, so the resolution writes
+// the level and the run's own gate is what refuses the run — which is what
+// these cases assert, with the end-to-end shape in
+// TestLevelModelNotInTheAllowListRefused.
+func TestRoutingApplyLevelsLeavesTheAllowListToTheRun(t *testing.T) {
+	const coder, reviewer, background, adversarial = "claude-sonnet-5-5", "claude-opus-5", "claude-haiku-4-5", "deepseek/deepseek-v4-pro"
+	r := levelsRun(config.Agent{Auth: "api-key", Models: config.ModelRoles{
+		Coder: coder, Reviewer: reviewer, Background: background,
+	}}, levelRoutes())
+	// The merged list as resolvePolicy leaves it: the ceiling's, on the policy
+	// the run's own gate reads.
+	r.policy = policy.Effective{AllowedModels: []string{coder, reviewer, background}}
+	if _, _, err := r.applyLevels(config.LevelInputs{
+		Mode: rigor.Critical,
+		Task: &config.ReviewLevels{L3: &config.LevelSetting{Model: adversarial}},
+	}); err != nil {
+		t.Fatalf("applyLevels refused %s, which the run's allow-list does not name: %v", adversarial, err)
 	}
-	inputs := func() config.LevelInputs {
-		return config.LevelInputs{
-			Mode: rigor.Critical,
-			Task: &config.ReviewLevels{L3: &config.LevelSetting{Model: adversarial}},
-		}
+	if got := r.levelModel(policy.LevelL3); got != adversarial {
+		t.Fatalf("level 3's model = %q, want the resolved %q: the level runs, and the run's own gate is what judges it", got, adversarial)
 	}
-	for _, c := range []struct {
-		name string
-		set  func(r *run)
-	}{
-		{"the ceiling's allow-list", func(r *run) { r.spend.AllowedModels = []string{coder, reviewer} }},
-		{"the policy's allow-list", func(r *run) { r.policy = policy.Effective{AllowedModels: []string{coder, reviewer}} }},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			r := levelsRun(agent(), levelRoutes())
-			c.set(r)
-			_, _, err := r.applyLevels(inputs())
-			if err == nil {
-				t.Fatalf("%s (%s, %s) does not name %s and the level was accepted", c.name, coder, reviewer, adversarial)
-			}
-			if want := "l3.model " + adversarial + " is not in the run's allowed_models"; !strings.Contains(err.Error(), want) {
-				t.Errorf("the refusal is %q, want it to say %q", err, want)
-			}
-		})
+	ps := r.checkLevels(func(a config.Agent) []config.Problem {
+		return config.CheckAllowed(a, r.policy, r.ceilingAllowed(), r.routingSwitch(), r.modelProviders())
+	})
+	if len(ps) != 1 || ps[0].Path != "agent.levels.l3.model" {
+		t.Fatalf("the run's own gate reports %v, want the level's own key alone: %s is the one model the list leaves off", ps, adversarial)
+	}
+	if !strings.Contains(ps[0].Message, adversarial) {
+		t.Errorf("the refusal %q does not name %s", ps[0].Message, adversarial)
 	}
 }
 

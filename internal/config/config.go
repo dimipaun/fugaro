@@ -520,22 +520,22 @@ const (
 )
 
 // StageRole is the role of a stage: implement, fix and review_first (the
-// first-line review) are the coder, review (the senior one) the reviewer. An
-// unknown stage is the coder.
+// first-line review) are the coder, review (the senior one) and adversarial
+// (level 3's) the reviewer. An unknown stage is the coder.
 func StageRole(stage string) Role {
-	if stage == "review" {
+	if stage == "review" || stage == "adversarial" {
 		return RoleReviewer
 	}
 	return RoleCoder
 }
 
-// IsReviewStage reports whether a stage reviews a change: the senior review
-// and the first-line one. Both are handed the built review input
-// (runner.reviewPromptWithInput) and both are restricted the same way; the
-// two differ in whose model they run on, which is StageRole's business, not
-// this one's.
+// IsReviewStage reports whether a stage reviews a change: the senior review,
+// the first-line one and level 3's adversarial one. All three are handed the
+// built review input (runner.reviewPromptWithInput) and all three are
+// restricted the same way; they differ in whose model they run on, which is
+// StageRole's business, not this one's.
 func IsReviewStage(stage string) bool {
-	return stage == "review" || stage == "review_first"
+	return stage == "review" || stage == "review_first" || stage == "adversarial"
 }
 
 // ModelFor is the model of role r: models.<role>, else agent.model (a task's

@@ -189,13 +189,22 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	// decides whether the switch has anything to act on at all — is read off
 	// r.spend: applied before it, every run would look like a run with the
 	// gateway off, and the switch would silently never take effect (the
-	// critical finding of this PR's review). Nothing between here and the
-	// loop reads a pin: the price table this function built is keyed by the
-	// routes and the catalog rather than by the pins, and the plan — the one
-	// decision that *is* read off a pin, through Agent.FirstLineOn — is
-	// derived by the caller after this returns, so it sees the pins the
-	// switch produced rather than the ones it replaced.
+	// critical finding of this PR's review). The price table this function
+	// built is keyed by the routes and the catalog rather than by the pins, and
+	// the two decisions that *are* read off a pin — the review levels, whose
+	// level 1 answer is the coder's model, and the plan, built from those
+	// levels and Agent.FirstLineOn — are taken just below and by the caller
+	// after this returns, so both see the pins the switch produced rather than
+	// the ones it replaced.
+	//
+	// The run's review levels are resolved after the switch for that reason:
+	// the floor is the merged policy's (G1), and the models a level names are
+	// read off the pins the switch left, so a resolution taken before the
+	// rewrite would answer about the IDs it replaced.
 	if err := r.applyRouting(pp, found); err != nil {
+		return err
+	}
+	if err := r.resolveLevels(); err != nil {
 		return err
 	}
 	r.rec.Policy = r.recordPolicy(nDef)

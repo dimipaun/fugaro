@@ -174,9 +174,24 @@ type run struct {
 	// travels with the layer, which is re-read on every launch.
 	providers map[string]config.ModelProvider
 	// plan is the loop after implement, from the recipe resolved at
-	// bootstrap (resolveRecipe) with its rounds decided (planOf); it always
-	// ends with a review step.
+	// bootstrap (resolveRecipe) and the review levels resolved with it
+	// (resolveLevels), with its rounds decided (planOf); it always ends with
+	// a review step.
 	plan []planStep
+	// rcp is the recipe the run resolved at bootstrap (resolveRecipe), kept
+	// because the review levels are resolved against it and its steps are
+	// what the plan is built from.
+	rcp *recipe.Recipe
+	// derived is whether rcp is the catalog's own `default`, the one recipe
+	// whose first_line step runs only when a layer turns level 1 on
+	// (config.LevelInputs.CatalogDefault).
+	derived bool
+	// levels are the run's three review levels, resolved by resolveLevels
+	// inside resolvePolicy (config.ResolveLevels, L3.1): which levels run,
+	// the model, effort and focus each one runs with, and whether the recipe
+	// has no step for it. The plan is built from them (planRecipe) and every
+	// review stage reads its own level here.
+	levels config.Levels
 	// gateSteps are the recipe's leading check steps (gate.go), run before
 	// implement; nil for a recipe with none.
 	gateSteps []recipe.Step
@@ -418,11 +433,12 @@ type run struct {
 	// the record's block carries no per-moment history: which moment raised the
 	// mode is what readiness reads (T3.5, outcome.go).
 	rigorRaise *RigorRaise
-	// lastSenior is the last senior review round as the loop read it: the
-	// findings the record's summary only counts, kept because the mode's
-	// threshold table reads their scores (outcome.go, T3.1). It is the round
-	// seniorReview(r.rec.Reviews) returns, which is the only one readiness
-	// reads.
+	// lastSenior is the last review round the level that decides readiness
+	// recorded as the loop read it: the findings the record's summary only
+	// counts, kept because the mode's threshold table reads their scores
+	// (outcome.go, T3.1). It is the round decidingReview(r.rec.Reviews)
+	// returns, which is the only one readiness reads: level 3's where it ran,
+	// level 2's otherwise, and level 1's where no outer level ran at all.
 	lastSenior seniorRound
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
@@ -1922,6 +1938,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.rec.Recipe = &rrec
 	derived := rrec.Name == recipe.DefaultName && rrec.Source == string(recipe.SourceCatalog)
+	r.rcp, r.derived = rcp, derived
 	r.gateSteps = checkGateSteps(rcp)
 	if err := checkGateCommands(rcp, wf, spec.Ref); err != nil {
 		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
@@ -1994,17 +2011,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// nothing yet.
 	r.recordTier()
 	// The plan is derived here, *after* the policy: the routing switch is
-	// applied inside resolvePolicy and rewrites the pins the plan's
-	// first-line decision is read off — Agent.FirstLineOn asks whether the
-	// coder's model is claimed by a route and the reviewer's is not — so a
-	// plan derived before it would answer from the pins the switch replaced.
-	// Concretely, with `agent.first_line_review: auto` and a switch that
-	// routes only the coder, the canonical coder pin is unclaimed before the
-	// rewrite and claimed after it, and the earlier order silently dropped the
-	// cheap first-line loop of exactly the runs a switch routed (the review
-	// finding on this change). Nothing between here and the loop reads the
-	// plan, so deriving it here changes nothing else, and the steps' rounds
-	// and the trailing-review check are the same derivation as before.
+	// applied inside resolvePolicy, and the levels it resolved with it are what
+	// decide which steps the plan carries (L2.1's O7). A plan derived before
+	// the switch would answer from the pins it replaced, and a plan derived
+	// before the levels would be the recipe's steps rather than the run's.
+	// Nothing between here and the loop reads the plan, so deriving it here
+	// changes nothing else.
 	if !r.artifact {
 		// An artifact run has no implement/fix/review loop: planOf builds
 		// the ordinary loop's plan and checkPlan demands a trailing review
@@ -2012,23 +2024,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// has. Its own stage list is read directly (artifactHasPlan), and
 		// the render is the runner's (artifact.go).
 		//
-		// The plan is derived from the champion's coder, never the arm's: the
-		// arms share a shape (D555 keeps "the reviewer, recipe, mode, tier
-		// and caps" the same), and the first-line step is derived from the
-		// coder's own family — Agent.FirstLineOn asks whether the coder's
-		// model is served by a route of this run's and the reviewer's is not
-		// — so a challenger whose family is routed would otherwise gain a
-		// stage the champion never had. Two runs whose stage sets differ are
-		// not two runs that differ in the coder model, and their records,
-		// costs and review findings would not be comparable. It is read after
-		// resolvePolicy, as every other run's is, so the switch has rewritten
-		// it like any pin.
-		planAgent := r.cfg.Agent
-		if r.shadow {
-			planAgent.Models.Coder = r.championCoder
-		}
-		plan := planOf(rcp, derived, planAgent, r.modelProviders(), spec.Overrides.ReviewRounds, r.reachedRigor())
-		if err := checkPlan(rcp, plan); err != nil {
+		// The rounds come from the run's own configuration, which for a shadow
+		// run is the arm's: resolveLevels put the champion's coder back only
+		// for the length of its own call, because the level 1 *model* is read
+		// off the coder while the rounds are not.
+		plan := planOf(rcp, r.levels, r.cfg.Agent, spec.Overrides.ReviewRounds, r.reachedRigor())
+		if err := checkPlan(rcp, r.levels, plan); err != nil {
 			return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 		}
 		r.plan = plan
@@ -2647,20 +2648,26 @@ func (r *run) agentLoop(ctx context.Context) {
 				return
 			}
 		case recipe.StepReview:
-			// The last step: recipe.Parse allows only the adversarial step
-			// after review, planOf has no arm for it and checkPlan refuses a
-			// recipe carrying one, so the review is what the plan ends with.
-			r.seniorLoop(ctx, st, tier, reviewPrompt, sys, sessionID)
-			return
+			// The plan ends with the review step when level 3 is off, and with
+			// the adversarial step when it is on (planRecipe): a review that
+			// could not finish — a failed stage, a cap, a closed pull request,
+			// an answer with no verdict — is where the run stops, and the
+			// levels after it are not run (checkPlan keeps the order fixed).
+			if !r.seniorLoop(ctx, st, tier, reviewPrompt, sys, sessionID) {
+				return
+			}
+		case recipe.StepAdversarial:
+			if !r.adversarialLoop(ctx, st, reviewPrompt, sys, sessionID) {
+				return
+			}
 		}
 	}
 }
 
 // seniorLoop is a review step: up to (*run).reviewRounds senior reviews on the
-// reviewer's model, each followed by a fix while it asks for changes. Its
-// verdict alone decides readiness (seniorReview). tier is "senior" when a
-// first line came before it, "" otherwise, as runs without a first line
-// always recorded. When st.Bounce and st.FirstRounds > 0 (review:
+// reviewer's model, each followed by a fix while it asks for changes. tier is
+// "senior" when a first line came before it, "" otherwise, as runs without a
+// first line always recorded. When st.Bounce and st.FirstRounds > 0 (review:
 // {bounce: first_line} with a first_line step before it), a rejection's fix
 // is followed by another cheap loop (firstLine) instead of going straight to
 // the next senior round; a bounce with FirstRounds == 0 behaves like a plain
@@ -2673,48 +2680,205 @@ func (r *run) agentLoop(ctx context.Context) {
 // is about a round that names what it wants). The run then carries on to
 // finalize, where the record and the pull request's status say what happened
 // and the run ends a draft — a round with no verdict is not a review the run
-// can be called ready on (Decide, reviewsPart).
-func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string) {
+// can be called ready on (Decide, reviewsPart), and no level after this one
+// runs: an outer level that could not answer cannot be part of the "every
+// enabled outer level shipped" readiness is decided on (G4).
+//
+// It reports whether the plan may go on to the step after it, which is false
+// for every way the run stops here.
+func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string) bool {
 	for round := 1; ; round++ {
+		// The head is read per round rather than once: a fix between two rounds
+		// moves the branch, and the summary keeps the commit *this* round read
+		// (D727), so the levels can be told apart by the head they approved.
+		head := r.reviewedHead(ctx)
 		v, parsed, ok := r.seniorRound(ctx, round, reviewPrompt)
 		if !ok {
-			return
+			return false
 		}
 		if !parsed {
 			r.lastSenior = seniorRound{Round: round}
-			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: "none"})
+			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: "none", Head: head})
 			r.save(ctx)
 			r.d.Log.Warn("the review round returned no parseable verdict after a retry; the run carries on and ends a draft", "round", round)
-			return
+			return false
 		}
 		// The round is kept whole as well as counted: the mode's threshold
 		// table reads the findings' scores, which the summary does not carry
 		// (outcome.go, T3.1).
 		r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
-		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: v.Verdict, Findings: len(v.Findings)})
+		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: v.Verdict, Findings: len(v.Findings), Head: head})
 		r.save(ctx)
-		if r.capReached() || v.Verdict == "ship" || round >= r.reviewRounds(st) {
-			return
+		if r.capReached() {
+			return false
+		}
+		if v.Verdict == "ship" || round >= r.reviewRounds(st) {
+			return true
 		}
 		r.afterStage(ctx, "review")
 		if r.pr.gone {
-			return
+			return false
 		}
 		if sessionID, ok = r.fix(ctx, v, sys, sessionID); !ok {
-			return
+			return false
 		}
 		if st.Bounce && st.FirstRounds > 0 {
 			r.bounce++
 			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPrompt, sys, sessionID); !ok {
-				return
+				return false
 			}
 		}
 	}
 }
 
+// adversarialLoop is level 3's step: up to (*run).adversarialRounds adversarial
+// reviews on the level's own model and prompt, each followed by a fix while it
+// asks for changes. It is seniorLoop's twin, and the two differ in three
+// things that are the level's own: the stage, the tier it records, and the
+// prompt — an adversarial reviewer asked to find what the senior review missed,
+// rather than the senior question asked again.
+//
+// A rejection bounces to the cheap loop exactly as the senior review's does
+// (st.Bounce, st.FirstRounds), and the level 2 loop is never run on the way
+// back: the senior review shipped the head it read, and asking it again about a
+// head it never saw would be a second review of the change level 3 already
+// rejected (D727). The level that decides readiness is level 3 from then on.
+//
+// It reports whether the run may go on, which the plan does not ask of it: the
+// adversarial step is the plan's last, so the answer only decides whether the
+// loop returns early or falls out of its own bottom.
+func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sys, sessionID string) bool {
+	prompt := AdversarialPrompt(reviewPrompt, r.levelFocus(policy.LevelL3))
+	for round := 1; ; round++ {
+		head := r.reviewedHead(ctx)
+		v, parsed, ok := r.adversarialRound(ctx, round, prompt)
+		if !ok {
+			return false
+		}
+		if !parsed {
+			// The deciding round is this one, whatever it answered: the round
+			// is kept so the policy is read off the level that ran and never
+			// off the round the bounce before it left behind (seniorLoop does
+			// the same).
+			r.lastSenior = seniorRound{Round: round}
+			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: "none", Head: head})
+			r.save(ctx)
+			r.d.Log.Warn("the adversarial review round returned no parseable verdict after a retry; the run carries on and ends a draft", "round", round)
+			return false
+		}
+		r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
+		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: v.Verdict, Findings: len(v.Findings), Head: head})
+		r.save(ctx)
+		if r.capReached() {
+			return false
+		}
+		if v.Verdict == "ship" || round >= r.adversarialRounds(st) {
+			return true
+		}
+		r.afterStage(ctx, stageAdversarial)
+		if r.pr.gone {
+			return false
+		}
+		if sessionID, ok = r.fix(ctx, v, sys, sessionID); !ok {
+			return false
+		}
+		if st.Bounce && st.FirstRounds > 0 {
+			r.bounce++
+			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPrompt, sys, sessionID); !ok {
+				return false
+			}
+		}
+	}
+}
+
+// adversarialRound runs one adversarial review round's stage calls, retrying
+// the review when the answer carries no parseable verdict, exactly as
+// seniorRound does and for the same reasons: the retry is a stage of its own,
+// in a session of its own, and it is not run once the run has crossed its token
+// cap.
+func (r *run) adversarialRound(ctx context.Context, round int, prompt string) (Verdict, bool, bool) {
+	for attempt := 1; attempt <= noVerdictRetries+1; attempt++ {
+		if attempt > 1 && r.capReached() {
+			return Verdict{}, false, false
+		}
+		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, prompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
+		res, ok, _ := r.stage(ctx, stageAdversarial, req, stageOpts{})
+		r.noteReviewSession(req, res)
+		r.countTokens(res)
+		if !ok {
+			return Verdict{}, false, false
+		}
+		if v, parsed := TryVerdict(res); parsed {
+			return v, true, true
+		}
+		r.d.Log.Warn("the adversarial review round produced no parseable verdict", "round", round, "attempt", attempt)
+	}
+	return Verdict{}, false, true
+}
+
 // noVerdictRetries is how many times one round's review is asked again after an
 // answer with no parseable verdict: one, so a round costs at most two calls.
 const noVerdictRetries = 1
+
+// reviewedHead is the commit the review stage about to run reads: the
+// checkout's HEAD, which every fix round, every checkpoint and the agent's own
+// commits move. It is read immediately before each round rather than once per
+// level, because the levels can approve different heads (D727): after an
+// adversarial rejection the cheap loop runs and the senior level is not
+// reviewed again, so its verdict names an earlier head than the one shipped. A
+// head that cannot be read is recorded as none, which is how every review
+// written before the field existed reads.
+func (r *run) reviewedHead(ctx context.Context) string {
+	sha, err := r.repo.HeadSHA(ctx)
+	if err != nil {
+		r.d.Log.Warn("reading the head this review round reads failed", "err", r.redact(err.Error()))
+		return ""
+	}
+	return sha
+}
+
+// levelFocus is the text the level's reviewer is asked to look at, "" for a
+// level no layer gave one. It is quoted into the prompt as data (FocusPrompt)
+// and into the pull request body through the sanitiser every job-written field
+// takes: it is written by a launcher, and a launcher's text must not become
+// instructions to the reviewer (L4.2).
+func (r *run) levelFocus(level policy.Level) string {
+	return resolvedLevel(r.levels, level).Focus
+}
+
+// applyStageEffort merges the review level's own reasoning effort into the
+// stage's pins (L4.3's EffortVars): each of the three levels may name one, and
+// a stage takes its own level's. It is merged into the pins rather than set
+// beside them because the pins are what the stage's environment and its managed
+// settings both read, and one answer is what keeps a stage from running under
+// two (stagePins, agentenv.go). Nothing is merged for a stage that is not a
+// review, for a level with no effort, or for a provider route, whose calls run
+// with thinking off (G5, D725).
+func (r *run) applyStageEffort(stage string, pins map[string]string) (map[string]string, error) {
+	s, ok := reviewStageOf(stage)
+	if !ok {
+		return pins, nil
+	}
+	effort := resolvedLevel(r.levels, s.level).Effort
+	if effort == "" {
+		return pins, nil
+	}
+	vars, err := agent.EffortVars(effort, r.stageOnProviderRoute(r.stageModel(stage), r.backgroundModel()))
+	if err != nil {
+		return pins, err
+	}
+	if len(vars) == 0 {
+		return pins, nil
+	}
+	if pins == nil {
+		// stagePins answers nil with the gateway off, and a Claude stage's
+		// effort is not the gateway's business: the variable is the stage's
+		// however the run is billed.
+		pins = map[string]string{}
+	}
+	maps.Copy(pins, vars)
+	return pins, nil
+}
 
 // seniorRound runs one senior review round's stage calls, retrying the review
 // when the answer carries no parseable verdict (TryVerdict). It reports the
@@ -2788,19 +2952,29 @@ func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string
 
 // firstLine is the first-line review (design m10 §11a): up to rounds
 // reviews (the plan's first_line step) by the coder's model, each followed by a
-// fix when it asks for changes. Its verdict never decides readiness: it is
-// recorded with its tier, and the senior review that follows is told
+// fix when it asks for changes. Its verdict never decides readiness on its own:
+// it is recorded with its tier, and the senior review that follows is told
 // nothing of it. A first-line stage that fails or has no verdict is
 // recorded and skipped, never failing the run; a halt or a cancel still
 // ends it. It reports the session to go on with, and whether the run may
 // go on to the senior review.
+//
+// A run in which level 2 does not run at all has no outer level only when level
+// 3 is off too, so the first line is what decides readiness (D723,
+// rigor.defaultLevels' POC row): its last round is kept as the deciding round
+// exactly as a senior round would be. In a run with an outer level the cheap
+// loop is never the decider, and a bounce's extra rounds must not overwrite the
+// senior round the mode's findings policy is read off (outcome.go,
+// findingsPolicy).
 func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sessionID string) (string, bool) {
+	decides := !levelOn(r.levels, policy.LevelL2) && !levelOn(r.levels, policy.LevelL3)
 	for round := 1; round <= rounds; round++ {
+		head := r.reviewedHead(ctx)
 		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
 		res, ok, err := r.stage(ctx, "review_first", req, stageOpts{Skippable: true})
 		r.noteReviewSession(req, res)
 		r.countTokens(res)
-		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none", Bounce: r.bounce}
+		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none", Head: head, Bounce: r.bounce}
 		var v Verdict
 		switch skipped := (skippedError{}); {
 		case errors.As(err, &skipped):
@@ -2814,6 +2988,9 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			} else {
 				r.d.Log.Warn("the first-line review produced no parseable verdict; skipping it", "round", round)
 			}
+		}
+		if decides {
+			r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
 		}
 		r.rec.Reviews = append(r.rec.Reviews, sum)
 		r.save(ctx)
@@ -3061,7 +3238,14 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 			return agent.Result{}, false, errors.New(reason)
 		}
 	}
-	pins := r.stagePins(name)
+	pins, effErr := r.applyStageEffort(name, r.stagePins(name))
+	if effErr != nil {
+		// The resolver refuses an effort outside the closed set (L3.1), so this
+		// is a value that reached the run some other way: the stage is not run
+		// with an effort Claude Code would drop in silence.
+		r.fail("stage " + name + ": " + effErr.Error())
+		return agent.Result{}, false, effErr
+	}
 	if err := r.writeManagedSettings(name, pins); err != nil {
 		r.fail("stage " + name + ": " + err.Error())
 		return agent.Result{}, false, err
@@ -3568,7 +3752,7 @@ func (r *run) finalize(ctx context.Context) error {
 	r.uploadPatch(ctx, sha)
 
 	pol := r.findingsPolicy()
-	ready, reason := Decide(records, decided, seniorReview(r.rec.Reviews), pol)
+	ready, reason := Decide(records, decided, r.decidingReview(), pol)
 	r.rec.Tolerated = r.toleratedRecord(pol)
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"

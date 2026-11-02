@@ -366,17 +366,11 @@ func reviewStageOf(stage string) (reviewStage, bool) {
 	return reviewStage{}, false
 }
 
-// stageRole is the role slot a stage pins. It is config.StageRole plus the
-// adversarial stage: that function answers the coder's role for a stage name
-// it does not know, and level 3 is a review — the reviewer's slot, its output
-// limit and its role's model. L4.2 teaches config.StageRole the new stage, and
-// until then TestStageRoleAgreesWithConfig pins the two answers together for
-// the stages both know, so the disagreement is this one line and not a second
-// ladder.
+// stageRole is the role slot a stage pins: config.StageRole, which now knows
+// the adversarial stage too, so level 3 takes the reviewer's slot — its output
+// limit and its role's model — through the one ladder rather than a second
+// answer beside it (TestStageRoleAgreesWithConfig).
 func stageRole(stage string) config.Role {
-	if stage == stageAdversarial {
-		return config.RoleReviewer
-	}
 	return config.StageRole(stage)
 }
 
@@ -457,26 +451,29 @@ func resolvedLevel(levels config.Levels, level policy.Level) config.ResolvedLeve
 //
 // It is the levels' half of the runner: reading the task's review_levels, the
 // owner's floor and the recipe is L4.2's, and it calls this with the inputs it
-// has. Two of them the run answers for itself, and it fills them in when the
-// caller leaves them out, because a caller that forgot one would not fail: a
-// nil AllowedModels means "every model is allowed" and a nil Providers skips
-// the provider-effort refusal (D725), so both would be a rule silently not
-// applied. The mode is not one of them: the resolver's first layer is the
-// run's rigor mode, which is L4.2's to pass.
+// has. One of them the run answers for itself, and it fills it in when the
+// caller leaves it out, because a caller that forgot it would not fail: a nil
+// Providers skips the provider-effort refusal (D725), so a forgotten input
+// would be a rule silently not applied. The mode is not one of them: the
+// resolver's first layer is the run's rigor mode, which is L4.2's to pass.
 //
-// It has to run before applyRouting (resolvePolicy), which rewrites the pins
-// of the models the switch names: a level written after that rewrite would
-// keep the canonical ID its own role slot had already moved off.
+// The allow-list is deliberately *not* one of them. The resolver's own list is
+// a plain membership test, while the list that bounds this run is
+// config.CheckAllowed's, which admits a route ID where the switch routes the
+// model to it and names the key the owner wrote — the run's own pins by their
+// paths and a level's own model as agent.levels.lN.model (checkLevels,
+// levelModelPath). A list filled in here would refuse a level model before
+// checkBudget judged it, and refuse it by a rule that does not know the run's
+// routes: the routed level model this run may use would be reported as one it
+// may not. It runs in bootstrap, before any stage, so the judgement is made
+// either way (checkBudget).
+//
+// It runs after applyRouting (resolvePolicy), which rewrites the pins of the
+// models the switch names: level 1's own answer is read off the coder's model
+// (Agent.FirstLineOn), so a resolution taken before the rewrite would turn the
+// cheap first-line loop off for exactly the runs a switch routed.
 func (r *run) applyLevels(in config.LevelInputs) (config.Levels, []config.Warning, error) {
 	in.Config = r.cfg
-	if in.AllowedModels == nil {
-		// The ceiling's list is the effective one (resolvePolicy stores it on
-		// both), and the policy's is the fallback for a run built without it.
-		in.AllowedModels = r.spend.AllowedModels
-		if in.AllowedModels == nil && r.policy.HasAllowList() {
-			in.AllowedModels = r.policy.AllowedModels
-		}
-	}
 	if in.Providers == nil {
 		in.Providers = r.modelProviders()
 	}

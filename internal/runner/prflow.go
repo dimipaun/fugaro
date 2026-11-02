@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -467,9 +468,10 @@ func verifyPart(records []verify.Record) string {
 
 // reviewsPart is the section's account of the review rounds, or "". With a
 // first line, it says which tier the latest review is: the first line only
-// advises, the senior review decides. pol is the mode's findings policy for
-// the round the line reports (finalSection); a round the mode let through
-// names each finding it tolerated beside the count (T3.3).
+// advises, the senior review decides and level 3 decides over both (D723). pol
+// is the mode's findings policy for the round the line reports (finalSection);
+// a round the mode let through names each finding it tolerated beside the count
+// (T3.3).
 func reviewsPart(rs []runstore.ReviewSummary, pol FindingsPolicy) string {
 	if len(rs) == 0 {
 		return ""
@@ -481,6 +483,8 @@ func reviewsPart(rs []runstore.ReviewSummary, pol FindingsPolicy) string {
 		who = "first-line "
 	case runstore.TierSenior:
 		who = "senior "
+	case runstore.TierAdversarial:
+		who = "adversarial "
 	}
 	switch last.Verdict {
 	case "ship":
@@ -489,13 +493,71 @@ func reviewsPart(rs []runstore.ReviewSummary, pol FindingsPolicy) string {
 		if last.Tier == runstore.TierFirst {
 			return fmt.Sprintf("first-line review round %d: skipped, no verdict", last.Round)
 		}
-		// A senior round is never skipped: this is one whose answer carried no
+		// An outer round is never skipped: this is one whose answer carried no
 		// parseable verdict, retried once and then left the run with no verdict
-		// at all (seniorLoop), and the line is the reason Decide gave for
-		// keeping the pull request a draft.
+		// at all (seniorLoop, adversarialLoop), and the line is the reason Decide
+		// gave for keeping the pull request a draft.
 		return fmt.Sprintf("%sreview round %d returned no parseable verdict after a retry", who, last.Round)
 	}
 	return fmt.Sprintf("%sreview round %d: %s%s", who, last.Round, Plural(last.Findings, "finding"), toleratedPart(pol, last))
+}
+
+// levelNames are the levels as the section's own line names them, in the order
+// a run holds them. The index is the level's own number, so the three read
+// together as the ladder they are.
+var levelNames = map[policy.Level]string{policy.LevelL1: "level 1", policy.LevelL2: "level 2", policy.LevelL3: "level 3"}
+
+// levelsPart is the section's line per review level the run held: the level,
+// its last round's verdict, the head that round approved and the focus the
+// level was asked to look at (D727, L4.2). It exists beside reviewsPart, which
+// reports the last round of all, because the levels can approve different
+// commits: after an adversarial rejection the cheap loop runs and level 2 is
+// never reviewed again, so a run that ships carries a level 2 verdict about an
+// earlier head than the one it ships. A reader of the pull request has to be
+// able to see that.
+//
+// The focus is level 3's alone: it is the only level whose reviewer is given
+// one (AdversarialPrompt, levelFocus), so a focus a layer wrote for level 1 or
+// level 2 reaches no model and the line does not claim the round was asked for
+// it.
+//
+// The focus is the same sanitiser's business as the verdict beside it, and the
+// two agree on every value that can reach here: the resolver refuses a focus
+// carrying a control, a bidi or a zero-width character at every layer that may
+// write one (config.LevelSetting.validate), so there is nothing left for
+// safetext to escape that inlineText does not already handle.
+//
+// "" for a run that resolved no levels (levelsResolved) and for one whose
+// levels left no round at all: reviewsPart's own line is then the whole
+// account, and an empty line would only repeat it.
+func (r *run) levelsPart() string {
+	if !r.levelsResolved() {
+		return ""
+	}
+	var lines []string
+	for _, l := range []policy.Level{policy.LevelL1, policy.LevelL2, policy.LevelL3} {
+		if !levelOn(r.levels, l) {
+			continue
+		}
+		rs := lastRoundOf(r.rec.Reviews, l)
+		if rs == nil {
+			continue
+		}
+		line := fmt.Sprintf("%s: %s in round %d", levelNames[l], inlineText(rs.Verdict), rs.Round)
+		if rs.Head != "" {
+			line += fmt.Sprintf(" on `%s`", shortSHA(rs.Head))
+		}
+		if l == policy.LevelL3 {
+			if f := inlineText(r.levelFocus(l)); f != "" {
+				line += fmt.Sprintf(" (focus: %s)", f)
+			}
+		}
+		lines = append(lines, line)
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "review levels: " + strings.Join(lines, "; ")
 }
 
 // toleratedPart is the rest of a review line whose round the run's mode let
@@ -670,7 +732,7 @@ func (r *run) runningSection(stage string, during bool) string {
 	what := fmt.Sprintf("after stage `%s`", inlineText(stage))
 	if during {
 		what = fmt.Sprintf("checkpoint during stage `%s`", inlineText(stage))
-	} else if stage == "review" || stage == "review_first" {
+	} else if _, ok := reviewStageOf(stage); ok {
 		// The zero policy: mid-run nothing has been tolerated yet, and the
 		// section names what the round left rather than what a mode would do
 		// with it once the run reaches Decide (T3.3).
@@ -702,7 +764,9 @@ func (r *run) pushedPart(records []verify.Record) string {
 
 // finalSection is the section when the run ended: outcome, reason, tests,
 // reviews and cost. A review round the run's mode let through names each
-// finding it tolerated and the mode that tolerated it (T3.3, D7, D18).
+// finding it tolerated and the mode that tolerated it (T3.3, D7, D18), and a
+// run that held more than one review level lists each level's verdict and the
+// head it approved (levelsPart, D727).
 func (r *run) finalSection(ready bool, reason string, records []verify.Record) string {
 	head, why := "**Draft**", inlineText(reason)
 	switch {
@@ -713,7 +777,7 @@ func (r *run) finalSection(ready bool, reason string, records []verify.Record) s
 	case r.rec.Status == runstore.StatusCancelled:
 		head = "**Cancelled**"
 	}
-	return r.sectionLines(head, why, r.checkpointReportPart(), r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.narrowText, r.costPart(), r.updated("finished"))
+	return r.sectionLines(head, why, r.checkpointReportPart(), r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.levelsPart(), r.narrowText, r.costPart(), r.updated("finished"))
 }
 
 // ---- finalize ----

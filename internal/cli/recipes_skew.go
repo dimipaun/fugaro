@@ -293,8 +293,9 @@ const digestSince = "0.13.0"
 // as for every other *Since constant here — safe either way, since a runner
 // that cannot run the step refuses the recipe at bootstrap rather than
 // skipping it and opening an ordinary pull request in its place. It names
-// 0.15.0, the release L4.2 ships in: if L4.2 does not make 0.15.0 the
-// constant moves with it before the tag, so no image ever accepts an
+// 0.16.0, the release L4.2 ships in: 0.15.0 shipped with the step parsing
+// but no runner running it (a 0.15.0 run stopped at planning), so L4.2
+// missed that tag and the constant moved with it — no image ever accepts an
 // adversarial launch and then refuses the recipe, and docs/release.md's
 // checklist verifies it against the tag actually cut, the way digestSince's
 // bullet records.
@@ -307,7 +308,7 @@ const digestSince = "0.13.0"
 // whose file cannot be read here — no checkout, an unreadable or invalid one —
 // stays on recipesSince, with the runner's parse refusal as the backstop,
 // exactly as it is for a name this launcher cannot resolve at all.
-const adversarialSince = "0.15.0"
+const adversarialSince = "0.16.0"
 
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image

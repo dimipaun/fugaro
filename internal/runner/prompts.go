@@ -7,6 +7,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -250,6 +251,54 @@ func ReviewPrompt(review, promptFile, rev string, size DiffSize, baseUnread bool
 	default:
 		return defaultReview + "\n\n" + scope + tail
 	}
+}
+
+// adversarialReview is the preamble review level 3's reviewer reads in place of
+// the ordinary reviewer's: the senior level has already read this change and
+// passed it, so a second reviewer that looked for the same things would spend
+// the run's rounds to agree. It says what the second read is for (D727) and
+// nothing about scope or scoring, which the review brief below it still
+// carries.
+const adversarialReview = "You are an adversarial reviewer, and a previous review of this change already ran and passed it. Find what that review missed rather than repeating it: an edge case, an error path, an ordering or concurrency hazard, a security consequence, or a claim the change makes that its own code does not hold. A finding the earlier review would already have made is not worth the round it costs, and pure style preferences are not findings at all."
+
+// FocusPrompt is a review level's own focus — the words a repository or a
+// project layer gave the level (config.ResolvedLevel.Focus) — as the reviewer
+// reads them: a heading of this program's own, and the focus under it as quoted
+// data, one "> " per line. The quoting is the point: the focus is written by a
+// launcher and never by this program, so it is made safe to print (safetext
+// keeps its lines and replaces the controls, escape sequences, bidi marks and
+// zero-width characters a terminal or a model could read differently) and put
+// where a reader can see it is quoted, rather than left to read as one more
+// instruction of the run's. It is "" for a level that names no focus.
+func FocusPrompt(focus string) string {
+	focus = strings.TrimSpace(safetext.MultiLine(focus))
+	if focus == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Review focus\n\n")
+	for _, line := range strings.Split(focus, "\n") {
+		b.WriteString("> " + line + "\n")
+	}
+	return b.String()
+}
+
+// AdversarialPrompt is review level 3's prompt: the review brief the senior
+// level read (reviewPrompt, ReviewPrompt's own answer, so level 3 reviews the
+// same range under the same scoring contract), led by the adversarial preamble
+// and, when the level names one, its focus quoted under its heading.
+//
+// The ordinary reviewer's opening line is dropped where the brief is the
+// default one, because the preamble has already said who this reviewer is; a
+// repository's own review text is kept whole, since what it describes is the
+// repository rather than the role.
+func AdversarialPrompt(reviewPrompt, focus string) string {
+	brief := strings.TrimPrefix(reviewPrompt, defaultReview+"\n\n")
+	out := adversarialReview
+	if fp := FocusPrompt(focus); fp != "" {
+		out += "\n\n" + fp
+	}
+	return out + "\n\n" + brief
 }
 
 // PickPrompt is the review stage prompt for a pick run (design generic-tool

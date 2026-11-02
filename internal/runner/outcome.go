@@ -3,6 +3,7 @@ package runner
 import (
 	"fmt"
 
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -70,8 +71,124 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 			return false, pol.raiseReason(last)
 		}
 		return false, fmt.Sprintf("review round %d still has %s", last.Round, Plural(last.Findings, "finding"))
+	case pol.HeldBack != nil:
+		// The level that decided shipped, and an enabled level above it did
+		// not: readiness is decided by the highest level that ran, and only
+		// when every enabled outer level's last verdict is `ship` (D727, G4).
+		// The case sits below the tolerance on purpose — a round the mode
+		// tolerates is not a ship, and the level it came from is the one
+		// Decide is reading, not one held back beside it.
+		return false, heldBackReason(*pol.HeldBack)
 	}
 	return true, ""
+}
+
+// heldBackReason is Decide's reason for a run whose deciding level shipped and
+// whose other enabled level did not: the level, its last verdict and round, and
+// the head that verdict read (D727). The head is named because telling the two
+// apart is the whole point of the rule — the level approved an earlier commit
+// than the one shipped — and a reader has to be able to see which.
+func heldBackReason(rs runstore.ReviewSummary) string {
+	reason := fmt.Sprintf("review %s last shipped nothing: round %d left %s", levelNames[reviewLevelOf(rs)], rs.Round, rs.Verdict)
+	if rs.Head != "" {
+		reason += fmt.Sprintf(" on %s", shortSHA(rs.Head))
+	}
+	return reason + ", so the pull request is a draft until every enabled review level ships"
+}
+
+// reviewLevelOf is the level a recorded round is a round of: its tier says
+// which. A tier of "" is the senior review of a run that had no first line
+// (ReviewSummary.Tier), and a tier this build does not know is read as the
+// senior level too, which is what such a round recorded before the levels
+// existed.
+func reviewLevelOf(rs runstore.ReviewSummary) policy.Level {
+	switch rs.Tier {
+	case runstore.TierFirst:
+		return policy.LevelL1
+	case runstore.TierAdversarial:
+		return policy.LevelL3
+	}
+	return policy.LevelL2
+}
+
+// lastRoundOf is the level's last round in the record, nil for a level that
+// never ran.
+func lastRoundOf(rs []runstore.ReviewSummary, level policy.Level) *runstore.ReviewSummary {
+	for i := len(rs) - 1; i >= 0; i-- {
+		if reviewLevelOf(rs[i]) == level {
+			return &rs[i]
+		}
+	}
+	return nil
+}
+
+// levelsResolved reports whether this run resolved its review levels at all
+// (resolveLevels). A run that did not — one built by hand, and every run the
+// unit tests build without a mode — reads readiness the way it did before the
+// levels existed (decidingReview, seniorReview).
+func (r *run) levelsResolved() bool {
+	return rigor.Known(r.reachedRigor())
+}
+
+// decidingReview is the round readiness is decided on: the last round of the
+// highest enabled review level (D723, G4) — level 3's where it is on, level 2's
+// where level 3 is not, level 1's in a run whose level 2 does not run at all
+// (POC). nil when that level left no round, which is a run that stopped before
+// its decider ran: the mode asked for a level the run never held, nothing
+// decided, and Decide keeps the pull request a draft (G4's "every enabled outer
+// level's last verdict is ship" has no verdict at all to read).
+//
+// A run that resolved no levels falls back to the last senior review, which is
+// what every such run recorded before the levels existed and what readiness
+// read then.
+func (r *run) decidingReview() *runstore.ReviewSummary {
+	if !r.levelsResolved() {
+		return seniorReview(r.rec.Reviews)
+	}
+	for _, l := range []policy.Level{policy.LevelL3, policy.LevelL2, policy.LevelL1} {
+		if levelOn(r.levels, l) {
+			return lastRoundOf(r.rec.Reviews, l)
+		}
+	}
+	return nil
+}
+
+// heldBackLevel is the enabled outer level, other than the one that decided,
+// whose last verdict is not `ship`: the pull request is a draft when there is
+// one (D727, G4). It is level 2 when level 3 decided, and nothing when level 2
+// or level 1 decided — level 3 is the only level above either of them.
+//
+// Level 1 is never one of them. It advises the levels above it and never
+// decides on its own (seniorReview), so a cheap loop that ran out of rounds
+// asking for changes is not what keeps a shipped senior review a draft; that is
+// what the bounce is for. And a level whose round the run never held is not
+// read here either: decidingReview answers nil for it, and the decider's own
+// absence is the reason.
+//
+// It is read only where the deciding round itself shipped. Where it did not,
+// that round's verdict is the reason Decide gives, and a second level's would
+// only be noise beside it.
+func (r *run) heldBackLevel() *runstore.ReviewSummary {
+	if !r.levelsResolved() {
+		return nil
+	}
+	decided := r.decidingReview()
+	if decided == nil || decided.Verdict != "ship" {
+		return nil
+	}
+	// Level 1 is skipped by name rather than by leaving it out of the slice
+	// walked here: it is never a candidate whatever order the levels are read
+	// in (below), and the code says so rather than the reader having to know
+	// that level 2 is the only level it sits under.
+	for _, l := range []policy.Level{policy.LevelL1, policy.LevelL2, policy.LevelL3} {
+		if l == policy.LevelL1 || !levelOn(r.levels, l) || l == reviewLevelOf(*decided) {
+			continue
+		}
+		if rs := lastRoundOf(r.rec.Reviews, l); rs != nil && rs.Verdict != "ship" {
+			return rs
+		}
+	}
+	return nil
 }
 
 // FindingsPolicy is the mode's findings policy as Decide is given it
@@ -99,6 +216,11 @@ type FindingsPolicy struct {
 	// rose (T3.5, D19). It is what makes a raised mode decide readiness and
 	// name itself in the reason.
 	Raised *RigorRaise
+	// HeldBack is an enabled outer level's last round whose verdict is not
+	// `ship`, where the level that decided shipped (heldBackLevel, D727, G4).
+	// Decide blocks on it: the run's highest level approved the change, and a
+	// level the run's mode required did not.
+	HeldBack *runstore.ReviewSummary
 }
 
 // RigorRaise is the raise a run's mode took during the run (T3.5, D22): the
@@ -188,13 +310,15 @@ func findingsPolicyOf(cfg rigor.Config, mode rigor.Mode, round int, findings []r
 	return FindingsPolicy{Mode: mode, Round: round, Blocking: blocking, Tolerated: tolerated}
 }
 
-// findingsPolicy is findingsPolicyOf for this run: the last senior review
-// round as the loop read it, the mode the run resolved, the rigor
-// configuration that mode was read from, and the raise the run's mode took
-// during it (noteRigorRaise, rigor.go).
+// findingsPolicy is findingsPolicyOf for this run: the last review round the
+// loop read as the decider's, the mode the run resolved, the rigor
+// configuration that mode was read from, the raise the run's mode took during
+// it (noteRigorRaise, rigor.go) and the outer level the deciding one held back,
+// if any.
 func (r *run) findingsPolicy() FindingsPolicy {
 	pol := findingsPolicyOf(r.rigorCfg, r.reachedRigor(), r.lastSenior.Round, scoresOf(r.lastSenior.Findings))
 	pol.Raised = r.rigorRaise
+	pol.HeldBack = r.heldBackLevel()
 	return pol
 }
 

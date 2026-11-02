@@ -46,6 +46,7 @@
   "reviews": [
     {
       "findings": 0,
+      "head": "<sha>",
       "round": 1,
       "verdict": "ship"
     }
