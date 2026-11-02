@@ -349,7 +349,27 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		return m.recordGeneration(ctx, cmd)
 	}
 	m.print(w)
-	if err := confirmRemoval(cmd, m.lc, yes, m.what()+": every run of the project reads it, and the fields you edited into it by hand are carried over rather than published again"); err != nil {
+	what := m.what() + ": every run of the project reads it, and the fields you edited into it by hand are carried over rather than published again"
+	// D846 reaches this door too: a publish that raises a ceiling, removes one
+	// or widens the model list is the widening the settings commands reserve for
+	// the project's own hand, and the two are one decision — what every run of
+	// the project is admitted by. So the typed name is asked for it and --yes
+	// does not stand in, which is what the sentence says to the operator whose
+	// script (or agent session) has just passed --yes and been refused.
+	if loosening := m.loosening(); len(loosening) > 0 {
+		why := m.looseningWhy(loosening)
+		// The sentence is said once. A session with no terminal is refused with
+		// it inside the error (confirmTypedStrict), and a door that reported
+		// that error next to the sentence it already printed said the same
+		// thing twice; the person at a terminal reads it here and only here,
+		// because the prompt below names the step and never the widening.
+		if stdinIsTerminal(cmd.InOrStdin()) {
+			fmt.Fprintf(w, "%s\n", why)
+		}
+		if err := confirmTypedStrict(cmd, m.lc, why, what); err != nil {
+			return err
+		}
+	} else if err := confirmRemoval(cmd, m.lc, yes, what); err != nil {
 		return err
 	}
 	if err := m.write(ctx); err != nil {
