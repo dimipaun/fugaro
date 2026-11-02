@@ -26,6 +26,7 @@
 // never a derived "5 minutes ago", which would compare two things that are not
 // on the same scale.
 
+import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -122,7 +123,7 @@ import type {
 } from '../../src/renderer/screens/coordinator'
 import { BUSY_SLOT_CLASS } from '../../src/renderer/section'
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
-import { PATH_PLACEHOLDER, sanitizeText, type TextClass } from '../../src/shared/sanitize'
+import { PATH_PLACEHOLDER, TOKEN_PLACEHOLDER, sanitizeText, type TextClass } from '../../src/shared/sanitize'
 import { decodeCoordinatorStatus, decodePlanStatus } from '../../src/shared/schema'
 import type { CoordinatorStatusView, PlanStatusView } from '../../src/shared/schema'
 import type { JSONDoc } from '../../src/source/source'
@@ -1813,6 +1814,45 @@ describe('the pull request description (K3)', () => {
     ).toBe(true)
     // One line is under the block's own bound, so there is nothing to show.
     expect(all(host, COORDINATOR_DESCRIPTION_ALL_CLASS)).toEqual([])
+  })
+
+  it('masks a credential block that spans lines before the body is split into them', () => {
+    // The block is split into lines before the class is run over each one, and
+    // the one redaction that needs a whole value -- a PEM block, whose body may
+    // not run past its own BEGIN and END lines -- would never see one: every
+    // line it drew would be a line of key material with no marker in sight. So
+    // the masking runs on the body, and the split runs on what it left.
+    //
+    // The block is **built here** rather than written out: the file holds no
+    // key-shaped literal, and the material is fresh on every run.
+    const begin = ['-----BEGIN', 'PRIVATE KEY-----'].join(' ')
+    const end = ['-----END', 'PRIVATE KEY-----'].join(' ')
+    // Wrapped the way a real block is, and 57 bytes so that the wrap leaves a
+    // short line: a run under the entropy net's own floor is exactly the line
+    // the class keeps whole, which is what a split-then-mask drawing of this
+    // value puts on the screen.
+    const material = randomBytes(57).toString('base64')
+    const wrapped = [material.slice(0, 64), material.slice(64)]
+    const host = blockOf(['before the block', [begin, ...wrapped, end].join('\n'), 'after the block'].join('\n'))
+    const drawn = all(host, COORDINATOR_DESCRIPTION_LINE_CLASS).map((line) => line.textContent ?? '')
+
+    // Every window of the material's own characters over every drawn line: the
+    // key is gone whole, and not one line of it at a time.
+    for (let at = 0; at + 8 <= material.length; at += 1) {
+      const window = material.slice(at, at + 8)
+      expect(
+        drawn.some((line) => line.includes(window)),
+        `a drawn line carries eight characters of the key material`,
+      ).toBe(false)
+    }
+    expect(drawn.join('\n')).toContain(TOKEN_PLACEHOLDER)
+    // The markers the block was written with go with it: what is left of that
+    // value is the placeholder and nothing else.
+    expect(drawn.join('\n')).not.toContain('PRIVATE KEY')
+    // The lines around it are untouched by the masking -- the split still gets
+    // the author's own lines.
+    expect(drawn[0]).toBe('before the block')
+    expect(drawn[drawn.length - 1]).toBe('after the block')
   })
 
   it('clips a long description to the console’s twenty lines, and draws every line once Show all is pressed', () => {

@@ -57,7 +57,7 @@
 
 import { measured } from '../../shared/availability'
 import type { Reading, Unit } from '../../shared/availability'
-import { nameableText, sanitizeText } from '../../shared/sanitize'
+import { maskCredentialBlocks, nameableText, sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
 import { BUSY_SLOT_CLASS } from '../section'
 import type { SkeletonBlock, SkeletonShape } from '../skeleton'
@@ -2122,6 +2122,15 @@ function runCell(parent: ScreenElement, factory: ScreenFactory, run: Coordinator
  * would make the bound and `Show all` mean nothing. Each line is therefore a text
  * node of its own, and `showAll` is the block's state rather than the class's.
  *
+ * **The block is masked before it is split, and that order is the whole of it.**
+ * The class reads one line at a time, and the one redaction that needs a whole
+ * value -- a PEM block, whose body stops at its own BEGIN and END lines -- would
+ * never see one: the markers would be drawn as text and the body left to the
+ * entropy net, which is exactly the leak the review of this block found (a
+ * wrapped body's short last line drawn as key material). `maskCredentialBlocks`
+ * is that masking; what it hands back still carries the author's own newlines,
+ * so the split after it draws the same lines with one value redacted.
+ *
  * It answers the control it drew, or `null` when there is nothing to show: the
  * entry binds the press, and the two are answered as a pair for the reason
  * `fillCoordinatorQueuePart` answers its buttons.
@@ -2132,14 +2141,15 @@ export function fillCoordinatorDescription(
   host: ScreenElement,
   showAll: boolean,
 ): ScreenElement | null {
-  if (body.trim() === '') {
+  const masked = maskCredentialBlocks(body)
+  if (masked.trim() === '') {
     // The host answered and wrote nothing. That is a fact about the pull request,
     // and it is the console's own sentence rather than a blank block -- a block
     // with nothing in it is what a read that did not answer would look like.
     literal(cell(host, factory, 'p', COORDINATOR_DESCRIPTION_EMPTY_CLASS), COORDINATOR_DESCRIPTION_EMPTY_WORD)
     return null
   }
-  const lines = body.split(/\r\n|\r|\n/u)
+  const lines = masked.split(/\r\n|\r|\n/u)
   for (const line of showAll ? lines : lines.slice(0, COORDINATOR_DESCRIPTION_LINES)) {
     putText(cell(host, factory, 'div', COORDINATOR_DESCRIPTION_LINE_CLASS), line, 'sentence', 'body')
   }
