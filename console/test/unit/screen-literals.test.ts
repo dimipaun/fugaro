@@ -247,6 +247,11 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       reason:
         'the parameter of the `numberCell` helper itself; every call site passes one of this file\'s own count words (`COORDINATOR_RECORDS_WORD`, `COORDINATOR_IN_FLIGHT_COUNT_WORD`, `COORDINATOR_COLLISIONS_WORD`), so no document string reaches the sink',
     },
+    label: {
+      within: 'jobsControl',
+      reason:
+        'the parameter of the `jobsControl` helper itself, which is the job list\'s two controls (console 0.119.0, K4): its two call sites pass `COORDINATOR_JOBS_LOAD_WORD` and `COORDINATOR_JOBS_OLDER_WORD`, this file\'s own control words, so no document string reaches the sink',
+    },
   },
   // The two drawings console 0.116.1 adds: the panel's reading placeholder and
   // the Graph's no-checkout card. Neither is handed a document string that

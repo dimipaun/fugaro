@@ -48,6 +48,13 @@ import {
   COORDINATOR_DRAFT_WORD,
   COORDINATOR_IN_FLIGHT_COUNT_WORD,
   COORDINATOR_IN_FLIGHT_WORD,
+  COORDINATOR_JOBS_FLOOR_WORD,
+  COORDINATOR_JOBS_LOAD_CLASS,
+  COORDINATOR_JOBS_LOAD_WORD,
+  COORDINATOR_JOBS_OLDER_CLASS,
+  COORDINATOR_JOBS_OLDER_WORD,
+  COORDINATOR_JOBS_RUNS_WORD,
+  COORDINATOR_JOBS_SPENT_WORD,
   COORDINATOR_LAUNCH_WORD,
   COORDINATOR_LIST_CAP,
   COORDINATOR_NO_AGE_WORD,
@@ -85,8 +92,15 @@ import {
   QUEUE_SOURCES,
   buildCoordinatorModel,
   coordinatorJobsControl,
+  coordinatorJobsFloorNote,
+  coordinatorLoadJobsControl,
+  coordinatorOlderJobsControl,
+  fillCoordinatorJobs,
+  fillCoordinatorJobsHead,
+  jobsDocument,
   queueRuns,
   renderCoordinator,
+  renderCoordinatorFrame,
 } from '../../src/renderer/screens/coordinator'
 import type {
   CoordinatorInputs,
@@ -196,12 +210,28 @@ function drawn(node: ScreenElement): string {
     .join(' ')
 }
 
+/** said is the whole tree's text the way a browser concatenates it: every node's
+ * own text, in document order, **with nothing put between them**. `drawn` joins
+ * with a space, so it answers a sentence whose two spans run together as one that
+ * reads -- which is the one thing a case about a sentence's spacing cannot use. */
+function said(node: ScreenElement): string {
+  return walk(node)
+    .map((leaf) => leaf.textContent ?? '')
+    .join('')
+}
+
 /** decodes is a document that must decode, or the failure is the decoder's own
  * sentence rather than an assertion three lines later. */
 function decodes(raw: unknown): CoordinatorStatusView {
   const result = decodeCoordinatorStatus(raw)
   if (!result.ok) throw new Error(result.skew.because)
   return result.value
+}
+
+/** bodyOf is a row's expanded body, which is the one `coordinator-job-detail`
+ * every row carries. */
+function bodyOf(row: ScreenElement): ScreenElement {
+  return one(row, 'coordinator-job-detail')
 }
 
 /** renders draws a document, as the entry point does: the document's own read
@@ -1489,6 +1519,201 @@ describe('the numbers that open a pull request (K2)', () => {
         mainWouldOpen && rowCanDraw,
       )
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The job list (K4).
+// ---------------------------------------------------------------------------
+
+/** LS_DOC is one page of `runs ls --json --since 24h --limit=50`, with the two
+ * figures this section turns on **deliberately different**: the window's own
+ * `totals` say 41 runs, and the page below prints two. A section that summed the
+ * rows it drew would show `2` under a word that claims the window. */
+const LS_DOC = {
+  project: 'a-project',
+  runs: [
+    {
+      run: '20261101-090000-aa01',
+      repo: 'owner/repo-a',
+      status: 'succeeded',
+      stage: 'implement',
+      outcome: 'implemented',
+      title: 'the job that finished',
+      branch: 'feat/a-thing',
+      reason: '',
+      created: '2026-11-01T09:00:00Z',
+      plan_task: 'plans/2026-10-01-a/task-one',
+      launched_by: 'person-1',
+      pr: 1459,
+      cost: { total_usd: 1.25, model_usd: 1.0, compute_usd: 0.25, compute_estimated: true },
+      terminal: true,
+      changed_files: { paths: ['src/a.go'], total: 3 },
+    },
+    {
+      run: '20261101-080000-bb02',
+      repo: 'owner/repo-a',
+      status: 'failed',
+      stage: 'review',
+      outcome: '',
+      title: 'the job that did not finish',
+      branch: '',
+      reason: 'the reviewer refused the change',
+      created: '2026-11-01T08:00:00Z',
+      plan_task: '',
+      launched_by: '',
+      cost: { total_usd: 0.0, model_usd: 0, compute_usd: 0, compute_estimated: false },
+      terminal: true,
+    },
+  ],
+  totals: { runs: 41, model_usd: 9.0, model_notional_usd: 0, compute_usd: 3.5, total_usd: 12.5 },
+  warnings: [],
+}
+
+describe('the job list (K4)', () => {
+  it('draws the window’s own figures in the head and only the page’s rows under them', () => {
+    // D818: the head is the window and the list is the page. The CLI cuts what it
+    // *prints* and sums what it *read*, so the two figures are different numbers
+    // in any real document -- and a section that recomputed the head from the
+    // rows on screen would draw the page's count under the window's word.
+    const page = jobsDocument(LS_DOC)
+    const frame = renderCoordinatorFrame(factory, 'dark')
+    fillCoordinatorJobsHead(factory, page.window, frame.jobs.head)
+    fillCoordinatorJobs(factory, page.rows, frame.jobs.list)
+
+    expect(figureOf(frame.jobs.head, 'coordinator-jobs-window-runs')).toEqual([
+      COORDINATOR_JOBS_RUNS_WORD,
+      '41',
+    ])
+    expect(figureOf(frame.jobs.head, 'coordinator-jobs-window-spent')).toEqual([
+      COORDINATOR_JOBS_SPENT_WORD,
+      '$12.50',
+    ])
+    expect(all(frame.jobs.list, 'coordinator-job')).toHaveLength(2)
+    expect(
+      drawn(frame.jobs.list),
+      'the list drew the window’s own count, which is the figure a section that summed its rows would show',
+    ).not.toContain('41')
+    // The cursor is the last row's own id: what `--after` takes, read back out of
+    // the row the console drew rather than computed.
+    expect(page.cursor).toBe('20261101-080000-bb02')
+  })
+
+  it('draws a row off the document’s own fields, and keeps the body it expands hidden', () => {
+    const page = jobsDocument(LS_DOC)
+    const frame = renderCoordinatorFrame(factory, 'dark')
+    fillCoordinatorJobs(factory, page.rows, frame.jobs.list)
+    const rows = all(frame.jobs.list, 'coordinator-job')
+    const first = rows[0]
+    const second = rows[1]
+    if (first === undefined || second === undefined) throw new Error('the list drew no row')
+
+    expect(textOf(first, 'coordinator-job-id')).toBe('20261101-090000-aa01')
+    expect(textOf(first, 'coordinator-job-repo')).toBe('owner/repo-a')
+    expect(textOf(first, 'coordinator-job-status')).toBe('succeeded')
+    expect(textOf(first, 'coordinator-job-title')).toBe('the job that finished')
+    // A field the document did not carry draws nothing at all: the second row
+    // wrote no outcome, and an empty cell is not a cell saying `unknown`.
+    expect(all(second, 'coordinator-job-outcome')).toEqual([])
+
+    // The body is drawn with the row and hidden, so the press is a toggle rather
+    // than a rendering: every string in it is a document's.
+    const body = one(first, 'coordinator-job-detail')
+    expect(body.getAttribute('hidden'), 'the expanded body is open before the press').toBe('')
+    expect(textOf(body, 'coordinator-job-stage')).toBe('implement')
+    expect(textOf(body, 'coordinator-job-branch')).toBe('feat/a-thing')
+    // The plan task is a `label` on the wire, and a label shaped like a path is
+    // masked by that class: the console draws the masked value, which is what
+    // keeps a document from using this cell to spell a real path.
+    expect(textOf(body, 'coordinator-job-plan')).toBe('plans<path>')
+    expect(textOf(body, 'coordinator-job-by')).toBe('person-1')
+    expect(textOf(body, 'coordinator-job-created')).toBe('2026-11-01T09:00:00Z')
+    expect(textOf(body, 'coordinator-job-pr')).toBe('1459')
+    expect(figureOf(body, 'coordinator-job-cost')).toEqual([COORDINATOR_JOBS_SPENT_WORD, '$1.25'])
+    // The path class masks a repository-relative path in a document the recorder
+    // did not redact, which is the class's whole job: what is drawn is the
+    // placeholder and never a directory of the operator's machine.
+    expect(textOf(body, 'coordinator-job-file')).toBe(PATH_PLACEHOLDER)
+    // The set's own `total` is the document's: three paths, one drawn, two left
+    // off -- a figure this screen subtracted but did not invent.
+    expect(one(body, 'coordinator-job-more').textContent).toBe('2')
+    // The second row's own body: the reason a run stopped, and no cost cell for a
+    // document that carried `0` -- the reading is drawn either way, and the row
+    // that wrote none draws nothing.
+    const secondBody = one(second, 'coordinator-job-detail')
+    expect(textOf(secondBody, 'coordinator-job-reason')).toBe('the reviewer refused the change')
+    expect(all(secondBody, 'coordinator-job-file')).toEqual([])
+  })
+
+  it('draws a document it cannot read as a page of nothing rather than inventing rows', () => {
+    // The reader is the console's own, and a document that is not one draws no
+    // row: the CLI's refusal is the entry's to draw, and a page this screen
+    // cannot read is not a page of zeroes with a head claiming a window.
+    const page = jobsDocument({ runs: 'not a list', totals: { runs: 3, total_usd: 1 } })
+    expect(page.rows).toEqual([])
+    expect(page.cursor).toBe('')
+    expect(page.window?.runs.value).toBe(3)
+    expect(page.window?.spent.value).toBe(1)
+  })
+
+  it('draws the section’s two controls in the console’s own words, and the floor sentence with the version', () => {
+    const load = coordinatorLoadJobsControl(factory)
+    expect(load.getAttribute('class')).toBe(COORDINATOR_JOBS_LOAD_CLASS)
+    expect(load.getAttribute('type')).toBe('button')
+    // Both carry the same state: what the press asks for is not on screen while
+    // the control is, which is what the attribute says.
+    expect(load.getAttribute('aria-expanded')).toBe('false')
+    expect(load.textContent).toBe(COORDINATOR_JOBS_LOAD_WORD)
+    const older = coordinatorOlderJobsControl(factory)
+    expect(older.getAttribute('class')).toBe(COORDINATOR_JOBS_OLDER_CLASS)
+    expect(older.getAttribute('aria-expanded')).toBe('false')
+    expect(older.textContent).toBe(COORDINATOR_JOBS_OLDER_WORD)
+
+    // The floor: the sentence names the release the paged read needs and the
+    // version line the handshake read, and the version is *text* wherever it came
+    // from -- a hostile one is a value drawn, not an element or an attribute.
+    const note = coordinatorJobsFloorNote(factory, '0.15.3+<script>')
+    expect(textOf(note, 'coordinator-jobs-floor-word')).toBe(COORDINATOR_JOBS_FLOOR_WORD)
+    expect(one(note, 'coordinator-jobs-floor-version').textContent).toBe('0.15.3+<script>')
+    // The sentence reads as one: the two spans are inline and nothing separates
+    // them but what the drawing puts there, so the version must not run into
+    // "this CLI is" on the screen. Spelled out rather than built from the
+    // constant, because the space between the two words is the claim.
+    expect(said(note)).toBe('the job list needs fugaro 0.16.0 and this CLI is 0.15.3+<script>')
+  })
+
+  it('renders every string a row draws through the class its wire key declares', () => {
+    // A row is a document's text end to end -- a title somebody wrote, a reason a
+    // stage wrote, a branch, a path -- so every one of them goes through
+    // `putText`: nothing here is `literal`, and no value reaches an attribute.
+    const page = jobsDocument({
+      runs: [
+        {
+          run: '20261101-093000-cc03',
+          repo: 'owner/repo-a',
+          status: 'failed',
+          title: '<img src=x onerror=alert(1)>',
+          branch: 'feat/<script>',
+          reason: 'javascript:alert(1)',
+          changed_files: { paths: ['../etc/passwd'], total: 1 },
+        },
+      ],
+      totals: { runs: 1, total_usd: 0 },
+    })
+    const frame = renderCoordinatorFrame(factory, 'dark')
+    fillCoordinatorJobs(factory, page.rows, frame.jobs.list)
+    const row = all(frame.jobs.list, 'coordinator-job')[0]
+    if (row === undefined) throw new Error('the list drew no row')
+    // The title's own class refuses markup, so what is drawn is the sanitizer's
+    // refusal and never the tag it carried.
+    // The title is drawn as text: the harness throws on the attributes a screen
+    // may not set, so a screen that turned this string into an element would have
+    // failed at the call rather than at this assertion -- and no element of the
+    // tag it names exists anywhere under the row.
+    expect(one(row, 'coordinator-job-title').textContent).not.toBe('')
+    expect(walk(row).every((node) => node.tag !== 'img')).toBe(true)
+    expect(textOf(bodyOf(row), 'coordinator-job-reason')).toBe('javascript:alert(1)')
+    expect(one(row, 'coordinator-job-detail').getAttribute('hidden')).toBe('')
   })
 })
 

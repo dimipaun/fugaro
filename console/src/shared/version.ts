@@ -220,8 +220,41 @@ export function budgetComputeSupported(version: string): boolean {
 }
 
 /**
- * meetsCliFloor is the one patch-level comparison both floors above are asked
- * by, so a rule learned on one of them cannot be missing from the other.
+ * RUNS_LIST_PAGE_CLI_FLOOR is the oldest CLI the Coordinator's job list may ask
+ * for a page from, by passing `runs ls --limit=N` and `--after=RUN-ID`.
+ *
+ * Both words are newer than the operation, and **one of them changed meaning**:
+ * `0.16.0` is the release that carries #1545, where `--limit` cuts what is
+ * *printed* after the sort, and `--after` becomes a cursor on the row's own
+ * `run_id`. In the 0.15 line `--after` is an unknown flag the command refuses
+ * outright, and `--limit` means "read only the newest N" -- so its document's
+ * `totals` are the page's and not the window's, and a screen that drew them
+ * under "the window holds" would draw the page's count as the window's. That is
+ * the one wrong number this section could draw, which is why the floor is asked
+ * before either word goes out rather than after a refusal comes back.
+ *
+ * It is a patch-level floor rather than a range membership for the reason the
+ * two above are: `0.15.2` is inside a minor this console reads and is below this
+ * one, so `SUPPORTED_CLI_MINORS` and `classifyCliVersion` cannot answer it.
+ */
+export const RUNS_LIST_PAGE_CLI_FLOOR = '0.16.0'
+
+/**
+ * runsListPageSupported answers whether one version line may be asked for a page
+ * of the run list, by comparing it against `RUNS_LIST_PAGE_CLI_FLOOR` at the
+ * patch level. The caller is `showCoordinator`'s job list in
+ * `src/renderer/entry.ts`: below the floor the section draws the console's own
+ * sentence naming the version it needs and spawns nothing, because a `--after`
+ * the CLI refuses is a read whose failure the operator cannot act on and a
+ * `--limit` whose `totals` are the page's is a figure this screen must not draw.
+ */
+export function runsListPageSupported(version: string): boolean {
+  return meetsCliFloor(version, RUNS_LIST_PAGE_CLI_FLOOR)
+}
+
+/**
+ * meetsCliFloor is the one patch-level comparison all three floors above are
+ * asked by, so a rule learned on one of them cannot be missing from the others.
  *
  * The order of the tests is the rule, and each refusal is on the safe side of a
  * spend. An unreadable line, a `dev` build and a prerelease are all `false`: the
