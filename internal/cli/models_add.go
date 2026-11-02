@@ -338,6 +338,6 @@ func modelsAddHandoff(cmd *cobra.Command, lc *localcfg.Config, id string) error 
 	return nil
 }
 
-// priceText is a rate as the file writes it: the shortest decimal that reads
-// back as the same number, so 1 is written 1 and never 1.000000.
+// A rate as the file writes it: the shortest decimal that reads back as the
+// same number, so 1 is written 1 and never 1.000000.
 func modelsPriceText(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }

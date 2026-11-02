@@ -147,7 +147,12 @@ func modelsUseFile(ctx context.Context, repo, project string) (string, error) {
 // named.
 func modelsUseCheck(lc *localcfg.Config, cfg *config.Config, path, repo, role, id string, table *pricing.Table) error {
 	name, p, claimed := config.ProviderFor(lc.Providers, id)
-	if !claimed && strings.Contains(id, "/") {
+	// A Claude model reaches Anthropic with no route at all, in either spelling
+	// a pin may carry (isClaudeModel), so the missing-route refusal is only for
+	// a vendor/model ID a route has not opened: telling the owner to open a
+	// route for a Claude ID would name a fix that does not exist (spec §6, §8).
+	claude := isClaudeModel(id)
+	if !claimed && !claude && strings.Contains(id, "/") {
 		return userErr("no route of the project config serves %s, so no run of %s could reach it: the owner opens one with `fugaro models add %s`, and a repository names a model the owner has opened and nothing more", config.CodeSpan(id), config.CodeSpan(repo), id)
 	}
 	if claimed && !p.AllowsData(repo) {
@@ -158,10 +163,14 @@ func modelsUseCheck(lc *localcfg.Config, cfg *config.Config, path, repo, role, i
 		if why == "" {
 			why = "the built-in price catalog does not price it for this route"
 		}
-		if claimed {
+		switch {
+		case claimed:
 			return userErr("%s has no price a run can use: %s. The owner gives it one with `fugaro models add %s --price-in <dollars per million tokens> --price-out <dollars per million tokens>`, which writes a model_prices entry in the project config", config.CodeSpan(id), why, id)
+		case claude:
+			return userErr("%s is a Claude model, which goes to Anthropic with no route, but the price table has no row for that spelling: %s. Pin the ID the table prices, such as claude-sonnet-5-5, or have a route claim and price this spelling", config.CodeSpan(id), why)
+		default:
+			return userErr("%s has no price a run can use: %s. The owner prices it in the project config before the repository may pin it", config.CodeSpan(id), why)
 		}
-		return userErr("%s has no price a run can use: %s. The owner prices it in the project config before the repository may pin it", config.CodeSpan(id), why)
 	}
 	if lc.Budget != nil && len(lc.Budget.AllowedModels) > 0 && !slices.Contains(lc.Budget.AllowedModels, id) {
 		return userErr("budget.allowed_models of the project config does not name %s, so no run of %s could use it: the owner names it there, or adds the model with `fugaro models add %s`", config.CodeSpan(id), config.CodeSpan(repo), id)

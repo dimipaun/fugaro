@@ -226,6 +226,47 @@ func TestModelsUseRefusesAProviderModelUnderOAuth(t *testing.T) {
 	}
 }
 
+// TestModelsUsePinsAClaudeModelWithNoRoute: a Claude ID needs no route of the
+// project config — it goes to Anthropic — so the missing-route refusal is for a
+// vendor/model ID a route has not opened, never for one of these. The pin is
+// written, and the price of the spelling the table carries is what lets it.
+func TestModelsUsePinsAClaudeModelWithNoRoute(t *testing.T) {
+	modelsUseHome(t)
+	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
+
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "claude-sonnet-5-5", "--yes")
+	if err != nil {
+		t.Fatalf("a Claude model with no route was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(readFileString(t, path), "coder: claude-sonnet-5-5") {
+		t.Errorf("the pin was not written:\n%s", readFileString(t, path))
+	}
+}
+
+// TestModelsUseRefusesAClaudeSpellingTheTableDoesNotPrice: the route's own
+// spelling of a Claude ID is a Claude ID, so the refusal says so and names the
+// price as the reason, rather than sending the owner to open a provider route
+// for a model that never takes one.
+func TestModelsUseRefusesAClaudeSpellingTheTableDoesNotPrice(t *testing.T) {
+	modelsUseHome(t)
+	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
+	before := readFileString(t, path)
+
+	_, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "anthropic/claude-sonnet-5-5", "--yes")
+	if err == nil {
+		t.Fatal("a spelling the price table does not carry was accepted")
+	}
+	if !strings.Contains(err.Error(), "Claude model") || !strings.Contains(err.Error(), "no row for that spelling") {
+		t.Errorf("the refusal does not say it is a Claude model with no price: %v", err)
+	}
+	if strings.Contains(err.Error(), "no route of the project config serves") {
+		t.Errorf("the refusal tells the owner to open a route for a Claude model: %v", err)
+	}
+	if got := readFileString(t, path); got != before {
+		t.Errorf("the refused switch wrote the file:\n%s", got)
+	}
+}
+
 // TestModelsUseNeverCommits: the change is prepared for the user to review, in
 // the working tree. Nothing is committed, staged or pushed — the file reaches a
 // run when the user's own branch is merged to the base branch (spec §6).
