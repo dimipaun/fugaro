@@ -17,10 +17,14 @@ package credsvc
 //     honoured only by the job whose repository it belongs to). A run that
 //     asked for another repository has no field to ask in, and a job account
 //     bound to another repository never reaches this function.
-//   - The permissions are the run's own set and this service adds none:
-//     github.RunTokenPermissions is the exported spelling of the set
-//     internal/gitprov/github's own provider mints with, so the service's
-//     tokens and the in-job ones are the same reach.
+//   - The permissions are the class's and this service adds none: a repository
+//     caller is issued github.RunTokenPermissions(), the exported spelling of
+//     the set internal/gitprov/github's own provider mints with, so the
+//     service's tokens and the in-job ones are the same reach — and a review
+//     caller, which the same file admits to this route, is issued CSR1's
+//     read-only set instead (mintPermissions, review.go; D883, D1065), because
+//     the run's set is the write set of the very repository the review is
+//     about.
 //   - The key that signs is the bundle's and nothing else. A bundle with no
 //     App key is a refusal (TestMintFailsClosedWithNoAppKeyInTheBundle) and
 //     never a fallback to the copy a job may still mount (D143).
@@ -229,14 +233,29 @@ func appKey(b *Bundle) (*rsa.PrivateKey, error) {
 }
 
 // mint answers one mint call. The caller has been verified and bound to a
-// repository before this is reached (ServeHTTP), so what is left is: read the
-// body, read the App key, resolve the repository, mint, and answer.
+// repository before this is reached (ServeHTTP), so what is left is: choose the
+// permission set, read the body, read the App key, resolve the repository,
+// mint, and answer.
 //
-// Every refusal is a state_unavailable refusal — the run halts on it (D143) and
-// never falls back to a key of its own — and every one is audited through
-// C1.13's auditor (auditMint), whether the mint issued or refused, because a
-// mint is one of the acts that file exists to record.
+// Every refusal of the mint's own is a state_unavailable refusal — the run
+// halts on it (D143) and never falls back to a key of its own — and every one,
+// the class's included, is audited through C1.13's auditor (auditMint), whether
+// the mint issued or refused, because a mint is one of the acts that file
+// exists to record. The class's refusal is the one that is not
+// state_unavailable: it is a fact about the run identity, and it is answered —
+// and recorded — with the pairing's own vocabulary.
 func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Request, id Identity, ja JobAccount) {
+	// The set comes first, and it is the class's (mintPermissions, D1065). Its
+	// refusal is the pairing's own, because it is the pairing's question about
+	// the run identity asked for this endpoint's second one: a review-class
+	// caller the claim rule refuses is refused here too rather than served the
+	// run's write set (refusePairing answers it with the vocabulary a pairing
+	// refusal already carries, so a run needs no new case).
+	perms, err := mintPermissions(id)
+	if err != nil {
+		s.refusePairing(ctx, w, id, PurposeMint, config.GitHubAppKeySecret, err)
+		return
+	}
 	req, err := readMintRequest(r)
 	if err != nil {
 		s.refuseMint(ctx, w, id, err.Error())
@@ -260,7 +279,7 @@ func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Reques
 	token, expires, err := github.MintInstallationToken(ctx, github.Options{
 		Owner: owner, Repo: repo, AppID: req.AppID, PrivateKey: key,
 		HTTP: s.cfg.Client, Now: s.now,
-	}, github.RunTokenPermissions())
+	}, perms)
 	if err != nil {
 		// The operator gets the class of the failure and, when GitHub
 		// answered, its status — and never a byte of GitHub's own text. Two
