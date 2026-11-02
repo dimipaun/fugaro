@@ -1103,3 +1103,52 @@ func TestReviewArtifactRefusesAHostileRunID(t *testing.T) {
 		}
 	}
 }
+
+// TestReviewArtifactRefusesAMalformedHead: head_sha is the commit the review
+// read, which is half of what makes a verdict a statement about ONE commit --
+// the coordinator compares it against the head it holds, and a git call at the
+// other end names it. Both the reader and the published schema hold it to Git's
+// object names: lowercase hex, forty characters or sixty-four, and nothing
+// else. A branch name, a tag, an abbreviated commit or one that differs only in
+// case is refused, because each of those is a different object than the one the
+// review claims to have read.
+func TestReviewArtifactRefusesAMalformedHead(t *testing.T) {
+	for _, tc := range []struct{ name, head string }{
+		{"empty", ""},
+		{"a short head", strings.Repeat("a", 39)},
+		{"a long head", strings.Repeat("a", 41)},
+		{"a sixty-three character head", strings.Repeat("a", 63)},
+		{"a sixty-five character head", strings.Repeat("a", 65)},
+		{"upper-case hex", strings.ToUpper(reviewJobHead)},
+		{"one upper-case hex letter", "A" + reviewJobHead[1:]},
+		{"a non-hex letter", strings.Repeat("g", 40)},
+		{"a branch name", "refs/heads/main"},
+		{"a tag", "HEAD"},
+		{"a leading space", " " + reviewJobHead},
+		{"a trailing newline", reviewJobHead + "\n"},
+	} {
+		art := reviewArtifactFixture(t)
+		art.HeadSHA = tc.head
+		data, err := json.Marshal(art)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := DecodeReviewArtifact(data); err == nil {
+			t.Errorf("the reader accepted %s as a head_sha: %q", tc.name, tc.head)
+		}
+	}
+	// Both lengths Git names are read, so the check holds the field to a commit
+	// rather than to one repository's hash: a SHA-256 object name is sixty-four
+	// hex (the same rule the central orchestrator's merge action carries).
+	art := reviewArtifactFixture(t)
+	for _, head := range []string{reviewJobHead, reviewJobOldHead, strings.Repeat("0f", 32), strings.Repeat("a", 64)} {
+		art.HeadSHA = head
+		data, err := json.Marshal(art)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := DecodeReviewArtifact(data); err != nil {
+			t.Errorf("the reader refused a commit %q: %v", head, err)
+		}
+	}
+}

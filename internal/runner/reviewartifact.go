@@ -549,6 +549,15 @@ func VerifyReviewArtifact(ctx context.Context, data []byte, signature string, wa
 // would act on.
 var reviewRunPattern = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`)
 
+// reviewHeadPattern is the shape of a commit, Git's two object-name lengths
+// (SHA-1 and SHA-256), spelled in the reader as well as in the published
+// schema. A head_sha is compared against the head the coordinator holds and is
+// named in a git call, so a branch name, an abbreviated commit or one that
+// differs only in case is a different object than the one the review claims to
+// have read -- and a string with a separator or a control character in it is
+// worse than that.
+var reviewHeadPattern = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+
 // DecodeReviewArtifact reads one artifact. It is strict and it closes every
 // vocabulary the shape has: an unknown field, a version this reader does not
 // read, a missing required field, a verdict that is not one of the three, or a
@@ -587,6 +596,9 @@ func DecodeReviewArtifact(data []byte) (ReviewArtifact, error) {
 	}
 	if !reviewRunPattern.MatchString(art.ReviewRun) {
 		return art, fmt.Errorf("%w: review_run is %q, and the launcher mints %s", ErrReviewArtifact, art.ReviewRun, reviewRunPattern)
+	}
+	if !reviewHeadPattern.MatchString(art.HeadSHA) {
+		return art, fmt.Errorf("%w: head_sha is %q, and a commit is %s", ErrReviewArtifact, art.HeadSHA, reviewHeadPattern)
 	}
 	// The effort is the one provenance field a run may honestly have nothing
 	// to say about (the level named none), so its absence is not a refusal --

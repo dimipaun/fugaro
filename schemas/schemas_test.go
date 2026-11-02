@@ -4781,6 +4781,23 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 	if err := sch.Validate(unset); err != nil {
 		t.Errorf("review.schema.json refuses an artifact whose reviewer carries no effort, which is what a run whose level named none writes: %v", err)
 	}
+	// head_sha names the commit the review read, so the document holds it to
+	// Git's object names -- lowercase hex, forty characters or sixty-four --
+	// rather than to a non-empty string: a branch name, a tag, an abbreviated
+	// commit or one that differs only in case is a different object than the one
+	// the review claims to have read.
+	head := strings.Repeat("a", 40)
+	if !bytes.Contains(data, []byte(`"head_sha":"`+head+`"`)) {
+		t.Fatalf("fixture lacks the head this test replaces: %s", data)
+	}
+	widened, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data,
+		[]byte(`"head_sha":"`+head+`"`), []byte(`"head_sha":"`+strings.Repeat("a", 64)+`"`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(widened); err != nil {
+		t.Errorf("review.schema.json refuses a sixty-four character commit, which is a SHA-256 repository's object name: %v", err)
+	}
 	for _, tc := range []struct {
 		name string
 		from string
@@ -4789,6 +4806,11 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 		{"an unknown field", `"base":"main"`, `"base":"main","extra":1`},
 		{"a local timestamp", `"created_at":"2026-11-02T09:30:00Z"`, `"created_at":"2026-11-02T10:30:00+01:00"`},
 		{"an empty effort", `"effort":"high"`, `"effort":""`},
+		{"a short head", `"head_sha":"` + head + `"`, `"head_sha":"` + strings.Repeat("a", 39) + `"`},
+		{"an upper-case head", `"head_sha":"` + head + `"`, `"head_sha":"` + strings.ToUpper(head) + `"`},
+		{"a head that is not hex", `"head_sha":"` + head + `"`, `"head_sha":"` + strings.Repeat("g", 40) + `"`},
+		{"a branch name where a commit belongs", `"head_sha":"` + head + `"`, `"head_sha":"refs/heads/main"`},
+		{"a hostile review_run", `"review_run":"20261102-093000-abcd"`, `"review_run":"../../etc/passwd"`},
 	} {
 		if !bytes.Contains(data, []byte(tc.from)) {
 			t.Fatalf("%s: fixture lacks the literal this test replaces: %s", tc.name, data)
