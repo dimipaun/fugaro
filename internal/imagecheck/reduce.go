@@ -1079,6 +1079,9 @@ func yarnPatchDescriptor(value string) (name, inner, patch string, ok bool) {
 		return "", "", "", false
 	}
 	name = value[:i]
+	if strings.Contains(name, ":") {
+		return "", "", "", false
+	}
 	inner, fragment, _ := strings.Cut(value[i+len("@patch:"):], "#")
 	inner = yarnPatchColon(inner)
 	innerName, _, locator := yarnRegistryVersion(inner)

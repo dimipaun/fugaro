@@ -646,6 +646,9 @@ func TestReduceYarnBerryPatch(t *testing.T) {
 	// are that package's, so the entry is refused rather than keyed under the
 	// name the header states.
 	refused(t, "yarn.lock", yarnBerryPatchEntry("evil-pkg@npm%3A1.0.0", "optional!builtin<compat/typescript>"), UnkeyedNonRegistry)
+	// An alias name carries a colon, and the plain alias is refused for it; the
+	// same name written as a patch's is the same alias, so it is refused too.
+	refused(t, "yarn.lock", "\"lodash@npm:evil@patch:lodash@npm%3Aevil@npm%3A1.0.0#optional!builtin<compat/typescript>\":\n  version: 1.0.0\n  resolution: \"lodash@npm:evil@patch:lodash@npm%3Aevil@npm%3A1.0.0#optional!builtin<compat/typescript>\"\n  checksum: 10c0/abcdef\n", UnkeyedNonRegistry)
 	// A patch the repository holds the bytes of names a path where a built-in
 	// one names `builtin<...>`, and those bytes are not in the fact: the entry
 	// is refused rather than keyed as the package's own version, which would
