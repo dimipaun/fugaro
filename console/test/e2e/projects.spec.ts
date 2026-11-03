@@ -94,6 +94,7 @@ import { SPAWN_LOG_ENV } from '../../src/main/spawnlog'
 import type { SpawnLogEntry } from '../../src/main/spawnlog'
 import type { JSONDoc } from '../../src/source/source'
 import { PROJECT_PANEL_KEYS, PROJECTS_BUSY, PROJECTS_THEMES } from '../../src/renderer/screens/projects'
+import { CLI_VERSION_BUILT_AGAINST, MODELS_LIST_CLI_FLOOR } from '../../src/shared/version'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
 import { expectGolden, expectGrounded } from '../support/goldens'
@@ -887,6 +888,22 @@ function tab(view: string): string {
   return `nav.console-views button.console-view[data-view="${view}"]`
 }
 
+/** readsOf is a spawn log as records: one line per child the console ran,
+ * written by `src/main/spawn.ts` before the child prints anything. It is the
+ * only place a read that should not have happened is visible from outside. */
+function readsOf(where: string): readonly SpawnLogEntry[] {
+  let text: string
+  try {
+    text = readFileSync(where, 'utf8')
+  } catch {
+    return []
+  }
+  return text
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => JSON.parse(line) as SpawnLogEntry)
+}
+
 test.describe('the Projects view in the dashboard', () => {
   test.describe.configure({ mode: 'serial' })
 
@@ -908,6 +925,15 @@ test.describe('the Projects view in the dashboard', () => {
     // is seeded -- which is what makes the panel's own refusal path reachable
     // here without a second stub.
     cli.seedModels({ document: MODELS })
+    // **The stub's own line is below the models read's floor**
+    // (`CLI_VERSION_BUILT_AGAINST` is 0.13.0 and `MODELS_LIST_CLI_FLOOR` is
+    // 0.16.0), so a view on it draws the console's floor sentence for the panel
+    // and spawns nothing at all: the `models ls --json` argv asserted below would
+    // then be a read this view never makes. The version the console reads is the
+    // stub's own `version.txt`, so this case raises it rather than installing a
+    // second stub -- and the case that asserts the floor sentence, below, is the
+    // one that leaves it where it is.
+    cli.setVersion(MODELS_LIST_CLI_FLOOR)
     // The spawn log is the operator's own opt-in (`SPAWN_LOG_ENV`) and the only
     // place a read that should not have happened is visible from outside: the
     // case below reads it to say which commands this view drove.
@@ -927,21 +953,6 @@ test.describe('the Projects view in the dashboard', () => {
     rmSync(scratch, { recursive: true, force: true })
   })
 
-  /** reads is the spawn log as records: one line per child the console ran,
-   * written by `src/main/spawn.ts` before the child prints anything. */
-  function reads(): readonly SpawnLogEntry[] {
-    let text: string
-    try {
-      text = readFileSync(spawnLog, 'utf8')
-    } catch {
-      return []
-    }
-    return text
-      .split('\n')
-      .filter((line) => line.trim() !== '')
-      .map((line) => JSON.parse(line) as SpawnLogEntry)
-  }
-
   test('answers the tab in the frame it was opened in, and reads one command', async () => {
     // Live, the view this console opens on, makes one `runs ls --json` of its own
     // -- the rigor join -- and that read is not this case's subject. Waiting for
@@ -950,11 +961,11 @@ test.describe('the Projects view in the dashboard', () => {
     // second record here, and one that asked as the tab was opened would be
     // seen whatever the boot had done.
     await expect
-      .poll(() => reads().filter((record) => record.argv[1] === 'runs').length, {
+      .poll(() => readsOf(spawnLog).filter((record) => record.argv[1] === 'runs').length, {
         message: 'the Live view never made its rigor join',
       })
       .toBeGreaterThan(0)
-    const before = reads().length
+    const before = readsOf(spawnLog).length
 
     // **The click's own frame.** The tab is pressed and the section drawn in the
     // same turn of the event loop, with nothing awaited in between: the mark,
@@ -1014,7 +1025,7 @@ test.describe('the Projects view in the dashboard', () => {
     // And the reads behind that drawing: `budget show` and `models ls`, the two
     // commands this tab's two sections name, and **no `runs` read at all**
     // since this view was opened.
-    const asked = reads()
+    const asked = readsOf(spawnLog)
       .slice(before)
       .map((record) => record.argv.slice(1))
     expect(asked).toContainEqual(['budget', 'show', '--json', '--project', 'e2e'])
@@ -1023,5 +1034,69 @@ test.describe('the Projects view in the dashboard', () => {
     // installation's `--project`, and nothing a renderer chose.
     expect(asked).toContainEqual(['models', 'ls', '--json', '--project', 'e2e'])
     expect(asked.filter((argv) => argv[0] === 'runs')).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The models panel below the models read's floor.
+// ---------------------------------------------------------------------------
+
+/** The case below is the other half of the version the case above seeds: a view
+ * whose CLI has no `models ls` at all. `inRangeCliStub` prints
+ * `CLI_VERSION_BUILT_AGAINST` (0.13.0), which is inside the console's supported
+ * range and below `MODELS_LIST_CLI_FLOOR` (0.16.0), so this is the state the
+ * panel's floor sentence was written for -- a 0.15.x CLI, which would answer
+ * `unknown command "ls"`, is the same state one minor up. */
+test.describe('the models panel below the models read floor', () => {
+  test.describe.configure({ mode: 'serial' })
+
+  let app: ElectronApplication
+  let page: Page
+  let cli: CliStub
+  let scratch: string
+  let spawnLog: string
+
+  test.beforeAll(async () => {
+    cli = inRangeCliStub()
+    cli.seedActiveInstallation()
+    cli.seedSpend({ budget: { document: BUDGET } })
+    // **No models document is seeded, and none is needed**: the floor is asked
+    // before the read goes out, so the panel must never reach the stub.
+    scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-models-floor-'))
+    spawnLog = join(scratch, 'spawn.jsonl')
+    app = await launchConsole({
+      args: cli.launchArgs(consoleDir),
+      env: { ...cli.env, [SPAWN_LOG_ENV]: spawnLog },
+    })
+    page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+  })
+
+  test.afterAll(async () => {
+    await app?.close()
+    cli.remove()
+    rmSync(scratch, { recursive: true, force: true })
+  })
+
+  test('draws the console’s own floor sentence, and spawns no models read', async () => {
+    await page.click(tab('projects'))
+    // The tab is up -- the caps panel's own read landed -- and the models panel
+    // is the one part of it that is not read.
+    await expect(page.locator(`${THE_PROJECTS} h1.projects-project`)).toHaveText('example-project')
+    const panel = page.locator(`${THE_PROJECTS} section.projects-panel[data-panel="models"]`)
+    await expect(panel).toHaveAttribute('data-state', 'unavailable')
+    // The sentence is the console's own and names both versions: what the read
+    // needs and what this CLI is.
+    await expect(panel.locator('p.projects-because')).toHaveText(
+      `the models read needs fugaro ${MODELS_LIST_CLI_FLOOR} and this CLI is ${CLI_VERSION_BUILT_AGAINST}`,
+    )
+    // Nothing of a document, because there was no read to draw one from.
+    await expect(page.locator(`${THE_PROJECTS} .projects-models-route`)).toHaveCount(0)
+    // And the spawn log says the same from outside: this view drove no `models`
+    // child at all, so a panel that drew the sentence *after* asking would be a
+    // read this case sees.
+    const asked = readsOf(spawnLog).map((record) => record.argv.slice(1))
+    expect(asked).toContainEqual(['budget', 'show', '--json', '--project', 'e2e'])
+    expect(asked.filter((argv) => argv[0] === 'models')).toEqual([])
   })
 })
