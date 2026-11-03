@@ -204,7 +204,10 @@ func catalogBuildStep(t *testing.T, fb *gcpfake.Build, id string) map[string]any
 // prebuilt image is named and passed over rather than failing the others.
 func TestImageBuildWithACatalogBuildsTheEntry(t *testing.T) {
 	fb, gcs, _ := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
-	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+	stubCatalogProvider(t, map[string]string{
+		".fugaro/base.Dockerfile":  catalogBuildFetched,
+		".fugaro/other.Dockerfile": catalogBuildFetched,
+	})
 
 	out, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
 	if err != nil {
