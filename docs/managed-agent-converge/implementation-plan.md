@@ -1,6 +1,6 @@
 # The managed agent converge: implementation plan
 
-**Status: a design, and nothing is built.** The owner answered **D1011** (the command set) and **D1012** (the rules — a fixed deterministic gate over the plan, with no judgment calls by the agent) on 2026-11-01, and the tasks below are written to those answers; **D1013–D1026 are still recommendations** ([reconciliation.md](reconciliation.md) §3). A task whose decision is answered differently is rewritten before it starts. **Nothing here may begin before D1013 (the cost bound on billable image builds) is answered** — it is the last of the three that decide what the rest of the plan is, and M4 reads its answer.
+**Status: a design, and nothing is built.** The owner answered **D1011** (the command set) and **D1012** (the rules — a fixed deterministic gate over the plan, with no judgment calls by the agent) on 2026-11-01, and the tasks below are written to those answers; **D1013–D1026 were answered on 2026-11-03, every one as recommended** ([reconciliation.md](reconciliation.md) §3), so every task is written to its answer. D1013 (the `max_image_builds` cost bound in a version-3 marker) is answered, so M4 may start. The build is the 0.18.0 theme.
 
 Each task touches at most twelve files, names its tests, starts with a **red step**, and carries a **SEC** flag where it moves a security boundary. **Where this plan and [spec.md](spec.md) disagree, the reconciliation wins**; where a task and the reconciliation disagree, the reconciliation wins.
 
