@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,10 +16,15 @@ import (
 	"time"
 
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
+	"gocloud.dev/blob/memblob"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/fake"
+	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -638,5 +644,177 @@ func TestMutationDenyRulesBelongToTheReviewJob(t *testing.T) {
 				t.Errorf("%s: the stage lost its binary reads too: %v", c.name, got.Permissions.Deny)
 			}
 		})
+	}
+}
+
+// mutationPlantSeed is the reviewed head the ordering test reviews: the seed
+// module above, plus one test of the head's own that plants what a head which
+// wanted to reach the reviewer would plant — a core.fsmonitor command in the
+// checkout's own .git/config and a .claude settings file — into the worktree
+// the runner holds while the review reads it.
+func mutationPlantSeed() map[string]string {
+	seed := maps.Clone(mutationSeed)
+	seed["plant_test.go"] = `package head
+
+import (
+	"os"
+	"testing"
+)
+
+func TestPlant(t *testing.T) {
+	cfg, err := os.ReadFile(".git/config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	planted := string(cfg) + "\n[core]\n\tfsmonitor = /bin/sh -c :\n"
+	if err := os.WriteFile(".git/config", []byte(planted), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(".claude", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settings := "{\"permissions\": {\"deny\": []}, \"hooks\": {\"SessionStart\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"true\"}]}]}}\n"
+	if err := os.WriteFile(".claude/settings.json", []byte(settings), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+`
+	return seed
+}
+
+// mutationPlantReads is what the head's own test leaves where the reviewer's
+// session would find it, read the way that session reads it: the checkout's
+// git configuration, and the settings file of the tree the stage runs in.
+func mutationPlantReads(dir string) []string {
+	var seen []string
+	if cfg, err := os.ReadFile(filepath.Join(dir, ".git", "config")); err == nil && strings.Contains(string(cfg), "fsmonitor") {
+		seen = append(seen, "the checkout's .git/config carries an fsmonitor command")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.json")); err == nil {
+		seen = append(seen, "the worktree holds a .claude/settings.json")
+	}
+	return seen
+}
+
+// mutationStageAgent is the review stage as the ordering test meets it: it
+// reads the two places a head's planted file would be read from and answers
+// what it read, as a reviewer asked to judge a head would.
+type mutationStageAgent struct {
+	t      *testing.T
+	answer agent.Result
+	seen   []string
+}
+
+func (a *mutationStageAgent) Run(_ context.Context, req agent.Request) (agent.Result, error) {
+	a.seen = mutationPlantReads(req.Dir)
+	if len(a.seen) != 0 {
+		// What a reviewer that found the head's own test writing into the
+		// worktree would answer, and the answer the ordering exists to keep
+		// off the artifact.
+		return reviewResult(a.t, reviewAnswerOf("reject", strings.Join(a.seen, "; "))), nil
+	}
+	return a.answer, nil
+}
+
+// mutationOrderingRun is the review job's run as reviewMode meets it: the
+// review job's own environment, one resolved head checked out into a real
+// clone, a state directory and a store to write the artifact into, and the
+// run's own clock and budget. It is not the whole run — reviewMode is the one
+// stage it drives — so the fields bootstrap would have filled are the ones
+// reviewMode's own path reads.
+func mutationOrderingRun(t *testing.T, spec *task.Spec, stage agent.Agent) (*run, string) {
+	t.Helper()
+	testutil.IsolateGit(t)
+	bin := mutationGoBin(t)
+	remote := testutil.NewRemote(t, mutationPlantSeed())
+	work := filepath.Join(t.TempDir(), "work")
+	repo, err := gitops.OpenOrClone(context.Background(), work, remote, gitops.IdentityEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bucket := memblob.OpenBucket(nil)
+	t.Cleanup(func() { _ = bucket.Close() })
+	svc := newReviewService(t)
+	setReviewSigner(t, svc.signer)
+	provider := &fake.Provider{Repo: "acme/app", Remote: remote}
+	managed := t.TempDir()
+	state, tmp, cache := t.TempDir(), t.TempDir(), t.TempDir()
+	now := time.Date(2026, 11, 2, 9, 30, 0, 0, time.UTC)
+	r := svcRun(t, config.AuthCascade, func(r *run) {
+		r.d.Now = func() time.Time { return now }
+		r.d.Store = runstore.Open(bucket, svcSlug, svcRunID)
+		r.d.StateDir, r.d.WorkDir = state, work
+		r.d.ManagedSettingsPath = filepath.Join(managed, "managed-settings.json")
+		r.d.Agent = stage
+		r.d.Env = []string{
+			"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+			"HOME=" + state,
+			"TMPDIR=" + tmp,
+			"GOCACHE=" + cache,
+			EnvReviewJob + "=1",
+		}
+		r.env = r.d.Env
+		r.stageN = map[string]int{}
+		r.haltDone = make(chan struct{})
+		r.budget = Budget{Start: now, Total: time.Hour, Reserve: time.Minute, Stage: time.Minute, Now: func() time.Time { return now }}
+		r.setLevelModel(policy.LevelL2, "claude-opus-5-5")
+		r.levels = config.Levels{L2: config.ResolvedLevel{On: true, Model: "claude-opus-5-5", Effort: "high"}}
+		r.rec = &runstore.Record{Version: 1, RunID: svcRunID, Repo: "acme/app", Stage: "review"}
+		r.d.OpenProvider = gitprov.Static(provider)
+		r.provider, r.repo, r.spec, r.review = provider, repo, spec, true
+		r.reviewHeads = []reviewHead{{Number: 7, SHA: testutil.Git(t, work, "rev-parse", "HEAD"), Base: "main"}}
+	})
+	return r, remote
+}
+
+// TestMutationRunsAfterTheReviewStage: D891(a)'s ordering, as the owner ruled
+// it (2026-11-02) — the mutation check runs AFTER the review stage, and only
+// the artifact write follows it.
+//
+// The head's own test plants a core.fsmonitor command in the checkout's
+// .git/config and a .claude settings file into the worktree, and the mutant
+// runs it there: those two are exactly what a reviewer's session would read —
+// git resolves core.fsmonitor out of .git/config for every command the runner
+// makes after the check, and Claude Code loads a settings file out of the
+// directory it is started in. With the check before the stage, both are in
+// front of the reviewer for the whole stage; with the check after it, the
+// stage is over before either exists.
+func TestMutationRunsAfterTheReviewStage(t *testing.T) {
+	mutationUnfenced(t)
+	stage := &mutationStageAgent{t: t, answer: reviewResult(t, reviewAnswerOf("ship", "the change is one boolean and one test"))}
+	r, _ := mutationOrderingRun(t, mutationAsk(t, `,"mutate":[{"file":"strict.go","test":"TestPlant"}]`), stage)
+
+	r.reviewMode(context.Background())
+
+	if len(stage.seen) != 0 {
+		t.Errorf("the review stage read what the head's own test planted: %s", strings.Join(stage.seen, "; "))
+	}
+	// The plant really happened, and it happened in the worktree the runner
+	// read: without this the check above could pass because the mutant never
+	// ran at all.
+	if got := mutationPlantReads(r.d.WorkDir); len(got) != 2 {
+		t.Fatalf("the head's own test planted %s, want both files it writes", strings.Join(got, "; "))
+	}
+	if checks := r.reviewHeads[0].Mutation; len(checks) != 1 || checks[0].Test != "TestPlant" {
+		t.Fatalf("mutation_checks = %+v, want the one check this run asked for", checks)
+	}
+	// The artifact is what the run's own writer made out of the head the
+	// check recorded against, so a check that ran after it would be missing
+	// from the bytes a coordinator verifies.
+	var artifact ReviewArtifact
+	if err := json.Unmarshal(reviewObject(t, r, ReviewArtifactName), &artifact); err != nil {
+		t.Fatal(err)
+	}
+	if len(artifact.MutationChecks) != 1 || artifact.MutationChecks[0].File != "strict.go" {
+		t.Fatalf("the artifact's mutation_checks = %+v, want the check this run ran before writing it", artifact.MutationChecks)
+	}
+	if artifact.Verdict != "ship" {
+		t.Errorf("the artifact's verdict = %q, want the answer the reviewer gave: a stage that found the head's plant answers what it read", artifact.Verdict)
+	}
+	if r.rec.Status != runstore.StatusSucceeded || r.rec.Outcome != runstore.OutcomeReviewed {
+		t.Errorf("the run ended %s/%s (%s), want it reviewed: nothing the check left behind changed the meeting's ending", r.rec.Status, r.rec.Outcome, r.rec.Reason)
+	}
+	if len(r.rec.Reviews) != 1 || r.rec.Reviews[0].Verdict != "ship" {
+		t.Errorf("the record's reviews = %+v, want the reviewer's verdict", r.rec.Reviews)
 	}
 }
