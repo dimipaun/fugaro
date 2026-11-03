@@ -1642,3 +1642,39 @@ func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
 		}
 	})
 }
+
+// TestARefusedLaunchDeclaresNothing: the docker tag's refusal is the launch's
+// own judgement (D1149), and a launch that is refused is not a launch. The
+// declaration is the coordinator's record that this run is about to work, so a
+// refusal has to come before it and not only before the token: otherwise the
+// coordinator is told about a run that had already been refused, and a reader
+// of its record sees work that never existed.
+//
+// Mutation (move the call back below declareLaunch): the declarer is handed a
+// refused run.
+func TestARefusedLaunchDeclaresNothing(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, dockerCatalogYAML)
+	dockerCheckout(t, needsDocker)
+	env := memEnv(t, f)
+	spec := raceSpecAt(t, env, "20261103-100002-abcd")
+	declared := 0
+	installDeclarer(t, func(context.Context, *Cloud, string, *task.Spec) error {
+		declared++
+		return nil
+	})
+
+	_, err := launchRun(context.Background(), env, appSlug, spec, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "Cloud Run gen-2 has no Docker daemon") {
+		t.Fatalf("err = %v, want the docker tag's Cloud Run refusal", err)
+	}
+	if declared != 0 {
+		t.Errorf("the refused launch was declared to the coordinator %d time(s)", declared)
+	}
+	if startedAny(f) {
+		t.Fatal("a refused launch started a job")
+	}
+	if _, err := runstore.Open(env.bucket.Bucket, appSlug, spec.RunID).ReadLaunch(context.Background()); err == nil {
+		t.Error("a refused launch left a launch record behind")
+	}
+}

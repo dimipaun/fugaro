@@ -2973,6 +2973,20 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		rcancel()
 		return res, userErr("run %s was cancelled; start a new one", res.Run)
 	}
+	// The docker tag's rule, before anything of this launch is written or
+	// reported (D1149): a run whose job image the catalog gave the docker tag
+	// is refused here on a backend with no daemon, and on the VM backend the
+	// answer asks the backend for the socket. Before the mint below, so a
+	// refused launch has no token to drop, and before the declaration, which
+	// is the coordinator's record that this run is about to work — a refusal
+	// must leave nothing behind that says otherwise.
+	docker, err := catalogDockerAsk(ctx, env, spec)
+	if err != nil {
+		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		releaseClaim(rctx, env, s, holder)
+		rcancel()
+		return res, err
+	}
 	// The launch declares itself to the coordinator's record (P4), beside the
 	// claim it just won: the caller the task already names, the branch the run
 	// is about to work on and the release that branch targets. It is a
@@ -2990,18 +3004,6 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// build registers the coordinator's own writer.
 	if err := declareLaunch(hctx, env, slug, spec); err != nil && !errors.Is(err, rtdb.ErrPermission) {
 		fmt.Fprintf(launchWarn, "warning: the launch was not reported to the coordinator: %s\n", oneLine(err.Error()))
-	}
-	// The docker tag's rule, before anything of this launch is written to the
-	// bucket (D1149): a run whose job image the catalog gave the docker tag
-	// is refused here on a backend with no daemon, and on the VM backend the
-	// answer asks the backend for the socket. Before the mint below, so a
-	// refused launch has no token to drop.
-	docker, err := catalogDockerAsk(ctx, env, spec)
-	if err != nil {
-		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		releaseClaim(rctx, env, s, holder)
-		rcancel()
-		return res, err
 	}
 	// The run's budget identity: minted, sealed under a key drawn for this
 	// launch and left in the bucket before the execution can start, by the
