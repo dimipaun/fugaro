@@ -312,10 +312,12 @@ export const MODELS_LIST_CLI_FLOOR = '0.16.0'
  * project's models read, by comparing it against `MODELS_LIST_CLI_FLOOR` at the
  * patch level.
  *
- * **No caller passes it yet.** The caller is the Project tab's models panel in
- * `src/renderer/entry.ts`, and that panel is the task after this one: no spawn
- * passes `models ls` today, so this predicate is the rule that task asks rather
- * than a comparison it writes itself.
+ * **Its caller is the Project tab's models panel.** `showProjects` in
+ * `src/renderer/entry.ts` asks it before the panel's read goes out, below the
+ * floor the panel draws the console's own sentence naming the version it needs
+ * and spawns nothing -- the same shape `runsSummarySupported`'s fleet strip has
+ * one tab over. It is asked once per visit, with the tab's other gates, so no
+ * `models ls` this console makes is made against a CLI that cannot answer it.
  */
 export function modelsListSupported(version: string): boolean {
   return meetsCliFloor(version, MODELS_LIST_CLI_FLOOR)

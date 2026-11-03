@@ -728,6 +728,90 @@ section.projects-panel[data-state='read'] {
  * gone with the markup that drew them: a live row says `live` in its state
  * cell, and the repository list is one card. */
 
+/* ---- The models panel (console 0.119.0) ------------------------------------
+ *
+ * The Project tab's **second** read, `models ls --json`: the routes a call may
+ * go down, the models a run can name and the price catalog's age (design section
+ * 2.5). Its rules are here rather than in `flight-deck.css` because the redesign
+ * did not redraw this panel -- it did not exist -- and because the panel is the
+ * shape the screen already draws: one panel box (`section.projects-panel`,
+ * above), two lists of rows with a figure beside a name, and the connector words
+ * that say which repositories a route takes. **Nothing here is coloured**: a
+ * route's fee, a model's price and the catalog's staleness are readings the
+ * document makes, and the panel draws `stale` as a word the stylesheet must not
+ * be the only channel for (section 3.5).
+ */
+
+ul.projects-models-route-list,
+ul.projects-models-list {
+  display: grid;
+  gap: var(--space-2xs);
+  margin-block: var(--space-2xs) var(--space-md);
+}
+
+li.projects-models-route,
+li.projects-models-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  min-height: var(--row-height);
+  padding-block: var(--space-2xs);
+  border-bottom: var(--rule-width) solid var(--border);
+}
+
+h3.projects-models-heading {
+  margin-block-end: var(--space-2xs);
+  font-size: var(--font-size-sm);
+  font-weight: var(--weight-semibold);
+}
+
+/* Identity: a route's name and host, a model's id and a route's `base_url` are
+ * compared character by character, so they are drawn mono and their figures
+ * tabular (`projects-number`, above) -- the design's section 3.7. A `base_url`
+ * is text here and not a destination: nothing in this theme underlines it, and
+ * the panel offers no link. */
+span.projects-models-route-name,
+span.projects-models-route-host,
+span.projects-models-route-base,
+span.projects-models-id {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+/* The panel's muted half: a route's kind, the two words that introduce its
+ * lists, the route a model comes from, the repositories an allow-list names and
+ * the catalog's date and age. Two hooks are **not** in this group: the staleness
+ * word, which is the one word of the panel a reader is meant to catch, and a
+ * route's `projects-models-route-note`, which is the CLI's own sentence about
+ * the route and is drawn the way `projects-because` is — at the body size, by
+ * the rule below and not by inheriting the row's, so a document's explanation
+ * reads as prose rather than as a muted qualifier. */
+span.projects-models-route-kind,
+span.projects-models-claims-word,
+span.projects-models-to-word,
+span.projects-models-route-of,
+span.projects-models-claim,
+span.projects-models-allow,
+span.projects-models-to-every,
+span.projects-models-to-none,
+span.projects-models-catalog-checked,
+span.projects-models-catalog-age {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+span.projects-models-route-note {
+  font-size: var(--font-size-base);
+}
+
+p.projects-models-catalog {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+}
+
 /* ---- Run detail -----------------------------------------------------------
  *
  * The Run screen's header, its status strip, its stage timeline, its ledger, its

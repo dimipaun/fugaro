@@ -594,9 +594,10 @@ exported: it is the sentence a row draws, not a vocabulary anything reads.
 
 ### 2.5 Project — `console/src/renderer/screens/projects.ts`
 
-Seven panels, each `section.projects-panel` carrying `data-panel`, `data-state` and
-(where there is one) `data-operation`: `caps`, `kill`, `repositories`, `accounts`,
-`secrets`, `policy`, `enrollment`. **The panel's state is a word as well as a frame**:
+Seven panels of the tab's first read, each `section.projects-panel` carrying `data-panel`,
+`data-state` and (where there is one) `data-operation`: `caps`, `kill`, `repositories`,
+`accounts`, `secrets`, `policy`, `enrollment` — and an **eighth panel**, `models`, which
+belongs to the tab's **second** read and is filled on its own (see below). **The panel's state is a word as well as a frame**:
 `span.projects-state` draws `read`, `not read`, or the design's word for a card this CLI
 cannot read at all — `locked` — so no rule has to carry a state on a tone alone (§3.5).
 
@@ -604,19 +605,25 @@ cannot read at all — `locked` — so no rule has to carry a state on a tone al
 2026-10-31: that list "is slow and serves no purpose there"). `runs ls --json` is about
 248 KB and six seconds for a day of runs, and this screen started it before the caps —
 the whole of the panel's content — could be drawn, which is what made the tab about
-twenty seconds with nothing on screen. The screen makes **one** read, `budget show
---json`; the jobs table, the `projects-jobs-*` hooks beside it, `data-operation="runs.list"`
+twenty seconds with nothing on screen. The screen makes **two** reads — `budget show
+--json`, and `models ls --json` for the models panel of console 0.119.0 — and each has its
+own section, its own mark and its own refusal; the jobs table, the `projects-jobs-*` hooks
+beside it, `data-operation="runs.list"`
 and the two repository claims the run list carried (the enrolled-and-seen split and the
 "seen, not enrolled" card) all leave the vocabulary with it. The repositories panel draws
 the cap document's own `repos` and says nothing about which of them have run: a repository
 enrolled with no run is not the same fact as a repository that ran with no cap row.
 
 **The screen's shell is `section.projects > div.projects-body > div.console-busy-slot`**,
-and the entry mounts it in the frame the tab is opened in. The mark, the skeleton and the
-`aria-busy` on `.projects-body` are `src/renderer/section.ts`'s (§2.11, and the console
-rule in `.claude/rules/console.md`): the section is dimmed while the read is out, never
-blanked, and says "still reading" after a quarter of a minute. A screen this session has
-already read is drawn at once, stamped `as of HH:MM` with a Refresh control.
+and the entry mounts it in the frame the tab is opened in. The models read has a section of
+its own beside it — `section.projects > div.projects-models > div.console-busy-slot` — and
+it is a **sibling** of the body rather than a child of it, because `fillProjects` appends
+the seven panels to the body and a host inside it would push the models panel ahead of
+them. The mark, the skeleton and the `aria-busy` on each section's own host are
+`src/renderer/section.ts`'s (§2.11, and the console rule in `.claude/rules/console.md`):
+the section is dimmed while its read is out, never blanked, and says "still reading" after
+a quarter of a minute. A screen this session has already read is drawn at once, stamped
+`as of HH:MM` with a Refresh control.
 
 | Group | Class hooks |
 |---|---|
@@ -627,10 +634,11 @@ already read is drawn at once, stamped `as of HH:MM` with a Refresh control.
 | Repositories | `projects-repos`, `projects-repo-card`, `projects-repo-card-title`, `projects-repo-list`, `projects-repo-enrolled`, `projects-repo-card-none` |
 | Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-account-none`, `projects-accounts-note` |
 | Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed`, `projects-secret-bound`, `projects-secret-bound-word`, `projects-secrets-managed` |
+| Models | `projects-models`, `projects-models-body`, `projects-models-heading`, `projects-models-route-list`, `projects-models-route`, `projects-models-route-name`, `projects-models-route-kind`, `projects-models-route-host`, `projects-models-route-fee`, `projects-models-claims`, `projects-models-claims-word`, `projects-models-claim`, `projects-models-to`, `projects-models-to-word`, `projects-models-to-every`, `projects-models-to-none`, `projects-models-allow`, `projects-models-route-base`, `projects-models-route-note`, `projects-models-list`, `projects-models-row`, `projects-models-id`, `projects-models-route-of`, `projects-models-input`, `projects-models-output`, `projects-models-catalog`, `projects-models-catalog-checked`, `projects-models-catalog-age`, `projects-models-catalog-stale` |
 
 `data-*`: `data-theme`; `data-panel`; `data-state` — **the panel states are
 `read`, `unavailable`, `not-built`**; `data-operation`
-(`budget.show|accounts.inventory|secrets.inventory`, absent on `policy` and
+(`budget.show|accounts.inventory|secrets.inventory|models.list`, absent on `policy` and
 `enrollment`); `data-scope` (`global|defaults|repo`, on a caps row and on a kill row);
 `data-slug` (the same two rows); `data-killed` (`true`|`false` on a kill row, and `true` on
 the banner a killed row carries); `data-kind` (`enrolled` alone, on a repository card —
@@ -681,6 +689,30 @@ drawn with their own "not read" sentence and no list at all — and the secrets 
 `p.projects-secrets-managed` sentence ("All managed by fugaro.") waits for a document whose
 every entry says so.
 
+**The models panel is read-only, and it is the tab's second section** (console 0.119.0, the
+owner's ruling of 2026-11-02). `div.projects-models` is the host its read is drawn into,
+with its own `div.console-busy-slot` and its own mark — `models ls --json` is offline and
+cheap and does not wait on `budget show`, so the two sections paint as each answer lands
+and neither holds the other. Below `MODELS_LIST_CLI_FLOOR` (0.16.0) the visit spawns
+nothing and the panel is `unavailable` with the console's own sentence naming the version
+it needs. `div.projects-models-body` then holds the two lists: `ul.projects-models-route-list`
+of `li.projects-models-route` and `ul.projects-models-list` of `li.projects-models-row`,
+under the two `h3.projects-models-heading`s. A route draws its name, kind and host, the
+models it claims (`span.projects-models-claim`, introduced by `projects-models-claims-word`),
+the fee it adds (`projects-models-route-fee`, drawn only where it adds one), and **which
+repositories may send data to it as a sentence**: `projects-models-to-word` then
+`projects-models-to-every` (`open to every repository`), `projects-models-to-none`
+(`no repository`) or the `projects-models-allow` list itself. A model draws its id, the
+route that serves it (`projects-models-route-of`, or the console's `no route`) and both
+prices (`projects-models-input`, `projects-models-output`): a price the document does not
+carry is `n/a` and **never `$0`**, which would draw an unknown model as a free one. The
+catalog's own line is `p.projects-models-catalog`: the date, the age in days and
+`stale`/`current` (`projects-models-catalog-stale`) as a **word**, so no rule carries that
+state on a tone alone. A route's `base_url` and `note` are drawn as text and are **never
+offered as links** — a link built from a document's string is a navigable attribute the
+document wrote — and the panel has no control of any kind: nothing under
+`div.projects-models` adds, removes or uses a model.
+
 **`projects-accounts-note` is a hook no document this CLI produces can reach.** `fugaro
 accounts ls --json` writes `note` with `omitempty` and answers `complete: false` whenever
 that note is non-empty (`internal/cli/accounts.go`), and the screen builds the accounts
@@ -691,8 +723,9 @@ hook is emitted by the code and reachable by no feed today; it becomes reachable
 `complete: true` and a non-empty `note` can arrive together, which is why it stays in the
 vocabulary rather than being deleted.
 
-Readings: money (`usd`) for the reserve and the caps; counts for the panel counts and the
-secret versions. **No reading is a time on this screen** — every date is text, and no cell
+Readings: money (`usd`) for the reserve, the caps and the models panel's two prices; counts
+for the panel counts, the secret versions and the price catalog's age in days; a percent for
+a route's fee. **No reading is a time on this screen** — every date is text, and no cell
 of this screen carries a rigor mode: the run detail owns that answer (§2.6), and the jobs
 row that used to repeat it went with the run list.
 
@@ -2031,7 +2064,7 @@ the `ElementLike` interface is untouched (a media query is not a DOM write).
 | Panel / section title (`projects-title`, `run-panel-title`, `spend-account-title`) | `--font-size-md` (15px) | 600 | sans |
 | Table header (`projects-repos-label`, `run-log-time`, a column caption) | `--font-size-xs` (11px), uppercase, letter-spaced | 500 | sans |
 | Row text, labels, controls | `--font-size-sm` (12px) — the dense default | 400 | sans |
-| Screen prose (`live-note`, `spend-note`, `spend-warning`, `projects-because`, `run-warning`, and the two Projects note hooks — `projects-note`, `projects-accounts-note`, §2.5) | `--font-size-base` (13px) | 400 | sans |
+| Screen prose (`live-note`, `spend-note`, `spend-warning`, `projects-because`, `run-warning`, and the Projects note hooks — `projects-note`, `projects-accounts-note` and a route's `projects-models-route-note`, §2.5) | `--font-size-base` (13px) | 400 | sans |
 | **Every number, id, slug, path, timestamp and log line** | `--font-size-sm` | 400 | `--font-mono` with `font-variant-numeric: tabular-nums` |
 
 Money is always tabular and right-aligned, in mono, with the `$` inside the same cell —

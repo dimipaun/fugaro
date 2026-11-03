@@ -35,8 +35,17 @@
 // screen no longer reads, and a repository listed with no run is not the same
 // fact as a repository running with no cap row (`repositoriesBecause`).
 //
-// **`budget show` is the screen's only read**, about a second on the owner's
-// installation, and the entry draws the whole panel from it.
+// **`budget show` is the screen's first read**, about a second on the owner's
+// installation, and the entry draws the seven panels below from it -- the whole
+// of the tab but the models section.
+//
+// **The models panel is the screen's second read** (console 0.119.0, the
+// owner's ruling of 2026-11-02): `models ls --json`, drawn by
+// `buildProjectsModels`/`fillProjectsModels` rather than by the seven-panel
+// model, because it lands apart from `budget show` and neither read waits for
+// the other. It is **read-only**: it draws the project's routes, the models a
+// run can name, the prices the document carries and the price catalog's age, and
+// it has no control that adds, removes or uses a model.
 //
 // **The secrets inventory, and a fact about this build's reader.** The document
 // `secrets ls --json` prints is a **bare JSON array** (`console/docs/
@@ -70,6 +79,13 @@ import { UNAVAILABLE_MARK, measured, readNumber, unavailable } from '../../share
 import type { Reading } from '../../shared/availability'
 import type { OperationName } from '../../main/ipc'
 import type { KillView } from '../../shared/schema'
+import type {
+  ModelsListCatalog,
+  ModelsListModel,
+  ModelsListRoute,
+  ModelsListView,
+} from '../../shared/schema'
+import { MODELS_LIST_CLI_FLOOR } from '../../shared/version'
 import { nameableText, sanitizeRefusal, sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
 import type { JSONDoc } from '../../source/source'
@@ -93,6 +109,7 @@ export const PROJECTS_SOURCE_LINES: Readonly<Record<string, string>> = Object.fr
   'budget.show': 'fugaro budget show --json',
   'accounts.inventory': 'fugaro accounts ls --json',
   'secrets.inventory': 'fugaro secrets ls --json',
+  'models.list': 'fugaro models ls --json',
 })
 
 /**
@@ -124,7 +141,12 @@ export const REPOSITORIES_SOURCE_LINE = PROJECTS_SOURCE_LINES['budget.show'] as 
 export const SECRETS_ARRAY_NOTE =
   'the CLI prints `secrets ls --json` as a bare JSON array; this build reads a line that is not a JSON object as a notice (json-contract section 10.13 rule 1), so the panel draws entries only when a source hands it the parsed array'
 
-/** ProjectsPanelKey is the seven panels, in the order they are drawn. */
+/** ProjectsPanelKey is the seven panels the tab's first read builds, and the
+ * eighth panel the models read builds: `models` belongs to this union because it
+ * is drawn through the same `panelShell`, but it is deliberately **not** a
+ * member of `PROJECT_PANEL_KEYS` -- that tuple is the model's own panel list, and
+ * the models panel is a second read's, drawn by `fillProjectsModels` rather than
+ * by `fillProjects`. */
 export type ProjectsPanelKey =
   | 'caps'
   | 'kill'
@@ -133,9 +155,11 @@ export type ProjectsPanelKey =
   | 'secrets'
   | 'policy'
   | 'enrollment'
+  | 'models'
 
 /** PROJECT_PANEL_KEYS is that list as a value: the model carries one panel per
- * member and a test walks it. */
+ * member and a test walks it. It is the seven the tab's first read builds; the
+ * models panel is the eighth (`ProjectsPanelKey`) and a second read's. */
 export const PROJECT_PANEL_KEYS: readonly ProjectsPanelKey[] = Object.freeze([
   'caps',
   'kill',
@@ -317,6 +341,50 @@ export interface ProjectsModel {
   readonly accounts: ProjectAccounts
   readonly secrets: ProjectSecrets
   readonly warnings: readonly string[]
+}
+
+/**
+ * ProjectsModels is the models panel: the routes a call may go down, the models a
+ * run can name today and the built-in price catalog's age, drawn from
+ * `models ls --json` (contract section 6.18) -- the console half of the owner's
+ * ruling of 2026-11-02. It is a panel of its own rather than a member of
+ * `ProjectsModel` because it is a **second read's**: it lands apart from
+ * `budget show` and is filled by `fillProjectsModels`, so nothing about it waits
+ * on the budget and nothing about the budget waits on it.
+ *
+ * `panel` is drawn through the same `panelShell` every other panel is; the three
+ * lists are the document's own rows. `catalog` is `null` when no row in the
+ * document is priced from the catalog, which the contract says is "no
+ * catalog-priced model here" and not "no catalog".
+ */
+export interface ProjectsModels {
+  readonly panel: ProjectsPanel
+  readonly catalog: ModelsListCatalog | null
+  readonly routes: readonly ModelsListRoute[]
+  readonly models: readonly ModelsListModel[]
+}
+
+/**
+ * ProjectsModelsInputs is everything the models panel is built from.
+ *
+ * `document` is the **decoded** `models ls --json` view, or `null` when no
+ * document arrived -- a refusal, or a document this build's decoder refused.
+ * `because` is the CLI's own sentence (or the decoder's reason) for the case
+ * where `document` is `null`, and it is drawn through `drawnRefusal` like every
+ * other panel's reason.
+ *
+ * `tooOld` is the CLI floor (`modelsListSupported`): below it the tab spawns
+ * nothing, and the panel draws the console's own sentence naming the version it
+ * needs, with `version` the line the handshake read. The version is untrusted
+ * text, so it is interpolated here and the whole sentence is sanitized by
+ * `unavailablePanel` before it is stored, and drawn through `literal` (a text
+ * slot) and never as an element.
+ */
+export interface ProjectsModelsInputs {
+  readonly document: ModelsListView | null
+  readonly because: string | null
+  readonly tooOld: boolean
+  readonly version: string
 }
 
 // ---------------------------------------------------------------------------
@@ -691,6 +759,83 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
     accounts: projectAccounts,
     secrets: { entries: secretEntries, note: SECRETS_ARRAY_NOTE },
     warnings,
+  }
+}
+
+/**
+ * MODELS_FLOOR_WORD introduces the console's own sentence for a CLI below the
+ * models command's floor, and **its trailing space is the sentence's**: the
+ * version line follows it and the two are one string.
+ *
+ * `models ls` landed after v0.15.0 (`MODELS_LIST_CLI_FLOOR`), so a 0.15.x CLI has
+ * no such verb and answers `unknown command "ls"` -- a failure the operator can
+ * do nothing about. The floor is asked before the read goes out, and below it the
+ * panel spawns nothing and draws this.
+ */
+const MODELS_FLOOR_WORD = `the models read needs fugaro ${MODELS_LIST_CLI_FLOOR} and this CLI is `
+
+/** MODELS_NO_ROUTE_WORD, MODELS_EVERY_REPOSITORY_WORD and
+ * MODELS_NO_REPOSITORY_WORD are the console's own words for the three absences
+ * this panel draws, so a model no route serves, a route open to every repository
+ * and a route open to none are facts in words rather than blank cells. */
+const MODELS_NO_ROUTE_WORD = 'no route'
+const MODELS_EVERY_REPOSITORY_WORD = 'open to every repository'
+const MODELS_NO_REPOSITORY_WORD = 'no repository'
+
+/** MODELS_STALE_WORD and MODELS_CURRENT_WORD are the catalog's staleness as a
+ * word: the contract's `stale` flag says the price catalog is past its 30-day
+ * rule, and a rule keyed on a tone would carry the fact on colour alone
+ * (styling design section 3.5). */
+const MODELS_STALE_WORD = 'stale'
+const MODELS_CURRENT_WORD = 'current'
+
+/** MODELS_NO_PRICE is the reason a model row's absent price is drawn as `n/a`:
+ * the contract leaves `input_per_m`/`output_per_m` out on a row whose price is
+ * zero *or* unknown, so an absent price is an unknown here and never a `$0`. */
+const MODELS_NO_PRICE = 'the document carries no price for this model'
+
+/** MODELS_ROUTES_WORD, MODELS_MODELS_WORD, MODELS_CLAIMS_WORD and
+ * MODELS_TO_WORD are the console's own words for the three lists this panel
+ * draws, so a bare column of route names, of model ids or of repository names
+ * says what it is: which models a route claims, and which repositories may send
+ * their code down it. */
+const MODELS_ROUTES_WORD = 'routes'
+const MODELS_MODELS_WORD = 'models'
+const MODELS_CLAIMS_WORD = 'claims'
+const MODELS_TO_WORD = 'may send data to'
+
+/**
+ * buildProjectsModels turns the models read into the panel: the routes, the
+ * models and the catalog's age. It touches no element, so every rule below --
+ * the floor sentence, the read state and the count -- is testable in plain Node.
+ */
+export function buildProjectsModels(inputs: ProjectsModelsInputs): ProjectsModels {
+  if (inputs.tooOld) {
+    return {
+      panel: unavailablePanel(
+        'models',
+        'models',
+        'models.list',
+        `${MODELS_FLOOR_WORD}${inputs.version}`,
+      ),
+      catalog: null,
+      routes: [],
+      models: [],
+    }
+  }
+  if (inputs.document === null) {
+    return {
+      panel: unavailablePanel('models', 'models', 'models.list', inputs.because ?? absent('models.list', undefined)),
+      catalog: null,
+      routes: [],
+      models: [],
+    }
+  }
+  return {
+    panel: readPanel('models', 'models', 'models.list', inputs.document.routes.length + inputs.document.models.length),
+    catalog: inputs.document.catalog,
+    routes: inputs.document.routes,
+    models: inputs.document.models,
   }
 }
 
@@ -1103,7 +1248,162 @@ const PANEL_BODIES: Readonly<Record<ProjectsPanelKey, (factory: ScreenFactory, m
     // no count. Their reason is the frame's own `because`.
     policy: () => null,
     enrollment: () => null,
+    // The eighth panel is this screen's **second read's**, and it is not drawn
+    // from a `ProjectsModel` at all: `fillProjectsModels` draws it into a host
+    // of its own when `models ls` answers, so there is no body here to give it.
+    models: () => null,
   })
+
+/**
+ * modelsPrice is a model row's price with its state: the figure the document
+ * carries, or an absent one drawn `n/a` with its reason. The contract leaves the
+ * key out on a row whose price is zero *or* unknown (`ModelsListModel`), so an
+ * absent price is an unknown here and **never a `$0`**, which would draw an
+ * unknown model as a free one.
+ */
+function modelsPrice(value: number | null): Reading {
+  return value === null ? unavailable(MODELS_NO_PRICE) : measured(value)
+}
+
+/**
+ * modelsRouteLine is one route of the project: its name, kind and host, the
+ * models it claims, what it adds to every charge, the repositories whose code
+ * may be sent down it, and the `base_url` and `note` the document carries.
+ *
+ * **`base_url` and `note` are drawn as text and are never offered as links.**
+ * `base_url` is a free string from the document, and a link built from it would
+ * be a navigable attribute a document wrote -- the one door `putLink`
+ * (`../app.ts`) exists to keep shut -- while a `note` is the CLI's own sentence
+ * about the route and not a destination at all. Both go through `putText` with
+ * their wire class, so markup, bidi controls and newlines are flattened to inert
+ * text rather than read as markup.
+ *
+ * **The host is drawn as the console's marker and not as the machine's name, and
+ * that is the decoder's own row for the key.** `routes[].host` is `host` in
+ * `WIRE_TEXT_CLASSES` (`../../shared/schema.ts`), and `sanitizeText`'s host class
+ * returns `HOST_PLACEHOLDER` for every machine name it is given, valid or not: a
+ * machine name is the one thing this console does not draw, whichever field it
+ * arrives in. **Another class cannot be asked instead**: `label` and
+ * `sentence` run the free-text rules, whose hostname and address rules replace a
+ * machine name before any class branch reads the value, so the value comes out as
+ * the marker there too (`sanitize.ts`). The row is recognised without it: the
+ * `name` above is the document's own word for the route, and the hostname itself
+ * is drawn whole inside the `base_url` beside it, which is a `url`.
+ */
+function modelsRouteLine(parent: ScreenElement, factory: ScreenFactory, route: ModelsListRoute): void {
+  const element = cell(parent, factory, 'li', 'projects-models-route')
+  textCell(element, factory, 'span', route.name, 'label', 'routes[].name', 'projects-models-route-name')
+  if (route.kind !== '') {
+    textCell(element, factory, 'span', route.kind, 'label', 'routes[].kind', 'projects-models-route-kind')
+  }
+  if (route.host !== '') {
+    textCell(element, factory, 'span', route.host, 'host', 'routes[].host', 'projects-models-route-host')
+  }
+  // The fee this route adds to every charge, drawn only where the entry adds
+  // one: `route_fee_pct` is `omitempty`, so a zero is "this route adds nothing"
+  // and drawing it would be a `0%` the document does not make a claim about.
+  if (route.feePct !== 0) {
+    numberCell(element, factory, 'span', measured(route.feePct), 'percent', 'projects-models-route-fee')
+  }
+  const claims = cell(element, factory, 'span', 'projects-models-claims')
+  literal(cell(claims, factory, 'span', 'projects-models-claims-word'), MODELS_CLAIMS_WORD)
+  for (const claimed of route.models) {
+    textCell(claims, factory, 'span', claimed, 'label', 'routes[].models[]', 'projects-models-claim')
+  }
+  const to = cell(element, factory, 'span', 'projects-models-to')
+  literal(cell(to, factory, 'span', 'projects-models-to-word'), MODELS_TO_WORD)
+  // **Which repositories may send data to this route is a fact in words**, in
+  // the three shapes the document can answer with: the console's own sentence
+  // for a route open to every one of them, the same for a route open to none,
+  // and the list itself otherwise. The flag is drawn and never inferred from
+  // `allow_data_to` being `['*']`, so a document that spelled it either way
+  // reads the same.
+  if (route.openToEveryRepo) {
+    literal(cell(to, factory, 'span', 'projects-models-to-every'), MODELS_EVERY_REPOSITORY_WORD)
+  } else if (route.allowDataTo.length === 0) {
+    literal(cell(to, factory, 'span', 'projects-models-to-none'), MODELS_NO_REPOSITORY_WORD)
+  } else {
+    for (const allowed of route.allowDataTo) {
+      textCell(to, factory, 'span', allowed, 'repository', 'routes[].allow_data_to[]', 'projects-models-allow')
+    }
+  }
+  if (route.baseUrl !== '') {
+    textCell(element, factory, 'span', route.baseUrl, 'url', 'routes[].base_url', 'projects-models-route-base')
+  }
+  if (route.note !== '') {
+    textCell(element, factory, 'span', route.note, 'sentence', 'routes[].note', 'projects-models-route-note')
+  }
+}
+
+/** modelsRowLine is one model a run can name: its id, the route that serves it
+ * -- or the console's own `no route` where the document carries none -- and its
+ * two prices, each drawn with its state. Nothing here is a control: the panel
+ * reads `models ls` and has no word that adds, removes or uses a model. */
+function modelsRowLine(parent: ScreenElement, factory: ScreenFactory, row: ModelsListModel): void {
+  const element = cell(parent, factory, 'li', 'projects-models-row')
+  textCell(element, factory, 'span', row.id, 'label', 'models[].id', 'projects-models-id')
+  const route = cell(element, factory, 'span', 'projects-models-route-of')
+  if (row.route === '') literal(route, MODELS_NO_ROUTE_WORD)
+  else putText(route, row.route, 'label', 'models[].route')
+  numberCell(element, factory, 'span', modelsPrice(row.inputPerM), 'usd', 'projects-models-input')
+  numberCell(element, factory, 'span', modelsPrice(row.outputPerM), 'usd', 'projects-models-output')
+}
+
+/** modelsPanelBody is the models panel's content: the routes, the models and the
+ * price catalog's own line. The catalog is drawn only where the document carries
+ * one -- the contract's `catalog` is null when no model in it is priced from the
+ * catalog, which is "no catalog-priced model here" and not "no catalog". */
+function modelsPanelBody(factory: ScreenFactory, model: ProjectsModels): ScreenElement {
+  const element = make(factory, 'div', 'projects-models-body')
+  literal(cell(element, factory, 'h3', 'projects-models-heading'), MODELS_ROUTES_WORD)
+  const routes = cell(element, factory, 'ul', 'projects-models-route-list')
+  for (const route of model.routes) modelsRouteLine(routes, factory, route)
+  literal(cell(element, factory, 'h3', 'projects-models-heading'), MODELS_MODELS_WORD)
+  const models = cell(element, factory, 'ul', 'projects-models-list')
+  for (const row of model.models) modelsRowLine(models, factory, row)
+  if (model.catalog !== null) {
+    const catalog = cell(element, factory, 'p', 'projects-models-catalog')
+    textCell(
+      catalog,
+      factory,
+      'span',
+      model.catalog.checkedAt,
+      'label',
+      'catalog.checked_at',
+      'projects-models-catalog-checked',
+    )
+    numberCell(catalog, factory, 'span', measured(model.catalog.ageDays), 'count', 'projects-models-catalog-age')
+    // **The catalog's staleness is a word and not a tone.** The document's flag
+    // says the price catalog is past its 30-day rule, and §3.5's rule for this
+    // tree is that no state is carried on colour alone: the date, the age in
+    // days and `stale`/`current` are the whole of the claim, and the stylesheet
+    // is free to give the word a tone as well.
+    const stale = cell(catalog, factory, 'span', 'projects-models-catalog-stale')
+    if (model.catalog.stale) literal(stale, MODELS_STALE_WORD)
+    else literal(stale, MODELS_CURRENT_WORD)
+  }
+  return element
+}
+
+/**
+ * fillProjectsModels draws the models panel into the host the frame gave it.
+ *
+ * It is the **second read's** filler, beside `fillProjects` rather than inside
+ * it: `models ls` lands apart from `budget show`, so this panel is drawn the
+ * moment its own document arrives and neither read waits for the other. The body
+ * is drawn only for a panel that **read a document** -- a panel below the floor
+ * or with no document draws its frame, its state and its reason, and no empty
+ * list, which is `fillProjects`'s rule for the seven.
+ *
+ * It appends to the host and not to the slot, for `fillProjects`'s reason: the
+ * slot is where the mark of the read that is still out lives, and a figure drawn
+ * into it would be exempt from the section's own dimming rule.
+ */
+export function fillProjectsModels(factory: ScreenFactory, model: ProjectsModels, host: ScreenElement): void {
+  const element = panelShell(factory, model.panel)
+  if (model.panel.state === 'read') element.append(modelsPanelBody(factory, model))
+  host.append(element)
+}
 
 /** PROJECTS_THEMES is the set of themes a screenshot golden is taken for, and
  * it is the same two the Live and Spend screens name: design section 6.1 rule 5
@@ -1121,31 +1421,52 @@ export type ProjectsTheme = (typeof PROJECTS_THEMES)[number]
 export const PROJECTS_BUSY = 'Reading the project’s budget…'
 
 /** PROJECTS_BODY_CLASS is the section the model is drawn into, and it is the
- * element the entry's busy mark belongs to: the screen's one read is the whole
- * of its content, so the section and the screen are the same box. */
+ * element the entry's busy mark belongs to: `budget show`'s seven panels are the
+ * whole of its content, so for that read the section and the screen are the same
+ * box. The models read draws into a section of its own instead
+ * (`PROJECTS_MODELS_CLASS`, a sibling), which is what keeps the two lifecycles
+ * apart. */
 export const PROJECTS_BODY_CLASS = 'projects-body'
 
+/** PROJECTS_MODELS_BUSY is the tab's **second** section's mark (console
+ * 0.119.0): `models ls --json`, the routes, the models and the price catalog.
+ * The two reads of this tab have a lifecycle each, so each mark names the read
+ * it belongs to -- a tab whose models read is out says which one is still out
+ * rather than wearing the budget's label. */
+export const PROJECTS_MODELS_BUSY = 'Reading the project’s models…'
+
+/** PROJECTS_MODELS_CLASS is the host the models read is drawn into: a sibling of
+ * `projects-body` inside the same `section.projects`, so the second read's mark
+ * and skeleton have an element of their own. One element wearing both claims
+ * would have whichever read landed first take the other's claim down
+ * (`COORDINATOR_WINDOW_SHAPE`'s reason, one tab over). */
+export const PROJECTS_MODELS_CLASS = 'projects-models'
+
 /** DrawnProjectsFrame is the screen with nothing in it: the root, the section a
- * read fills, and the slot the entry's busy mark goes in. */
+ * read fills, and the slot the entry's busy mark goes in. `models` and
+ * `modelsSlot` are the second section's pair, drawn the same way. */
 export interface DrawnProjectsFrame {
   readonly root: ScreenElement
   readonly body: ScreenElement
   readonly slot: ScreenElement
+  readonly models: ScreenElement
+  readonly modelsSlot: ScreenElement
 }
 
 /**
- * renderProjectsFrame draws the Projects shell: the root and one empty section,
- * and no figure at all.
+ * renderProjectsFrame draws the Projects shell: the root and its two empty
+ * sections, and no figure at all.
  *
- * **It is what makes the screen's one read answer in the frame it started in**,
- * on the owner's rule of 2026-10-31: the entry mounts this the moment the tab is
- * opened, puts the busy mark and the skeleton of the screen's shape in the
- * section, and `fillProjects` replaces the slot's contents when `budget show`
- * answers. Nothing here is drawn from a document, and the header is deliberately
- * **not** here -- the project, the mode and the day are the document's, and a
- * header drawn from nothing would name a project the console has not read.
+ * **It is what makes each of the screen's two reads answer in the frame it
+ * started in**, on the owner's rule of 2026-10-31: the entry mounts this the
+ * moment the tab is opened, puts each read's own busy mark and skeleton in its
+ * own section, and `fillProjects` / `fillProjectsModels` replace the slot's
+ * contents as `budget show` and `models ls` answer. Nothing here is drawn from a
+ * document, and the header is deliberately **not** here -- the project, the mode
+ * and the day are the document's, and a header drawn from nothing would name a
+ * project the console has not read.
  *
- * The root carries no `data-busy` of its own: the section does, so the
+ * The root carries no `data-busy` of its own: each section does, so the
  * stylesheet dims the section's children and leaves the mark and the header
  * around it alone.
  */
@@ -1154,8 +1475,14 @@ export function renderProjectsFrame(factory: ScreenFactory, theme: ProjectsTheme
   root.setAttribute('data-theme', theme)
   const body = make(factory, 'div', PROJECTS_BODY_CLASS)
   const slot = cell(body, factory, 'div', BUSY_SLOT_CLASS)
+  // The second read's host is a **sibling** of the body and not a child of it:
+  // `fillProjects` appends the budget's panels to the body, so a host inside it
+  // would be pushed ahead of them and the models panel would draw above the caps.
+  const models = make(factory, 'div', PROJECTS_MODELS_CLASS)
+  const modelsSlot = cell(models, factory, 'div', BUSY_SLOT_CLASS)
   root.append(body)
-  return { root, body, slot }
+  root.append(models)
+  return { root, body, slot, models, modelsSlot }
 }
 
 /**
@@ -1196,9 +1523,21 @@ export function fillProjects(
 
 /** renderProjects walks the model through Task 2.0's writers: the frame with its
  * section filled. It is what the tests and the spec draw, because both want the
- * screen an operator sees rather than the shell the entry mounts first. */
-export function renderProjects(factory: ScreenFactory, model: ProjectsModel, theme: ProjectsTheme): ScreenElement {
+ * screen an operator sees rather than the shell the entry mounts first.
+ *
+ * `models` is the tab's **second read's** model (console 0.119.0), and it is
+ * optional because the two reads are independent: a caller with no models
+ * document draws the budget's screen and nothing where the models panel would
+ * be -- which is the whole of what "that read has not answered" looks like in
+ * this frame. */
+export function renderProjects(
+  factory: ScreenFactory,
+  model: ProjectsModel,
+  theme: ProjectsTheme,
+  models?: ProjectsModels,
+): ScreenElement {
   const frame = renderProjectsFrame(factory, theme)
   fillProjects(factory, model, frame.body)
+  if (models !== undefined) fillProjectsModels(factory, models, frame.models)
   return frame.root
 }

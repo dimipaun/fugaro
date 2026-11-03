@@ -44,9 +44,22 @@
 import { describe, expect, it } from 'vitest'
 
 import { CONSOLE_OPERATIONS } from '../../src/main/ipc'
+import { UNAVAILABLE_MARK } from '../../src/shared/availability'
 import { putText } from '../../src/renderer/app'
-import { PROJECT_PANEL_KEYS, PROJECTS_THEMES, buildProjectsModel, renderProjects } from '../../src/renderer/screens/projects'
-import type { ProjectsInputs, ScreenElement, ScreenFactory } from '../../src/renderer/screens/projects'
+import {
+  PROJECT_PANEL_KEYS,
+  PROJECTS_THEMES,
+  buildProjectsModel,
+  buildProjectsModels,
+  fillProjectsModels,
+  renderProjects,
+} from '../../src/renderer/screens/projects'
+import type {
+  ProjectsInputs,
+  ProjectsModelsInputs,
+  ScreenElement,
+  ScreenFactory,
+} from '../../src/renderer/screens/projects'
 import {
   PR_NO_LINK_REASON,
   RUN_LOG_CAP,
@@ -60,6 +73,8 @@ import {
 } from '../../src/renderer/screens/run'
 import type { RunFactory, RunInputs } from '../../src/renderer/screens/run'
 import { ReplayBuffer } from '../../src/shared/replay'
+import { decodeModelsList } from '../../src/shared/schema'
+import type { ModelsListView } from '../../src/shared/schema'
 import { ADDRESS_PLACEHOLDER, sanitizeText, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
 import { githubToken, highEntropyRun } from '../support/fakeSecrets'
 
@@ -842,6 +857,201 @@ function runInputs(overrides: Partial<RunInputs> = {}): RunInputs {
     ...overrides,
   }
 }
+
+// ---------------------------------------------------------------------------
+// The read-only models panel (console 0.119.0).
+// ---------------------------------------------------------------------------
+
+/** MODELS is `models ls --json` (contract section 6.18), invented: two routes
+ * -- the direct one open to every repository, a gateway one with an allow-list
+ * and a fee -- and two models, one of them with no price at all. */
+const MODELS = {
+  version: 1,
+  project: 'example-project',
+  catalog: { source: 'https://catalog.example.test/models.json', checked_at: '2026-10-01', age_days: 33, stale: true },
+  routes: [
+    {
+      name: 'anthropic',
+      kind: 'direct',
+      base_url: 'https://api.anthropic.com',
+      host: 'api.anthropic.com',
+      models: ['claude-*'],
+      route_fee_pct: 0,
+      allow_data_to: ['*'],
+      open_to_every_repo: true,
+      note: '',
+    },
+    {
+      name: 'gateway',
+      kind: 'openai',
+      base_url: 'https://gateway.example.test/v1',
+      host: 'gateway.example.test',
+      models: ['deepseek-v4.1-flash'],
+      route_fee_pct: 12.5,
+      allow_data_to: ['example-owner/example-repo'],
+      open_to_every_repo: false,
+      note: 'the provider margin is added on this route',
+    },
+  ],
+  models: [
+    {
+      id: 'deepseek-v4.1-flash',
+      route: 'gateway',
+      source: 'catalog',
+      input_per_m: 0.14,
+      output_per_m: 0.28,
+      catalog: null,
+      allowed_to: ['*'],
+      refused: '',
+      note: '',
+    },
+    { id: 'claude-sonnet-5', route: '', source: 'unpriced', input_per_m: null, output_per_m: null, catalog: null, allowed_to: [], refused: 'no route serves it', note: '' },
+  ],
+  repositories: [],
+}
+
+/** modelsDocument is the fixture **through the console's own decoder**, so the
+ * panel is drawn from the shape the console will really hold and not from the
+ * fixture's spelling. */
+function modelsDocument(raw: Record<string, unknown> = MODELS): ModelsListView {
+  const decoded = decodeModelsList(raw)
+  if (!decoded.ok) throw new Error(`the models fixture is not a document the console reads: ${decoded.skew.because}`)
+  return decoded.value
+}
+
+/** modelsInputs is a complete set of models inputs: the document above and the
+ * current CLI. */
+function modelsInputs(overrides: Partial<ProjectsModelsInputs> = {}): ProjectsModelsInputs {
+  return { document: modelsDocument(), because: null, tooOld: false, version: '1.2.3', ...overrides }
+}
+
+/** modelsTree draws the models panel into a host of its own, the way the entry
+ * does. */
+function modelsTree(inputs: ProjectsModelsInputs): FakeScreen {
+  const host = new FakeScreen('div')
+  fillProjectsModels(factory, buildProjectsModels(inputs), host)
+  return host
+}
+
+describe('the read-only models panel', () => {
+  it('says a route open to every repository in words, and draws an allow-list as its own list', () => {
+    const tree = modelsTree(modelsInputs())
+    expect(texts(tree, 'projects-models-to-every')).toEqual(['open to every repository'])
+    // The allow-listed route draws the repository itself and the console's word
+    // for "every one of them" nowhere: the flag is the document's, and a route
+    // that lists one repository is not open to the others.
+    expect(texts(tree, 'projects-models-to-every')).toHaveLength(1)
+    expect(texts(tree, 'projects-models-allow')).toEqual(['example-owner/example-repo'])
+    expect(texts(tree, 'projects-models-to-word')).toEqual(['may send data to', 'may send data to'])
+    // **The host is the console's marker, and not the machine's own name.**
+    // `routes[].host` is `host` in the decoder's table (`WIRE_TEXT_CLASSES`), and
+    // that class returns `HOST_PLACEHOLDER` for every machine name it is given,
+    // valid or not (`sanitize.ts`) -- which is the console's rule for a machine
+    // and the recorder's too. No other class would draw the name either: `label`
+    // and `sentence` run the free-text rules, and their hostname rule replaces
+    // one before any class branch reads the value. The route is recognised
+    // without the host: its `name` is the document's own word for it, and the
+    // full hostname is drawn inside the `base_url` beside it.
+    expect(texts(tree, 'projects-models-route-host')).toEqual(['<host>', '<host>'])
+    // A route that claims no model at all: the panel's own word, not a blank.
+    const empty = modelsTree(
+      modelsInputs({
+        document: modelsDocument({
+          ...MODELS,
+          routes: [{ ...MODELS.routes[1], models: [], allow_data_to: [], open_to_every_repo: false }],
+        }),
+      }),
+    )
+    expect(texts(empty, 'projects-models-to-none')).toEqual(['no repository'])
+    expect(drawn(empty)).toContain('claims')
+  })
+
+  it('draws an absent price as `n/a` and never as a zero', () => {
+    const tree = modelsTree(modelsInputs())
+    const inputs = texts(tree, 'projects-models-input')
+    expect(inputs).toHaveLength(2)
+    expect(inputs[1]).toBe(UNAVAILABLE_MARK)
+    // The price the document carried is drawn as money, and the row it left out
+    // is not a `$0` anywhere: an unknown model is not a free one.
+    expect(inputs[0]).toBe('$0.14')
+    expect(texts(tree, 'projects-models-output')[1]).toBe(UNAVAILABLE_MARK)
+    expect(drawn(tree)).not.toContain('$0.00')
+    // A model no route serves says so in the console's own words.
+    expect(texts(tree, 'projects-models-route-of')).toEqual(['gateway', 'no route'])
+  })
+
+  it('draws a hostile `base_url` and `note` as inert text and builds no link', () => {
+    const hostile = {
+      ...MODELS,
+      routes: [
+        {
+          ...MODELS.routes[1],
+          base_url: 'https://gateway.example.test/‮reversed',
+          note: '<b>bold</b>\nnext <a href="https://evil.example.test">go</a>',
+        },
+        { ...MODELS.routes[0], base_url: '<img src=x onerror=alert(1)>', note: 'javascript:alert(1)' },
+      ],
+    }
+    const tree = modelsTree(modelsInputs({ document: modelsDocument(hostile) }))
+    // The bidi override and the newline are neutralised, and the markup is
+    // **characters**: it is drawn through `textContent`, so no element the
+    // document wrote exists and nothing is clickable.
+    expect(texts(tree, 'projects-models-route-base')).toEqual([
+      'https://gateway.example.test/reversed',
+      UNAVAILABLE_MARK,
+    ])
+    const note = texts(tree, 'projects-models-route-note')[0] ?? ''
+    expect(note).toContain('<b>bold</b> next')
+    // The bidi override and the newline are gone: what is drawn is one
+    // flattened run of inert characters, whatever the document wrote.
+    expect([...note].some((one) => one.charCodeAt(0) < 0x20 || one === '‮')).toBe(false)
+    expect(
+      walk(tree).filter((node) => node.tag === 'a' || node.tag === 'b' || node.tag === 'img'),
+      'a document string became an element',
+    ).toEqual([])
+    expect(
+      walk(tree).filter((node) => node.getAttribute('href') !== null || node.getAttribute('src') !== null),
+    ).toEqual([])
+    // A `base_url` the url class will not draw is the mark, and the sentence
+    // about why is a title and not the hostile string.
+    expect(texts(tree, 'projects-models-route-base')).not.toContain('<img src=x onerror=alert(1)>')
+  })
+
+  it('holds no control that writes, and no contenteditable subtree', () => {
+    const tree = modelsTree(modelsInputs())
+    const WRITERS = new Set(['input', 'textarea', 'select', 'button', 'form'])
+    expect(
+      walk(tree).filter((node) => WRITERS.has(node.tag)),
+      'the models panel is read-only: nothing here adds, removes or uses a model',
+    ).toEqual([])
+    expect(walk(tree).filter((node) => node.getAttribute('contenteditable') !== null)).toEqual([])
+    // And the panel draws the console's own read words: a source line naming
+    // `models ls`, and the count of what it drew.
+    expect(drawn(tree)).toContain('fugaro models ls --json')
+  })
+
+  it('draws the console’s own sentence below the floor, and no list at all', () => {
+    const tree = modelsTree(modelsInputs({ document: null, because: null, tooOld: true, version: '0.15.1' }))
+    const panel = all(tree, 'projects-panel')[0]
+    expect(panel?.getAttribute('data-state')).toBe('unavailable')
+    expect(drawn(tree)).toContain('the models read needs fugaro 0.16.0 and this CLI is 0.15.1')
+    expect(all(tree, 'projects-models-list')).toEqual([])
+    expect(all(tree, 'projects-models-route-list')).toEqual([])
+  })
+
+  it('draws the catalog’s age and its staleness in words', () => {
+    const tree = modelsTree(modelsInputs())
+    expect(texts(tree, 'projects-models-catalog-checked')).toEqual(['2026-10-01'])
+    expect(texts(tree, 'projects-models-catalog-age')).toEqual(['33'])
+    expect(texts(tree, 'projects-models-catalog-stale')).toEqual(['stale'])
+    const fresh = modelsTree(
+      modelsInputs({
+        document: modelsDocument({ ...MODELS, catalog: { ...MODELS.catalog, stale: false, age_days: 3 } }),
+      }),
+    )
+    expect(texts(fresh, 'projects-models-catalog-stale')).toEqual(['current'])
+  })
+})
 
 describe('buildRunModel', () => {
   it('reads the ledger, the stage timeline and the outcome out of the row', () => {

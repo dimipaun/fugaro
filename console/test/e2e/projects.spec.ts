@@ -94,6 +94,7 @@ import { SPAWN_LOG_ENV } from '../../src/main/spawnlog'
 import type { SpawnLogEntry } from '../../src/main/spawnlog'
 import type { JSONDoc } from '../../src/source/source'
 import { PROJECT_PANEL_KEYS, PROJECTS_BUSY, PROJECTS_THEMES } from '../../src/renderer/screens/projects'
+import { CLI_VERSION_BUILT_AGAINST, MODELS_LIST_CLI_FLOOR } from '../../src/shared/version'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
 import { expectGolden, expectGrounded } from '../support/goldens'
@@ -131,7 +132,12 @@ const SPEC = 'projects.spec.ts'
  * and the reading words and skeleton beside it are here for that reason, while
  * `shared/launcher.js` and `shared/rigor.js` are gone with the run list that
  * used them -- `shared/notice.js` stays, because `shared/version.js` reads the
- * reduced-mode notice it carries. `src/main/ipc.ts` is imported by the screen
+ * reduced-mode notice it carries, and `shared/schema.js` is here as the one
+ * **deliberate** addition to the compiled requires: the models panel's document
+ * arrives as a raw `models ls --json` object and the entry decodes it before the
+ * model builder sees it (`decodeModelsList`), so the spec decodes it in the page
+ * the same way rather than hand-writing a view the decoder is the judge of.
+ * `src/main/ipc.ts` is imported by the screen
  * for a **type** only, which the compiler erases, so nothing of the main
  * process is reachable from here -- and the registry below refuses a specifier
  * that is not a relative path, so a bundle that grew an import of `node:` or of
@@ -141,6 +147,7 @@ const MODULES: readonly string[] = Object.freeze([
   'shared/sanitize.js',
   'shared/notice.js',
   'shared/version.js',
+  'shared/schema.js',
   'renderer/app.js',
   'renderer/skeleton.js',
   'renderer/screens/reading.js',
@@ -220,7 +227,13 @@ function domFactory() {
 
 /** draw is the expression the window evaluates: load the compiled screen, build
  * the model from the three documents, and mount what it draws. */
-function draw(budget: JSONDoc, accounts: JSONDoc, secrets: readonly JSONDoc[], theme: string): string {
+function draw(
+  budget: JSONDoc,
+  accounts: JSONDoc,
+  secrets: readonly JSONDoc[],
+  theme: string,
+  models: JSONDoc | null = MODELS,
+): string {
   return `(function () {
 ${LOADER}${MODULES.map(moduleSource).join('\n')}${FACTORY}
 var projects = load('/renderer/screens/projects.js');
@@ -231,7 +244,15 @@ var model = projects.buildProjectsModel({
   secrets: ${JSON.stringify(secrets)},
   sentences: {}
 });
-var tree = projects.renderProjects(factory, model, ${JSON.stringify(theme)});
+var raw = ${JSON.stringify(models)};
+var decoded = raw === null ? null : load('/shared/schema.js').decodeModelsList(raw, 'models ls --json');
+var modelsModel = projects.buildProjectsModels({
+  document: decoded !== null && decoded.ok ? decoded.value : null,
+  because: decoded !== null && !decoded.ok ? decoded.skew.because : null,
+  tooOld: false,
+  version: '1.2.3'
+});
+var tree = projects.renderProjects(factory, model, ${JSON.stringify(theme)}, modelsModel);
 var previous = document.getElementById('projects-mount');
 if (previous) previous.remove();
 var host = document.createElement('div');
@@ -268,6 +289,16 @@ interface Screen {
   readonly enrolled: readonly string[]
   readonly repoWrites: readonly string[]
   readonly secretNames: readonly string[]
+  // The models panel (console 0.119.0): the routes' names and hosts, the
+  // repositories an allow-list names, the models a run can name and their
+  // prices as drawn, and every control of any kind under the panel -- which is
+  // an empty list, because the panel is read-only.
+  readonly modelsRoutes: readonly string[]
+  readonly modelsHosts: readonly string[]
+  readonly modelsAllowed: readonly string[]
+  readonly modelsIds: readonly string[]
+  readonly modelsPrices: readonly string[]
+  readonly modelsControls: readonly string[]
   readonly anchors: number
   readonly hrefs: number
   readonly text: string
@@ -309,6 +340,18 @@ function screen(page: Page): Promise<Screen> {
       enrolled: texts('.projects-repo-enrolled'),
       repoWrites: texts('button.projects-repo-add'),
       secretNames: texts('.projects-secret-name'),
+      modelsRoutes: texts('.projects-models-route-name'),
+      modelsHosts: texts('.projects-models-route-host'),
+      modelsAllowed: texts('.projects-models-allow'),
+      modelsIds: texts('.projects-models-id'),
+      modelsPrices: texts('.projects-models-input, .projects-models-output'),
+      // The whole panel, for anything a reader could operate: the models read
+      // is read-only, so an `input`, a `select`, a `button`, a `form` or a
+      // contenteditable under it would be a control no operation backs.
+      modelsControls: all(
+        '.projects-models input, .projects-models textarea, .projects-models select, ' +
+          '.projects-models button, .projects-models form, .projects-models [contenteditable]',
+      ).map((one) => one.tagName.toLowerCase()),
       // A screen may offer no navigation at all, and no destination attribute
       // either: this console draws text, and the main process owns opening.
       anchors: all('a').length,
@@ -423,6 +466,63 @@ const SECRETS: readonly JSONDoc[] = [
   },
 ]
 
+/**
+ * MODELS is `models ls --json` (contract section 6.18), the read the tab's
+ * **second** section draws from (console 0.119.0): the routes a launch may send
+ * data through, the models a run can name today, and the price catalog's age.
+ * It is one document per project and it is offline -- no bucket, no host -- so
+ * nothing here is a run's spend.
+ *
+ * The two routes are the screen's two states in one document: `anthropic` is
+ * open to every repository (`open_to_every_repo`, drawn in words) and `gateway`
+ * names the one repository it may send data to and carries a fee. One model is
+ * priced and one is not: `claude-sonnet-5` has no `input_per_m` at all, which is
+ * unknown and never zero, and no route -- the two cases the panel must not draw
+ * as `$0.00` and as a blank.
+ *
+ * The catalog is stale, so the panel's age marker has something to say: a
+ * catalog's age is what makes its prices a claim about a date.
+ */
+const MODELS: JSONDoc = {
+  version: 1,
+  project: 'example-project',
+  catalog: {
+    source: 'https://catalog.example.test/models.json',
+    checked_at: '2026-10-01',
+    age_days: 33,
+    stale: true,
+  },
+  routes: [
+    {
+      name: 'anthropic',
+      kind: 'direct',
+      base_url: 'https://api.anthropic.com',
+      host: 'api.anthropic.com',
+      models: ['claude-*'],
+      route_fee_pct: 0,
+      allow_data_to: ['*'],
+      open_to_every_repo: true,
+      note: '',
+    },
+    {
+      name: 'gateway',
+      kind: 'openai',
+      base_url: 'https://gateway.example.test/v1',
+      host: 'gateway.example.test',
+      models: ['deepseek-v4.1-flash'],
+      route_fee_pct: 12.5,
+      allow_data_to: ['example-owner/example-repo'],
+      open_to_every_repo: false,
+      note: 'the provider margin is added on this route',
+    },
+  ],
+  models: [
+    { id: 'deepseek-v4.1-flash', route: 'gateway', source: 'catalog', input_per_m: 0.14, output_per_m: 0.28, catalog: null, allowed_to: ['*'], refused: '', note: '' },
+    { id: 'claude-sonnet-5', route: '', source: 'unpriced', input_per_m: null, output_per_m: null, catalog: null, allowed_to: [], refused: 'no route serves it', note: '' },
+  ],
+  repositories: [],
+}
+
 test.describe('the Projects screen', () => {
   // One window, one page, and the tests in order: each draws the screen it is
   // about into the same document, and the goldens are taken from what the test
@@ -476,8 +576,12 @@ test.describe('the Projects screen', () => {
     const drawn = await screen(page)
 
     expect(drawn.theme).toBe('light')
-    expect(drawn.panels).toEqual([...PROJECT_PANEL_KEYS])
-    expect(drawn.states).toEqual(['read', 'read', 'read', 'read', 'read', 'not-built', 'not-built'])
+    // The eighth panel is the models panel (console 0.119.0): the tab's second
+    // read, drawn by `fillProjectsModels` rather than by the seven-panel model,
+    // and last in the tree because it is a sibling of the body those seven are
+    // filled into.
+    expect(drawn.panels).toEqual([...PROJECT_PANEL_KEYS, 'models'])
+    expect(drawn.states).toEqual(['read', 'read', 'read', 'read', 'read', 'not-built', 'not-built', 'read'])
     // Every panel names the command it read, drawn on the panel itself: a panel
     // whose source is nowhere is a panel a reader cannot check. There is one
     // command behind the three panels that read the cap document -- `budget show`
@@ -487,9 +591,10 @@ test.describe('the Projects screen', () => {
     expect(drawn.sources).toContain('fugaro budget show --json')
     expect(drawn.sources).not.toContain('fugaro runs ls --json')
     // And every panel says its state in words, so the frame's tone is never the
-    // only channel: `read` on the five that read a document, the design's
-    // `locked` on the two cards this CLI cannot read at all.
-    expect(drawn.stateWords).toEqual(['read', 'read', 'read', 'read', 'read', 'locked', 'locked'])
+    // only channel: `read` on the six that read a document (the models panel
+    // among them), the design's `locked` on the two cards this CLI cannot read
+    // at all.
+    expect(drawn.stateWords).toEqual(['read', 'read', 'read', 'read', 'read', 'locked', 'locked', 'read'])
   })
 
   test('renders the two sections with no command as not-built, and never as a zero', async () => {
@@ -506,10 +611,11 @@ test.describe('the Projects screen', () => {
     // The two panels say *why* they have nothing, with the design's own phrase
     // for the state: "not readable with this CLI".
     expect(text).toContain('not readable with this CLI')
-    // The five panels that read a document have a count; the two that did not
-    // have none. This is the mechanism behind "never as a zero": there is no
-    // reading to format, so nothing can render as `0`.
-    expect(drawn.counts.length).toBe(5)
+    // The six panels that read a document have a count (the models panel counts
+    // its routes and models); the two that did not have none. This is the
+    // mechanism behind "never as a zero": there is no reading to format, so
+    // nothing can render as `0`.
+    expect(drawn.counts.length).toBe(6)
   })
 
   test('names the binding scope of every cap', async () => {
@@ -585,15 +691,62 @@ test.describe('the Projects screen', () => {
     expect(drawn.text).toContain('bare JSON array')
   })
 
+  test('draws the models read-only: the routes, the open-to-every words and no price as a zero', async () => {
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
+    const drawn = await screen(page)
+
+    // **The panel is read-only, and that is asserted on the drawn tree rather
+    // than on the model**: there is no control under it of any kind -- nothing to
+    // add a model, remove one or point a role at one -- and no navigation
+    // either, so the `base_url` below is text and not a destination.
+    expect(drawn.modelsControls).toEqual([])
+    expect(drawn.anchors).toBe(0)
+    expect(drawn.hrefs).toBe(0)
+    // The route's own words: which repositories may send data to it is a
+    // sentence (`may send data to`) and never a bare list, and the route open to
+    // every repository says so in words rather than by an empty allow-list.
+    expect(drawn.modelsRoutes).toEqual(['anthropic', 'gateway'])
+    // **The host here is the console's marker for a machine name and not the
+    // name the document wrote.** `routes[].host` is the `host` class in the
+    // decoder's own table (`WIRE_TEXT_CLASSES`, `src/shared/schema.ts`), and that
+    // class draws `HOST_PLACEHOLDER` for every machine name, valid or not --
+    // which is the recorder's rule as well (`src/source/redact.ts`). No other
+    // class draws the name either: `label` and `sentence` run the free-text
+    // rules, whose hostname rule replaces one before any class branch reads the
+    // value. The hostname the route points at is not hidden by this: it is drawn
+    // whole inside the `base_url` below, which is a `url`.
+    expect(drawn.modelsHosts).toEqual(['<host>', '<host>'])
+    expect(drawn.text).toContain('open to every repository')
+    expect(drawn.modelsAllowed).toEqual(['example-owner/example-repo'])
+    // The models: one priced, one not. A price the document does not carry is
+    // `n/a` -- unknown -- and never `$0.00`, which would say the model is free.
+    expect(drawn.modelsIds).toEqual(['deepseek-v4.1-flash', 'claude-sonnet-5'])
+    expect(drawn.modelsPrices).toContain('n/a')
+    expect(drawn.modelsPrices).not.toContain('$0.00')
+    // The catalog's age and its stale marker, as words on the panel.
+    expect(drawn.text).toContain('2026-10-01')
+    expect(drawn.text).toContain('stale')
+  })
+
   test('draws an incomplete accounts document as unavailable rather than as an empty list', async () => {
     await mount(BUDGET, ACCOUNTS_INCOMPLETE, SECRETS, 'light')
     const drawn = await screen(page)
 
-    expect(drawn.states).toEqual(['read', 'read', 'read', 'unavailable', 'read', 'not-built', 'not-built'])
+    expect(drawn.states).toEqual([
+      'read',
+      'read',
+      'read',
+      'unavailable',
+      'read',
+      'not-built',
+      'not-built',
+      'read',
+    ])
     expect(drawn.text).toContain('the project could not be selected')
     // An incomplete inventory has no count: `0 accounts` would be a false
-    // statement about the project, not a missing one.
-    expect(drawn.counts.length).toBe(4)
+    // statement about the project, not a missing one. The models panel is a
+    // read of its own and is unaffected by this document either way.
+    expect(drawn.counts.length).toBe(5)
   })
 
   test('offers no link, and nothing to click', async () => {
@@ -698,7 +851,7 @@ test.describe('the Projects screen', () => {
     // The state is in the DOM twice over: as the attribute a reader's tools read, and
     // as the sentence a reader reads.
     expect(forced.states).toContain('not-built')
-    expect(forced.words).toEqual(['read', 'read', 'read', 'read', 'read', 'locked', 'locked'])
+    expect(forced.words).toEqual(['read', 'read', 'read', 'read', 'read', 'locked', 'locked', 'read'])
     // The switches' state words survive too, `KILLED` among them.
     expect(forced.killWords).toEqual(['live', 'live', 'KILLED'])
     expect(forced.because.join(' '), 'a panel with no document lost its reason').toContain(
@@ -735,6 +888,22 @@ function tab(view: string): string {
   return `nav.console-views button.console-view[data-view="${view}"]`
 }
 
+/** readsOf is a spawn log as records: one line per child the console ran,
+ * written by `src/main/spawn.ts` before the child prints anything. It is the
+ * only place a read that should not have happened is visible from outside. */
+function readsOf(where: string): readonly SpawnLogEntry[] {
+  let text: string
+  try {
+    text = readFileSync(where, 'utf8')
+  } catch {
+    return []
+  }
+  return text
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => JSON.parse(line) as SpawnLogEntry)
+}
+
 test.describe('the Projects view in the dashboard', () => {
   test.describe.configure({ mode: 'serial' })
 
@@ -751,6 +920,20 @@ test.describe('the Projects view in the dashboard', () => {
     // specs hand it their own: the stub answers `budget show --json` with
     // `spend-budget.json`, and refuses the read when no document is seeded.
     cli.seedSpend({ budget: { document: BUDGET } })
+    // The tab's **second** read, seeded the same way: the models panel is drawn
+    // from `models ls --json`, and the stub refuses that read when no document
+    // is seeded -- which is what makes the panel's own refusal path reachable
+    // here without a second stub.
+    cli.seedModels({ document: MODELS })
+    // **The stub's own line is below the models read's floor**
+    // (`CLI_VERSION_BUILT_AGAINST` is 0.13.0 and `MODELS_LIST_CLI_FLOOR` is
+    // 0.16.0), so a view on it draws the console's floor sentence for the panel
+    // and spawns nothing at all: the `models ls --json` argv asserted below would
+    // then be a read this view never makes. The version the console reads is the
+    // stub's own `version.txt`, so this case raises it rather than installing a
+    // second stub -- and the case that asserts the floor sentence, below, is the
+    // one that leaves it where it is.
+    cli.setVersion(MODELS_LIST_CLI_FLOOR)
     // The spawn log is the operator's own opt-in (`SPAWN_LOG_ENV`) and the only
     // place a read that should not have happened is visible from outside: the
     // case below reads it to say which commands this view drove.
@@ -770,21 +953,6 @@ test.describe('the Projects view in the dashboard', () => {
     rmSync(scratch, { recursive: true, force: true })
   })
 
-  /** reads is the spawn log as records: one line per child the console ran,
-   * written by `src/main/spawn.ts` before the child prints anything. */
-  function reads(): readonly SpawnLogEntry[] {
-    let text: string
-    try {
-      text = readFileSync(spawnLog, 'utf8')
-    } catch {
-      return []
-    }
-    return text
-      .split('\n')
-      .filter((line) => line.trim() !== '')
-      .map((line) => JSON.parse(line) as SpawnLogEntry)
-  }
-
   test('answers the tab in the frame it was opened in, and reads one command', async () => {
     // Live, the view this console opens on, makes one `runs ls --json` of its own
     // -- the rigor join -- and that read is not this case's subject. Waiting for
@@ -793,11 +961,11 @@ test.describe('the Projects view in the dashboard', () => {
     // second record here, and one that asked as the tab was opened would be
     // seen whatever the boot had done.
     await expect
-      .poll(() => reads().filter((record) => record.argv[1] === 'runs').length, {
+      .poll(() => readsOf(spawnLog).filter((record) => record.argv[1] === 'runs').length, {
         message: 'the Live view never made its rigor join',
       })
       .toBeGreaterThan(0)
-    const before = reads().length
+    const before = readsOf(spawnLog).length
 
     // **The click's own frame.** The tab is pressed and the section drawn in the
     // same turn of the event loop, with nothing awaited in between: the mark,
@@ -845,17 +1013,90 @@ test.describe('the Projects view in the dashboard', () => {
     await expect(page.locator(`${THE_PROJECTS} h1.projects-project`)).toHaveText('example-project')
     await expect(page.locator(`${THE_PROJECTS} tr.projects-cap`).first()).toBeVisible()
     await expect(page.locator(THE_BODY)).not.toHaveAttribute('aria-busy', 'true')
+    // The models panel is the tab's own second section, and it holds the
+    // document the stub answered with: a route of it is drawn, which is what
+    // says this read landed and was painted rather than merely asked for.
+    await expect(page.locator(`${THE_PROJECTS} .projects-models-route-name`).first()).toHaveText('anthropic')
     // The jobs table is not there to be drawn: this screen has no run list and
     // no panel built from one, which is the owner's report of 2026-10-31
     // answered on the tab itself.
     await expect(page.locator(`${THE_PROJECTS} .projects-job`)).toHaveCount(0)
 
-    // And the reads behind that drawing: `budget show`, the one command the
-    // panels name, and **no `runs` read at all** since this view was opened.
-    const asked = reads()
+    // And the reads behind that drawing: `budget show` and `models ls`, the two
+    // commands this tab's two sections name, and **no `runs` read at all**
+    // since this view was opened.
+    const asked = readsOf(spawnLog)
       .slice(before)
       .map((record) => record.argv.slice(1))
     expect(asked).toContainEqual(['budget', 'show', '--json', '--project', 'e2e'])
+    // The models read is the group's one reachable word and takes no argument
+    // of its own: the argv is the command, the row's `--json` and the
+    // installation's `--project`, and nothing a renderer chose.
+    expect(asked).toContainEqual(['models', 'ls', '--json', '--project', 'e2e'])
     expect(asked.filter((argv) => argv[0] === 'runs')).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The models panel below the models read's floor.
+// ---------------------------------------------------------------------------
+
+/** The case below is the other half of the version the case above seeds: a view
+ * whose CLI has no `models ls` at all. `inRangeCliStub` prints
+ * `CLI_VERSION_BUILT_AGAINST` (0.13.0), which is inside the console's supported
+ * range and below `MODELS_LIST_CLI_FLOOR` (0.16.0), so this is the state the
+ * panel's floor sentence was written for -- a 0.15.x CLI, which would answer
+ * `unknown command "ls"`, is the same state one minor up. */
+test.describe('the models panel below the models read floor', () => {
+  test.describe.configure({ mode: 'serial' })
+
+  let app: ElectronApplication
+  let page: Page
+  let cli: CliStub
+  let scratch: string
+  let spawnLog: string
+
+  test.beforeAll(async () => {
+    cli = inRangeCliStub()
+    cli.seedActiveInstallation()
+    cli.seedSpend({ budget: { document: BUDGET } })
+    // **No models document is seeded, and none is needed**: the floor is asked
+    // before the read goes out, so the panel must never reach the stub.
+    scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-models-floor-'))
+    spawnLog = join(scratch, 'spawn.jsonl')
+    app = await launchConsole({
+      args: cli.launchArgs(consoleDir),
+      env: { ...cli.env, [SPAWN_LOG_ENV]: spawnLog },
+    })
+    page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+  })
+
+  test.afterAll(async () => {
+    await app?.close()
+    cli.remove()
+    rmSync(scratch, { recursive: true, force: true })
+  })
+
+  test('draws the console’s own floor sentence, and spawns no models read', async () => {
+    await page.click(tab('projects'))
+    // The tab is up -- the caps panel's own read landed -- and the models panel
+    // is the one part of it that is not read.
+    await expect(page.locator(`${THE_PROJECTS} h1.projects-project`)).toHaveText('example-project')
+    const panel = page.locator(`${THE_PROJECTS} section.projects-panel[data-panel="models"]`)
+    await expect(panel).toHaveAttribute('data-state', 'unavailable')
+    // The sentence is the console's own and names both versions: what the read
+    // needs and what this CLI is.
+    await expect(panel.locator('p.projects-because')).toHaveText(
+      `the models read needs fugaro ${MODELS_LIST_CLI_FLOOR} and this CLI is ${CLI_VERSION_BUILT_AGAINST}`,
+    )
+    // Nothing of a document, because there was no read to draw one from.
+    await expect(page.locator(`${THE_PROJECTS} .projects-models-route`)).toHaveCount(0)
+    // And the spawn log says the same from outside: this view drove no `models`
+    // child at all, so a panel that drew the sentence *after* asking would be a
+    // read this case sees.
+    const asked = readsOf(spawnLog).map((record) => record.argv.slice(1))
+    expect(asked).toContainEqual(['budget', 'show', '--json', '--project', 'e2e'])
+    expect(asked.filter((argv) => argv[0] === 'models')).toEqual([])
   })
 })
