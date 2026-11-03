@@ -34,8 +34,15 @@ const (
 // catalogBuildSteps are a catalog build's steps, in order. The derived
 // config's source, render, gate and record steps are not among them: a
 // catalog build never clones a repository into the build context, renders
-// nothing (its Dockerfile is PIC3's copy), and gates on and writes a
-// record of its own.
+// nothing (its Dockerfile is PIC3's copy), and writes a record of its own.
+//
+// Having no gate is the one difference that shows: a derived build's gate
+// reads the record already in the bucket and refuses to promote over a newer
+// one, so a build that finishes late leaves latest where it is, while a
+// catalog build promotes as soon as it is smoked and can move latest back.
+// A gate for this path — the copied definition's generation against the one
+// the entry's record already carries — is a follow-up, and nothing here
+// pretends to have one.
 var catalogBuildSteps = []string{
 	"prep", credentialStep, catalogDockerfileStepID, catalogPinStepID,
 	"build", "smoke", "promote", catalogTagStepID, catalogRecordStepID, "untag",
