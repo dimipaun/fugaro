@@ -57,6 +57,9 @@ import (
 //   - TestCoordinatorShowNeverPrintsTheTokenTheHostEchoed: the redaction, on
 //     the class where the token never passes the reader's hands — the source
 //     the provider was opened with is what knows it (gitprov.TokenHolder).
+//   - TestCoordinatorShowNeverReadsTheAppCredential: the App's ID and key are a
+//     run's and the service's, and a person's read neither uses them nor refuses
+//     over them — the test a mutant that reaches for them dies on.
 //   - TestCoordinatorShowBitbucketThroughService and
 //     TestServicePathRefusesAPIRootOverride: BB4's Bitbucket half, on the same
 //     class and now off the same source as the GitHub one.
@@ -430,6 +433,49 @@ func TestCoordinatorShowPrintsTheHostsBodyAsText(t *testing.T) {
 	for _, secret := range []string{mint.tokenFor("acme/app"), personIdentity} {
 		if strings.Contains(out, secret) {
 			t.Errorf("the text output carries a credential:\n%s", out)
+		}
+	}
+}
+
+// A person's read never asks for the App credential, and this is the test the
+// mutant is killed by: the environment here carries the App's ID and a key that
+// is not a key, which is a credential coordinatorAppCredential refuses over
+// (github.ParsePrivateKey, exit 1). The read below succeeds anyway, so a
+// person's path that called it — to use it, or merely to check for it — fails
+// here rather than in a review.
+//
+// The App's key is the strongest credential the installation has and a person's
+// machine holds none of it: the service holds it, and what a person's read
+// carries instead is the App's ID, which is not a secret and comes from the
+// project's own configuration (coordinatorAppID).
+func TestCoordinatorShowNeverReadsTheAppCredential(t *testing.T) {
+	mint := newReadMintServer(t, github.ServiceReadPath)
+	api := newGitHubAPI(t, "acme", "app", 1458)
+	setPersonSeams(t, api, mint.client())
+	personShowFixture(t, mint)
+	// Set AFTER the fixture, so nothing the fixture does can clear them: these
+	// are the values the read would meet if it looked.
+	t.Setenv(providers.EnvGitHubAppID, "987654")
+	t.Setenv(providers.EnvGitHubAppKey, "not-an-app-key")
+
+	out, errOut, err := execute(t, "coordinator", "show", "--repo", "acme/app", "--pr", "1458", "--json")
+	if err != nil {
+		t.Fatalf("a person's read met the App credential: %v (stderr: %s)", err, errOut)
+	}
+	if !strings.Contains(out, `"title": "Add search"`) {
+		t.Errorf("the read did not answer with the host's document:\n%s", out)
+	}
+	// The service is where the token came from, so the read is the one this
+	// test means and not one that never happened.
+	if paths, _, _ := mint.asked(); len(paths) != 1 || paths[0] != github.ServiceReadPath {
+		t.Errorf("the read mint was asked on %v, want one call on %s", paths, github.ServiceReadPath)
+	}
+	// And the key the environment carries reaches nothing this command prints:
+	// a read that refused over it would be the mutant, and a read that reported
+	// it would be worse.
+	for _, secret := range []string{"987654", "not-an-app-key", personIdentity} {
+		if strings.Contains(out, secret) || strings.Contains(errOut, secret) {
+			t.Errorf("the read printed a credential:\n%s%s", out, errOut)
 		}
 	}
 }
