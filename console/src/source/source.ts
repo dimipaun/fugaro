@@ -54,7 +54,7 @@
 import type { ConsoleHandlers, ValidatedArguments } from '../main/ipc'
 import { NO_ACTIVE_INSTALLATION } from '../main/installations'
 import type { InstallationArguments, InstallationOperationName } from '../main/installations'
-import type { Notice } from '../main/spawn'
+import type { Notice, SettingsEditPhase } from '../main/spawn'
 
 /**
  * JSONDoc is the CLI's document as it arrived: a JSON object, undecoded. It is
@@ -106,6 +106,29 @@ export interface Snapshot {
 export interface TextSnapshot {
   readonly text: string
   readonly receivedAt: string
+}
+
+/**
+ * SettingsEditSpawn is one phase of a settings edit as the source ran it: the
+ * dry run's document (`--dry-run --json` prints `settingsWriteDoc`) or the
+ * write's own sentence (`wrote <path> (backup at <path>)`, which is what the
+ * CLI prints on success and the only thing it prints).
+ *
+ * `refusal` is the CLI's own sentence for a non-zero exit, verbatim and already
+ * stripped of its `fugaro: ` prefix (`refusalFrom`), and it is a **returned
+ * value rather than a thrown one** because a refused dry run is not a failed
+ * read: the settings window shows that sentence and offers the operator a
+ * re-read (D1112), and a refusal that arrived as an exception would have to be
+ * caught and re-typed by the one caller to say so.
+ */
+export interface SettingsEditSpawn {
+  readonly refusal: string | null
+  /** the parsed document, or null when stdout held none (every successful
+   * write: its answer is a sentence). */
+  readonly document: JSONDoc | null
+  /** the child's stdout, trimmed. It is the success sentence the screen draws
+   * (`wrote %s (backup at %s)`) and nothing else. */
+  readonly text: string
 }
 
 /** FeedEndReason says why a live feed stopped. */
@@ -303,6 +326,51 @@ export interface FugaroSource {
    * at all and the screen drops the row whole (D1111).
    */
   readSettings(args: ValidatedArguments): Promise<Snapshot>
+  /**
+   * settingsEditArgv is the **exact command line** one phase of a settings edit
+   * spawns -- the dry run's or the write's -- and it exists so that what the
+   * confirmation window shows is what is spawned (rule 11's property, rule 12's
+   * copy of it). It is the source's own plan for `settings.edit` and not a
+   * second spelling: `settingsEdit` below builds its child from the same
+   * `planFor` call, with the same phase and the same layer.
+   *
+   * The argv is a pure function of the three arguments and carries **no**
+   * renderer-supplied flag: the phase (`--dry-run --json` / `--yes`, and
+   * nothing for a narrowing) and the layer (`--layer <L>`) are main-process
+   * facts (`argvFor`'s own `settingsEdit`), and the value is the operator's one
+   * element behind the `--` terminator.
+   *
+   * It is **asynchronous** for the reason every other method here is: the
+   * binding's source is resolved (and its binary probed) on the first call, so
+   * a console with no installation refuses here rather than building a plan
+   * over nothing.
+   */
+  settingsEditArgv(args: ValidatedArguments, phase: SettingsEditPhase, layer: string): Promise<readonly string[]>
+  /**
+   * settingsEdit runs one phase: the dry run (which writes nothing, D1106) or
+   * the write, whose `--yes` the phase decides. It answers the dry run's
+   * document or the write's sentence, or the CLI's own refusal sentence -- see
+   * `SettingsEditSpawn`.
+   *
+   * `shown` is the argv the confirmation window drew for that phase, and a plan
+   * whose argv differs from it is **refused rather than spawned**: an operator
+   * who read one command line must not be the cause of another, and the
+   * installation a plan was built over can move while a window is open (an
+   * installation re-chosen or removed closes the window, D1115, and this is the
+   * same rule seen from the write's side, where there is no window left to
+   * close). The refusal is `SETTINGS_EDIT_MOVED` below.
+   *
+   * It is **not** reached by a renderer directly: the surface's `settings.edit`
+   * is answered by `createSettingsEdit`, which calls this from a pencil press --
+   * after its own read of the project's settings named the layer, and after the
+   * operator confirmed the change in the window.
+   */
+  settingsEdit(
+    args: ValidatedArguments,
+    phase: SettingsEditPhase,
+    layer: string,
+    shown: readonly string[],
+  ): Promise<SettingsEditSpawn>
   environmentReport(args: ValidatedArguments): Promise<Snapshot>
   /** close stops every feed and every child this source started. */
   close(): Promise<void>
@@ -378,6 +446,20 @@ export const NO_INSTALLATION_SURFACE = 'this console has no installation store'
  * not a refusal from a command.
  */
 export const NO_PLAN_CHECKOUT = 'this installation records no checkout, and the plan read is about its docs/ directory'
+
+/**
+ * SETTINGS_EDIT_MOVED is what a settings write answers when the argv its plan
+ * builds is not the argv the confirmation window drew. The operator confirmed
+ * one command line, and the only thing that can make the two differ is the
+ * installation between them -- another project chosen, the checkout or the
+ * config path changed, the record removed -- so the write is refused and the
+ * settings are re-read rather than written somewhere the window did not name.
+ *
+ * It is the console's own sentence, like `NO_PLAN_CHECKOUT`'s: no child ran, so
+ * there is no CLI refusal to show.
+ */
+export const SETTINGS_EDIT_MOVED =
+  'the installation changed since this edit was read: nothing was written; open the settings again'
 
 /**
  * handlersFor answers the whole IPC surface from one source. It is a function
@@ -517,23 +599,28 @@ export function handlersFor(
 }
 
 /**
- * CliBackedHandlers is the whole surface **minus the three operations that are
+ * CliBackedHandlers is the whole surface **minus the four operations that are
  * not reads of the CLI**: `startup.compatibility` (desktop-console plan Task
  * 3.3), whose answer is the handshake `src/main/index.ts` ran before it built
  * any window, `run.launch` (V2.5.1a, design section 5.1 rule 11), which is the
  * console's **one write**: it is not a read of the active installation's source
  * at all -- it takes the installation's name as an argument, resolves its own
  * records, and goes through the confirmation seam (`src/main/launch.ts`) rather
- * than a `CliSource` -- and `link.openPullRequest` (K2a, D815), which reads no
+ * than a `CliSource` -- `settings.edit` (the settings-edit plan's C3, rule 12),
+ * which is the console's **second write** and the same shape: the window is
+ * `src/main/confirm.ts`'s, the flow is `src/main/settingsedit.ts`'s, and what
+ * this module answers is the two phases that flow spawns -- and
+ * `link.openPullRequest` (K2a, D815), which reads no
  * CLI either: it builds a URL from three of its own arguments and hands it to
- * the console's one call to `shell.openExternal`. All three are joined in at the
+ * the console's one call to `shell.openExternal`. All four are joined in at the
  * entry point, as
  * `{ ...handlersFor(source, deps), 'startup.compatibility': … , 'run.launch': … ,
- * 'link.openPullRequest': … }` with `startupCompatibility` and
- * `openPullRequestHandler` from `src/main/ipc.ts` and the launcher from
- * `src/main/launch.ts`. **Nothing registers the handlers until that task lands**:
- * today `main()` serves the bundle and starts the lifecycle, and no window has a
- * preload to reach a channel with.
+ * 'settings.edit': … , 'link.openPullRequest': … }` with `startupCompatibility`
+ * and `openPullRequestHandler` from `src/main/ipc.ts`, the launcher from
+ * `src/main/launch.ts` and the editor from `src/main/settingsedit.ts`. **Nothing
+ * registers the handlers until that task lands**: today `main()` serves the
+ * bundle and starts the lifecycle, and no window has a preload to reach a
+ * channel with.
  *
  * The `Omit` is still a *closed* type: a key typed here that is not an operation
  * is an excess property, and an operation deleted from `CONSOLE_OPERATIONS`
@@ -544,5 +631,5 @@ export function handlersFor(
  */
 export type CliBackedHandlers = Omit<
   ConsoleHandlers,
-  'startup.compatibility' | 'run.launch' | 'link.openPullRequest'
+  'startup.compatibility' | 'run.launch' | 'settings.edit' | 'link.openPullRequest'
 >

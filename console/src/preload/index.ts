@@ -229,6 +229,20 @@ export const BRIDGE_VERSION = 1
  * copy of the generic path's allowlist**.
  * A `sensitive: true` row carries no value member at all and the screen drops it
  * whole (D1111), so nothing this operation returns is a credential.
+ *
+ * **The settings-edit plan's C3 added the thirty-first** (`settings.edit` /
+ * `editSetting`, the console's second write -- the Project tab's pencil, rule
+ * 12) and left the other thirty exactly where they were. It is **not in
+ * 0.119.0** either: it lands with C1 in 0.120.0. It sits directly under
+ * `settings.read`, whose document is where the layer it writes at comes from,
+ * and it is the one row here whose argv the table does not fix: the main process
+ * decides the phase (`--dry-run --json` for the classification, `--yes` for a
+ * widening, neither for a narrowing), and its method takes the subcommand, the
+ * key and the operator's own value. Everything else about the command -- the
+ * layer, the project, the config path, the terminator before the value -- is the
+ * main process's, and the argv the child is started from is the argv the window
+ * drew: a plan that differs from it is refused rather than spawned
+ * (`SETTINGS_EDIT_MOVED`, `src/source/source.ts`).
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -263,10 +277,18 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // 0.119.0 -- that release shipped without it):
   // `fugaro settings --json`, the project's settings with the writability facts
   // the Project tab's settings section draws its pencils from. One row, no
-  // argument, and the group's read alone -- `settings set` and `settings unset`
-  // are writes this surface does not carry (the plan's C3 is where the edit and
-  // its never rows land).
+  // argument, and the group's read alone.
   ['settings.read', 'readSettings'],
+  // The settings write (the settings-edit plan's C3, D1103): one key set or
+  // unset, at the layer the read's own row named, after the operator has read
+  // the change in the confirmation window (rule 12). Its three arguments are the
+  // subcommand, the key and the operator's own value -- and **no layer**, which
+  // is the main process's own fact out of the document it read (D1105, D1114),
+  // so this method cannot name one. The argv the child is started from is the
+  // argv the window drew, held by the main process and never handed here: the
+  // value is the operator's own text, and nothing else about the command line
+  // comes from this side.
+  ['settings.edit', 'editSetting'],
   ['cli.version', 'cliVersion'],
   ['startup.compatibility', 'getCompatibility'],
   ['installation.current', 'getInstallation'],

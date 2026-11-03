@@ -68,6 +68,8 @@ import { startUpdates } from './updater-electron'
 import { createUpdateSettings } from './updatestore'
 import type { UpdateController } from './updates'
 import { CONFIRM_ENTRY_URL, createConfirmWindow } from './confirm'
+import { createSettingsEdit, DECLINING_SETTINGS_EDITOR } from './settingsedit'
+import type { SettingsEditRunner } from './settingsedit'
 import { launchFingerprint } from './launchrules'
 import type { LaunchRecordFacts } from './launchrules'
 import type { InstallationsListReply } from './onboarding'
@@ -745,6 +747,19 @@ let launchRunner = createLaunchRunner({
 })
 
 /**
+ * settingsEditRunner is the settings edit's flow, and its default declines for
+ * `launchRunner`'s reason: before `main` has built the confirmation window and
+ * the source, an edit has nothing to read, nothing to show and nowhere to write,
+ * and `DECLINING_SETTINGS_EDITOR` says so rather than leaving a half-built flow
+ * reachable. `main` replaces it with the real one over the **same** window the
+ * launcher uses (D1115: one window, two questions).
+ *
+ * Its `cancelFor` is called from the two places the rail learns an installation
+ * moved, beside the launcher's.
+ */
+let settingsEditRunner: SettingsEditRunner = DECLINING_SETTINGS_EDITOR
+
+/**
  * gated is the whole surface, and it is the join the two modules describe:
  * `handlersFor` answers the twelve operations that read the CLI -- eleven
  * before console L5b added `runs.stats` (`src/source/source.ts`'s
@@ -797,6 +812,21 @@ const gated: ConsoleHandlers = {
   // URL `pullRequestUrl` built from them -- the first gate is the build, and
   // `openExternalValidated` inside the opener is the second.
   'link.openPullRequest': openPullRequestFromShell,
+  // **The settings edit, and the console's other write** (the settings-edit
+  // plan's C3, design section 5.1 rule 12, D1115). It is joined here for the
+  // same reason the launch is: it is not a read of the active installation's
+  // source, `handlersFor` leaves it out (`CliBackedHandlers` in
+  // `src/source/source.ts` says so from the other side), and what it needs is
+  // the confirmation window -- which is built in `main`, after this constant.
+  // So the runner is read at message time: before `main` an edit meets
+  // `DECLINING_SETTINGS_EDITOR` and writes nothing.
+  //
+  // **The layer and the value are not the renderer's to name.** The request the
+  // renderer sends is a subcommand, a key and a value (`settings.edit`'s schema
+  // closes exactly those), and the layer is read out of a settings document this
+  // process fetched (`settingsedit.ts`). The argv a write spawns is the argv the
+  // window drew, and the source refuses a plan that differs from it.
+  'settings.edit': (args) => settingsEditRunner.edit(args),
 }
 
 /**
@@ -989,19 +1019,38 @@ async function main(): Promise<void> {
   // every launch would be declined. `dashboardWindow` is the parent, so the
   // window is modal over the dashboard and never over the picker or over another
   // confirmation.
+  // **One confirmation window, two questions** (D1115). It is built once, here,
+  // and both flows are built over it: the launcher (rule 11) and the settings
+  // edit (rule 12). Its `open` decides its own subject's shape, its own preload
+  // and its own sender gate, so neither flow has a window of its own -- which is
+  // the whole of what "one implementation" means for a modal over the dashboard.
+  const confirmer = createConfirmWindow({
+    BrowserWindow,
+    ipcMain,
+    parent: dashboardWindow,
+    appPath: app.getAppPath(),
+    entryUrl: CONFIRM_ENTRY_URL,
+    session: session.defaultSession,
+  })
   launchRunner = createLaunchRunner({
     lookUp: launchLookUp,
     stillRecorded: launchStillRecorded,
-    confirmer: createConfirmWindow({
-      BrowserWindow,
-      ipcMain,
-      parent: dashboardWindow,
-      appPath: app.getAppPath(),
-      entryUrl: CONFIRM_ENTRY_URL,
-      session: session.defaultSession,
-    }),
+    confirmer,
     appEnv: process.env,
     log: createSpawnLog(process.env),
+  })
+  // **The settings edit's flow, over the same window.** Its three reads are the
+  // bound source's own: the read that names the layer and the row is
+  // `settings.read` (C1's operation), and the dry run and the write are
+  // `settings.edit`'s two phases (`src/source/source.ts`), so every child an
+  // edit spawns is one the source's plan built for the active installation and
+  // nothing else. Built only from `main`, so the runner the surface reads is
+  // either this one or the declining default and never a half-built pair.
+  settingsEditRunner = createSettingsEdit({
+    readSettings: async () => ({ document: (await boundSource.readSettings({})).document }),
+    argvForEdit: (args, phase, layer) => boundSource.settingsEditArgv(args, phase, layer),
+    spawnEdit: (args, phase, layer, shown) => boundSource.settingsEdit(args, phase, layer, shown),
+    confirmer,
   })
   // **The update policy comes up with the launcher it defers to**, and before
   // the surface exists: `startUpdates` answers null on anything but a packaged
@@ -1053,8 +1102,12 @@ async function main(): Promise<void> {
       // Rule 11's "re-chosen": a launch names its own installation rather than
       // the active one, so the installation being chosen again is the window
       // that must close. Before `lifecycle.choose`, so the cancel is decided
-      // while the old installation's window is still the only one open.
+      // while the old installation's window is still the only one open. The
+      // settings edit's window is the same window (D1115), so the same move
+      // cancels it: an edit read from a project that is no longer the active one
+      // would write to the wrong installation.
       launchRunner.cancelFor(chosen.project)
+      settingsEditRunner.cancelFor(chosen.project)
       resolvedBinaries.set(chosen.project, chosen.resolvedBinaryPath)
       return lifecycle.choose(chosen.compatibility).catch(reportAndQuit)
     },
@@ -1075,6 +1128,7 @@ async function main(): Promise<void> {
     // launch that project has open, active row or not.
     onRecordRemoved: (project) => {
       launchRunner.cancelFor(project)
+      settingsEditRunner.cancelFor(project)
     },
     // The crash reporter's checkbox, on the platforms the owner's ruling of
     // 2026-10-30 gives it (`darwin` and `linux`) and not on Windows. It is the

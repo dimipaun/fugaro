@@ -1314,6 +1314,12 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // (the settings-edit plan's C1), so the command's keys, globs and seven
   // remaining flags are all words no renderer can reach.
   'settings.read': {},
+  // The three keys the settings write's schema closes (the settings-edit plan's
+  // C3): the subcommand, the key and the operator's own value. **No layer**:
+  // it is the read's own `target_layer`, held in the main process and emitted
+  // from `argvFor`'s own `settingsEdit` (D1105, D1114), so a renderer has no
+  // word for one -- which the pin below reads back, key by key.
+  'settings.edit': { op: 'set', key: 'budget.cap_usd', value: '25' },
   'cli.version': {},
   'startup.compatibility': {},
   'installation.current': {},
@@ -2320,7 +2326,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these thirty, and no others".
+ * channel. The claim is "these thirty-one, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -2392,6 +2398,15 @@ describe('the spend read’s arguments', () => {
  * able to fill. It is the second operation the reduced mode withholds under
  * `caps` (`REDUCED_VIEW_OPERATIONS` above, and the withheld list below), because
  * the table it draws carries the project's configured caps.
+ * **The settings-edit plan's C3 added the thirty-first** (`settings.edit` /
+ * `editSetting`: one key set or unset at the layer the read named, after the
+ * operator has read the change in the confirmation window -- the console's
+ * second write, rule 12) and left the other thirty exactly where they were. It
+ * is next to `settings.read`, whose own row names the layer this one writes to,
+ * and it is the first operation here whose argv depends on a **phase** the main
+ * process decides (the dry run's `--dry-run --json`, the write's `--yes` for a
+ * widening) rather than on a flag the row fixes -- which is why its `flags` is
+ * empty and why its three arguments are the whole of what a renderer may say.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -2408,6 +2423,7 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['accounts.inventory', 'listAccounts'],
   ['models.list', 'listModels'],
   ['settings.read', 'readSettings'],
+  ['settings.edit', 'editSetting'],
   ['cli.version', 'cliVersion'],
   ['startup.compatibility', 'getCompatibility'],
   ['installation.current', 'getInstallation'],
@@ -2454,7 +2470,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these thirty, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these thirty-one, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -2471,11 +2487,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A thirty-first channel: what each task added must stay one row, and the
+    // A thirty-second channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
-    const thirtyFirst = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(thirtyFirst).toContain('fleet.report: a channel this console does not ship')
-    expect(thirtyFirst).toContain('31 rows, and this console ships 30')
+    const thirtySecond = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(thirtySecond).toContain('fleet.report: a channel this console does not ship')
+    expect(thirtySecond).toContain('32 rows, and this console ships 31')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -2489,7 +2505,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('29 rows, and this console ships 30')
+    expect(withoutTheNewRow).toContain('30 rows, and this console ships 31')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -2504,8 +2520,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the thirty methods and nothing else', () => {
-    // The bridge the window is handed: the thirty methods and the names,
+  it('is frozen, and hands the window a bridge with the thirty-one methods and nothing else', () => {
+    // The bridge the window is handed: the thirty-one methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
