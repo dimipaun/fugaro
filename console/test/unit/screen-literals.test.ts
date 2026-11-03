@@ -259,6 +259,11 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     },
     STAMP_REFRESH_LABEL:
       'the console\'s own word for the stamp\'s one control (`src/renderer/section.ts`), the label `renderStamp` already writes on every screen\'s Refresh: K4\'s and K5\'s follow-ups draw the row a **refused** read is left with (`coordinatorRefreshLine`), and its control is the console\'s press and never a string a document chose',
+    sentence: {
+      within: 'floorNote',
+      reason:
+        'the parameter of the `floorNote` helper itself, which is the sentence a floor is drawn as (`coordinatorJobsFloorNote` and `coordinatorWindowNote`): its two call sites pass `COORDINATOR_JOBS_FLOOR_WORD` and `COORDINATOR_WINDOW_FLOOR_WORD`, this file\'s own floor words, and the version drawn beside each is the handshake\'s own line rather than a document string',
+    },
   },
   // The two drawings console 0.116.1 adds: the panel's reading placeholder and
   // the Graph's no-checkout card. Neither is handed a document string that
