@@ -14,7 +14,11 @@
 //      pencil press is one read, one dry run and one write.
 //   2. **the dry run** -- `settings set|unset KEY --layer <L> --dry-run --json`,
 //      which writes nothing, backs nothing up and classifies the edit (D1106,
-//      P3). Its document is what the window draws.
+//      P3). Its document is what the window draws, and it is refused unless it
+//      answers about **this** edit: another key, another layer, a document this
+//      console cannot read or one carrying a refusal stops the flow here, with
+//      no window and no write (`SETTINGS_EDIT_DISAGREES`,
+//      `SETTINGS_EDIT_REFUSED`).
 //   3. **the window** -- `confirm.ts`'s, one implementation for both questions
 //      (D1115), showing C2's `settingsView` of that dry run.
 //   4. **the write** -- `settings set|unset KEY --layer <L> --yes -- <VALUE>`,
@@ -60,7 +64,7 @@
 import type { ValidatedArguments } from './ipc'
 import type { LaunchConfirmer, SettingsConfirmView } from './launch'
 import type { SettingsView, SettingsViewRow } from './settingsview'
-import { settingsView } from './settingsview'
+import { settingsDryRun, settingsView } from './settingsview'
 import type { SettingsEditPhase } from './spawn'
 import type { SettingsEditSpawn } from '../source/source'
 
@@ -110,6 +114,26 @@ export const SETTINGS_EDIT_NO_ROW = 'this project’s settings do not carry this
  * may not write -- an owned key (D1102), or one whose `target_layer` is empty.
  * It is a re-read's refusal for `SETTINGS_EDIT_NO_ROW`'s reason. */
 export const SETTINGS_EDIT_NOT_WRITABLE = 'this console does not write this key: read the settings again'
+
+/** SETTINGS_EDIT_DISAGREES is the refusal for a dry run that answered about
+ * **another edit**: its `key` is not the one the operator's pencil named, or its
+ * `layer` is not the layer the read's own row gave. The window's key is the
+ * document's and the write's `--layer` is the row's, so a document that
+ * disagrees on either would be shown as this edit and written as another one;
+ * it is refused before the window exists, and nothing is spawned but the dry run
+ * that answered it. It is a re-read's refusal for `SETTINGS_EDIT_NO_ROW`'s
+ * reason: the operator's way back is to read the settings again. */
+export const SETTINGS_EDIT_DISAGREES =
+  'the dry run answered for another edit: nothing was written; read the settings again'
+
+/** SETTINGS_EDIT_REFUSED is the refusal for a dry run whose **document** carries
+ * a refusal. The CLI prints that member empty in every document it prints
+ * (`settingsWriteDoc`, `internal/cli/settings_set.go`): a refusal is its own
+ * sentence, with a non-zero exit and no document at all, which is the state
+ * above (`dry.refusal`). A zero-exit document that carries one is therefore a
+ * state this CLI does not produce, and text this console cannot act on -- it is
+ * refused rather than read as a classification to write over. */
+export const SETTINGS_EDIT_REFUSED = 'the dry run reported a refusal: nothing was written'
 
 /** SETTINGS_EDIT_SHAPE is the refusal for a request that is not a subcommand, a
  * key and an optional value. The IPC schema (`settings.edit`) already closes
@@ -405,12 +429,33 @@ export function createSettingsEdit(deps: SettingsEditDeps): SettingsEditRunner {
       const dry = await deps.spawnEdit(args, 'dry-run', layer, dryArgv)
       if (dry.refusal !== null) return refused(dry.refusal)
 
+      // The dry run is the document the window and the write are built over, so
+      // it has to be a document **about this edit** before either exists. Three
+      // ways it can fail to be, and each is a refusal with no window and no
+      // write:
+      //   - it is not a document this console reads at all, refused with the
+      //     same sentence `settingsView` would refuse it with;
+      //   - its `key` is not the one the pencil named, or its `layer` is not
+      //     the layer the read's own row gave. Both members reach a window: the
+      //     key is drawn from the document and the layer written is the row's,
+      //     so a disagreement is a window showing one edit and a write of
+      //     another (`SETTINGS_EDIT_DISAGREES`);
+      //   - it carries a `refusal` (`SETTINGS_EDIT_REFUSED`), which is a state
+      //     this CLI does not print.
+      const dryRead = settingsDryRun(dry.document)
+      if (!dryRead.ok) return refused(dryRead.because)
+      if (dryRead.dryRun.key !== asked.key || dryRead.dryRun.layer !== layer) {
+        return refused(SETTINGS_EDIT_DISAGREES)
+      }
+      if (dryRead.dryRun.refusal !== '') return refused(SETTINGS_EDIT_REFUSED)
+
       // Which of the two write phases this edit is -- the tick's question, and
       // not the argv's: both write phases carry `--yes` (D1107) -- is the dry
       // run's classification, and the classification is a member of the window
-      // C2 builds. So the document is decoded twice: `classified` is read for
-      // `widening` alone -- `settingsView` is a pure function of the dry run's
-      // document, so the two calls cannot disagree -- and the window below is the
+      // C2 builds. So the document is read again here, for `widening` alone:
+      // `settingsView` is a pure function of it, so this call cannot answer
+      // differently from the checks above, and `classified` is thrown away as
+      // soon as the argv it decides exists -- the window below is the one the
       // operator sees, carrying the argv the child is started from. The window's
       // argv is built here, before the window exists, because it is both what is
       // drawn and what is spawned: the terminator and the value are part of what

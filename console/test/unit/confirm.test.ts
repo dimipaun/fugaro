@@ -72,7 +72,9 @@ import {
   SETTINGS_CONFIRM_PREFIX,
   SETTINGS_EDIT_BUSY,
   SETTINGS_EDIT_CANCELLED,
+  SETTINGS_EDIT_DISAGREES,
   SETTINGS_EDIT_NO_ROW,
+  SETTINGS_EDIT_REFUSED,
   SETTINGS_EDIT_NOT_WRITABLE,
   SETTINGS_EDIT_SHAPE,
   SETTINGS_EDIT_UNBUILT,
@@ -1728,6 +1730,64 @@ describe('the settings edit behind the same window', () => {
     expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
   })
 
+  it('refuses a dry run that answered for another key, and writes nothing', async () => {
+    // The window's key is the **dry run's** and the layer written is the
+    // **row's**, so a document about another key would be drawn as this edit's
+    // and then written against this key's row. A dry run that answers for an
+    // edit the operator did not ask for is refused before the window exists.
+    const { confirmer, windows } = confirmOver()
+    const source = settingsEditSource({
+      dryRun: { refusal: null, document: settingsDryRun({ key: 'budget.other' }), text: '' },
+    })
+    const runner = createSettingsEdit({ ...source.deps, confirmer })
+
+    expect(await runner.edit({ op: 'set', key: SETTINGS_KEY, value: '30' })).toStrictEqual({
+      ok: false,
+      sentence: SETTINGS_EDIT_DISAGREES,
+    })
+    expect(windows).toStrictEqual([])
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
+  })
+
+  it('refuses a dry run that answered for another layer, and writes nothing', async () => {
+    // The write's `--layer` is the read's row and the document's `layer` is the
+    // dry run's own answer about where it would land: a document naming another
+    // layer is a classification of a different write, and the console must not
+    // read its `widening` as if it were this one's.
+    const { confirmer, windows } = confirmOver()
+    const source = settingsEditSource({
+      dryRun: { refusal: null, document: settingsDryRun({ layer: 'local' }), text: '' },
+    })
+    const runner = createSettingsEdit({ ...source.deps, confirmer })
+
+    expect(await runner.edit({ op: 'set', key: SETTINGS_KEY, value: '30' })).toStrictEqual({
+      ok: false,
+      sentence: SETTINGS_EDIT_DISAGREES,
+    })
+    expect(windows).toStrictEqual([])
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
+  })
+
+  it('refuses a dry run whose document carries a refusal, and writes nothing', async () => {
+    // The CLI prints `refusal` empty in every document it prints
+    // (`settingsWriteDoc`, internal/cli/settings_set.go): a refusal is its own
+    // sentence with a non-zero exit and no document. A zero-exit document that
+    // carries one is a state this CLI never produces, so it is refused rather
+    // than read as a classification and written over.
+    const { confirmer, windows } = confirmOver()
+    const source = settingsEditSource({
+      dryRun: { refusal: null, document: settingsDryRun({ refusal: DRY_RUN_MEMBER_REFUSAL }), text: '' },
+    })
+    const runner = createSettingsEdit({ ...source.deps, confirmer })
+
+    expect(await runner.edit({ op: 'set', key: SETTINGS_KEY, value: '30' })).toStrictEqual({
+      ok: false,
+      sentence: SETTINGS_EDIT_REFUSED,
+    })
+    expect(windows).toStrictEqual([])
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
+  })
+
   it('answers a refused write with the CLI’s sentence, and starts no second child', async () => {
     const clock = aClock()
     const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
@@ -2011,6 +2071,12 @@ const DRY_RUN_REFUSAL = 'budget.cap_usd is not a key this project may write'
 const STALE_WRITE_REFUSAL =
   'layer.yaml changed since it was read: nothing was written; read it again and repeat the edit'
 
+/** DRY_RUN_MEMBER_REFUSAL is the impossible state rule 12 fails closed on: a
+ * **zero-exit** dry run document whose `refusal` member is not empty. The CLI
+ * prints that member empty in every document it prints, so any text will do --
+ * what is asserted is that the text is not read as a classification. */
+const DRY_RUN_MEMBER_REFUSAL = 'the layer is managed by the installation'
+
 /** settingsReadDocument is `settings --json`'s document (`settingsDocVersion`,
  * `internal/cli/settings_render.go`): the settings read's own contract, which
  * `decodeRead` reads strictly. */
@@ -2034,8 +2100,9 @@ function settingsRow(overrides: Record<string, unknown> = {}): Record<string, un
 }
 
 /** settingsDryRun is `settings set|unset --dry-run --json`'s document: what the
- * window is drawn from, and the classification (`widening`) that decides whether
- * the write carries `--yes` (D1106, D1107). */
+ * window is drawn from, and the classification (`widening`) that decides the
+ * window's own shape -- the tick -- rather than a word of the write's argv
+ * (D1106, D1109). */
 function settingsDryRun(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     version: 1,
