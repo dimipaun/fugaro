@@ -989,7 +989,13 @@ export function buildProjectsSettings(inputs: ProjectsSettingsInputs): ProjectsS
   }
   const rows: ProjectsSettingsRow[] = []
   for (const row of settingsRowsAt(document.settings)) {
-    if (row.sensitive === true) continue
+    // **The check fails closed on the type.** Only an absent member or exactly
+    // `false` may draw a row: a document that spells the flag `"true"`, `1`,
+    // `"false"` or `null` loses the row rather than drawing it. Reading it as
+    // `=== true` would draw exactly the row the ruling of 2026-11-01 (D1111)
+    // says is never editable and never shown.
+    const sensitive = row['sensitive']
+    if (sensitive !== undefined && sensitive !== false) continue
     const key = textAt(row.key) ?? ''
     const writable = row.writable === true
     const targetLayer = textAt(row.target_layer) ?? ''

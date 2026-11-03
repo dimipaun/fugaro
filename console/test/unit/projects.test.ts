@@ -1198,6 +1198,31 @@ describe('the settings section', () => {
     expect(drawn(tree)).not.toContain('a-value-the-table-must-not-draw')
   })
 
+  it('drops a row whose `sensitive` is anything but a false one, whatever its type', () => {
+    // The check **fails closed**: only an absent member or exactly `false` may
+    // draw a row, so a document that spells the flag `"true"`, `1`, `"false"`,
+    // `0` or `null` loses the row rather than drawing it. A coercion here would
+    // draw exactly the row the ruling of 2026-11-01 (D1111) says is never shown.
+    for (const sensitive of ['true', 1, 'false', 0, null, {}]) {
+      const tree = settingsTree(
+        settingsInputs({
+          raw: {
+            ...SETTINGS,
+            settings: [
+              {
+                ...(SETTINGS.settings[0] as unknown as Record<string, unknown>),
+                sensitive,
+              },
+            ],
+          },
+        }),
+      )
+      expect(settingsKeys(tree), `sensitive: ${JSON.stringify(sensitive)} drew a row`).toEqual([])
+      expect(drawn(tree)).not.toContain('a-value-the-table-must-not-draw')
+      expect(all(tree, 'projects-settings-pencil')).toEqual([])
+    }
+  })
+
   it('draws a refusal rather than an empty table when no document arrived', () => {
     const tree = settingsTree(settingsInputs({ raw: null, because: 'the CLI refused the read' }))
     expect(all(tree, 'projects-settings-row')).toEqual([])
