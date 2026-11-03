@@ -321,9 +321,10 @@ func catalogInputs(now time.Time) CatalogInputs {
 // TestCheckTriggersOnACatalogDefinitionChange: the daily check's one new
 // trigger. A catalog entry whose copied definition is not the one its last
 // build read is rebuilt; a copy that did not change is not, and an entry
-// with no record is built. The trigger is what makes a nightly security
-// rebuild of a catalog image possible at all (F4, D1148's recommendation),
-// since an entry has no commits of its own to watch.
+// with no record is built. The trigger is what makes a rebuild of an entry
+// possible at all when neither its definition nor its base has moved (F4),
+// since an entry has no commits of its own to watch. How often such a
+// rebuild runs is the schedule's business (PIC7), not this decision's.
 func TestCheckTriggersOnACatalogDefinitionChange(t *testing.T) {
 	now := time.Date(2026, 11, 3, 5, 30, 0, 0, time.UTC)
 	cases := []struct {
@@ -346,11 +347,10 @@ func TestCheckTriggersOnACatalogDefinitionChange(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			in := catalogInputs(now)
-			in.Force = false
 			tc.mod(&in)
 			got := DecideCatalog(in)
 			if got.Entry != "agent" || got.Decision != tc.decision || !slices.Equal(got.Reasons, tc.reasons) {
-				t.Fatalf("decided %s %v (%s), want %s %v", got.Decision, got.Reasons, got.Error, tc.decision, tc.reasons)
+				t.Fatalf("decided %s %v, want %s %v", got.Decision, got.Reasons, tc.decision, tc.reasons)
 			}
 		})
 	}

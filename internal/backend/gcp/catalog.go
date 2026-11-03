@@ -308,10 +308,16 @@ gcloud artifacts docker tags add "$$IMAGE@$$digest" "$$IMAGE:$$TAG" --quiet`},
 }
 
 // catalogRecordStep writes the entry's record where the daily check reads
-// it (CatalogRecordKey). Every value it carries is constrained — a
-// validated entry name, hex sums, a digits-only generation, a validated
-// image reference, Cloud Build's own build ID — so the step composes the
-// JSON with printf and no escaping, and no secret is anywhere near it.
+// it (CatalogRecordKey). The field names are imagecheck.CatalogRecordState's
+// (and, where the meaning is the same, imagecheck.Record's): base_ref the
+// base as the build was given it, base_digest the base it ran FROM — the
+// build step writes that digest to /workspace/base-digest — and image_digest
+// the digest latest was promoted to.
+//
+// Every value it carries is constrained — a validated entry name, hex sums,
+// a digits-only generation, a validated image reference, Cloud Build's own
+// build ID — so the step composes the JSON with printf and no escaping, and
+// no secret is anywhere near it.
 func catalogRecordStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
 	key, _ := CatalogRecordKey(s.Slug, s.Entry) // checked before this is called
 	return &cloudbuild.BuildStep{
@@ -325,12 +331,13 @@ func catalogRecordStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
 			"BASE=" + s.Base, "TAG=${_CATALOG_TAG}",
 		},
 		Args: []string{"-c", `set -eu
-digest=$$(cat /workspace/out/image-digest)
-case "$$digest" in sha256:*) ;; *) echo "no pushed digest" >&2; exit 1 ;; esac
+image_digest=$$(cat /workspace/out/image-digest)
+case "$$image_digest" in sha256:*) ;; *) echo "no pushed digest" >&2; exit 1 ;; esac
+base_digest=$$(cat /workspace/base-digest)
 built_at=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
 record=$$(mktemp)
-printf '{"version":1,"entry":"%s","source_commit":"%s","definition_generation":%s,"definition_sha256":"%s","image":"%s","content_tag":"%s","base":"%s","digest":"%s","build_id":"%s","built_at":"%s"}' \
-  "$$ENTRY" "$$COMMIT" "$$GENERATION" "$$SHA256" "$$IMAGE" "$$TAG" "$$BASE" "$$digest" "$BUILD_ID" "$$built_at" > "$$record"
+printf '{"version":1,"entry":"%s","source_commit":"%s","definition_generation":%s,"definition_sha256":"%s","base_ref":"%s","base_digest":"%s","image":"%s","content_tag":"%s","image_digest":"%s","build_id":"%s","built_at":"%s"}' \
+  "$$ENTRY" "$$COMMIT" "$$GENERATION" "$$SHA256" "$$BASE" "$$base_digest" "$$IMAGE" "$$TAG" "$$image_digest" "$BUILD_ID" "$$built_at" > "$$record"
 gcloud storage cp --quiet "$$record" "$$BUCKET/$$KEY"
 rm -f "$$record"
 echo "recorded $$KEY"`},

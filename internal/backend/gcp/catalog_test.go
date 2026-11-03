@@ -218,12 +218,18 @@ func TestCatalogBuildWritesARecordTheCheckReads(t *testing.T) {
 		t.Fatalf("the record step's env = %v, want %v", env, want)
 	}
 	script := strings.Join(rec.Args, "\n")
-	for _, field := range []string{"definition_generation", "definition_sha256", "source_commit", "digest", "build_id", "entry"} {
+	// Every field imagecheck.CatalogRecordState reads, and the two extra a
+	// human wants: the image, its content tag and the build that wrote it.
+	for _, field := range []string{
+		`"version":`, `"entry":"`, `"source_commit":"`, `"definition_generation":`,
+		`"definition_sha256":"`, `"base_ref":"`, `"base_digest":"`, `"image":"`,
+		`"content_tag":"`, `"image_digest":"`, `"build_id":"`, `"built_at":"`,
+	} {
 		if !strings.Contains(script, field) {
 			t.Fatalf("the record does not carry %s: %q", field, script)
 		}
 	}
-	for _, value := range []string{"$$SHA256", "$$GENERATION", "$$COMMIT", "/workspace/out/image-digest"} {
+	for _, value := range []string{"$$SHA256", "$$GENERATION", "$$COMMIT", "/workspace/out/image-digest", "/workspace/base-digest"} {
 		if !strings.Contains(script, value) {
 			t.Fatalf("the record does not read %s: %q", value, script)
 		}
