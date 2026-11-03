@@ -1507,9 +1507,21 @@ export function fillProjects(
 
 /** renderProjects walks the model through Task 2.0's writers: the frame with its
  * section filled. It is what the tests and the spec draw, because both want the
- * screen an operator sees rather than the shell the entry mounts first. */
-export function renderProjects(factory: ScreenFactory, model: ProjectsModel, theme: ProjectsTheme): ScreenElement {
+ * screen an operator sees rather than the shell the entry mounts first.
+ *
+ * `models` is the tab's **second read's** model (console 0.119.0), and it is
+ * optional because the two reads are independent: a caller with no models
+ * document draws the budget's screen and nothing where the models panel would
+ * be -- which is the whole of what "that read has not answered" looks like in
+ * this frame. */
+export function renderProjects(
+  factory: ScreenFactory,
+  model: ProjectsModel,
+  theme: ProjectsTheme,
+  models?: ProjectsModels,
+): ScreenElement {
   const frame = renderProjectsFrame(factory, theme)
   fillProjects(factory, model, frame.body)
+  if (models !== undefined) fillProjectsModels(factory, models, frame.models)
   return frame.root
 }
