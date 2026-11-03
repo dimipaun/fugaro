@@ -87,7 +87,11 @@ func fetchDockerfile(ctx context.Context, open gitprov.Opener, kind string, e co
 	}
 	data, err := r.Contents(ctx, s.Path, s.Branch)
 	if err != nil {
-		return nil, fmt.Errorf("the catalog entry %s: reading %s from %s: %w", nameOf(e), s.Path, pluginwire.Printable(s.Repo), err)
+		// The path is printed through pluginwire.Printable like every other
+		// value that reaches a message here: gitprov.ValidRepoPath lets a
+		// formatting (bidi) character through, so the path a person reads
+		// back is escaped rather than taken at its word.
+		return nil, fmt.Errorf("the catalog entry %s: reading %s from %s: %w", nameOf(e), pluginwire.Printable(s.Path), pluginwire.Printable(s.Repo), err)
 	}
 	return bounded(e, data)
 }

@@ -132,6 +132,52 @@ func TestContentsReadsTheFileAtItsRef(t *testing.T) {
 	}
 }
 
+// TestContentsPrintsAPathEscaped: a path is a value a person reads back in a
+// failure, and gitprov.ValidRepoPath deliberately allows formatting (bidi)
+// characters in one, so every message here prints it through
+// pluginwire.Printable rather than as it was given: neither the refusal of a
+// path outside the rule nor the refusal of a reply may carry the raw
+// character into whatever reads the message.
+func TestContentsPrintsAPathEscaped(t *testing.T) {
+	// A bidi override passes gitprov.ValidRepoPath, so this refusal is the
+	// reply's: the API answers a directory where the file was asked for.
+	const bidi = "docker/agent\u202ename.Dockerfile"
+	p := contentsProvider(t, append(mintExchanges(t),
+		contentsExchange(t, "/repos/acme/web/contents/docker/agent%E2%80%AEname.Dockerfile", 200,
+			contentsReply("dir", "", 0, "")))...)
+	err := escapedError(t, p, bidi)
+	if !strings.Contains(err.Error(), "dir") {
+		t.Fatalf("err = %v, want it to name what the reply held", err)
+	}
+	// A control character is refused before any request is made: the fixture
+	// holds no exchange at all, so a request would fail this test.
+	err = escapedError(t, contentsProvider(t), "docker/agent\x1bagent.Dockerfile")
+	if !strings.Contains(err.Error(), "not a relative file path") {
+		t.Fatalf("err = %v, want the path's own refusal", err)
+	}
+}
+
+// escapedError is the failure Contents answers path with, which must print
+// the path escaped and never as it was given.
+func escapedError(t *testing.T, p *Provider, path string) error {
+	t.Helper()
+	_, err := p.Contents(ctx, path, "")
+	if err == nil {
+		t.Fatalf("the path %q was accepted", path)
+	}
+	for _, r := range path {
+		if r > 0x7f || r < 0x20 {
+			if strings.ContainsRune(err.Error(), r) {
+				t.Fatalf("err = %q carries %U raw", err, r)
+			}
+			if !strings.Contains(err.Error(), fmt.Sprintf(`\u%04x`, r)) {
+				t.Fatalf("err = %v does not escape %U", err, r)
+			}
+		}
+	}
+	return err
+}
+
 // TestContentsRefusesWhatItCannotRead: a definition a build may be handed is
 // a regular file's bytes, so every other shape the API answers with — a
 // directory, a symlink, a submodule, an encoding this reader cannot decode,

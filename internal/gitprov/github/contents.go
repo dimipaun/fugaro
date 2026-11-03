@@ -39,8 +39,14 @@ var _ gitprov.ContentsReader = (*Provider)(nil)
 // gitprov.MaxContentsBytes — a caller may put these bytes into an image's
 // build, so what it gets is a bounded regular file or an error.
 func (p *Provider) Contents(ctx context.Context, path, ref string) ([]byte, error) {
+	// The path in a message is the caller's value printed through
+	// pluginwire.Printable, as every other value that reaches a log here is:
+	// gitprov.ValidRepoPath refuses control characters, and it deliberately
+	// allows formatting (bidi) ones, so a path a person reads back in a
+	// failure is escaped rather than taken at its word.
+	at := pluginwire.Printable(path)
 	if !gitprov.ValidRepoPath(path) {
-		return nil, fmt.Errorf("reading %s: the path is not a relative file path inside the repository", path)
+		return nil, fmt.Errorf("reading %s: the path is not a relative file path inside the repository", at)
 	}
 	q := url.Values{}
 	if ref != "" {
@@ -48,27 +54,27 @@ func (p *Provider) Contents(ctx context.Context, path, ref string) ([]byte, erro
 	}
 	var f contentsFile
 	if err := p.api.Do(ctx, "GET", p.contentsPath(path, q), nil, &f); err != nil {
-		return nil, fmt.Errorf("reading %s: %w", path, err)
+		return nil, fmt.Errorf("reading %s: %w", at, err)
 	}
 	switch {
 	case f.Type != "file":
-		return nil, fmt.Errorf("reading %s: the repository holds a %s there, not a file", path, pluginwire.Printable(f.Type))
+		return nil, fmt.Errorf("reading %s: the repository holds a %s there, not a file", at, pluginwire.Printable(f.Type))
 	case f.Encoding != "base64":
-		return nil, fmt.Errorf("reading %s: the reply is encoded as %s, not base64", path, pluginwire.Printable(f.Encoding))
+		return nil, fmt.Errorf("reading %s: the reply is encoded as %s, not base64", at, pluginwire.Printable(f.Encoding))
 	case f.Size <= 0:
-		return nil, fmt.Errorf("reading %s: the reply is %d bytes", path, f.Size)
+		return nil, fmt.Errorf("reading %s: the reply is %d bytes", at, f.Size)
 	case f.Size > gitprov.MaxContentsBytes:
-		return nil, fmt.Errorf("reading %s: it is %d bytes, more than the %d a definition may be", path, f.Size, gitprov.MaxContentsBytes)
+		return nil, fmt.Errorf("reading %s: it is %d bytes, more than the %d a definition may be", at, f.Size, gitprov.MaxContentsBytes)
 	}
 	// GitHub wraps the base64 content at 60 characters with newlines; the
 	// decoder reads it either way, and the size above has already bounded
 	// what the decode produces.
 	data, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(f.Content, "\n", ""))
 	if err != nil {
-		return nil, fmt.Errorf("reading %s: decoding the reply: %w", path, err)
+		return nil, fmt.Errorf("reading %s: decoding the reply: %w", at, err)
 	}
 	if len(data) == 0 || len(data) > gitprov.MaxContentsBytes {
-		return nil, fmt.Errorf("reading %s: the reply decoded to %d bytes", path, len(data))
+		return nil, fmt.Errorf("reading %s: the reply decoded to %d bytes", at, len(data))
 	}
 	return data, nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -23,10 +24,10 @@ func fakeCredential(t *testing.T) string {
 	return "cred-" + hex.EncodeToString(sum[:12])
 }
 
-// fetchOpener is a gitprov.Opener for one fake provider, recording every
-// open and handing out a credential the fetch must never write anywhere.
+// fetchOpener is a gitprov.Opener for one provider, recording every open and
+// handing out a credential the fetch must never write anywhere.
 type fetchOpener struct {
-	p      *fake.Provider
+	p      gitprov.Provider
 	cred   string
 	opened []string
 }
@@ -34,6 +35,16 @@ type fetchOpener struct {
 func (o *fetchOpener) open(_ context.Context, kind, repo string) (gitprov.Provider, []string, error) {
 	o.opened = append(o.opened, kind+":"+repo)
 	return o.p, []string{o.cred}, nil
+}
+
+// quietReader is a provider whose read fails without quoting the path back:
+// what a message then prints is the resolver's own, which is what the test
+// below is about (a provider's error carries the path it was given, as the
+// real adapters' do).
+type quietReader struct{ gitprov.Provider }
+
+func (quietReader) Contents(context.Context, string, string) ([]byte, error) {
+	return nil, errors.New("the read failed")
 }
 
 func dockerfileEntry(name, path, branch string) config.Entry {
@@ -150,6 +161,22 @@ func TestCatalogFetchUsesTheExistingCredentialAndLogsNone(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "docker/absent.Dockerfile") || !strings.Contains(err.Error(), "acme/app") {
 		t.Fatalf("the failure does not name what was read: %v", err)
+	}
+}
+
+// TestCatalogFetchPrintsThePathEscaped: the path a source names is a value a
+// person reads back in a failure, and gitprov.ValidRepoPath deliberately
+// allows formatting (bidi) characters in one, so the resolver escapes it on
+// its way into the message rather than printing whatever it was given.
+func TestCatalogFetchPrintsThePathEscaped(t *testing.T) {
+	const bidi = "docker/agent\u202ename.Dockerfile"
+	o := &fetchOpener{p: quietReader{}, cred: fakeCredential(t)}
+	_, err := Fetch(context.Background(), o.open, gitprov.KindGitHub, dockerfileEntry("agent", bidi, ""))
+	if err == nil || !strings.Contains(err.Error(), `\u202e`) {
+		t.Fatalf("err = %v, want the path escaped", err)
+	}
+	if strings.ContainsRune(err.Error(), '\u202e') {
+		t.Fatalf("err = %q carries the raw path", err)
 	}
 }
 
