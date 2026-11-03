@@ -44,8 +44,9 @@ that decides where a repository's code may go or what a run may cost:
   **do not exist**; `secrets` has no `rm` and no policy flags; `accounts` has no `rm`.
 
 `fugaro settings set` already writes scalars and string lists
-(`internal/cli/settings_set.go:68`), but **235 of the registry's 323 keys are not
-writable** ([reconciliation.md](reconciliation.md) §1, F1). The root cause is one sentence: **the
+(`internal/cli/settings_set.go:68`): the allowlist carries **89 of the registry's 323 rows** (13 by name
+and 76 through its prefixes), and the remaining **234 rows have no generic writer**
+([reconciliation.md](reconciliation.md) §1, F1). The root cause is one sentence: **the
 generic writer handles scalars and string lists only**, and every gap above is a map, an object list, or
 a key the allowlist does not carry.
 
@@ -83,7 +84,7 @@ facts rather than its conclusion.
 - **It changes no field's meaning.** For every wire and JSON shape a reader outside this binary
   consumes — the settings read, the settings-write document, the policy node, the run record and the
   config formats — members are **added only**; the settings-write schema moves to a new version, and
-  the console's settings edit keeps working unchanged ([spec.md](spec.md) §3, D1164).
+  the console's settings edit keeps working unchanged ([spec.md](spec.md) §2.4, D1164).
 - **It does not touch the managed gate's decisions.** D1011–D1026 are cited and extended with a row per
   new command; no decision there is re-opened, and no file of
   [docs/managed-agent-converge/](../managed-agent-converge/README.md) is edited by any task here.
@@ -91,7 +92,7 @@ facts rather than its conclusion.
   session exactly as today, except where the managed gate of D1011 admits it in a managed project.
 - **It does not make `fugaro setup` agent-runnable**, and it does not move an installation fact
   (endpoints, terraform, batch, build, `gcp_project`, region, `runs_bucket`, registry, generations)
-  out of setup/update's hands ([spec.md](spec.md) §7, D1182).
+  out of setup/update's hands ([spec.md](spec.md) §6, D1182).
 
 ## Related
 
