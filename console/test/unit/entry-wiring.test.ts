@@ -133,6 +133,7 @@ import {
 import {
   COORDINATOR_SHAPE,
   PROJECTS_SHAPE,
+  PROJECTS_MODELS_SHAPE,
   SKELETON_BLOCK_CLASS,
   SKELETON_CLASS,
   SKELETON_SHAPES,
@@ -176,7 +177,7 @@ import {
   COORDINATOR_JOBS_WINDOW_WORD,
   COORDINATOR_JOB_DETAIL_CLASS,
 } from '../../src/renderer/screens/coordinator'
-import { PROJECTS_BUSY } from '../../src/renderer/screens/projects'
+import { PROJECTS_BUSY, PROJECTS_MODELS_BUSY } from '../../src/renderer/screens/projects'
 import type { SkeletonShape } from '../../src/renderer/skeleton'
 import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
 import {
@@ -203,8 +204,9 @@ import {
  * and the built tree are read from. */
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
-/** READ_METHODS is the twelve reads `entry.ts` may reach for (`ReadBridge`, the
- * same twelve), by the name the preload exposes. Every one of them is on the
+/** READ_METHODS is the thirteen reads `entry.ts` may reach for (`ReadBridge`'s
+ * own list less `summaryRuns`, which `queueBridge` answers with its own
+ * recorder), by the name the preload exposes. Every one of them is on the
  * fake bridge below, and every one records its call -- so "this read was never
  * made" is a claim this suite can make about any of them. */
 const READ_METHODS = [
@@ -213,6 +215,7 @@ const READ_METHODS = [
   'runReport',
   'listRuns',
   'statsRuns',
+  'listModels',
   'coordinatorStatus',
   'coordinatorShow',
   'coordinatorIntents',
@@ -3599,6 +3602,7 @@ function everyReadHeld(): FakeBridge {
     showBudget: () => holding().reply(),
     runReport: () => holding().reply(),
     listRuns: () => holding().reply(),
+    listModels: () => holding().reply(),
     coordinatorStatus: () => holding().reply(),
   })
 }
@@ -3628,7 +3632,7 @@ describe('the skeleton a tab draws while its data is on its way', () => {
    * the owner's rule of 2026-10-31 drawn: four reads that start together and a
    * section per read, rather than the whole tab behind its slowest. */
   const ownShape = (tab: string): readonly SkeletonShape[] | null => {
-    if (tab === 'projects') return [PROJECTS_SHAPE]
+    if (tab === 'projects') return [PROJECTS_SHAPE, PROJECTS_MODELS_SHAPE]
     if (tab === 'coordinator') return SKELETON_SHAPES.coordinator
     return null
   }
@@ -4787,6 +4791,41 @@ const BUDGET_DOC = Object.freeze({
   warnings: [],
 })
 
+/** MODELS_DOC is `models ls --json` (contract section 6.18), invented: one
+ * route and one model with a price. It is the Projects tab's second read. */
+const MODELS_DOC = Object.freeze({
+  version: 1,
+  project: 'example-project',
+  catalog: { source: 'built-in', checked_at: '2026-10-01', age_days: 33, stale: false },
+  routes: [
+    {
+      name: 'anthropic',
+      kind: 'direct',
+      base_url: 'https://api.anthropic.com',
+      host: 'api.anthropic.com',
+      models: ['claude-*'],
+      route_fee_pct: 0,
+      allow_data_to: ['*'],
+      open_to_every_repo: true,
+      note: '',
+    },
+  ],
+  models: [
+    {
+      id: 'deepseek-v4.1-flash',
+      route: 'anthropic',
+      source: 'catalog',
+      input_per_m: 0.14,
+      output_per_m: 0.28,
+      catalog: null,
+      allowed_to: ['*'],
+      refused: '',
+      note: '',
+    },
+  ],
+  repositories: [],
+})
+
 /** QUEUE_OFFER is the one repository identity the open installation offers: the
  * `<provider>/<owner>/<name>` string the launch form's `select` holds as an
  * option's value, and the value the form sends. */
@@ -5132,7 +5171,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     expect(
       calls.slice(before).map((call) => call.name),
       'the Projects tab made a read that is not its own',
-    ).toEqual(['showBudget'])
+    ).toEqual(['showBudget', 'listModels'])
     expect(
       calls.slice(before).some((call) => call.name === 'listRuns'),
       'the Projects tab read the run list, which is the read the owner measured at six seconds',
@@ -5144,6 +5183,68 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     // The operator is a person, and the console draws one through the
     // sanitizer's own class: the address loses its local part (`sanitize.ts`).
     expect(classed(panelOf(document), 'projects-kill-by')[0]?.textContent).toBe(ADDRESS_PLACEHOLDER)
+  })
+
+  it('starts the models read with the tab’s others and lets none of them wait', async () => {
+    // The two reads of this tab are independent documents: `models ls` is
+    // offline and cheap and does not wait on `budget show`, and the budget does
+    // not wait on it. Both go out in the click's own turn -- nothing is awaited
+    // before the second call -- which is what the assertion on the order says.
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const before = calls.length
+    buttonFor(document, 'projects').click()
+    // **Nothing is awaited**: the click's own turn is where both calls are, so a
+    // tab that serialised them would show one here.
+    expect(
+      calls
+        .slice(before)
+        .map((call) => call.name)
+        .filter((name) => name === 'showBudget' || name === 'listModels'),
+    ).toEqual(['showBudget', 'listModels'])
+    // While both are out, the tab says which read each of its two marks is.
+    expect(busyLabels(document)).toEqual([PROJECTS_BUSY, PROJECTS_MODELS_BUSY])
+    await flush()
+    // Each section paints its own answer, and the models section paints the
+    // document's own routes and models and not the budget's.
+    const models = classed(panelOf(document), 'projects-models')[0]
+    expect(models, 'the tab drew no models section').toBeDefined()
+    expect(holdsText(models as FakeNode, 'anthropic')).toBe(true)
+    expect(holdsText(models as FakeNode, 'deepseek-v4.1-flash')).toBe(true)
+    expect(busyLabels(document)).toEqual([])
+  })
+
+  it('asks for no models read at all below the command’s floor, and says which version it needs', async () => {
+    // `models ls` landed after v0.15.0: a 0.15.x CLI answers `unknown command
+    // "ls"`, which is a failure the operator can do nothing about. The floor is
+    // asked **before** the read goes out, and below it the panel draws the
+    // console's own sentence instead.
+    const { bridge, calls } = fakeBridge({
+      compatibility: { ...anOkCompatibility(), cliVersion: '0.15.3' },
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const before = calls.length
+    buttonFor(document, 'projects').click()
+    await flush()
+    expect(
+      calls.slice(before).some((call) => call.name === 'listModels'),
+      'the tab asked a CLI below the floor for `models ls`',
+    ).toBe(false)
+    const models = classed(panelOf(document), 'projects-models')[0]
+    expect(models, 'the tab drew no models section').toBeDefined()
+    expect(holdsText(models as FakeNode, 'the models read needs fugaro 0.16.0 and this CLI is 0.15.3')).toBe(true)
+    expect(classed(models as FakeNode, 'projects-models-route-list')).toEqual([])
   })
 
   it('draws the Coordinator’s own header in the click’s frame, and its summary the moment the view lands', async () => {

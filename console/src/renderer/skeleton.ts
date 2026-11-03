@@ -110,6 +110,21 @@ export const PROJECTS_SHAPE: SkeletonShape = Object.freeze({
 })
 
 /**
+ * PROJECTS_MODELS_SHAPE is the Projects screen's **second** section (console
+ * 0.119.0): the routes, the models a run can name and the price catalog's age,
+ * drawn from `models ls --json`. The tab is one panel with two reads behind it,
+ * and the two are not one section for `COORDINATOR_WINDOW_SHAPE`'s reason -- the
+ * models read is offline and cheap and does not wait on `budget show`, so a tab
+ * that held one mark for both would hold the models behind the budget or the
+ * budget behind the models. Its name is its own, so "which of the tab's two reads
+ * is still out" is answerable from a tree alone.
+ */
+export const PROJECTS_MODELS_SHAPE: SkeletonShape = Object.freeze({
+  section: 'models',
+  blocks: Object.freeze<SkeletonBlock[]>(['line', 'row', 'row']),
+})
+
+/**
  * COORDINATOR_SHAPE is the shape of what the Coordinator screen's body holds
  * while its read is out: a repository's name and counts, then the rows of the
  * records and collisions under them. The header above that body -- the source
@@ -190,7 +205,7 @@ export const SKELETON_SHAPES: Readonly<Record<SkeletonTab, readonly SkeletonShap
     Object.freeze({ section: 'cards', blocks: Object.freeze<SkeletonBlock[]>(['card', 'card', 'card']) }),
   ]),
   spend: Object.freeze([SPEND_CAPS_SHAPE, SPEND_REPORT_SHAPE]),
-  projects: Object.freeze([PROJECTS_SHAPE]),
+  projects: Object.freeze([PROJECTS_SHAPE, PROJECTS_MODELS_SHAPE]),
   coordinator: Object.freeze([
     COORDINATOR_QUEUE_SHAPE,
     COORDINATOR_WINDOW_SHAPE,

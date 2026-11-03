@@ -87,6 +87,7 @@ import {
   decodeCoordinatorIntents,
   decodeCoordinatorPullRequest,
   decodeCoordinatorStatus,
+  decodeModelsList,
   decodePlanStatus,
   decodeRunsSummary,
   decodeSnapshot,
@@ -95,6 +96,7 @@ import type {
   CoordinatorIntentsView,
   CoordinatorPullRequestDocument,
   CoordinatorStatusView,
+  ModelsListView,
   PlanStatusView,
   RunsSummaryView,
 } from '../shared/schema'
@@ -125,6 +127,7 @@ import {
   COORDINATOR_TOTALS_SHAPE,
   COORDINATOR_WINDOW_SHAPE,
   PROJECTS_SHAPE,
+  PROJECTS_MODELS_SHAPE,
   SPEND_CAPS_SHAPE,
   SPEND_REPORT_SHAPE,
 } from './skeleton'
@@ -182,7 +185,15 @@ import type {
   ScreenElement,
 } from './screens/coordinator'
 import type { SectionRead } from './section'
-import { PROJECTS_BUSY, buildProjectsModel, fillProjects, renderProjectsFrame } from './screens/projects'
+import {
+  PROJECTS_BUSY,
+  PROJECTS_MODELS_BUSY,
+  buildProjectsModel,
+  buildProjectsModels,
+  fillProjects,
+  fillProjectsModels,
+  renderProjectsFrame,
+} from './screens/projects'
 import type { DrawnProjectsFrame, ProjectsModel } from './screens/projects'
 import {
   RUN_LOGS_BUSY,
@@ -228,6 +239,7 @@ import {
   SKEW_HEADLINES,
   hidesView,
   launchSupported,
+  modelsListSupported,
   runsListPageSupported,
   runsSummarySupported,
 } from '../shared/version'
@@ -450,11 +462,12 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
 }
 
 /**
- * ReadBridge is the thirteen reads the screens make (Task 3.4c; console L5b
+ * ReadBridge is the fourteen reads the screens make (Task 3.4c; console L5b
  * added `statsRuns`, Bitbucket credentials T1.2 added `coordinatorStatus`,
  * GV2.3b added `planStatus`, coordinator v2 K3 added `coordinatorShow`, K5 added
- * `coordinatorIntents`, and console 0.119.0 added `summaryRuns` -- the
- * Coordinator's jobs-free totals read), named one by one
+ * `coordinatorIntents`, console 0.119.0 added `summaryRuns` -- the
+ * Coordinator's jobs-free totals read -- and `listModels`, the Project tab's
+ * models panel), named one by one
  * for the reason `CompatibilityBridge` names one: this file should reach for
  * exactly the operations it draws, and a reader should be able to see which
  * those are without reading the preload.
@@ -471,6 +484,7 @@ export interface ReadBridge {
   listRuns(args: Readonly<Record<string, unknown>>): Promise<unknown>
   statsRuns(args: Readonly<Record<string, unknown>>): Promise<unknown>
   summaryRuns(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  listModels(args: Readonly<Record<string, unknown>>): Promise<unknown>
   coordinatorStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
   coordinatorShow(args: Readonly<Record<string, unknown>>): Promise<unknown>
   coordinatorIntents(args: Readonly<Record<string, unknown>>): Promise<unknown>
@@ -480,7 +494,7 @@ export interface ReadBridge {
   planStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
 }
 
-/** readBridgeFrom is the thirteen reads over the structural bridge. A missing
+/** readBridgeFrom is the fourteen reads over the structural bridge. A missing
  * member answers `null` rather than rejecting, and so does a member that fails
  * to answer -- by throwing before it returns, or by returning a promise that
  * rejects, which is what `invoke` does on a channel with nothing behind it.
@@ -509,6 +523,7 @@ export function readBridgeFrom(fugaro: unknown): ReadBridge {
     listRuns: (args) => ask('listRuns', args),
     statsRuns: (args) => ask('statsRuns', args),
     summaryRuns: (args) => ask('summaryRuns', args),
+    listModels: (args) => ask('listModels', args),
     coordinatorStatus: (args) => ask('coordinatorStatus', args),
     coordinatorShow: (args) => ask('coordinatorShow', args),
     coordinatorIntents: (args) => ask('coordinatorIntents', args),
@@ -4497,10 +4512,21 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * busy mark, one sequence token, one refusal. */
   const projectsRead = sectionRead({ factory, theme })
 
-  /** leaveProjects ends that section's busy state when the operator moves to
+  /** projectsModelsRead is the tab's **second** section (console 0.119.0):
+   * `models ls --json`, the routes, the models a run can name and the price
+   * catalog's age. It has a lifecycle of its own for the reason the Coordinator's
+   * window does -- its own sequence token, its own busy mark, its own refusal --
+   * because the two reads of this tab are independent: the models read is offline
+   * and cheap and does not wait on `budget show`, and a tab holding one mark for
+   * both would hold the models behind the budget or the budget behind the
+   * models. */
+  const projectsModelsRead = sectionRead({ factory, theme })
+
+  /** leaveProjects ends those sections' busy state when the operator moves to
    * another tab: nothing is in flight for a screen nobody is looking at. */
   leaveProjects = () => {
     projectsRead.end()
+    projectsModelsRead.end()
   }
 
   /**
@@ -4524,6 +4550,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * **What this session already read is drawn instantly**, stamped `as of
    * HH:MM` with a Refresh control, and a view older than `CACHE_FRESH_MS` is
    * read again at once rather than served silently.
+   *
+   * **The models panel is a second section with a second read** (console
+   * 0.119.0): `models ls --json` goes out in the same turn as `budget show` and
+   * paints the moment it lands. It is gated by its own floor
+   * (`modelsListSupported`): below it this visit spawns nothing and the panel
+   * draws the console's own sentence naming the version it needs, which is the
+   * shape the Coordinator's fleet window has one tab over.
    */
   const showProjects = async (): Promise<void> => {
     const mine = claim()
@@ -4533,6 +4566,22 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     let frame: DrawnProjectsFrame | null = null
     let token = 0
 
+    /** modelsTooOld is whether the CLI in use predates `models ls`
+     * (`modelsListSupported`). It landed after v0.15.0, so a 0.15.x CLI has no
+     * such verb and answers `unknown command "ls"` -- a failure the operator can
+     * do nothing about. The floor is asked **before** the read goes out. */
+    const modelsTooOld = !modelsListSupported(gate.compatibility.cliVersion ?? '')
+    /** model and modelsSentence are what `models ls` last answered on this
+     * visit, and `modelsOut` says a read of it is in flight. */
+    let models: ModelsListView | null = null
+    let modelsSentence: string | null = null
+    let modelsOut = false
+    let modelsAttempt = 0
+    let modelsToken = 0
+    /** modelsPainted says this visit has already drawn a models panel: the mark
+     * of a re-read carries no skeleton over content that is already there. */
+    let modelsPainted = false
+
     /** mount draws the shell if it is not up yet, and answers it. The mark of a
      * read that is still out goes up here, which is the only moment it can be
      * drawn: the panel held another view's content until this call. */
@@ -4541,7 +4590,21 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       const drawn = renderProjectsFrame(factory, theme)
       frame = drawn
       replace(drawn.root)
-      if (busy) projectsRead.mark(token, drawn.body, drawn.slot, PROJECTS_BUSY, PROJECTS_SHAPE)
+      if (busy) {
+        projectsRead.mark(token, drawn.body, drawn.slot, PROJECTS_BUSY, PROJECTS_SHAPE)
+        // The models section's mark goes on **its own** host and its own slot:
+        // the two reads are in flight at once, and one element wearing both
+        // claims would have whichever read landed first take the other's down.
+        if (modelsOut) {
+          projectsModelsRead.mark(
+            modelsToken,
+            drawn.models,
+            drawn.modelsSlot,
+            PROJECTS_MODELS_BUSY,
+            PROJECTS_MODELS_SHAPE,
+          )
+        }
+      }
       return drawn
     }
 
@@ -4560,6 +4623,30 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
           start()
         })
       }
+    }
+
+    /**
+     * paintModels fills the tab's second section from what `models ls`
+     * answered. Below the floor and on a refused read it draws the panel's own
+     * sentence and no list: a document that did not arrive is never drawn as an
+     * empty set of routes and models, which would read as "this project runs
+     * nothing" (`buildProjectsModels`'s three inputs are the whole of the
+     * distinction).
+     */
+    const paintModels = (): void => {
+      const drawn = mount(false)
+      modelsPainted = true
+      clearSection(drawn.models, drawn.modelsSlot)
+      fillProjectsModels(
+        factory,
+        buildProjectsModels({
+          document: models,
+          because: modelsSentence,
+          tooOld: modelsTooOld,
+          version: gate.compatibility.cliVersion ?? '',
+        }),
+        drawn.models,
+      )
     }
 
     /** load makes the one read and draws it when it is still the latest. */
@@ -4594,13 +4681,88 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       paint(model, at, false)
     }
 
+    /** loadModels makes the second section's read, `models ls --json`. The
+     * attempt is checked before anything is drawn and `stale(mine)` after it, so
+     * an answer to a read the operator has already asked again -- or to one from
+     * a tab they have left -- never lands under another visit. A refusal or a
+     * document this build's decoder will not read leaves the section with its own
+     * sentence and nothing else. */
+    const loadModels = async (attempt: number): Promise<void> => {
+      const answer = documentOf(await bridge.listModels({}))
+      if (modelsAttempt !== attempt) return
+      if (stale(mine)) return
+      modelsOut = false
+      models = null
+      modelsSentence = null
+      if (!answer.ok) {
+        modelsSentence = answer.sentence
+      } else {
+        const decoded = decodeModelsList(answer.data, 'models.list')
+        if (!decoded.ok) modelsSentence = decoded.skew.because
+        else models = decoded.value
+      }
+      // The mark is taken down through the section helper rather than by the
+      // filler: `fillProjectsModels` writes **beside** the slot, so nothing else
+      // would remove the claim from the host it was made on.
+      projectsModelsRead.settle(modelsToken)
+      paintModels()
+    }
+
+    /** beginModels starts the second section's read and puts its mark up -- or,
+     * below the floor, makes no read at all and draws the console's own sentence
+     * naming the version this panel needs. It is called on every visit, the
+     * budget's own read or not: a cached budget view drawn before anything is
+     * awaited is not what keeps the models panel waiting. */
+    const beginModels = (): void => {
+      if (!modelsTooOld) {
+        modelsAttempt += 1
+        modelsOut = true
+        modelsToken = projectsModelsRead.start()
+      }
+      if (frame === null) mount(true)
+      else markModels()
+      if (modelsTooOld) paintModels()
+      else void loadModels(modelsAttempt)
+    }
+
+    /** markModels puts the second section's mark up where the frame already is.
+     * The skeleton goes with the **first** read of the visit and not with a
+     * re-read: content already drawn is dimmed under the mark, and a skeleton
+     * over it would be the console taking a drawing away to say a drawing is
+     * coming (`section.ts`'s rule for Spend's two sections). */
+    const markModels = (): void => {
+      if (!modelsOut || frame === null) return
+      projectsModelsRead.mark(
+        modelsToken,
+        frame.models,
+        frame.modelsSlot,
+        PROJECTS_MODELS_BUSY,
+        modelsPainted ? undefined : PROJECTS_MODELS_SHAPE,
+      )
+    }
+
     /** start takes the sequence token for one read, puts the mark up in the
      * frame's own section when the shell is already drawn, and makes the read. */
     const start = (): void => {
       token = projectsRead.start()
-      if (frame === null) mount(true)
-      else projectsRead.mark(token, frame.body, frame.slot, PROJECTS_BUSY)
+      // The models section's read is taken with the budget's and in the same
+      // turn: the two are independent documents, and asking for one after the
+      // other answered would be the serialisation the owner's rule of 2026-10-31
+      // forbids. Below the floor there is no read at all.
+      if (!modelsTooOld) {
+        modelsAttempt += 1
+        modelsOut = true
+        modelsToken = projectsModelsRead.start()
+      }
+      const fresh = frame === null
+      const drawn = mount(true)
+      if (!fresh) {
+        projectsRead.mark(token, drawn.body, drawn.slot, PROJECTS_BUSY)
+        markModels()
+      }
       void load(token)
+      if (modelsTooOld) paintModels()
+      else void loadModels(modelsAttempt)
     }
 
     // The view this screen opens on, if this session has already read it, is
@@ -4611,6 +4773,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     else {
       paint(held.value, held.at, true)
       if (Date.now() - held.at >= CACHE_FRESH_MS) start()
+      else beginModels()
     }
   }
 
