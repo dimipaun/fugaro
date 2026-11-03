@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -423,7 +425,7 @@ func runCoordinatorSweep(ctx context.Context, cmd *cobra.Command, getenv func(st
 	var tokens *coordinatorTokens
 	if test != nil && test.reader != nil {
 		reader = test.reader
-	} else if reader, tokens, err = coordinatorReader(nil, getenv, warn); err != nil {
+	} else if reader, tokens, err = coordinatorReaderWith(coordinatorSweepMint(getenv), warn); err != nil {
 		return err
 	}
 	// The tick holds each repository's token for as long as it reads and no
@@ -690,14 +692,13 @@ func runCoordinatorStatus(cmd *cobra.Command, o *coordinatorOptions) error {
 	if err != nil {
 		return err
 	}
-	// No local config, deliberately: this read serves GitHub only and refuses a
-	// Bitbucket repository (coordinator.ErrBitbucket), while `show` reads one
-	// through the service's read mint (BB4). Handing the config over would make
-	// the mere presence of a credentials_service block turn that refusal into a
-	// read — a behaviour that arrived with a config block and not with a task.
-	// The project-wide read of Bitbucket is BB5's
-	// (docs/bitbucket-credentials/implementation-plan.md) and lands with its own
-	// wiring, as the sweep's does.
+	// No local config, deliberately: this read takes its caller class from the
+	// person's own variable and never from the installation's published block,
+	// so a Bitbucket repository is read through the service's read mint where
+	// the person named one (BB5) and refused with coordinator.ErrBitbucket
+	// otherwise. Handing the config over would make the mere presence of a
+	// credentials_service block turn that refusal into a read — a behaviour
+	// that arrived with a config block and not with a task.
 	reader, tokens, err := coordinatorReader(nil, os.Getenv, warn)
 	if err != nil {
 		return err
@@ -788,7 +789,12 @@ func coordinatorViewOf(ctx context.Context, env *fcli.Cloud, reader coordinator.
 		// when it does not already carry a code, so a user error the reader
 		// rewrote the text of is still a user error here.
 		if errors.Is(err, coordinator.ErrBitbucket) {
-			return coordinator.View{}, fcli.UserErr("%v", err)
+			// The stored view is the answer this refusal has for a person whose
+			// read holds no Bitbucket credential at all (BB5): --from-store
+			// prints what the sweep wrote, with no host read and no key, so the
+			// refusal points at it rather than leaving the command with nothing
+			// to print.
+			return coordinator.View{}, fcli.UserErr("%v; --from-store prints the view the sweep stored, with no host read", err)
 		}
 		return coordinator.View{}, fcli.RemoteErr(err)
 	}
@@ -888,21 +894,29 @@ func coordinatorRun(in runview.Input) coordinator.Run {
 // it loaded and os.Getenv, the sweep no config and the environment it was
 // handed, status no config either — so which environment the override is read
 // from is the caller's fact and never this function's.
+//
+// This is the PERSON's class and a person's commands are what it is for
+// (BB4): the coordinator job builds its own reader (coordinatorSweepReader).
 func coordinatorReader(lc *localcfg.Config, getenv func(string) string, warn io.Writer) (coordinator.Reader, *coordinatorTokens, error) {
+	return coordinatorReaderWith(coordinatorPersonMint(lc, getenv), warn)
+}
+
+// coordinatorReaderWith builds the project-wide read around one caller class's
+// read mint (BB5): the class decides which variable names the service and
+// which identity is presented there, and everything else about the read — the
+// opener, the App mint, the revocation record, the redaction — is the same for
+// every class, which is the whole reason this is one function and not two.
+func coordinatorReaderWith(mint coordinatorBitbucketReadMint, warn io.Writer) (coordinator.Reader, *coordinatorTokens, error) {
 	open, err := openCoordinatorProvider(os.Environ(), func(s string) { fmt.Fprintln(warn, safetext.MultiLine(s)) })
 	if err != nil {
 		return nil, nil, fcli.UserErr("%v", err)
 	}
-	// The Bitbucket read mint, wired only where a service URL resolved: with
-	// none, this reader has no Bitbucket credential and refuses one with
-	// ErrBitbucket exactly as it did before BB4 (G8).
-	readTokens := coordinatorBitbucketSource(lc, getenv, warn)
 	// The mint runs on the first call a repository's provider makes, and that
 	// call happens only for a repository whose runs name a pull request: this
 	// read needs no App credential to look at a project with nothing in it, and
 	// nothing here reads one to find that out.
 	tokens := &coordinatorTokens{}
-	return &coordinator.Project{Mint: tokens.mint, Open: open, ReadTokens: readTokens, Redact: agent.Redact}, tokens, nil
+	return &coordinator.Project{Mint: tokens.mint, Open: open, ReadTokens: mint.source(), Redact: agent.Redact}, tokens, nil
 }
 
 // coordinatorTokens remembers the installation tokens one status run minted, so
@@ -1002,6 +1016,75 @@ var coordinatorGitHubAPIURL = github.DefaultBaseURL
 // service rather than the general one (F2, F23).
 const envBitbucketReadServiceURL = "FUGARO_BITBUCKET_READ_SERVICE_URL"
 
+// envCoordinatorCredentialsServiceURL is the aggregation job's own name for
+// the same service (F23, BB5), and the sweep is its only reader.
+//
+// Three names stand beside each other here and none may be swapped for another:
+// FUGARO_CREDENTIALS_SERVICE_URL makes coordinatorAppCredential refuse, so the
+// job that read it would lose its GitHub read as well; the person's
+// FUGARO_BITBUCKET_READ_SERVICE_URL is a variable a person's machine carries,
+// and a job must not take its credential from one; and this one is set on the
+// job alone, by Terraform, from the installation's credentials_service block.
+const envCoordinatorCredentialsServiceURL = "FUGARO_COORDINATOR_CREDENTIALS_SERVICE_URL"
+
+// coordinatorBitbucketReadMint is ONE caller class's way into the read mint
+// (BB5, G4): where the service is and who presents itself there. There are two
+// classes and a command uses exactly one of them — a person's commands are the
+// person class, the aggregation job is the coordinator class — and which one a
+// command is, is a fact of the command rather than of whatever the environment
+// happens to carry.
+type coordinatorBitbucketReadMint struct {
+	// url is the service this class mints at, resolved from this class's own
+	// sources. Empty is a class with no service to call: the job whose
+	// installation has not opted in, or a person's machine that named none.
+	url string
+	// identity mints the Google ID token this class presents for url.
+	identity func(context.Context) (string, error)
+}
+
+// source is this class's read mint as the source a Bitbucket repository is
+// opened with: the service mints one token per repository (G11), so this is a
+// function of the repository and not one shared client, and the token is
+// checked against the repository that asked.
+//
+// Nil is no mint at all, and that nil is what keeps the reader's own refusal of
+// a Bitbucket repository (coordinator.ErrBitbucket) in place wherever this
+// class has no service — which is where every Bitbucket read stood before BB4
+// and where the sweep still stands on an installation that has not opted in
+// (G8).
+func (m coordinatorBitbucketReadMint) source() func(string) gitprov.TokenSource {
+	if m.url == "" {
+		return nil
+	}
+	tokens := &bitbucket.ServiceReadTokens{URL: m.url, IDToken: m.identity}
+	return func(repo string) gitprov.TokenSource { return tokens.Repo(repo) }
+}
+
+// coordinatorPersonMint is the PERSON class (BB4): the service's URL from the
+// person's own variable or from the installation's published block, and the
+// person's own Google ID token, minted from their own credentials.
+func coordinatorPersonMint(lc *localcfg.Config, getenv func(string) string) coordinatorBitbucketReadMint {
+	return coordinatorBitbucketReadMint{url: coordinatorBitbucketReadURL(lc, getenv), identity: coordinatorBitbucketIDToken}
+}
+
+// coordinatorSweepMint is the COORDINATOR class (BB5): the service's URL from
+// the job's own variable, and the job's own identity token — the account the
+// job runs as, which is the one the service admits (G4) and the one Terraform
+// grants roles/run.invoker to on the service.
+//
+// No local config is a source here, and that is the job's shape rather than a
+// restriction: `sweep` has no project config file at all, and the variable
+// Terraform sets on it is the only thing that may turn its Bitbucket read on.
+func coordinatorSweepMint(getenv func(string) string) coordinatorBitbucketReadMint {
+	url := ""
+	if getenv != nil {
+		url = getenv(envCoordinatorCredentialsServiceURL)
+	}
+	return coordinatorBitbucketReadMint{url: url, identity: func(ctx context.Context) (string, error) {
+		return coordinatorIdentityToken(ctx, url)
+	}}
+}
+
 // coordinatorBitbucketReadURL is where the read mint is, for the person
 // running this command: the override when it is set, and otherwise the
 // installation's own published credentials_service block — the value the
@@ -1047,6 +1130,84 @@ var coordinatorBitbucketIDToken = func(context.Context) (string, error) {
 	return "", fcli.UserErr("a Bitbucket read presents your own Google ID token to the installation's credentials service, and the command that mints one from your own credentials is not in this build (coordinator P7, docs/coordinator/implementation-plan.md). The read is refused rather than made with another identity")
 }
 
+// The metadata server's own endpoint for the coordinator job's identity, the
+// platform host it is served at unless the platform's own variable moves it,
+// and the bound on the answer. They are internal/runner's constants respelled
+// (metadataIdentityURL, which is unexported and is the run's own): the job's
+// identity is asked for the same way at both ends, and the value this one
+// receives is the token Cloud Run IAM admits for run.invoker on the service.
+const (
+	coordinatorMetadataHostEnv      = "GCE_METADATA_HOST"
+	coordinatorMetadataHost         = "metadata.google.internal"
+	coordinatorMetadataIdentityPath = "/computeMetadata/v1/instance/service-accounts/default/identity"
+	// coordinatorIdentityMaxBytes is internal/credsvc's own bound on a
+	// presented token (auth.go's maxTokenBytes): an answer longer than it, or
+	// one that is not a single clean header value, is refused here rather than
+	// sent to be refused there.
+	coordinatorIdentityMaxBytes = 8 << 10
+)
+
+// coordinatorIdentityClient bounds the whole exchange. The metadata server is
+// the platform's own link-local address, and an answer that takes longer than
+// this is not one a tick waits for.
+var coordinatorIdentityClient = &http.Client{Timeout: 10 * time.Second}
+
+// coordinatorIdentityToken mints the coordinator JOB's own Google ID token for
+// the credentials service at audience — the job's runtime account, which is the
+// identity the service's coordinator class verifies (G4, BB5).
+//
+// It is the job's class's seam and not the person's (coordinatorBitbucketIDToken):
+// a job's identity is the platform's own and no command mints it, while a
+// person's comes from their own credentials and does. It is a variable so a
+// test replaces it, and the body is never read into an error: on success it is
+// the token, and on failure it is the metadata server's own text about a
+// request this code made, so only the class of the failure is reported.
+var coordinatorIdentityToken = func(ctx context.Context, audience string) (string, error) {
+	host := os.Getenv(coordinatorMetadataHostEnv)
+	if host == "" {
+		host = coordinatorMetadataHost
+	}
+	u := "http://" + host + coordinatorMetadataIdentityPath + "?audience=" + url.QueryEscape(audience)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", errors.New("the metadata request for the coordinator's identity could not be built")
+	}
+	req.Header.Set("Metadata-Flavor", "Google")
+	resp, err := coordinatorIdentityClient.Do(req)
+	if err != nil {
+		return "", errors.New("the metadata server could not be reached for the coordinator's identity")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("the metadata server answered %d for the coordinator's identity", resp.StatusCode)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, coordinatorIdentityMaxBytes+1))
+	if err != nil {
+		return "", errors.New("the metadata server's answer for the coordinator's identity could not be read")
+	}
+	tok := strings.TrimSpace(string(b))
+	if len(tok) > coordinatorIdentityMaxBytes || !coordinatorPrintableToken(tok) {
+		return "", errors.New("the metadata server answered with no usable identity token")
+	}
+	return tok, nil
+}
+
+// coordinatorPrintableToken reports whether tok is one clean header value: the
+// rule internal/credsvc reads a presented token by (wire.go's
+// printableHeaderValue) and the one internal/runner's own id token keeps,
+// neither of which is exported.
+func coordinatorPrintableToken(tok string) bool {
+	if tok == "" {
+		return false
+	}
+	for i := 0; i < len(tok); i++ {
+		if tok[i] < 0x21 || tok[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
 // coordinatorBitbucketProvider opens the Bitbucket provider the read goes
 // through, on the API root this code pins. It is a seam so that a test can
 // hold the root to DefaultBaseURL with FUGARO_BITBUCKET_API_URL set, without a
@@ -1055,22 +1216,6 @@ var coordinatorBitbucketIDToken = func(context.Context) (string, error) {
 // check.
 var coordinatorBitbucketProvider = func(o bitbucket.Options) (gitprov.Provider, error) {
 	return bitbucket.New(o)
-}
-
-// coordinatorBitbucketSource is the read mint as a token source for one
-// repository (BB4): the person's token, minted by the service for the one
-// repository named here and checked against the repository it was minted for.
-//
-// It is nil when no service URL resolved, and that nil is what keeps the
-// reader's own refusal of Bitbucket (coordinator.ErrBitbucket) in place on an
-// installation that has not opted into the service.
-func coordinatorBitbucketSource(lc *localcfg.Config, getenv func(string) string, warn io.Writer) func(string) gitprov.TokenSource {
-	url := coordinatorBitbucketReadURL(lc, getenv)
-	if url == "" {
-		return nil
-	}
-	tokens := &bitbucket.ServiceReadTokens{URL: url, IDToken: coordinatorBitbucketIDToken}
-	return func(repo string) gitprov.TokenSource { return tokens.Repo(repo) }
 }
 
 // coordinatorProviderEnv is the environment a provider is opened with: the one
