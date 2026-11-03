@@ -3439,3 +3439,38 @@ func TestSpecCatalogIsTheProjectsOwnWhenTheLocalConfigWritesOne(t *testing.T) {
 		t.Errorf("api's image = %q, want %q", got, want)
 	}
 }
+
+// TestPlanWorkflowJobMovesACatalogJobsImage: a baked job whose image the
+// project's catalog chose is the third shape the mover accepts, and the only
+// baked one (D1152, PIC5). Both halves of the move have to be catalog images,
+// so the refusal a baked job's job gets before the catalog — never onto the
+// base image, which holds no checkout of this repository — is unchanged.
+func TestPlanWorkflowJobMovesACatalogJobsImage(t *testing.T) {
+	shared := installationOutputs().RegistryHost + "/" + gcp.SharedRegistryRepoID() + "/catalog-"
+	old, next := shared+"standard:latest", shared+"universal:latest"
+	f, _, ws, owner := workflowJobCloud(t, func(j map[string]any) {
+		container(j)["image"] = old
+		envEntry(j)["value"] = config.CheckoutBaked
+	})
+	u, err := PlanWorkflowJob(context.Background(), f.c, "proj-1234", "us-east5", ws.Job, ws.Name, next, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u == nil || !u.Changes() || u.OldImage() != old || u.NewImage() != next {
+		t.Fatalf("plan: %+v, want the catalog's own image moving", u)
+	}
+	if img := container(f.run.JobJSON("proj-1234", "us-east5", ws.Job))["image"]; img != old {
+		t.Fatalf("image = %v, want %s left alone by a plan", img, old)
+	}
+
+	// A catalog job's image must not move to the base image: the base holds
+	// no checkout of this repository, whatever the job's own image is.
+	f, _, ws, owner = workflowJobCloud(t, func(j map[string]any) {
+		container(j)["image"] = old
+		envEntry(j)["value"] = config.CheckoutBaked
+	})
+	u, err = PlanWorkflowJob(context.Background(), f.c, "proj-1234", "us-east5", ws.Job, ws.Name, oldBase, owner)
+	if !errors.Is(err, ErrCheckJobShape) || u != nil {
+		t.Fatalf("base image: %v %+v, want a shape refusal", err, u)
+	}
+}
