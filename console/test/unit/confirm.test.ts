@@ -1368,6 +1368,7 @@ describe('the view the window is shown', () => {
     expect(Object.keys(view).sort()).toStrictEqual([
       'argv',
       'installation',
+      'kind',
       'planTask',
       'recordedRepository',
       'ref',
@@ -1377,6 +1378,10 @@ describe('the view the window is shown', () => {
       'taskText',
       'title',
     ])
+    // `kind` is the union's tag (D1115): the launch's own view is the one the
+    // window draws a `run` argv for, and a subject drawn from the settings half
+    // would draw no task and no run id at all.
+    expect(view.kind).toBe('launch')
 
     // The frozen launch's own fields the window must never be shown: the plan,
     // the child's environment and working directory, and the task's bytes -- a

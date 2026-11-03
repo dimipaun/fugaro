@@ -66,6 +66,11 @@ import type { ConfirmBridge, ConfirmReply } from '../../src/preload/confirm'
 class FakeElement implements ConfirmElement {
   textContent: string | null = null
   tabIndex = 0
+  /** checked and disabled are the checkbox's and the button's own properties:
+   * the tick's box and the button it gates are the two elements the view reads
+   * and writes them on. */
+  checked = false
+  disabled = false
   readonly attributes = new Map<string, string>()
   readonly children: FakeElement[] = []
   /** focused is whether `focus()` was called on this element. */
@@ -187,6 +192,7 @@ const HOSTILE = {
  * process, with a test's own values over it. */
 function aView(overrides: Partial<ConfirmFields> = {}): ConfirmFields {
   return {
+    kind: 'launch',
     runId: 'run-0000000000000001',
     installation: HOSTILE.installation,
     recordedRepository: HOSTILE.recordedRepository,
