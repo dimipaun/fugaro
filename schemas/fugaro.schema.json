@@ -301,7 +301,15 @@
     "workflow": {
       "type": "object",
       "additionalProperties": false,
-      "not": { "required": ["image", "dockerfile"] },
+      "not": {
+        "anyOf": [
+          { "required": ["image", "dockerfile"] },
+          { "required": ["image", "image_name"] },
+          { "required": ["image", "needs"] },
+          { "required": ["dockerfile", "image_name"] },
+          { "required": ["dockerfile", "needs"] }
+        ]
+      },
       "allOf": [
         {
           "if": { "not": { "required": ["profile"] } },
@@ -312,6 +320,8 @@
           "then": {
             "properties": {
               "dockerfile": { "const": "" },
+              "image_name": { "const": "" },
+              "needs": { "maxItems": 0 },
               "image": {
                 "properties": {
                   "apt": { "maxItems": 0 },
@@ -329,6 +339,8 @@
           "then": {
             "properties": {
               "dockerfile": { "const": "" },
+              "image_name": { "const": "" },
+              "needs": { "maxItems": 0 },
               "image": {
                 "properties": {
                   "setup": { "maxItems": 0 }
@@ -385,6 +397,21 @@
           "type": "string",
           "pattern": "^[^/]",
           "not": { "pattern": "(^|/)\\.\\.(/|$)" }
+        },
+        "image_name": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+          "description": "The project's image catalog entry this repository runs, named (docs/project-image-catalog, D1155). The repository pins that entry: the tag-cover selection does not run for it, and the entry's tags are checked only to warn if they do not cover what the job needs. It is image_name and not image, which is the repository's own build-customisation block. A repository that also sets image: or dockerfile: is refused, since it would state two definitions at once; a repository that also lists needs: pins this entry and has the tags checked against it. Needs fugaro 0.17.0: an older runner decodes fugaro.yaml strictly and refuses the key alone, so a repository may name one only once every job image has moved."
+        },
+        "needs": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "description": "The tags a job of this workflow needs, for example [node, postgres] (docs/project-image-catalog, D1155). Fugaro picks the catalog entry with the fewest tags that covers every tag the job's repositories need, and a job no entry covers is refused before it starts. A repository sets this or its own image definition, never both. Needs fugaro 0.17.0: an older runner decodes fugaro.yaml strictly and refuses the key alone.",
+          "items": {
+            "type": "string",
+            "pattern": "^[^ \\t\\n\\v\\f\\r\\x00-\\x1f\\x7f]{1,64}$"
+          }
         },
         "commands": {
           "type": "object",
