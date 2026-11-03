@@ -877,12 +877,15 @@ span.projects-settings-owner-generic {
   font-size: var(--font-size-xs);
 }
 
-/* The pencil: the write this row offers, drawn `disabledWrite`
- * (`src/renderer/writes.ts`) until the task that makes it a button lands. It is
- * a real control -- a keyboard reader meets it and hears why it does nothing --
- * and it is painted as a control and not as a figure, the words
- * `button.projects-kill-action` is painted with. It is the row's last cell and
- * sits at the row's end, so the writes of a column of settings line up. */
+/* The pencil: the write this row offers, and it is a **live** control now (the
+ * settings-edit plan's C2): a real `button` the entry binds, in the tab order,
+ * whose accessible name is the key of the row it edits. It is painted as a
+ * control and not as a figure, the words `button.projects-kill-action` is
+ * painted with, and it is the row's last cell, so the writes of a column of
+ * settings line up. Its states are a hover and the theme's one focus ring
+ * (`base.css`, `:focus-visible`) and never a tone of their own: the control says
+ * what it does in a word, so nothing about it is carried by colour (styling
+ * design section 3.5). */
 button.projects-settings-pencil {
   margin-left: auto;
   padding: var(--space-3xs) var(--space-sm);
@@ -891,7 +894,13 @@ button.projects-settings-pencil {
   background: var(--surface-sunken);
   border: var(--rule-width) solid var(--control-border);
   border-radius: var(--radius-sm);
-  cursor: not-allowed;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+button.projects-settings-pencil:hover {
+  color: var(--accent-ink);
+  border-color: var(--border-strong);
 }
 
 /* ---- Run detail -----------------------------------------------------------
