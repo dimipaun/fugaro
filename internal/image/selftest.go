@@ -291,7 +291,7 @@ func checkContract(rows []Check, add func(string, bool, string, ...any)) {
 		add("contract", false, "the image does not meet the runtime contract: %s", strings.Join(missing, "; "))
 		return
 	}
-	add("contract", true, "%d critical tools and %s are present", len(rows), contractShell)
+	add("contract", true, "%d critical tools and the shell %s are present", len(rows), contractShell)
 }
 
 // checkCheckout checks the baked checkout and the baked-checkout contract.

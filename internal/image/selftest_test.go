@@ -1107,6 +1107,28 @@ func TestContractCheckFailsWhenTheAgentBinaryIsMissing(t *testing.T) {
 	}
 }
 
+// TestContractCheckFailsWhenTheShellIsMissing: the shell is what PIC7 adds
+// to the rows the table already lists -- the contract requires one, and the
+// runner runs every workflow command through `sh -c` -- so an image without
+// it is refused even when every critical tool answers.
+func TestContractCheckFailsWhenTheShellIsMissing(t *testing.T) {
+	contractTable(t, "kit")
+	spec := contractSpec(t)
+	bin := contractEnv(t, 1)
+	dropTool(t, bin, "sh")
+	r := Selftest(context.Background(), spec, &bytes.Buffer{})
+	if r.Passed {
+		t.Fatalf("the image passed without a shell: %+v", r)
+	}
+	c, ok := checkNamed(r, "contract")
+	if !ok || c.OK {
+		t.Fatalf("contract = %+v, want a failure", c)
+	}
+	if !strings.Contains(c.Detail, "sh") {
+		t.Errorf("the contract check's detail does not name the shell: %q", c.Detail)
+	}
+}
+
 // TestContractCheckDoesNotInspectTheFromLine: the spec says Fugaro does not
 // check the FROM line, so the check's answer is the same for Fugaro's own
 // base and for any other — on an image that meets the contract and on one
