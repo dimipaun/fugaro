@@ -203,6 +203,18 @@
           "type": "boolean",
           "description": "Absent when false. A sensitive row carries the set/unset fact in value and never the value itself."
         },
+        "writable": {
+          "type": "boolean",
+          "description": "Whether `fugaro settings set|unset` writes this key: the generic path's own decision, so a consumer draws an edit only where the write accepts it, and never from a copy of the CLI's allowlist (D1102). A sensitive row is a row no family and no allowlist hands the generic path, so it is never writable. Written on every row by this CLI; absent from a document an older CLI wrote, where it means the same as false."
+        },
+        "owner": {
+          "type": "string",
+          "description": "The command family that writes a key the generic path does not — `fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`, `fugaro project` — and the empty string for a key no family owns, which is the installation's own plumbing: the honest answer, and never an invented name (D1102, D1111). Display text, not an authority: it is the sentence `settings set` refuses with, and no rule reads it. Written on every row by this CLI; absent from a document an older CLI wrote, where it means the same as the empty string."
+        },
+        "target_layer": {
+          "type": "string",
+          "description": "The layer a write with no --layer lands in: the narrowest of `repo`, `project` and `local` the key may be set in, and the empty string for a key none of the three holds, which is a row no edit may target (D1102, D1105). A consumer that shows an operator the file an edit reaches passes it back as --layer, because what the window shows is what is spawned. Written on every row by this CLI; absent from a document an older CLI wrote, where it means the same as the empty string."
+        },
         "levels": {
           "type": "array",
           "items": {
