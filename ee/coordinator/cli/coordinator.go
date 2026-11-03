@@ -4,6 +4,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"crypto/rsa"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
@@ -614,30 +616,29 @@ func newCoordinatorStatusCmd() *cobra.Command {
 			"run names is listed as having none, because it is work somebody has open and\n" +
 			"dropping it is the one thing this view must not do — is not reached by this\n" +
 			"command today.\n\n" +
-			"Every repository is read through the coordinator's own credential: an\n" +
-			"installation token for that repository, minted from the GitHub App the\n" +
-			"environment holds and carrying a named read-only permission set — pull\n" +
-			"requests and metadata, the two reads this view makes (Q3 answered (A)) —\n" +
-			"and cached for the token's life, so a second read of the same repository\n" +
-			"mints nothing. Every token the command minted is revoked when it is done,\n" +
-			"so the credential lives for the read and no longer.\n" +
-			"With FUGARO_CREDENTIALS_SERVICE_URL set, the installation's credentials\n" +
-			"service holds the App's key and this command holds none, so it refuses (exit 1)\n" +
-			"before it reads the App's ID or key: the service mints a run's token, and this\n" +
-			"read is not a run.\n" +
-			"Exit codes: 1 for a missing or malformed App credential (or the refusal above),\n" +
-			"2 for a failure of the host.\n" +
-			"The coordinator reads github only: a bitbucket repository is refused, and the\n" +
-			"refusal names the reason, because its credential is one repository's access\n" +
-			"token and cannot be widened to a project (reconciliation Q12 (A), finding #30).\n\n" +
+			"Every repository is read through the installation's credentials service: one\n" +
+			"read-only token for that repository, minted there against the caller's own\n" +
+			"Google ID token and carrying a named read-only permission set — pull requests\n" +
+			"and metadata, the two reads this view makes (Q3 answered (A)) — and cached for\n" +
+			"the token's life, so a second read of the same repository mints nothing.\n" +
+			"The service's URL is the project's own published credentials_service block and\n" +
+			"never an environment variable, and this command holds no GitHub App key at\n" +
+			"all: an installation that publishes no service is one whose host read is\n" +
+			"refused (exit 1) rather than made with a key a person's machine does not hold,\n" +
+			"and --from-store is the view to read instead.\n" +
+			"Exit codes: 1 for a project with no credentials service (or the refusals\n" +
+			"above), 2 for a failure of the host.\n" +
+			"A bitbucket repository is read through the same service, one repository's read\n" +
+			"token at a time, and refused where the project publishes none\n" +
+			"(reconciliation Q12 (A), finding #30).\n\n" +
 			"--from-store is a different read of the same view (D364): it prints what the\n" +
 			"sweep already stored, coordinator/repos/<slug>/ in the project's database,\n" +
 			"through the caller's own credentials — roles/firebasedatabase.viewer is what\n" +
 			"admits it — and with the same --repo and --all selection as above. It opens no\n" +
 			"host and holds no App ID, no App key and no Bitbucket credential: everything a\n" +
 			"stored view says about a pull request is what the sweep read once. It is the\n" +
-			"read a console makes, and it works with FUGARO_CREDENTIALS_SERVICE_URL set,\n" +
-			"where the read above refuses.\n" +
+			"read a console makes, and it needs no credentials service and no host read at\n" +
+			"all — it works on a project whose installation publishes none.\n" +
 			"With --json, one repository is printed as it is stored: {\"repo\":\n" +
 			"\"owner/name\", \"stored\": true, \"view\": {the view document}, \"stale\": {the\n" +
 			"sweep's marker, as stored}}. A repository the coordinator has never\n" +
@@ -692,14 +693,14 @@ func runCoordinatorStatus(cmd *cobra.Command, o *coordinatorOptions) error {
 	if err != nil {
 		return err
 	}
-	// No local config, deliberately: this read takes its caller class from the
-	// person's own variable and never from the installation's published block,
-	// so a Bitbucket repository is read through the service's read mint where
-	// the person named one (BB5) and refused with coordinator.ErrBitbucket
-	// otherwise. Handing the config over would make the mere presence of a
-	// credentials_service block turn that refusal into a read — a behaviour
-	// that arrived with a config block and not with a task.
-	reader, tokens, err := coordinatorReader(nil, os.Getenv, warn)
+	// The person's own class, resolved from the project's configuration: the
+	// installation's published credentials_service block is where this read's
+	// GitHub and Bitbucket tokens are minted, and a project that publishes none
+	// is a project whose host read is refused rather than made with a credential
+	// a person's machine does not hold (coordinatorNoAppKey, G8). The local
+	// config is the only source of that URL: no variable of this process names
+	// it (coordinatorReadServiceURL).
+	reader, tokens, err := coordinatorReader(env.Config(), warn)
 	if err != nil {
 		return err
 	}
@@ -889,34 +890,74 @@ func coordinatorRun(in runview.Input) coordinator.Run {
 // than deferred here because "the command is done" is the caller's fact and not
 // the reader's: the reader has no end of its own.
 //
-// lc and getenv are the read mint's two sources: the installation's published
-// block and the override. Each caller passes its own — `show` the local config
-// it loaded and os.Getenv, the sweep no config and the environment it was
-// handed, status no config either — so which environment the override is read
-// from is the caller's fact and never this function's.
+// lc is the read mint's one source: the installation's published block, out of
+// the local config the caller loaded. It is the caller's fact and never this
+// function's, which is why it is a parameter; a caller with no local config
+// (the sweep, whose reader is built by coordinatorReaderWith) has none, and a
+// caller that has one passes it even where it publishes no service.
 //
 // This is the PERSON's class and a person's commands are what it is for
-// (BB4): the coordinator job builds its own reader (coordinatorSweepReader).
-func coordinatorReader(lc *localcfg.Config, getenv func(string) string, warn io.Writer) (coordinator.Reader, *coordinatorTokens, error) {
-	return coordinatorReaderWith(coordinatorPersonMint(lc, getenv), warn)
+// (BB4): the coordinator job builds its own reader (coordinatorReaderWith).
+func coordinatorReader(lc *localcfg.Config, warn io.Writer) (coordinator.Reader, *coordinatorTokens, error) {
+	return coordinatorReaderWith(coordinatorPersonMint(lc), warn)
 }
 
 // coordinatorReaderWith builds the project-wide read around one caller class's
-// read mint (BB5): the class decides which variable names the service and
-// which identity is presented there, and everything else about the read — the
-// opener, the App mint, the revocation record, the redaction — is the same for
-// every class, which is the whole reason this is one function and not two.
-func coordinatorReaderWith(mint coordinatorBitbucketReadMint, warn io.Writer) (coordinator.Reader, *coordinatorTokens, error) {
-	open, err := openCoordinatorProvider(os.Environ(), func(s string) { fmt.Fprintln(warn, safetext.MultiLine(s)) })
+// read mint (BB5): the class decides which variable names the service, which
+// identity is presented there and whether this process holds the GitHub App's
+// key, and everything else about the read — the opener, the App mint, the
+// revocation record, the redaction — is the same for every class, which is the
+// whole reason this is one function and not two.
+func coordinatorReaderWith(mint coordinatorReadMint, warn io.Writer) (coordinator.Reader, *coordinatorTokens, error) {
+	// The mint runs on the first call a repository's provider makes, and that
+	// call happens only for a repository whose runs name a pull request: this
+	// read needs no credential at all to look at a project with nothing in it,
+	// and nothing here reads one to find that out.
+	// The environment is the JOB's source and the person's is nothing: a class
+	// with an App ID is opened without one (openCoordinatorPersonProvider), and
+	// handing it os.Environ() would suggest otherwise. The job's class is the
+	// one that reads its App credential out of the environment Terraform set on
+	// it.
+	env := os.Environ()
+	if mint.appID != nil {
+		env = nil
+	}
+	open, err := openCoordinatorProvider(env, mint.appID, func(s string) { fmt.Fprintln(warn, safetext.MultiLine(s)) })
 	if err != nil {
 		return nil, nil, fcli.UserErr("%v", err)
 	}
-	// The mint runs on the first call a repository's provider makes, and that
-	// call happens only for a repository whose runs name a pull request: this
-	// read needs no App credential to look at a project with nothing in it, and
-	// nothing here reads one to find that out.
+	// The mint this read falls back to is the class's own. The coordinator job
+	// holds the App's key and mints its own read-only token, recorded so the
+	// command takes it back when it is done; a person's machine holds no key at
+	// all, and a GitHub read that reached its own mint would be reaching for a
+	// credential it was never given (coordinatorNoAppKey).
 	tokens := &coordinatorTokens{}
-	return &coordinator.Project{Mint: tokens.mint, Open: open, ReadTokens: mint.source(), Redact: agent.Redact}, tokens, nil
+	var own coordinator.TokenMinter = tokens.mint
+	if !mint.holdsAppKey() {
+		own = coordinatorNoAppKey
+	}
+	return &coordinator.Project{
+		Mint:             own,
+		Open:             open,
+		ReadTokens:       mint.bitbucketSource(),
+		GitHubReadTokens: mint.githubSource(),
+		Redact:           agent.Redact,
+	}, tokens, nil
+}
+
+// coordinatorNoAppKey is the person class's own mint, and it refuses: a person's
+// machine holds no GitHub App key (the owner's ruling of 2026-11-03), so the one
+// credential this read can be authenticated with is the one the installation's
+// credentials service mints — and this read has no service to mint at, because
+// the project's configuration publishes none.
+//
+// It is reached only for a repository the read actually reads (Project.
+// PullRequests returns before opening when the runs name no pull request), so a
+// project with nothing in it is still read with no credential anywhere. The
+// refusal is the caller's and not the host's: there is no key to find and
+// nothing to retry.
+func coordinatorNoAppKey(context.Context, string) (string, time.Time, error) {
+	return "", time.Time{}, fcli.UserErr("the project-wide read mints its GitHub token at the installation's credentials service, and this project publishes none (no credentials_service block in its configuration). An operator turns the service on with `fugaro update --provision-credentials`; the read is refused rather than made with a GitHub App key, which a person's machine does not hold")
 }
 
 // coordinatorTokens remembers the installation tokens one status run minted, so
@@ -1008,63 +1049,120 @@ func (t *coordinatorTokens) revoke(ctx context.Context) {
 // change it.
 var coordinatorGitHubAPIURL = github.DefaultBaseURL
 
-// envBitbucketReadServiceURL is the read mint's own override, read by the
-// Bitbucket opener and by nothing else. It is NOT
-// FUGARO_CREDENTIALS_SERVICE_URL: that one makes coordinatorAppCredential
-// refuse, so setting it on a person's machine would turn their GitHub read off
-// as well — the same reason the coordinator job gets its own name for the
-// service rather than the general one (F2, F23).
-const envBitbucketReadServiceURL = "FUGARO_BITBUCKET_READ_SERVICE_URL"
+// There is no person's variable here, and its absence is the change the owner's
+// ruling of 2026-11-03 asks for. BB4 read the person's service URL out of
+// FUGARO_BITBUCKET_READ_SERVICE_URL (F2, F23's own reading), and a variable is
+// exactly what may not decide where a person's own Google ID token — a bearer
+// credential — is presented: a shell that carried one could point the read, and
+// with it the token, at a host the installation never published, and it could
+// turn a repository this project has no service for from a refusal into a read.
+// The service URL comes from the installation's own published
+// credentials_service block (coordinatorReadServiceURL) and from nothing else,
+// so a machine that exports nothing reads exactly as one that exports
+// everything. F23's property — the person's source is not the job's — is
+// stronger for it: the person has no variable to confuse with the job's.
 
 // envCoordinatorCredentialsServiceURL is the aggregation job's own name for
 // the same service (F23, BB5), and the sweep is its only reader.
 //
-// Three names stand beside each other here and none may be swapped for another:
-// FUGARO_CREDENTIALS_SERVICE_URL makes coordinatorAppCredential refuse, so the
-// job that read it would lose its GitHub read as well; the person's
-// FUGARO_BITBUCKET_READ_SERVICE_URL is a variable a person's machine carries,
-// and a job must not take its credential from one; and this one is set on the
-// job alone, by Terraform, from the installation's credentials_service block.
+// Two names stand beside each other here and neither may be swapped for the
+// other: FUGARO_CREDENTIALS_SERVICE_URL is the run's own name for the service,
+// and a job that read it would be taking a run's configuration for its own; and
+// this one is set on the job alone, by Terraform, from the installation's
+// credentials_service block. A person's read has no name here at all: it reads
+// the block itself, which is the same value Terraform hands the job.
 const envCoordinatorCredentialsServiceURL = "FUGARO_COORDINATOR_CREDENTIALS_SERVICE_URL"
 
-// coordinatorBitbucketReadMint is ONE caller class's way into the read mint
-// (BB5, G4): where the service is and who presents itself there. There are two
-// classes and a command uses exactly one of them — a person's commands are the
-// person class, the aggregation job is the coordinator class — and which one a
-// command is, is a fact of the command rather than of whatever the environment
-// happens to carry.
-type coordinatorBitbucketReadMint struct {
+// coordinatorServiceClient builds the client a read mint's calls are made with,
+// and it is the tests' seam and nothing else's: it answers nil on every real
+// path, where each mint builds its own hardened client (github.ServiceReadTokens,
+// bitbucket.ServiceReadTokens — no redirects, no jar, a bounded timeout).
+//
+// The tests need it because a project's published URL is https by validation
+// (localcfg.validCredentialsServiceURL) while a test's fake service is a
+// hermetic TLS server no machine trusts; the alternative — pointing the
+// configuration at an http URL — is one the loader refuses, and relaxing that
+// rule for a test would be relaxing it for every machine.
+var coordinatorServiceClient = func() *http.Client { return nil }
+
+// coordinatorReadMint is ONE caller class's way into the credentials service's
+// read mints (BB4, BB5, G4): where the service is, who presents itself there,
+// and — for the class that holds no GitHub App key of its own — which App its
+// GitHub read is minted as. There are two classes and a command uses exactly
+// one of them: a person's commands are the person class, the aggregation job is
+// the coordinator class. Which one a command is, is a fact of the command
+// rather than of whatever the environment happens to carry.
+type coordinatorReadMint struct {
 	// url is the service this class mints at, resolved from this class's own
 	// sources. Empty is a class with no service to call: the job whose
-	// installation has not opted in, or a person's machine that named none.
+	// installation has not opted in, or a person's machine whose project
+	// publishes none.
 	url string
 	// identity mints the Google ID token this class presents for url.
 	identity func(context.Context) (string, error)
+	// appID names the GitHub App ID of the repository a read is of, and the
+	// PERSON class alone sets it: a person's machine holds no App key, so the
+	// service mints their GitHub read and the App ID — which is not a secret —
+	// travels with the request. It is the project's own recorded value
+	// (localcfg.Repo.GitHubAppID) and never an environment variable. The
+	// coordinator job holds the App's key itself, mints its own read-only token
+	// and leaves this nil.
+	appID func(repo string) string
 }
 
-// source is this class's read mint as the source a Bitbucket repository is
-// opened with: the service mints one token per repository (G11), so this is a
-// function of the repository and not one shared client, and the token is
-// checked against the repository that asked.
+// holdsAppKey reports whether this class holds the GitHub App's key itself: the
+// coordinator job does, and a person's machine does not (appID's own reason).
+func (m coordinatorReadMint) holdsAppKey() bool { return m.appID == nil }
+
+// bitbucketSource is this class's read mint as the source a Bitbucket
+// repository is opened with: the service mints one token per repository (G11),
+// so this is a function of the repository and not one shared client, and the
+// token is checked against the repository that asked.
 //
 // Nil is no mint at all, and that nil is what keeps the reader's own refusal of
 // a Bitbucket repository (coordinator.ErrBitbucket) in place wherever this
 // class has no service — which is where every Bitbucket read stood before BB4
 // and where the sweep still stands on an installation that has not opted in
 // (G8).
-func (m coordinatorBitbucketReadMint) source() func(string) gitprov.TokenSource {
+func (m coordinatorReadMint) bitbucketSource() func(string) gitprov.TokenSource {
 	if m.url == "" {
 		return nil
 	}
-	tokens := &bitbucket.ServiceReadTokens{URL: m.url, IDToken: m.identity}
+	tokens := &bitbucket.ServiceReadTokens{URL: m.url, IDToken: m.identity, HTTP: coordinatorServiceClient()}
 	return func(repo string) gitprov.TokenSource { return tokens.Repo(repo) }
 }
 
+// githubSource is this class's read mint as the source a GitHub repository is
+// opened with (the GitHub read mint, github.ServiceReadTokens): the service
+// mints a read-only installation token for the ONE repository named, and the
+// answer names that repository back for the client to check before the token is
+// used.
+//
+// Nil is a class that holds the App's key and mints its own token — the
+// coordinator job, whose appID is nil — or a class with no service to call.
+// Both are the reader's own mint (Project.Mint), and neither is this one.
+func (m coordinatorReadMint) githubSource() func(string) gitprov.TokenSource {
+	if m.url == "" || m.appID == nil {
+		return nil
+	}
+	tokens := &github.ServiceReadTokens{URL: m.url, IDToken: m.identity, HTTP: coordinatorServiceClient()}
+	return func(repo string) gitprov.TokenSource { return tokens.Repo(repo, m.appID(repo)) }
+}
+
 // coordinatorPersonMint is the PERSON class (BB4): the service's URL from the
-// person's own variable or from the installation's published block, and the
-// person's own Google ID token, minted from their own credentials.
-func coordinatorPersonMint(lc *localcfg.Config, getenv func(string) string) coordinatorBitbucketReadMint {
-	return coordinatorBitbucketReadMint{url: coordinatorBitbucketReadURL(lc, getenv), identity: coordinatorBitbucketIDToken}
+// installation's published block, the person's own Google ID token, and the
+// GitHub App ID of the repository the read is of, from the project's own
+// configuration. None of the three is an environment variable (the owner's
+// ruling of 2026-11-03): a person's read resolves the installation the way
+// every other person's command does, and a machine that exports nothing reads
+// exactly as one that exports everything.
+func coordinatorPersonMint(lc *localcfg.Config) coordinatorReadMint {
+	url := coordinatorReadServiceURL(lc)
+	return coordinatorReadMint{
+		url:      url,
+		identity: func(ctx context.Context) (string, error) { return coordinatorPersonIdentity(ctx, url) },
+		appID:    coordinatorAppID(lc),
+	}
 }
 
 // coordinatorSweepMint is the COORDINATOR class (BB5): the service's URL from
@@ -1075,59 +1173,135 @@ func coordinatorPersonMint(lc *localcfg.Config, getenv func(string) string) coor
 // No local config is a source here, and that is the job's shape rather than a
 // restriction: `sweep` has no project config file at all, and the variable
 // Terraform sets on it is the only thing that may turn its Bitbucket read on.
-func coordinatorSweepMint(getenv func(string) string) coordinatorBitbucketReadMint {
+// Its GitHub read is its own (appID is nil): the job holds the App's key, and
+// nothing about it changed when the person's read moved to the service.
+func coordinatorSweepMint(getenv func(string) string) coordinatorReadMint {
 	url := ""
 	if getenv != nil {
 		url = getenv(envCoordinatorCredentialsServiceURL)
 	}
-	return coordinatorBitbucketReadMint{url: url, identity: func(ctx context.Context) (string, error) {
+	return coordinatorReadMint{url: url, identity: func(ctx context.Context) (string, error) {
 		return coordinatorIdentityToken(ctx, url)
 	}}
 }
 
-// coordinatorBitbucketReadURL is where the read mint is, for the person
-// running this command: the override when it is set, and otherwise the
-// installation's own published credentials_service block — the value the
-// setup run wrote from the installation root's outputs on the machine that
-// deployed the service and `localcfg.MergeShared` carries to every machine.
-// Empty is an
-// installation that has not opted into the service, where Bitbucket is refused
-// exactly as it was before BB4 (G8).
+// coordinatorReadServiceURL is where the read mint is, for the person running
+// this command: the installation's own published credentials_service block —
+// the value the setup run wrote from the installation root's outputs on the
+// machine that deployed the service, and that `localcfg.MergeShared` carries to
+// every machine. Empty is an installation that has not opted into the service,
+// where Bitbucket is refused exactly as it was before BB4 (G8) and a GitHub
+// read has no mint to ask.
 //
-// The override is an override on the BLOCK and not on the credential: what it
-// names is the service the person's own ID token is presented to, and the
-// block is what an operator's `fugaro update` wrote.
-//
-// The environment is the caller's own getenv and not os.Getenv: the sweep is
-// handed the environment it runs in, so that the tick a test runs is one whose
-// every value — this override included — it set itself. A nil getenv is a
-// caller with no environment to read, and the block is then the only source.
-func coordinatorBitbucketReadURL(lc *localcfg.Config, getenv func(string) string) string {
-	if getenv != nil {
-		if v := getenv(envBitbucketReadServiceURL); v != "" {
-			return v
-		}
-	}
+// The block is the only source, and there is deliberately no environment
+// variable behind it (the owner's ruling of 2026-11-03): the URL decides where
+// the caller's own Google ID token is presented, so a value a person's shell
+// carries may not supply one their project never published. A nil config is a
+// caller that has none — which is the shape this read would have on a machine
+// with no project configuration at all — and it publishes no service.
+func coordinatorReadServiceURL(lc *localcfg.Config) string {
 	if lc != nil && lc.CredentialsService != nil {
 		return lc.CredentialsService.URL
 	}
 	return ""
 }
 
-// coordinatorBitbucketIDToken mints the caller's own Google ID token for the
-// read mint, which is the identity the service's person class verifies (BB4).
+// coordinatorAppID is the GitHub App ID of one repository, from the project's
+// own configuration (localcfg.Repo.GitHubAppID, recorded when the project was
+// set up). It is the one field of a read mint that is neither the repository
+// nor an identity, and the service's environment does not hold it either, so a
+// person's read carries it.
 //
-// It is a package variable and it REFUSES by default, deliberately: the
-// `fugaro` command that mints a person's ID token from their own Application
-// Default Credentials is coordinator P7's
-// (docs/coordinator/implementation-plan.md), and it is not in this tree yet.
-// A default that reached for something else — the metadata server, the
-// gcloud SDK — would be a second way to be a person, which is exactly what
-// BB4's whole design refuses. Until P7 lands, a Bitbucket read on a machine
-// with the service URL set is refused with this sentence and a test injects a
-// fake here.
-var coordinatorBitbucketIDToken = func(context.Context) (string, error) {
-	return "", fcli.UserErr("a Bitbucket read presents your own Google ID token to the installation's credentials service, and the command that mints one from your own credentials is not in this build (coordinator P7, docs/coordinator/implementation-plan.md). The read is refused rather than made with another identity")
+// It is not a secret — the platform passes the same number to a run as
+// FUGARO_GITHUB_APP_ID — and it is read from the project's recorded value and
+// never from an environment variable: a person's read has to work on a machine
+// that exports nothing.
+//
+// A repository the project does not hold, or holds with no App ID, answers the
+// empty string, and the read refuses it before the service is called
+// (openCoordinatorGitHubRead) rather than asking for a mint nothing could sign.
+func coordinatorAppID(lc *localcfg.Config) func(repo string) string {
+	return func(repo string) string {
+		r, ok := lc.RepoFor(repo)
+		if !ok {
+			return ""
+		}
+		return r.GitHubAppID
+	}
+}
+
+// coordinatorGcloudBin is the binary a person's own Google ID token is minted
+// with, and coordinatorIdentityArgs is the argv it is run with: the account is
+// the person's own (no --account), and the audience is the credentials
+// service's URL, which is what the service verifies an ID token's aud against
+// (internal/cli's service passes its own URL as credsvc.AuthConfig.Audience, so
+// a token minted for anything else is refused there). --quiet is passed so that
+// nothing gcloud would ask can hold a read.
+const coordinatorGcloudBin = "gcloud"
+
+func coordinatorIdentityArgs(url string) []string {
+	return []string{"auth", "print-identity-token", "--audiences=" + url, "--quiet"}
+}
+
+// coordinatorIdentityTimeout bounds the whole mint: gcloud is a local process
+// that answers in a second when it answers at all, and a read must not hold on
+// one that does not.
+const coordinatorIdentityTimeout = 30 * time.Second
+
+// coordinatorGcloudLookPath and coordinatorGcloudRun are the two seams the mint
+// is run through — the shape internal/billing's own gcloud fallback uses — so
+// that a test drives the real function with no binary and no credential. The
+// real ones are exec.LookPath and a child process whose stderr is CAPTURED and
+// dropped: this command's subject is a credential, and a refusal that quoted a
+// child process's own words would be another writer's value reaching an error,
+// which is the rule this whole path keeps.
+var (
+	coordinatorGcloudLookPath = exec.LookPath
+	coordinatorGcloudRun      = func(ctx context.Context, args ...string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, coordinatorGcloudBin, args...)
+		// A leaked descendant holding the output pipe must not hold us.
+		cmd.WaitDelay = 5 * time.Second
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		return cmd.Output()
+	}
+)
+
+// coordinatorPersonIdentity mints the caller's own Google ID token for the
+// credentials service at url, with `gcloud auth print-identity-token`: the
+// identity the service's person class verifies (BB4, G4), and the same
+// credential every other command a person runs reaches the project with.
+//
+// It runs gcloud rather than calling an id-token library because the Google
+// client libraries cannot mint one from a person's own credential at all: their
+// id-token sources handle a service account, an impersonated account and the
+// metadata server, and refuse an authorized-user credential by name
+// (google.golang.org/api/idtoken's tokenSourceFromBytes, and
+// cloud.google.com/go/auth's own id-token credentials with it). A person's own
+// ADC is exactly that credential, and print-identity-token is the supported way
+// to turn it into an ID token — gcloud resolves it from the person's own
+// gcloud login or their ADC, and no variable of Fugaro's decides which.
+//
+// It is a package variable so that a test replaces it: no test mints a real
+// credential, and no value this returns or refuses with reaches an error, a log
+// line or an output — the checks below are the ones the service applies to a
+// presented token (one clean header value, bounded), and the refusals are
+// sentences written here.
+var coordinatorPersonIdentity = func(ctx context.Context, url string) (string, error) {
+	if _, err := coordinatorGcloudLookPath(coordinatorGcloudBin); err != nil {
+		return "", fcli.UserErr("a read through the installation's credentials service presents your own Google ID token, and the %s command that mints one is not on PATH: install the Google Cloud CLI (https://cloud.google.com/sdk/docs/install) and run `%s auth login`", coordinatorGcloudBin, coordinatorGcloudBin)
+	}
+	cctx, cancel := context.WithTimeout(ctx, coordinatorIdentityTimeout)
+	defer cancel()
+	out, err := coordinatorGcloudRun(cctx, coordinatorIdentityArgs(url)...)
+	if err != nil {
+		return "", fcli.UserErr("your own Google ID token could not be minted for the installation's credentials service: run `%s auth login`, or `%s auth application-default login`, and try again", coordinatorGcloudBin, coordinatorGcloudBin)
+	}
+	tok := strings.TrimSpace(string(out))
+	if tok == "" || len(tok) > coordinatorIdentityMaxBytes || !coordinatorPrintableToken(tok) {
+		return "", fcli.UserErr("`%s auth print-identity-token` answered with no usable identity token: run `%s auth login` and try again", coordinatorGcloudBin, coordinatorGcloudBin)
+	}
+	return tok, nil
 }
 
 // The metadata server's own endpoint for the coordinator job's identity, the
@@ -1156,7 +1330,7 @@ var coordinatorIdentityClient = &http.Client{Timeout: 10 * time.Second}
 // the credentials service at audience — the job's runtime account, which is the
 // identity the service's coordinator class verifies (G4, BB5).
 //
-// It is the job's class's seam and not the person's (coordinatorBitbucketIDToken):
+// It is the job's class's seam and not the person's (coordinatorPersonIdentity):
 // a job's identity is the platform's own and no command mints it, while a
 // person's comes from their own credentials and does. It is a variable so a
 // test replaces it, and the body is never read into an error: on success it is
@@ -1304,18 +1478,30 @@ func coordinatorAppCredential() (appID string, key *rsa.PrivateKey, pemData stri
 // The App credential is asked for before the provider is opened, and that is
 // the second half of the decision. providers.FromEnv reports a variable it does
 // not find as a plain error, and a failure through the host is a remote one
-// (exit 2) — so without this check a person who simply has not exported the
+// (exit 2) — so without this check a caller who simply has not exported the
 // App's ID, or whose key is not a key, would be told the host failed and would
 // retry it, when the refusal is theirs to fix and the same condition is already
 // a user error where the mint asks for the credential
 // (coordinatorAppCredential, exit 1). Asking here is also what makes that
 // wording reachable: the opener refuses before the mint is reached, so the
-// mint's own message could never be the one a person saw.
+// mint's own message could never be the one a caller saw.
 // It costs a repository whose runs name a pull request the same credential read
 // a second time, and nothing at all for one without: Project.PullRequests
 // returns before opening when the runs name no pull request, so a project with
 // nothing in it is still read with no App credential anywhere.
-var openCoordinatorProvider = func(env []string, warn func(string)) (coordinator.ProviderOpener, error) {
+//
+// All of that is the class that holds the App's key — the coordinator job. A
+// class with an App ID holds none, and is opened a different way entirely
+// (openCoordinatorPersonProvider): no variable is read, no key is looked for,
+// no provider is built out of the environment at all, and the App ID travels
+// with the request. That is why the two are separate functions and not one
+// closure with a branch: building the environment's opener is itself a read of
+// FUGARO_GITHUB_APP_ID and of the key beside it, and a person's machine must
+// not have one made.
+var openCoordinatorProvider = func(env []string, appID func(repo string) string, warn func(string)) (coordinator.ProviderOpener, error) {
+	if appID != nil {
+		return openCoordinatorPersonProvider(appID, warn), nil
+	}
 	_, open, err := fcli.OpenProvider(coordinatorProviderEnv(env), warn)
 	if err != nil {
 		return nil, err
@@ -1336,6 +1522,78 @@ var openCoordinatorProvider = func(env []string, warn func(string)) (coordinator
 		}
 		return p, secrets, nil
 	}, nil
+}
+
+// openCoordinatorPersonProvider is the PERSON class's opener (the owner's
+// ruling of 2026-11-03): the two hosts this read serves, each opened without a
+// credential of this process's own and without reading the environment for one.
+// The GitHub half is keyless through the credentials service
+// (openCoordinatorGitHubRead) and the Bitbucket half is the read mint's token
+// (openCoordinatorBitbucket, BB4); neither has a fallback, and there is no
+// third branch, because a class that holds no key cannot mint one.
+//
+// The environment is not a parameter here, and that is the whole point of the
+// function: providers.FromEnv is where FUGARO_GITHUB_APP_ID and the App's key
+// are read, and a person's command must not build that opener even to leave it
+// unused.
+func openCoordinatorPersonProvider(appID func(repo string) string, warn func(string)) coordinator.ProviderOpener {
+	return func(ctx context.Context, kind, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		if kind == gitprov.KindBitbucket {
+			return openCoordinatorBitbucket(repo, src, warn)
+		}
+		return openCoordinatorGitHubRead(repo, appID(repo), src, warn)
+	}
+}
+
+// openCoordinatorGitHubRead opens one GitHub repository's provider for a class
+// whose read the credentials service mints: the App's key is the service's, so
+// this process opens the provider keyless (github.Options.ServiceHeldKey, the
+// state a provider starts in and refuses every token in) and hands it the read
+// mint's source — the service's read-only installation token, minted for this
+// one repository (G11).
+//
+// The App ID is the project's own recorded value and never an environment
+// variable, and a repository with none is refused here rather than sent to the
+// service as a mint nothing could sign: the service checks the App ID's shape
+// and refuses a request without one, and a person is better told which
+// repository the project has not recorded an App for.
+//
+// It returns no credential values to redact: the App's key never leaves the
+// service, and the token is not this process's to print. The provider's own
+// Warn is the caller's, for the same reason the Bitbucket path uses it.
+func openCoordinatorGitHubRead(repo, appID string, src gitprov.TokenSource, warn func(string)) (gitprov.Provider, []string, error) {
+	owner, name, ok := gitprov.SplitRepo(repo)
+	if !ok {
+		return nil, nil, fcli.UserErr("repository %q must look like owner/name", repo)
+	}
+	if appID == "" {
+		return nil, nil, fcli.UserErr("the project's configuration records no GitHub App ID for %s, so the installation's credentials service has no App to mint this read as: `fugaro doctor` reports what the project holds for it, and the setup run in that repository's checkout records it", repo)
+	}
+	p, err := coordinatorGitHubReadProvider(github.Options{
+		Owner:          owner,
+		Repo:           name,
+		AppID:          appID,
+		ServiceHeldKey: true,
+		BaseURL:        coordinatorGitHubAPIURL,
+		Warn:           warn,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := installCoordinatorSource(p, src); err != nil {
+		return nil, nil, err
+	}
+	return p, nil, nil
+}
+
+// coordinatorGitHubReadProvider opens the GitHub adapter the person's read goes
+// through, keyless and on the API root this code pins. It is a seam so that a
+// test can hold the root to DefaultBaseURL with FUGARO_GITHUB_API_URL set,
+// without a network: the root is an argument to New and never a value read out
+// of the environment, which is what makes the pinning a property of the call
+// rather than of a check.
+var coordinatorGitHubReadProvider = func(o github.Options) (gitprov.Provider, error) {
+	return github.New(o)
 }
 
 // openCoordinatorBitbucket opens one Bitbucket repository's provider around

@@ -143,7 +143,7 @@ func storedView() coordinator.View {
 // with, and an opener that was reached is the read going somewhere it must not.
 func noStoreOpens(t *testing.T) {
 	t.Helper()
-	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
+	setCoordinatorHost(t, func([]string, func(string) string, func(string)) (coordinator.ProviderOpener, error) {
 		t.Error("--from-store opened a provider: this read holds no App credential and reads no host")
 		return nil, errors.New("no provider")
 	})

@@ -131,8 +131,23 @@ type ServiceReadTokens struct {
 }
 
 // ServiceReadTokens is the TokenSource a provider installs (gitprov.TokenSource)
-// when the installation's service mints a person's read.
-var _ gitprov.TokenSource = (*ServiceReadTokens)(nil)
+// when the installation's service mints a person's read, and it is a
+// gitprov.TokenHolder so that the reader above can redact the token out of a
+// host's echo of it: the token never passes through the reader's hands, so the
+// holder is the only thing that knows it.
+var (
+	_ gitprov.TokenSource = (*ServiceReadTokens)(nil)
+	_ gitprov.TokenHolder = (*ServiceReadTokens)(nil)
+)
+
+// HeldToken is the token this source last minted, or "" before the first mint.
+// It is read under the same lock Token mints under, because the provider's
+// calls and the reader's failure path are different goroutines.
+func (s *ServiceReadTokens) HeldToken() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.token
+}
 
 func (s *ServiceReadTokens) now() time.Time {
 	if s.Now == nil {
