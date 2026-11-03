@@ -323,7 +323,7 @@ func TestDocsSettingsCommandsD846CarriesTheConsoleHalf(t *testing.T) {
 	doc := readDoc(t, path)
 	row := mdRow(t, path, doc, "| **D846** |")
 	for _, want := range []string{
-		"the console's half",
+		"The console's half",
 		"`--yes`",
 		"`I understand this raises a limit`",
 		"no console-only flag",

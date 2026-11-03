@@ -646,7 +646,7 @@ a quarter of a minute. A screen this session has already read is drawn at once, 
 | Repositories | `projects-repos`, `projects-repo-card`, `projects-repo-card-title`, `projects-repo-list`, `projects-repo-enrolled`, `projects-repo-card-none` |
 | Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-account-none`, `projects-accounts-note` |
 | Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed`, `projects-secret-bound`, `projects-secret-bound-word`, `projects-secrets-managed` |
-| Settings | `projects-settings`, `projects-settings-list`, `projects-settings-row`, `projects-settings-key`, `projects-settings-scope`, `projects-settings-value`, `projects-settings-wins`, `projects-settings-state`, `projects-settings-owner-word`, `projects-settings-owner`, `projects-settings-owner-generic`, `projects-settings-pencil` |
+| Settings | `projects-settings`, `projects-settings-list`, `projects-settings-row`, `projects-settings-key`, `projects-settings-scope`, `projects-settings-value`, `projects-settings-wins`, `projects-settings-state`, `projects-settings-owner-word`, `projects-settings-owner`, `projects-settings-owner-generic`, `projects-settings-pencil`, `projects-settings-editor`, `projects-settings-editor-outcome` |
 | Models | `projects-models`, `projects-models-body`, `projects-models-heading`, `projects-models-route-list`, `projects-models-route`, `projects-models-route-name`, `projects-models-route-kind`, `projects-models-route-host`, `projects-models-route-fee`, `projects-models-claims`, `projects-models-claims-word`, `projects-models-claim`, `projects-models-to`, `projects-models-to-word`, `projects-models-to-every`, `projects-models-to-none`, `projects-models-allow`, `projects-models-route-base`, `projects-models-route-note`, `projects-models-list`, `projects-models-row`, `projects-models-id`, `projects-models-route-of`, `projects-models-input`, `projects-models-output`, `projects-models-catalog`, `projects-models-catalog-checked`, `projects-models-catalog-age`, `projects-models-catalog-stale` |
 
 `data-*`: `data-theme`; `data-panel`; `data-state` — **the panel states are
@@ -725,6 +725,37 @@ state on a tone alone. A route's `base_url` and `note` are drawn as text and are
 offered as links** — a link built from a document's string is a navigable attribute the
 document wrote — and the panel has no control of any kind: nothing under
 `div.projects-models` adds, removes or uses a model.
+
+**The settings section is the tab's third section, and it is the one of the three that
+writes** (console 0.120.0, the settings-edit plan's C2 and C3; `desktop-console.md` §5.1
+rule 12 is the fence). The pencil is the row's only control, and pressing it draws the row's
+own editor into the row: `span.projects-settings-editor` holds the labelled box, the hint
+that an empty box removes the key, `Review and write` and `Cancel`, and the editor's
+sentence is `span.projects-settings-editor-outcome`, marked `aria-live` so a refusal is
+spoken when it lands. **The editor is the row's state and not a second control beside the
+pencil**: it carries `aria-busy="true"` while an edit is in flight with its one control
+disabled then, and once a write happened the box and that control are both disabled, because
+the row behind them is stale until the section is read again. Every outcome — a refusal, a
+sentence, a write — carries `Read again`, and it **reads the section** rather than repeating
+the write: the write's own compare-and-swap refuses an edit built on bytes that moved, and a
+console that retried it silently would be deciding what it was told not to. A refusal is the
+CLI's own sentence and never a tone; a successful write shows the CLI's own
+`next: fugaro update` line as text.
+
+**The confirmation window is §2.13's, with a settings subject, and it has two shapes.**
+`confirm.ts` and `confirm.html` are one implementation for both questions, so this window
+carries the same four declared ids, the same three `console-confirm-*` hooks, no `data-*` and
+no theme-attribute rule — what is this screen's is the field list (the key, the old value,
+the new value, the layer written and the layer that decides today, the last two as fields
+rather than as a sentence the window computes) and **the tick**. A **widening** — the dry
+run's own `widening` member, never the console's reading of a limit — draws the tick
+`I understand this raises a limit` as a real `<label for=…>` on a real checkbox, leaves the
+confirming button **disabled** until the box is ticked, and makes **Cancel** the window's
+default button. A **narrowing** draws no tick at all and makes the confirming button the
+default: that is the whole of the difference between the two shapes. The tick's checkbox and
+label carry **no hook of this theme** — no rule here selects them, and its id is the
+document's own — and the confirming button is out of the tab order in both shapes and
+answers only a pointer click, so a keyboard-synthesized click confirms nothing.
 
 **`projects-accounts-note` is a hook no document this CLI produces can reach.** `fugaro
 accounts ls --json` writes `note` with `omitempty` and answers `complete: false` whenever
