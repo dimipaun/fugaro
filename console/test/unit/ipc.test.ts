@@ -643,6 +643,21 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   { command: 'models rm', kind: 'mutating', where: 'internal/cli/models_rm.go:20' },
   { command: 'models use', kind: 'mutating', where: 'internal/cli/models_use.go:24' },
   { command: 'models search', kind: 'unused', where: 'internal/cli/models_search.go:21' },
+  // The settings group's read (the settings-edit plan's C1, D1102): the
+  // project's registry rows, what decides each one and which of them the
+  // generic path may write -- `fugaro settings --json`, whose two project flags
+  // (`--project`, `--config`) are main-process state rather than arguments
+  // (`src/main/spawn.ts`'s `takesProject`). It is `allowed` and it takes no
+  // argument: the command's own shape is `settings [KEY|GLOB ...]`, so its
+  // positional word is exactly what this surface must not be able to fill, and
+  // `src/main/spawn.ts` declares no argument for the row.
+  //
+  // **The group's writers are not here, and that is deliberate** (D1114): `set`
+  // and `unset` are C3's, which adds their never rows in the commit that adds
+  // the write. Until then the never table is the table main shipped, and a row
+  // here marked `mutating` would name a command this surface's never list does
+  // not yet refuse.
+  { command: 'settings', kind: 'allowed', where: 'internal/cli/settings.go:64' },
   // **The console's one write** (design §5.1 rule 11, D22). `run` was the
   // first writer in this list and the one no argv could drive; since V2.5.1a it
   // is a command the allow-list admits, in exactly one argv, so it is `allowed`
@@ -721,7 +736,7 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * is still `runs ls --json` and rule 6's row carries the two words in its
  * parenthetical.
  *
- * **It is twenty argvs, and this surface is the same twenty.** The thirteenth is
+ * **It is twenty-one argvs, and this surface is the same twenty-one.** The thirteenth is
  * `config list --json`, the rail's own read (owner's design ruling of
  * 2026-10-25): until that ruling there were twelve here and it was pinned where
  * the picker's table was, and the ruling made the read the dashboard's own
@@ -740,7 +755,12 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * the seventeenth, eighteenth and nineteenth. The twentieth is the same
  * release's models read (`models ls --json`, the Project tab's read-only
  * panel): the command and its one fixed flag and nothing else, because the
- * command takes no argument at all.
+ * command takes no argument at all. The twenty-first is the same tab's third
+ * read (`settings --json`, the settings-edit plan's C1): this file's convention
+ * again takes out what main-process state fills -- the row's `--project <name>`
+ * and `[--config <path>]`, which are the same two words every cloud command of
+ * that tab carries (`src/main/spawn.ts`'s `takesProject`) -- so what is left is
+ * the command and its one fixed flag.
  */
 const DESIGN_ARGV: readonly string[] = [
   'watch --json',
@@ -785,6 +805,12 @@ const DESIGN_ARGV: readonly string[] = [
   // empty (`src/main/spawn.ts`), which is what makes that true rather than
   // merely stated.
   'models ls --json',
+  // The settings read (the settings-edit plan's C1). The row fixes the command
+  // and `--json`; the two project flags are main-process state rather than
+  // arguments, which is this file's convention for taking them out, and the row
+  // declares no argument of its own (`src/main/spawn.ts`'s empty `args`), which
+  // is what keeps the command's `[KEY|GLOB ...]` positional unreachable.
+  'settings --json',
 ]
 
 /** argvOf is an operation's command and the flags it fixes, as one string. */
@@ -2294,7 +2320,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these twenty-nine, and no others".
+ * channel. The claim is "these thirty, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -2356,6 +2382,16 @@ describe('the spend read’s arguments', () => {
  * says, and it is the third operation here with no argument at all -- and the
  * first whose command belongs to a group the console may otherwise not touch,
  * which is why its four sibling words are pinned on the never table above.
+ * **The settings-edit plan's C1 added the thirtieth** (`settings.read` /
+ * `readSettings`, the Project tab's third section -- `fugaro settings --json`,
+ * one row per setting with what decides it and which of them the generic path
+ * may write) and left the other twenty-nine exactly where they were. It is next
+ * to `models.list`, the tab's other read, and it is the fourth operation here
+ * with no argument at all: the command's own shape is `settings [KEY|GLOB ...]`,
+ * so the positional word it accepts is exactly what this surface must not be
+ * able to fill. It is the second operation the reduced mode withholds under
+ * `caps` (`REDUCED_VIEW_OPERATIONS` above, and the withheld list below), because
+ * the table it draws carries the project's configured caps.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -2371,6 +2407,7 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['secrets.inventory', 'listSecrets'],
   ['accounts.inventory', 'listAccounts'],
   ['models.list', 'listModels'],
+  ['settings.read', 'readSettings'],
   ['cli.version', 'cliVersion'],
   ['startup.compatibility', 'getCompatibility'],
   ['installation.current', 'getInstallation'],
@@ -2417,7 +2454,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these twenty-nine, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these thirty, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -2434,11 +2471,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A thirtieth channel: what each task added must stay one row, and the
+    // A thirty-first channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
-    const thirtieth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(thirtieth).toContain('fleet.report: a channel this console does not ship')
-    expect(thirtieth).toContain('30 rows, and this console ships 29')
+    const thirtyFirst = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(thirtyFirst).toContain('fleet.report: a channel this console does not ship')
+    expect(thirtyFirst).toContain('31 rows, and this console ships 30')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -2452,7 +2489,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('28 rows, and this console ships 29')
+    expect(withoutTheNewRow).toContain('29 rows, and this console ships 30')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -2467,8 +2504,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the twenty-nine methods and nothing else', () => {
-    // The bridge the window is handed: the twenty-nine methods and the names,
+  it('is frozen, and hands the window a bridge with the thirty methods and nothing else', () => {
+    // The bridge the window is handed: the thirty methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -3505,12 +3542,17 @@ describe('the source of the allow-list and the preload', () => {
  * panel's per-person dollars, console L5b -- the same spend figures a reduced
  * console cannot vouch for, D7), `runs.summary` is the totals read that carries
  * those same two figures again over the window and over each repository
- * (console 0.119.0, B4's console half), `budget.show` is the Caps screen's, and
- * the kill switch has no operation of its own (design C10 -- its fields travel
- * inside `live.watch`, which a reduced console still draws).
+ * (console 0.119.0, B4's console half), `budget.show` is the Caps screen's,
+ * `settings.read` is the same kind of figure again -- the Projects tab's
+ * settings table carries the project's configured `budget.*` rows, so the
+ * section is refused with the caps panel the tab's own `VIEWS` entry declares
+ * (the settings-edit plan's C1) -- and the kill switch has no operation of its
+ * own (design C10 -- its fields travel inside `live.watch`, which a reduced
+ * console still draws).
  */
 const THE_WITHHELD_OPERATIONS: readonly OperationName[] = [
   'budget.show',
+  'settings.read',
   'runs.stats',
   'runs.summary',
   'spend.report',
@@ -3629,7 +3671,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: twenty-four of the surface's twenty-nine operations,
+    // The non-vacuity half: twenty-four of the surface's thirty operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its

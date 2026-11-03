@@ -188,10 +188,13 @@ import type { SectionRead } from './section'
 import {
   PROJECTS_BUSY,
   PROJECTS_MODELS_BUSY,
+  PROJECTS_SETTINGS_BUSY,
   buildProjectsModel,
   buildProjectsModels,
+  buildProjectsSettings,
   fillProjects,
   fillProjectsModels,
+  fillProjectsSettings,
   renderProjectsFrame,
 } from './screens/projects'
 import type { DrawnProjectsFrame, ProjectsModel } from './screens/projects'
@@ -462,12 +465,13 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
 }
 
 /**
- * ReadBridge is the fourteen reads the screens make (Task 3.4c; console L5b
+ * ReadBridge is the fifteen reads the screens make (Task 3.4c; console L5b
  * added `statsRuns`, Bitbucket credentials T1.2 added `coordinatorStatus`,
  * GV2.3b added `planStatus`, coordinator v2 K3 added `coordinatorShow`, K5 added
  * `coordinatorIntents`, console 0.119.0 added `summaryRuns` -- the
  * Coordinator's jobs-free totals read -- and `listModels`, the Project tab's
- * models panel), named one by one
+ * models panel, and the settings-edit plan's C1 added `readSettings`, the same
+ * tab's settings panel), named one by one
  * for the reason `CompatibilityBridge` names one: this file should reach for
  * exactly the operations it draws, and a reader should be able to see which
  * those are without reading the preload.
@@ -485,6 +489,7 @@ export interface ReadBridge {
   statsRuns(args: Readonly<Record<string, unknown>>): Promise<unknown>
   summaryRuns(args: Readonly<Record<string, unknown>>): Promise<unknown>
   listModels(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  readSettings(args: Readonly<Record<string, unknown>>): Promise<unknown>
   coordinatorStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
   coordinatorShow(args: Readonly<Record<string, unknown>>): Promise<unknown>
   coordinatorIntents(args: Readonly<Record<string, unknown>>): Promise<unknown>
@@ -494,7 +499,7 @@ export interface ReadBridge {
   planStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
 }
 
-/** readBridgeFrom is the fourteen reads over the structural bridge. A missing
+/** readBridgeFrom is the fifteen reads over the structural bridge. A missing
  * member answers `null` rather than rejecting, and so does a member that fails
  * to answer -- by throwing before it returns, or by returning a promise that
  * rejects, which is what `invoke` does on a channel with nothing behind it.
@@ -524,6 +529,7 @@ export function readBridgeFrom(fugaro: unknown): ReadBridge {
     statsRuns: (args) => ask('statsRuns', args),
     summaryRuns: (args) => ask('summaryRuns', args),
     listModels: (args) => ask('listModels', args),
+    readSettings: (args) => ask('readSettings', args),
     coordinatorStatus: (args) => ask('coordinatorStatus', args),
     coordinatorShow: (args) => ask('coordinatorShow', args),
     coordinatorIntents: (args) => ask('coordinatorIntents', args),
@@ -4522,11 +4528,22 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * models. */
   const projectsModelsRead = sectionRead({ factory, theme })
 
+  /** projectsSettingsRead is the tab's **third** section (the settings-edit
+   * plan's C1): `settings --json`, the registry's rows with what decides each
+   * one and which of them the generic path may write. It has a lifecycle of its
+   * own for the models section's reason one read over -- its own token, its own
+   * mark, its own refusal -- because the third read is as independent as the
+   * other two: it is a cloud read of its own (the project layer is cached, but
+   * the read is the read) and neither the budget nor the models may be held
+   * behind it. */
+  const projectsSettingsRead = sectionRead({ factory, theme })
+
   /** leaveProjects ends those sections' busy state when the operator moves to
    * another tab: nothing is in flight for a screen nobody is looking at. */
   leaveProjects = () => {
     projectsRead.end()
     projectsModelsRead.end()
+    projectsSettingsRead.end()
   }
 
   /**
@@ -4557,6 +4574,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * (`modelsListSupported`): below it this visit spawns nothing and the panel
    * draws the console's own sentence naming the version it needs, which is the
    * shape the Coordinator's fleet window has one tab over.
+   *
+   * **The settings panel is a third section with a third read** (the
+   * settings-edit plan's C1): `settings --json` goes out in the same turn as the
+   * other two and paints the moment it lands. It has no floor of its own and
+   * takes no cache: the read is the project's settings as the CLI reads them
+   * now, and a CLI that cannot take `--project` answers `unknown flag`, which
+   * this panel draws as its own reason.
    */
   const showProjects = async (): Promise<void> => {
     const mine = claim()
@@ -4581,6 +4605,24 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     /** modelsPainted says this visit has already drawn a models panel: the mark
      * of a re-read carries no skeleton over content that is already there. */
     let modelsPainted = false
+    /** settings, settingsSentence and settingsOut are the third section's, on
+     * the models section's terms: what `settings --json` last answered, the CLI's
+     * own sentence for a read that was refused, and whether a read of it is in
+     * flight. There is no floor for this read and no cache of its own: unlike
+     * `models ls`, `settings` is a verb of the CLI the console has always
+     * supported, and unlike the budget a settings row is about the project's
+     * configuration now -- the two flags the read needs (`--project`,
+     * `--config`) are the ones every cloud command of this tab takes. A CLI too
+     * old for them refuses the spawn with its own sentence (`unknown flag`),
+     * which is drawn as this panel's reason rather than as an empty table. */
+    let settings: unknown = null
+    let settingsSentence: string | null = null
+    let settingsOut = false
+    let settingsAttempt = 0
+    let settingsToken = 0
+    /** settingsPainted says this visit has already drawn a settings panel, for
+     * `modelsPainted`'s reason. */
+    let settingsPainted = false
 
     /** mount draws the shell if it is not up yet, and answers it. The mark of a
      * read that is still out goes up here, which is the only moment it can be
@@ -4602,6 +4644,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
             drawn.modelsSlot,
             PROJECTS_MODELS_BUSY,
             PROJECTS_MODELS_SHAPE,
+          )
+        }
+        if (settingsOut) {
+          projectsSettingsRead.mark(
+            settingsToken,
+            drawn.settings,
+            drawn.settingsSlot,
+            PROJECTS_SETTINGS_BUSY,
           )
         }
       }
@@ -4646,6 +4696,27 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
           version: gate.compatibility.cliVersion ?? '',
         }),
         drawn.models,
+      )
+    }
+
+    /**
+     * paintSettings fills the tab's third section from what `settings --json`
+     * answered.
+     *
+     * `raw` is the document as it arrived rather than a decoded view, because
+     * this screen reads its own documents (`buildProjectsSettings`'s note): a
+     * document of another version, or a read that was refused, draws the panel's
+     * own sentence and no table -- an empty table would read as "this project
+     * sets nothing", which is a claim no answer here made.
+     */
+    const paintSettings = (): void => {
+      const drawn = mount(false)
+      settingsPainted = true
+      clearSection(drawn.settings, drawn.settingsSlot)
+      fillProjectsSettings(
+        factory,
+        buildProjectsSettings({ raw: settings, because: settingsSentence }),
+        drawn.settings,
       )
     }
 
@@ -4708,6 +4779,30 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       paintModels()
     }
 
+    /** loadSettings makes the third section's read, `settings --json`. The
+     * attempt check and `stale(mine)` are the models read's, one section over:
+     * an answer to a read the operator has already asked again -- or to one from
+     * a tab they have left -- never lands under another visit. Every answer,
+     * landed or refused, is kept as it arrived and handed to the builder, which
+     * is where a document this build does not read becomes the panel's own
+     * sentence. */
+    const loadSettings = async (attempt: number): Promise<void> => {
+      const answer = documentOf(await bridge.readSettings({}))
+      if (settingsAttempt !== attempt) return
+      if (stale(mine)) return
+      settingsOut = false
+      settings = null
+      settingsSentence = null
+      if (!answer.ok) settingsSentence = answer.sentence
+      else settings = answer.data
+      // The mark is taken down through the section helper rather than by the
+      // filler, for the models read's reason: `fillProjectsSettings` writes
+      // beside the slot, so nothing else would remove the claim from the host it
+      // was made on.
+      projectsSettingsRead.settle(settingsToken)
+      paintSettings()
+    }
+
     /** beginModels starts the second section's read and puts its mark up -- or,
      * below the floor, makes no read at all and draws the console's own sentence
      * naming the version this panel needs. It is called on every visit, the
@@ -4741,28 +4836,61 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       )
     }
 
+    /** markSettings puts the third section's mark up where the frame already is.
+     * As with the models section, the mark carries no skeleton: this section
+     * draws none in this release (`markModels`'s rule, and C1 adds no shape of
+     * its own to `skeleton.ts`). */
+    const markSettings = (): void => {
+      if (!settingsOut || frame === null) return
+      projectsSettingsRead.mark(
+        settingsToken,
+        frame.settings,
+        frame.settingsSlot,
+        PROJECTS_SETTINGS_BUSY,
+      )
+    }
+
+    /** beginSettings starts the third section's read and puts its mark up. It
+     * is called on every visit, the budget's own read or not: a cached budget
+     * view drawn before anything is awaited is not what keeps the settings panel
+     * waiting. */
+    const beginSettings = (): void => {
+      settingsAttempt += 1
+      settingsOut = true
+      settingsToken = projectsSettingsRead.start()
+      if (frame === null) mount(true)
+      else markSettings()
+      void loadSettings(settingsAttempt)
+    }
+
     /** start takes the sequence token for one read, puts the mark up in the
      * frame's own section when the shell is already drawn, and makes the read. */
     const start = (): void => {
       token = projectsRead.start()
       // The models section's read is taken with the budget's and in the same
-      // turn: the two are independent documents, and asking for one after the
-      // other answered would be the serialisation the owner's rule of 2026-10-31
-      // forbids. Below the floor there is no read at all.
+      // turn, and the settings section's with both: the three are independent
+      // documents, and asking for one after the other answered would be the
+      // serialisation the owner's rule of 2026-10-31 forbids. Below the floor
+      // there is no models read at all; the settings read has no floor.
       if (!modelsTooOld) {
         modelsAttempt += 1
         modelsOut = true
         modelsToken = projectsModelsRead.start()
       }
+      settingsAttempt += 1
+      settingsOut = true
+      settingsToken = projectsSettingsRead.start()
       const fresh = frame === null
       const drawn = mount(true)
       if (!fresh) {
         projectsRead.mark(token, drawn.body, drawn.slot, PROJECTS_BUSY)
         markModels()
+        markSettings()
       }
       void load(token)
       if (modelsTooOld) paintModels()
       else void loadModels(modelsAttempt)
+      void loadSettings(settingsAttempt)
     }
 
     // The view this screen opens on, if this session has already read it, is
@@ -4773,7 +4901,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     else {
       paint(held.value, held.at, true)
       if (Date.now() - held.at >= CACHE_FRESH_MS) start()
-      else beginModels()
+      else {
+        beginModels()
+        beginSettings()
+      }
     }
   }
 

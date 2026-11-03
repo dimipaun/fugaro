@@ -177,7 +177,11 @@ import {
   COORDINATOR_JOBS_WINDOW_WORD,
   COORDINATOR_JOB_DETAIL_CLASS,
 } from '../../src/renderer/screens/coordinator'
-import { PROJECTS_BUSY, PROJECTS_MODELS_BUSY } from '../../src/renderer/screens/projects'
+import {
+  PROJECTS_BUSY,
+  PROJECTS_MODELS_BUSY,
+  PROJECTS_SETTINGS_BUSY,
+} from '../../src/renderer/screens/projects'
 import type { SkeletonShape } from '../../src/renderer/skeleton'
 import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
 import {
@@ -204,7 +208,7 @@ import {
  * and the built tree are read from. */
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
-/** READ_METHODS is the thirteen reads `entry.ts` may reach for (`ReadBridge`'s
+/** READ_METHODS is the fourteen reads `entry.ts` may reach for (`ReadBridge`'s
  * own list less `summaryRuns`, which `queueBridge` answers with its own
  * recorder), by the name the preload exposes. Every one of them is on the
  * fake bridge below, and every one records its call -- so "this read was never
@@ -216,6 +220,7 @@ const READ_METHODS = [
   'listRuns',
   'statsRuns',
   'listModels',
+  'readSettings',
   'coordinatorStatus',
   'coordinatorShow',
   'coordinatorIntents',
@@ -229,7 +234,7 @@ const READ_METHODS = [
 type AReply = (args: unknown) => unknown
 
 /** FakeBridge is the preload seam, recorded: the handshake, the installation,
- * and the twelve reads (`READ_METHODS`), each answering what the case told it to
+ * and the fourteen reads (`READ_METHODS`), each answering what the case told it to
  * and appending its own call to `calls`. */
 interface FakeBridge {
   readonly bridge: Record<string, unknown>
@@ -4826,6 +4831,40 @@ const MODELS_DOC = Object.freeze({
   repositories: [],
 })
 
+/** SETTINGS_DOC is `settings --json` (the settings-edit plan's C1), invented:
+ * two rows -- a writable one with a target layer, and one the generic path does
+ * not write. It is the Projects tab's third read. */
+const SETTINGS_DOC = Object.freeze({
+  version: 1,
+  project: 'example-project',
+  generated_at: '2026-11-03T06:00:00Z',
+  sources: [{ layer: 'default', read_at: '2026-11-03T06:00:00Z', duration_ms: 0, status: 'ok' }],
+  settings: [
+    {
+      key: 'budget.per_run_usd',
+      scope: 'project',
+      value: '5',
+      wins: 'project',
+      default: { value: '3', source: 'registry' },
+      state: 'set',
+      writable: true,
+      owner: '',
+      target_layer: 'project',
+    },
+    {
+      key: 'agent.models.coder',
+      scope: 'repo',
+      value: 'claude-*',
+      wins: 'repo',
+      default: { unset: 'the recipe’s own coder model' },
+      state: 'set',
+      writable: false,
+      owner: 'fugaro models',
+      target_layer: '',
+    },
+  ],
+})
+
 /** QUEUE_OFFER is the one repository identity the open installation offers: the
  * `<provider>/<owner>/<name>` string the launch form's `select` holds as an
  * option's value, and the value the form sends. */
@@ -5171,7 +5210,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     expect(
       calls.slice(before).map((call) => call.name),
       'the Projects tab made a read that is not its own',
-    ).toEqual(['showBudget', 'listModels'])
+    ).toEqual(['showBudget', 'listModels', 'readSettings'])
     expect(
       calls.slice(before).some((call) => call.name === 'listRuns'),
       'the Projects tab read the run list, which is the read the owner measured at six seconds',
@@ -5185,31 +5224,35 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     expect(classed(panelOf(document), 'projects-kill-by')[0]?.textContent).toBe(ADDRESS_PLACEHOLDER)
   })
 
-  it('starts the models read with the tab’s others and lets none of them wait', async () => {
-    // The two reads of this tab are independent documents: `models ls` is
-    // offline and cheap and does not wait on `budget show`, and the budget does
-    // not wait on it. Both go out in the click's own turn -- nothing is awaited
-    // before the second call -- which is what the assertion on the order says.
+  it('starts the models and settings reads with the tab’s others and lets none of them wait', async () => {
+    // The three reads of this tab are independent documents: `models ls` is
+    // offline and cheap and does not wait on `budget show`, and neither waits on
+    // `settings --json` (the settings-edit plan's C1). All three go out in the
+    // click's own turn -- nothing is awaited before the second and third calls --
+    // which is what the assertion on the order says.
     const { bridge, calls } = fakeBridge({
       replies: {
         subscribeLive: () => snapshotReply(liveFrame()),
         showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
         listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
       },
     })
     const document = await boot(bridge, new FakeDocument())
     const before = calls.length
     buttonFor(document, 'projects').click()
-    // **Nothing is awaited**: the click's own turn is where both calls are, so a
-    // tab that serialised them would show one here.
+    // **Nothing is awaited**: the click's own turn is where all three calls are,
+    // so a tab that serialised them would show fewer than three here.
     expect(
       calls
         .slice(before)
         .map((call) => call.name)
-        .filter((name) => name === 'showBudget' || name === 'listModels'),
-    ).toEqual(['showBudget', 'listModels'])
-    // While both are out, the tab says which read each of its two marks is.
-    expect(busyLabels(document)).toEqual([PROJECTS_BUSY, PROJECTS_MODELS_BUSY])
+        .filter(
+          (name) => name === 'showBudget' || name === 'listModels' || name === 'readSettings',
+        ),
+    ).toEqual(['showBudget', 'listModels', 'readSettings'])
+    // While all three are out, the tab says which read each of its marks is.
+    expect(busyLabels(document)).toEqual([PROJECTS_BUSY, PROJECTS_MODELS_BUSY, PROJECTS_SETTINGS_BUSY])
     await flush()
     // Each section paints its own answer, and the models section paints the
     // document's own routes and models and not the budget's.
@@ -5217,7 +5260,48 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     expect(models, 'the tab drew no models section').toBeDefined()
     expect(holdsText(models as FakeNode, 'anthropic')).toBe(true)
     expect(holdsText(models as FakeNode, 'deepseek-v4.1-flash')).toBe(true)
+    // And the settings section paints the settings document's own rows.
+    const settings = classed(panelOf(document), 'projects-settings')[0]
+    expect(settings, 'the tab drew no settings section').toBeDefined()
+    expect(holdsText(settings as FakeNode, 'budget.per_run_usd')).toBe(true)
+    expect(holdsText(settings as FakeNode, 'fugaro models')).toBe(true)
     expect(busyLabels(document)).toEqual([])
+  })
+
+  it('paints the settings section on its own token, and a document of another version is its own sentence', async () => {
+    // **The section's own lifecycle**, which is the whole of the progressive
+    // rendering rule (the owner's rule of 2026-10-31, `.claude/rules/console.md`):
+    // the settings read is the third of three, and it is held by its own token
+    // rather than by the tab's. The case shows both halves -- a document of
+    // version 2 draws the console's own sentence and no table, and the read that
+    // answers afterwards is the one that ends the mark.
+    const settings = holding()
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => settings.reply(),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+    // The budget and the models have painted; the settings section is still out,
+    // and it is the only mark left.
+    expect(busyLabels(document)).toEqual([PROJECTS_SETTINGS_BUSY])
+    settings.release({ ok: true, data: { document: { ...SETTINGS_DOC, version: 2 } } })
+    await flush()
+    expect(busyLabels(document)).toEqual([])
+    const section = classed(panelOf(document), 'projects-settings')[0]
+    expect(section, 'the tab drew no settings section').toBeDefined()
+    expect(
+      holdsText(section as FakeNode, 'settings --json is version 2 and this console reads version 1'),
+    ).toBe(true)
+    // A document this build does not read draws no table: the rows of the
+    // document that did arrive are not on screen.
+    expect(classed(section as FakeNode, 'projects-settings-row')).toEqual([])
+    expect(calls.some((call) => call.name === 'readSettings')).toBe(true)
   })
 
   it('asks for no models read at all below the command’s floor, and says which version it needs', async () => {

@@ -3156,6 +3156,15 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
  *     `spent_micros` and `notional_micros` over the window and over each
  *     repository, so it is withheld with them for the same reason: a totals
  *     read answered in reduced mode is the withheld figure by another name;
+ *   - **`caps` names the Projects tab's reads, and the settings read with
+ *     `budget show`.** The tab's own `VIEWS` entry declares the view this list
+ *     is the other half of (`src/renderer/entry.ts`, `{ id: 'projects', … view:
+ *     'caps' }`), so the section is offered and drawn only where `budget.show`
+ *     may be read. `settings.read` (the settings-edit plan's C1) carries the
+ *     same kind of figure under a different name: the registry's `budget.*` and
+ *     `agent.max_budget_usd` rows are the project's configured caps, and the
+ *     reduced mode withholds caps -- a settings table answered here would put a
+ *     limit on screen through the third section that the caps panel is refused;
  *   - **`kill` is empty, and that is the answer rather than a gap.** There is no
  *     kill-switch operation in the surface: the controls live in the live feed's
  *     own fields (design C10, and `src/shared/version.ts`'s `HIDDEN_VIEW_WORDS`
@@ -3172,7 +3181,7 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
 export const REDUCED_VIEW_OPERATIONS: Readonly<Record<ReducedView, readonly OperationName[]>> =
   Object.freeze({
     spend: Object.freeze(['spend.report', 'runs.stats', 'runs.summary'] as const),
-    caps: Object.freeze(['budget.show'] as const),
+    caps: Object.freeze(['budget.show', 'settings.read'] as const),
     kill: Object.freeze([] as const),
   })
 

@@ -315,6 +315,12 @@ var consoleReadPaths = map[string]bool{
 	// writes nothing, the remembered checkouts included. It asks nothing else
 	// of the machine: the read is the caller's own database node.
 	"fugaro coordinator intents": true,
+	// The settings read (the settings-edit plan's C1): the project's settings,
+	// each with the layer that decided it and the three writability facts. It
+	// writes nothing -- no file, no cache, no cloud object (`newSettingsCmd`'s
+	// own comment) -- and it is a read of the installation's records like the
+	// rest, aimed with `--project`/`--config`, so it belongs here with them.
+	"fugaro settings": true,
 	// The one the design names and §5.1 has not carried a row for yet (the
 	// console task adds it); it resolves no checkout today.
 	"fugaro plan graph": true,
