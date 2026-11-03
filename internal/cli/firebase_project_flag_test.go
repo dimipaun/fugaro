@@ -371,9 +371,19 @@ func TestTheRemediesPrintedFromAnEmptyConfigCarryAProject(t *testing.T) {
 func TestTheUpdateWarningsCarryAProject(t *testing.T) {
 	r, _ := updateBudgetRig(t)
 	// The recorded opt-in is what makes a plain update plan the coordinator at
-	// all (opts.Coordinator = o.coordinator || lc.Terraform.Coordinator), and
-	// no GitHub App ID is recorded: the state this warning is about.
+	// all (opts.Coordinator = o.coordinator || lc.Terraform.Coordinator), and a
+	// GitHub repository with no App ID recorded is what makes its job
+	// undeployable: the sweep mints its own read-only installation token from
+	// the App key for every repository it reconciles on GitHub. A config whose
+	// repositories are all Bitbucket is not that state any more (F24): it needs
+	// no App at all, and its job is deployed — which is why the rig's own
+	// config, one Bitbucket repository, is not the config this arm runs on.
 	r.appendConfig(t, "terraform: { coordinator: true }\n")
+	cfg := strings.Replace(readFileString(t, r.cfg), "  acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }",
+		"  acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }\n  acme/webapp: { provider: github, base_branch: main, workflows: [web] }", 1)
+	if err := os.WriteFile(r.cfg, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
 	if err != nil {
