@@ -74,6 +74,41 @@ func TestTheCoordinatorOptInIsRecordedAndKept(t *testing.T) {
 	}
 }
 
+// F24: the coordinator's job needs an App where it reads GitHub and nowhere
+// else. The rig's config records one Bitbucket repository and no GitHub App ID,
+// and the job is deployed all the same — its sweep mints a read token at the
+// credentials service (BB5) — with no App ID in the plan, because there is no
+// App for this installation to name.
+//
+// Fails when coordinatorJob keeps the App ID as the gate for every config: a
+// Bitbucket-only installation's job would never be deployed, and its
+// repositories would be missing from the view rather than recorded as ones
+// the installation cannot reconcile.
+func TestTheCoordinatorJobIsDeployedForABitbucketOnlyInstallation(t *testing.T) {
+	r := newFBRig(t)
+	r.historyImage()
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"history_service_account": historyAccount, "history_job": nil, "coordinator_service_account": coordinatorAccount})}
+	r.save(t)
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, names(3)+"us-east5\n"+names(1), "setup", "--firebase-project", fpID, "--coordinator")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	c, ok := r.tfvars(t)["coordinator"].(map[string]any)
+	if !ok {
+		t.Fatalf("the opt-in planned no coordinator: %v", r.tfvars(t)["coordinator"])
+	}
+	if c["deploy_job"] != true {
+		t.Errorf("deploy_job = %v, want true: a Bitbucket-only sweep has no App to need (F24)\n%s", c["deploy_job"], out)
+	}
+	if got := c["github_app_id"]; got != "" {
+		t.Errorf("github_app_id = %v, want none: this config records no App", got)
+	}
+	if repos, _ := c["repos"].([]any); len(repos) != 1 {
+		t.Errorf("the sweep reconciles %v, want the config's one repository", c["repos"])
+	}
+}
+
 // TestTheCoordinatorOptInIsRefusedWhereItCannotBeConfirmed: the opt-in
 // follows --provision-credentials — --yes never covers it, it excludes the
 // flags that only read or only stop and --repo — and it needs
