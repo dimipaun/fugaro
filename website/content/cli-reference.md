@@ -1925,7 +1925,7 @@ Flags:
 Subcommands:
 
 - `fugaro image add` -- Add an image catalog entry to this machine's project config
-- `fugaro image build` -- Build the derived image with Cloud Build; --local builds it with local Docker and smoke-tests it
+- `fugaro image build` -- Build a catalog entry's image with Cloud Build, or the workflow's derived image; --local builds the derived one with local Docker
 - `fugaro image check` -- Decide whether each workflow's image needs a rebuild (the daily check; locally it only prints the decision)
 - `fugaro image ls` -- List the project's image catalog entries, or the shared-image lock's with --shared
 - `fugaro image promote` -- Copy a repository's image definition into the catalog and point the repository at it
@@ -1974,25 +1974,36 @@ This command has no subcommands.
 
 ## `fugaro image build`
 
-Build the derived image with Cloud Build; --local builds it with local Docker and smoke-tests it
+Build a catalog entry's image with Cloud Build, or the workflow's derived image; --local builds the derived one with local Docker
 
-Build the workflow's derived image.
+Build an image with Cloud Build.
 
-Without --local, Cloud Build builds it from the repository's base branch
-as the repository's build account (cloning with its bitbucket-token, or
-a read-only token its GitHub App mints) and pushes it to the repository's
-own registry, which fugaro update --repo creates. It pushes a candidate,
-smoke-tests it without network, and only then points latest at it and
-records what it was built from, unless a newer build is already
-recorded. Run it from the repository's checkout: the checkout's
-fugaro.yaml and origin say what to build.
+With an image catalog published (fugaro image ls lists its entries), it
+builds the catalog entry you name, or every entry whose source is a
+Dockerfile: the entry's Dockerfile is copied into the project's bucket,
+the build reads that one object, mounts the workflow's secrets as file
+secrets, smoke-tests the candidate without network and promotes it into
+the installation's shared registry with a content tag naming the
+definition it built. Run it from the checkout of the entry's own
+repository: the build account, the provider credential and the secrets
+are that repository's.
+
+Without a catalog — or with --workflow, which selects the per-workflow
+case — Cloud Build builds the workflow's derived image from the
+repository's base branch as the repository's build account (cloning with
+its bitbucket-token, or a read-only token its GitHub App mints) and
+pushes it to the repository's own registry, which fugaro update --repo
+creates. It pushes a candidate, smoke-tests it without network, and only
+then points latest at it and records what it was built from, unless a
+newer build is already recorded. Run it from the repository's checkout:
+the checkout's fugaro.yaml and origin say what to build.
 
 A Cloud Build is billable, so it asks for the project's name typed at a real
 terminal: --json, a pipe and a coding agent's session never confirm it (it
 prints the one line to run in your own terminal window and exits 1).
 --local builds with your own Docker and costs nothing in the cloud.
 
-Usage: `fugaro image build`
+Usage: `fugaro image build [name]`
 
 Flags:
 
@@ -2397,14 +2408,18 @@ PROJECT_ID must be the exact GCP project ID of the installation selected by
 --project, --config or the checkout: one invocation names one project, and
 there is no bulk form, no wildcard and no prefix.
 
-It records two things in gs://<runs bucket>/fugaro/managed.json: that this
-project is managed, and the monthly budget amount and currency the owner
-states with --budget and --budget-currency. The amount is required, with no
-default (D64), because the marker's amount is what the apply-time budget read
-opens the gate on: a marked project that records no amount is refused by every
-managed apply rather than applied without a budget control. The amount is the
-budget ALERT amount the installation's Terraform creates and nothing else —
-this command does not create or change a budget, and it makes no billing call.
+It records three things in gs://<runs bucket>/fugaro/managed.json: that this
+project is managed, the monthly budget amount and currency the owner states
+with --budget and --budget-currency, and the bound on the billable image
+builds one invocation of fugaro image refresh may start (design D1013). The
+amount is required, with no default (D64), because the marker's amount is what
+the apply-time budget read opens the gate on: a marked project that records no
+amount is refused by every managed apply rather than applied without a budget
+control. The amount is the budget ALERT amount the installation's Terraform
+creates and nothing else — this command does not create or change a budget,
+and it makes no billing call. The bound is not a question: it is the marker's
+own default of one build per invocation, and this command asks the owner for
+no count, exactly as fugaro setup asks for none.
 
 It writes BOTH marks a managed project carries, in one step: that object and
 the label fugaro_managed=true on the GCP project itself (Task 3.0). The read

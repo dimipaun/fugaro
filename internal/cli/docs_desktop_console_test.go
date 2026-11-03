@@ -644,6 +644,9 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(settingsDoc{}), reflect.TypeOf(settingsLayer{}),
 		reflect.TypeOf(settingsJSON{}), reflect.TypeOf(settingsDefault{}),
 		reflect.TypeOf(settingsLevelJS{}),
+		// §6.20, the write's dry run (the settings-edit plan's C3, CLI 0.16.0):
+		// the one shape its field table is read against.
+		reflect.TypeOf(settingsWriteDoc{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -972,6 +975,15 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// describes its flags, so they are checked against this constructor like
 	// any other command's.
 	"settings": newSettingsCmd,
+	// §6.20 documents the write's dry run (CLI 0.16.0, the settings-edit plan's
+	// C3), which is `settings set` and `settings unset` and not the read above:
+	// the two phase words, `--add`/`--remove`, `--layer` and `--repo` are those
+	// two commands' own flags, so the section's prose is checked against them
+	// like any other command's. Both constructors are here rather than only the
+	// set command's, because the pair's flags are written as one line in the
+	// document and half of them -- `--dry-run` not least -- belong to both.
+	"settings set":   newSettingsSetCmd,
+	"settings unset": newSettingsUnsetCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
@@ -9606,5 +9618,126 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 	}
 	if launches != 1 {
 		t.Errorf("%s's allow-list table carries %d `run` argvs, want exactly 1 (rule 11's)", path, launches)
+	}
+}
+
+// TestDocsDesktopConsoleDesignCarriesTheSettingsEditSections: the prose the
+// settings-edit plan's C5 is the task to move, in the design document. C1 and C3
+// moved the fences in their own commits -- rule 5's operation count, rule 6's two
+// settings rows and rule 12 itself -- and what is left is what a reader arrives
+// through: the project-flag paragraph's list, the sentence in rule 6's never
+// table that still called the launch the console's only write, the Project tab's
+// own prose, and rule 12's cross-reference into the settings commands'
+// reconciliation, where D846 is amended for `settings set|unset`.
+//
+// Each one is pinned by name, because each is a sentence that can be deleted by
+// an edit that leaves the document looking complete: a list that lost
+// `settings`, a never table that still says "single write", a screen that draws
+// a write nothing describes.
+func TestDocsDesktopConsoleDesignCarriesTheSettingsEditSections(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+
+	// §3.4 rule 3: the commands the console passes the aiming flags on. The
+	// settings read takes them (`settingsAimFlags`), so it belongs on this list.
+	rule3 := mdBetween(t, path, doc, "\n3. **The project is passed explicitly", "\n4. **The binary is resolved explicitly")
+	if !strings.Contains(rule3, "`plan status` and `settings`") {
+		t.Errorf("%s's §3.4 rule 3 does not name `settings` among the commands the console passes `--project`/`--config` on: the settings read takes them, and an argv built from a list that lost it is an argv no reader can check", path)
+	}
+
+	// Rule 6's never table: the row about every `run` argv but rule 11's. The
+	// launch was the console's *only* write until the settings edit landed, and
+	// that row is where the stale word survived.
+	never := mdBetween(t, path, doc, "\n6. **The spawn allow-list", "\n7. **Job-written text is text")
+	if strings.Contains(never, "the console's single write") {
+		t.Errorf("%s's rule 6 still calls the launch \"the console's single write\": the settings edit is the console's second write (rule 12), and a never table that denies it is a fence the reader cannot trust", path)
+	}
+	if !strings.Contains(never, "the console's first write") {
+		t.Errorf("%s's rule 6 never names the launch as the console's *first* write, so the second write has nothing to be second to", path)
+	}
+
+	// §6.2 item 3, the Project screen: the settings section is the tab's third
+	// read and rule 12's window is where its pencil leads.
+	project := mdItem(t, path, doc, "\n### 6.2 The screens", "\n### 6.3 ", 3)
+	for _, want := range []string{
+		"**The tab's third read, and a section of its own, is the settings section**",
+		"`settings --json`",
+		"is dropped whole",
+		"rule 12's window",
+		"next: fugaro update",
+	} {
+		if !strings.Contains(project, want) {
+			t.Errorf("%s's §6.2 item 3 does not name %q: the Project tab draws the settings section and its edit, and a screen the design does not describe is a screen no review can check against it", path, want)
+		}
+	}
+
+	// Rule 12 points at the settings commands' own reconciliation, which is
+	// where the typed-name rule D1107 amends for `settings set|unset` is written
+	// down. The console's half lives there and not here.
+	rule12 := mdBetween(t, path, doc, "\n12. **The launch's second question", "\n### 5.2 ")
+	if !strings.Contains(rule12, "[reconciliation.md](../settings-commands/reconciliation.md)") {
+		t.Errorf("%s's rule 12 does not cross-reference docs/settings-commands/reconciliation.md: D1107's amendment of the typed-name rule is written down there, and rule 12 is where a reader arrives", path)
+	}
+}
+
+// TestDocsDesktopConsoleContractFinishesTheSettingsWrite: the console's own
+// contract, finished against the screen C3 shipped (D848's own rule: the section
+// is written by the task that builds the screen). The read's section (§6.19) said
+// the writes were not operations of the console "until C3 lands"; C3 has landed,
+// so the write is an operation, its dry run's document is a document of the set,
+// and the two inventory paragraphs that call the launch the console's one write
+// count two.
+func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+
+	read := mdBetween(t, path, doc, "### 6.19 ", "\n## 7. The CLI gaps")
+	for _, want := range []string{
+		"operation `settings.edit`",
+		"it is the console's second",
+		"`settings set|unset KEY --layer <L> --dry-run --json",
+		"retried silently",
+	} {
+		if !strings.Contains(read, want) {
+			t.Errorf("%s's §6.19 does not state %q: the read's section is where a reader learns that the console also writes this group, and the screen C3 shipped does", path, want)
+		}
+	}
+	if strings.Contains(read, "Until C3 lands") {
+		t.Errorf("%s's §6.19 still says \"Until C3 lands no console operation drives either write\": C3 is on main, and a contract that denies an operation the console spawns is one a reviewer has to check against the wrong tree", path)
+	}
+
+	// The dry run's document: the shape the confirmation window is drawn from,
+	// member by member, off `settingsWriteDoc`.
+	write := mdBetween(t, path, doc, "### 6.20 ", "\n## 7. The CLI gaps")
+	for _, want := range []string{
+		"settingsWriteDoc",
+		"schemas/settings-write.schema.json",
+		"`widening`",
+		"`changed`",
+		"`refusal`",
+	} {
+		if !strings.Contains(write, want) {
+			t.Errorf("%s's §6.20 does not state %q: the write's dry run is the document the window and the write are built over, and it is the console's contract to describe", path, want)
+		}
+	}
+
+	inventory := mdBetween(t, path, doc, "## 8. The flag inventory", "## 9. What the console may do")
+	if !strings.Contains(inventory, `settings set\|unset`) {
+		t.Errorf("%s's §8 does not carry the settings write's row: the inventory is what the spawn contract turns on, and the second write's argv is on it", path)
+	}
+	if strings.Contains(inventory, "**the one row here that writes**") {
+		t.Errorf("%s's §8 still calls `run` \"the one row here that writes\": `settings set|unset` is the second, and the row it belongs in is above this sentence", path)
+	}
+
+	// §9: the console's documents are read-only **with** the two writes named,
+	// and the sentence that says so keeps the pinned claim about the set.
+	nine := mdBetween(t, path, doc, "## 9. What the console may do", "\n## 10. ")
+	for _, want := range []string{
+		"Every document in the console's set is read-only",
+		"**second write**",
+	} {
+		if !strings.Contains(nine, want) {
+			t.Errorf("%s's §9 does not state %q: the console now writes twice, and this is the section that counts what it may do with the documents it reads", path, want)
+		}
 	}
 }

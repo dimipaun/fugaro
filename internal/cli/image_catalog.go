@@ -105,7 +105,10 @@ func runImageLs(cmd *cobra.Command, o cloudOptions, shared, asJSON bool) error {
 
 func runImageLsCatalog(cmd *cobra.Command, env *cloudEnv, records *blobx.Bucket, asJSON bool) error {
 	ctx := cmd.Context()
-	cat := effectiveCatalog(ctx, env)
+	// A node this machine cannot read is not a refusal for a listing: it shows
+	// the catalog this machine's configuration holds, which is what it would
+	// publish.
+	cat, _ := effectiveCatalog(ctx, env)
 	out := catalogLsOut{Project: env.lc.Name, Entries: []catalogEntryRow{}}
 	if cat != nil {
 		for _, e := range cat.Entries {
@@ -227,20 +230,27 @@ func catalogSourceLine(s config.Source) string {
 
 // effectiveCatalog is the catalog the project has: this machine's project
 // config when it states one, the published node's otherwise (localcfg's keep
-// rule, D1140). A node this machine cannot read is not a refusal — a listing
-// then shows what this machine's config holds, which is what it would publish.
-func effectiveCatalog(ctx context.Context, env *cloudEnv) *config.Catalog {
-	return env.lc.ImageCatalogEffective(publishedCatalog(ctx, env))
+// rule, D1140), with the published node's read error. A node this machine
+// cannot read is not a refusal — the catalog it answers with is what a
+// listing shows, which is what this machine would publish — but a caller that
+// has to choose between two different things says which one it got.
+func effectiveCatalog(ctx context.Context, env *cloudEnv) (*config.Catalog, error) {
+	published, err := publishedCatalog(ctx, env)
+	return env.lc.ImageCatalogEffective(published), err
 }
 
 // publishedCatalog is the catalog in the project's published policy node, nil
-// when nothing is published or the node cannot be read.
-func publishedCatalog(ctx context.Context, env *cloudEnv) *config.Catalog {
+// when nothing is published, with the error a node this machine cannot read
+// is.
+func publishedCatalog(ctx context.Context, env *cloudEnv) (*config.Catalog, error) {
 	p, found, err := env.policy.read(ctx, env.lc)
-	if err != nil || !found || p == nil {
-		return nil
+	if err != nil {
+		return nil, err
 	}
-	return p.ImageCatalog
+	if !found || p == nil {
+		return nil, nil
+	}
+	return p.ImageCatalog, nil
 }
 
 // catalogEntryDigest is the digest of the image the last build of entry
