@@ -9,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -4526,6 +4527,144 @@ settings:
 	if err := compile(t, "settings.schema.json").Validate(yamlInstance(t, []byte(olderDoc))); err != nil {
 		t.Errorf("a document written before writable, owner and target_layer existed does not validate: %v", err)
 	}
+}
+
+// TestSettingsWriteSchema holds schemas/settings-write.schema.json to the
+// document `fugaro settings set|unset … --dry-run --json` prints. That document
+// is what the console's confirmation window is drawn from (D1106), so its
+// members are the contract: this test reads them off the Go struct that writes
+// them and holds the schema's required list to them, in order, so a member
+// added on one side alone is red here rather than at a consumer that silently
+// reads nothing.
+//
+// The document itself is validated against this schema by
+// TestSettingsSetDryRunJSONMatchesSchema in internal/cli, which is where the
+// command that writes it lives.
+func TestSettingsWriteSchema(t *testing.T) {
+	raw, err := os.ReadFile("settings-write.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	// A schema that does not compile is a schema nobody can use.
+	sch := compile(t, "settings-write.schema.json")
+
+	want := settingsWriteDocMembers(t)
+	if got := stringsOf(t, doc, "required"); !slices.Equal(got, want) {
+		t.Errorf("settings-write.schema.json requires %v, and internal/cli's settingsWriteDoc writes %v: a consumer reads the document by these names", got, want)
+	}
+	props := nodeOf(t, doc, "properties")
+	for _, member := range want {
+		node, ok := props[member].(map[string]any)
+		if !ok {
+			t.Errorf("%s: no properties entry, and the struct writes it", member)
+			continue
+		}
+		if got, _ := node["description"].(string); strings.TrimSpace(got) == "" {
+			t.Errorf("%s: no description, and it is a member a consumer draws an edit from", member)
+		}
+	}
+	for member := range props {
+		if !slices.Contains(want, member) {
+			t.Errorf("properties carries %s, and internal/cli's settingsWriteDoc writes no such member", member)
+		}
+	}
+
+	// The layer a write lands in is the write path's closed vocabulary and not
+	// a copy of it: `default` is a level a read names and never a target, so
+	// the enum is these three and nothing else (D845).
+	wantLayers := []string{settings.LayerLocal, settings.LayerProject, settings.LayerRepo}
+	if got := stringsOf(t, doc, "properties", "layer", "enum"); !slices.Equal(got, wantLayers) {
+		t.Errorf("properties.layer.enum = %v, and a write lands in %v", got, wantLayers)
+	}
+
+	// The version is the document's own, and its $comment names the constant
+	// that writes it, so a bump on one side alone is red here.
+	version := nodeOf(t, doc, "properties", "version")
+	if got, _ := version["const"].(float64); got != 1 {
+		t.Errorf("properties.version.const = %v, want 1", version["const"])
+	}
+	if got, _ := version["$comment"].(string); !strings.Contains(got, "settingsWriteDocVersion") {
+		t.Errorf("properties.version.$comment = %q, and it names the constant that writes the version", got)
+	}
+
+	// Every shape the command prints validates: a widening, a removal and an
+	// edit that changes nothing, which is a classification like any other.
+	for _, tc := range []struct{ name, instance string }{
+		{"widening", `{"version":1,"key":"budget.per_run_usd","layer":"repo","path":"/checkout/fugaro.yaml","changed":true,"widening":true,"why":"this raises a limit","old":"10","new":"50","refusal":""}`},
+		{"removal", `{"version":1,"key":"budget.per_run_usd","layer":"repo","path":"/checkout/fugaro.yaml","changed":true,"widening":true,"why":"removing a ceiling hands the decision back to a looser layer","old":"10","new":"","refusal":""}`},
+		{"no change", `{"version":1,"key":"budget.per_run_usd","layer":"repo","path":"/checkout/fugaro.yaml","changed":false,"widening":false,"why":"","old":"10","new":"10","refusal":""}`},
+	} {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(tc.instance))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err != nil {
+			t.Errorf("the %s document does not validate: %v", tc.name, err)
+		}
+	}
+	// And the required list bites: a document that lost a member is refused
+	// rather than read as a zero value.
+	inst, err := jsonschema.UnmarshalJSON(strings.NewReader(`{"version":1,"key":"k","layer":"repo","path":"p","changed":true,"why":"","old":"","new":"","refusal":""}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err == nil {
+		t.Error("a document with no widening member validates, and a consumer would read it as a narrowing")
+	}
+}
+
+// settingsWriteDocMembers returns the JSON member names of internal/cli's
+// settingsWriteDoc, in the order the struct writes them. The dry run's document
+// is the contract a consumer reads, so the schema's required list is that
+// contract only while it is the same members in the same order — and the struct
+// is where they are written, which is why this reads the Go source rather than
+// a second list.
+func settingsWriteDocMembers(t *testing.T) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "../internal/cli/settings_set.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.TYPE {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			ts, ok := spec.(*ast.TypeSpec)
+			if !ok || ts.Name.Name != "settingsWriteDoc" {
+				continue
+			}
+			st, ok := ts.Type.(*ast.StructType)
+			if !ok {
+				t.Fatalf("settingsWriteDoc is %T, not a struct", ts.Type)
+			}
+			for _, field := range st.Fields.List {
+				if len(field.Names) == 0 || field.Tag == nil {
+					t.Fatalf("settingsWriteDoc has a field without a name or a tag: %v", field)
+				}
+				raw, err := strconv.Unquote(field.Tag.Value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				name := strings.Split(reflect.StructTag(raw).Get("json"), ",")[0]
+				if name == "" || name == "-" {
+					t.Fatalf("settingsWriteDoc.%s carries no JSON member name: %s", field.Names[0].Name, raw)
+				}
+				out = append(out, name)
+			}
+		}
+	}
+	if len(out) == 0 {
+		t.Fatal("internal/cli/settings_set.go has no settingsWriteDoc struct, so this test would check nothing")
+	}
+	return out
 }
 
 // TestModelsLsSchema holds schemas/models-ls.schema.json to the document
