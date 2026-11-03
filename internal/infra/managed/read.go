@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 
 	crm "google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/googleapi"
@@ -115,8 +116,51 @@ func IsManaged(ctx context.Context, s *storage.Service, c *crm.Service, project,
 		reason = safetext.Field(reason)
 		err = safetext.FieldErr(err)
 	}()
-	_, ok, reason, err = readFact(ctx, s, c, project, gcpProject)
+	_, ok, reason, _, err = readFact(ctx, s, c, project, gcpProject)
 	return ok, reason, err
+}
+
+// MarkFacts is IsManaged's verdict with the two things about the creation fact
+// that a record of the read needs: which version of the object was in force and
+// the object's own generation (M6, D1024).
+//
+// It is the same read and not a second one — readFact, the one reader of the
+// marker this file's own gcpProject warning is about — extended by the one
+// field readFactObject now carries off the answer it already made: the
+// generation. The budget's read and the image build bound were extended the
+// same way for their own figures, and a caller that added a second read of the
+// object to learn a third fact would be the drift (reconciliation F3) that
+// warning exists to stop.
+//
+// Generation is 0 exactly when the read did not place the object — it was not
+// managed, or the answer carried no generation — and it is never a figure
+// invented for a fact nothing read. Version is the version the object declared,
+// 0 when no object was believed.
+type MarkFacts struct {
+	// Managed is IsManaged's answer, and it is true only with a nil error.
+	Managed bool
+	// Reason is IsManaged's reason, one line and already bounded.
+	Reason string
+	// Version is the marker version that was in force: 1, 2 or 3, and 0 when
+	// the read believed no object.
+	Version int
+	// Generation is the creation fact object's own generation.
+	Generation int64
+}
+
+// ReadMarkFacts is IsManaged, answering with the fact's version and generation
+// beside the verdict. It is the read every command in the managed gate's set
+// makes, per command and never cached (D1015), because the audit record it
+// feeds names the fact that was in force: a record that could not say which
+// version of the marker a run acted under would leave an owner unable to tell a
+// run under the bound a project chose from one under the default.
+func ReadMarkFacts(ctx context.Context, s *storage.Service, c *crm.Service, project, gcpProject string) (f MarkFacts, err error) {
+	defer func() {
+		f.Reason = safetext.Field(f.Reason)
+		err = safetext.FieldErr(err)
+	}()
+	m, ok, reason, gen, err := readFact(ctx, s, c, project, gcpProject)
+	return MarkFacts{Managed: ok, Reason: reason, Version: m.Version, Generation: gen}, err
 }
 
 // ReadBudget is the monthly budget amount and the currency that a managed
@@ -168,7 +212,7 @@ func ReadBudgetAnswer(ctx context.Context, s *storage.Service, c *crm.Service, p
 		a.Reason = safetext.Field(a.Reason)
 		err = safetext.FieldErr(err)
 	}()
-	m, managed, reason, err := readFact(ctx, s, c, project, gcpProject)
+	m, managed, reason, _, err := readFact(ctx, s, c, project, gcpProject)
 	if err != nil || !managed {
 		if err == nil && m.Budget != nil && m.Budget.Check() != nil {
 			return BudgetAnswer{Budget: *m.Budget, Invalid: true, Reason: reason}, nil
@@ -245,7 +289,7 @@ func ReadImageBuilds(ctx context.Context, s *storage.Service, c *crm.Service, pr
 		a.Reason = safetext.Field(a.Reason)
 		err = safetext.FieldErr(err)
 	}()
-	m, managed, reason, err := readFact(ctx, s, c, project, gcpProject)
+	m, managed, reason, _, err := readFact(ctx, s, c, project, gcpProject)
 	if err != nil || !managed {
 		if err == nil && m.MaxImageBuilds != 0 && CheckImageBuilds(m.MaxImageBuilds) != nil {
 			// The refused figure is handed back (and only here) so the caller
@@ -266,21 +310,21 @@ func ReadImageBuilds(ctx context.Context, s *storage.Service, c *crm.Service, pr
 // not. Its doc is IsManaged's — every decision in the body below is that
 // comment's, and each return is one of the ways it lists of being "not
 // managed", answered rather than failed.
-func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, gcpProject string) (m Marker, ok bool, reason string, err error) {
+func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, gcpProject string) (m Marker, ok bool, reason string, gen int64, err error) {
 	bucket := runsBucketName(gcpProject)
 	switch {
 	case project == "":
 		return Marker{}, false, "no project name, so nothing says what a creation fact would be about",
-			fmt.Errorf("managed: IsManaged: no project name")
+			0, fmt.Errorf("managed: IsManaged: no project name")
 	case gcpProject == "":
 		return Marker{}, false, "no GCP project, so there is no runs bucket to read a creation fact from",
-			fmt.Errorf("managed: IsManaged: no GCP project for %s", project)
+			0, fmt.Errorf("managed: IsManaged: no GCP project for %s", project)
 	case s == nil:
 		return Marker{}, false, fmt.Sprintf("no storage client to read gs://%s/%s with", bucket, MarkerObject),
-			fmt.Errorf("managed: IsManaged: no storage client for %s", project)
+			0, fmt.Errorf("managed: IsManaged: no storage client for %s", project)
 	case c == nil:
 		return Marker{}, false, fmt.Sprintf("no Resource Manager client to check gs://%s against the number of %s with", bucket, gcpProject),
-			fmt.Errorf("managed: IsManaged: no Resource Manager client for %s", project)
+			0, fmt.Errorf("managed: IsManaged: no Resource Manager client for %s", project)
 	}
 
 	// The number first: without it there is nothing to check the bucket
@@ -290,9 +334,9 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 	if err != nil {
 		var ge *googleapi.Error
 		if errors.As(err, &ge) && (ge.Code == http.StatusForbidden || ge.Code == http.StatusNotFound) {
-			return Marker{}, false, fmt.Sprintf("GCP project %s cannot be read, so gs://%s cannot be proved to be its own runs bucket (%s is not managed)", gcpProject, bucket, project), nil
+			return Marker{}, false, fmt.Sprintf("GCP project %s cannot be read, so gs://%s cannot be proved to be its own runs bucket (%s is not managed)", gcpProject, bucket, project), 0, nil
 		}
-		return Marker{}, false, fmt.Sprintf("reading project %s for %s: %v", gcpProject, project, err), err
+		return Marker{}, false, fmt.Sprintf("reading project %s for %s: %v", gcpProject, project, err), 0, err
 	}
 	// A project whose number came back as zero is a project the read cannot
 	// check anything against — and zero is the one number a bucket of the
@@ -300,7 +344,7 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 	// would make the check pass by itself. internal/infra/project.go refuses
 	// the same value for the same reason.
 	if number == 0 {
-		return Marker{}, false, fmt.Sprintf("GCP project %s came back with no number, so gs://%s cannot be proved to be its own runs bucket (%s is not managed)", gcpProject, bucket, project), nil
+		return Marker{}, false, fmt.Sprintf("GCP project %s came back with no number, so gs://%s cannot be proved to be its own runs bucket (%s is not managed)", gcpProject, bucket, project), 0, nil
 	}
 
 	// The project's own label, the second half of the creation fact (Task
@@ -338,22 +382,22 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 	// state every project marked before Task 3.0 is in (decisions §5) — and it
 	// is paid for the reason: the verdict is the same either way (never
 	// managed), so what the read buys is only the better sentence.
-	m, ok, reason, err = readFactObject(ctx, s, project, gcpProject, number)
+	m, ok, reason, gen, err = readFactObject(ctx, s, project, gcpProject, number)
 	switch {
 	case labelWhy == "":
-		return m, ok, reason, err
+		return m, ok, reason, 0, err
 	case err == nil && refusedFigure(m):
 		// The two answer functions' own conditions, deliberately (see
 		// refusedFigure): all three have to agree about which refusals carry a
 		// figure back.
-		return m, false, reason, nil
+		return m, false, reason, 0, nil
 	}
 	// Everything else, including a bucket or object read that failed: the
 	// label alone decides this project, and a read that could not answer
 	// cannot change a verdict the label already gave. The error is dropped
 	// rather than returned — a caller failing a command for a project the
 	// label has already refused would be reporting the wrong thing.
-	return Marker{}, false, labelWhy, nil
+	return Marker{}, false, labelWhy, 0, nil
 }
 
 // readFactObject is the second half of readFact: everything the answer needs
@@ -362,35 +406,44 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 // being judged twice, and it keeps readFact's decisions exactly as they were —
 // each return is one of the ways IsManaged lists of being "not managed", with
 // readFact's own doc as the account of them.
-func readFactObject(ctx context.Context, s *storage.Service, project, gcpProject string, number uint64) (m Marker, ok bool, reason string, err error) {
+func readFactObject(ctx context.Context, s *storage.Service, project, gcpProject string, number uint64) (m Marker, ok bool, reason string, gen int64, err error) {
 	bucket := runsBucketName(gcpProject)
 	b, err := s.Buckets.Get(bucket).Context(ctx).Do()
 	if err != nil {
 		var ge *googleapi.Error
 		if errors.As(err, &ge) && (ge.Code == http.StatusForbidden || ge.Code == http.StatusNotFound) {
-			return Marker{}, false, fmt.Sprintf("gs://%s is not there, so %s has no creation fact (an installation that never made its runs bucket recorded none)", bucket, project), nil
+			return Marker{}, false, fmt.Sprintf("gs://%s is not there, so %s has no creation fact (an installation that never made its runs bucket recorded none)", bucket, project), 0, nil
 		}
-		return Marker{}, false, fmt.Sprintf("reading gs://%s for %s: %v", bucket, project, err), err
+		return Marker{}, false, fmt.Sprintf("reading gs://%s for %s: %v", bucket, project, err), 0, err
 	}
 	if b.ProjectNumber != number {
-		return Marker{}, false, fmt.Sprintf("gs://%s belongs to project number %d, not %d (%s), so its contents are not a fact about %s", bucket, b.ProjectNumber, number, gcpProject, project), nil
+		return Marker{}, false, fmt.Sprintf("gs://%s belongs to project number %d, not %d (%s), so its contents are not a fact about %s", bucket, b.ProjectNumber, number, gcpProject, project), 0, nil
 	}
 	if b.Labels[gcp.LabelManaged] != gcp.ManagedValue {
-		return Marker{}, false, fmt.Sprintf("gs://%s carries no %s=%s label, so it is not %s's runs bucket", bucket, gcp.LabelManaged, gcp.ManagedValue, project), nil
+		return Marker{}, false, fmt.Sprintf("gs://%s carries no %s=%s label, so it is not %s's runs bucket", bucket, gcp.LabelManaged, gcp.ManagedValue, project), 0, nil
 	}
 
 	resp, err := s.Objects.Get(bucket, MarkerObject).Context(ctx).Download()
 	if err != nil {
 		var ge *googleapi.Error
 		if errors.As(err, &ge) && (ge.Code == http.StatusForbidden || ge.Code == http.StatusNotFound) {
-			return Marker{}, false, fmt.Sprintf("gs://%s/%s is not there (or cannot be read), so %s was not created by a managed run", bucket, MarkerObject, project), nil
+			return Marker{}, false, fmt.Sprintf("gs://%s/%s is not there (or cannot be read), so %s was not created by a managed run", bucket, MarkerObject, project), 0, nil
 		}
-		return Marker{}, false, fmt.Sprintf("reading gs://%s/%s for %s: %v", bucket, MarkerObject, project, err), err
+		return Marker{}, false, fmt.Sprintf("reading gs://%s/%s for %s: %v", bucket, MarkerObject, project, err), 0, err
 	}
 	defer resp.Body.Close()
+	// The object's own generation, from the same answer as its bytes: it is
+	// what the audit record names so an owner can see which version of the
+	// creation fact a run acted under, even after the object has been replaced
+	// (D1024). A gateway that served the bytes without a generation leaves it
+	// 0, which the record writes as an empty field rather than as a generation
+	// — nothing here turns a fact it could not read into one it made up, and
+	// the alternative (refusing the read) would fail a command for a header no
+	// GCS answer omits.
+	gen, _ = strconv.ParseInt(resp.Header.Get("X-Goog-Generation"), 10, 64)
 	data, err := io.ReadAll(io.LimitReader(resp.Body, markerMaxBytes+1))
 	if err != nil {
-		return Marker{}, false, fmt.Sprintf("reading gs://%s/%s for %s: %v", bucket, MarkerObject, project, err), err
+		return Marker{}, false, fmt.Sprintf("reading gs://%s/%s for %s: %v", bucket, MarkerObject, project, err), 0, err
 	}
 	// The object has to be exactly one marker and nothing else, and the shape
 	// is parseMarker's — one function, because the flag's writer has to make
@@ -400,14 +453,14 @@ func readFactObject(ctx context.Context, s *storage.Service, project, gcpProject
 	// two.
 	parsed, perr := parseMarker(data, bucket, project)
 	if perr != nil {
-		return Marker{}, false, perr.Error(), nil
+		return Marker{}, false, perr.Error(), 0, nil
 	}
 	m = parsed
 	// The project it names first: a fact about another project is that,
 	// whatever else is wrong with it, so its budget is never judged (or
 	// handed back as this project's invalid figure) before the name is.
 	if m.GCPProject != gcpProject {
-		return Marker{}, false, fmt.Sprintf("gs://%s/%s names project %s, not %s: the fact is about another project, so %s is not managed", bucket, MarkerObject, m.GCPProject, gcpProject, project), nil
+		return Marker{}, false, fmt.Sprintf("gs://%s/%s names project %s, not %s: the fact is about another project, so %s is not managed", bucket, MarkerObject, m.GCPProject, gcpProject, project), 0, nil
 	}
 	// The versions this build knows, each with what it has to carry. Any
 	// other version is refused rather than partly believed, which is the
@@ -423,10 +476,10 @@ func readFactObject(ctx context.Context, s *storage.Service, project, gcpProject
 		// the versions are decided, so the rule does not rest on the shape
 		// check alone.
 		if m.Budget != nil {
-			return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d and records a budget, which only version %d carries, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersionBudget, project), nil
+			return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d and records a budget, which only version %d carries, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersionBudget, project), 0, nil
 		}
 		if m.MaxImageBuilds != 0 {
-			return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d and records an image build bound, which only version %d carries, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersionBuilds, project), nil
+			return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d and records an image build bound, which only version %d carries, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersionBuilds, project), 0, nil
 		}
 	case MarkerVersionBudget:
 		// The amount is what version 2 is for, so an object of this version
@@ -435,10 +488,10 @@ func readFactObject(ctx context.Context, s *storage.Service, project, gcpProject
 		// state Task 4.4's read fails closed on). A budget of 0 or of no
 		// currency is the same: an amount is above 0 and a pair.
 		if m.Budget == nil {
-			return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d and records no budget amount, and version %d is a creation that was required to choose one, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersionBudget, project), nil
+			return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d and records no budget amount, and version %d is a creation that was required to choose one, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersionBudget, project), 0, nil
 		}
 		if m.MaxImageBuilds != 0 {
-			return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d and records an image build bound, which only version %d carries, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersionBuilds, project), nil
+			return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d and records an image build bound, which only version %d carries, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersionBuilds, project), 0, nil
 		}
 		// The same rule the write holds (Budget.Check): a currency that is
 		// not the ISO 4217 shape or an amount outside the range is not a
@@ -449,7 +502,7 @@ func readFactObject(ctx context.Context, s *storage.Service, project, gcpProject
 			// here) so ReadBudget's caller can say the recorded budget is
 			// invalid rather than that the project is not managed; IsManaged
 			// ignores it, and it is never believed as a line.
-			return Marker{Budget: m.Budget}, false, fmt.Sprintf("gs://%s/%s is version %d and records no budget amount a managed creation could have chosen (%v), so %s is not managed by it", bucket, MarkerObject, m.Version, err, project), nil
+			return Marker{Budget: m.Budget}, false, fmt.Sprintf("gs://%s/%s is version %d and records no budget amount a managed creation could have chosen (%v), so %s is not managed by it", bucket, MarkerObject, m.Version, err, project), 0, nil
 		}
 	case MarkerVersionBuilds:
 		// Version 3 is the version that carries both figures (D1013), so an
@@ -460,21 +513,21 @@ func readFactObject(ctx context.Context, s *storage.Service, project, gcpProject
 		// (Budget.Check and CheckImageBuilds), and each refused figure is
 		// handed back so the caller can name it.
 		if m.Budget == nil {
-			return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d and records no budget amount, and version %d is a creation that was required to choose one, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersionBuilds, project), nil
+			return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d and records no budget amount, and version %d is a creation that was required to choose one, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersionBuilds, project), 0, nil
 		}
 		if err := m.Budget.Check(); err != nil {
-			return Marker{Budget: m.Budget}, false, fmt.Sprintf("gs://%s/%s is version %d and records no budget amount a managed creation could have chosen (%v), so %s is not managed by it", bucket, MarkerObject, m.Version, err, project), nil
+			return Marker{Budget: m.Budget}, false, fmt.Sprintf("gs://%s/%s is version %d and records no budget amount a managed creation could have chosen (%v), so %s is not managed by it", bucket, MarkerObject, m.Version, err, project), 0, nil
 		}
 		if m.MaxImageBuilds == 0 {
-			return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d and records no image build bound, and version %d is a creation whose applies are held to one, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersionBuilds, project), nil
+			return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d and records no image build bound, and version %d is a creation whose applies are held to one, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersionBuilds, project), 0, nil
 		}
 		if err := CheckImageBuilds(m.MaxImageBuilds); err != nil {
-			return Marker{MaxImageBuilds: m.MaxImageBuilds}, false, fmt.Sprintf("gs://%s/%s is version %d and records no image build bound a managed creation could have chosen (%v), so %s is not managed by it", bucket, MarkerObject, m.Version, err, project), nil
+			return Marker{MaxImageBuilds: m.MaxImageBuilds}, false, fmt.Sprintf("gs://%s/%s is version %d and records no image build bound a managed creation could have chosen (%v), so %s is not managed by it", bucket, MarkerObject, m.Version, err, project), 0, nil
 		}
 	default:
-		return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d, and this build knows versions %d, %d and %d, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersion, MarkerVersionBudget, MarkerVersionBuilds, project), nil
+		return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d, and this build knows versions %d, %d and %d, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersion, MarkerVersionBudget, MarkerVersionBuilds, project), 0, nil
 	}
-	return m, true, "", nil
+	return m, true, "", gen, nil
 }
 
 // refusedFigure reports whether the read refused this marker for a figure it
