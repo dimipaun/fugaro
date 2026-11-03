@@ -126,6 +126,17 @@ var (
 	bucketURLRE = regexp.MustCompile(`^gs://[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$`)
 	// digestRE is an image digest.
 	digestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	// imageRefRE is a container image reference: an optional registry host
+	// with an optional port, a repository path of lower-case components, an
+	// optional tag and an optional sha256 digest — the grammar
+	// internal/config's catalogImageRE holds a prebuilt catalog entry's
+	// reference to. A base image reaches a build's substitutions, the
+	// image's own labels and, for a catalog build, a record the record step
+	// composes with printf and no escaping, so the base is checked against
+	// this allowlist: a value carrying a quote, a backslash, a newline or
+	// any other control character would rewrite one of those instead of
+	// naming an image.
+	imageRefRE = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*(?::[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(?:@sha256:[a-f0-9]{64})?$`)
 	// registryHostRE is <region>-docker.pkg.dev/<project>.
 	registryHostRE = regexp.MustCompile(`^([a-z]+-[a-z]+[0-9]+)-docker\.pkg\.dev/([a-z][a-z0-9-]{4,28}[a-z0-9])$`)
 	// sha256HexRE is a sha256 sum as 64 hex digits.
@@ -321,6 +332,9 @@ func (s BuildSpec) check(project string, reserved map[string]bool) error {
 		if f.v == "" {
 			return fmt.Errorf("the Cloud Build request has no %s", f.name)
 		}
+	}
+	if !imageRefRE.MatchString(s.Base) {
+		return fmt.Errorf("the base image %q is not a container image reference such as ghcr.io/owner/image:1.2", s.Base)
 	}
 	switch s.GitProvider {
 	case gitprov.KindBitbucket:

@@ -305,6 +305,48 @@ func TestCatalogBuildRefusesWhenTheCopyIsMissing(t *testing.T) {
 	}
 }
 
+// TestCatalogBuildRefusesABaseThatIsNotAnImageRef: the record step composes
+// its JSON with printf and no escaping, on the claim that every value it
+// carries is constrained. The base is the value that was constrained only to
+// be non-empty, and it is written into a JSON string in the middle of that
+// printf: a quote in it would close the string early, a backslash would
+// escape whatever follows, and a newline or any other control character
+// would end the record's line. All four are refused before a request is
+// built, and the reference a real build is given still passes.
+func TestCatalogBuildRefusesABaseThatIsNotAnImageRef(t *testing.T) {
+	s := catalogBuildSpec(t)
+	if _, err := CatalogBuildRequest("proj-1234", s); err != nil {
+		t.Fatalf("the reference base %q was refused: %v", s.Base, err)
+	}
+	const ref = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc"
+	for name, base := range map[string]string{
+		"a quote":             ref + `"`,
+		"a backslash":         ref + `\`,
+		"a newline":           ref + "\n",
+		"a control character": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-\x1babc",
+		"a space":             "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev abc",
+		// A JSON field of the record's own, smuggled in through the base.
+		"a field": ref + `","built_at":"1970-01-01T00:00:00Z`,
+	} {
+		bad := s
+		bad.Base = base
+		if _, err := CatalogBuildRequest("proj-1234", bad); err == nil || !strings.Contains(err.Error(), "invalid Cloud Build request") {
+			t.Errorf("%s in the base was accepted (%v)", name, err)
+		}
+	}
+	// The refusal quotes the value, so an escape sequence in a refused base
+	// cannot reach a log as itself.
+	bad := s
+	bad.Base = ref + "\n"
+	_, err := CatalogBuildRequest("proj-1234", bad)
+	if err == nil {
+		t.Fatal("a base with a newline was accepted")
+	}
+	if strings.Contains(err.Error(), "\n") {
+		t.Fatalf("the refusal carries the newline: %q", err)
+	}
+}
+
 // TestCatalogImageLandsInTheSharedRegistryWithAContentTag: D1152 — the
 // image is per project, so it lands in the installation's one shared
 // registry, named from the entry (catalog-<entry>), tagged with the content

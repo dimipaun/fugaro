@@ -365,6 +365,15 @@ func (s CatalogBuildSpec) check(project string, reserved map[string]bool) error 
 			return fmt.Errorf("the Cloud Build request has no %s", f.name)
 		}
 	}
+	// The record step composes its JSON with printf and no escaping, on the
+	// claim that every value it carries is constrained; the base is the one
+	// value that was only constrained to be non-empty, so it is checked
+	// against the reference grammar here (imageRefRE), and a quote, a
+	// backslash, a newline or any other control character in it is refused
+	// rather than written into the record.
+	if !imageRefRE.MatchString(s.Base) {
+		return fmt.Errorf("the base image %q is not a container image reference such as ghcr.io/owner/image:1.2", s.Base)
+	}
 	// A name outside the entry grammar is refused by the helper the keys are
 	// derived with, before anything else looks at it.
 	if _, err := config.CatalogDockerfileKey(s.Entry); err != nil {
