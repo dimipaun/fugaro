@@ -300,8 +300,9 @@ guard_workspaces() {
     [ -n "$ws" ] || die "usage: $USAGE"
     # A lowercased copy, so every spelling of the dev installation is refused:
     # a list of the spellings someone thought of ('belong', 'Belong', 'BELONG')
-    # is exactly the guard a typo gets past.
-    case "${ws,,}" in
+    # is exactly the guard a typo gets past. `tr`, not ${ws,,}: this check is run
+    # on macOS too, whose /bin/bash is 3.2 and dies on that substitution.
+    case "$(printf '%s' "$ws" | tr '[:upper:]' '[:lower:]')" in
     belong)
       die "Check 145 refused: 'belong' is the installation's own workspace and this check runs on sandboxes only. Nothing was sent anywhere"
       ;;
