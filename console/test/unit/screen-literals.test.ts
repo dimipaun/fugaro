@@ -498,6 +498,16 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'panel.operation': '`OperationName`, the closed IPC allow-list union',
     'row.scope': '`ProjectCapScope`, a closed union the model assigns (`global`, `defaults`, `repo`)',
     slug: { within: 'capRowLine', reason: '`sanitizedKey(row.slug)`: the slug as `sanitizeText` drew it, null when refused' },
+    named: {
+      within: 'settingsPencil',
+      reason:
+        '`settingsKeyText(key)`: the row\'s key as `sanitizeText` drew it in the `branch` class -- the class whose grammar admits a dotted identifier whole -- or the console\'s own unavailable mark when the sanitizer refuses it, which is the same answer the key\'s own cell draws. The document string reaches the attribute only through that door',
+    },
+    '`${SETTINGS_PENCIL_LABEL} ${named}`': {
+      within: 'settingsPencil',
+      reason:
+        'the pencil\'s accessible name: the console\'s own word for the control, a space, and the sanitized key above. It is a name built from a constant and a sanitizer\'s answer, so no document string is in it that is not one already',
+    },
     theme: {
       within: 'renderProjectsFrame',
       reason:

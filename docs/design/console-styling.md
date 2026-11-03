@@ -628,9 +628,10 @@ them. The settings read is the third of those hosts —
 of both for the same reason: one row per setting, in a `ul.projects-settings-list`, with a
 pencil on a row the document says is writable and a target layer it names, the owning
 command family on a row the generic path may not write, and **no row at all** for one the
-document marks sensitive. The pencil is `disabledWrite`'s: a real `<button>` that is
-`aria-disabled` and binds nothing until the task after C1 makes it a dialog, so its rule
-draws a boundary (never a tone) and a `not-allowed` cursor rather than a hover state. The mark, the skeleton and the `aria-busy` on each section's own host are
+document marks sensitive. The pencil is a real `<button>`, in the tab order and bound by the
+entry, whose accessible name is the key of the row it edits — a column of pencils names as
+many settings rather than as many "Edit"s — and it says what it does in that word and not in a
+tone, so its rule draws a hover and the theme's one focus ring and no state of its own. The mark, the skeleton and the `aria-busy` on each section's own host are
 `src/renderer/section.ts`'s (§2.11, and the console rule in `.claude/rules/console.md`):
 the section is dimmed while its read is out, never blanked, and says "still reading" after
 a quarter of a minute. A screen this session has already read is drawn at once, stamped
