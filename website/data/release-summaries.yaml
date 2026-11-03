@@ -23,6 +23,7 @@
 version: 1
 
 summaries:
+  v0.16.0: A repository can give each of its three review levels its own model, effort and focus and let a run follow them through to a harder adversarial review, the default recipe writes its adversarial step itself, fugaro accounts add sets a Claude account up end to end, fugaro models and fugaro settings can now change what a run gets, and fugaro runs ls and the coordinator command read a fleet's runs, pull requests and declared intents.
   v0.15.0: Review rounds now follow each rigor mode, so a repository that sets nothing runs three first-line and three senior rounds at Pro and costs more per run, fugaro update keeps the credentials service on its HTTP/2 image and publishes the settings your local config states, and a new fugaro settings command shows every setting with the layer that decided it.
   v0.14.2: A run now pushes exactly the commit its test suite passed on and refuses to commit a stray binary, a review that answers nothing opens the pull request as a draft rather than a ready one, fugaro doctor counts the credential-side security checks on its default screen, and a launch from outside a repository's checkout is refused instead of guessed.
   v0.14.1: A single fugaro update now converges a whole installation and its checkout, migrating the published policy in place and moving the checkout's plugin pin and job images with it, fugaro doctor answers on one screen, and fugaro report and fugaro runs ls read a project's runs many times faster.
