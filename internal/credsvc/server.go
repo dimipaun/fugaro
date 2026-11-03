@@ -312,12 +312,13 @@ type Verifier interface {
 	// RequestFromHTTP, so the two identity headers a Request is built from are
 	// not there to read.
 	VerifyVerifier(ctx context.Context, tok string) (string, error)
-	// VerifyPerson admits the caller of the Bitbucket read mint, which presents
-	// a token and no Request for VerifyVerifier's reason and no new one (BB4,
-	// B2): the path is answered ahead of RequestFromHTTP. It is the same check
-	// against a second list, and the two classes are told apart by the list
-	// their caller is in rather than by a flag on a route.
-	VerifyPerson(ctx context.Context, tok string) (string, error)
+	// VerifyReadCaller admits the caller of the Bitbucket read mint, which
+	// presents a token and no Request for VerifyVerifier's reason and no new one
+	// (BB4, B2): the path is answered ahead of RequestFromHTTP. It is the same
+	// check against two more lists — the installation's people and its
+	// coordinator (BB5) — and the classes are told apart by the list their
+	// caller is in rather than by a flag on a route.
+	VerifyReadCaller(ctx context.Context, tok string) (string, error)
 }
 
 // PolicyReader is the published policy as the service reads it: the project's
