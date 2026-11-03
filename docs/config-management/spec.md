@@ -10,7 +10,7 @@ management commands in Fugaro just like with settings."* The design is built **b
 every new command carries a row in the managed gate's command set
 ([managed spec](../managed-agent-converge/spec.md) §3.1), and **D1026** — a `Typed` step is never
 admitted by a plan gate ([managed reconciliation](../managed-agent-converge/reconciliation.md:223)) —
-is inherited unchanged (§6).
+is inherited unchanged (§5).
 
 ## 1. What "managed" means for a configuration
 
@@ -20,21 +20,21 @@ edits a file by hand. Three properties define it, and each is a rule of this des
 1. **Every key has a writer.** The registry's `Owner` column
    (`internal/settings/registry.go:86`) names the command family that writes a key;
    a key whose owner is not a command that exists, or a sentence saying `setup` or `update` owns it, is
-   the defect this design closes (§5).
+   the defect this design closes (§4).
 2. **Every shape has a mechanism.** The generic writer handles scalars and string lists today
    (`internal/cli/settings_set.go:68`); a map entry, an object-list entry and a
    concrete spelling of a wildcard key have none. §2 gives them one, in the generic path, and a
-   dedicated command exists only where a rule differs (§4).
+   dedicated command exists only where a rule differs (§3).
 3. **Nothing is published by a second command.** The HARD RULE in `CLAUDE.md` — `fugaro update` is the
    whole upgrade — means an edit that must be published to reach a run is published by the same run's
-   `update`, not by a follow-up `fugaro config publish`. §4.6 folds the layer file's publish into the
+   `update`, not by a follow-up `fugaro config publish`. §3.6 folds the layer file's publish into the
    edit and into `update`.
 
 ## 2. The generic writer, extended first
 
 **Recommendation: extend `fugaro settings set|unset` before any dedicated command is written** (D1160).
 One mechanism closes gap 1 of the audit (a repository's `workflows.*`, 37 keys) and most of gap 2 (the
-project layer file's entries, D1175), and the dedicated commands of §4 are then only the ones whose
+project layer file's entries, D1175), and the dedicated commands of §3 are then only the ones whose
 *rules* differ, not the ones whose *shape* does.
 
 ### 2.1 A concrete key addresses a wildcard row
@@ -104,21 +104,22 @@ floor or turns a `followup.*` key on; the agent-session fence comes first, and `
 only outside a coding agent's session (**D846**, [settings reconciliation](../settings-commands/reconciliation.md:218);
 **D1107**). An entry write that adds a `secrets`
 member or an `allow_data_to` value is a widening by the same rule and takes the same typed name — and, in
-a managed project, is refused by the gate because a `Typed` step is never admitted (§6).
+a managed project, is refused by the gate because a `Typed` step is never admitted (§5).
 
-### 2.4 The settings-write document moves to a new version
+### 2.4 The settings-write document gains its members, and keeps the version it has
 
-**Recommendation (D1164): `schemas/settings-write.schema.json` gains a version 2, with members added and
-none changed.** The document's version is its own contract (**D848**,
-`schemas/settings-write.schema.json:20`, whose version is `1` today).
-An entry write's document needs members the version-1 shape does not carry — the operation (`add-entry`,
-`remove-entry`, `add`, `remove`, `set`), the entry's key field and value, and the members the entry
-carries — and none of them changes a member the console reads. **The console's settings edit keeps
-working unchanged** (**D1164**'s second half): it reads the version-1 members (`changed`, `widening`,
-`why`, `old`, `new`) and a version-2 document still carries every one of them with the same meaning, so
-the console spawns `settings set … --yes` behind its own dialog exactly as
-[docs/console-settings-edit](../console-settings-edit/README.md) settled, and this design edits no
-console file.
+**Recommendation (D1164): `schemas/settings-write.schema.json` stays at version 1 and gains the entry
+write's members as optional ones.** The document's version is its own contract (**D848**,
+`schemas/settings-write.schema.json:20`, whose version is `1` today), and **the console pins that
+number**: `SETTINGS_VIEW_DOC_VERSION = 1` (`console/src/main/settingsview.ts:42`) refuses a document at
+any other version (`:178`), so a version 2 would break **every** settings edit the console makes — the
+edit it draws its confirmation for and then spawns `settings set … --yes` behind
+([docs/console-settings-edit](../console-settings-edit/README.md)). An entry write's document needs
+members the version-1 shape does not carry — the operation (`add-entry`, `remove-entry`, `add`,
+`remove`, `set`), the entry's key field and value, and the members the entry carries — and D848's rule
+is that members are **only ever added within a version**: they are added as **optional** members, none
+of them required, and every version-1 member keeps its name and its meaning. **An old document that
+carries none of the new members still decodes and still draws**, and this design edits no console file.
 
 ## 3. Which dedicated commands remain, and their rules
 
@@ -156,11 +157,11 @@ removal is not a plan the gate can read (D1026).
 
 **Recommendation (D1171): `fugaro secrets rm NAME` deletes the Secret Manager version and the config
 entry, and the policy flags are added to the family as the settings write path's own rules cannot carry
-them.** The secret **value** is never a setting and never a diff (§6, and
+them.** The secret **value** is never a setting and never a diff (§5, and
 [managed spec](../managed-agent-converge/spec.md) §3.2): `rm` and the flags write the
 **policy**, which the generic writer could reach but whose `allow_data_to`/`proxy` members are a widening
 the gate must judge. `rm` is **never admitted by the managed gate**: a removal of a secret is a value
-no plan shows (§6).
+no plan shows (§5).
 
 ### 3.3 `fugaro accounts rm`, and `allow_data_to` (D1172)
 
@@ -171,7 +172,7 @@ no plan shows (§6).
 writes and **nothing can remove**.
 
 **Recommendation: `fugaro accounts rm NAME` removes the account definition and its allow-list entry, and
-is admitted by the managed gate only when no profile and no repository still references it** (§6;
+is admitted by the managed gate only when no profile and no repository still references it** (§5;
 [managed spec](../managed-agent-converge/spec.md) §4.2). `add` with a widening `allow_data_to` is a
 widening (D868) and stays refused in a coding agent's session.
 
@@ -238,27 +239,36 @@ workflow edit exactly as it applies to a layer publish.
 ## 4. The registry's owner column
 
 **Recommendation (D1178): every non-writable key names a command that exists, or a sentence saying
-`setup` or `update` owns it.** The column is read by the settings read
-(`internal/cli/settings_read.go:388`) through `settingsFamilyCommands`
-(`internal/cli/settings_set.go:43`), and **that map is missing four families** —
-`budget`, `setup`, `update`, `config` — so every key they own prints an empty owner today. The fix has two
-halves and both are mechanical:
+`setup` or `update` owns it.** The column is rendered by the settings read
+(`internal/cli/settings_read.go:388`) as `settingsFamilyCommands[row.Owner]`
+(`internal/cli/settings_set.go:43`), and that map is missing `setup`, `update` and `config` — so the rows
+those families own, and every row whose owner is the default, print an empty owner today. The fix has
+three parts:
 
-- **`settingsFamilyCommands` gains the missing families**, each naming an existing command:
-  `budget → fugaro budget set`, and the installation families → a sentence that names `fugaro setup` or
-  `fugaro update` rather than a command that would be read as an editor.
-- **Every key that changes owner is listed**, in the plan's own table (§ plan, G10), so the change is
+- **The rule.** A key the allowlist carries is `settings set`'s and its row says so; every other key
+  names a command that exists, or a sentence naming `fugaro setup` or `fugaro update` rather than a
+  command that would be read as an editor.
+- **The mechanism is the read's own table, not the write's map.** `settingsFamilyCommands` is asked a
+  second question too — it is what refuses a write and points the key at its family
+  (`internal/cli/settings_set.go:298`) — so a family cannot simply be added to it: `config` owns
+  `max_parallel` (`internal/settings/registry.go:560`) and `setup` owns `update_check` (`:566`), and both
+  are keys the generic path writes today, so an entry for either family would refuse two keys `settings
+  set` writes.
+- **Every key that changes owner is listed**, in the plan's own table (§ plan, G12), so the change is
   reviewable as a diff of names and nothing else.
 
-**Recommendation (D1179): `budget.mode`, `budget.per_day_usd`, `budget.per_run_usd` and
-`budget.allowed_models` are owned by `fugaro budget set`, and `compute_prices.*` by `fugaro budget
-prices`.** The four budget keys are the caps `budget set` already writes into the budget database
-(`internal/cli/budget.go:921`) and today default to the owner `settings set`
-(`internal/settings/registry.go:324`); `compute_prices` is a price table that
-`fugaro budget prices` (`internal/cli/budget.go:1508`) reads and that is a deliberate
-choice with no editor today (`internal/settings/registry.go:595`). **No key's meaning
-changes** — only the command the column names — so this is a rename of the owner and never a re-meaning
-of a key.
+**Recommendation (D1179): the four budget keys stay the generic writer's, and the allowlist gains the
+two it refuses.** `budget.mode`, `budget.per_day_usd`, `budget.per_run_usd` and `budget.allowed_models`
+are a repository's own tightening of a ceiling (`internal/config/scope.go:91`, four `InRepo` rows): two
+of them are already in `settingsGenericKeys` (`internal/cli/settings_set.go:68`) and the other two are
+**added to it**, which is the whole of what F13 needs — today they default to the owner `settings set`
+(`internal/settings/registry.go:324`) while the allowlist refuses them on purpose
+(`internal/cli/settings_set.go:60`). `fugaro budget set` keeps writing the budget **database**'s caps
+under its ETag-guarded write (`internal/cli/budget.go:923`) and owns no registry row. `compute_prices.*`
+(`internal/settings/registry.go:595`) becomes a generic-writer entry (D1162) as well: it is a deliberate
+local override with its own validation (`internal/localcfg/localcfg.go:118`) that no run's ceiling turns
+on. **No key's meaning changes** — only the command the column names — so this is a rename of the owner
+and never a re-meaning of a key.
 
 ## 5. The managed gate's rows
 
@@ -269,7 +279,7 @@ is visible in a document it produces before it writes; the rows are:
 
 | New command or operation | What the managed gate admits | Refused, and who refuses it |
 | --- | --- | --- |
-| `settings set\|unset` with a **concrete** key (§2.1) | Admitted for a key the registry knows at a scope inside the project, where the value lowers no floor and widens no ceiling | A widening that takes the typed project name — **D1026**, a `Typed` step is never admitted |
+| `settings set\|unset` with a **concrete** key (§2.1) | Admitted for a key the registry knows at a scope inside the project, where the value lowers no floor and widens no ceiling — **including `budget.mode` and `budget.per_day_usd`**, which D1179 gives the generic path | A widening that takes the typed project name — **D1026**, a `Typed` step is never admitted |
 | `settings set\|unset` with `--add-entry` / `--remove-entry` (§2.2) | Admitted when the entry adds no `allow_data_to` member and no `secrets` member | A `secrets` entry and an `allow_data_to` widening: refused by the widening rule, not by the gate's plan |
 | `fugaro workflow add\|rm` (§3.7) | Admitted as a `--layer repo` write, the one document an agent session may write today | An executable-key change (`image.apt`, `image.setup`, `commands.*`) without the owner's flag |
 | `fugaro rigor set` (§3.1) | Admitted for a mode at or above the resolved mode | `hotfix` (D834), a duplicate glob (D838), and a floor **lowered or removed** — the typed name, D1026 |
@@ -304,8 +314,9 @@ and `batch.machine_type` (`internal/settings/registry.go:572`):
 ## 7. What this design is not
 
 - **It is not a compatibility or skew design.** There are no production users; a shape that must change
-  changes directly, and the settings-write schema's version is the one place a change is versioned
-  (D1164), because the console reads it (D848).
+  changes directly. The settings-write document is the one shape that carries a version, because the
+  console reads it (D848), and it **keeps that version** while its members grow as optional ones
+  (D1164).
 - **It does not re-open the managed gate's decisions.** D1011–D1026 are cited; a new command gets a row
   (§5) and no decision there is rewritten.
 - **It does not give the console an edit of its own.** The console keeps spawning `settings set|unset`
