@@ -439,7 +439,10 @@ func PlanWorkflowJob(ctx context.Context, c *Clients, gcpProject, region, job, w
 		// a changed default) is a move this must accept. Both halves have to
 		// be catalog images — a baked job moved onto a base image still
 		// expects the checkout baked into its own image, whatever its
-		// current one is.
+		// current one is — and isCatalogImage recognises the built half
+		// alone (its own comment says why): a move involving an entry whose
+		// source is a prebuilt reference is refused here, with the fix the
+		// refusal names.
 		if !isCatalogImage(image) || !isCatalogImage(newImage) {
 			return nil, shape("is not a checkout: clone or shared job: its container has no %s=%s or %s, so moving its image would leave a job expecting a baked checkout", CheckoutEnv, config.CheckoutClone, config.CheckoutShared)
 		}
@@ -465,11 +468,23 @@ func PlanWorkflowJob(ctx context.Context, c *Clients, gcpProject, region, job, w
 }
 
 // isCatalogImage reports whether image is one of the project image catalog's
-// images: an image of the installation's one shared registry, named
-// catalog-<entry> and tagged (D1152). The writer is repoCtx.catalogImage in
-// spec.go, and the two are one shape: a job whose image this answers true for
-// is a job the catalog's own image was given to, and one no repository's
-// derived tag belongs to.
+// built images: an image of the installation's one shared registry, named
+// catalog-<entry> and tagged (D1152). Its writer is repoCtx.catalogImage in
+// spec.go, and this recognises the half of that writer which has a shape —
+// an entry whose source is a Dockerfile or an inline definition, built into
+// that name — because a job whose image this answers true for is a job the
+// catalog's own image was given to, and one no repository's derived tag
+// belongs to.
+//
+// The other half is not recognisable and is not guessed at: for an entry
+// whose source is a prebuilt reference (config.SourceImage) the same writer
+// returns the entry's own image verbatim (spec.md, D1152), and any reference
+// could be one — the installation's base image among them — so a job the
+// catalog gave such an entry to answers false here and the move guard above
+// refuses it. What would accept that move is the project's catalog, which
+// the mover is not given; the caller that holds it is the refresh path PIC6
+// adds, and until one passes it the refusal's own fix stands: fugaro update
+// deploys the job with the image the catalog now names.
 func isCatalogImage(image string) bool {
 	base, tag, ok := strings.Cut(image, ":")
 	if !ok || tag == "" {
