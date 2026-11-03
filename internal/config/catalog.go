@@ -128,6 +128,25 @@ const (
 	maxCatalogInlineBytes = 64 << 10
 )
 
+// CatalogDockerfileKey is where an entry's Dockerfile is copied into the
+// project's bucket, before a build reads it (D1140, spec.md §Where
+// Dockerfiles live): under the builds/ prefix the build and check accounts'
+// grants are conditioned on, at the entry's own name so the copy a build
+// reads is the one an entry names.
+//
+// The name is checked here and not only where a catalog is validated,
+// because this is the one place a name becomes a key: a name outside the
+// grammar (a ".." segment, a "/", a NUL) would otherwise name an object
+// outside the entry's own directory.
+func CatalogDockerfileKey(name string) (string, error) {
+	if !catalogNameRE.MatchString(name) {
+		// The message names the rule and not the value, the way every
+		// refusal of a name that reaches a key or a log does here.
+		return "", fmt.Errorf("the catalog entry's name %s", catalogNameMessage)
+	}
+	return buildsPrefix + "catalog/" + name + "/Dockerfile", nil
+}
+
 // catalogNameRE is a catalog entry's name. It is ProjectNameRE's shape — 1 to
 // 40 of a-z, 0-9 and '-', starting and ending with a letter or digit — and it
 // is deliberately the same rule, because a name reaches a tag of an image in
