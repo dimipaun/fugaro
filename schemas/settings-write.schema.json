@@ -19,6 +19,7 @@
   "properties": {
     "version": {
       "const": 1,
+      "description": "The document's own version, which is not the read's: the two are separate contracts and one may move without the other (D848).",
       "$comment": "settingsWriteDocVersion in internal/cli/settings_set.go."
     },
     "key": {
