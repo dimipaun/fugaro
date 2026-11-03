@@ -644,6 +644,9 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(settingsDoc{}), reflect.TypeOf(settingsLayer{}),
 		reflect.TypeOf(settingsJSON{}), reflect.TypeOf(settingsDefault{}),
 		reflect.TypeOf(settingsLevelJS{}),
+		// §6.20, the write's dry run (the settings-edit plan's C3, CLI 0.16.0):
+		// the one shape its field table is read against.
+		reflect.TypeOf(settingsWriteDoc{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -9682,9 +9685,9 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 	read := mdBetween(t, path, doc, "### 6.19 ", "\n## 7. The CLI gaps")
 	for _, want := range []string{
 		"operation `settings.edit`",
-		"the console's second write",
-		"`settings set KEY --layer <L> --dry-run --json",
-		"never retried",
+		"it is the console's second",
+		"`settings set|unset KEY --layer <L> --dry-run --json",
+		"retried silently",
 	} {
 		if !strings.Contains(read, want) {
 			t.Errorf("%s's §6.19 does not state %q: the read's section is where a reader learns that the console also writes this group, and the screen C3 shipped does", path, want)
@@ -9710,7 +9713,7 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 	}
 
 	inventory := mdBetween(t, path, doc, "## 8. The flag inventory", "## 9. What the console may do")
-	if !strings.Contains(inventory, "settings set|unset") {
+	if !strings.Contains(inventory, `settings set\|unset`) {
 		t.Errorf("%s's §8 does not carry the settings write's row: the inventory is what the spawn contract turns on, and the second write's argv is on it", path)
 	}
 	if strings.Contains(inventory, "**the one row here that writes**") {
@@ -9722,7 +9725,7 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 	nine := mdBetween(t, path, doc, "## 9. What the console may do", "\n## 10. ")
 	for _, want := range []string{
 		"Every document in the console's set is read-only",
-		"the console's second write",
+		"**second write**",
 	} {
 		if !strings.Contains(nine, want) {
 			t.Errorf("%s's §9 does not state %q: the console now writes twice, and this is the section that counts what it may do with the documents it reads", path, want)
