@@ -1837,3 +1837,141 @@ func TestVerifierAccountsNotInShared(t *testing.T) {
 		t.Error("Shared/MergeShared cleared the local list")
 	}
 }
+
+// catalogYAML is an operator's image catalog in the shape the spec writes one:
+// two entries, one marked default, so a test can tell which entry it read and
+// whether the marker survived.
+const catalogYAML = `image_catalog:
+  entries:
+    - name: universal
+      tags: [node]
+      default: true
+      source: { kind: image, image: ghcr.io/acme/agent:1.2 }
+    - name: rust
+      tags: [cargo]
+      source: { kind: dockerfile, repo: acme/web, path: docker/agent.Dockerfile }
+`
+
+// TestLocalConfigCatalogIsDecodedAndKept is the other half of this task's red
+// step: the local configuration gains the member, and a config that carries a
+// catalog is decoded rather than dropped or refused by strict decoding. What it
+// carries is the whole entry — the source's kind, the tags and the default
+// marker — because the publisher copies this value into the node and a member
+// lost here is an image no job can be built from.
+func TestLocalConfigCatalogIsDecodedAndKept(t *testing.T) {
+	c, err := Parse([]byte(sample + catalogYAML))
+	if err != nil {
+		t.Fatalf("a config carrying a catalog was refused: %v", err)
+	}
+	if c.ImageCatalog == nil || len(c.ImageCatalog.Entries) != 2 {
+		t.Fatalf("image_catalog = %+v, want the file's two entries", c.ImageCatalog)
+	}
+	universal := c.ImageCatalog.Entries[0]
+	if universal.Name != "universal" || !universal.Default {
+		t.Errorf("entries[0] = %+v, want universal marked default", universal)
+	}
+	if !slices.Equal(universal.Tags, []string{"node"}) {
+		t.Errorf("entries[0].tags = %v, want [node]", universal.Tags)
+	}
+	if universal.Source.Kind != config.SourceImage || universal.Source.Image != "ghcr.io/acme/agent:1.2" {
+		t.Errorf("entries[0].source = %+v, want the prebuilt reference the file names", universal.Source)
+	}
+	rust := c.ImageCatalog.Entries[1]
+	if rust.Source.Kind != config.SourceDockerfile || rust.Source.Repo != "acme/web" {
+		t.Errorf("entries[1].source = %+v, want the repository and path the file names", rust.Source)
+	}
+	// The file's own catalog is what a publish sends, whether the node has one
+	// or not (ImageCatalogEffective): a stated catalog is never silently
+	// replaced by the node's, which is the direction the keep rule must never
+	// move for this shape — the operator who edits the file means the edit.
+	if got := c.ImageCatalogEffective(nil); got != c.ImageCatalog {
+		t.Errorf("a config that states a catalog takes %+v, want its own", got)
+	}
+	if got := c.ImageCatalogEffective(&config.Catalog{Entries: []config.Entry{{Name: "other"}}}); got != c.ImageCatalog {
+		t.Errorf("a config that states a catalog takes %+v, want its own over the node's", got)
+	}
+	// It is written back, so the file the operator reads is the file this
+	// Fugaro parsed.
+	out, err := c.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "image_catalog") {
+		t.Errorf("the marshalled config has no image_catalog:\n%s", out)
+	}
+	// The member is held to the node's own rule, the way the verifier list and
+	// the floor are: config.ValidateCatalog is the one function both carriers
+	// apply, so a file this loader accepts is one the node's decoder accepts.
+	if _, err := Parse([]byte(sample + "image_catalog:\n  entries:\n    - name: Universal\n      source: { kind: image, image: ghcr.io/acme/agent:1.2 }\n")); err == nil {
+		t.Error("a catalog entry with an illegal name was accepted")
+	}
+	if _, err := Parse([]byte(sample + "image_catalog:\n  entries:\n    - name: a\n      source: { kind: image }\n")); err == nil {
+		t.Error("a source with no image was accepted")
+	}
+}
+
+// TestLocalConfigCatalogKeepsThePublishedOneWhenSilent: the keep rule this
+// task is about (D1140, D1156). A machine whose file says nothing about the
+// catalog must not publish a node without the operator's — a teammate's config
+// or a CI box's would leave every repository that names an entry with nothing
+// to run — while a file that writes an empty catalog is how the published one
+// is taken away on purpose, and a project with no catalog at either end
+// publishes no member at all.
+func TestLocalConfigCatalogKeepsThePublishedOneWhenSilent(t *testing.T) {
+	published := &config.Catalog{Entries: []config.Entry{{
+		Name: "universal", Default: true,
+		Source: config.Source{Kind: config.SourceImage, Image: "ghcr.io/acme/agent:1.2"},
+	}}}
+	silent, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := silent.ImageCatalogEffective(published); got != published {
+		t.Errorf("a silent config takes %+v, want the published catalog", got)
+	}
+	if got := silent.ImageCatalogEffective(nil); got != nil {
+		t.Errorf("a silent config beside a node with no catalog takes %+v, want nothing published", got)
+	}
+	stated, err := Parse([]byte(sample + catalogYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stated.ImageCatalogEffective(published); got != stated.ImageCatalog {
+		t.Errorf("a config that states a catalog takes %+v, want its own", got)
+	}
+	empty, err := Parse([]byte(sample + "image_catalog: { entries: [] }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := empty.ImageCatalogEffective(published); got != nil {
+		t.Errorf("a written empty catalog takes %+v, want none: it is how a published catalog is removed on purpose", got)
+	}
+}
+
+// TestImageCatalogNotInShared: the catalog is the owner's and travels the
+// verifier list's way. The shared config is the file any launcher with
+// objectAdmin on the runs bucket can write, and the catalog is what decides
+// which image a run's job executes in and which Dockerfile a build fetches, so
+// a launcher who could write this key would be choosing the code every
+// teammate's runs run. internal/cli's ParseShared refuses the key besides.
+func TestImageCatalogNotInShared(t *testing.T) {
+	c, err := Parse([]byte(sample + catalogYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, got := range map[string]*Config{"shared": c.Shared(), "merged": MergeShared(nil, c)} {
+		if got.ImageCatalog != nil {
+			t.Errorf("%s: image_catalog = %+v", name, got.ImageCatalog)
+		}
+		out, err := got.Marshal()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(string(out), "image_catalog") {
+			t.Errorf("%s: output carries image_catalog:\n%s", name, out)
+		}
+	}
+	if c.ImageCatalog == nil {
+		t.Error("Shared/MergeShared cleared the local catalog")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -631,5 +632,29 @@ func TestInitPublishFromACodingAgentSession(t *testing.T) {
 				t.Errorf("published from an agent's session: %v", err)
 			}
 		})
+	}
+}
+
+// TestSharedConfigRefusesImageCatalog: the image catalog is the owner's policy
+// and is published through the policy node — which the runner reads and fails
+// closed on — precisely because the shared config is the file any launcher with
+// objectAdmin on the runs bucket can write (D1140). A catalog there would let a
+// launcher choose the image every teammate's runs execute in, and the
+// Dockerfile a build fetches with the project's own credentials, so the reader
+// refuses the key by name before the file is parsed, the way review_floor and
+// verifier_accounts are refused.
+func TestSharedConfigRefusesImageCatalog(t *testing.T) {
+	if !slices.Contains(sharedForbidden, "image_catalog") {
+		t.Fatal("sharedForbidden does not name image_catalog, so a published catalog would be read")
+	}
+	data := validShared() + "image_catalog:\n    entries:\n        - name: universal\n          source: { kind: image, image: ghcr.io/acme/agent:1.2 }\n"
+	_, err := ParseShared([]byte(data), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying image_catalog: was accepted")
+	}
+	for _, want := range []string{"image_catalog", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
 	}
 }
