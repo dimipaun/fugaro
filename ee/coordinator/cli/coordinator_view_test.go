@@ -247,11 +247,12 @@ func TestCoordinatorStatusFromStoreWithService(t *testing.T) {
 	f := newCoordinatorStoreFixture(t, coordinatorSeeds())
 	openCoordinatorProvider = real
 	f.writeStoredView(t, storedView(), nil)
-	// The installation's credentials service holds the App's key (C2.2,
-	// D145), so the project-wide read refuses here rather than reaching for a
-	// key the platform withheld — and the fixture's runs name pull requests,
-	// so a read that delegated to coordinatorReader would reach that refusal
-	// rather than return before it.
+	// A person's read resolves its service from the project's own published
+	// block and from nothing else (the owner's ruling of 2026-11-03), so this
+	// variable is set to hold that: the fixture's project publishes no block,
+	// and the run's own name for the service cannot stand in for one. The
+	// fixture's runs name pull requests, so a read that delegated to
+	// coordinatorReader would reach the refusal rather than return before it.
 	t.Setenv(providers.EnvCredentialsServiceURL, "https://credentials.example.com/")
 
 	// --since 0 so that the whole fixture is in the window: a read that
@@ -265,11 +266,14 @@ func TestCoordinatorStatusFromStoreWithService(t *testing.T) {
 		t.Errorf("the view printed is not the stored one:\n%+v\nwant\n%+v", got.View, want)
 	}
 	// The other half of the same rule: without --from-store the command is
-	// still the one that refuses, so this is the flag that decides and not
-	// the environment.
-	if _, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0", "--json"); fcli.ExitCode(err) != fcli.ExitUserError ||
-		err == nil || !strings.Contains(err.Error(), providers.EnvCredentialsServiceURL) {
+	// still the one that refuses, and it refuses on the project's own
+	// configuration — so this is the flag that decides, and the environment
+	// decides nothing.
+	if _, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0", "--json"); err == nil ||
+		fcli.ExitCode(err) != fcli.ExitUserError || !strings.Contains(err.Error(), "credentials service") {
 		t.Errorf("status without --from-store: exit %d, err %v; want the credentials-service refusal", fcli.ExitCode(err), err)
+	} else if strings.Contains(err.Error(), providers.EnvCredentialsServiceURL) {
+		t.Errorf("the refusal names the run's own variable rather than the project's configuration: %v", err)
 	}
 }
 

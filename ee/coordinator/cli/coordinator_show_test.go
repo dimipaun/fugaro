@@ -260,8 +260,8 @@ func (a *githubAPI) answers(status int, doc map[string]any) {
 // read about.
 func setPersonSeams(t *testing.T, api *githubAPI, client *http.Client) *github.Options {
 	t.Helper()
-	prevID, prevAPI, prevClient := coordinatorPersonIdentity, coordinatorGitHubReadProvider, coordinatorServiceClient
-	coordinatorPersonIdentity = func(context.Context, string) (string, error) { return personIdentity, nil }
+	prevAPI, prevClient := coordinatorGitHubReadProvider, coordinatorServiceClient
+	setPersonIdentity(t)
 	coordinatorGitHubReadProvider = func(o github.Options) (gitprov.Provider, error) {
 		*api.seen = o
 		o.Warn = nil
@@ -270,18 +270,37 @@ func setPersonSeams(t *testing.T, api *githubAPI, client *http.Client) *github.O
 	}
 	coordinatorServiceClient = func() *http.Client { return client }
 	t.Cleanup(func() {
-		coordinatorPersonIdentity, coordinatorGitHubReadProvider, coordinatorServiceClient = prevID, prevAPI, prevClient
+		coordinatorGitHubReadProvider, coordinatorServiceClient = prevAPI, prevClient
 	})
 	return api.seen
+}
+
+// setPersonIdentity replaces the person's own identity — their Google ID token,
+// minted from their own credentials — with the fixture's stand-in. No test
+// machine has a person's credentials, and the service's person class verifies
+// exactly this value (G4), so a read that presented anything else would be
+// admitted under the wrong class rather than quietly pass.
+func setPersonIdentity(t *testing.T) {
+	t.Helper()
+	prev := coordinatorPersonIdentity
+	coordinatorPersonIdentity = func(context.Context, string) (string, error) { return personIdentity, nil }
+	t.Cleanup(func() { coordinatorPersonIdentity = prev })
 }
 
 // personShowFixture is the fixture one person's `coordinator show` is made in:
 // the project's own published credentials service at mint's URL, the App ID the
 // fixture's config records for acme/app, and nothing in the environment naming
 // either.
-func personShowFixture(t *testing.T, mint *readMintServer) *cloudFixture {
+//
+// repos are further entries of the config's own repos mapping, appended before
+// the service is published: the block is the last thing the config carries, so
+// a line added after it would land inside the block's own mapping.
+func personShowFixture(t *testing.T, mint *readMintServer, repos ...string) *cloudFixture {
 	t.Helper()
 	f := newCloudFixture(t)
+	for _, r := range repos {
+		f.appendConfig(t, r)
+	}
 	f.publishService(t, mint.srv.URL)
 	return f
 }
@@ -446,8 +465,7 @@ func TestCoordinatorShowReadsBothHostsWithNoVariablesSet(t *testing.T) {
 	setPersonSeams(t, ghAPI, mint.client())
 	setBitbucketSeams(t, bbAPI)
 
-	f := personShowFixture(t, mint)
-	f.appendConfig(t, "  acme/legacy: { provider: bitbucket, base_branch: main, workflows: [web] }\n")
+	personShowFixture(t, mint, "  acme/legacy: { provider: bitbucket, base_branch: main, workflows: [web] }\n")
 
 	out, errOut, err := execute(t, "coordinator", "show", "--repo", "acme/app", "--pr", "1458", "--json")
 	if err != nil {
@@ -744,8 +762,7 @@ func TestCoordinatorShowBitbucketThroughService(t *testing.T) {
 	setPersonSeams(t, newGitHubAPI(t, "acme", "app", 1458), mint.client())
 	seen := setBitbucketSeams(t, api)
 
-	f := personShowFixture(t, mint)
-	f.appendConfig(t, "  acme/legacy: { provider: bitbucket, base_branch: main, workflows: [web] }\n")
+	personShowFixture(t, mint, "  acme/legacy: { provider: bitbucket, base_branch: main, workflows: [web] }\n")
 
 	out, errOut, err := execute(t, "coordinator", "show", "--repo", "acme/legacy", "--pr", "12", "--json")
 	if err != nil {
@@ -964,8 +981,7 @@ func TestServicePathRefusesAPIRootOverride(t *testing.T) {
 	setPersonSeams(t, newGitHubAPI(t, "acme", "app", 1458), mint.client())
 	seen := setBitbucketSeams(t, api)
 
-	f := personShowFixture(t, mint)
-	f.appendConfig(t, "  acme/legacy: { provider: bitbucket, base_branch: main, workflows: [web] }\n")
+	personShowFixture(t, mint, "  acme/legacy: { provider: bitbucket, base_branch: main, workflows: [web] }\n")
 
 	out, errOut, err := execute(t, "coordinator", "show", "--repo", "acme/legacy", "--pr", "12", "--json")
 	if err != nil {

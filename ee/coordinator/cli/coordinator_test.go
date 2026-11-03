@@ -227,6 +227,7 @@ func publishReadService(t *testing.T, f *cloudFixture, paths ...string) *readMin
 	mint := newReadMintServer(t, paths...)
 	f.publishService(t, mint.srv.URL)
 	setServiceClientSeam(t, mint)
+	setPersonIdentity(t)
 	return mint
 }
 
@@ -579,7 +580,7 @@ func TestCoordinatorStatusAllReadsEveryRepository(t *testing.T) {
 			branch: "fugaro/20261013-150000-ffff", who: "someone@example.com",
 			status: runstore.StatusRunning, prRef: 21, base: "main", files: []string{"internal/api/handler.go"}},
 	), coordinatorPRs()...)
-	f.appendConfig(t, "  acme/other: { provider: github, base_branch: main, workflows: [web] }\n")
+	f.appendConfig(t, "  acme/other: { provider: github, base_branch: main, workflows: [web], github_app_id: \"" + appIDFixture + "\" }\n")
 	other := &fake.Provider{Repo: "acme/other", SelfID: "2"}
 	other.State.PRs = []fake.PRState{coordinatorPR(21, "fugaro/20261013-150000-ffff", gitprov.PROpen, false)}
 	// The person's class: the two repositories are read through the tokens the
@@ -1088,25 +1089,20 @@ func TestCoordinatorStatusRefusesABitbucketProject(t *testing.T) {
 	}
 }
 
-// The refusal above is a property of the READ and not of the installation's
-// configuration: an installation that has opted into the credentials service
-// — the block IS the opt-in (localcfg.CredentialsService) — still gets it from
-// status, which is the read it has always been. `show` reads one Bitbucket
-// repository through the service's read mint (BB4); the project-wide read of
-// Bitbucket is BB5's, and a status read that widened with the block would be
-// BB5 arriving as a side effect of `fugaro update` writing a URL.
-func TestCoordinatorStatusBitbucketUnchangedWithService(t *testing.T) {
-	f := newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
-	f.appendConfig(t, "  acme/legacy: { provider: bitbucket, base_branch: main, workflows: [web] }\n")
-	f.appendConfig(t, "credentials_service: { url: https://fugaro-credentials-abcde-uc.a.run.app }\n")
-	if lc := f.config(t); lc.CredentialsService == nil || lc.CredentialsService.URL == "" {
-		t.Fatal("the fixture's config carries no credentials_service block, so this test aims at nothing")
-	}
-	_, _, err := execute(t, "coordinator", "status", "--all", "--since", "0")
-	if fcli.ExitCode(err) != fcli.ExitUserError || !strings.Contains(err.Error(), "cannot be widened to a project") {
-		t.Fatalf("status on an installation with the credentials service: exit %d, %v", fcli.ExitCode(err), err)
-	}
-}
+// The other half of the refusal above — a project that DOES publish the
+// credentials service reads its Bitbucket repositories through it — is held in
+// coordinator_sweep_bitbucket_test.go, where the person's Bitbucket read lives
+// (TestLocalStatusBitbucketThroughService). It is one file's subject and not
+// this one's, and the class is the same for `show`, for `status --repo` and for
+// `status --all`: one reader, one source.
+//
+// What changed under the refusal above is worth stating here, because it is
+// what makes that test the whole of the coverage. BB4 read the person's service
+// URL out of FUGARO_BITBUCKET_READ_SERVICE_URL, and that variable is gone (the
+// owner's ruling of 2026-11-03): the project's own configuration is now the
+// only source, so the block decides and a project that publishes none has no
+// Bitbucket read at all — a person's machine holds no Bitbucket credential of
+// its own and there is deliberately nothing else to fall back to.
 
 // secretErrHost fails every read of a pull request with an error carrying the
 // credential, which is what a real host's 401 does.
@@ -1159,34 +1155,39 @@ func TestCoordinatorStatusNeverPrintsACredential(t *testing.T) {
 	}
 }
 
-// The coordinator's own mint is the half of this command that holds the App's
-// private key, and a failure it reports must not carry one: the key is redacted
-// out of whatever the mint says (agent.Redact). The host here answers the
-// installation lookup with an error, so the read fails the way an unreachable
-// or refusing API does and the key is read from the environment on the way.
-func TestCoordinatorStatusNeverPrintsTheAppKey(t *testing.T) {
-	const secret = "ghs_0123456789abcdefghij"
+// The coordinator's own mint is the one half of this command that holds the
+// App's private key, and a failure it reports must not carry one: the key is
+// redacted out of whatever the mint says (agent.Redact). The host here answers
+// the installation lookup with an error, so the mint fails the way an
+// unreachable or refusing API makes it and the key is read from the environment
+// on the way.
+//
+// It is the JOB's mint (coordinatorMint, reached by `sweep`) and not a person's
+// read: since the owner's ruling of 2026-11-03 a person's machine holds no App
+// key at all — coordinatorNoAppKey refuses before any key could be read — so
+// this is the only path left that has one to leak.
+func TestCoordinatorMintNeverPrintsTheAppKey(t *testing.T) {
 	pem := appKeyPEM(t)
 	srv := httpfixture.Serve(t, filepath.Join("testdata", "coordinator_mint_refused.json"))
 	t.Setenv(providers.EnvGitHubAppID, "12345")
 	t.Setenv(providers.EnvGitHubAppKey, pem)
+	t.Setenv(providers.EnvCredentialsServiceURL, "")
 	setCoordinatorGitHubRoot(t, srv.URL)
 
-	newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
-	// The real coordinatorMint, against a host that refuses: the key is read
-	// from the environment on the way and must not reach what is printed.
-	setCoordinatorProject(t, map[string]*fake.Provider{"acme/app": {Repo: "acme/app", SelfID: "1"}}, nil)
-	out, errOut, err := execute(t, "coordinator", "status", "--since", "0")
+	_, _, err := coordinatorMint(context.Background(), "acme/app")
 	if err == nil {
-		t.Fatalf("the mint was refused and the command succeeded: %s%s", out, errOut)
+		t.Fatal("the mint was refused and it returned a token")
 	}
-	for _, got := range []string{err.Error(), out, errOut} {
-		if strings.Contains(got, pem) || strings.Contains(got, secret) {
-			t.Errorf("a credential reached the output: %q", got)
-		}
+	if strings.Contains(err.Error(), pem) {
+		t.Errorf("the App's key reached the failure: %q", err)
 	}
 	if !strings.Contains(err.Error(), "github") {
 		t.Errorf("the failure is %q, want the mint's own failure reported", err)
+	}
+	// The key is what the failure would have carried, and the PEM's own first
+	// line is the part a redaction that missed would leave behind.
+	if head, _, _ := strings.Cut(pem, "\n"); head != "" && strings.Contains(err.Error(), head) {
+		t.Errorf("the App's key header reached the failure: %q", err)
 	}
 }
 
