@@ -784,8 +784,9 @@ span.projects-models-id {
  * the catalog's date and age. Two hooks are **not** in this group: the staleness
  * word, which is the one word of the panel a reader is meant to catch, and a
  * route's `projects-models-route-note`, which is the CLI's own sentence about
- * the route and is drawn the way `projects-because` is — at the body size, so a
- * document's explanation reads as prose rather than as a muted qualifier. */
+ * the route and is drawn the way `projects-because` is — at the body size, by
+ * the rule below and not by inheriting the row's, so a document's explanation
+ * reads as prose rather than as a muted qualifier. */
 span.projects-models-route-kind,
 span.projects-models-claims-word,
 span.projects-models-to-word,
@@ -798,6 +799,10 @@ span.projects-models-catalog-checked,
 span.projects-models-catalog-age {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
+}
+
+span.projects-models-route-note {
+  font-size: var(--font-size-base);
 }
 
 p.projects-models-catalog {
