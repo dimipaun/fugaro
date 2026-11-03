@@ -75,10 +75,10 @@ resource "google_artifact_registry_repository" "base" {
 # The shared image registry: one repository per installation, holding the
 # images every repository's builds share (design
 # docs/forge-authorship-images/shared-images.md §2.6). Nobody is granted on it
-# here: its writer is each repository's build account and its readers are each
-# repository's job accounts, granted on it by that repository's own root
-# (modules/repo/registry.tf), so no member of this module can widen it to the
-# whole installation at once.
+# here: its writer and its tag mover are each repository's build account and
+# its readers are each repository's job accounts, granted on it by that
+# repository's own root (modules/repo/registry.tf), so no member of this
+# module can widen it to the whole installation at once.
 #
 # It holds the same kind of object a repository's own registry does — a
 # derived image tagged latest or candidate- — so it carries that repository

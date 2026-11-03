@@ -238,10 +238,12 @@ func TestNoProjectLevelSecretAccessor(t *testing.T) {
 	})
 }
 
-// The tag mover role lets a repository's build move its own :latest, which
+// The tag mover role lets a repository's build move an existing tag, which
 // needs artifactregistry.tags.delete, and nothing more: no version or
-// package delete. It is granted on a repository's own registry only, never
-// on the project.
+// package delete. It is granted on the build account's two registries and
+// nowhere else — its own, and the installation's shared one, where a shared
+// image is promoted and a catalog image's content tag (the definition's own
+// sha256) is moved again on a rebuild — never on the project.
 func TestTagMoverRoleIsTagsDeleteOnly(t *testing.T) {
 	roles, grants := 0, 0
 	walk(t, func(path string, b []byte) {
@@ -269,15 +271,33 @@ func TestTagMoverRoleIsTagsDeleteOnly(t *testing.T) {
 					continue
 				}
 				grants++
-				if typ != "google_artifact_registry_repository_iam_member" || path != "gcp/modules/repo/build.tf" ||
-					!strings.Contains(blk.body, "google_artifact_registry_repository.images.repository_id") {
-					t.Errorf("%s: %s grants the tag mover role other than on the repository's own registry", path, blk.name)
+				if typ != "google_artifact_registry_repository_iam_member" {
+					t.Errorf("%s: %s grants the tag mover role through %s: it is a repository-level grant, on the build account's own registries", path, blk.name, typ)
+					continue
+				}
+				// The member is the repository's own build account either way:
+				// an account the module creates, never a person, a job account
+				// or another repository's build.
+				if !hasAttr(blk.body, "member", "google_service_account.build.member") {
+					t.Errorf("%s: %s grants the tag mover to a member that is not the repository's own build account", path, blk.name)
+				}
+				switch path {
+				case "gcp/modules/repo/build.tf":
+					if !hasAttr(blk.body, "repository", "google_artifact_registry_repository.images.repository_id") {
+						t.Errorf("%s: %s must grant the tag mover on the repository's own registry", path, blk.name)
+					}
+				case "gcp/modules/repo/registry.tf":
+					if !hasAttr(blk.body, "repository", "var.installation.shared_registry") {
+						t.Errorf("%s: %s must grant the tag mover on the installation's shared registry", path, blk.name)
+					}
+				default:
+					t.Errorf("%s: %s grants the tag mover role on neither the repository's own registry nor the installation's shared one", path, blk.name)
 				}
 			}
 		}
 	})
-	if roles != 1 || grants != 1 {
-		t.Errorf("found %d tag mover roles and %d grants, want 1 of each", roles, grants)
+	if roles != 1 || grants != 2 {
+		t.Errorf("found %d tag mover roles and %d grants, want 1 role and 2 grants (the repository's own registry, modules/repo/build.tf, and the installation's shared one, modules/repo/registry.tf)", roles, grants)
 	}
 }
 

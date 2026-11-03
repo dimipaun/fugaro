@@ -1550,10 +1550,14 @@ func (rs RepoSpec) Addresses() []string {
 	}
 	// The installation's shared image registry (design
 	// docs/forge-authorship-images/shared-images.md §2.6, §11): this
-	// repository's build account writes it, and each of its job accounts
-	// reads it. Both grants are declared without a gate, so they are
-	// addresses of every repository root.
+	// repository's build account writes it and holds the installation's tag
+	// mover on it — moving a tag needs artifactregistry.tags.delete, which
+	// the writer role lacks, and a catalog build (D1152) moves both latest
+	// and its content tag there — and each of its job accounts reads it.
+	// Every grant is declared without a gate, so all three are addresses of
+	// every repository root.
 	add(root + "google_artifact_registry_repository_iam_member.build_shared")
+	add(root + "google_artifact_registry_repository_iam_member.build_shared_tag_mover")
 	for _, key := range slices.Sorted(maps.Keys(rs.Workflows)) {
 		add(root + "google_artifact_registry_repository_iam_member.job_shared[" + q(key) + "]")
 	}

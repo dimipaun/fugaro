@@ -1692,6 +1692,19 @@ var runAccountGrants = setOf(
 	// resolves, spelled as members here so the key pins them.
 	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.writer" | repository=var.installation.shared_registry | google_service_account.build.member | for_each= | perms=`,
 	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.reader" | repository=var.installation.shared_registry | each.value | for_each={ for name, w in module.workflow : name => "serviceAccount:${w.service_account}" } | perms=`,
+	// Reviewed for PIC4b: the build account's tag mover on that same shared
+	// registry, beside the writer above — moving an existing tag is
+	// gcloud artifacts docker tags add, which deletes the old tag first, and
+	// writer lacks artifactregistry.tags.delete, so a shared image's promote
+	// and a catalog build's promote and content tag need it. The role is the
+	// installation's own fugaroTagMover, whose whole permission list is
+	// artifactregistry.tags.delete: no version or package delete, no storage
+	// permission, and nothing that grants a role, acts as or mints tokens for
+	// another account. The target is that registry repository — never the
+	// runs bucket, whose root this test exists for, and never the project —
+	// and it is the same account, role and target shape as the row on the
+	// repository's own registry above.
+	`google_artifact_registry_repository_iam_member | var.installation.role_ids.tag_mover | repository=var.installation.shared_registry | google_service_account.build.member | for_each= | perms=artifactregistry.tags.delete`,
 	`google_project_iam_member | "roles/logging.logWriter" | project=var.project | google_service_account.build.member | for_each={ log_writer = "roles/logging.logWriter" build_submitter = var.installation.role_ids.build_submitter } | perms=`,
 	`google_project_iam_member | var.installation.role_ids.build_submitter | project=var.project | google_service_account.build.member | for_each={ log_writer = "roles/logging.logWriter" build_submitter = var.installation.role_ids.build_submitter } | perms=cloudbuild.builds.create,cloudbuild.builds.get`,
 	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=local.secrets[each.value] | google_service_account.build.member | for_each=toset(var.repo.build_secrets) | perms=`,
