@@ -449,6 +449,28 @@ func TestSettingsSetDryRunReportsNoChange(t *testing.T) {
 	}
 }
 
+// TestSettingsSetDryRunDoesNotClassifyANoOpAsAWidening: the file already holds a
+// spend cap far above the built-in default a run starts under, so setting the
+// same value is no edit, and the real write answers "already reads what was
+// asked for" without the typed name a loosening asks for. The dry run says the
+// same: changed false, widening false, no reason.
+func TestSettingsSetDryRunDoesNotClassifyANoOpAsAWidening(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML("agent:\n  max_budget_usd: 100\n"))
+	before := readFileString(t, path)
+
+	doc := settingsDryRunDoc(t, "settings", "set", "agent.max_budget_usd", "100", "--layer", "repo")
+	if doc.Changed {
+		t.Errorf("the document says the edit changes something, and the file already reads 100: %+v", doc)
+	}
+	if doc.Widening || doc.Why != "" {
+		t.Errorf("an edit that changes nothing is classified as a widening: %+v", doc)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the dry run changed fugaro.yaml")
+	}
+}
+
 // TestSettingsDryRunTakesNeitherYesNorABareJSON: --dry-run and --yes answer
 // different questions, and the pair is refused rather than resolved; --json is
 // the dry run's own shape, so it is refused without it (the two flags the

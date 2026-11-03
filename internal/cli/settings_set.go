@@ -1041,6 +1041,12 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		base = settingsCeilingBase(cmd.Context(), row, oldValue)
 	}
 	typed, why := settingsTypedWrite(row, base, value, mode)
+	if !changed {
+		// An edit that writes nothing asks for nothing: the real write prints
+		// "already reads what was asked for" and demands no typed name, so the
+		// dry run must not classify it as a widening either.
+		typed, why = false, ""
+	}
 	edit := settingsEdit{
 		Path:     target.path,
 		Old:      old,
@@ -1109,6 +1115,9 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 	}
 	oldValue := settingsValueIn(old, target.keyPath)
 	typed, why := settingsTypedWrite(row, oldValue, "", "unset")
+	if !yamledit.Changed(old, newData) {
+		typed, why = false, ""
+	}
 	edit := settingsEdit{
 		Path:     target.path,
 		Old:      old,
