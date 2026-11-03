@@ -1645,7 +1645,7 @@ func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
 	t.Run("the VM backend is given the socket", func(t *testing.T) {
 		f := newCloudFixture(t)
 		dockerCheckout(t, needsDocker)
-		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.BatchCodec(), dockerCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec, nil)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.BatchCodec(), dockerCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec)
 		if err != nil {
 			t.Fatalf("the VM backend refused a docker-tagged image: %v", err)
 		}
@@ -1656,7 +1656,7 @@ func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
 	t.Run("Cloud Run refuses it", func(t *testing.T) {
 		f := newCloudFixture(t)
 		dockerCheckout(t, needsDocker)
-		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec, nil)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec)
 		if ask || err == nil || !strings.Contains(err.Error(), "Cloud Run gen-2 has no Docker daemon") {
 			t.Fatalf("ask = %v, err = %v, want the Cloud Run refusal", ask, err)
 		}
@@ -1671,7 +1671,7 @@ func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
 	t.Run("a job that needs no daemon asks for nothing", func(t *testing.T) {
 		f := newCloudFixture(t)
 		dockerCheckout(t, needsNode)
-		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML, "ghcr.io/acme/minimal:1"), appSlug, spec, nil)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML, "ghcr.io/acme/minimal:1"), appSlug, spec)
 		if err != nil || ask {
 			t.Fatalf("ask = %v, err = %v, want neither", ask, err)
 		}
@@ -1683,7 +1683,7 @@ func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
 	t.Run("an entry the catalog builds is read by its own name", func(t *testing.T) {
 		f := newCloudFixture(t)
 		dockerCheckout(t, needsNode)
-		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.BatchCodec(), builtCatalogYAML, catalogImageOf("dind")), appSlug, spec, nil)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.BatchCodec(), builtCatalogYAML, catalogImageOf("dind")), appSlug, spec)
 		if err != nil || !ask {
 			t.Fatalf("ask = %v, err = %v, want the socket dind's image needs", ask, err)
 		}
@@ -1694,7 +1694,7 @@ func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
 	t.Run("a pin to the docker entry is refused on Cloud Run", func(t *testing.T) {
 		f := newCloudFixture(t)
 		dockerCheckout(t, "{ image_name: dind, commands: { build: sh b.sh, test: sh t.sh } }")
-		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec, nil)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec)
 		if ask || err == nil || !strings.Contains(err.Error(), "Cloud Run gen-2 has no Docker daemon") {
 			t.Fatalf("ask = %v, err = %v, want the Cloud Run refusal for the pin", ask, err)
 		}
@@ -1705,7 +1705,7 @@ func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
 	t.Run("no catalog, nothing to judge", func(t *testing.T) {
 		f := newCloudFixture(t)
 		dockerCheckout(t, needsDocker)
-		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), "", "ghcr.io/acme/dind:1"), appSlug, spec, nil)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), "", "ghcr.io/acme/dind:1"), appSlug, spec)
 		if err != nil || ask {
 			t.Fatalf("ask = %v, err = %v, want neither", ask, err)
 		}
@@ -1720,7 +1720,7 @@ func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
 		for name, codec := range map[string]backend.Codec{"cloud-run": backend.CloudRunCodec(), "cloud-batch": backend.BatchCodec()} {
 			f := newCloudFixture(t)
 			dockerCheckout(t, "{ image: { apt: [jq] }, commands: { build: sh b.sh, test: sh t.sh } }")
-			ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, codec, dockerDefaultCatalogYAML, derived), appSlug, spec, nil)
+			ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, codec, dockerDefaultCatalogYAML, derived), appSlug, spec)
 			if err != nil || ask {
 				t.Fatalf("%s: ask = %v, err = %v, want neither", name, ask, err)
 			}
@@ -1744,7 +1744,7 @@ func TestTheDockerAskReadsTheDeployedImageNotTheCatalogsChoice(t *testing.T) {
 	t.Run("the VM backend is given the socket", func(t *testing.T) {
 		f := newCloudFixture(t)
 		dockerCheckout(t, needsNode)
-		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.BatchCodec(), dockerCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec, nil)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.BatchCodec(), dockerCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec)
 		if err != nil {
 			t.Fatalf("the VM backend refused the deployed image: %v", err)
 		}
@@ -1755,7 +1755,7 @@ func TestTheDockerAskReadsTheDeployedImageNotTheCatalogsChoice(t *testing.T) {
 	t.Run("Cloud Run refuses it", func(t *testing.T) {
 		f := newCloudFixture(t)
 		dockerCheckout(t, needsNode)
-		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec, nil)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec)
 		if ask || err == nil || !strings.Contains(err.Error(), "Cloud Run gen-2 has no Docker daemon") {
 			t.Fatalf("ask = %v, err = %v, want the Cloud Run refusal of the deployed image", ask, err)
 		}
@@ -1779,7 +1779,7 @@ func TestACatalogMoveBetweenDeployAndLaunchIsRefused(t *testing.T) {
 	t.Run("the entry the deployed image is is gone", func(t *testing.T) {
 		f := newCloudFixture(t)
 		dockerCheckout(t, needsDocker)
-		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), minimalCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec, nil)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), minimalCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec)
 		if err == nil || !strings.Contains(err.Error(), "fugaro update") {
 			t.Fatalf("ask = %v, err = %v, want a refusal naming fugaro update", ask, err)
 		}
@@ -1793,7 +1793,7 @@ func TestACatalogMoveBetweenDeployAndLaunchIsRefused(t *testing.T) {
 	t.Run("the entry no longer covers what the job needs", func(t *testing.T) {
 		f := newCloudFixture(t)
 		dockerCheckout(t, needsDocker)
-		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerTagDroppedCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec, nil)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerTagDroppedCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec)
 		if err == nil || !strings.Contains(err.Error(), "fugaro update") {
 			t.Fatalf("ask = %v, err = %v, want a refusal naming fugaro update", ask, err)
 		}
@@ -1803,7 +1803,7 @@ func TestACatalogMoveBetweenDeployAndLaunchIsRefused(t *testing.T) {
 	t.Run("the deployed image is no entry of the catalog", func(t *testing.T) {
 		f := newCloudFixture(t)
 		dockerCheckout(t, needsNode)
-		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.BatchCodec(), dockerCatalogYAML, "us-east5-docker.pkg.dev/proj-1234/acme-app/tiny:latest"), appSlug, spec, nil)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.BatchCodec(), dockerCatalogYAML, "us-east5-docker.pkg.dev/proj-1234/acme-app/tiny:latest"), appSlug, spec)
 		if err == nil || !strings.Contains(err.Error(), "fugaro update") {
 			t.Fatalf("ask = %v, err = %v, want a refusal naming fugaro update", ask, err)
 		}
@@ -1823,7 +1823,7 @@ func TestADeployedImageTheLauncherCannotReadIsNeverSwallowed(t *testing.T) {
 		dockerCheckout(t, needsDocker)
 		env := catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML, "")
 		env.be = deployedJob{codec: backend.CloudRunCodec(), readErr: errors.New("the platform is unreachable")}
-		if ask, err := catalogDockerAsk(context.Background(), env, appSlug, spec, nil); ask || err == nil {
+		if ask, err := catalogDockerAsk(context.Background(), env, appSlug, spec); ask || err == nil {
 			t.Fatalf("ask = %v, err = %v, want the read's own failure", ask, err)
 		}
 	})
@@ -1836,7 +1836,7 @@ func TestADeployedImageTheLauncherCannotReadIsNeverSwallowed(t *testing.T) {
 			t.Fatal(err)
 		}
 		env := &cloudEnv{lc: lc, be: backendNamed{codec: backend.CloudRunCodec()}}
-		if ask, err := catalogDockerAsk(context.Background(), env, appSlug, spec, nil); ask || err != nil {
+		if ask, err := catalogDockerAsk(context.Background(), env, appSlug, spec); ask || err != nil {
 			t.Fatalf("ask = %v, err = %v, want neither", ask, err)
 		}
 	})

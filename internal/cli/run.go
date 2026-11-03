@@ -2839,7 +2839,7 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 // launch whose ref says something else is therefore judged by the tree, which
 // is the residual the deploy-time arm does not have — that arm builds the spec
 // the job is deployed with, from the same file (F7).
-func catalogDockerAsk(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, job *launchProjectJob) (bool, error) {
+func catalogDockerAsk(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (bool, error) {
 	co := checkoutConfig(ctx, spec.Repo)
 	if co == nil {
 		return false, nil
@@ -2858,12 +2858,22 @@ func catalogDockerAsk(ctx context.Context, env *cloudEnv, slug string, spec *tas
 	if cat == nil || !catalog.Applies(*cat, w) {
 		return false, nil
 	}
-	name := deployedJobName(slug, spec, job)
+	// The job is the workflow's own: the catalog's jobs are per-repository
+	// ones, and the sole kind a shared project job runs — a clone workflow
+	// (launchProjectJobFor) — is the kind catalog.Applies has just taken out
+	// of this rule.
+	variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken)
+	if !ok {
+		// Not a job name: the launch itself refuses the variant a few lines
+		// on.
+		return false, nil
+	}
+	name := gcp.JobName(slug, variant)
 	be, ok := env.be.(jobImageReader)
-	if name == "" || !ok {
-		// No job to read: a backend that keeps no deployed job, and a
-		// workflow whose variant is not a job name, which the launch itself
-		// refuses a few lines on.
+	if !ok {
+		// A backend that keeps no deployed job to read (Cloud Batch starts
+		// one per run and keeps none) cannot say what image the run starts
+		// on, so the tag's rule has nothing to judge here.
 		return false, nil
 	}
 	image, deployed, err := be.JobImage(ctx, name)
@@ -2908,20 +2918,6 @@ func catalogDockerAsk(ctx context.Context, env *cloudEnv, slug string, spec *tas
 // exist only for the length of a run answers it not at all.
 type jobImageReader interface {
 	JobImage(ctx context.Context, job string) (string, bool, error)
-}
-
-// deployedJobName is the job this launch runs on: the shared project job it
-// resolved, or the per-repository job the workflow's variant names, which is
-// the name the deploy gave it (internal/infra's WorkflowSpec.Job). "" when
-// the workflow's variant is not a job name, which the launch itself refuses.
-func deployedJobName(slug string, spec *task.Spec, job *launchProjectJob) string {
-	if job != nil {
-		return job.Name
-	}
-	if variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken); ok {
-		return gcp.JobName(slug, variant)
-	}
-	return ""
 }
 
 // catalogEntryOf is the one catalog entry whose image image is, and whether
@@ -3069,7 +3065,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// refused launch has no token to drop, and before the declaration, which
 	// is the coordinator's record that this run is about to work — a refusal
 	// must leave nothing behind that says otherwise.
-	docker, err := catalogDockerAsk(hctx, env, slug, spec, job)
+	docker, err := catalogDockerAsk(hctx, env, slug, spec)
 	if err != nil {
 		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		releaseClaim(rctx, env, s, holder)
