@@ -62,7 +62,7 @@ The step is level 3 of the review levels the owner answered on 2026-10-30 (`docs
 
 | Name | Behaviour |
 |---|---|
-| `default` | Exactly today's loop: first-line per `agent.first_line_review` and `first_line_rounds`, senior rounds per `agent.review_rounds`. |
+| `default` | The whole loop, up to three review levels: first-line per `agent.first_line_review` and `first_line_rounds`, senior rounds per `agent.review_rounds`, and the `adversarial` step where the run's resolved levels run level 3. |
 | `cheap-loop-senior` | First-line (2 rounds), then senior (1 round, reviewer role). |
 | `claude-solo` | `reviewer: coder`, senior review (1 round), no first-line. |
 
