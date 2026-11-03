@@ -1131,18 +1131,15 @@ function textAt(raw: unknown): string | null {
  * that ended without succeeding, or that a person halted -- the two grounds D810
  * names.
  *
- * **It is a decoder, and the one document the console decodes closed.** Every
- * other reader here takes the document as it arrived and reads the fields it
- * knows (the owner's ruling of 2026-10-30, in `shared/schema.ts`); this one
- * refuses a row carrying a key `runview.Row` does not have, a member of the
- * wrong type, or neither of the two keys that name the run. The queue is why:
- * its rows are not drawn and forgotten -- `runsQueuePart` turns each into the
- * console's own act, a re-run whose repository and plan task come from this very
- * row, and the entry prefills a launch from them. A member this console has not
- * read is a row whose shape it cannot vouch for, and a document it cannot vouch
- * for is refused whole rather than drawn around: the caller draws the refusal in
- * the section's own place, the way it draws a read that failed, so a page with
- * one bad row never becomes a shorter list with no sign of what was left out.
+ * **It is a decoder, and a row it cannot read refuses the page.** `queueRuns`
+ * holds each row to what the queue cannot do without -- the two keys that name
+ * the run, the repository and the status a press acts on, `terminal`, and the
+ * kind of every member this build knows (`decodeRunsList`, and the ruling of
+ * 2026-10-30 it reads a document by: an unknown key is a column a newer CLI
+ * added and is ignored). A page it cannot read is refused whole rather than
+ * drawn around: the caller draws the refusal in the section's own place, the way
+ * it draws a read that failed, so a page with one bad row never becomes a
+ * shorter list with no sign of what was left out.
  *
  * **The CLI's order is kept.** `runs ls` answers newest first, and a queue that
  * re-sorted it would be a second opinion about which run is the newest -- the

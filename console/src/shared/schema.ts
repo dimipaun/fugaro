@@ -47,18 +47,6 @@
 // `*_KEYS` lists stay, pinned to the Go structs by `schema.test.ts`, as the
 // console's statement of what it has read.
 //
-// **One door is closed, and it is the queue's.** `decodeRunsList` (§5's
-// `runs ls --json`, at the end of this file) refuses a key `runview.Row` does
-// not have. The ruling above is about a document a screen *draws* -- a column a
-// newer CLI added reaches no element -- while the queue *decides* from its rows
-// and turns them into the console's own acts, so a row whose shape this build
-// has not read is not one it may offer to re-run. It is the one exception, it is
-// written up at the door itself, and it is a **deliberate divergence** from
-// §5.1's compatibility note in `docs/design/desktop-console.md`, whose sentence
-// ("ignore an unknown key on every CLI read shape") now has one exception to
-// record: that note is where this should be written down, and it is filed in the
-// pull request that added this door rather than changed under it.
-//
 // **The tolerant axes for a known key, named.** Numbers are read through
 // `readNumber`, so a number that is absent, `null` or not a number becomes an
 // *unavailable reading* with a sentence rather than a refusal: the contract's
@@ -484,8 +472,6 @@ export type SchemaRefusalName =
   | 'not-a-day'
   /** a key that must be a number is not one */
   | 'not-a-number'
-  /** a key the shape does not have at all (the closed runs list, §5) */
-  | 'unknown-key'
   /** a key whose value must be one of a closed set of words carries none of them */
   | 'unknown-value'
   /** a live document was expected where a degraded one arrived */
@@ -2477,22 +2463,24 @@ export function decodeCoordinatorIntents(
 }
 
 // ---------------------------------------------------------------------------
-// §5's runs list: the one document this console decodes closed.
+// §5's runs list.
 //
-// Every other door above follows the owner's ruling of 2026-10-30 -- an unknown
-// key is a column a newer CLI added, and it is ignored while a missing or
-// retyped one is refused, because a console that refused the addition would
-// turn a whole screen into the skew state until its own next release caught up.
-// This door is the deliberate exception, and the queue is why: its rows are not
-// drawn and forgotten, they become the console's own acts (the run a press
-// re-runs, the plan task a launch is prefilled with). A reader that decides from
-// a document has to know the document, key by key, so a row carrying a member
-// `runview.Row` does not have is refused rather than read around.
+// The queue reads this document and does not merely draw it -- its rows become
+// the console's own acts (the run a press re-runs, the plan task a launch is
+// prefilled with) -- so its rows are held to more than a screen's drawing is:
+// the four keys the queue decides by have to be there, and every member this
+// build knows has to be the kind the struct declares.
 //
-// The closed set is the console's own `RECORD_KEYS`, the list of the struct's
-// every JSON key that `schema.test.ts` derives from `internal/runview/runview.go`
-// and holds here in step with it: the same list every other reader of this shape
-// uses, and one that cannot drift from the struct without a failing test.
+// What it does not know it ignores, exactly as every door above does (the
+// owner's ruling of 2026-10-30): a key a newer CLI added is a column this build
+// has not read, and refusing it would turn the queue into a refusal over a
+// document the CLI wrote correctly.
+//
+// The kinds come from `RECORD_MEMBERS` below, whose names are the console's own
+// `RECORD_KEYS` -- the list of `runview.Row`'s every JSON key that
+// `schema.test.ts` derives from `internal/runview/runview.go` and holds here in
+// step with it: the same list every other reader of this shape uses, and one
+// that cannot drift from the struct without a failing test.
 // ---------------------------------------------------------------------------
 
 /** RUNS_LIST_KEYS is `lsDoc`'s own key set (`internal/cli/runs.go`), the
@@ -2514,9 +2502,10 @@ type RecordMemberKind = 'text' | 'count' | 'flag' | 'stamp' | 'block'
  * members, and a reader that did would own a second copy of a shape whose own
  * decoder is the screen that draws it.
  *
- * A key of `RECORD_KEYS` that is not listed here is accepted and not read --
- * `RECORD_KEYS` is the struct's whole key set and this table holds the members
- * whose type this build knows how to check.
+ * A key this table does not name is ignored, and it is ignored whether the
+ * struct has it or not: this build checks the members it knows a kind for, and a
+ * key outside them -- a member whose type is not read here, or the column a
+ * newer CLI added -- reaches no drawing and no act.
  *
  * An absent member, and a `null` at one, both read as the CLI having nothing to
  * say -- this module's house reading of a `null` (`optionalText`), and what the
@@ -2593,12 +2582,10 @@ export interface RunsListView {
 }
 
 /**
- * decodeRunsList admits `runs ls --json` (§5) and nothing else, closed: the
- * document's root is `lsDoc`'s four keys with `runs` the array it is read from,
- * and every row is a `runview.Row` -- its keys `RECORD_KEYS` and its members the
- * kinds `RECORD_MEMBERS` names. One row this door cannot read refuses the whole
- * document: the caller draws the refusal in place of the list rather than the
- * rows beside the one it could not read.
+ * decodeRunsList admits `runs ls --json` (§5): the root's `runs`, an array, with
+ * each member of it a `runview.Row`. A key the document carries and this build
+ * does not know is ignored, the way every other door above reads a document --
+ * what is refused is a row that cannot say what a row is.
  *
  * The four members a row must carry are the ones the queue cannot do without:
  * the id (`run`, or `run_id` where a shape carries only that), the repository a
@@ -2606,13 +2593,15 @@ export interface RunsListView {
  * all four written without `omitempty`. The rest of the struct's optional keys
  * are read as the empty string (or, for `halt`, as no halt) when they are absent,
  * which is the CLI's own "there was nothing to say".
+ *
+ * A row this door cannot read refuses the whole document: the caller draws the
+ * refusal in place of the list rather than the rows beside the one it could not
+ * read, because a dropped row is a shorter list the operator cannot tell from a
+ * shorter day.
  */
 export function decodeRunsList(raw: unknown, where = 'the runs list document'): Decoded<RunsListView> {
   return at(where, () => {
     const root = objectAt(raw, 'the document', where)
-    for (const key of Object.keys(root)) {
-      if (!RUNS_LIST_KEYS.includes(key)) refuse('unknown-key', key, where)
-    }
     const rows = arrayAt(required(root, 'runs', '', where), 'runs', where)
     return { runs: rows.map((row, index) => runsRowAt(row, index, where)) }
   })
@@ -2621,8 +2610,10 @@ export function decodeRunsList(raw: unknown, where = 'the runs list document'): 
 function runsRowAt(raw: unknown, index: number, where: string): RunsListRow {
   const field = `runs[${String(index)}]`
   const record = objectAt(raw, field, where)
+  // The members this build knows a kind for are held to it; a key it does not
+  // name -- including a member of `runview.Row` no reader here types -- is left
+  // where it is and read by nothing.
   for (const key of Object.keys(record)) {
-    if (!RECORD_KEYS.includes(key)) refuse('unknown-key', `${field}.${key}`, where)
     const kind = RECORD_MEMBERS[key]
     if (kind !== undefined) recordMemberAt(record, key, kind, field, where)
   }

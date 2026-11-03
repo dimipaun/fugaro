@@ -5847,10 +5847,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       runs = null
       if (!answer.ok) sentences.runs = answer.sentence
       else {
-        // The queue's own reader is the console's one closed decoder: a
-        // document it cannot read is refused **whole**, and the refusal is the
-        // section's own sentence -- the same state a read that failed draws --
-        // rather than a list of the rows that happened to parse.
+        // The queue's own reader refuses a page **whole** when a row cannot be
+        // read, and the refusal is the section's own sentence -- the same state
+        // a read that failed draws -- rather than a list of the rows that
+        // happened to parse.
         const decoded = queueRuns(answer.data)
         if (!decoded.ok) sentences.runs = decoded.skew.because
         else {
