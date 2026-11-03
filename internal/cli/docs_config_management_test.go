@@ -439,7 +439,7 @@ func TestDocsConfigManagementNoSecondWritePath(t *testing.T) {
 	section := plan[start:end]
 	for _, task := range []string{"G0", "G1", "G3", "G4", "G6", "G7", "G8", "G9", "G10", "G11"} {
 		if !regexp.MustCompile(`\b` + task + `\b`).MatchString(section) {
-			t.Errorf("%s' §5 does not name %s among the tasks that call the managed build's gate or its audit writer", cfmPlan, task)
+			t.Errorf("%s' §5 does not name %s: the section lists the tasks that call the managed build's gate or its audit writer and the tasks that need neither, so a task it leaves out is one whose dependency a reader cannot see", cfmPlan, task)
 		}
 		if !strings.Contains(plan, "\n## "+task+". ") {
 			t.Errorf("%s names %s in §5 and writes no task heading for it", cfmPlan, task)
