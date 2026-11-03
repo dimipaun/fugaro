@@ -2483,10 +2483,6 @@ export function decodeCoordinatorIntents(
 // that cannot drift from the struct without a failing test.
 // ---------------------------------------------------------------------------
 
-/** RUNS_LIST_KEYS is `lsDoc`'s own key set (`internal/cli/runs.go`), the
- * document `runs ls --json` prints and `watch`'s degraded body embeds. */
-export const RUNS_LIST_KEYS: readonly string[] = Object.freeze(['project', 'runs', 'totals', 'warnings'])
-
 /** RecordMemberKind is the JSON kind of one member of `runview.Row`, as the Go
  * struct declares it: a string, a whole number, a boolean, an RFC 3339 stamp,
  * or a nested block the reader does not open. */
