@@ -586,22 +586,6 @@ func (r *run) reviewMode(ctx context.Context) {
 		r.failReviewInfra(ctx, err)
 		return
 	}
-	// The mutation check the task asked for (fugaro review --mutate, D885)
-	// runs here and not earlier or later: the head is checked out and the
-	// review home is in place, which is what the child's toolchain resolves
-	// against, and the prompt below is built and the stage started only once
-	// the worktree holds the head's own bytes again. An ask this run cannot
-	// turn into a check ends the review with its own reason; a check that ran
-	// is evidence the artifact carries and never a verdict, so it ends
-	// nothing (runMutationCheck).
-	if err := r.runMutationCheck(ctx); err != nil {
-		if errors.Is(err, errMutationRefused) {
-			r.endReviewInvalidVerdict(ctx, r.redact(err.Error()))
-			return
-		}
-		r.failReviewInfra(ctx, err)
-		return
-	}
 	// The built input is the reviewed pull request's own diff, read from the
 	// checkout reviewMode's line above put its head in (reviewinput.go). A
 	// pick run gets none: its attempts are worktrees beside the main
@@ -632,6 +616,29 @@ func (r *run) reviewMode(ctx context.Context) {
 	}
 	if reviewStageDoneSeam != nil {
 		reviewStageDoneSeam()
+	}
+	// The mutation check the task asked for (fugaro review --mutate, D885)
+	// runs here and not earlier or later (owner ruling on D891(a)): the
+	// reviewer has read the head and is done, so the mutant's own child --
+	// which runs the head's test code in this very worktree and can leave a
+	// .git/config fsmonitor entry or a settings file behind -- has nothing
+	// left to influence, and only the artifact write below follows the
+	// check. A halt decides the run before either, the same priority every
+	// other branch here gives it. An ask this run cannot turn into a check
+	// ends the review with its own reason; a check that ran is evidence the
+	// artifact carries and never a verdict, so it ends nothing
+	// (runMutationCheck).
+	if h := r.haltValue(); h != nil {
+		r.endReviewHalted(ctx, h)
+		return
+	}
+	if err := r.runMutationCheck(ctx); err != nil {
+		if errors.Is(err, errMutationRefused) {
+			r.endReviewInvalidVerdict(ctx, r.redact(err.Error()))
+			return
+		}
+		r.failReviewInfra(ctx, err)
+		return
 	}
 	// The independent review job's result is the artifact, and it is decoded
 	// by the artifact's own reader (D890, F23): the code below reads a verdict
