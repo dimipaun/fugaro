@@ -324,7 +324,10 @@ variable "coordinator" {
       # installation token from the App, while its Bitbucket path mints a read
       # token at the credentials service (BB5) — so an installation whose
       # repositories are all Bitbucket has no App to name and is not a
-      # deployment that is wrong.
+      # deployment that is wrong. alltrue over an empty list is true, so that
+      # clause on its own would admit a coordinator with no repository at all:
+      # the length check beside it is what refuses that, and the two are one
+      # guard.
       (var.coordinator.github_app_id != "" || alltrue([for r in var.coordinator.repos : r.provider != "github"])) &&
       length(var.coordinator.repos) > 0
     ))

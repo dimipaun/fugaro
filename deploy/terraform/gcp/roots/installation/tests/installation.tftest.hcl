@@ -1207,6 +1207,12 @@ run "coordinator_job" {
     condition     = one(one(google_cloud_run_v2_job.coordinator[0].template).template).timeout == "600s"
     error_message = "the sweep's own deadline is 600s, above the 8 minutes internal/cli stops a tick at"
   }
+  # The App ID counts among the six plain entries because this fixture's
+  # repositories include a GitHub one: the module emits it from a conditional
+  # block (F24), and a conditional block resolves to the same plain entry as
+  # any other, so what is counted here is the plan's list and not the module's
+  # blocks. Where every repository is Bitbucket the entry is absent and this
+  # run's own tfvars would have to say so.
   assert {
     condition = (toset([for e in one(one(one(google_cloud_run_v2_job.coordinator[0].template).template).containers).env : e.name if length(coalesce(e.value_source, [])) == 0]) == toset([
       "FUGARO_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL", "FUGARO_RUNS_BUCKET",
