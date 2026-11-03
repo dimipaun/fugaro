@@ -544,6 +544,36 @@
         "governance.tiers": {
           "default": "unset = Fugaro's own tiers"
         },
+        "image_catalog.entries.*.name": {
+          "default": "unset = none"
+        },
+        "image_catalog.entries.*.tags": {
+          "default": "unset = none"
+        },
+        "image_catalog.entries.*.source.kind": {
+          "default": "unset = none"
+        },
+        "image_catalog.entries.*.source.repo": {
+          "default": "unset = none"
+        },
+        "image_catalog.entries.*.source.path": {
+          "default": "unset = none"
+        },
+        "image_catalog.entries.*.source.branch": {
+          "default": "unset = none"
+        },
+        "image_catalog.entries.*.source.inline": {
+          "default": "unset = none"
+        },
+        "image_catalog.entries.*.source.image": {
+          "default": "unset = none"
+        },
+        "image_catalog.entries.*.description": {
+          "default": "unset = none"
+        },
+        "image_catalog.entries.*.default": {
+          "default": "unset = false"
+        },
         "image_source": {
           "default": "unset = none: no base pin has been recorded"
         },
