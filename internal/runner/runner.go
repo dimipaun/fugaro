@@ -2644,7 +2644,7 @@ func (r *run) agentLoop(ctx context.Context) {
 		case recipe.StepFirstLine:
 			tier = runstore.TierSenior
 			var ok bool
-			if sessionID, ok = r.firstLine(ctx, st.Rounds, reviewPrompt, sys, sessionID); !ok {
+			if sessionID, ok = r.firstLine(ctx, st.Rounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
 				return
 			}
 		case recipe.StepReview:
@@ -2687,12 +2687,16 @@ func (r *run) agentLoop(ctx context.Context) {
 // It reports whether the plan may go on to the step after it, which is false
 // for every way the run stops here.
 func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string) bool {
+	// Level 2's own reviewer reads the level's focus quoted under the run's
+	// heading (reviewPromptWithFocus), exactly as level 3's does; the bounce's
+	// cheap loop below is level 1's and reads level 1's.
+	prompt := reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL2))
 	for round := 1; ; round++ {
 		// The head is read per round rather than once: a fix between two rounds
 		// moves the branch, and the summary keeps the commit *this* round read
 		// (D727), so the levels can be told apart by the head they approved.
 		head := r.reviewedHead(ctx)
-		v, parsed, ok := r.seniorRound(ctx, round, reviewPrompt)
+		v, parsed, ok := r.seniorRound(ctx, round, prompt)
 		if !ok {
 			return false
 		}
@@ -2726,7 +2730,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		}
 		if st.Bounce && st.FirstRounds > 0 {
 			r.bounce++
-			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPrompt, sys, sessionID); !ok {
+			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
 				return false
 			}
 		}
@@ -2788,7 +2792,7 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 		}
 		if st.Bounce && st.FirstRounds > 0 {
 			r.bounce++
-			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPrompt, sys, sessionID); !ok {
+			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
 				return false
 			}
 		}

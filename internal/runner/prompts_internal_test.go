@@ -5,6 +5,23 @@ import (
 	"testing"
 )
 
+// TestReviewPromptWithFocusEmptyChangesNothing: a level that names no focus is
+// handed the review brief byte for byte. reviewPromptWithFocus is the one place
+// a level's focus enters an ordinary review prompt, and an empty focus must add
+// nothing — not a heading, not a blank block — or every run with no focus would
+// carry a section the reviewer was never asked about.
+//
+// Mutation (return reviewPrompt + "\n\n" when the focus is empty): this test
+// fails, the byte-identical cases gaining a trailing blank pair.
+func TestReviewPromptWithFocusEmptyChangesNothing(t *testing.T) {
+	const brief = "You are reviewing a pull request.\n\nReview the changes on this branch (see `git diff origin/main...HEAD`). Do not modify any files."
+	for _, focus := range []string{"", "  ", "\n", "\t\n "} {
+		if got := reviewPromptWithFocus(brief, focus); got != brief {
+			t.Errorf("reviewPromptWithFocus(brief, %q) = %q, want the brief byte for byte", focus, got)
+		}
+	}
+}
+
 // TestBaseInstructionsBlockCapsWhatItPastes: the base branch's instructions
 // are read out of the base ref whole and pasted into the prompt, and nothing
 // upstream bounds their size — a CLAUDE.md or a rule file of any length is a
