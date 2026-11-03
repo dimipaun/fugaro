@@ -275,3 +275,50 @@ func TestUpdatePublishesTheCatalogWithNoSecondCommand(t *testing.T) {
 		t.Errorf("the stage has %s %q after the update: publishing a catalog asks for no second command", st.State, st.Detail)
 	}
 }
+
+// TestImageCatalogIsKeptWhenTheConfigIsSilent is the keep rule's publish half
+// (D1140, D1156), and the reason this task is a SEC one: a machine whose file
+// says nothing about the catalog — a teammate's, a CI box's, an operator's
+// second laptop — must not republish the node without it, which would leave
+// every repository that names an entry with nothing to run. Deleting the key is
+// therefore not how a catalog is taken away; the test below is the spelling
+// that is.
+func TestImageCatalogIsKeptWhenTheConfigIsSilent(t *testing.T) {
+	f := newProjectFixture(t, catalogConfigYAML)
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	rewriteProjectConfig(t, f, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	p := publishedPolicy(t, f)
+	if p.ImageCatalog == nil || len(p.ImageCatalog.Entries) != 2 {
+		t.Fatalf("ImageCatalog = %+v, want the published catalog kept", p.ImageCatalog)
+	}
+	if p.ImageCatalog.Entries[0].Name != "universal" {
+		t.Errorf("entries[0] = %+v, want the entry the node already carried", p.ImageCatalog.Entries[0])
+	}
+}
+
+// TestImageCatalogIsDroppedOnAnExplicitEmptyCatalog: a written catalog with no
+// entry is how a published one is taken away on purpose, and taking it away
+// takes the member away too — the node an operator clears is byte for byte the
+// node of a project that never named a catalog, so no launcher of an older CLI
+// meets the key's skew for a catalog nobody has.
+func TestImageCatalogIsDroppedOnAnExplicitEmptyCatalog(t *testing.T) {
+	f := newProjectFixture(t, catalogConfigYAML)
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	rewriteProjectConfig(t, f, "image_catalog: { entries: [] }\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if p := publishedPolicy(t, f); p.ImageCatalog != nil {
+		t.Errorf("ImageCatalog = %+v, want none after a written empty catalog", p.ImageCatalog)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); strings.Contains(raw, "image_catalog") {
+		t.Errorf("the node still carries the member:\n%s", raw)
+	}
+}
