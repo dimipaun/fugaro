@@ -928,15 +928,20 @@ const SETTINGS_OWNED_WORD = 'written by '
  * (`settings set`'s refusal: "%s is written by %s, not by the generic path"). */
 const SETTINGS_NOT_GENERIC_WORD = ', not by the generic path'
 
-/** SETTINGS_PENCIL_LABEL is the pencil's control word. The button is drawn
- * through `disabledWrite`, so its accessible name is this word plus the
- * console's own sentence that the write is not in this release; the task that
- * makes it a button (`C2`) is the one that names the key in it (D1116). */
+/** SETTINGS_PENCIL_LABEL is the pencil's control word, and it is the button's
+ * own text: the state a control is in is never colour alone (styling design
+ * section 3.5), so the control says in a word what pressing it does. */
 const SETTINGS_PENCIL_LABEL = 'Edit'
 
 /** SETTINGS_PENCIL_CLASS is the pencil's hook, and the class the stylesheet
  * gives the pencil's states. */
 export const SETTINGS_PENCIL_CLASS = 'projects-settings-pencil'
+
+/** SETTINGS_PENCIL_KEY is the attribute the pencil carries its row's key in. A
+ * button's accessible name is the row's key drawn (D1116), and the entry -- the
+ * one place with a listener to bind -- works from the drawn element alone, so
+ * the key travels on the element rather than in a table beside it. */
+export const SETTINGS_PENCIL_KEY = 'data-setting-key'
 
 /**
  * SETTINGS_DOC_SHAPE_BECAUSE and SETTINGS_ROW_SHAPE_BECAUSE are the console's
@@ -983,6 +988,16 @@ type SettingsRowsRead =
  * Only `value` may be absent: the contract writes no `value` member on a
  * sensitive row at all, and `*string` is the one member the CLI omits.
  *
+ * The three writability members (`writable`, `owner`, `target_layer`, D1102) are
+ * read the other way round: a member that is **absent** is a CLI whose read does
+ * not carry it, which is a row with no pencil and no owning family, and never a
+ * refused table. The owner's ruling of 2026-11-03 is that the console keeps no
+ * floor of its own here -- it does not compare a version and it does not name a
+ * release that would have written the members -- so an older CLI draws the table
+ * it can and offers no edit. A member that is **present and of another type** is
+ * still a refusal, below: absent is a CLI that did not answer, a wrong type is a
+ * document this screen cannot read.
+ *
  * Two entries are dropped rather than refused, and each is **not a row** of this
  * table rather than a row of the wrong shape:
  *
@@ -1006,11 +1021,11 @@ function settingsRowAt(entry: unknown): SettingsRowRead {
   const scope = textAt(row['scope'])
   const wins = textAt(row['wins'])
   const state = textAt(row['state'])
-  const owner = textAt(row['owner'])
-  const targetLayer = textAt(row['target_layer'])
+  const owner = row['owner'] === undefined ? '' : textAt(row['owner'])
+  const targetLayer = row['target_layer'] === undefined ? '' : textAt(row['target_layer'])
   const rawValue = row['value']
   const value = rawValue === undefined ? null : textAt(rawValue)
-  const writable = row['writable']
+  const writable = row['writable'] === undefined ? false : row['writable']
   if (
     scope === null ||
     wins === null ||
@@ -1215,6 +1230,17 @@ function numberCell(
 function sanitizedKey(raw: string): string | null {
   const result = sanitizeText(raw, 'slug', 'repos[].slug')
   return result.ok && result.text !== '' ? result.text : null
+}
+
+/** settingsKeyText is a setting's key the way the settings row draws it and the
+ * way the pencil carries it: `branch`, the class whose grammar admits a dotted
+ * identifier whole (`settingsRowLine`'s note on why the key is not `label`), or
+ * the console's own unavailable mark when the sanitizer refuses the string. It
+ * is one function for the two doors so that the cell a reader sees and the name
+ * the button is announced with cannot come out of the same key differently. */
+function settingsKeyText(key: string): string {
+  const result = sanitizeText(key, 'branch', 'settings[].key')
+  return result.ok && result.text !== '' ? result.text : UNAVAILABLE_MARK
 }
 
 /** note is one of the console's own sentences, in a cell of its own. */
@@ -1677,10 +1703,11 @@ export function fillProjectsModels(factory: ScreenFactory, model: ProjectsModels
  * run gets, the layer that decided it, the read's state, and the row's write.
  *
  * **The write is the whole point of the row set.** A writable row with a target
- * layer carries the pencil, drawn through `disabledWrite`: a real `button` in
- * the tab order that says it is not available in this release, so nothing here
- * looks like a control that quietly does nothing and **no listener is bound**.
- * The task that turns it into the edit's door is the plan's C2. A row the
+ * layer carries the pencil: a real `button`, in the tab order, whose accessible
+ * name is the row's own key (D1116) so that a column of them names six settings
+ * rather than six "Edit"s. What it opens is the entry's to bind (`entry.ts`,
+ * `paintSettings`), and the entry binds it: the drawing is a function of the
+ * document and attaches no listener of its own. A row the
  * generic path does not write draws the family that does instead -- the
  * document's own `owner`, in S5's own words -- and a row with no family at all
  * draws no word about one, because the console does not know who writes it.
@@ -1710,12 +1737,34 @@ function settingsRowLine(parent: ScreenElement, factory: ScreenFactory, row: Pro
   if (row.value !== null) textCell(element, factory, 'span', row.value, 'label', 'settings[].value', 'projects-settings-value')
   if (row.wins !== '') textCell(element, factory, 'span', row.wins, 'label', 'settings[].wins', 'projects-settings-wins')
   if (row.state !== '') textCell(element, factory, 'span', row.state, 'sentence', 'settings[].state', 'projects-settings-state')
-  if (row.pencil) element.append(disabledWrite(factory, SETTINGS_PENCIL_CLASS, SETTINGS_PENCIL_LABEL))
+  if (row.pencil) element.append(settingsPencil(factory, row.key))
   else if (!row.writable && row.owner !== '') {
     literal(cell(element, factory, 'span', 'projects-settings-owner-word'), SETTINGS_OWNED_WORD)
     textCell(element, factory, 'span', row.owner, 'label', 'settings[].owner', 'projects-settings-owner')
     literal(cell(element, factory, 'span', 'projects-settings-owner-generic'), SETTINGS_NOT_GENERIC_WORD)
   }
+}
+
+/**
+ * settingsPencil is the one write a settings row offers (D1108's pencil, D1116):
+ * a real `button` with no listener of its own, whose accessible name names the
+ * key it edits so that a column of pencils is a column of as many different
+ * controls. `type="button"` keeps it out of a form's submit path, the way every
+ * live control in this theme is drawn.
+ *
+ * It binds nothing here. The press is the entry's (`paintSettings`), because the
+ * entry is the only place holding the bridge, the row set and the focus to hand
+ * back -- and what pressing it opens (the dry run, `settingsView`'s window, the
+ * argv) is C3's.
+ */
+function settingsPencil(factory: ScreenFactory, key: string): ScreenElement {
+  const button = make(factory, 'button', SETTINGS_PENCIL_CLASS)
+  button.setAttribute('type', 'button')
+  const named = settingsKeyText(key)
+  button.setAttribute(SETTINGS_PENCIL_KEY, named)
+  button.setAttribute('aria-label', `${SETTINGS_PENCIL_LABEL} ${named}`)
+  literal(button, SETTINGS_PENCIL_LABEL)
+  return button
 }
 
 /** settingsPanelBody is the settings panel's content: one row per setting, in
