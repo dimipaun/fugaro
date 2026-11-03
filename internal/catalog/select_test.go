@@ -109,6 +109,42 @@ func TestNoCoveringEntryRefusesBeforeTheJobStarts(t *testing.T) {
 	}
 }
 
+// TestNoCoveringEntryListsOnlyTrueNearMisses: §3.3's first message lists the
+// whole catalog, and on Cloud Run that includes the entries the docker rule
+// took out of the candidate set (D1149) — an entry that covers the needed tags
+// and would otherwise read as a near miss, telling a person to add an image
+// they already have. Each one is marked with the reason it was not a
+// candidate, and on the VM backend, where the rule takes nothing out, nothing
+// is marked.
+//
+// Mutation (drop the mark, or mark on every backend): the Cloud Run case lists
+// dk as an ordinary near miss, or the VM case claims a rule the VM does not
+// have.
+func TestNoCoveringEntryListsOnlyTrueNearMisses(t *testing.T) {
+	cat := config.Catalog{Entries: []config.Entry{entry("dk", "node docker", false)}}
+	_, err := Choose(job(cat, CloudRun, Repo{Slug: "acme/api", Needs: []string{"node"}}))
+	if err == nil {
+		t.Fatal("a needed set the only entry is left out of was accepted on Cloud Run")
+	}
+	want := "the catalog's images cover: dk [node docker] (docker: VM backend only)"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("the Cloud Run refusal reads\n%s\n\nwant it to carry %q: dk covers the tags this job needs and is not a candidate, and saying only the second half sends the reader to add the image they have",
+			err.Error(), want)
+	}
+	// The same entry on the VM backend, where it is an ordinary candidate and
+	// this refusal is about its tags alone.
+	_, err = Choose(job(cat, Batch, Repo{Slug: "acme/api", Needs: []string{"node", "firebase-emulator"}}))
+	if err == nil {
+		t.Fatal("a needed set no entry covers was accepted on the VM backend")
+	}
+	if want := "the catalog's images cover: dk [node docker]\n"; !strings.Contains(err.Error()+"\n", want) {
+		t.Errorf("the VM refusal reads\n%s\n\nwant it to carry %q: the docker rule takes nothing out on a backend that has a daemon", err.Error(), want)
+	}
+	if strings.Contains(err.Error(), "VM backend only") {
+		t.Errorf("the VM refusal marks an entry the docker rule kept:\n%s", err.Error())
+	}
+}
+
 func TestEmptyNeededSetTakesTheDefaultNotTheFewestTags(t *testing.T) {
 	cat := config.Catalog{Entries: []config.Entry{
 		entry("narrow", "node", false),

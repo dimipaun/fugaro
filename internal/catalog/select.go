@@ -109,12 +109,15 @@ var (
 // order the repositories named them, so the message is deterministic and a
 // person can read it against their own needs: line.
 //
-// entries is the whole catalog, not the candidate set: which entries the
-// backend left out is D1149's rule and the person's fix is a catalog entry,
-// so the near misses a reader needs to see are all of them.
-func NoCoveringEntryError(needed []string, entries []config.Entry) error {
+// entries is the whole catalog, not the candidate set: the person's fix is a
+// catalog entry, so the near misses a reader needs to see are all of them. An
+// entry the backend's docker rule left out is listed and marked as such
+// (D1149), because it is a near miss for another reason than its tags — and a
+// list a reader cannot trust is a list that has them adding an entry they
+// already have.
+func NoCoveringEntryError(needed []string, entries []config.Entry, backend Backend) error {
 	return fmt.Errorf("%w: %s\nthe catalog's images cover: %s\nadd an entry that covers the missing tags (fugaro image add <name> --tags %s), or add a \"universal\" entry that covers every tag this project uses",
-		ErrNoCoveringEntry, brackets(needed), coverList(entries), strings.Join(needed, " "))
+		ErrNoCoveringEntry, brackets(needed), coverList(entries, backend), strings.Join(needed, " "))
 }
 
 // DockerOnCloudRunError is §3.3's second message: the missing capability is
@@ -139,10 +142,19 @@ func brackets(tags []string) string { return "[" + strings.Join(tags, " ") + "]"
 // coverList is what the catalog's entries cover, in catalog order: each
 // entry's name and its tags. An entry with no tags reads as an empty list
 // rather than as nothing, because it is still an entry the message is about.
-func coverList(entries []config.Entry) string {
+//
+// An entry the docker rule took out of this job's candidate set (D1149) is
+// marked, so that every entry the message lists is a true near miss: without
+// the mark, a catalog whose only node-carrying image is tagged docker is read
+// as "nothing covers [node], and here are the images that do".
+func coverList(entries []config.Entry, backend Backend) string {
 	parts := make([]string, 0, len(entries))
 	for _, e := range entries {
-		parts = append(parts, e.Name+" "+brackets(e.Tags))
+		part := e.Name + " " + brackets(e.Tags)
+		if !backend.hasDockerDaemon() && slices.Contains(e.Tags, DockerTag) {
+			part += " (" + DockerTag + ": VM backend only)"
+		}
+		parts = append(parts, part)
 	}
 	return strings.Join(parts, ", ")
 }
@@ -262,7 +274,7 @@ func Choose(j Job) (Choice, error) {
 	if len(covering) == 0 {
 		// §3.1 step 6, and only for a non-empty needed set: a job that
 		// needs nothing is never refused for want of a candidate.
-		return Choice{}, NoCoveringEntryError(needed, j.Catalog.Entries)
+		return Choice{}, NoCoveringEntryError(needed, j.Catalog.Entries, j.Backend)
 	}
 	slices.SortFunc(covering, func(a, b config.Entry) int {
 		if c := len(a.Tags) - len(b.Tags); c != 0 {
