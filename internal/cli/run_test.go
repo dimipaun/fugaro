@@ -1481,6 +1481,21 @@ const dockerCatalogYAML = `image_catalog:
       source: { kind: image, image: ghcr.io/acme/dind:1 }
 `
 
+// dockerDefaultCatalogYAML is the same catalog with the docker-tagged entry
+// marked default: the shape that makes the catalog speak for a repository that
+// names nothing, and the one a workflow keeping its own image definition must
+// still not be judged by.
+const dockerDefaultCatalogYAML = `image_catalog:
+  entries:
+    - name: minimal
+      tags: [node]
+      source: { kind: image, image: ghcr.io/acme/minimal:1 }
+    - name: dind
+      tags: [node, docker]
+      default: true
+      source: { kind: image, image: ghcr.io/acme/dind:1 }
+`
+
 // dockerCheckout makes the working directory a checkout of acme/app whose web
 // workflow is web: the selection reads a job's tags from the checkout's
 // fugaro.yaml, so a job only asks for the docker tag when its repository's
@@ -1609,6 +1624,21 @@ func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
 		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), ""), spec)
 		if err != nil || ask {
 			t.Fatalf("ask = %v, err = %v, want neither", ask, err)
+		}
+	})
+	// A workflow that keeps its own image definition is not the catalog's job
+	// at all (D1155): the deploy gave it the image this project builds for the
+	// repository, so the launcher must not judge it against an entry it does
+	// not run — here the catalog's default is the docker entry, which would
+	// otherwise refuse this launch on Cloud Run and ask a VM for a socket.
+	t.Run("its own image definition is not the catalog's", func(t *testing.T) {
+		for name, codec := range map[string]backend.Codec{"cloud-run": backend.CloudRunCodec(), "cloud-batch": backend.BatchCodec()} {
+			f := newCloudFixture(t)
+			dockerCheckout(t, "{ image: { apt: [jq] }, commands: { build: sh b.sh, test: sh t.sh } }")
+			ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, codec, dockerDefaultCatalogYAML), spec)
+			if err != nil || ask {
+				t.Fatalf("%s: ask = %v, err = %v, want neither", name, ask, err)
+			}
 		}
 	})
 }

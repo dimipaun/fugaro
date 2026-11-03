@@ -279,6 +279,37 @@ func Choose(j Job) (Choice, error) {
 	return Choice{Entry: covering[0]}, nil
 }
 
+// Applies reports whether the project's catalog is what decides a workflow's
+// job image at all. Three workflows are not the catalog's: one that keeps its
+// own image definition (image: or dockerfile:) runs the image the project
+// builds for that repository and never a catalog entry (D1155); a clone
+// workflow runs the installation's base image; and a shared workflow's image
+// is a shared dependency-layer digest no catalog entry produces. A repository
+// that names no entry and needs no tag is the catalog's only when the project
+// marks a default — "nothing: it uses the project default" is the spec's rule
+// (§3.1 step 3) — which is also what leaves an installation whose catalog is
+// not yet curated exactly as it was (F1).
+//
+// Both halves of a selection ask this: the deploy-time job spec, which fixes
+// the job's image (F7), and the launcher, which judges the image again against
+// the backend it picks (D1149). A workflow one of them judged by the catalog
+// and the other did not would be refused for an entry it does not run, or
+// asked for a Docker socket it never needed, so the predicate lives here and
+// not twice.
+func Applies(c config.Catalog, w config.Workflow) bool {
+	if w.Checkout == config.CheckoutClone || w.Checkout == config.CheckoutShared {
+		return false
+	}
+	if !w.Image.IsZero() || w.Dockerfile != "" {
+		return false
+	}
+	if w.ImageName == "" && len(w.Needs) == 0 {
+		_, ok := Default(c)
+		return ok
+	}
+	return true
+}
+
 // Default is the entry the catalog marks as its default, and whether it
 // marks one: PIC1's rule allows one entry or none. It is what a repository
 // that names nothing runs (§3.1 step 3), and what a caller asks before it

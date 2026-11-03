@@ -785,26 +785,26 @@ func (c *repoCtx) effectiveCatalog() *config.Catalog {
 // the project's configuration rather than of one run.
 //
 // The repository's own image: or dockerfile: block is the override and never
-// reaches this function (D1155 item 1): its job runs the per-repository image
-// this spec builds, exactly as it did before the catalog existed. A
-// repository that names no entry and needs no tag asks for the project
-// default, and a catalog that marks none says nothing about it — its own
-// per-repository image keeps its meaning (F1) — which is what the false
-// return means.
+// reaches the catalog (D1155 item 1): its job runs the per-repository image
+// this spec builds, exactly as it did before the catalog existed, which is
+// what catalog.Applies decides for it — and what the same predicate decides
+// for the launcher, so the two cannot disagree about which jobs are the
+// catalog's.
+//
+// The backend is the installation's own, read from the config and not written
+// as a constant: the docker rule is a rule about the backend the job will run
+// on (D1149), and today's only backend is Cloud Run — a config that names
+// cloud-batch is refused where it is read until the task that makes a Batch
+// run safe, which is also the point this line starts meaning something else.
 func (c *repoCtx) catalogJobImage(name string, w config.Workflow) (string, []string, bool, error) {
 	cat := c.effectiveCatalog()
-	if cat == nil {
+	if cat == nil || !catalog.Applies(*cat, w) {
 		return "", nil, false, nil
-	}
-	if w.ImageName == "" && len(w.Needs) == 0 {
-		if _, ok := catalog.Default(*cat); !ok {
-			return "", nil, false, nil
-		}
 	}
 	choice, err := catalog.Choose(catalog.Job{
 		Catalog: *cat,
 		Repos:   []catalog.Repo{{Slug: c.slug, Pin: w.ImageName, Needs: w.Needs}},
-		Backend: catalog.CloudRun,
+		Backend: catalog.Backend(c.lc.Backend()),
 	})
 	if err != nil {
 		return "", nil, false, userErr("workflow %s: %w", name, err)
@@ -1010,25 +1010,14 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// it runs; C8b1 owns replacing both.
 	image := gcp.ImageName(c.registryPath(), slug, name) + ":latest"
 	var warnings []string
-	switch {
-	case w.Checkout == config.CheckoutClone:
+	if w.Checkout == config.CheckoutClone {
 		image = lc.BaseImage(config.BaseKind)
-	case w.Checkout != config.CheckoutShared && w.Image.IsZero() && w.Dockerfile == "":
-		// A baked workflow that names no override is the catalog's own arm
-		// (D1155): a repository that names an entry or needs tags runs that
-		// entry's image, and §3.3's refusals are raised here, before the
-		// job is deployed. A shared workflow keeps the derived tag above;
-		// its image is a shared dependency-layer digest the operator's
-		// machine writes onto the job, and a catalog reference on it is
-		// refused where the file is read (PIC1).
-		img, warns, chosen, err := c.catalogJobImage(name, w)
-		if err != nil {
-			return WorkflowSpec{}, err
-		}
-		if chosen {
-			image = img
-			warnings = warns
-		}
+	} else if img, warns, chosen, err := c.catalogJobImage(name, w); err != nil {
+		// §3.3's refusals are raised here, before the job is deployed: a
+		// job whose image cannot do its work would die mid-run instead.
+		return WorkflowSpec{}, err
+	} else if chosen {
+		image, warnings = img, warns
 	}
 	ws := WorkflowSpec{
 		Job:            gcp.JobName(slug, variant),

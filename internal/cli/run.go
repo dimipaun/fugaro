@@ -2806,11 +2806,24 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 // backend, launched onto the other, would otherwise start and die on its
 // first docker command.
 //
+// Which jobs the catalog speaks for is catalog.Applies, the same predicate the
+// deploy-time spec builder uses: a workflow that keeps its own image
+// definition, or that runs the base or a shared layer, is not the catalog's,
+// and asking the rule on its behalf would refuse a launch for an entry the job
+// does not run.
+//
 // Nothing else the selection can say refuses a launch: an uncovered needed set
 // is a condition of the project's configuration and is refused where the job
 // spec is built (F7), before the job exists at all, and a catalog the launcher
 // cannot read — no checkout of this repository, no fugaro.yaml, a file this
 // binary cannot parse — is "cannot tell", which is never a refusal.
+//
+// The workflow it judges is the one in this launcher's working tree, as the
+// artifact gate's recipe is (recipeForLaunch) and for the same reason: the
+// launcher has the operator's checkout and the runner reads the task's ref. A
+// launch whose ref says something else is therefore judged by the tree, which
+// is the residual the deploy-time arm does not have — that arm builds the spec
+// the job is deployed with, from the same file (F7).
 func catalogDockerAsk(ctx context.Context, env *cloudEnv, spec *task.Spec) (bool, error) {
 	co := checkoutConfig(ctx, spec.Repo)
 	if co == nil {
@@ -2825,7 +2838,7 @@ func catalogDockerAsk(ctx context.Context, env *cloudEnv, spec *task.Spec) (bool
 		published = p.ImageCatalog
 	}
 	cat := env.lc.ImageCatalogEffective(published)
-	if cat == nil {
+	if cat == nil || !catalog.Applies(*cat, w) {
 		return false, nil
 	}
 	be := catalog.Backend(launchBackend(env.be))

@@ -262,3 +262,48 @@ func TestAnUnknownBackendHasNoDockerDaemon(t *testing.T) {
 		t.Fatal("a backend the rule does not know was treated as if it had a Docker daemon")
 	}
 }
+
+// TestAppliesIsTheJobsTheCatalogGivesAnImageTo pins which workflows the
+// catalog speaks for at all, because two callers ask it and each of them
+// refuses on the answer: the deploy-time job spec, and the launcher judging
+// the same job's image against the backend it picks. A workflow one of them
+// judged by the catalog and the other did not would be refused for an entry it
+// does not run, or asked for a Docker socket it never needed.
+//
+// Mutation (drop the override arm, or the clone/shared arm): the launcher
+// judges a job the deploy gave the repository's own image — and a catalog
+// whose default is docker-tagged then refuses that launch on Cloud Run, or
+// asks a VM installation with no gid recorded for a socket nobody needs.
+func TestAppliesIsTheJobsTheCatalogGivesAnImageTo(t *testing.T) {
+	// defaulted marks one entry as the project default, which is what a
+	// repository that names nothing needs to be the catalog's at all.
+	defaulted := testCatalog()
+	defaulted.Entries[1].Default = true
+	override := config.Workflow{Image: config.Image{Apt: []string{"jq"}}}
+	baked := config.Workflow{Checkout: config.CheckoutBaked}
+
+	for name, tt := range map[string]struct {
+		cat  config.Catalog
+		w    config.Workflow
+		want bool
+	}{
+		"a repository that needs a tag":               {testCatalog(), config.Workflow{Checkout: config.CheckoutBaked, Needs: []string{"node"}}, true},
+		"a repository that pins an entry":             {testCatalog(), config.Workflow{Checkout: config.CheckoutBaked, ImageName: "backend"}, true},
+		"a repository that names nothing, a default":  {defaulted, baked, true},
+		"a repository that names nothing, no default": {testCatalog(), baked, false},
+		"its own image definition":                    {testCatalog(), override, false},
+		"its own Dockerfile": {
+			testCatalog(),
+			config.Workflow{Checkout: config.CheckoutBaked, Dockerfile: "docker/Dockerfile"},
+			false,
+		},
+		"a clone workflow":  {testCatalog(), config.Workflow{Checkout: config.CheckoutClone, Needs: []string{"node"}}, false},
+		"a shared workflow": {testCatalog(), config.Workflow{Checkout: config.CheckoutShared, Needs: []string{"node"}}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := Applies(tt.cat, tt.w); got != tt.want {
+				t.Fatalf("Applies = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
