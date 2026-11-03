@@ -436,6 +436,74 @@ func TestRecipesSkewRefusesResolvedL3OnOldImage(t *testing.T) {
 	}
 }
 
+// TestRecipesSkewRefusesTheDefaultAtCriticalOnOldImage: the catalog's own
+// `default` is the recipe a run gets when nothing names one, and since 0.16.0
+// it writes the adversarial step itself — but what makes a launch of it need a
+// runner at reviewLevelsSince is the level the mode's row turns on, which the
+// task carries as no field at all. A 0.15.0 job image is refused before it
+// accepts the launch, and the refusal names the three things the user acts on:
+// the release the image was built from, the release the runner needs, and the
+// one command that brings both the installation and this repository's images
+// to it (fugaro update).
+func TestRecipesSkewRefusesTheDefaultAtCriticalOnOldImage(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
+	text, ok := recipe.CatalogText(recipe.DefaultName)
+	if !ok {
+		t.Fatalf("no catalog recipe %s", recipe.DefaultName)
+	}
+	def, ps := recipe.Parse(text)
+	if len(ps) > 0 {
+		t.Fatalf("parsing the catalog default: %v", ps)
+	}
+	cfg := &config.Config{}
+	levels, _, err := config.ResolveLevels(config.LevelInputs{Config: cfg, Mode: rigor.Critical, Recipe: def, CatalogDefault: true})
+	if err != nil {
+		t.Fatalf("resolving a critical run of the default: %v", err)
+	}
+	if !levels.L3.On {
+		t.Fatal("a critical run of the default resolved without level 3")
+	}
+	ask := reviewLevelsAsk(levels, spec.ReviewLevels, cfg, nil, false)
+	if want := "review level 3 (its adversarial step)"; ask != want {
+		t.Fatalf("ask = %q, want %q", ask, want)
+	}
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
+	var warn bytes.Buffer
+	err = checkReviewLevelsImage(context.Background(), env, appSlug, spec, "base", ask, &warn)
+	if err == nil {
+		t.Fatalf("a critical launch of the default on a 0.15.0 image was accepted: warn = %q", warn.String())
+	}
+	for _, want := range []string{"fugaro 0.16.0 or later", "release 0.15.0", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit code = %d, want a user error", ExitCode(err))
+	}
+	if warn.Len() > 0 {
+		t.Errorf("warning %q, want none on a release base image", warn.String())
+	}
+	// The same launch on the image that has the runner: accepted, and the
+	// clone workflow's gate — the same constant, judged on base_images.base —
+	// carries the same remedy.
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.16.0")
+	if err := checkReviewLevelsImage(context.Background(), env, appSlug, spec, "base", ask, &bytes.Buffer{}); err != nil {
+		t.Fatalf("0.16.0: %v", err)
+	}
+	lc := *env.lc
+	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.15.0"}
+	if err := checkCloneReviewLevelsImage(&lc, spec, ask, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "fugaro update") {
+		t.Fatalf("clone 0.15.0: err = %v, want the same remedy", err)
+	}
+	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.16.0"
+	if err := checkCloneReviewLevelsImage(&lc, spec, ask, &bytes.Buffer{}); err != nil {
+		t.Fatalf("clone 0.16.0: %v", err)
+	}
+}
+
 // TestRecipesSkewRefusesResolvedL3OutsideACheckout: the levels a launch
 // resolves are not the task field, and a launch from outside the repository's
 // checkout — `fugaro run --repo acme/app` from anywhere else — reads no
