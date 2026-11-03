@@ -28,7 +28,7 @@ gate's rows.** The order inside a step is a task's own business; the order betwe
 | 1 | **G0**, **G1**, **G2** | D1160: the primitive. A dedicated command written before these pays for the same mechanism twice |
 | 2 | **G3**, **G4**, **G6** | G0 and G1 (the wildcard allowlist and the entry shapes); G4 is the widest surface of the three and takes the reviewer |
 | 3 | **G5** | G4 — the publish is a layer *write*'s next step, and there is no write to publish before it |
-| 4 | **G7**, **G8**, **G9**, **G10**, **G11**, **G12** | G2 (the document's version, for the commands the console can see) and their own block's task from step 2 |
+| 4 | **G7**, **G8**, **G9**, **G10**, **G11**, **G12** | G2 (the document's members, for the commands the console can see) and their own block's task from step 2 |
 | 5 | **G13** | Every command's final rules: a gate row written before its command's refusals are settled is a row that has to be rewritten |
 
 **The signature of the order** — the plan's own reading of its dependencies, and what a reader is owed
@@ -64,12 +64,12 @@ landed.
 
 | File | Tasks | What each one does with it |
 | --- | --- | --- |
-| `internal/cli/settings_set.go` | G0, G1, G2, G3, G4, G12 | G0 widens the allowlist and reuses the wildcard resolver; G1 adds the entry flags and the dispatch; G2 moves the document's version; G3 and G4 add their blocks' rows; G12 edits the owner map. **G0 first, then G1, then G2** — each adds and none rewrites the other's lines |
+| `internal/cli/settings_set.go` | G0, G1, G2, G3, G4, G6, G10, G12 | G0 widens the allowlist (D1179's two budget keys included) and reuses the wildcard resolver; G1 adds the entry flags and the dispatch; **G2 adds the document's entry members and does not move its version**; G3 adds the `workflows.*` rows and G10 the `repos.*` scalars; **G6 edits no allowlist entry** — the rigor rows are the `rigor` family's, which this file's map already refuses, so it reads only the write path it calls; G12 edits the owner strings. **G0 first, then G1, then G2** — each adds and none rewrites the other's lines |
 | `internal/cli/settings_write.go` | G1, G7, G9 | G1 classifies an entry write through the existing helpers; G7 and G9 call `confirmTypedStrict` and `applySettingsEdit` for their own writes. **No task edits this file's fence, its compare-and-swap or its backup** |
-| `internal/settings/registry.go` | G0, G3, G4, G10, G12 | G0/G3/G4/G10 add or re-spell rows for the blocks they own; G12 changes **owner strings only**. One row, one owner |
+| `internal/settings/registry.go` | G0, G3, G4, G6, G10, G12 | G0/G3/G4/G10 add rows for the blocks they own; G6 re-spells the rigor rows only if its design's own spelling differs; **G12 changes owner strings only** and moves none of the four budget keys (D1179). One row, one owner |
 | `internal/yamledit/yamledit.go` | G1, G4 | G1 wires the object-list ops that exist; G4 needs the map-member op if the dispatch cannot reach it through a parent path. **G4 adds the op only if G1 did not** — the two read each other's diff before either merges |
-| `schemas/settings-write.schema.json` | G2, G8, G9 | G2 adds version 2 with its members; G8 and G9 add the `secrets` and `accounts` operations' members to that version. **G2 first** |
-| `internal/cli/config_publish.go` | G4, G5 | G4 reuses the reserved-key and executable-key refusals; G5 adds the publish to `update`'s Layer stage. Two tasks, one file, **G4 first** |
+| `schemas/settings-write.schema.json` | G2, G8, G9 | **G2 adds the entry members to version 1 — it does not move the version** (D1164); G8 and G9 add the `secrets` and `accounts` operations' members beside them. **G2 first** |
+| `internal/cli/config_publish.go` | G4, G5 | G4 reuses the reserved-key and executable-key refusals; **G5 calls `publishLayer` (`internal/cli/config_publish.go:173`) from `update`'s Layer stage and adds no second publisher**. Two tasks, one file, **G4 first** |
 | `docs/config-management/` | G13 | G13 is the only task that edits this folder after the design merges, and it changes a *status* line, never a decision |
 | `docs/rigor-modes/reconciliation.md` | none after the design | The census row (F14) is moved **in the design's own commit**, not by a task |
 
@@ -81,9 +81,14 @@ landed.
 - **M6** (the audit record's write) is called by the same five, plus **G9** (an `accounts rm` under the
   gate). D1014's *a failure to write the record fails the command* is why none of them may land before
   it: a command that applies and records nothing is the state §6 of the managed spec exists to end.
-- **G7, G8 and G13** need **neither** to be written: G7's floor removal and G8's whole family are
-  refused in an agent's session whatever the gate says (D1170, D1171), and G13 writes the rows rather
-  than calling them.
+- **G0 and G1 add no gate call of their own**, because neither adds a command: they extend
+  `fugaro settings set|unset`, whose gate call is the **settings design's own handoff row** in the
+  managed plan's §2 (the three handoffs are rows to copy, not tasks) — so the keys and the entry shapes
+  the two add are gated by a row that design already owes, and the tasks wait on nothing here.
+- **G2, G5, G7, G8, G12 and G13** need **neither** to be written: G2 adds a document's members, G5 rides
+  on `update`'s existing Layer stage (M1's own gate call and M6's record), G7's floor removal and G8's
+  whole family are refused in an agent's session whatever the gate says (D1170, D1171), G12 renames an
+  owner string rather than calling anything, and G13 writes the rows.
 - **What a task does when M0 or M6 is not on `main` yet:** it lands the command with its agent refusal
   intact and its row written, and it **reports the missing call** rather than inventing a predicate —
   the managed plan's own §2 says a row that has not landed leaves its command agent-refused, which is
@@ -92,15 +97,19 @@ landed.
 ## G0. The generic writer's wildcard rows (D1160, D1161). **SEC**
 
 - **Interface.** `settingsGenericKeys` (`internal/cli/settings_set.go:68`) gains the wildcard rows this
-  design manages; `settingsWriteLookup` (`:328`) and `settingsPatternMatch` (`:351`) are **reused
-  unchanged**, and the literal `*` refusal (`:306`) stays. A concrete key of a row the allowlist does
-  not carry keeps today's refusal, whose sentence names the nearest keys.
+  design manages, **and the two budget keys D1179 gives the generic path** (`budget.mode`,
+  `budget.per_day_usd`) — the two whose rows default to the generic owner while the allowlist refuses
+  them on purpose (F13), with the list's own comment (`:60`) rewritten beside them;
+  `settingsWriteLookup` (`:328`) and `settingsPatternMatch` (`:351`) are **reused unchanged**, and the
+  literal `*` refusal (`:306`) stays. A concrete key of a row the allowlist does not carry keeps today's
+  refusal, whose sentence names the nearest keys.
 - **Decided here, and tested:** writing one concrete key into a block the document does not hold
   **creates the block** (D1161's stated cost), and the created block is refused when its key may not be
   set in that layer (`--layer` and the row's own `Layers`).
 - **Red step.** `TestSettingsSetConcreteWildcardKeyWrites` — `settings set workflows.web.commands.test
   --layer repo --dry-run --json` resolves a row and prints the document; it fails today with *no setting
-  has that name*. Then `TestSettingsSetLiteralStarIsStillRefused` and
+  has that name*. Then `TestSettingsSetWritesBudgetModeAndPerDayUsd` (F13's two keys, refused today
+  with *not a key the generic path writes*), `TestSettingsSetLiteralStarIsStillRefused` and
   `TestSettingsSetConcreteKeyOfAnUnlistedRowIsRefused`.
 - **Files (≤5).** `internal/cli/settings_set.go`, `internal/cli/settings_set_test.go`, and the test that
   pins the document's shape.
@@ -126,21 +135,24 @@ landed.
 - **SEC.** An entry write is how a `secrets` block or an `allow_data_to` list grows; its widening half
   is read by the reviewer against D846 and D1107.
 
-## G2. The settings-write document's version 2 (D1164, D1166)
+## G2. The settings-write document's entry members (D1164, D1166)
 
-- **Interface.** `settingsWriteDocVersion` (`internal/cli/settings_set.go:1197`) moves to 2, the schema
-  const (`schemas/settings-write.schema.json:20`) with it, and the new members are **added**:
-  `operation`, the entry's key field and the members the entry carries. Every version-1 member keeps its
-  name and its meaning, so the console's edit — which reads `changed`, `widening`, `why`, `old` and
-  `new` — reads a version-2 document unchanged, and **no console file is edited by this task**.
-- **Red step.** `TestSettingsWriteDocVersionTwoCarriesEveryVersionOneMember` — every required member of
-  `schemas/settings-write.schema.json`'s version 1 is present in a version-2 document with the same
-  meaning, and the document's `version` is 2 — which fails today because the version is 1. Then
+- **Interface.** `settingsWriteDocVersion` (`internal/cli/settings_set.go:1197`) and the schema's const
+  (`schemas/settings-write.schema.json:20`) **stay at `1`**, and the entry write's members are **added as
+  optional ones**: `operation`, the entry's key field and the members the entry carries. Every version-1
+  member keeps its name and its meaning, so the console's edit — which pins version 1
+  (`console/src/main/settingsview.ts:42`) and reads `changed`, `widening`, `why`, `old` and `new` — reads
+  a document of this shape unchanged, and **no console file is edited by this task**.
+- **Red step.** `TestSettingsWriteDocWithoutTheEntryMembersStillDecodes` — the document a plain scalar
+  write produces carries none of the new members, still decodes against the schema, and its `version` is
+  `1` — which fails today because the members do not exist to be optional. Then
   `TestSettingsWriteDocEntryOperationNamesTheEntry` and the docs test that pins the schema's version.
 - **Files (≤5).** `internal/cli/settings_set.go`, `schemas/settings-write.schema.json`, the CLI test and
   the docs test.
-- **Not in this task:** a console change. If the console's own tests refuse a version-2 document, that is
-  a **report** and a handoff to the console's owner, never an edit from here.
+- **Not in this task:** a console change, and never a version bump. If the console's own tests refuse the
+  added members, that is a **report** and a handoff to the console's owner, never an edit from here; and
+  a member that would have to *change* one the console reads is a new version, which is a decision of
+  its own rather than a widening of this task.
 
 ## G3. A repository's `workflows.*`: `fugaro workflow add` / `rm` (D1177). **SEC**
 
@@ -175,7 +187,7 @@ landed.
 - **SEC**, and the reviewer this plan names hardest: the layer file is the document that decides which
   profile a project's repositories run under.
 
-## G5. The layer write publishes through `update` (D1176)
+## G5. The layer write publishes through `update` (D1176). **SEC**
 
 - **Interface.** `fugaro update`'s Layer stage publishes a layer file a writer here has just written,
   idempotently: an unchanged file is a no-op that says so, and the stage is **skipped** when there is no
@@ -185,11 +197,14 @@ landed.
   path, then `update`'s Layer stage, then the published object carries the entry — which fails today
   because the stage does not publish a local edit. Then `TestUpdateLayerStageIsANoOpWhenNothingChanged`
   and `TestUpdateLayerStageSkipsWhenNoLayerFile`.
-- **Files (≤6).** `internal/cli/init.go` (the Layer stage), a new `internal/cli/update_layer.go` if the
-  call site needs one, and the tests. Hermetic: `internal/gcpfake`, `t.TempDir()`.
-- **Not SEC**: it writes a file a person already wrote and publishes it.
+- **Files (≤6).** `internal/cli/init.go` (the Layer stage), `internal/cli/config_publish.go` (its
+  `publishLayer` **called, never copied**), a new `internal/cli/update_layer.go` if the call site needs
+  one, and the tests. Hermetic: `internal/gcpfake`, `t.TempDir()`.
+- **SEC.** It is the step that reaches the bucket: the layer file decides which profile and which
+  workflows a project's repositories run under, and publishing it is what makes an edit real for every
+  job that follows.
 
-## G6. `fugaro rigor set` (D1169)
+## G6. `fugaro rigor set` (D1169). **SEC**
 
 - **Interface.** The command `docs/rigor-command/` designed (D830–D839, D900) — the rank rule (a mode at
   or above the resolved one), D834's `hotfix` refusal, D838's duplicate-glob refusal — writing through
@@ -199,8 +214,9 @@ landed.
   fails today because the command does not exist — then `TestRigorSetWritesTheLocalProjectConfig`.
 - **Files (≤8).** a new `internal/cli/rigor.go`, its test, `internal/settings/registry.go` (rows only),
   and the pin tests for the rigor design's own docs.
-- **Not SEC by the brief's list** (no secret, no credential, no `allow_data_to`, no new fence), and its
-  gate row is refused as a `Typed` step where it lowers anything (D1180).
+- **SEC.** It writes the rigor mode — the depth and the cost every review of a run of this repository is
+  held to — through the write path, and where it lowers a floor its gate row refuses it as a `Typed`
+  step (D1180).
 
 ## G7. `fugaro rigor floor`, with the typed project name (D1170). **SEC**
 
@@ -227,7 +243,7 @@ landed.
   `TestSecretsNoValueEverAppearsInADiff`, the property that no dry run of any write in this family
   prints a secret's value.
 - **Files (≤8).** `internal/cli/secrets.go`, a new `internal/cli/secrets_rm.go` if the family's file is
-  already large, the schema (G2's version 2 members for the operation), and the tests. Hermetic:
+  already large, the schema (G2's optional members for the operation), and the tests. Hermetic:
   `internal/gcpfake` for the Secret Manager half.
 - **SEC.** The whole task. Its red step is written before its first success, and its refusals are read
   line by line.
@@ -258,7 +274,7 @@ landed.
   `internal/settings/registry.go` (rows), and the tests.
 - **SEC**: a job profile carries `secrets` and `allow_repos`, which is the fence the gate judges.
 
-## G11. `fugaro image add --image REF` (D1174)
+## G11. `fugaro image add --image REF` (D1174). **SEC**
 
 - **Interface.** The flag writes a `config.SourceImage` (`internal/config/catalog.go:69`) through the
   path `add` already uses (`internal/cli/image_catalog.go:295`), refusing `--image` together with
@@ -266,23 +282,26 @@ landed.
 - **Red step.** `TestImageAddPrebuiltWritesASourceImage` — fails today because the flag does not exist —
   then `TestImageAddRefusesImageWithDockerfile` and `TestImageLsShowsThePrebuiltEntry`.
 - **Files (≤5).** `internal/cli/image_catalog.go`, its test, and the catalog test.
-- **Not SEC**: no secret, no credential, no fence.
+- **SEC.** The catalog entry is what every job's image comes from: the value this flag writes is the
+  image a run executes.
 
 ## G12. The registry's owner column (D1178, D1179)
 
-- **Interface.** `settingsFamilyCommands` (`internal/cli/settings_set.go:43`) gains `budget`, `setup`,
-  `update` and `config`, each mapping to an existing command or to a sentence naming `fugaro setup` or
-  `fugaro update`; the four budget caps and `compute_prices.*` change owner as D1179 says, and the
-  plan's own table (below) lists **every key whose owner string changes**. The read path
+- **Interface.** The settings read resolves an owner through a **table of its own** instead of
+  `settingsFamilyCommands` (`internal/cli/settings_set.go:43`), which answers the write's refusal and
+  cannot be widened without refusing `max_parallel` and `update_check` (F11); the read's table names
+  `fugaro settings set` for the default owner, and a command that exists or a sentence naming
+  `fugaro setup` / `fugaro update` for every family. D1179's other half — the two budget keys the
+  allowlist gains — is G0's, not this task's. The read path
   (`internal/cli/settings_read.go:388`) renders a sentence where a command name was, and that is the one
   rendering decision this task makes.
 - **The owner table** is written into this task's test as a fixture — `key → old owner → new owner` —
   so the diff of names is reviewable and a later row cannot change owner silently.
-- **Red step.** `TestSettingsReadNamesBudgetSetForBudgetMode` — the read says `settings set` today,
-  which is the command that refuses the key (F13) — then
-  `TestSettingsReadNamesSetupForAnInstallationKey`, `TestSettingsOwnerStringsAreAClosedVocabulary`
-  (every non-writable key's owner is a command that exists or one of the setup/update sentences) and
-  `TestSettingsOwnerChangesAreTheOnesThePlanLists`.
+- **Red step.** `TestSettingsReadNamesTheGenericWriterForAGenericKey` — a key the allowlist carries,
+  `budget.mode` among them, renders the command that writes it instead of an empty owner (F11, F13) —
+  then `TestSettingsReadNamesSetupForAnInstallationKey`,
+  `TestSettingsOwnerStringsAreAClosedVocabulary` (every non-writable key's owner is a command that
+  exists or one of the setup/update sentences) and `TestSettingsOwnerChangesAreTheOnesThePlanLists`.
 - **Files (≤6).** `internal/cli/settings_set.go`, `internal/cli/settings_read.go`,
   `internal/settings/registry.go` (owner strings only), and the tests.
 - **Not SEC**: it renames an owner and never changes a key's meaning.
@@ -308,10 +327,12 @@ Beyond each task's red step, two properties are cross-cutting and neither belong
 
 - **The write-path property.** *Every* write here goes through `applySettingsEdit`
   (`internal/cli/settings_write.go:86`) — the diff, the confirmation, the fence, the backup and the
-  compare-and-swap — and none of the eight commands in §5 carries a second one. The test is a source
-  check in the shape `CLAUDE.md` asks for (`internal/cli/docs_config_management_test.go`,
-  `TestDocsConfigManagementNoSecondWritePath`): each of the commands this plan adds reaches the helper,
-  and the helper's own fence and compare-and-swap are unchanged by the plan.
+  compare-and-swap — and none of the ten commands in §5 carries a second one. The test
+  (`internal/cli/docs_config_management_test.go`, `TestDocsConfigManagementNoSecondWritePath`) is a
+  **pin on this plan's own words** and not a source check: these documents add no code, so what it
+  asserts is that the plan states the property, names the helper, and names the same ten tasks in §5 as
+  it writes headings for. Whether each command really reaches the helper is that command's own red step
+  to prove when it lands.
 - **The owner property.** Every non-writable key's `Owner` is a command that exists or one of the
   setup/update sentences (G12's `TestSettingsOwnerStringsAreAClosedVocabulary`). It is nobody's task in
   particular because it is a property of the registry as a whole, and it is the property the audit's
@@ -328,4 +349,5 @@ A later slot costs more than a later date, for one reason and one only: **the co
 cannot manage today is the configuration an agent's session cannot touch at all**, so every release
 between this one and that one leaves the three documents of the audit (F6, F7, F13) in the state the
 owner's ruling is about — a repository's `workflows.*` with no writer, a layer file published by a second
-command, and a budget key whose registry row names a command that refuses it.
+command, and two budget keys whose registry row names the generic writer while its own allowlist refuses
+them.
