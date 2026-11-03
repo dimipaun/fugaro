@@ -19,6 +19,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
@@ -299,6 +300,12 @@ type WorkflowSpec struct {
 	// clones the repository's own source at launch (design
 	// forge-authorship-images/shared-images.md §6, route A).
 	Checkout string `json:"-"`
+	// Warnings are what the image selection has to say about this
+	// workflow's job without refusing it (D1146): a pinned catalog entry
+	// that does not cover the tags the job needs is used anyway, and this
+	// is the sentence a caller prints to say so. They are json:"-" because
+	// nothing outside the process that built this spec reads them.
+	Warnings []string `json:"-"`
 }
 
 // Registry is the repository's own image registry.
@@ -741,6 +748,74 @@ func (c *repoCtx) platformEnv() map[string]string {
 
 func (c *repoCtx) registryPath() string { return c.registryHost + "/" + gcp.RegistryRepoID(c.slug) }
 
+// catalogImage is where a catalog entry's image is (D1152): the
+// installation's one shared registry, one image per entry, named
+// catalog-<entry> with the moving :latest tag the job spec names. An entry
+// whose source is an image the project builds elsewhere is not built by the
+// catalog at all and is used exactly as it is written.
+//
+// It is built here rather than read from the build half of this package
+// (PIC4), which does not exist yet; when it lands, this is the reader the two
+// halves must agree through, so the name is written once.
+func (c *repoCtx) catalogImage(e config.Entry) string {
+	if e.Source.Kind == config.SourceImage {
+		return e.Source.Image
+	}
+	return c.registryHost + "/" + c.inst.SharedRegistry + "/catalog-" + e.Name + ":latest"
+}
+
+// effectiveCatalog is the catalog the repository's specs are computed from:
+// the local configuration's when it states one, the published project node's
+// otherwise (localcfg's keep rule, D1140), and nil when the project has
+// neither.
+func (c *repoCtx) effectiveCatalog() *config.Catalog {
+	var published *config.Catalog
+	if c.in.Policy != nil {
+		published = c.in.Policy.ImageCatalog
+	}
+	return c.lc.ImageCatalogEffective(published)
+}
+
+// catalogJobImage is the image a checkout: baked workflow's job runs, chosen
+// through the tag-cover rule (reconciliation §3.1, D1146, D1155), with the
+// D1146 warning a pin may carry. It is called where the job spec is built —
+// deploy time — because the job's image is fixed once the job exists (F7): a
+// job that started on an image that cannot do its work would die mid-run
+// instead of being refused, and the two refusals of §3.3 are conditions of
+// the project's configuration rather than of one run.
+//
+// The repository's own image: or dockerfile: block is the override and never
+// reaches this function (D1155 item 1): its job runs the per-repository image
+// this spec builds, exactly as it did before the catalog existed. A
+// repository that names no entry and needs no tag asks for the project
+// default, and a catalog that marks none says nothing about it — its own
+// per-repository image keeps its meaning (F1) — which is what the false
+// return means.
+func (c *repoCtx) catalogJobImage(name string, w config.Workflow) (string, []string, bool, error) {
+	cat := c.effectiveCatalog()
+	if cat == nil {
+		return "", nil, false, nil
+	}
+	if w.ImageName == "" && len(w.Needs) == 0 {
+		if _, ok := catalog.Default(*cat); !ok {
+			return "", nil, false, nil
+		}
+	}
+	choice, err := catalog.Choose(catalog.Job{
+		Catalog: *cat,
+		Repos:   []catalog.Repo{{Slug: c.slug, Pin: w.ImageName, Needs: w.Needs}},
+		Backend: catalog.CloudRun,
+	})
+	if err != nil {
+		return "", nil, false, userErr("workflow %s: %w", name, err)
+	}
+	var warnings []string
+	if choice.Warn != "" {
+		warnings = append(warnings, choice.Warn)
+	}
+	return c.catalogImage(choice.Entry), warnings, true, nil
+}
+
 // Workflow is the spec of one workflow of the repository, its default
 // Claude account (config.DefaultClaudeAccount). Repo builds one WorkflowSpec
 // per account a repository may choose among (docs/design/named-oauth-tokens.md
@@ -934,8 +1009,26 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// readiness.go's non-clone branch asks the operator to build — is what
 	// it runs; C8b1 owns replacing both.
 	image := gcp.ImageName(c.registryPath(), slug, name) + ":latest"
-	if w.Checkout == config.CheckoutClone {
+	var warnings []string
+	switch {
+	case w.Checkout == config.CheckoutClone:
 		image = lc.BaseImage(config.BaseKind)
+	case w.Checkout != config.CheckoutShared && w.Image.IsZero() && w.Dockerfile == "":
+		// A baked workflow that names no override is the catalog's own arm
+		// (D1155): a repository that names an entry or needs tags runs that
+		// entry's image, and §3.3's refusals are raised here, before the
+		// job is deployed. A shared workflow keeps the derived tag above;
+		// its image is a shared dependency-layer digest the operator's
+		// machine writes onto the job, and a catalog reference on it is
+		// refused where the file is read (PIC1).
+		img, warns, chosen, err := c.catalogJobImage(name, w)
+		if err != nil {
+			return WorkflowSpec{}, err
+		}
+		if chosen {
+			image = img
+			warnings = warns
+		}
 	}
 	ws := WorkflowSpec{
 		Job:            gcp.JobName(slug, variant),
@@ -964,6 +1057,7 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 		Labels:              map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: c.label, gcp.LabelWorkflow: variant},
 		SecretIDs:           map[string]string{},
 		GitSecret:           c.gitSecret,
+		Warnings:            warnings,
 	}
 	if lc.Registry != "" {
 		ws.LegacyImage = gcp.ImageName(lc.Registry, slug, name)
