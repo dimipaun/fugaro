@@ -1862,10 +1862,11 @@ the console does not pass), `--json`, and the cloud flags `--project`,
 
 **Command:** `internal/cli/run.go` (`newRunCmd`), printed by `printLaunch` with
 `json.Encoder` and `SetIndent("", "  ")`: **one indented object**, the shape
-every command in the console's set prints (§9.2). **This is the one write in the
-whole console** — the operation `run.launch`, the row V2.5.1a added to the IPC
-allow-list (2026-10-28/29), the surface's twenty-fourth — and the only document
-below that a launch produces rather than a read. The argv the console builds from the form's
+every command in the console's set prints (§9.2). **This was the one write in the
+whole console, and it is the first of the two it has now** — the operation
+`run.launch`, the row V2.5.1a added to the IPC allow-list (2026-10-28/29), the
+surface's twenty-fourth; the settings edit (§6.20) is the second — and it is one
+of the two documents below that a write produces rather than a read. The argv the console builds from the form's
 five fields, and the confirmation window the main process owns, are design §5.1
 rule 11's and are not repeated here; what this section settles is the shape of
 the answer those fields come back as.
@@ -2485,15 +2486,32 @@ no `value` member for one at all, and the human table prints `set`/`unset`
 consumer could mistake for the value. The console's own rule is one step
 further: the row is **dropped whole**, so not even the key is drawn.
 
-**Never on this surface: the writes.** `fugaro settings`' other subcommands —
-`get` (one key) and the pair `set`/`unset` — are not operations of the console:
-`get` reads a single key this screen does not need (the row set is the whole
-document), and the write's operation and its `NEVER_REACHABLE` rows are the
-settings-edit plan's C3, the task after C1. Until C3 lands no console operation
-drives either write, and the group's positional keys and globs, its `--repo`,
-`--all-repos`, `--layer`, `--grep`, `--changed`, `--why` and `--offline` flags
-are not words of design §5.1's row: they narrow the table by a rule no screen
-control sets.
+**The write is an operation of the console, and it is the console's second
+write** (the settings-edit plan's C3, design §5.1 rule 12, SECURITY-SENSITIVE
+because a new write always is). `settings.edit` drives the pair on the argv
+§5.1's write row spells and nothing else of the group: the dry run's is
+`settings set|unset KEY --layer <L> --dry-run --json --project <name> [--config
+<path>] [-- <VALUE>]`, and the confirmed write is the same line with `--yes` in
+place of `--dry-run --json` — the flag is on **both** phases, because the
+console's child has no terminal to answer the CLI's ordinary y/N with, and what
+the dry run's classification decides is the console's own window's shape and not
+the argv (§6.20). **Neither `--layer` nor a phase word is a renderer's**: the
+layer is this read's own `target_layer`, held in the console's main process, and
+the two phase spellings are that process's own — so no payload of a renderer's
+can name a layer the CLI did not offer, which is the whole of D1105.
+
+**The group's other words stay off this surface.** `settings get` reads a single
+key this screen does not need (the row set is the whole document); the group's
+positional keys and globs, its `--repo`, `--all-repos`, `--layer`, `--grep`,
+`--changed`, `--why` and `--offline` flags are not words of either row, because
+they narrow the table by a rule no screen control sets; and `--add`/`--remove`
+is a form no control can choose, since this document carries no member saying a
+key is list-shaped. **A refusal is not a document**: the CLI exits non-zero with
+its own sentence and prints none of these, so a consumer branches on the exit
+and draws that sentence verbatim — the console does, and **no write is ever
+retried silently** (D1112): the write's own compare-and-swap refuses an edit
+built on bytes of the target file that moved (it does not re-measure the dry run's classification: see the limits in desktop-console.md rule 12), and its `Read again` control re-runs the read rather
+than repeating the write.
 
 **Flags** (`newSettingsCmd`): `--json`, the aiming pair `--project` and
 `--config` (`settingsAimFlags`), and the read's own `--repo`, `--all-repos`,
@@ -2506,6 +2524,58 @@ console's argv is unaffected either way: neither word was ever on it.
 nothing else** (design §5.1 rule 6): the command takes arbitrary positional
 arguments, and the row's own `args` is empty, so no renderer names a key, a
 scope or a layer.
+
+### 6.20 `fugaro settings set|unset … --dry-run --json` — the write's dry run
+
+**Command:** `internal/cli/settings.go`'s `newSettingsCmd` reaching
+`internal/cli/settings_set.go`'s write path; `settingsDryRun.document` builds
+the document and `writeSettingsWriteDoc` prints it. Cited by symbol, not by
+line, for §6.11's reason. **The console spawns it since the settings-edit plan's
+C3** (operation `settings.edit`, design §5.1 rule 12), and it is **not** the
+console's read of the settings: §6.19's document is the table the pencil is
+drawn from, and this one is about **one edit of one key**.
+
+**Why it exists: one edit, classified by the CLI's own code, before a window is
+shown or a byte is written.** The dry run writes nothing — no file, not even the
+backup a real write takes — so a console can show the operator what an edit
+would do and let the CLI decide whether the edit widens a limit, and it does the
+deciding so the console never re-implements it (D1106): the members below are
+what the confirmation window and the write are built over, and the window's key,
+old value and shape come from this document and from nowhere else.
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `version` | int | never | never | the document's version, `1` today (`settingsWriteDocVersion`, pinned by `schemas/settings-write.schema.json`). Members are only ever added within a version (D848) |
+| `key` | string | never | never | the key the edit is about, printed through `safetext.Field`. A consumer reads it to check that the document is about **the** edit it asked for: the window draws the key from here and writes the layer from the read's own row, so a document answering about another key is refused before any window exists |
+| `layer` | string | never | never | the layer the edit would write, `local`, `project` or `repo` (`settingsWriteLayers`). A console cannot name it: it is §6.19's `target_layer`, and this member is the check that the child was aimed where the read said |
+| `path` | string | never | never | the file the edit would write, printed through `safetext.Field`. It is a path of the operator's machine: a consumer may show it and may never spawn anything built from it |
+| `changed` | bool | never | never | the write path's own comparison of the two byte strings — the same comparison that decides whether a write would happen at all — so the document cannot claim a change the write path did not see |
+| `widening` | bool | never | never | the write path's own classification, from `settingsCeilingKey`, `settingsLoosens`, `settingsListSubset` and `settingsTypedWrite` (D1106). **A consumer never re-derives it**: a form the CLI cannot compare counts as a widening, and a re-implementation would answer *narrowing* where the CLI answers *widening* — the one direction a console must not get wrong |
+| `why` | string | never | never | the CLI's own sentence for a widening (`settingsTypedWhy`), empty for a narrowing: the reason the CLI will demand a typed project name, shown beside the fields it explains |
+| `old` | string | never | never | the value the TARGET layer's own file holds for the key before the edit, which is not the value a run gets (the winning layer decides that). Empty when that layer's file holds none |
+| `new` | string | never | never | the value the edit would write. Empty for an unset, which is the fact that makes the pair meaningful: `changed` is the CLI's comparison and not a consumer's reading of these two strings |
+| `refusal` | string | never | never | **empty in every document this CLI prints.** A refusal is the CLI's own sentence with a non-zero exit and **no document at all**, which is what a consumer branches on (D1106, D1112); the member is written out because the shape is the contract, and a consumer reads it by name |
+
+**Every string is printed through `safetext.Field`**, for §6.19's reason: a key,
+a path and a value are as much the file's and the command line's as they are the
+program's, and a console draws them as text rather than as anything a renderer
+built.
+
+**The table shape carries the same facts.** Without `--json` the command prints
+one `FIELD`/`VALUE` row per member, in this document's own order, so the two
+shapes cannot drift into two contracts.
+
+**The two phase words are exclusive, and that is the command's own rule.**
+`--json` without `--dry-run` is refused ("`--json` is the dry run's document"),
+and `--dry-run` with `--yes` is refused too ("a dry run says what the edit would
+do and writes nothing, `--yes` answers a write"): a console passes exactly one
+of the two spellings, and the CLI is what makes that a property rather than a
+convention. **The layer is never guessed by the console** either: the CLI itself falls back to the narrowest layer when `--layer` is
+omitted, but the console always names one (`argvFor` refuses a settings edit without it), the layer must be
+one `settingsWriteLayers` names, and a layer outside them is a refusal rather
+than a document. The command is the same pair §6.19's paragraph describes, so the
+`--`-terminated value, the two phase words and the layer's provenance are
+written down there and not twice here.
 
 ## 7. The CLI gaps, settled against the code
 
@@ -2571,7 +2641,8 @@ and **not** off this document or the design:
 | `coordinator status` | yes (`newCoordinatorStatusCmd`, §6.13) — with `--from-store` it is the one read here that asks nothing of the host (the stored view, through the caller's own credentials), and it is a cloud read all the same: the view lives in the project's database, so it carries `--project` and `--config` like the rest |
 | `coordinator show` | yes (`newCoordinatorShowCmd`, §6.15) — the pull request read (coordinator v2 C3, D816): `--repo` and `--pr` are its own two arguments, both required, and it carries `--project` and `--config` like the rest because it resolves the repository's provider the way the project view does. **The second row here whose child mints a credential of the host's** — the first is `run`'s below, whose child is a run and mints the write-capable token it pushes and opens the pull request with; this row's is the coordinator's own read-only installation token, revoked when the command is done — so its argv is the whole of what a renderer may influence about it |
 | `coordinator intents` | yes (`newCoordinatorIntentsCmd`, §6.16) — the declarations read (coordinator v2 C4, D827): it has **no argument of its own** (`--all` and `--json` are the console row's fixed words), and it carries `--project` and `--config` like the rest because it resolves the local config the way the project view does. **The one row here whose child asks nothing of the host at all**: the declarations are the caller's own database node, read through the same credentials §6.13's stored read uses, so there is no App key, no installation token and no provider anywhere in it |
-| **`run`** | yes (`newRunCmd`, §6.14) — **the one row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
+| `settings set\|unset` | yes (`newSettingsCmd`, §6.20) — **the second row here that writes** (the settings-edit plan's C3, design §5.1 rule 12): the dry run and the confirmed write are the same command with the same aiming pair, and the layer written is §6.19's `target_layer` rather than a flag a renderer chose |
+| **`run`** | yes (`newRunCmd`, §6.14) — **the other row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
 
 So the console passes `--project <name>` (and `--config <path>` when the
 installation is not the ambient one) on **every spawn except the handshake**,
@@ -2584,14 +2655,18 @@ table against the live constructors.
 
 ## 9. What the console may do with all this
 
-1. **Every document in the console's set is read-only** — with **one exception,
-   the launch** (§6.14, design §5.1 rule 11), which is the console's single
-   write and whose confirmation window is the main process's own. The allow-list
-   is by exact argv (design §5.1 rule 6), and the write is on it: `run.launch` is
-   the one operation of the surface that writes (V2.5.1a, 2026-10-28/29, the
-   surface's twenty-fourth; K2a's `link.openPullRequest` took the surface to
-   twenty-five and writes nothing, and C4c's `coordinator.intents` took it to
-   twenty-six and writes nothing), and no other argv that writes is reachable
+1. **Every document in the console's set is read-only** — with **two
+   exceptions, and both are writes the console's own confirmation windows
+   answer**: the launch (§6.14, design §5.1 rule 11), which was the console's
+   **first write**, and the settings edit (§6.20, design §5.1 rule 12, the
+   settings-edit plan's C3), which is its **second write**. The allow-list is by
+   exact argv (design §5.1 rule 6), and both are on it: `run.launch` and
+   `settings.edit` are the two operations of the surface that write (V2.5.1a,
+   2026-10-28/29, took the surface to twenty-four; K2a's
+   `link.openPullRequest` took it to twenty-five and writes nothing, and C4c's
+   `coordinator.intents` took it to twenty-six and writes nothing — **the
+   counts in this parenthesis are the history up to that commit, and rule 5's
+   thirty-one is today's**), and no other argv that writes is reachable
    from a renderer. Two further commands this file
    describes are writes, and **neither is in the console's set**: `fugaro cancel
    RUN --json` (§6.3), which is on the design's "never" table and which no v1
