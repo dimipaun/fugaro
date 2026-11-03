@@ -13,6 +13,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/settings"
 )
 
 // settingsFakeAPIKey is the placeholder every budget fixture in this package
@@ -180,4 +181,219 @@ func doc2states(t *testing.T, out string) []string {
 		states = append(states, s.State)
 	}
 	return states
+}
+
+// settingsWritabilityRow is the writability half of a row, decoded here rather
+// than through settingsTestRow (settings_read_test.go) because the three
+// members are this task's own contract: a test that decoded them through the
+// producer's struct would agree with the producer whatever it wrote. The three
+// are pointers so a test can tell a member that is absent from one that carries
+// false or the empty string, which is the difference between a document a
+// consumer may read and one it may not.
+type settingsWritabilityRow struct {
+	Key         string  `json:"key"`
+	Scope       string  `json:"scope"`
+	Writable    *bool   `json:"writable"`
+	Owner       *string `json:"owner"`
+	TargetLayer *string `json:"target_layer"`
+}
+
+// readSettingsWritability runs the read and decodes every row's writability,
+// keyed by key and scope.
+func readSettingsWritability(t *testing.T, args ...string) map[string]settingsWritabilityRow {
+	t.Helper()
+	out, _, err := execute(t, append([]string{"settings", "--json"}, args...)...)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var doc struct {
+		Settings []settingsWritabilityRow `json:"settings"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	rows := make(map[string]settingsWritabilityRow, len(doc.Settings))
+	for _, r := range doc.Settings {
+		rows[r.Key+"\x00"+r.Scope] = r
+	}
+	return rows
+}
+
+// writableRowOf is the one row of key in scope, or a fatal.
+func writableRowOf(t *testing.T, rows map[string]settingsWritabilityRow, key, scope string) settingsWritabilityRow {
+	t.Helper()
+	row, ok := rows[key+"\x00"+scope]
+	if !ok {
+		t.Fatalf("%s in %s: no such row (the document has %d rows)", key, scope, len(rows))
+	}
+	return row
+}
+
+// TestSettingsJSONMarksTheGenericPathsRowsWritable: the read answers, per row,
+// whether the generic path writes it — the fact the console draws its pencils
+// from, so no consumer has to keep a copy of the allowlist (D1102, F10). The
+// answer is not the allowlist alone: spec §4.4 hands the generic path the
+// `agent.` block whole, and `agent.model` is inside it while the models family
+// owns the row, so a read drawn from the allowlist would offer an edit the
+// write refuses.
+func TestSettingsJSONMarksTheGenericPathsRowsWritable(t *testing.T) {
+	settingsWriteHome(t)
+	rows := readSettingsWritability(t)
+
+	for _, key := range []string{
+		"budget.per_run_usd", "budget.allowed_models", "commit_name", "max_parallel",
+		"agent.review_rounds", "git.pr.labels", "layer.default_profile",
+	} {
+		row := writableRowOf(t, rows, key, "project")
+		if row.Writable == nil {
+			t.Errorf("%s: no writable member, and settings set writes it", key)
+			continue
+		}
+		if !*row.Writable {
+			t.Errorf("%s: writable = false, and settings set writes it", key)
+		}
+	}
+	for _, key := range []string{
+		"agent.model", "budget.firebase_project", "endpoints.run", "batch.machine_type",
+		"budget.firebase_api_key",
+	} {
+		row := writableRowOf(t, rows, key, "project")
+		if row.Writable == nil {
+			t.Errorf("%s: no writable member, and settings set refuses it", key)
+			continue
+		}
+		if *row.Writable {
+			t.Errorf("%s: writable = true, and settings set refuses it", key)
+		}
+	}
+}
+
+// TestSettingsJSONNamesTheFamilyThatOwnsTheOthers: a row the generic path does
+// not write carries the command family that does, in S5's own words, so the
+// console says who writes it instead of drawing a pencil (D1102, D1111). A row
+// no family owns — the installation's own plumbing — names nothing and is not
+// writable: the honest answer, not an invented name.
+func TestSettingsJSONNamesTheFamilyThatOwnsTheOthers(t *testing.T) {
+	settingsWriteHome(t)
+	rows := readSettingsWritability(t)
+
+	for _, tc := range []struct{ key, family string }{
+		{"agent.model", "fugaro models"},
+		{"layer.defaults.rigor.default", "fugaro rigor set"},
+		{"job_profiles.*.cpu", "fugaro project"},
+		{"batch.secrets", "fugaro secrets"},
+	} {
+		row := writableRowOf(t, rows, tc.key, "project")
+		if row.Owner == nil {
+			t.Errorf("%s: no owner member, and %s writes it", tc.key, tc.family)
+		} else if *row.Owner != tc.family {
+			t.Errorf("%s: owner = %q, and the family that writes it is %q", tc.key, *row.Owner, tc.family)
+		}
+		if row.Writable != nil && *row.Writable {
+			t.Errorf("%s: writable = true, and a family owns it", tc.key)
+		}
+	}
+
+	row := writableRowOf(t, rows, "budget.firebase_project", "project")
+	if row.Owner == nil {
+		t.Errorf("budget.firebase_project: no owner member, and the empty string is the answer for a key no family owns")
+	} else if *row.Owner != "" {
+		t.Errorf("budget.firebase_project: owner = %q, and no family owns the installation's plumbing", *row.Owner)
+	}
+}
+
+// TestSettingsJSONOwnerMatchesTheRefusalSettingsSetPrints is the anti-drift pin
+// (D1102): every row the document names a family for is a row `settings set`
+// refuses, and the command's own sentence names the same family. The two are
+// read from one table in the CLI, and this is what makes a second copy — or a
+// table that moved without the other — red rather than a pencil that offers an
+// edit the write will not make.
+func TestSettingsJSONOwnerMatchesTheRefusalSettingsSetPrints(t *testing.T) {
+	settingsWriteHome(t)
+	rows := readSettingsWritability(t)
+	named := 0
+	for _, r := range settings.Rows() {
+		row := writableRowOf(t, rows, r.Key, "project")
+		if row.Owner == nil || *row.Owner == "" {
+			continue
+		}
+		named++
+		if row.Writable != nil && *row.Writable {
+			t.Errorf("%s: writable = true and owner = %q, and a row with an owner is one the generic path refuses", r.Key, *row.Owner)
+		}
+		_, _, err := execute(t, "settings", "set", r.Key, "x")
+		if err == nil {
+			t.Errorf("%s: settings set wrote a key the document says %s owns", r.Key, *row.Owner)
+			continue
+		}
+		if !strings.Contains(err.Error(), *row.Owner) {
+			t.Errorf("%s: the document names %q, and settings set refuses it with %q", r.Key, *row.Owner, err)
+		}
+	}
+	if named == 0 {
+		t.Fatal("no row of the document names a command family, and the registry has rows a family owns")
+	}
+}
+
+// TestSettingsJSONTargetLayerMatchesWhatSetWrites: target_layer is the layer a
+// write with no --layer lands in (D1102, D1105), which is what lets the console
+// pass the layer explicitly and show the operator the file the edit reaches.
+// Two rows with different answers: one the local config takes, one only a
+// checkout's fugaro.yaml may hold.
+func TestSettingsJSONTargetLayerMatchesWhatSetWrites(t *testing.T) {
+	_, localPath := settingsWriteHome(t)
+	row := writableRowOf(t, readSettingsWritability(t), "commit_name", "project")
+	if row.TargetLayer == nil || *row.TargetLayer != settingsLayerLocal {
+		t.Fatalf("commit_name: target_layer = %v, and a write with no --layer lands in %s", row.TargetLayer, settingsLayerLocal)
+	}
+	if out, _, err := execute(t, "settings", "set", "commit_name", "Fugaro", "--yes"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := readFileString(t, localPath); !strings.Contains(got, "commit_name: Fugaro") {
+		t.Errorf("the write did not land in the file the read named (%s):\n%s", localPath, got)
+	}
+
+	checkout := settingsWriteCheckout(t, settingsRepoYAML(""))
+	row = writableRowOf(t, readSettingsWritability(t), "git.base_branch", "project")
+	if row.TargetLayer == nil || *row.TargetLayer != settingsLayerRepo {
+		t.Fatalf("git.base_branch: target_layer = %v, and a write with no --layer lands in %s", row.TargetLayer, settingsLayerRepo)
+	}
+	if out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--yes"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := readFileString(t, checkout); !strings.Contains(got, "base_branch: develop") {
+		t.Errorf("the write did not land in the file the read named (%s):\n%s", checkout, got)
+	}
+}
+
+// TestSettingsJSONIsStillVersionOne: the three members are members added within
+// version 1 (D848), so neither the document nor the schema moves its version.
+// A consumer that reads version 1 reads the new members as members it does not
+// know rather than as a document it must refuse.
+func TestSettingsJSONIsStillVersionOne(t *testing.T) {
+	settingsWriteHome(t)
+	doc := readSettingsJSON(t)
+	if doc.Version != 1 {
+		t.Errorf("the document's version is %d, want 1", doc.Version)
+	}
+	if settingsDocVersion != 1 {
+		t.Errorf("settingsDocVersion is %d, want 1", settingsDocVersion)
+	}
+	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "settings.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Properties struct {
+			Version struct {
+				Const float64 `json:"const"`
+			} `json:"version"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if schema.Properties.Version.Const != 1 {
+		t.Errorf("schemas/settings.schema.json: version const = %v, want 1", schema.Properties.Version.Const)
+	}
 }

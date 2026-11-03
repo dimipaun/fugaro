@@ -805,6 +805,17 @@ span.projects-models-route-note {
   font-size: var(--font-size-base);
 }
 
+/* A route's two lists each lead with their word and then name their members;
+ * the row's own gap spaces only its direct children, so without this the word
+ * ran into the first member ("claimsclaude-*"). */
+span.projects-models-claims,
+span.projects-models-to {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-xs);
+}
+
 p.projects-models-catalog {
   display: flex;
   flex-wrap: wrap;

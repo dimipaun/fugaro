@@ -35,15 +35,25 @@ type settingsLayer struct {
 
 // settingsJSON is one row. A sensitive row carries no value member at all: an
 // absent member is the one spelling a consumer cannot mistake for the value.
+//
+// Writable, Owner and TargetLayer are the writability half of the row (D1102):
+// they are what lets a consumer draw an edit without keeping its own copy of
+// the generic path's allowlist, which is the copy that drifts the day a key is
+// added to the registry. All three are written on every row — a consumer
+// branches on the value and not on the member's presence — and all three are
+// members added within version 1 (D848).
 type settingsJSON struct {
-	Key       string            `json:"key"`
-	Scope     string            `json:"scope"`
-	Value     *string           `json:"value,omitempty"`
-	Wins      string            `json:"wins"`
-	Default   settingsDefault   `json:"default"`
-	State     string            `json:"state"`
-	Sensitive bool              `json:"sensitive,omitempty"`
-	Levels    []settingsLevelJS `json:"levels,omitempty"`
+	Key         string            `json:"key"`
+	Scope       string            `json:"scope"`
+	Value       *string           `json:"value,omitempty"`
+	Wins        string            `json:"wins"`
+	Default     settingsDefault   `json:"default"`
+	State       string            `json:"state"`
+	Sensitive   bool              `json:"sensitive,omitempty"`
+	Writable    bool              `json:"writable"`
+	Owner       string            `json:"owner"`
+	TargetLayer string            `json:"target_layer"`
+	Levels      []settingsLevelJS `json:"levels,omitempty"`
 }
 
 // settingsDefault is the built-in default: the value and the constant that
@@ -94,11 +104,14 @@ func writeSettingsJSON(w io.Writer, r *settingsRead, rows []setting, now time.Ti
 	}
 	for _, s := range rows {
 		row := settingsJSON{
-			Key:       s.Key,
-			Scope:     s.Scope,
-			Wins:      s.Wins,
-			State:     s.State,
-			Sensitive: s.Sensitive,
+			Key:         s.Key,
+			Scope:       s.Scope,
+			Wins:        s.Wins,
+			State:       s.State,
+			Sensitive:   s.Sensitive,
+			Writable:    s.Writable,
+			Owner:       s.Owner,
+			TargetLayer: s.TargetLayer,
 		}
 		switch {
 		case s.DefaultValue != "":
