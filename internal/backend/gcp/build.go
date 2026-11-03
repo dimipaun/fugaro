@@ -485,15 +485,24 @@ func (b *Builder) Submit(ctx context.Context, s BuildSpec) (BuildResult, error) 
 	if err != nil {
 		return BuildResult{}, err
 	}
+	return b.create(ctx, s.Image, req)
+}
+
+// create posts req to Cloud Build and returns the started build as queued.
+// image is the untagged image the request builds, which names the build in
+// the messages here and in the result: a catalog build's request comes from
+// CatalogBuildRequest (catalog.go) and is submitted with it, so a
+// submission, its errors and its result cannot drift between the two paths.
+func (b *Builder) create(ctx context.Context, image string, req *cloudbuild.Build) (BuildResult, error) {
 	op, err := b.svc.Projects.Locations.Builds.Create(b.parent(), req).Context(ctx).Do()
 	if err != nil {
-		return BuildResult{}, fmt.Errorf("submitting the Cloud Build build of %s: %w", s.Image, err)
+		return BuildResult{}, fmt.Errorf("submitting the Cloud Build build of %s: %w", image, err)
 	}
 	var md cloudbuild.BuildOperationMetadata
 	if err := json.Unmarshal(op.Metadata, &md); err != nil || md.Build == nil || md.Build.Id == "" {
-		return BuildResult{}, fmt.Errorf("Cloud Build accepted the build of %s but returned no build ID (operation %s)", s.Image, op.Name)
+		return BuildResult{}, fmt.Errorf("Cloud Build accepted the build of %s but returned no build ID (operation %s)", image, op.Name)
 	}
-	return BuildResult{ID: md.Build.Id, Status: md.Build.Status, Image: s.Image + ":latest", LogURL: md.Build.LogUrl}, nil
+	return BuildResult{ID: md.Build.Id, Status: md.Build.Status, Image: image + ":latest", LogURL: md.Build.LogUrl}, nil
 }
 
 // waitRetries and waitRetryBase bound Wait's retries of a failed status
