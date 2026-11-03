@@ -91,6 +91,28 @@ var defaultReports = []string{"**/junit*.xml", "**/build/test-results/**/*.xml"}
 // in internal/cli).
 func DefaultReports() []string { return slices.Clone(defaultReports) }
 
+// CatalogDefaultEntry is the catalog's default: the entry marked default and
+// whether one is marked. A repository that names no catalog entry is the
+// spec's "Nothing: it uses the project default" (spec project-image-catalog
+// §Repo configuration item 1), and reconciliation §3.1 step 3 is what reads
+// this — the choice for an empty needed set, before any tag count is
+// compared, because the entry with the fewest tags is not the spec's answer
+// for a repository that asked for nothing.
+//
+// It is here, beside the other defaults a file that omits a key takes,
+// because that is what it is: the image a job runs when nothing named one.
+// ok is false for a catalog that marks no entry, which is a valid catalog
+// and a job with no default to run — ValidateCatalog refuses only a second
+// marked entry.
+func CatalogDefaultEntry(c Catalog) (Entry, bool) {
+	for _, e := range c.Entries {
+		if e.Default {
+			return e, true
+		}
+	}
+	return Entry{}, false
+}
+
 // RigorBudgetStageFloorUSD is the least model spend one stage can be granted:
 // the budget gateway's own lease floor (internal/budget's minLease, $0.25).
 // Under it the gateway grants a stage nothing, and a run that cannot be

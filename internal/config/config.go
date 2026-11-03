@@ -599,15 +599,37 @@ type Workflow struct {
 	// Base is removed in 0.7.0: kept so Validate can refuse it with the
 	// migration (MigrationDoc). Read the workflow's base kind through
 	// BaseKind, which always returns BaseKind now.
-	Base       string       `yaml:"base"`
-	Image      Image        `yaml:"image"`
-	Dockerfile string       `yaml:"dockerfile"`
-	Commands   Commands     `yaml:"commands"`
-	Cache      []CacheEntry `yaml:"cache"`
-	Secrets    []Secret     `yaml:"secrets"`
-	Resources  Resources    `yaml:"resources"`
-	Timeouts   Timeouts     `yaml:"timeouts"`
-	Rebuild    Rebuild      `yaml:"rebuild"`
+	Base       string `yaml:"base"`
+	Image      Image  `yaml:"image"`
+	Dockerfile string `yaml:"dockerfile"`
+	// ImageName names one entry of the project's image catalog (spec
+	// project-image-catalog §Repo configuration item 2, D1155): the
+	// repository pins that entry, and the tag-cover rule does not run for it.
+	// It is one of the repository's catalog references, and a repository that
+	// also sets its own image: or dockerfile: is refused (validateCatalogRef).
+	//
+	// It is image_name and NOT image:, which has named the build-customisation
+	// block since 0.6.0 (F2): one key cannot carry both meanings, and a
+	// spelled-apart name is what lets a repository's override and a catalog
+	// reference be told apart in a refusal that names both.
+	//
+	// The json tags are what Config.SHA256 hashes (resolve.go): a file that
+	// names no catalog entry must hash exactly as it did before the keys
+	// existed, which omitempty is what gives.
+	ImageName string `yaml:"image_name,omitempty" json:"image_name,omitempty"`
+	// Needs lists the tags a job of this workflow needs (spec
+	// project-image-catalog §Repo configuration item 3, D1155): the selection
+	// picks the catalog entry with the fewest tags that covers every one of
+	// them, over the union of the job's repositories (reconciliation §3.1).
+	// A repository that names both an entry and tags pins the entry; the tags
+	// are then only checked to warn (D1146).
+	Needs     []string     `yaml:"needs,omitempty" json:"needs,omitempty"`
+	Commands  Commands     `yaml:"commands"`
+	Cache     []CacheEntry `yaml:"cache"`
+	Secrets   []Secret     `yaml:"secrets"`
+	Resources Resources    `yaml:"resources"`
+	Timeouts  Timeouts     `yaml:"timeouts"`
+	Rebuild   Rebuild      `yaml:"rebuild"`
 	// Checkout is baked (the derived image holds a clone the runner moves
 	// to the task's ref) or clone (the job runs the installation's base
 	// image directly, with the runner making a blobless clone at start);
