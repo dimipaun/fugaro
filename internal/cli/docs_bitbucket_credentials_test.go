@@ -306,16 +306,11 @@ func bitbucketCitedPaths(doc string) []string {
 // The list shrinks as the tasks land, and the test says so when it does not:
 // T0.1's own file left it in the commit that wrote this guard and T0.2's in the
 // commit that registered the checks, T1.1's two files left it after T1.1 landed
-// and BB1's two after BB1 landed, as did BB3's two, BB4's four and BB5's one, so
-// all of them are checked like every other cited path now.
+// and BB1's two after BB1 landed, as did BB3's two, BB4's four and BB5's three
+// — the two Check 146 scripts and the sweep's own test, which is bitbucketMoved's
+// ninth entry below — so every path one of those commits landed is checked the
+// moment it is cited, as a path in the tree or as the old spelling of a move.
 var bitbucketWillCreate = map[string]string{
-	// S2, retargeted 2026-11-01: `coordinator show` reads Bitbucket through the
-	// service's read consumer. BB4's four left this list in the commit that
-	// landed them, and BB5's one in the commit that landed it — under `ee/`
-	// rather than under the plan's own path, which is bitbucketMoved's entry
-	// below.
-	"scripts/live-checks/check146.sh":              "BB5",
-	"scripts/live-checks/check146_test.sh":         "BB5",
 	"internal/cli/docs_bitbucket_runbook_test.go":  "T2.6",
 	"internal/cli/docs_bitbucket_security_test.go": "T2.11",
 	// Parked with S3, and still absent for as long as S3 is.
