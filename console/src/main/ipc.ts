@@ -1013,12 +1013,12 @@ export const CONSOLE_OPERATIONS = [
   // confirmation window (rule 12).
   //
   // **`flags` is empty, and that is the one place this row differs from every
-  // read beside it.** The dry run's argv carries `--dry-run --json` and the
-  // confirmed write's carries nothing for a narrowing or `--yes` for a widening
-  // -- which is not a set of flags this operation *fixes*, so it is the phase
-  // the main process decides (`SETTINGS_EDIT_PHASE_WORDS`, `src/main/spawn.ts`)
-  // rather than a column here. A screen chooses none of them: not `--dry-run`,
-  // not `--yes`, not even `--json`.
+  // read beside it.** The dry run's argv carries `--dry-run --json` and a
+  // confirmed write's carries `--yes` -- which is not a set of flags this
+  // operation *fixes*, so it is the phase the main process decides
+  // (`SETTINGS_EDIT_PHASE_WORDS`, `src/main/spawn.ts`) rather than a column
+  // here. A screen chooses none of them: not `--dry-run`, not `--yes`, not even
+  // `--json`.
   //
   // **The schema is three keys and no more**, and the layer is not one of them:
   // it is the read's own `target_layer`, held in this process's copy of the

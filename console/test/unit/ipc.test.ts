@@ -762,10 +762,10 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * that tab carries (`src/main/spawn.ts`'s `takesProject`) -- so what is left is
  * the command and its one fixed flag. The twenty-second is that read's own
  * write (`settings`, the settings-edit plan's C3, D1103), and it is the one row
- * here that fixes **no** flag: the dry run's `--dry-run --json` and the
- * confirmed widening's `--yes` are the phase the main process decides from the
- * dry run's classification (`SETTINGS_EDIT_PHASE_WORDS`), not words this table
- * gives a renderer, so what is left is the command alone.
+ * here that fixes **no** flag: the dry run's `--dry-run --json` and a confirmed
+ * write's `--yes`, which both write phases carry, are the phase the main process
+ * decides (`SETTINGS_EDIT_PHASE_WORDS`), not words this table gives a renderer,
+ * so what is left is the command alone.
  */
 const DESIGN_ARGV: readonly string[] = [
   'watch --json',
@@ -2525,9 +2525,10 @@ describe('the spend read’s arguments', () => {
  * second write, rule 12) and left the other thirty exactly where they were. It
  * is next to `settings.read`, whose own row names the layer this one writes to,
  * and it is the first operation here whose argv depends on a **phase** the main
- * process decides (the dry run's `--dry-run --json`, the write's `--yes` for a
- * widening) rather than on a flag the row fixes -- which is why its `flags` is
- * empty and why its three arguments are the whole of what a renderer may say.
+ * process decides (the dry run's `--dry-run --json`, a write's `--yes`, which
+ * both write phases carry) rather than on a flag the row fixes -- which is why
+ * its `flags` is empty and why its three arguments are the whole of what a
+ * renderer may say.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],

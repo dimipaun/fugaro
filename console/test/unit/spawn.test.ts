@@ -1059,12 +1059,13 @@ describe('the spawn table and the argv it builds', () => {
     }
   })
 
-  it('spawns `settings set` for a narrowing with exactly these words, and no `--yes`', () => {
+  it('spawns `settings set` for a narrowing with exactly these words, and the CLI’s own `--yes`', () => {
     // The settings write (the settings-edit plan's C3, D1103, D1104, D1107).
     // One argv, written out word by word: the group, the subcommand, the key,
     // the layer the read's own row named (**D1105** -- it is the main process's
-    // fact and no schema key declares it), the installation's two flags, and
-    // last of all the terminator with the operator's value behind it.
+    // fact and no schema key declares it), the phase's words, the installation's
+    // two flags, and last of all the terminator with the operator's value behind
+    // it.
     //
     // **The value is behind `--` and the `--` is last but one** (D1104, and the
     // reason this row is the one that terminates): the value is a positional, so
@@ -1073,6 +1074,22 @@ describe('the spawn table and the argv it builds', () => {
     // `--project` written after it would be a positional rather than a flag. The
     // terminator is emitted by `argvFor` after every flag this row knows, which
     // is why the order below is the order a child gets.
+    //
+    // **`--yes` is the one word the phase table puts on a narrowing too**, and
+    // the vector below is where that is written down: this write has no
+    // terminal (the console spawns every child with stdin `'ignore'`), so
+    // `confirmSettingsWrite`'s ordinary y/N has nobody to ask and refuses
+    // without the flag. What the dry run's classification decides is the
+    // console's own question -- the tick, which gates Confirm for a widening --
+    // and not a word of this argv.
+    //
+    // **This is the test the `--yes` guard fails without.** The phase is the
+    // main process's (`settingsedit.ts`'s `phaseOf`, from the dry run's own
+    // `widening` field) and `SETTINGS_EDIT_PHASE_WORDS` is the only place a
+    // phase becomes words: with the narrowing row's words dropped -- the
+    // mutation is `narrowing: Object.freeze([])` -- this vector loses its
+    // `--yes` and fails, which is what makes it a guard rather than a
+    // description.
     const args = { op: 'set', key: 'budget.cap_usd', value: '25' }
     const narrowing = [...argvFor('settings.edit', args, {
       ...safeContext({ project: 'chosen' }),
@@ -1084,26 +1101,21 @@ describe('the spawn table and the argv it builds', () => {
       'budget.cap_usd',
       '--layer',
       'project',
+      '--yes',
       '--project',
       'chosen',
       '--',
       '25',
     ])
-    // A write the operator confirmed and the dry run did **not** classify a
-    // widening carries no `--yes`: the flag is the CLI's own answer to the typed
-    // form, and passing it where the CLI did not ask would be this console
-    // confirming an edit on the operator's behalf (D1107).
-    expect(narrowing).not.toContain('--yes')
   })
 
-  it('passes `--yes` for a widening and never for a narrowing', () => {
-    // **This is the test the `--yes` guard fails without.** The phase is the
-    // main process's (`settingsedit.ts`'s `phaseOf`, from the dry run's own
-    // `widening` field) and `SETTINGS_EDIT_PHASE_WORDS` is the only place a
-    // phase becomes words: with the widening row's words dropped -- the mutation
-    // is `widening: Object.freeze([])` -- this case's widening vector loses its
-    // `--yes` and fails, which is what makes the two vectors below a guard
-    // rather than a description.
+  it('spells one write argv for a widening and for a narrowing alike', () => {
+    // The classification is not a word: a widening and a narrowing are one
+    // command line, and the same one the vector above writes out. What a
+    // widening adds is the console's own gate -- `confirmNeedsTick` and the
+    // main process's refusal of an unticked yes -- rather than a flag, so a
+    // narrowing that lost `--yes` would be a write the CLI refuses for having no
+    // terminal at all.
     const args = { op: 'set', key: 'budget.cap_usd', value: '25' }
     const context = (phase: 'widening' | 'narrowing'): Parameters<typeof argvFor>[2] => ({
       ...safeContext({ project: 'chosen' }),
@@ -1123,12 +1135,7 @@ describe('the spawn table and the argv it builds', () => {
       '--',
       '25',
     ])
-    // The two are the same command line but for that one word: a widening and a
-    // narrowing are one argv with one flag, which is what D1107's ruling left
-    // for the console to do -- and **there is no console-only flag**: every
-    // other word is a word the narrowing carries too.
-    expect(widening.filter((word) => word !== '--yes')).toEqual(narrowing)
-    expect(narrowing).not.toContain('--yes')
+    expect(narrowing).toEqual(widening)
   })
 
   it('never puts `--yes` on a dry run, and never puts a value anywhere but after `--`', () => {
@@ -1170,6 +1177,7 @@ describe('the spawn table and the argv it builds', () => {
       'budget.cap_usd',
       '--layer',
       'local',
+      '--yes',
       '--project',
       'chosen',
       '--',
@@ -1179,7 +1187,7 @@ describe('the spawn table and the argv it builds', () => {
     expect(tricky[tricky.length - 1]).toBe('--layer')
   })
 
-  it('spawns `settings unset` with no value, no terminator and no `--yes` when it narrows', () => {
+  it('spawns `settings unset` with no value and no terminator, and `--yes` at either phase', () => {
     // **The unset form has nothing behind a terminator at all** (D1103): there
     // is no value to protect, and a row that emitted a bare `--` would be a
     // command line with an empty positional the CLI does not take. The key is
@@ -1190,10 +1198,11 @@ describe('the spawn table and the argv it builds', () => {
         { op: 'unset', key: 'budget.cap_usd' },
         { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'narrowing', layer: 'local' } },
       ),
-    ]).toEqual(['settings', 'unset', 'budget.cap_usd', '--layer', 'local', '--project', 'chosen'])
+    ]).toEqual(['settings', 'unset', 'budget.cap_usd', '--layer', 'local', '--yes', '--project', 'chosen'])
     // An `unset` that **widens** -- the CLI classifies it, and the console asks
-    // the same question of either subcommand -- carries `--yes` and still no
-    // terminator.
+    // the same question of either subcommand -- carries the same `--yes` and
+    // still no terminator. The two spellings differ by the subcommand word and
+    // the layer, and by nothing else.
     expect([
       ...argvFor(
         'settings.edit',
@@ -1221,6 +1230,7 @@ describe('the spawn table and the argv it builds', () => {
       'budget.cap_usd',
       '--layer',
       'project',
+      '--yes',
       '--project',
       'chosen',
       '--config',
@@ -1266,12 +1276,13 @@ describe('the spawn table and the argv it builds', () => {
       'settings.edit',
     ])
     // `--yes` is the settings write's own word, and the phase table is the only
-    // thing that can produce it: `widening`'s row is the one place it appears,
-    // and the two other phases carry no words at all or the dry run's two. A
-    // fourth phase, or a `--yes` on another row, fails here.
+    // thing that can produce it: **both** write phases carry it -- the child has
+    // no terminal to answer the CLI's ordinary y/N with -- and the dry run is
+    // the one phase that carries no flag of the write at all. A fourth phase, or
+    // a `--yes` on another row, fails here.
     expect(Object.keys(SETTINGS_EDIT_PHASE_WORDS).sort()).toEqual(['dry-run', 'narrowing', 'widening'])
     for (const [phase, words] of Object.entries(SETTINGS_EDIT_PHASE_WORDS)) {
-      expect(words.includes('--yes'), phase).toBe(phase === 'widening')
+      expect(words.includes('--yes'), phase).toBe(phase !== 'dry-run')
     }
   })
 

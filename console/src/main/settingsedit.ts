@@ -17,14 +17,16 @@
 //      P3). Its document is what the window draws.
 //   3. **the window** -- `confirm.ts`'s, one implementation for both questions
 //      (D1115), showing C2's `settingsView` of that dry run.
-//   4. **the write** -- `settings set|unset KEY --layer <L> [--yes] -- <VALUE>`,
-//      reached only from a yes on that window's own top frame. `--yes` is passed
-//      **only where the dry run classified the edit a widening** (D1107): the
-//      CLI asks the typed form for exactly those, and the console answers it
-//      with the flag the CLI named rather than with a hook of its own -- so
-//      `CHILD_ENV_KEYS` gains no key for this task and the `--yes` is a word of
-//      the argv the window shows (rule 5's count and rule 6's rows, same
-//      commit).
+//   4. **the write** -- `settings set|unset KEY --layer <L> --yes -- <VALUE>`,
+//      reached only from a yes on that window's own top frame. `--yes` is on the
+//      write whatever the dry run classified the edit (D1107, C3): the CLI asks
+//      the flag, and the console answers it with the word the CLI named rather
+//      than with a hook of its own -- so `CHILD_ENV_KEYS` gains no key for this
+//      task and the `--yes` is a word of the argv the window shows (rule 5's
+//      count and rule 6's rows, same commit). The classification decides the
+//      console's own gate -- the tick a widening needs (D1109) -- and not this
+//      word: a narrowing spawns with no terminal either, and the CLI's ordinary
+//      y/N has nobody to ask.
 //
 // **Why the read is run here and D1114's layer route is (i).** The layer is the
 // one argument of this operation a renderer must not be able to name: a
@@ -403,12 +405,12 @@ export function createSettingsEdit(deps: SettingsEditDeps): SettingsEditRunner {
       const dry = await deps.spawnEdit(args, 'dry-run', layer, dryArgv)
       if (dry.refusal !== null) return refused(dry.refusal)
 
-      // Which of the two write spellings this edit uses is the dry run's
-      // classification (D1107: `--yes` is passed for a widening and for nothing
-      // else), and the classification is a member of the window C2 builds. So
-      // the document is decoded twice: `classified` is read for `widening`
-      // alone -- `settingsView` is a pure function of the dry run's document, so
-      // the two calls cannot disagree -- and the window below is the one the
+      // Which of the two write phases this edit is -- the tick's question, and
+      // not the argv's: both write phases carry `--yes` (D1107) -- is the dry
+      // run's classification, and the classification is a member of the window
+      // C2 builds. So the document is decoded twice: `classified` is read for
+      // `widening` alone -- `settingsView` is a pure function of the dry run's
+      // document, so the two calls cannot disagree -- and the window below is the
       // operator sees, carrying the argv the child is started from. The window's
       // argv is built here, before the window exists, because it is both what is
       // drawn and what is spawned: the terminator and the value are part of what
@@ -453,9 +455,10 @@ export function createSettingsEdit(deps: SettingsEditDeps): SettingsEditRunner {
 }
 
 /** phaseOf is which of the two write phases one view's edit is: the dry run
- * classified it (D1106), and the classification decides whether `--yes` is a
- * word of the argv (D1107). It is a function of C2's own `widening` and never of
- * this module's reading of a limit. */
+ * classified it (D1106), and the classification decides which phase the child is
+ * spawned as -- the tick's question, since both spell the same argv. It is a
+ * function of C2's own `widening` and never of this module's reading of a
+ * limit. */
 export function phaseOf(view: SettingsView): SettingsEditPhase {
   return view.widening ? 'widening' : 'narrowing'
 }

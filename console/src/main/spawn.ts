@@ -939,10 +939,11 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // key may be written -- so no payload of a renderer's can choose one.
     //
     // **`<phase>` is the main process's too, and it is one of three spellings**
-    // (`SETTINGS_EDIT_PHASE_WORDS`): the dry run's `--dry-run --json`, the
-    // confirmed write's `--yes` **only for a widening**, and nothing at all for
-    // a narrowing. `--yes` answers the CLI's own confirmation (D1107), and no
-    // flag, marker variable or typed name of the console's exists for it: the
+    // (`SETTINGS_EDIT_PHASE_WORDS`): the dry run's `--dry-run --json`, and then
+    // `--yes` for the confirmed write -- for a widening and for a narrowing
+    // alike, because the console's child has no terminal to answer the CLI's
+    // ordinary y/N with. `--yes` answers that confirmation (D1107), and no flag,
+    // marker variable or typed name of the console's exists for it: the
     // console's extra tick is the window's business and not an argv word.
     //
     // **The value is the one word behind a `--` terminator**, and it is emitted
@@ -1118,15 +1119,25 @@ export const SETTINGS_EDIT_OPERATION = 'settings.edit'
  *     its document is what the confirmation window draws.
  *   - `widening` is the second spawn **when the dry run classified the edit a
  *     widening** -- the CLI's own `widening` field and never the console's
- *     guess -- and it is the only state that carries `--yes` (D1107).
- *   - `narrowing` is the second spawn otherwise, and it carries neither word:
- *     the ordinary confirmation was answered by the window the operator read.
+ *     guess -- and it is the state the confirmation window gates on a tick
+ *     (D1109).
+ *   - `narrowing` is the second spawn otherwise, answered by the window the
+ *     operator read with no tick of its own.
+ *
+ * The two write phases are spawned with **the same argv**: `--yes` is on both
+ * (D1107, the settings-edit plan's C3). What the classification decides is the
+ * console's own question -- the tick, which gates Confirm -- and not a word of
+ * what the child is told, because the console spawns every child with stdin
+ * `'ignore'`: the CLI's ordinary y/N has no terminal to be asked at and refuses
+ * a write without the flag (`confirmSettingsWrite`,
+ * `internal/cli/settings_write.go`), so a narrowing that left it off would fail
+ * every time.
  *
  * **The `--yes` word lives here and nowhere else**, which is what keeps it out
- * of a renderer's reach: no argument, no schema key and no row declares it, and
- * a narrowing's argv can carry it only by this table being wrong -- the test
- * `passes --yes for a widening and never for a narrowing` is the one that
- * fails when it is.
+ * of a renderer's reach: no argument, no schema key and no row declares it. A
+ * phase that carried it where it does not belong, or dropped it where it does,
+ * is this table being wrong, and `spawn.test.ts`'s phase-table case is the one
+ * that fails when it is.
  */
 export type SettingsEditPhase = 'dry-run' | 'widening' | 'narrowing'
 
@@ -1138,7 +1149,7 @@ export type SettingsEditPhase = 'dry-run' | 'widening' | 'narrowing'
 export const SETTINGS_EDIT_PHASE_WORDS: Readonly<Record<SettingsEditPhase, readonly string[]>> = Object.freeze({
   'dry-run': Object.freeze(['--dry-run', '--json']),
   widening: Object.freeze(['--yes']),
-  narrowing: Object.freeze([]),
+  narrowing: Object.freeze(['--yes']),
 })
 
 /** SETTINGS_EDIT_LAYERS is the whole of the layer vocabulary

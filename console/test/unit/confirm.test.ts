@@ -1612,7 +1612,7 @@ describe('the settings edit behind the same window', () => {
     expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run', 'narrowing'])
   })
 
-  it('carries --yes for a widening and not before the tick, and never for a narrowing', async () => {
+  it('carries --yes for a widening and not before the tick, and for a narrowing the moment it is answered', async () => {
     const clock = aClock()
     const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
     const source = settingsEditSource({
@@ -1649,6 +1649,27 @@ describe('the settings edit behind the same window', () => {
     expect(await edited).toStrictEqual({ ok: true, sentence: SETTINGS_WRITE_TEXT })
     expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run', 'widening'])
     expect(source.spawns[1]?.shown).toStrictEqual(shown.argv)
+
+    // The same argv again for a narrowing: `--yes` is on the write whatever the
+    // dry run's `widening` field said. The field decides the console's own
+    // question -- the tick, which gates Confirm above -- and not a word of what
+    // the child is spawned with, because the child has no terminal to answer the
+    // CLI's ordinary y/N with.
+    const narrow = settingsEditSource()
+    const narrowing = createSettingsEdit({ ...narrow.deps, confirmer })
+    const lowered = narrowing.edit({ op: 'set', key: SETTINGS_KEY, value: '30' })
+    await untilSettled()
+    const lower = windows[1] as FakeWindow
+    ready(lower, clock)
+    expect((await settingsShownOf(ipcMain, lower)).confirmNeedsTick).toBe(false)
+
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(lower), true)).toStrictEqual({
+      ok: true,
+      data: { answered: true },
+    })
+    expect(await lowered).toStrictEqual({ ok: true, sentence: SETTINGS_WRITE_TEXT })
+    expect(narrow.spawns.map((call) => call.phase)).toStrictEqual(['dry-run', 'narrowing'])
+    expect(narrow.spawns[1]?.shown).toContain('--yes')
   })
 
   it('cancels the edit, and closes no other project’s window, when the installation moves', async () => {

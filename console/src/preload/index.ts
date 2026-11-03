@@ -236,8 +236,9 @@ export const BRIDGE_VERSION = 1
  * 0.119.0** either: it lands with C1 in 0.120.0. It sits directly under
  * `settings.read`, whose document is where the layer it writes at comes from,
  * and it is the one row here whose argv the table does not fix: the main process
- * decides the phase (`--dry-run --json` for the classification, `--yes` for a
- * widening, neither for a narrowing), and its method takes the subcommand, the
+ * decides the phase (`--dry-run --json` for the classification, `--yes` for
+ * either write -- D1107, which the console passes with the answer it already
+ * got from the operator), and its method takes the subcommand, the
  * key and the operator's own value. Everything else about the command -- the
  * layer, the project, the config path, the terminator before the value -- is the
  * main process's, and the argv the child is started from is the argv the window
