@@ -975,6 +975,15 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// describes its flags, so they are checked against this constructor like
 	// any other command's.
 	"settings": newSettingsCmd,
+	// §6.20 documents the write's dry run (CLI 0.16.0, the settings-edit plan's
+	// C3), which is `settings set` and `settings unset` and not the read above:
+	// the two phase words, `--add`/`--remove`, `--layer` and `--repo` are those
+	// two commands' own flags, so the section's prose is checked against them
+	// like any other command's. Both constructors are here rather than only the
+	// set command's, because the pair's flags are written as one line in the
+	// document and half of them -- `--dry-run` not least -- belong to both.
+	"settings set":   newSettingsSetCmd,
+	"settings unset": newSettingsUnsetCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document

@@ -2805,7 +2805,7 @@ in `base.css` and the rows' and badges' is in `screens.css`.
 ### 6.5 The docs test
 
 `internal/cli/docs_console_styling_test.go` (new), in the shape of
-`docs_budget_token_channel_test.go`, with thirteen tests:
+`docs_budget_token_channel_test.go`, with fourteen tests:
 
 1. a **presence test** over this document's eleven section headings and its load-bearing
    strings — the status line, `SERVED_FILES`, "No inline style attribute", `Never colour
@@ -2855,7 +2855,7 @@ in `base.css` and the rows' and badges' is in `screens.css`.
    or one whose capitalisation a sentence changes (`matchMedia` for `matchmedia`), is the
    same phrase to the test as it is to a reader;
 
-**Items 5 to 9 — five of the thirteen — read §3.4's numbers rather than its prose**, which is the
+**Items 5 to 9 — five of the fourteen — read §3.4's numbers rather than its prose**, which is the
 half the review of the first revision asked for. They recompute WCAG 2.1's relative luminance
 (`(L1+0.05)/(L2+0.05)`) and circular hue distance
 (`min(|Δh|, 360°−|Δh|)`) from the literal values in §3.2 and §3.3, in four lines of Go each,
@@ -2896,7 +2896,7 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    that branch; the synthetic table here is what keeps the branch itself tested rather than
    dead code. It also pins both thresholds as inclusive, which is how §3.4 writes them ("at
    least 50°", "at least 3:1").
-10. a **phase-ordering test**, the tenth, the one case of the thirteen that is about the two
+10. a **phase-ordering test**, the tenth, the one case of the fourteen that is about the two
    documents' agreement on the phase's order rather than about either alone — it reads
    [§7](#7-the-build-plan-phase-6) and the plan together: it cuts the plan's
    Phase 6 at its six task headings and §7 at its seven, and fails when a task's `**Files**`
@@ -2915,7 +2915,7 @@ deliberately not shared with the console's own token test: that one is TypeScrip
 11. a **counts test** over this section and §7.7, which is what keeps the numbers above from
    rotting: it numbers the ordered list here and requires it to run 1 to N with no gap and N
    to be the count this section's opening line prints in words; it reads the group sentence
-   ("Items 5 to 9 — five of the thirteen") against the list it names, in every number the
+   ("Items 5 to 9 — five of the fourteen") against the list it names, in every number the
    sentence prints;
    it counts the rows of §7.7's red-step table and the clauses of its two mutation lists
    against the words above them; and it counts this document's `## ` headings against the
@@ -2947,6 +2947,15 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    keys in 6.5 — because a design that describes a region and a plan whose tasks do not name
    it is a region nobody builds. It reads the plan as text for the same boundary reason the
    rest of this file does.
+14. a **settings-section test** over §2.5, the fourteenth: it reads the Settings row for the two
+   hooks the entry draws and a rule selects — `projects-settings-editor` and
+   `projects-settings-editor-outcome`, since a hook this table does not name is a hook no rule may
+   select — and it requires the section to describe the pencil's editor and the confirmation
+   window's **two shapes**: "Review and write", "Read again", the widening tick's words "I
+   understand this raises a limit", the names `widening` and `narrowing`, and the §2.13 pointer
+   that says the window is the launch's own document rather than a second one beside it. The
+   settings section is the one part of the Project tab that writes (console 0.120.0), and a shape
+   a reader cannot find in this document is a shape no review checks the code against.
 
 **The citation test stats a file; these five read the file**, which is the difference
 between a citation that exists and a citation that is true. Neither substitutes for the
