@@ -213,6 +213,23 @@ func setCoordinatorGitHubRoot(t *testing.T, root string) {
 	t.Cleanup(func() { coordinatorGitHubAPIURL = prev })
 }
 
+// publishReadService makes the fixture's project an installation whose
+// credentials service is the fake mint, and hands the command the client that
+// reaches it: the project's own published block is the only source of the
+// service's URL on a person's path (coordinatorReadServiceURL), and the client
+// is a test seam because a published URL is https by validation while a
+// hermetic fake is a TLS server no machine trusts.
+//
+// It returns the mint, so a test reads back which routes it was asked on and
+// which repository each token was minted for.
+func publishReadService(t *testing.T, f *cloudFixture, paths ...string) *readMintServer {
+	t.Helper()
+	mint := newReadMintServer(t, paths...)
+	f.publishService(t, mint.srv.URL)
+	setServiceClientSeam(t, mint)
+	return mint
+}
+
 // setCoordinatorProject is the fixture for a project-wide read: one fake host
 // per repository, opened through the coordinator's own token source, which the
 // opener asks for a token the way a provider's first call does — so the read
@@ -964,9 +981,9 @@ func TestCoordinatorSweepRevokesAfterAFailedStore(t *testing.T) {
 	f := newCoordinatorSweepFixture(t, coordinatorSeeds(), coordinatorPRs()...)
 	setCoordinatorProject(t, map[string]*fake.Provider{"acme/app": f.host}, nil)
 	revoked := setCoordinatorMint(t, nil)
-	// A database that refuses every write: the read has already minted by the
-	// time the tick tries to store what it read.
-	f.db.FailWrites = true
+	// A database that refuses the view's write: the read has already minted by
+	// the time the tick tries to store what it read.
+	f.db.Deny(coordinator.PathView(appSlug))
 
 	if _, _, err := execute(t, "coordinator", "sweep"); err == nil {
 		t.Fatal("the store refused the write and the tick succeeded")
