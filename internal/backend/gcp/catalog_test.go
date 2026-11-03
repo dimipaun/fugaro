@@ -364,6 +364,35 @@ func keyOf(t *testing.T, entry string) string {
 	return key
 }
 
+// TestCatalogReadConditionCoversEveryCopy: the build account's read grant is
+// the other half of the build's read step — without it the step's cp is a
+// 403 — so the one prefix the grant names must be the prefix every entry's
+// copied definition sits under, and it must not reach anything else in the
+// bucket: not the record (under the repository's own prefix), not the budget
+// token, not the marker at the bucket's root.
+func TestCatalogReadConditionCoversEveryCopy(t *testing.T) {
+	const bucket = "fugaro-runs-proj-1234"
+	cond := CatalogReadCondition(bucket)
+	if want := `resource.name.startsWith("projects/_/buckets/` + bucket + `/objects/builds/catalog/")`; cond != want {
+		t.Fatalf("CatalogReadCondition = %q, want %q", cond, want)
+	}
+	prefix := "projects/_/buckets/" + bucket + "/objects/" + CatalogBucketPrefix + "/"
+	for _, entry := range []string{"agent", "claude", "a", strings.Repeat("a", 40)} {
+		if key := keyOf(t, entry); !strings.HasPrefix(key, CatalogBucketPrefix+"/") {
+			t.Fatalf("the read step's key %q is not under the prefix the grant names (%s): %q", key, CatalogBucketPrefix, cond)
+		}
+	}
+	key, err := CatalogRecordKey(catalogSlug(t), "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, other := range []string{key, "builds/" + catalogSlug(t) + "/web/image.json", "tokens/" + catalogSlug(t) + "/budget.json", "fugaro/managed.json"} {
+		if strings.HasPrefix("projects/_/buckets/"+bucket+"/objects/"+other, prefix) {
+			t.Fatalf("the catalog grant's prefix %q covers %q", CatalogBucketPrefix, other)
+		}
+	}
+}
+
 // TestCatalogBuildSelftestIsTheSmokeSpec: the catalog build runs today's
 // runtime-contract smoke (image.SpecForCloud), which the caller renders and
 // the build carries unchanged: the spec is not secret, so it may travel in
