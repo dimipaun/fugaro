@@ -253,8 +253,10 @@ type CatalogDecision struct {
 
 // DecideCatalog evaluates one catalog entry's triggers, in the order the
 // workflow check evaluates them: force, the definition the last build read,
-// the base, then the image's age. It makes no calls: the caller reads
-// everything first.
+// the base, then the image's age. Every trigger that fires is recorded, and
+// the reasons keep that order, so a night when both the definition and the
+// base moved records catalog-definition before base. It makes no calls: the
+// caller reads everything first.
 //
 // An entry is not backed off: a back-off compares the inputs of a build
 // that just failed, and an entry has no per-entry check state to hold them.

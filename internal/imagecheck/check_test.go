@@ -391,4 +391,13 @@ func TestCheckRebuildsACatalogImageOnABaseChange(t *testing.T) {
 	if got := DecideCatalog(in); got.Decision != Rebuild || !slices.Equal(got.Reasons, []string{ReasonCatalogDefinition, ReasonMaxAge}) {
 		t.Fatalf("a changed definition and an old image: %s %v", got.Decision, got.Reasons)
 	}
+	// The definition is evaluated before the base, so a night when both moved
+	// records both in that order: the base switch runs after the definition
+	// comparison and appends to what it recorded, never ahead of it.
+	in = catalogInputs(now)
+	in.DefinitionSHA256 = strings.Repeat("b", 64)
+	in.BaseDigest = digestB
+	if got := DecideCatalog(in); got.Decision != Rebuild || !slices.Equal(got.Reasons, []string{ReasonCatalogDefinition, ReasonBase}) {
+		t.Fatalf("a changed definition and a moved base: %s %v", got.Decision, got.Reasons)
+	}
 }
