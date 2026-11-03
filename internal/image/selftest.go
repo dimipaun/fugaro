@@ -271,12 +271,27 @@ const contractShell = "sh"
 // scan) are the rest of the contract and are untouched by this check.
 func checkContract(rows []Check, add func(string, bool, string, ...any)) {
 	var missing []string
+	evaluated := 0
 	for _, c := range rows {
+		// checkTools reports the table it could not read as one "tools"
+		// check, and each row it did evaluate as "tool:<name>": only the
+		// latter are rows of the contract.
+		if strings.HasPrefix(c.Name, "tool:") {
+			evaluated++
+		}
 		// Every detail checkTools writes names what is wrong, the tool
 		// included, and a table it could not parse names the table.
 		if !c.OK {
 			missing = append(missing, c.Detail)
 		}
+	}
+	// With no row evaluated there is nothing this check can pass on: either
+	// the table could not be read (its failure is in missing already) or
+	// every row it lists belongs to another tier or architecture. Summarising
+	// that as "0 critical tools are present" would pass an image nothing was
+	// asked of, so the contract fails closed instead.
+	if evaluated == 0 {
+		missing = append(missing, "no row of tools.tsv was evaluated against the contract")
 	}
 	switch path, err := exec.LookPath(contractShell); {
 	case err != nil:
@@ -290,7 +305,7 @@ func checkContract(rows []Check, add func(string, bool, string, ...any)) {
 		add("contract", false, "the image does not meet the runtime contract: %s", strings.Join(missing, "; "))
 		return
 	}
-	add("contract", true, "%d critical tools and the shell %s are present", len(rows), contractShell)
+	add("contract", true, "%d critical tools and the shell %s are present", evaluated, contractShell)
 }
 
 // checkCheckout checks the baked checkout and the baked-checkout contract.

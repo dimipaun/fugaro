@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -1232,5 +1233,33 @@ func TestContractListIsReadNotDuplicated(t *testing.T) {
 	r = Selftest(context.Background(), spec, &bytes.Buffer{})
 	if c, ok := checkNamed(r, "contract"); !ok || !c.OK {
 		t.Fatalf("contract = %+v, want a pass: a kit row is not the contract", c)
+	}
+}
+
+// TestContractCheckFailsWhenNoToolRowIsEvaluated: the check's list is the
+// tools table, so a smoke that evaluated no row of it has nothing to pass
+// on. checkTools reports a table it cannot read as one failing "tools"
+// check and no rows, and a table whose every critical row is for another
+// architecture reports nothing at all; summarising either as "0 critical
+// tools are present" would pass an image nothing was asked of.
+func TestContractCheckFailsWhenNoToolRowIsEvaluated(t *testing.T) {
+	other := map[string]string{"amd64": "arm64", "arm64": "amd64"}[runtime.GOARCH]
+	cases := []struct{ name, table string }{
+		{"a table that does not parse", "git\tgit --version\tall\tnonsense\n"},
+		{"a table with no row for this architecture", "git\tgit --version\t" + other + "\tcritical\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := contractSpec(t)
+			contractEnv(t, 1)
+			old := baseTools
+			baseTools = tc.table
+			t.Cleanup(func() { baseTools = old })
+			r := Selftest(context.Background(), spec, &bytes.Buffer{})
+			c, ok := checkNamed(r, "contract")
+			if !ok || c.OK {
+				t.Fatalf("the image passed without a tool row evaluated: contract = %+v\nreport %+v", c, r)
+			}
+		})
 	}
 }
