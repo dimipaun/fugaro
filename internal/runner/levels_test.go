@@ -335,6 +335,51 @@ func TestLevelsBootstrapRefusesSameModelTask(t *testing.T) {
 	}
 }
 
+// TestLevelsFocusReachesEveryLevelsPrompt: a level's focus reaches that level's
+// own reviewer, whichever level it is. Each of the three levels is given a focus
+// of its own, and each reviewer — the cheap loop, the senior review and the
+// adversarial review — reads its own quoted under the run's own heading, never
+// another level's. A level 1 or level 2 focus that reached no model would be
+// configuration the run silently drops.
+func TestLevelsFocusReachesEveryLevelsPrompt(t *testing.T) {
+	const (
+		l1 = "the cheap path"
+		l2 = "the contract"
+		l3 = "the retry path"
+	)
+	h := newHarnessFiles(t, levelsCfg(t, "  levels:\n    l1: {focus: \""+l1+"\"}\n    l2: {focus: \""+l2+"\"}\n    l3: {focus: \""+l3+"\"}\n"), nil, levelsFiles)
+	rec, err := h.run(t, implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "review", "adversarial") {
+		t.Fatalf("stages = %v", got)
+	}
+	if len(h.agent.calls) != 4 {
+		t.Fatalf("agent calls = %d, want 4: implement, then each level's review", len(h.agent.calls))
+	}
+	for _, tc := range []struct {
+		call  int
+		level string
+		focus string
+		other []string
+	}{
+		{1, "level 1", l1, []string{l2, l3}},
+		{2, "level 2", l2, []string{l1, l3}},
+		{3, "level 3", l3, []string{l1, l2}},
+	} {
+		prompt := h.agent.calls[tc.call].Prompt
+		if !strings.Contains(prompt, "## Review focus\n\n> "+tc.focus) {
+			t.Errorf("%s's prompt does not carry its focus quoted under the heading:\n%s", tc.level, prompt)
+		}
+		for _, other := range tc.other {
+			if strings.Contains(prompt, other) {
+				t.Errorf("%s's prompt carries another level's focus %q:\n%s", tc.level, other, prompt)
+			}
+		}
+	}
+}
+
 // TestLevelsFocusIsQuotedAndRecorded: a level's focus is data a launcher wrote,
 // and it reaches the reviewer as quoted text under a heading of the run's own,
 // through safetext like every other untrusted string the run puts in front of a
@@ -380,25 +425,43 @@ func TestLevelsFocusIsQuotedAndRecorded(t *testing.T) {
 	}
 }
 
-// TestLevelsFocusShownForLevel3Only: a focus is level 3's alone — only its
-// reviewer is given one (AdversarialPrompt, levelFocus) — so the pull request's
-// levels line shows the focus beside the level whose reviewer received it and
-// no other. A focus a layer wrote for level 1 or level 2 reaches no model, and
-// the line must not claim the round was asked for it.
-func TestLevelsFocusShownForLevel3Only(t *testing.T) {
+// TestLevelsFocusShownForEveryLevel: the pull request's levels line shows each
+// level's focus beside the level whose reviewer was given it (L4.2). Every
+// level's reviewer reads its own focus (reviewPromptWithFocus,
+// AdversarialPrompt), so level 1's and level 2's are shown too — and a level no
+// layer gave one to shows none, so the line never claims a round was asked for
+// a focus it never read.
+func TestLevelsFocusShownForEveryLevel(t *testing.T) {
 	h := newHarnessFiles(t, levelsCfg(t, "  levels:\n    l1: {focus: \"the cheap path\"}\n    l2: {focus: \"the contract\"}\n"), nil, levelsFiles)
 	rec, err := h.run(t, implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := onlyPR(t, h.provider).Body
-	if strings.Contains(body, "(focus:") {
-		t.Errorf("the levels line shows a focus no reviewer was given:\n%s", body)
-	}
-	for _, want := range []string{"level 1: ship in round 1", "level 2: ship in round 1", "level 3: ship in round 1"} {
+	for _, want := range []string{
+		"level 1: ship in round 1",
+		"level 2: ship in round 1",
+		"level 3: ship in round 1",
+		"(focus: the cheap path)",
+		"(focus: the contract)",
+	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the levels line does not name %q:\n%s", want, body)
 		}
+	}
+	// Level 3 was given no focus, so its own segment shows none: a focus is
+	// named only beside the level whose reviewer read it.
+	i := strings.Index(body, "review levels: ")
+	if i < 0 {
+		t.Fatalf("the pull request carries no levels line:\n%s", body)
+	}
+	line := body[i:]
+	if j := strings.IndexByte(line, '\n'); j >= 0 {
+		line = line[:j]
+	}
+	segs := strings.Split(line, "; ")
+	if last := segs[len(segs)-1]; !strings.HasPrefix(last, "level 3:") || strings.Contains(last, "(focus:") {
+		t.Errorf("level 3's own segment = %q, want it to show no focus: no layer gave it one", last)
 	}
 	if got := stageNames(rec); !eq(got, "implement", "review_first", "review", "adversarial") {
 		t.Fatalf("stages = %v", got)

@@ -369,6 +369,19 @@ func AdversarialPrompt(reviewPrompt, focus string) string {
 	return out + "\n\n" + brief
 }
 
+// reviewPromptWithFocus is a review level's prompt: the brief the run built,
+// with the level's own focus quoted under FocusPrompt's heading when a layer
+// gave the level one. Level 1 and level 2 read the ordinary review brief, so
+// their focus is added here; level 3 reads AdversarialPrompt's, which quotes
+// its own focus the same way. A level with no focus is handed the brief
+// unchanged, so a run no layer gave one looks exactly as it did before.
+func reviewPromptWithFocus(reviewPrompt, focus string) string {
+	if fp := FocusPrompt(focus); fp != "" {
+		return reviewPrompt + "\n\n" + fp
+	}
+	return reviewPrompt
+}
+
 // PickPrompt is the review stage prompt for a pick run (design generic-tool
 // §3.6, G12): nums[i]'s checkout is dirs[i], one directory per attempt, so
 // the reviewer reads every one and names which to keep; see ReviewPrompt
