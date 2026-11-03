@@ -1025,15 +1025,20 @@ export const CONSOLE_OPERATIONS = [
   // document and emitted from `argvFor`'s own `settingsEdit` (D1105, D1114), so
   // no payload of a renderer's can name one. `op` and `key` are the two the
   // screen knows -- it drew the pencil for that row -- and `value` is the
-  // operator's own text, which reaches no log line and no window title.
+  // operator's own text: one argv element, so it is in the process table on the
+  // host route and in the spawn log when that log is on (rule 10), which is the
+  // trade rule 6's row states. Nothing keeps a credential out of it but D1111's
+  // rule: a sensitive row is dropped whole by the read, so it has no pencil and
+  // reaches this operation not at all.
   //
   // **What this operation does not have**: no `--repo` (the edit lands in the
-  // selected installation's own layers, and a repository's `fugaro.yaml` is a
-  // fourth layer the read's `target_layer` would name if it were the one), no
-  // `--add`/`--remove` (a list edit is a form no control can choose: the read
-  // carries no member that says a key is list-shaped), and no third subcommand:
-  // `settings get` and every other word of the group stay off this surface and
-  // are on the never table below with the reason they are there.
+  // selected installation's own layers, and the layer a repository's own config
+  // file would be is the fourth one the read's `target_layer` would name if that
+  // were the one), no `--add`/`--remove` (a list edit is a form no control can
+  // choose: the read carries no member that says a key is list-shaped), and no
+  // third subcommand: `settings get` and every other word of the group stay off
+  // this surface and are on the never table below with the reason they are
+  // there.
   {
     name: 'settings.edit',
     method: 'editSetting',
