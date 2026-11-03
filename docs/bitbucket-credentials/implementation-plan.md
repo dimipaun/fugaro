@@ -507,6 +507,39 @@ T2.3's coordinator-account half returns in BB5.
 - **Release note:** `### For operators`, per installation: `fugaro update`, then the person invoker
   grant Terraform applies.
 - **Commit:** `credsvc: the person caller class and the Bitbucket read mint (B2)`.
+- **Notes (fix round, 2026-11-03):** five properties this task's review found were held by
+  nothing, and what holds each one now.
+  - **The read mint's scope guard is an ALLOWLIST.** U11 is a token response that lists scopes,
+    and BB4's answer to it is: `repository`, `pullrequest` and their `:read` forms are handed on,
+    and **any other word refuses the mint**. Recognising write scopes and refusing those is not
+    the rule — a guard that refused only what it knew as a write scope would hand on every scope
+    it had not been taught about, and `webhook`, `wiki`, an unqualified word and an unmatched
+    shape (`Repository:Read`) are refused like any other. **`account` and `email` are NOT
+    admitted**: whether the read consumer may carry them is a decision about its reach that Check
+    145 U11 makes, and BB4 does not guess at it.
+  - **Empty scopes keep passing, and that is a documented choice.** A token response with no
+    scopes at all is read as "the endpoint did not say" (B1's own reading of U11), so the mint
+    hands the token on rather than refusing every consumer that was created without explicit
+    scopes. **This is a documented choice that Check 145 U11 must back**: if the live check finds
+    the endpoint does report scopes for a read consumer, the empty case becomes a refusal in the
+    same release.
+  - **The classes cannot overlap.** `NewAuthenticator` refuses, fail-closed, a `PersonAccounts`
+    entry that is also a job, a shared, a review or a verifier account, or a
+    `*.gserviceaccount.com` address: an address two lists admit is a caller whose class depends on
+    which route reached it. `TestRouteCallerClassMatrix` is the other half, and it is the one that
+    holds the reading of the lists rather than their configuration — all four classes are aimed at
+    all five routes, so an admission that consulted another class's list fails on the cell that
+    should have refused it.
+  - **A refusal repeats a repository only when it is a name.** The unknown-repository and
+    other-workspace refusals carry the caller's value only when `task.CanonicalRepo` accepts it;
+    `gitprov.SplitRepo` is the permissive parse the read uses and it admits `../`, control
+    characters and ANSI sequences, so a platform that repeated its value would be repeating text
+    someone else chose.
+  - **`coordinator status` is unchanged by the `credentials_service` block.** Status passes no
+    local config to the project-wide read, as the sweep does, so a Bitbucket repository stays
+    refused there whatever the installation published: the block is the opt-in, and an opt-in that
+    silently turned a command's Bitbucket read on would be BB5 arriving with a `fugaro update`.
+    `show` is the one command BB4 turns on, and it keeps the config.
 
 **BB5 `coordinator status` and the sweep read Bitbucket (B5).**
 
