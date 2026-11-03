@@ -423,6 +423,25 @@ func (s CatalogBuildSpec) check(project string, reserved map[string]bool) error 
 	if len(s.Selftest) == 0 || !json.Valid(s.Selftest) {
 		return fmt.Errorf("the smoke's spec is not JSON; a catalog build renders nothing, so the caller sends it")
 	}
+	// A catalog image may be built FROM any base (D1151), so its smoke is
+	// the only thing that can assert the runtime contract there, and a smoke
+	// that runs neither the contract check nor the tools it lists would
+	// assert the least where the base guarantees the least. Both keys cover
+	// the critical rows; only the contract check also requires a shell.
+	// These two keys are read here rather than through image.SelftestSpec:
+	// internal/image reaches this package (through imagecheck), so the spec
+	// cannot be imported back, and the JSON keys are what the caller that
+	// renders the spec and this request agree on.
+	var smoke struct {
+		Contract bool   `json:"contract"`
+		Tools    string `json:"tools"`
+	}
+	if err := json.Unmarshal(s.Selftest, &smoke); err != nil {
+		return fmt.Errorf("the smoke's spec: %w", err)
+	}
+	if !smoke.Contract && smoke.Tools != "critical" && smoke.Tools != "all" {
+		return fmt.Errorf("the smoke's spec asks for neither the runtime contract check (contract: true) nor the tools the contract lists (tools: %q); a catalog image may be built from any base", smoke.Tools)
+	}
 	// The build account holds the repository's secrets and writes its
 	// registry; any other account (the retired shared one, another
 	// repository's, a job's) is refused.
