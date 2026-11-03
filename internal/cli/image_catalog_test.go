@@ -10,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -315,5 +316,49 @@ func TestImageCatalogGateIsSpelledApartFromThePriceCatalog(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), catalogSince) {
 		t.Errorf("the refusal names the price catalog's release (%s): %v", catalogSince, err)
+	}
+}
+
+// TestUpdatePrintsTheDeployTimePinWarning: D1146's warning is computed where
+// the job's image is chosen — deploy time — and rides the spec
+// (WorkflowSpec.Warnings, PIC5). fugaro update reads it and prints it, so the
+// run that moves a job onto an entry its needs have outgrown says so, and the
+// --json result carries it too. Every account a workflow may choose among
+// gets its own spec, and the same warning in each: a person reads it once.
+func TestUpdatePrintsTheDeployTimePinWarning(t *testing.T) {
+	const pin = "the catalog entry base this job pins does not cover the tags it needs: missing [node]"
+	var out strings.Builder
+	r := &initRun{w: &out}
+	printWorkflowWarnings(r, infra.RepoSpec{Workflows: map[string]infra.WorkflowSpec{
+		"app":     {Name: "app", Warnings: []string{pin}},
+		"app__b":  {Name: "app", Warnings: []string{pin}},
+		"deploy":  {Name: "deploy", Warnings: []string{"the catalog entry tools this job pins does not cover the tags it needs: missing [go]"}},
+		"nothing": {Name: "nothing"},
+	}})
+	if got := strings.Count(out.String(), pin); got != 1 {
+		t.Errorf("the warning is printed %d times, want once:\n%s", got, out.String())
+	}
+	for _, want := range []string{"warning: " + pin, "missing [go]"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the update printed %q, want %q", out.String(), want)
+		}
+	}
+	if len(r.res.Warnings) != 2 {
+		t.Errorf("the run's warnings are %v, want the two the specs carry", r.res.Warnings)
+	}
+
+	// And the update path is where it is read: the field had no reader at
+	// all before this, so a spec that carries a warning and a stage that
+	// never asks for it is the gap this test exists for.
+	src, err := os.ReadFile("init.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := strings.Index(string(src), "printWorkflowWarnings(r, spec)")
+	if call < 0 {
+		t.Fatal("init.go does not read the specs' warnings: fugaro update prints none of them")
+	}
+	if at := strings.LastIndex(string(src)[:call], "infra.Repo(in)"); at < 0 || call-at > 200 {
+		t.Error("the warnings are read somewhere other than the stage that builds the specs fugaro update applies")
 	}
 }
