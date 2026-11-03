@@ -39,6 +39,15 @@ func TestCatalogSchemaAcceptsTheNewKeys(t *testing.T) {
 		{"a tag with a space", "    needs: [\"postgres redis\"]\n", false},
 		{"the same tag twice", "    needs: [node, node]\n", false},
 		{"checkout clone with a reference", "    checkout: clone\n    needs: [node]\n", false},
+		// An empty value means none on both surfaces. The decoder cannot tell
+		// an absent key from an empty one, so a dockerfile beside needs: [] or
+		// image_name: "" is a workflow with no catalog reference at all: the
+		// schema must not read the empty value as the reference the decoder
+		// does not see.
+		{"a dockerfile and an empty needs", "    dockerfile: .fugaro/web.Dockerfile\n    needs: []\n", true},
+		{"a dockerfile and an empty name", "    dockerfile: .fugaro/web.Dockerfile\n    image_name: \"\"\n", true},
+		{"an empty needs alone", "    needs: []\n", true},
+		{"an empty name alone", "    image_name: \"\"\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			text := head + tc.body

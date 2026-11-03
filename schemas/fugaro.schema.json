@@ -304,10 +304,10 @@
       "not": {
         "anyOf": [
           { "required": ["image", "dockerfile"] },
-          { "required": ["image", "image_name"] },
-          { "required": ["image", "needs"] },
-          { "required": ["dockerfile", "image_name"] },
-          { "required": ["dockerfile", "needs"] }
+          { "required": ["image", "image_name"], "properties": { "image_name": { "minLength": 1 } } },
+          { "required": ["image", "needs"], "properties": { "needs": { "minItems": 1 } } },
+          { "required": ["dockerfile", "image_name"], "properties": { "image_name": { "minLength": 1 } } },
+          { "required": ["dockerfile", "needs"], "properties": { "needs": { "minItems": 1 } } }
         ]
       },
       "allOf": [
@@ -400,14 +400,14 @@
         },
         "image_name": {
           "type": "string",
-          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
-          "description": "The project's image catalog entry this repository runs, named (docs/project-image-catalog, D1155). The repository pins that entry: the tag-cover selection does not run for it, and the entry's tags are checked only to warn if they do not cover what the job needs. It is image_name and not image, which is the repository's own build-customisation block. A repository that also sets image: or dockerfile: is refused, since it would state two definitions at once; a repository that also lists needs: pins this entry and has the tags checked against it. Needs fugaro 0.17.0: an older runner decodes fugaro.yaml strictly and refuses the key alone, so a repository may name one only once every job image has moved."
+          "pattern": "^([a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?)?$",
+          "description": "The project's image catalog entry this repository runs, named (docs/project-image-catalog, D1155). The repository pins that entry: the tag-cover selection does not run for it, and the entry's tags are checked only to warn if they do not cover what the job needs. It is image_name and not image, which is the repository's own build-customisation block. A repository that also sets image: or dockerfile: is refused, since it would state two definitions at once; a repository that also lists needs: pins this entry and has the tags checked against it. An empty image_name means none, here and in the decoder alike: the decoder cannot tell an absent key from an empty one, so both surfaces read an empty value as unset and neither refuses it beside an override. Needs fugaro 0.17.0: an older runner decodes fugaro.yaml strictly and refuses the key alone, so a repository may name one only once every job image has moved."
         },
         "needs": {
           "type": "array",
           "maxItems": 32,
           "uniqueItems": true,
-          "description": "The tags a job of this workflow needs, for example [node, postgres] (docs/project-image-catalog, D1155). A tag is 1 to 64 of a-z, 0-9, '.', '_' and '-', starting with a letter or a digit, the same allowlist the catalog's tags: entries are held to: a tag is compared for equality by the tag-cover rule, so a denylist would let Node and node, or a tag carrying a zero-width or bidi character, name two tags a person reads as one. Fugaro picks the catalog entry with the fewest tags that covers every tag the job's repositories need, and a job no entry covers is refused before it starts. A repository sets this or its own image definition, never both. Needs fugaro 0.17.0: an older runner decodes fugaro.yaml strictly and refuses the key alone.",
+          "description": "The tags a job of this workflow needs, for example [node, postgres] (docs/project-image-catalog, D1155). A tag is 1 to 64 of a-z, 0-9, '.', '_' and '-', starting with a letter or a digit, the same allowlist the catalog's tags: entries are held to: a tag is compared for equality by the tag-cover rule, so a denylist would let Node and node, or a tag carrying a zero-width or bidi character, name two tags a person reads as one. Fugaro picks the catalog entry with the fewest tags that covers every tag the job's repositories need, and a job no entry covers is refused before it starts. A repository sets this or its own image definition, never both, and an empty needs: means none here and in the decoder alike. Needs fugaro 0.17.0: an older runner decodes fugaro.yaml strictly and refuses the key alone.",
           "items": {
             "type": "string",
             "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
