@@ -18,8 +18,9 @@ import (
 // liveCheckScripts are the owner-run live checks' scripts and their tests.
 // Each test drives its script against fake tools on PATH -- a fake `claude`
 // and a fake upstream for Check 90, fake `gcloud`, `fugaro` and `curl` for
-// Check 91, and fake `gcloud`, `git`, `curl` and `fugaro` for Check 190 -- so
-// no network, no cloud project and no credential is touched here, and no live
+// Check 91, and fake `gcloud`, `git`, `curl` and `fugaro` for Check 190 -- or,
+// for Check 145, against a fake Bitbucket Cloud on a loopback port, so no
+// network, no cloud project and no credential is touched here, and no live
 // step of any of them is run by an agent.
 var liveCheckScripts = []struct {
 	name string
@@ -27,6 +28,7 @@ var liveCheckScripts = []struct {
 }{
 	{"check90.sh", "check90_test.sh"},
 	{"check91.sh", "check91_test.sh"},
+	{"check145.sh", "check145_test.sh"},
 	{"check190.sh", "check190_test.sh"},
 }
 
