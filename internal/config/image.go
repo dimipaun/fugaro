@@ -155,6 +155,56 @@ func validateImage(p string, w Workflow) []Problem {
 	if d := w.Dockerfile; d != "" && (strings.HasPrefix(d, "/") || slices.Contains(strings.Split(d, "/"), "..")) {
 		add(p+".dockerfile", "must be a relative path inside the repository, such as .fugaro/%s.Dockerfile", strings.TrimPrefix(p, "workflows."))
 	}
+	ps = append(ps, validateCatalogRef(p, w)...)
+	return ps
+}
+
+// validateCatalogRef checks a workflow's catalog reference (spec
+// project-image-catalog §Repo configuration, D1155): image_name: names one
+// entry of the project's catalog and needs: lists the tags the job needs.
+// Both are the repository's, and both are definitions of what the job runs,
+// which is why they are judged here rather than with the project's catalog:
+// whether the name exists is the selection's question (PIC5), and what this
+// refuses is a file that states two definitions at once.
+//
+// D1155 (answered 2026-11-02) is the refusal below: a repository that sets
+// its own image: or dockerfile: AND a catalog reference is refused, and the
+// message names both keys — the override's and the reference's — the shape
+// "image and dockerfile are mutually exclusive" already takes. The two
+// together would leave the precedence, which is first match wins, stated
+// nowhere in the file two readers could disagree about.
+//
+// A repository that names both an entry and tags is not a conflict: the
+// precedence is stated (image_name: first, then needs:), so the pin wins and
+// the tags are what the deploy-time warning of D1146 checks the pin against.
+func validateCatalogRef(p string, w Workflow) []Problem {
+	var ps []Problem
+	add := func(path, format string, args ...any) {
+		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(format, args...)})
+	}
+	if w.ImageName == "" && len(w.Needs) == 0 {
+		return nil
+	}
+	override := ""
+	switch {
+	case !w.Image.IsZero():
+		override = "image"
+	case w.Dockerfile != "":
+		override = "dockerfile"
+	}
+	if override != "" {
+		if w.ImageName != "" {
+			add(p+".image_name", "%s and image_name are mutually exclusive; a repository uses its own image definition or a catalog entry, not both", override)
+		}
+		if len(w.Needs) > 0 {
+			add(p+".needs", "%s and needs are mutually exclusive; a repository uses its own image definition or a catalog entry, not both", override)
+		}
+		return ps
+	}
+	if !catalogNameRE.MatchString(w.ImageName) && w.ImageName != "" {
+		add(p+".image_name", "%s", catalogNameMessage)
+	}
+	validateCatalogTags(p+".needs", w.Needs, add)
 	return ps
 }
 
@@ -317,6 +367,17 @@ func validateCheckout(p string, w Workflow) []Problem {
 		if w.Dockerfile != "" {
 			add(p+".dockerfile", "%s", msg)
 		}
+		// A catalog reference is the same kind of key: the shared image is
+		// chosen from the resolved dependency set, not from the project's
+		// catalog, so a workflow that names an entry here would get an image
+		// it did not ask for (D1142: the catalog is what a baked image is
+		// built from, and this kind is not baked).
+		if w.ImageName != "" {
+			add(p+".image_name", "%s", msg)
+		}
+		if len(w.Needs) > 0 {
+			add(p+".needs", "%s", msg)
+		}
 		return ps
 	}
 	if w.Checkout != CheckoutClone {
@@ -340,6 +401,15 @@ func validateCheckout(p string, w Workflow) []Problem {
 	}
 	if w.Dockerfile != "" {
 		add(p+".dockerfile", "%s", msg)
+	}
+	// A catalog reference is refused for the same reason: it replaces the
+	// per-workflow definition a build honors, and a clone workflow has no
+	// build (D1142).
+	if w.ImageName != "" {
+		add(p+".image_name", "%s", msg)
+	}
+	if len(w.Needs) > 0 {
+		add(p+".needs", "%s", msg)
 	}
 	return ps
 }

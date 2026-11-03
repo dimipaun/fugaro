@@ -120,6 +120,95 @@ func TestImageProblems(t *testing.T) {
 	}
 }
 
+// TestCatalogOverrideAndReferenceConflict is D1155's refusal (answered
+// 2026-11-02): a repository that sets both its own image definition and a
+// catalog reference is refused, and the message names both keys — the
+// override's (image or dockerfile) and the reference's (image_name or
+// needs) — the shape `image and dockerfile are mutually exclusive` already
+// takes. A repository's override wins outright when it is the only
+// definition, and a catalog reference wins over nothing but the project
+// default, so the two together would leave the precedence unstated in the
+// file two readers could disagree about.
+func TestCatalogOverrideAndReferenceConflict(t *testing.T) {
+	cases := []struct{ name, extra, path, msg string }{
+		{"image and image_name", "    image: { apt: [libvips-dev] }\n    image_name: backend\n", "workflows.web.image_name", "image and image_name are mutually exclusive"},
+		{"image and needs", "    image: { tools: { node: \"24.19.0\" } }\n    needs: [node]\n", "workflows.web.needs", "image and needs are mutually exclusive"},
+		{"dockerfile and image_name", "    dockerfile: .fugaro/web.Dockerfile\n    image_name: backend\n", "workflows.web.image_name", "dockerfile and image_name are mutually exclusive"},
+		{"dockerfile and needs", "    dockerfile: .fugaro/web.Dockerfile\n    needs: [node]\n", "workflows.web.needs", "dockerfile and needs are mutually exclusive"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, problems := Parse([]byte(webYAML + tc.extra))
+			if cfg != nil {
+				t.Fatal("expected no config when there are problems")
+			}
+			if !hasProblem(problems, tc.path, tc.msg, 0) {
+				t.Fatalf("want problem path=%q msg~%q, got %v", tc.path, tc.msg, problems)
+			}
+		})
+	}
+	// Each half alone is a definition in its own right: the override is the
+	// repository's own image, and the reference is the project's, so neither
+	// on its own is a conflict.
+	for _, tc := range []struct{ name, extra string }{
+		{"the override alone", "    image: { apt: [libvips-dev] }\n"},
+		{"image_name alone", "    image_name: backend\n"},
+		{"needs alone", "    needs: [node]\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, problems := Parse([]byte(webYAML + tc.extra)); len(problems) > 0 {
+				t.Fatalf("unexpected problems: %v", problems)
+			}
+		})
+	}
+}
+
+// TestCatalogReferenceWithCloneCheckoutIsRefused is D1142's first half:
+// checkout: clone runs the installation's base image with no build, so it
+// refuses a catalog reference exactly as it refuses image: and dockerfile:
+// today. The reference replaces the per-workflow definition, not the
+// checkout kind.
+func TestCatalogReferenceWithCloneCheckoutIsRefused(t *testing.T) {
+	const msg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
+	for _, tc := range []struct{ name, extra, path string }{
+		{"image_name", "    image_name: backend\n", "workflows.web.image_name"},
+		{"needs", "    needs: [node]\n", "workflows.web.needs"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, problems := Parse([]byte(cloneYAML + "    checkout: clone\n" + tc.extra))
+			if !hasProblem(problems, tc.path, msg, 0) {
+				t.Errorf("problems = %v, want one at %s: %s", problems, tc.path, msg)
+			}
+		})
+	}
+}
+
+// TestCatalogReferenceWithSharedCheckoutIsRefused is D1142's second half:
+// checkout: shared keeps its own refusal and this work does not lift it, so
+// a catalog reference is one more key it refuses (F6). The rules the kind
+// applies are reachable only behind the gate, so the test turns it on for
+// the arm, and pins the gate's own refusal for the shape a repository meets
+// today.
+func TestCatalogReferenceWithSharedCheckoutIsRefused(t *testing.T) {
+	const msg = "checkout: shared runs an image shared by every repository on the same dependency set, which holds no repository's own content; use checkout: baked to build a per-repository image"
+	_, problems := Parse([]byte(cloneYAML + "    checkout: shared\n    needs: [node]\n"))
+	if !hasProblem(problems, "workflows.web.checkout", SharedCheckoutRefusal, 0) {
+		t.Errorf("problems = %v, want the shared refusal the gate stands for", problems)
+	}
+	sharedShipped(t)
+	for _, tc := range []struct{ name, extra, path string }{
+		{"image_name", "    image_name: backend\n", "workflows.web.image_name"},
+		{"needs", "    needs: [node]\n", "workflows.web.needs"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, problems := Parse([]byte(cloneYAML + "    checkout: shared\n" + tc.extra))
+			if !hasProblem(problems, tc.path, msg, 0) {
+				t.Errorf("problems = %v, want one at %s: %s", problems, tc.path, msg)
+			}
+		})
+	}
+}
+
 // TestCloneRefusesImageBuildKeys pins design generic-tool.md §2 (G3): a
 // checkout: clone workflow runs the installation's base image with no
 // build, so a key that only a build can honor is refused, naming

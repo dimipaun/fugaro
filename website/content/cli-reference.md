@@ -4024,6 +4024,14 @@ confirmed by the project's name typed at a terminal, or by --yes. Writing
 outside a repository is refused in a coding agent's session, --yes included,
 and so is the typed form at any layer: --yes never lifts that fence.
 
+--dry-run says what the edit would do — the key, the layer, the file, the old
+and the new value, and whether it raises a limit — and writes nothing: no
+confirmation, no backup, no change to any file. It is answered with no
+terminal, and with --json it prints the versioned document
+schemas/settings-write.schema.json describes, which is what a caller that draws
+an edit reads. --dry-run takes neither --yes (the two answer different
+questions) nor a bare --json.
+
 Every write ends with one line: next: fugaro update.
 
 Usage: `fugaro settings set KEY VALUE`
@@ -4034,7 +4042,9 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--add` | string | "" | no | add an item to a string-list key |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--dry-run` | bool | `false` | no | print what the edit would do and write nothing |
 | `-h`, `--help` | bool | `false` | no | help for set |
+| `--json` | bool | `false` | no | print the dry run's document (with --dry-run) |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--remove` | string | "" | no | remove an item from a string-list key |
@@ -4059,6 +4069,13 @@ idempotent script does not fail.
 Removing a ceiling key is confirmed by the project's name typed at a terminal,
 or by --yes outside a coding agent's session.
 
+--dry-run says what the removal would do — the key, the layer, the file, the
+value it takes away, and whether it raises a limit — and writes nothing: no
+confirmation, no backup, no change to any file. It is answered with no
+terminal, and with --json it prints the versioned document
+schemas/settings-write.schema.json describes. --dry-run takes neither --yes
+(the two answer different questions) nor a bare --json.
+
 Every write ends with one line: next: fugaro update.
 
 Usage: `fugaro settings unset KEY`
@@ -4068,7 +4085,9 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--dry-run` | bool | `false` | no | print what the edit would do and write nothing |
 | `-h`, `--help` | bool | `false` | no | help for unset |
+| `--json` | bool | `false` | no | print the dry run's document (with --dry-run) |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name) |

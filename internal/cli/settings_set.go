@@ -2,12 +2,15 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -15,6 +18,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/settings"
 	"github.com/dimipaun/fugaro/internal/yamledit"
 )
@@ -116,6 +120,8 @@ type settingsWriteOptions struct {
 	yes     bool
 	add     string
 	remove  string
+	dryRun  bool
+	jsonOut bool
 }
 
 // settingsDocKind names the document a write lands in: the local project
@@ -193,6 +199,14 @@ confirmed by the project's name typed at a terminal, or by --yes. Writing
 outside a repository is refused in a coding agent's session, --yes included,
 and so is the typed form at any layer: --yes never lifts that fence.
 
+--dry-run says what the edit would do — the key, the layer, the file, the old
+and the new value, and whether it raises a limit — and writes nothing: no
+confirmation, no backup, no change to any file. It is answered with no
+terminal, and with --json it prints the versioned document
+schemas/settings-write.schema.json describes, which is what a caller that draws
+an edit reads. --dry-run takes neither --yes (the two answer different
+questions) nor a bare --json.
+
 Every write ends with one line: next: fugaro update.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -206,6 +220,8 @@ Every write ends with one line: next: fugaro update.`,
 	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	f.StringVar(&o.add, "add", "", "add an item to a string-list key")
 	f.StringVar(&o.remove, "remove", "", "remove an item from a string-list key")
+	f.BoolVar(&o.dryRun, "dry-run", false, "print what the edit would do and write nothing")
+	f.BoolVar(&o.jsonOut, "json", false, "print the dry run's document (with --dry-run)")
 	return cmd
 }
 
@@ -227,6 +243,13 @@ idempotent script does not fail.
 Removing a ceiling key is confirmed by the project's name typed at a terminal,
 or by --yes outside a coding agent's session.
 
+--dry-run says what the removal would do — the key, the layer, the file, the
+value it takes away, and whether it raises a limit — and writes nothing: no
+confirmation, no backup, no change to any file. It is answered with no
+terminal, and with --json it prints the versioned document
+schemas/settings-write.schema.json describes. --dry-run takes neither --yes
+(the two answer different questions) nor a bare --json.
+
 Every write ends with one line: next: fugaro update.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -238,6 +261,8 @@ Every write ends with one line: next: fugaro update.`,
 	f.StringVar(&o.layer, "layer", "", "the layer to write ("+strings.Join(settingsWriteLayers, ", ")+")")
 	f.StringVar(&o.repo, "repo", "", "the repository whose fugaro.yaml to edit (owner/name)")
 	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
+	f.BoolVar(&o.dryRun, "dry-run", false, "print what the edit would do and write nothing")
+	f.BoolVar(&o.jsonOut, "json", false, "print the dry run's document (with --dry-run)")
 	return cmd
 }
 
@@ -936,6 +961,9 @@ func settingsWriteCommand(op, key, value string, o settingsWriteOptions, layer s
 // runSettingsSet is `settings set`: find the row, find the layer, check the
 // value, then the shared write path (spec §4.2).
 func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) error {
+	if err := settingsDryRunFlags(o); err != nil {
+		return err
+	}
 	if o.add != "" && o.remove != "" {
 		return userErr("--add and --remove are two different edits: name one")
 	}
@@ -988,26 +1016,38 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		return userErr("%s: %v", key, err)
 	}
 	changed := yamledit.Changed(old, newData)
-	if !changed {
+	if !changed && !o.dryRun {
 		// Nothing to write and nothing to hold against the loader: a
 		// document this Fugaro cannot read back is not this edit's doing,
 		// and a no-op that refused on it would report the file's own state
 		// as the fault of a command that was asked for no change at all.
+		// The dry run is the exception: it answers with a document whatever
+		// the edit turns out to be, and `changed` is one of its members.
 		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s already reads what was asked for\n", target.path, key)
 		return nil
 	}
-	if mode == "remove" && settingsListGoneOrEmpty(newData, target.keyPath) {
+	if changed && mode == "remove" && settingsListGoneOrEmpty(newData, target.keyPath) {
 		return userErr("removing %s would leave %s an empty list, and an absent key and an empty list mean different things: remove the key with `fugaro settings unset %s --layer %s` instead", quoteWord(o.remove), key, key, target.layer)
 	}
 	if err := settingsReparse(target, newData); err != nil {
 		return err
 	}
 	oldValue := settingsValueIn(old, target.keyPath)
+	// The widening check compares against the tighter of the file's own value
+	// and what a run gets today; the document's `old` is the file's own value,
+	// which is what a window shows the operator as the value being changed.
+	base := oldValue
 	if settingsCeilingKey(key) {
-		oldValue = settingsCeilingBase(cmd.Context(), row, oldValue)
+		base = settingsCeilingBase(cmd.Context(), row, oldValue)
 	}
-	typed, why := settingsTypedWrite(row, oldValue, value, mode)
-	if err := applySettingsEdit(cmd, lc, settingsEdit{
+	typed, why := settingsTypedWrite(row, base, value, mode)
+	if !changed {
+		// An edit that writes nothing asks for nothing: the real write prints
+		// "already reads what was asked for" and demands no typed name, so the
+		// dry run must not classify it as a widening either.
+		typed, why = false, ""
+	}
+	edit := settingsEdit{
 		Path:     target.path,
 		Old:      old,
 		New:      newData,
@@ -1017,8 +1057,15 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		Kind:     target.kind,
 		Command:  settingsWriteCommand("set", key, value, o, target.layer),
 		Yes:      o.yes,
-	}); err != nil {
+	}
+	if o.dryRun {
+		edit.DryRun = &settingsDryRun{key: key, layer: target.layer, oldValue: oldValue, newValue: settingsValueIn(newData, target.keyPath), jsonOut: o.jsonOut}
+	}
+	if err := applySettingsEdit(cmd, lc, edit); err != nil {
 		return err
+	}
+	if o.dryRun {
+		return nil
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
 	return nil
@@ -1027,6 +1074,9 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 // runSettingsUnset is `settings unset`: remove the key from one layer so the
 // layer below decides again, never writing a default in its place (spec §4.3).
 func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions) error {
+	if err := settingsDryRunFlags(o); err != nil {
+		return err
+	}
 	if len(args) != 1 {
 		return userErr("settings unset takes one key")
 	}
@@ -1051,18 +1101,24 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 	if err != nil {
 		return userErr("%s: %v", key, err)
 	}
-	if !yamledit.Changed(old, newData) {
+	if !yamledit.Changed(old, newData) && !o.dryRun {
 		// The same order as the set path: a key that is not there is not a
 		// write, so a document that does not read back is reported when a
-		// write is actually asked for, not when nothing would change.
+		// write is actually asked for, not when nothing would change. The dry
+		// run is the exception: it answers with a document whatever the edit
+		// turns out to be, and `changed` is one of its members.
 		fmt.Fprintf(cmd.OutOrStdout(), "nothing to unset: %s is not set in %s\n", key, target.path)
 		return nil
 	}
 	if err := settingsReparse(target, newData); err != nil {
 		return err
 	}
-	typed, why := settingsTypedWrite(row, settingsValueIn(old, target.keyPath), "", "unset")
-	if err := applySettingsEdit(cmd, lc, settingsEdit{
+	oldValue := settingsValueIn(old, target.keyPath)
+	typed, why := settingsTypedWrite(row, oldValue, "", "unset")
+	if !yamledit.Changed(old, newData) {
+		typed, why = false, ""
+	}
+	edit := settingsEdit{
 		Path:     target.path,
 		Old:      old,
 		New:      newData,
@@ -1072,9 +1128,130 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 		Kind:     target.kind,
 		Command:  settingsWriteCommand("unset", key, "", o, target.layer),
 		Yes:      o.yes,
-	}); err != nil {
+	}
+	if o.dryRun {
+		edit.DryRun = &settingsDryRun{key: key, layer: target.layer, oldValue: oldValue, newValue: settingsValueIn(newData, target.keyPath), jsonOut: o.jsonOut}
+	}
+	if err := applySettingsEdit(cmd, lc, edit); err != nil {
 		return err
+	}
+	if o.dryRun {
+		return nil
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
 	return nil
+}
+
+// settingsDryRunFlags refuses the flag combinations a dry run does not take.
+// --dry-run and --yes answer different questions — one says what the edit would
+// do, the other answers a write that is about to happen — so the pair is
+// refused rather than resolved (D1106); --json is the dry run's own shape, and
+// a caller that asked for a document must not silently get a table instead.
+func settingsDryRunFlags(o settingsWriteOptions) error {
+	if o.dryRun {
+		if o.yes {
+			return userErr("--dry-run and --yes answer different questions: a dry run says what the edit would do and writes nothing, --yes answers a write; name one")
+		}
+		return nil
+	}
+	if o.jsonOut {
+		return userErr("--json is the dry run's document: pass --dry-run with it, or read the settings with `fugaro settings --json`")
+	}
+	return nil
+}
+
+// settingsDryRun is the classification a dry run answers with: the facts the
+// write path has and the shape they are printed in. The classification itself
+// is the edit's — Widening and Why are the values of the same settingsTypedWrite
+// call that decides whether the typed name is demanded, so a key added to
+// settingsCeilingKey or a list rule changed in settingsListSubset moves this
+// document with no edit here (D1106) — and this type carries only what that
+// call does not.
+type settingsDryRun struct {
+	key, layer         string
+	oldValue, newValue string
+	jsonOut            bool
+}
+
+// document is the dry run's document for the edit it describes. changed is the
+// write path's own comparison of the two byte strings — the same comparison
+// that decides whether a write would happen at all — and the caller does not
+// pass it, so a document cannot claim a change the write path did not see.
+func (d settingsDryRun) document(e settingsEdit, changed bool) settingsWriteDoc {
+	return settingsWriteDoc{
+		Version:  settingsWriteDocVersion,
+		Key:      safetext.Field(d.key),
+		Layer:    safetext.Field(d.layer),
+		Path:     safetext.Field(e.Path),
+		Changed:  changed,
+		Widening: e.Typed,
+		Why:      safetext.Field(e.TypedWhy),
+		Old:      safetext.Field(d.oldValue),
+		New:      safetext.Field(d.newValue),
+	}
+}
+
+// settingsWriteDocVersion is the dry run's document version (D848: members are
+// only ever added within a version, and removing or retyping one bumps this
+// number). schemas/settings-write.schema.json is the contract.
+const settingsWriteDocVersion = 1
+
+// settingsWriteDoc is what a dry run prints: what one edit would do, and the
+// write path's own classification of it. It is the document a consumer draws a
+// confirmation window from (D1106), so every member is one this CLI produced —
+// the consumer computes nothing — and every string is printed through
+// safetext.Field, because a key, a path and a value are as much the file's and
+// the command line's as they are this program's.
+//
+// Refusal is empty in every document this CLI prints. A refusal is this
+// program's own sentence with a non-zero exit and no document at all, which is
+// what a consumer branches on (D1106, D1112), so nothing ever sets this member:
+// it is written out because the shape is the contract, and a consumer reads it
+// by name.
+type settingsWriteDoc struct {
+	Version  int    `json:"version"`
+	Key      string `json:"key"`
+	Layer    string `json:"layer"`
+	Path     string `json:"path"`
+	Changed  bool   `json:"changed"`
+	Widening bool   `json:"widening"`
+	Why      string `json:"why"`
+	Old      string `json:"old"`
+	New      string `json:"new"`
+	Refusal  string `json:"refusal"`
+}
+
+// writeSettingsWriteDoc prints the dry run's document: the versioned JSON
+// document with --json, and the same facts as a table without it.
+func writeSettingsWriteDoc(w io.Writer, doc settingsWriteDoc, jsonOut bool) error {
+	if jsonOut {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(doc)
+	}
+	return writeSettingsWriteTable(w, doc)
+}
+
+// writeSettingsWriteTable prints the document as the settings commands' own
+// table shape, one row per member and in the document's own order: the two
+// shapes carry the same facts or the table is a second contract, and a second
+// contract is the one that drifts.
+func writeSettingsWriteTable(w io.Writer, doc settingsWriteDoc) error {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "FIELD\tVALUE")
+	for _, row := range [][2]string{
+		{"version", strconv.Itoa(doc.Version)},
+		{"key", doc.Key},
+		{"layer", doc.Layer},
+		{"path", doc.Path},
+		{"changed", strconv.FormatBool(doc.Changed)},
+		{"widening", strconv.FormatBool(doc.Widening)},
+		{"why", doc.Why},
+		{"old", doc.Old},
+		{"new", doc.New},
+		{"refusal", doc.Refusal},
+	} {
+		fmt.Fprintf(tw, "%s\t%s\n", row[0], row[1])
+	}
+	return tw.Flush()
 }
