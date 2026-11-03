@@ -59,7 +59,15 @@ type setting struct {
 	State        string
 	// Sensitive rows carry the set/unset fact and never the value.
 	Sensitive bool
-	Levels    []level
+	// Writable is whether the generic path writes the key, Owner is the
+	// command family that writes a key it does not (the empty string when no
+	// family owns it), and TargetLayer is the layer a write with no --layer
+	// lands in. They are the answer a consumer draws an edit from, and the
+	// write's own answer rather than a second list beside it (D1102).
+	Writable    bool
+	Owner       string
+	TargetLayer string
+	Levels      []level
 }
 
 // level is one layer that sets a key, for --why: the value it holds and
@@ -358,6 +366,14 @@ func layerSelected(row settings.Row, want []string) bool {
 // projectRow is the key at the project scope: the layer file, the local config
 // or the environment, whichever decides.
 func (r *settingsRead) projectRow(row settings.Row) setting {
+	// Writable is the write's own decision, asked of the write (D1102): it is
+	// the same function `settings set` refuses with, so a row the read offers
+	// an edit for is a row the write accepts. The allowlist alone is not that
+	// answer — spec §4.4 hands the generic path the `agent.` block whole, and
+	// `agent.model` is inside it while the models family owns the row — and a
+	// row with a varying segment is a map entry the write refuses whatever
+	// list carries it.
+	_, writeErr := settingsWriteRow(row.Key)
 	s := setting{
 		Key:          row.Key,
 		Scope:        "project",
@@ -368,6 +384,9 @@ func (r *settingsRead) projectRow(row settings.Row) setting {
 		Source:       row.Default.Const,
 		State:        stateOK,
 		Sensitive:    row.Sensitive,
+		Writable:     writeErr == nil,
+		Owner:        settingsFamilyCommands[row.Owner],
+		TargetLayer:  settingsDefaultLayer(row),
 	}
 	switch {
 	case strings.HasPrefix(row.Key, "layer."):
