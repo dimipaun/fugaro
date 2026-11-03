@@ -263,7 +263,10 @@ keeps today's per-workflow meaning otherwise (**D1144**). `fugaro image add`/`rm
 [name]` reads the repository's existing definition, writes the entry, and repoints the repository in the
 same commit — never automatic, never on `fugaro update` (**D1147**); its help names the **Cloud Build
 step** it shares a word with (**F15**). The command family's skew gate is **`imageCatalogSince`**
-(**D1156**), not the price catalog's `catalogSince` (**F14**).
+(**D1156**), not the price catalog's `catalogSince` (**F14**). **D1146's pin warning is printed
+here**: the update path reads the warnings the deploy-time job spec carries
+(`WorkflowSpec.Warnings`, PIC5) and prints them, so a repository pinning an entry its job outgrows
+is told in the run that moves the job.
 
 - **Files (9):** `internal/cli/image.go` (`newImageCmd`'s four additions), `internal/cli/image_catalog.go`
   (new: `ls`, `add`, `rm`), `internal/cli/image_catalog_test.go` (new), `internal/cli/image_promote.go`
