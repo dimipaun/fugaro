@@ -438,6 +438,9 @@ func TestGitHubReadRouteNamesTheClientPath(t *testing.T) {
 	if GitHubReadPath != githubReadPath {
 		t.Errorf("the read mint's path = %q, want %q", GitHubReadPath, githubReadPath)
 	}
+	if github.ServiceReadPath != GitHubReadPath {
+		t.Errorf("the client's read path = %q and the service's = %q, want one path", github.ServiceReadPath, GitHubReadPath)
+	}
 	purpose, credential := routeAct(GitHubReadPath)
 	if purpose != PurposeGitHubRead || credential != config.GitHubAppKeySecret {
 		t.Errorf("routeAct(%s) = (%q, %q), want (%q, %q)", GitHubReadPath, purpose, credential, PurposeGitHubRead, config.GitHubAppKeySecret)
