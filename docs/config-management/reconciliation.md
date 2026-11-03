@@ -69,10 +69,18 @@ what the guard at the end of this section re-runs.
   `--description`, `--default` and **no `--image`**, while `config.SourceImage`
   (`internal/config/catalog.go:69`) is a source a run already consumes and the rows name the `project`
   family (`internal/settings/registry.go:690`).
-- **F11 — the owner column is read through a map that is missing four families.**
-  `settingsFamilyCommands` (`internal/cli/settings_set.go:43`) maps `models`, `rigor`, `rigor floor`,
-  `accounts`, `secrets` and `project`; `budget`, `setup`, `update` and `config` are absent, so every key
-  those families own reads with no family beside it (`internal/cli/settings_read.go:388`).
+- **F11 — the owner column is read through the map the write path refuses with, and that map is missing
+  three families.** `settingsFamilyCommands` (`internal/cli/settings_set.go:43`) maps `models`, `rigor`,
+  `rigor floor`, `accounts`, `secrets` and `project`; `setup`, `update` and `config` are absent, so the
+  rows they own read with no family beside them (`internal/cli/settings_read.go:388`). The read is not
+  the only caller: the same map is what refuses a write and points the key at its family
+  (`internal/cli/settings_set.go:298`). So a family cannot simply be added — `config` owns `max_parallel`
+  (`internal/settings/registry.go:560`) and `setup` owns `update_check` (`:566`), and **both keys are in
+  the allowlist and are written by the generic path today**, so an entry for either family would refuse
+  two keys `settings set` writes. The map also carries no entry for the default owner
+  (`internal/settings/registry.go:324`), so the column is empty for every key the generic path writes,
+  which is the shape F13's two rows are read through. D1178 decides what the read resolves an owner
+  through instead of widening a map that answers a second question.
 - **F12 — a concrete key reaches a wildcard row only when the allowlist names that row.**
   `settingsWriteLookup` (`internal/cli/settings_set.go:328`) matches `settingsPatternMatch` (`:351`)
   across the registry's wildcard rows, bounded to the rows `settingsGenericKeys` carries by name — which
@@ -83,7 +91,10 @@ what the guard at the end of this section re-runs.
   generic path refuses them on purpose.** The rows are `internal/settings/registry.go:210` and `:213`,
   the default owner is `:324`, and the allowlist's own comment (`internal/cli/settings_set.go:60`) says
   in so many words that the spec does not hand them to the generic path. So they are **unwritable and
-  owned by a command that will not write them**: the sharpest single defect of the audit.
+  owned by a command that will not write them**: the sharpest single defect of the audit. The other two
+  keys of the same block — `budget.per_run_usd` and `budget.allowed_models` — *are* in the allowlist
+  (`internal/cli/settings_set.go:68`), so the four rows of a repository's own budget block are split
+  across two answers for no reason a reader can see; D1179 makes them one.
 - **F14 — the census row this folder moves is a running total of other folders' guards.**
   `docs/rigor-modes/reconciliation.md:732` counts the folders that ship their own
   `internal/cli/docs_*_test.go` and reads **92**; this folder's pin makes it **93**, and the row says in
@@ -114,19 +125,26 @@ on.
   is an allowlist gap: `settingsWriteLookup` (`internal/cli/settings_set.go:328`) already resolves a
   concrete key against a wildcard row, for the rows the allowlist names (F12). Nothing in the resolver
   changes; the decision is which rows the allowlist gains (D1161).
-- **C4 — `budget.mode` and `budget.per_day_usd` do not print an empty owner.** They print `settings set`,
-  the registry's default owner (`internal/settings/registry.go:324`). The empty-owner hole the brief
-  describes is real but elsewhere: the four families missing from `settingsFamilyCommands`
-  (`internal/cli/settings_set.go:43`, F11).
+- **C4 — `budget.mode` and `budget.per_day_usd` do not carry an empty owner.** Their rows store
+  `settings set`, the registry's default owner (`internal/settings/registry.go:324`). What reads as an
+  empty owner is the *rendering*: the column is `settingsFamilyCommands[row.Owner]`
+  (`internal/cli/settings_read.go:388`) and that map has no entry for the default owner, so it is empty
+  for every key the generic path writes (F11). The hole the brief describes is real; its cause is F11
+  beside F13, not a row whose owner string is missing.
 - **C5 — `compute_prices` already names an owner.** The brief lists it as a key that "needs one"; the
   rows name `setup` (`internal/settings/registry.go:595`). Its real state is worse and more interesting:
   it is a **local-config map with its own validation** (`internal/localcfg/localcfg.go:118`, the region
   and price checks at `:1652`) whose only editor is a hand edit, and the published-config design treats
   it as a mergeable map ([docs/design/shared-config.md](../design/shared-config.md)). D1179 decides it
   on that fact rather than on a missing owner string.
-- **C6 — the managed marker's new version is 3, not a "V4".** The design adds one value to
-  `MarkerVersion` (`internal/infra/managed/marker.go:58`) beside `MarkerVersionBudget`; nothing is
-  renumbered and no installation's mark is rewritten (D1180, and the managed folder's own F4).
+- **C6 — the managed marker's next version is 3, not a "V4", and this design writes no marker at all.**
+  The brief asks this design for a new mark version. The version beside `MarkerVersion = 1` and
+  `MarkerVersionBudget = 2` (`internal/infra/managed/marker.go:58`) is 3, not a "V4", and it is the
+  **managed build's** — that plan's M5 adds the constant and its field, and the marker's read is what
+  learns it. Nothing in this design bumps a marker version and no task here touches the mark: §1 of this
+  folder's plan says **no task in it edits `internal/managed/`**, and the mark's write path stays the
+  owner's alone (D1181). A task that changed a marker version would be a managed-build task, not one of
+  G0–G13.
 - **C7 — `job_profiles.*` and `image_catalog.entries.*` are already `project`-family keys.** The rows
   say so (`internal/settings/registry.go:647`, `:690`), so the two commands the brief asks for extend a
   family that exists rather than creating one, and they are refused by the generic path today for
@@ -204,20 +222,23 @@ rather than its conclusion.
   field cannot be addressed by the new pair at all, and the plan has to say so with a refusal rather
   than guess (G2).
 
-- **D1164 (the settings-write document moves to version 2, with members added and none changed, and the
-  console keeps working unchanged) — OPEN, recommended.**
-  Recommendation: `schemas/settings-write.schema.json` gains a version 2 whose members are **added**
-  (`operation`, the entry's key field, the entry's members) and whose every version-1 member keeps its
-  name and its meaning; `settingsWriteDocVersion` (`internal/cli/settings_set.go:1197`) moves with the
-  const (`schemas/settings-write.schema.json:20`). The console reads `changed`, `widening`, `why`, `old`
-  and `new` to draw its confirmation window, and a version-2 document carries all five, so it needs no
-  change and this design edits no console file. The document's own description is the rule being
-  followed: members are only ever added within a version (D848), and removing or retyping one bumps it.
-  Cost of the alternative: putting an entry write's fields into version 1 without bumping is exactly
-  what D848 forbids, and a console that refused the extra members would break the settings edit that
-  already ships. Cost of the recommendation: two versions of one document to keep consistent, so a
-  later task that changes the *shape* of a version-1 member must bump again rather than widen
-  in place — which is the same rule, applied twice.
+- **D1164 (the settings-write document keeps version 1 and gains its entry members as optional ones, and
+  the console keeps working unchanged) — OPEN, recommended.**
+  Recommendation: `settingsWriteDocVersion` (`internal/cli/settings_set.go:1197`) and the schema's const
+  (`schemas/settings-write.schema.json:20`) **stay at `1`**, and the entry write's members — `operation`,
+  the entry's key field, the entry's members — are **added as optional members**, none of them required.
+  The document's own description is the rule being followed: members are only ever added within a version
+  (D848), and removing or retyping one bumps it. The console pins the version it reads —
+  `SETTINGS_VIEW_DOC_VERSION = 1` (`console/src/main/settingsview.ts:42`) refuses any document at another
+  version (`:178`) — so a version 2 would break **every** settings edit the console makes, which is the
+  edit it spawns `settings set … --yes` behind; keeping version 1 and adding optional members is what
+  makes "the console keeps working unchanged" true rather than hoped for. An old document that carries
+  none of the new members still decodes and still draws. This design edits no console file.
+  Cost of the alternative: a version bump is a version the console must be taught in the same release,
+  and the console is released independently of the CLI — so the bump buys nothing here and breaks the one
+  reader that exists. Cost of the recommendation: version 1 can only grow by optional members, so a
+  member whose *meaning* must change takes a new version and a console edit with it, and a reader of the
+  schema cannot tell a member that is always present from one only an entry write prints.
 
 - **D1165 (an entry write is classified, confirmed and fenced exactly as a scalar write is) — OPEN,
   recommended.**
@@ -388,30 +409,40 @@ rather than its conclusion.
 
 - **D1178 (every non-writable key names a command that exists, or a sentence saying `setup` or `update`
   owns it) — OPEN, recommended.**
-  Recommendation: `settingsFamilyCommands` (`internal/cli/settings_set.go:43`) gains `budget`, `setup`,
-  `update` and `config`, each mapping to an existing command or to a sentence naming `fugaro setup` or
-  `fugaro update`; and every key whose owner changes is listed in the plan's own table (G10) so the
-  change is reviewable as a diff of names. The owner column is a read path
+  Recommendation, in three parts. **The rule**: a key the allowlist carries is `settings set`'s and its
+  row says so; every other key names a command that exists or a sentence naming `fugaro setup` or
+  `fugaro update`. **The mechanism**: the read resolves an owner through a table of its own instead of
+  `settingsFamilyCommands` (`internal/cli/settings_set.go:43`), which answers the *write*'s refusal and
+  cannot be widened — `config` owns `max_parallel` (`internal/settings/registry.go:560`) and `setup`
+  owns `update_check` (`:566`), and both are keys the generic path writes today (F11). **The table**:
+  every key whose owner string changes is listed in the plan's own table (G12), so the change is
+  reviewable as a diff of names. The owner column is a read path
   (`internal/cli/settings_read.go:388`) and not a write path, so this is a rename of a name and never a
   meaning.
-  Cost of the alternative: leaving four families out means the settings read tells a person that a
-  budget key is written by `settings set`, which refuses it — the worst answer a registry can give, and
-  the one F13 has today. Cost of the recommendation: a sentence where a command name was is a read path
-  that prints prose, so the plan has to decide how a sentence renders beside a command name rather than
-  letting the two shapes mix (G10).
+  Cost of the alternative: resolving through the write's own map makes a read-only question a change to
+  what a command refuses, and adding `setup` or `config` to it refuses two keys `settings set` writes
+  today — the trap D1179 fell into with `budget`. Cost of the recommendation: a second table is a second
+  place a family is spelled, so the plan has to keep the two in step with a test (G12) rather than
+  claiming one map answers both questions.
 
-- **D1179 (the four budget caps go to `fugaro budget set`; `compute_prices` goes to the generic writer)
-  — OPEN, recommended.**
+- **D1179 (the four budget keys stay the generic writer's, and the allowlist gains the two it refuses;
+  `compute_prices` goes to the generic writer too) — OPEN, recommended.**
   Recommendation: `budget.mode`, `budget.per_day_usd`, `budget.per_run_usd` and `budget.allowed_models`
-  (`internal/settings/registry.go:210`, `:213`) name `fugaro budget set`, the command that writes those
-  caps into the budget database with its ETag-guarded write (`internal/cli/budget.go:923`); and
-  `compute_prices.*` (`internal/settings/registry.go:595`) — a local-config map with its own validation
-  (`internal/localcfg/localcfg.go:118`) — becomes a generic-writer entry (D1162), because it is a
+  (`internal/config/scope.go:91`, four `InRepo` rows) are a repository's own tightening of a ceiling and
+  **stay the generic writer's**. Two of them are already in the allowlist
+  (`internal/cli/settings_set.go:68`: `budget.per_run_usd`, `budget.allowed_models`); the other two are
+  **added to it**, which is the whole change F13 needs, so a key `settings set` writes and a key its
+  allowlist carries are the same set (D1160). `fugaro budget set` keeps writing the budget **database**'s
+  caps under its ETag-guarded write (`internal/cli/budget.go:923`) and owns no registry row: handing it
+  these four would refuse, at a stroke, two keys the generic path writes today. `compute_prices.*`
+  (`internal/settings/registry.go:595`) — a local-config map with its own validation
+  (`internal/localcfg/localcfg.go:118`) — becomes a generic-writer entry (D1162) as well, because it is a
   deliberate local override no run's ceiling turns on.
-  Cost of the alternative: leaving the caps to the generic path keeps two writers of one ceiling — the
-  generic writer's file and `budget set`'s database — and the cross-key check the family exists for is
-  the one that gets lost. Cost of the recommendation: the caps' owner string changes even though their
-  values' *meaning* does not, which is a registry diff a reader must be told to read as a rename (D1178).
+  Cost of the alternative: naming `fugaro budget set` for the four is two writers of one ceiling with the
+  registry's owner column naming the remote one, and it breaks the two keys the generic path already
+  carries — a fix that refuses what it was meant to free. Cost of the recommendation: `budget set` and
+  `settings set` both move a ceiling, so the read has to say which document each writes (the file the
+  repository's runs read, the database the installation enforces), which is D1178's table's job.
 
 - **D1180 (every new command carries a row in the managed gate's command set, and the rows follow
   D1026) — OPEN, recommended.**
@@ -452,17 +483,21 @@ rather than its conclusion.
   plan's owner table has to point at the converge rather than at an editor, and a person wanting one of
   those facts waits for a flag (G12).
 
-- **D1183 (no compatibility or skew shim; the settings-write document is the one versioned thing) — OPEN,
-  recommended.**
+- **D1183 (no compatibility or skew shim; the settings-write document keeps the one version there is) —
+  OPEN, recommended.**
   Recommendation: there are no production users and this design adds no shim, no dual read and no
-  migration: a shape that must change changes directly, except the settings-write document, which is
-  versioned because the console reads it (D1164) and D848's rule governs it. No key is re-meant: the
-  owner column's values change (D1178, D1179) and a key's own meaning does not.
+  migration: a shape that must change changes directly. The settings-write document is the one shape
+  that carries a version at all, and this design **does not move it**: its new members are added as
+  optional ones inside version 1 (D1164, D848), because the console pins that version
+  (`console/src/main/settingsview.ts:42`) and refuses any other (`:178`) — a bump is a console release
+  the CLI cannot make. No key is re-meant: the owner column's values change (D1178, D1179) and a key's
+  own meaning does not.
   Cost of the alternative: a shim for a pre-1.0 CLI with no users is code that will be deleted before it
   is ever exercised, and it hides the very disagreements (F13, C4) this design exists to expose. Cost of
-  the recommendation: an installation one version behind sees a document version it does not know, and
-  the only answer is `fugaro update` — the HARD RULE's own command, which is the answer the repository
-  has already chosen everywhere else.
+  the recommendation: version 1 may only grow by optional members while the console reads it, so a
+  change to a member's *meaning* is a version bump and a console change in the same release, and an
+  installation one version behind still meets the only answer the repository has: `fugaro update`, the
+  HARD RULE's own command.
 
 ## 5. The residual this design refuses to hide
 
