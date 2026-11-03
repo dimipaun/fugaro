@@ -205,7 +205,7 @@
         },
         "writable": {
           "type": "boolean",
-          "description": "Whether `fugaro settings set|unset` writes this key: the generic path's own decision, so a consumer draws an edit only where the write accepts it, and never from a copy of the CLI's allowlist (D1102). A sensitive row is a row no family and no allowlist hands the generic path, so it is never writable. Written on every row by this CLI; absent from a document an older CLI wrote, where it means the same as false."
+          "description": "Whether `fugaro settings set|unset` writes this key: the generic path's own decision for the key, so a consumer never keeps a copy of the CLI's allowlist (D1102). It is the key's answer and ignores the session and the value: a write may still be refused in a coding agent's session for a target outside the repository, or as a typed widening. A sensitive row is a row no family and no allowlist hands the generic path, so it is never writable. Written on every row by this CLI; absent from a document an older CLI wrote, where it means the same as false."
         },
         "owner": {
           "type": "string",
