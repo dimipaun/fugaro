@@ -58,6 +58,16 @@ func TestConvergeRefusesATypedClass(t *testing.T) {
 	if err := ConvergeRefused(doc, initflow.YesOrTyped, rules).Refuse(); err == nil {
 		t.Error("a refused verdict admits the step")
 	}
+	// The gate admits the one class it judges and nothing else: a value outside
+	// the declared classes, or a class added later, is refused by default.
+	for _, class := range []initflow.ConfirmClass{2, -1} {
+		err := ConvergeAdmitted(doc, class, rules).Refuse()
+		if err == nil {
+			t.Errorf("an admitted step of unknown class %d is let through: the class rule fails open", class)
+		} else if strings.HasSuffix(err.Error(), "— ") || strings.HasSuffix(err.Error(), "—") {
+			t.Errorf("the refusal of class %d ends in a bare dash: %v", class, err)
+		}
+	}
 }
 
 // D1022: the gate hashes the exact bytes it read, so the document that was

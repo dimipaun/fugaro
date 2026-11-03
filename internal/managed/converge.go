@@ -126,7 +126,7 @@ const NotConverged = "a managed project admits an agent's session to the steps t
 // rule gives is the refusal (D1026), and the classes the stage table refuses a
 // --yes for never become agent-runnable because a plan looks clean.
 func (c Converge) Refuse() error {
-	if c.admitted && c.class != initflow.Typed {
+	if c.admitted && c.class == initflow.YesOrTyped {
 		return nil
 	}
 	return fmt.Errorf("%w: %s — %s", ErrNotConverged, NotConverged, c.refusedBy())
@@ -151,6 +151,8 @@ func (c Converge) refusedBy() string {
 	}
 	if c.class == initflow.Typed {
 		why = append(why, "the step's confirmation class is Typed, which no plan gate admits (D1026)")
+	} else if c.class != initflow.YesOrTyped {
+		why = append(why, "the step's confirmation class is not one a plan gate judges (D1026)")
 	}
 	return strings.Join(why, "; ")
 }
