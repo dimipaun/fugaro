@@ -2300,7 +2300,9 @@ run "credentials_service_off_by_default" {
 #     module's IAM resources. (Independent review n1: this comment used to
 #     claim the run guarded that too, which it does not.)
 #   * The service requires IAM: nothing in this module grants invoker to
-#     anyone, and the container reads no credential from its environment.
+#     allUsers or allAuthenticatedUsers, and the grants it does make are the
+#     front door's (iam.tf: the operators, BB4) and the container reads no
+#     credential from its environment.
 run "credentials_service_on" {
   command = plan
 
@@ -2463,12 +2465,16 @@ run "credentials_service_on" {
   # internal/infra/tf's credentialsServiceEnv allows, and it is held as an
   # exact map: an extra entry, a missing one, a name the process does not
   # read, or a value that is not the installation's own fails here. This run
-  # names a verifier, so it carries the eighth name; the run below, which
-  # names none, is where the seven are held. What the service does with a
-  # value (a database URL that is not the Firebase project's, an audience that
-  # is not a URL, a job table that binds nothing, a verifier list that is not
-  # a list of addresses) is refused by the process itself, by name, and is
-  # C1.14's tests.
+  # names a verifier, so it carries the ninth name; the run below, which names
+  # none, is where the other eight are held. Two of the nine are rendered only
+  # from what this file's own variables name: the verifier list (C3.9g1) and,
+  # since BB4, the read mint's admitted people — the operators among the
+  # installation's user: members, as the bare addresses a Google ID token's
+  # email claim carries, which is what the service verifies them by. What the
+  # service does with a value (a database URL that is not the Firebase
+  # project's, an audience that is not a URL, a job table that binds nothing,
+  # a verifier list or a person list that is not a list of addresses) is
+  # refused by the process itself, by name, and is C1.14's tests.
   assert {
     condition = tomap({
       for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.name => e.value
@@ -2481,6 +2487,7 @@ run "credentials_service_on" {
       FUGARO_CREDENTIALS_SERVICE_URL = "https://fugaro-credentials-123456789012.us-east5.run.app"
       FUGARO_JOB_ACCOUNTS            = "[{\"provider\":\"github\",\"repo\":\"acme/webapp\",\"workflow\":\"web\"}]"
       FUGARO_VERIFIER_ACCOUNTS       = "[\"person-1@example.com\",\"fugaro-coordinator@proj-1234.iam.gserviceaccount.com\"]"
+      FUGARO_PERSON_ACCOUNTS         = "[\"operator@example.com\"]"
     })
     error_message = "the container's environment is the names the service reads and nothing else: no secret ID, no credential value, and no entry beyond the ones the module sets for this run"
   }
@@ -2592,8 +2599,8 @@ run "credentials_service_first_apply_has_no_audience_yet" {
     error_message = "the placeholder must not look like a Cloud Run URL: a run.app-shaped audience would be a guess at another service's name"
   }
   assert {
-    condition     = length(google_cloud_run_v2_service.credentials[0].template[0].containers[0].env) == 7
-    error_message = "the unset case sets the same seven names, the audience among them: a name the module drops is a service the process refuses by a different message"
+    condition     = length(google_cloud_run_v2_service.credentials[0].template[0].containers[0].env) == 8
+    error_message = "the unset case sets the same eight names, the audience among them: a name the module drops is a service the process refuses by a different message"
   }
 }
 

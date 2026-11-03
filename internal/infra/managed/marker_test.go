@@ -1788,6 +1788,19 @@ var runAccountGrants = setOf(
 	`google_logging_log_view_iam_member | "roles/logging.viewAccessor" | name=google_logging_log_view.runs[0].name | each.value | for_each=var.log_isolation ? toset(concat(var.launchers, var.operators)) : toset([]) | perms=`,
 	`google_secret_manager_secret_iam_member | each.value.role | secret_id=google_secret_manager_secret.project[each.value.secret].secret_id | each.value.member | for_each=merge( { for k, v in local.operator_project_secrets : "${k} secretVersionAdder" => merge(v, { role = "roles/secretmanager.secretVersionAdder" }) }, { for k, v in local.operator_project_secrets : "${k} viewer" => merge(v, { role = "roles/secretmanager.viewer" }) }, ) [local.operator_project_secrets={ for p in setproduct(keys(var.project_secrets), var.operators) : "${p[0]} ${p[1]}" => { secret = p[0], member = p[1] } }] | perms=?`,
 	`google_secret_manager_secret_iam_member | each.value.role | secret_id=google_secret_manager_secret.this[each.value.secret].secret_id | each.value.member | for_each=merge( { for k, v in local.operator_secrets : "${k} secretVersionAdder" => merge(v, { role = "roles/secretmanager.secretVersionAdder" }) }, { for k, v in local.operator_secrets : "${k} viewer" => merge(v, { role = "roles/secretmanager.viewer" }) }, ) [local.operator_secrets={ for p in setproduct(keys(var.repo.secrets), var.installation.operators) : "${p[0]} ${p[1]}" => { secret = p[0], member = p[1] } }] | perms=?`,
+
+	// The read mint's own front door (BB4): the operators, over the user:
+	// members among them, holding roles/run.invoker on the credentials service
+	// so a person can call it at all. Its for_each is a conditional over a
+	// people set the module filters to those members, which this test cannot
+	// resolve to a set of people, so it is pinned whole like the three above.
+	// Reviewed as a grant to one of the operators rather than to a run's
+	// credential — each.value is a member the module already grants the runs
+	// bucket to — and the role reaches run services alone: invoking this one
+	// hands the caller a short-lived, read-scoped Bitbucket token for one
+	// repository, and G4's admission inside the service refuses every caller
+	// that is not one of these people.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | each.value | for_each=local.credentials_service_on ? toset(local.credentials_read_members) : toset([]) [local.credentials_read_members=[for m in var.operators : m if startswith(m, "user:")]] [local.credentials_service_on=var.credentials_service != null] | perms=`,
 )
 
 // setOf is a set of strings.

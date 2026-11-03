@@ -149,7 +149,7 @@ variable "launchers" {
 }
 
 variable "operators" {
-  description = "Members who onboard repositories, such as user:someone@example.com."
+  description = "Members who onboard repositories, such as user:someone@example.com. The user: members are also the people the credentials service's read mint admits, and the only ones it may be invoked by."
   type        = list(string)
   default     = []
   nullable    = false

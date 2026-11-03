@@ -317,6 +317,12 @@ func TestCatalogBuildRefusesWhenTheCopyIsMissing(t *testing.T) {
 		"no commit":     func(s *CatalogBuildSpec) { s.Definition.SourceCommit = "" },
 		"a bad commit":  func(s *CatalogBuildSpec) { s.Definition.SourceCommit = "main" },
 		"no selftest":   func(s *CatalogBuildSpec) { s.Selftest = nil },
+		// A catalog image may be built FROM any base (D1151), so its smoke
+		// is the only thing that can assert the runtime contract there: a
+		// spec asking for no tools is refused, whatever shape the ask takes.
+		"no tools key":  func(s *CatalogBuildSpec) { s.Selftest = []byte(`{"skip_verify":true}`) },
+		"empty tools":   func(s *CatalogBuildSpec) { s.Selftest = []byte(`{"skip_verify":true,"tools":""}`) },
+		"unknown tools": func(s *CatalogBuildSpec) { s.Selftest = []byte(`{"skip_verify":true,"tools":"none"}`) },
 	} {
 		// bad is a copy of the spec, made here and never stored: a row's
 		// mutation reaches the request built from it and nothing else, so the
@@ -325,6 +331,15 @@ func TestCatalogBuildRefusesWhenTheCopyIsMissing(t *testing.T) {
 		mod(&bad)
 		if _, err := CatalogBuildRequest("proj-1234", bad); err == nil || !strings.Contains(err.Error(), "invalid Cloud Build request") {
 			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	// The tiers that cover the contract's critical rows are accepted: the
+	// derived smoke's own, and every row the base image's CI smoke runs.
+	for _, tools := range []string{"critical", "all"} {
+		ok := s
+		ok.Selftest = []byte(`{"skip_verify":true,"tools":"` + tools + `"}`)
+		if _, err := CatalogBuildRequest("proj-1234", ok); err != nil {
+			t.Errorf("tools %q: %v", tools, err)
 		}
 	}
 	// The copy's key is derived from the entry's name and never taken from

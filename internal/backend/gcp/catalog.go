@@ -1,8 +1,10 @@
 package gcp
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -11,6 +13,7 @@ import (
 
 	cloudbuild "google.golang.org/api/cloudbuild/v1"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 )
@@ -127,6 +130,60 @@ func SharedCatalogImage(region, project, entry string) (string, error) {
 		return "", err
 	}
 	return host + "/" + SharedRegistryRepoID() + "/catalog-" + entry, nil
+}
+
+// CatalogImageEntry reads the entry's name back out of a catalog image's
+// reference: <region>-docker.pkg.dev/<project>/<SharedRegistryRepoID()>/
+// catalog-<entry>:latest, the image SharedCatalogImage names and the deploy
+// gives a job the catalog chose for it (D1152). It is the reader of that
+// writer, and false for every other reference — a repository's own derived
+// image, an entry whose source is a prebuilt reference (which is that
+// reference and nothing else), a digest rather than the moving tag.
+//
+// It makes no calls, and the entry it returns is grammar-checked by the same
+// helper the keys are derived with: a name that could not be an entry never
+// comes out of it.
+func CatalogImageEntry(image string) (string, bool) {
+	host, tail, ok := strings.Cut(image, "/"+SharedRegistryRepoID()+"/catalog-")
+	if !ok || !registryHostRE.MatchString(host) {
+		return "", false
+	}
+	entry, ok := strings.CutSuffix(tail, ":latest")
+	if !ok {
+		return "", false
+	}
+	if _, err := config.CatalogDockerfileKey(entry); err != nil {
+		return "", false
+	}
+	return entry, true
+}
+
+// JobImage reads job (a job name in the backend's region) and returns the
+// image its container is deployed with, and whether the job exists. A job
+// whose template carries no container gives "", true.
+//
+// It is the deployment read the docker tag's rule is answered from
+// (internal/cli's catalogDockerAsk, D1149): a job's image is fixed when the
+// job is deployed (F7) — Cloud Run cannot vary it per execution — so the
+// image a run will start on is the deployed job's own and never the one a
+// selection made now would choose. It is JobFullEnv's and JobSecretRefs'
+// shape, and reads one field of the same Jobs.Get.
+func (b *Backend) JobImage(ctx context.Context, job string) (string, bool, error) {
+	if !nameRE.MatchString(job) {
+		return "", false, fmt.Errorf("bad job name %q", job)
+	}
+	j, err := b.run.Projects.Locations.Jobs.Get(b.location() + "/jobs/" + job).Context(ctx).Do()
+	if err != nil {
+		err = apiError("reading job "+job, err)
+		if errors.Is(err, backend.ErrNotFound) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if j.Template != nil && j.Template.Template != nil && len(j.Template.Template.Containers) > 0 {
+		return j.Template.Template.Containers[0].Image, true, nil
+	}
+	return "", true, nil
 }
 
 // CatalogRecordKey is where a catalog build writes the entry's record and
@@ -423,6 +480,25 @@ func (s CatalogBuildSpec) check(project string, reserved map[string]bool) error 
 	}
 	if len(s.Selftest) == 0 || !json.Valid(s.Selftest) {
 		return fmt.Errorf("the smoke's spec is not JSON; a catalog build renders nothing, so the caller sends it")
+	}
+	// A catalog image may be built FROM any base (D1151), so its smoke is
+	// the only thing that can assert the runtime contract there, and a spec
+	// asking for no tools would assert the least exactly where the base
+	// guarantees the least. The critical tier is the contract list, and the
+	// runtime contract is reported with it.
+	//
+	// The key is read here rather than through image.SelftestSpec:
+	// internal/image reaches this package (through imagecheck), so the spec
+	// cannot be imported back, and the JSON key is what the caller that
+	// renders the spec and this request agree on.
+	var smoke struct {
+		Tools string `json:"tools"`
+	}
+	if err := json.Unmarshal(s.Selftest, &smoke); err != nil {
+		return fmt.Errorf("the smoke's spec: %w", err)
+	}
+	if smoke.Tools != "critical" && smoke.Tools != "all" {
+		return fmt.Errorf("the smoke's spec asks for no tools (tools: %q), so the catalog image would be smoked without the runtime contract; a catalog image may be built from any base", smoke.Tools)
 	}
 	// The build account holds the repository's secrets and writes its
 	// registry; any other account (the retired shared one, another

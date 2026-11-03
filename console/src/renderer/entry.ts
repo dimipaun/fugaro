@@ -189,6 +189,8 @@ import {
   PROJECTS_BUSY,
   PROJECTS_MODELS_BUSY,
   PROJECTS_SETTINGS_BUSY,
+  SETTINGS_PENCIL_CLASS,
+  SETTINGS_PENCIL_KEY,
   buildProjectsModel,
   buildProjectsModels,
   buildProjectsSettings,
@@ -4700,6 +4702,40 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
 
     /**
+     * openSettingsEdit is the seam this task leaves for the next one, and it is
+     * the whole of what pressing a settings pencil does today: **nothing**. The
+     * pencil is live -- in the tab order, named for its key (D1116) -- and what
+     * a press opens (the dry run, `settingsView`'s content, `confirm.ts`'s
+     * window, the spawn allow-list entry the write needs) is the plan's C3.
+     * Until then the press settles here, so the door is a door rather than a
+     * control that silently does nothing, and C3 fills this one body.
+     */
+    const openSettingsEdit = async (key: string): Promise<void> => {
+      void key
+    }
+
+    /**
+     * bindSettingsPencils attaches each pencil the settings panel just drew to
+     * that seam, and hands the focus back to the pencil it was pressed on when
+     * the press settles (D1116). The focus is taken on the node the drawing
+     * answered with and not on a re-drawn one, for `redraw`'s reason: a node
+     * this session has taken down is one a real window has detached, and
+     * focusing it would leave the keyboard behind.
+     */
+    const bindSettingsPencils = (host: Drawn): void => {
+      for (const pencil of classed(host, SETTINGS_PENCIL_CLASS)) {
+        const key = pencil.getAttribute(SETTINGS_PENCIL_KEY) ?? ''
+        const node = surface.nodeOf(pencil)
+        node.addEventListener('click', () => {
+          void openSettingsEdit(key).then(() => {
+            const focusable = node as Element & { focus(): void }
+            focusable.focus()
+          })
+        })
+      }
+    }
+
+    /**
      * paintSettings fills the tab's third section from what `settings --json`
      * answered.
      *
@@ -4718,6 +4754,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         buildProjectsSettings({ raw: settings, because: settingsSentence }),
         drawn.settings,
       )
+      bindSettingsPencils(drawn.settings)
     }
 
     /** load makes the one read and draws it when it is still the latest. */

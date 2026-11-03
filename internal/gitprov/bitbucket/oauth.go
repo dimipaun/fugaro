@@ -38,17 +38,32 @@ type Consumer struct {
 	Secret string
 }
 
+// Minted is one token a consumer exchange minted: the token itself, the
+// instant it expires, and the scopes the endpoint says it carries.
+//
+// Scopes is the answer's own list and empty when the answer listed none —
+// which is a fact a caller reads as "the endpoint did not say what this token
+// is scoped to" and never as "this token has no scopes". A holder that has to
+// be sure of a token's reach cannot be sure from an empty list, and the read
+// mint's rule (BB4, U11) is written to that difference.
+type Minted struct {
+	Token     string
+	ExpiresAt time.Time
+	Scopes    []string
+}
+
 // MintAccessToken exchanges a consumer's key and secret for one access token
-// with the client_credentials grant, and returns the token with its expiry.
-// It is how a holder of the read consumer mints without handing the
-// consumer's own credentials on: what the caller receives is the token.
+// with the client_credentials grant, and returns the token with its expiry and
+// its granted scopes. It is how a holder of the read consumer mints without
+// handing the consumer's own credentials on: what the caller receives is the
+// token.
 //
 // oauthRoot is where the exchange is made, and "" means DefaultOAuthRoot.
 // A refresh token in the answer is not read, so it is neither kept nor
 // forwarded, and a caller is never handed one (G5).
-func MintAccessToken(ctx context.Context, c Consumer, oauthRoot string, hc *http.Client) (string, time.Time, error) {
+func MintAccessToken(ctx context.Context, c Consumer, oauthRoot string, hc *http.Client) (Minted, error) {
 	if c.Key == "" || c.Secret == "" {
-		return "", time.Time{}, errors.New("bitbucket: an OAuth consumer's key and secret are both required")
+		return Minted{}, errors.New("bitbucket: an OAuth consumer's key and secret are both required")
 	}
 	if oauthRoot == "" {
 		oauthRoot = DefaultOAuthRoot
@@ -56,37 +71,60 @@ func MintAccessToken(ctx context.Context, c Consumer, oauthRoot string, hc *http
 	form := url.Values{"grant_type": {"client_credentials"}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(oauthRoot, "/")+oauthTokenPath, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("building the Bitbucket consumer exchange: %w", err)
+		return Minted{}, fmt.Errorf("building the Bitbucket consumer exchange: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.SetBasicAuth(c.Key, c.Secret)
 	resp, err := exchangeClient(hc).Do(req)
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("exchanging the Bitbucket consumer for an access token: %w", err)
+		return Minted{}, fmt.Errorf("exchanging the Bitbucket consumer for an access token: %w", err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswerBytes))
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("reading the Bitbucket consumer exchange: %w", err)
+		return Minted{}, fmt.Errorf("reading the Bitbucket consumer exchange: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return "", time.Time{}, refusal(resp.StatusCode, data)
+		return Minted{}, refusal(resp.StatusCode, data)
 	}
 	var answer struct {
 		AccessToken string `json:"access_token"`
 		ExpiresIn   int    `json:"expires_in"`
+		// Scopes is what Bitbucket documents: one string of scope words,
+		// separated by spaces or commas. An answer that lists filed rather than
+		// words is not one this exchange reads, and it is not read as a list
+		// either (scopesOf): a shape this endpoint does not write is not one
+		// this package guesses at.
+		Scopes string `json:"scopes"`
 	}
 	if err := json.Unmarshal(data, &answer); err != nil {
-		return "", time.Time{}, fmt.Errorf("reading the Bitbucket consumer exchange: the answer is not one this exchange wrote (%d bytes)", len(data))
+		return Minted{}, fmt.Errorf("reading the Bitbucket consumer exchange: the answer is not one this exchange wrote (%d bytes)", len(data))
 	}
 	if answer.AccessToken == "" {
-		return "", time.Time{}, errors.New("bitbucket: the consumer exchange returned no access token")
+		return Minted{}, errors.New("bitbucket: the consumer exchange returned no access token")
 	}
 	if answer.ExpiresIn <= 0 {
-		return "", time.Time{}, errors.New("bitbucket: the consumer exchange returned no life for its token, so it cannot be handed out as one that expires")
+		return Minted{}, errors.New("bitbucket: the consumer exchange returned no life for its token, so it cannot be handed out as one that expires")
 	}
-	return answer.AccessToken, time.Now().Add(time.Duration(answer.ExpiresIn) * time.Second), nil
+	return Minted{
+		Token:     answer.AccessToken,
+		ExpiresAt: time.Now().Add(time.Duration(answer.ExpiresIn) * time.Second),
+		Scopes:    scopesOf(answer.Scopes),
+	}, nil
+}
+
+// scopesOf splits an answer's scopes field into the scope words it lists. An
+// empty field is an empty list, which is the "the endpoint did not say" case
+// Minted.Scopes documents, and every separator Bitbucket documents is read as
+// one: the check that reads this (scripts/live-checks/check145.sh) splits the
+// same field the same way, so the two cannot disagree about what a token lists.
+func scopesOf(field string) []string {
+	var out []string
+	for _, w := range strings.FieldsFunc(field, func(r rune) bool { return r == ' ' || r == ',' || r == '\t' || r == '\n' }) {
+		out = append(out, w)
+	}
+	return out
 }
 
 // oauthErrorCode is the whole shape of an error code Bitbucket documents for

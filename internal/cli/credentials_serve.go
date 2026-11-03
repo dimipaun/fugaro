@@ -173,6 +173,16 @@ const (
 	// empty is the empty list the verify route already refuses every caller
 	// with (C3.9g2, D1068).
 	envVerifierAccounts = "FUGARO_VERIFIER_ACCOUNTS"
+	// envPersonAccounts is the identities that may ask the read mint for a
+	// read-scoped Bitbucket token: a JSON array of bare addresses, which is
+	// what the module renders from the installation's operators, whose IAM
+	// spellings it strips the "user:" from. Like the verifier list it is
+	// read as OPTIONAL and lives outside credentialsServiceEnvNames, because
+	// the module renders the entry only on an installation that named an
+	// operator and an installation that named none must still start: absent
+	// or empty is the empty list the read mint already refuses every caller
+	// with (BB4).
+	envPersonAccounts = "FUGARO_PERSON_ACCOUNTS"
 )
 
 // credentialsServiceEnvNames is the whole of this command's environment: the
@@ -322,6 +332,14 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	if err != nil {
 		return credsvc.Config{}, userErr("%v", err)
 	}
+	// The read mint's own class, read the same way and for the same reason:
+	// the entry is rendered only on an installation that named an operator,
+	// and an installation that named none gets a route that admits nobody
+	// rather than a service that will not bind a port (BB4).
+	persons, err := credentialsServicePersons(getenv(envPersonAccounts))
+	if err != nil {
+		return credsvc.Config{}, userErr("%v", err)
+	}
 	// The database's shape, then the database itself: a URL that is not a
 	// Firebase Realtime Database at all is a different refusal from one that
 	// names another installation's database.
@@ -383,9 +401,14 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// state every installation starts in, and the route answers every
 		// caller with the class's refusal rather than the process failing.
 		VerifierAccounts: verifiers,
-		Keys:             credsvc.NewGoogleKeys(),
-		JobKeys:          credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
-		Outcomes:         credsvc.RTDBOutcomes{DB: db},
+		// The read mint's class (BB4): the installation's operators, by the
+		// bare address a Google ID token's email claim carries. Empty is the
+		// state an installation that named no operator starts in, and the
+		// route answers every caller with the class's refusal.
+		PersonAccounts: persons,
+		Keys:           credsvc.NewGoogleKeys(),
+		JobKeys:        credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
+		Outcomes:       credsvc.RTDBOutcomes{DB: db},
 	})
 	if err != nil {
 		return credsvc.Config{}, userErr("the credentials service cannot verify its callers, so it will not start: %v", err)
@@ -487,6 +510,27 @@ func credentialsServiceVerifiers(raw string) ([]string, error) {
 		return nil, fmt.Errorf("%s is not the installation's verifier list: it must be a JSON array of the bare email addresses a Google ID token carries, one per identity that may ask the service to verify a signature. Nothing was started and no credential was issued", envVerifierAccounts)
 	}
 	return verifiers, nil
+}
+
+// credentialsServicePersons turns FUGARO_PERSON_ACCOUNTS into the read mint's
+// class (BB4): a JSON array of bare addresses, which is what the module renders
+// from the installation's operators.
+//
+// It is credentialsServiceVerifiers' rule word for word, and for the same
+// reason: an absent or empty value is an EMPTY list and not a refusal, because
+// the module renders the entry only on an installation that named an operator,
+// while a value that is present and is not that array is a deployment that is
+// wrong. The refusal names the variable and never an entry, because the entries
+// are accounts of people.
+func credentialsServicePersons(raw string) ([]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var persons []string
+	if err := json.Unmarshal([]byte(raw), &persons); err != nil {
+		return nil, fmt.Errorf("%s is not the installation's person list: it must be a JSON array of the bare email addresses a Google ID token carries, one per person who may ask the service to mint a read-scoped Bitbucket token. Nothing was started and no credential was issued", envPersonAccounts)
+	}
+	return persons, nil
 }
 
 // credentialsServiceJobAccounts turns FUGARO_JOB_ACCOUNTS into the two things

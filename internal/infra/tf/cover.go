@@ -208,12 +208,17 @@ var grantRules = map[string]map[string]who{
 		customKey + "fugaroJobRunner": toPeople | toAccounts,
 		"roles/run.invoker":           toAccounts,
 	},
-	// The credentials service (C1.18): each job account may invoke it, and
-	// nothing else may. No person is ever granted this role, and the grant is
-	// unconditional — the service's own ID-token check (Q6) is what decides
-	// who is served, not an IAM condition.
+	// The credentials service (C1.18): each job account may invoke it, and —
+	// since BB4 — the installation's operators, whose person caller class the
+	// read mint serves. So this is the one row where a person's invoker grant
+	// is the point rather than a mistake, and the row naming toPeople is what
+	// makes it a grant the review screen has to list: the person is on that
+	// screen by name, and a member kind this row did not accept would be
+	// refused outright. Every other kind is still out — the service's own
+	// ID-token check (Q6) is what decides who is served, not an IAM condition,
+	// and the grant stays unconditional.
 	"google_cloud_run_v2_service_iam_member": {
-		"roles/run.invoker": toAccounts,
+		"roles/run.invoker": toAccounts | toPeople,
 	},
 	"google_logging_log_view_iam_member": {
 		"roles/logging.viewAccessor": toPeople,
@@ -785,7 +790,9 @@ var knownCommands = [][2][]string{
 // ID tokens are minted for), the installation's per-repository jobs as a
 // JSON array of {provider, repo, workflow} triples, and — only on an
 // installation that names a verifier — the addresses that may ask the verify
-// route. No secret ID and no secret value, because the loader derives the
+// route, and — only on one that names an operator — the addresses the read
+// mint admits (BB4). No secret ID and no secret value, because the loader
+// derives the
 // container from the project name and reads it as the service's own account,
 // and the job accounts are derived from the triples rather than carried. The
 // case below is an allowlist of these, so an environment that hands this
@@ -795,7 +802,7 @@ var credentialsServiceEnv = []string{
 	"FUGARO_PROJECT", "FUGARO_GCP_PROJECT", "FUGARO_REGION",
 	"FUGARO_RTDB_URL", "FUGARO_FIREBASE_PROJECT",
 	"FUGARO_CREDENTIALS_SERVICE_URL", "FUGARO_JOB_ACCOUNTS",
-	"FUGARO_VERIFIER_ACCOUNTS",
+	"FUGARO_VERIFIER_ACCOUNTS", "FUGARO_PERSON_ACCOUNTS",
 }
 
 // APITargets are the two services the Firebase web key may call, sorted;

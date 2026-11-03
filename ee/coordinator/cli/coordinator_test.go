@@ -183,7 +183,7 @@ func newCoordinatorFixture(t *testing.T, seeds []coordinatorRunSeed, prs ...fake
 	host := &fake.Provider{Repo: "acme/app", SelfID: "1"}
 	host.State.PRs = prs
 	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
-		return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		return func(context.Context, string, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			return host, nil, nil
 		}, nil
 	})
@@ -223,7 +223,7 @@ func setCoordinatorGitHubRoot(t *testing.T, root string) {
 func setCoordinatorProject(t *testing.T, hosts map[string]*fake.Provider, tokens map[string]string) {
 	t.Helper()
 	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
-		return func(ctx context.Context, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		return func(ctx context.Context, kind, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			host, ok := hosts[repo]
 			if !ok {
 				return nil, nil, fmt.Errorf("the fixture has no host for %s", repo)
@@ -1045,6 +1045,26 @@ func TestCoordinatorStatusRefusesABitbucketProject(t *testing.T) {
 	}
 }
 
+// The refusal above is a property of the READ and not of the installation's
+// configuration: an installation that has opted into the credentials service
+// — the block IS the opt-in (localcfg.CredentialsService) — still gets it from
+// status, which is the read it has always been. `show` reads one Bitbucket
+// repository through the service's read mint (BB4); the project-wide read of
+// Bitbucket is BB5's, and a status read that widened with the block would be
+// BB5 arriving as a side effect of `fugaro update` writing a URL.
+func TestCoordinatorStatusBitbucketUnchangedWithService(t *testing.T) {
+	f := newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	f.appendConfig(t, "  acme/legacy: { provider: bitbucket, base_branch: main, workflows: [web] }\n")
+	f.appendConfig(t, "credentials_service: { url: https://fugaro-credentials-abcde-uc.a.run.app }\n")
+	if lc := f.config(t); lc.CredentialsService == nil || lc.CredentialsService.URL == "" {
+		t.Fatal("the fixture's config carries no credentials_service block, so this test aims at nothing")
+	}
+	_, _, err := execute(t, "coordinator", "status", "--all", "--since", "0")
+	if fcli.ExitCode(err) != fcli.ExitUserError || !strings.Contains(err.Error(), "cannot be widened to a project") {
+		t.Fatalf("status on an installation with the credentials service: exit %d, %v", fcli.ExitCode(err), err)
+	}
+}
+
 // secretErrHost fails every read of a pull request with an error carrying the
 // credential, which is what a real host's 401 does.
 type secretErrHost struct {
@@ -1066,13 +1086,13 @@ func TestCoordinatorStatusNeverPrintsACredential(t *testing.T) {
 		open func([]string, func(string)) (coordinator.ProviderOpener, error)
 	}{
 		{"opening the provider", func([]string, func(string)) (coordinator.ProviderOpener, error) {
-			return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+			return func(context.Context, string, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 				return nil, []string{secret}, fmt.Errorf("github: the App credential %s was refused", secret)
 			}, nil
 		}},
 		{"reading a pull request", func([]string, func(string)) (coordinator.ProviderOpener, error) {
 			host := &fake.Provider{Repo: "acme/app", SelfID: "1"}
-			return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+			return func(context.Context, string, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 				return secretErrHost{Provider: host, secret: secret}, []string{secret}, nil
 			}, nil
 		}},
@@ -1926,7 +1946,7 @@ func TestCoordinatorSweepMarksAHostItCannotOpenStale(t *testing.T) {
 	}
 	before, _ := f.view()
 	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
-		return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		return func(context.Context, string, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			return nil, nil, errors.New("the host is unreachable")
 		}, nil
 	})
@@ -2005,7 +2025,7 @@ func TestCoordinatorSweepNeverPrintsACredentialOrTheHostsText(t *testing.T) {
 	host := &fake.Provider{Repo: "acme/app", SelfID: "1"}
 	host.State.PRs = coordinatorPRs()
 	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
-		return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		return func(context.Context, string, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			return secretErrHost{Provider: host, secret: secret}, []string{secret}, nil
 		}, nil
 	})
@@ -2063,7 +2083,7 @@ func TestCoordinatorSweepRevokesEveryTokenItMinted(t *testing.T) {
 // to take back rather than a nil record to fail on.
 func TestCoordinatorSweepWithAnInjectedReader(t *testing.T) {
 	f := newCoordinatorSweepFixture(t, coordinatorSeeds(), coordinatorPRs()...)
-	reader, _, err := coordinatorReader(io.Discard)
+	reader, _, err := coordinatorReader(nil, os.Getenv, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
