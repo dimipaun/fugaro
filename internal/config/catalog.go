@@ -6,8 +6,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 )
 
 // Catalog is a project's image catalog (spec.md §Catalog entry): a handful of
@@ -165,7 +163,10 @@ func ValidateCatalog(p string, c Catalog) []Problem {
 		}
 		validateCatalogTags(ep+".tags", e.Tags, add)
 		validateCatalogSource(ep+".source", e.Source, add)
-		if strings.ContainsFunc(e.Description, catalogDescriptionBadRune) {
+		// A listing prints a description on one line, so it holds no tab and
+		// no newline either: badKeyRune is that rule, and it is the same one
+		// every value a person reads a line at a time is held to.
+		if strings.ContainsFunc(e.Description, badKeyRune) {
 			add(ep+".description", "must hold no control character")
 		} else if len(e.Description) > maxCatalogDescriptionLen {
 			add(ep+".description", "must be at most %d characters", maxCatalogDescriptionLen)
@@ -268,15 +269,6 @@ func addCatalogWrongKind(path string, s Source, kind SourceKind, add func(path, 
 		}
 		add(path+"."+f.key, "belongs to a %s source, not a %s one", f.owner, kind)
 	}
-}
-
-// catalogDescriptionBadRune reports whether r is a character a description
-// must not hold: a control character (tab and newline among them, since a
-// listing prints a description on one line), an invisible formatting (bidi)
-// character, a line or paragraph separator, or invalid UTF-8. It is
-// layer.go's badRune without the tab-and-newline exemption.
-func catalogDescriptionBadRune(r rune) bool {
-	return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == ' ' || r == ' ' || r == utf8.RuneError
 }
 
 // catalogPathMessage names what is wrong with a dockerfile source's path, ""
