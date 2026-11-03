@@ -7,8 +7,10 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"path"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Provider kinds, as git.provider names them in fugaro.yaml.
@@ -238,6 +240,28 @@ type BotAccount struct {
 type BotAccountReader interface {
 	BotAccount(ctx context.Context) (BotAccount, error)
 }
+
+// ContentsReader is implemented by a provider that can read one file out of
+// its repository, which is how a catalog entry's dockerfile source is
+// fetched before a build (D1140, PIC3). path is a repository-relative path
+// and ref a branch or tag ("" for the default branch); the caller validates
+// both, because they come from a published catalog. The read is a read of
+// this repository alone, made with the provider's own credential (the
+// project's existing one — no new access is added), and it returns no more
+// than MaxContentsBytes.
+//
+// It is not part of Provider: a host without a contents API (Bitbucket,
+// whose adapter would need a source-file read the catalog does not use) has
+// no way to answer it, and a caller that does not need it must keep working
+// there. The GitHub adapter and the file-backed test provider implement it.
+type ContentsReader interface {
+	Contents(ctx context.Context, path, ref string) ([]byte, error)
+}
+
+// MaxContentsBytes bounds what one Contents read returns: 1 MiB, GitHub's
+// own ceiling for a contents reply, so the bound a caller applies is the
+// bound the API already applies and no larger.
+const MaxContentsBytes = 1 << 20
 
 // Provider is what the runner needs from the git host.
 type Provider interface {
@@ -660,4 +684,28 @@ func SplitRepo(repo string) (owner, name string, ok bool) {
 		return "", "", false
 	}
 	return owner, name, true
+}
+
+// ValidRepoPath reports whether p is one clean relative file path inside
+// a repository: non-empty, relative, with no "." or ".." segment, already
+// clean (no "//" and no trailing "/") and no control character. It is the
+// shape a ContentsReader accepts and the shape an adapter may put into an
+// API path, stated once so a caller and an adapter cannot disagree about
+// what one is — a path that reached the API unrefused would be resolved by
+// the server against paths the caller never named.
+//
+// It is deliberately less than the grammar a config key is held to (no
+// length bound, no formatting-character rule): those are the rules of the
+// key that carries the path (config.ValidateCatalog), and this is the bound
+// of the read itself.
+func ValidRepoPath(p string) bool {
+	if p == "" || strings.HasPrefix(p, "/") || path.Clean(p) != p {
+		return false
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return !strings.ContainsFunc(p, unicode.IsControl)
 }

@@ -36,10 +36,17 @@ const (
 	maxProfileDescription = 200
 )
 
+// buildsPrefix is where everything a build reads out of the runs bucket
+// lives, one directory per writer: the per-repository copies
+// (LayerCopyKey) and the catalog's Dockerfiles (CatalogDockerfileKey). The
+// build and check accounts hold their grants conditioned on it, so a key
+// outside it is one they cannot read.
+const buildsPrefix = "builds/"
+
 // LayerCopyKey is the per-repository copy of the project layer, under the
 // build account's own prefix, which the daily image check and Cloud Build
 // read (decision L4).
-func LayerCopyKey(slug string) string { return "builds/" + slug + "/project-layer.yaml" }
+func LayerCopyKey(slug string) string { return buildsPrefix + slug + "/project-layer.yaml" }
 
 // LayerAnchor is what a project layer must name: the project and GCP
 // project of the repository (or local config) it is read for. An empty

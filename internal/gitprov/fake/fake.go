@@ -82,6 +82,12 @@ type State struct {
 	// Calls is every call made, in order (failed injected ones included),
 	// so tests can assert what the runner did and in which order.
 	Calls []Call `json:"calls,omitempty"`
+	// Files is the repository's file tree at its default branch (gitprov.
+	// ContentsReader, PIC3): a path relative to the repository's root ->
+	// the file's bytes. Branches is the same tree per named branch, for a
+	// read that names one; a branch not here has no files at all.
+	Files    map[string]string            `json:"files,omitempty"`
+	Branches map[string]map[string]string `json:"branches,omitempty"`
 }
 
 // Provider is a fake git host.
@@ -371,6 +377,28 @@ func (p *Provider) Repository(context.Context) (gitprov.RepoInfo, error) {
 		return gitprov.RepoInfo{}, errors.New("fake provider: injected Repository failure")
 	}
 	return gitprov.RepoInfo{Private: !p.State.Public}, nil
+}
+
+// Contents implements gitprov.ContentsReader: the file at path, at ref, out
+// of State's tree ("" is the default branch). The fake reads those trees and
+// nothing else, so a file one of them does not hold is a failure naming what
+// was read, exactly as the real adapter's 404 is: a caller that ignored the
+// ref or the path could not quietly get the definition it meant to (PIC3).
+func (p *Provider) Contents(_ context.Context, path, ref string) ([]byte, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.load(); err != nil {
+		return nil, err
+	}
+	tree := p.State.Files
+	if ref != "" {
+		tree = p.State.Branches[ref]
+	}
+	data, ok := tree[path]
+	if !ok {
+		return nil, fmt.Errorf("fake provider: %s holds no %s", p.Repo, path)
+	}
+	return []byte(data), nil
 }
 
 // PullRequest implements gitprov.Provider. The head is PRState.Head when
