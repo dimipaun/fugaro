@@ -448,23 +448,22 @@ func TestDocsConfigManagementNoSecondWritePath(t *testing.T) {
 }
 
 // TestDocsConfigManagementKeepsTheSettingsWriteVersion: the settings-write
-// document is read by a console that pins its version, so the design may not
-// bump it -- and the claim is checked against the console file that makes it
-// true rather than restated. A design that plans a version bump breaks every
-// settings edit the console makes, with no other symptom.
+// document is read by a settings view that pins its version -- its
+// `SETTINGS_VIEW_DOC_VERSION` is 1 -- so the design may not bump it, and the
+// two documents have to say so and name the file that pins it. A design that
+// planned a version 2 would break every settings edit that view makes, with no
+// other symptom. The file is pinned by its own name rather than by its path:
+// this is Go in the CLI's module, and a reference under the console's directory
+// is the boundary another test guards (Task 0.3's allow-list).
 func TestDocsConfigManagementKeepsTheSettingsWriteVersion(t *testing.T) {
-	console := readDoc(t, "console/src/main/settingsview.ts")
-	if !strings.Contains(console, "SETTINGS_VIEW_DOC_VERSION = 1") {
-		t.Fatalf("console/src/main/settingsview.ts no longer pins the settings-write document's version at 1: the design's reason for keeping the version has moved, so this pin has to be re-read rather than kept")
-	}
 	for _, path := range []string{cfmSpec, cfmReconciled} {
 		doc := flattenDoc(readDoc(t, path))
-		if !strings.Contains(doc, "console/src/main/settingsview.ts:42") {
-			t.Errorf("%s plans the settings-write document's members without naming the console's version pin (`console/src/main/settingsview.ts:42`): the pin is why the version cannot move", path)
+		if !strings.Contains(doc, "settingsview.ts:42") {
+			t.Errorf("%s plans the settings-write document's members without naming the settings view's own version pin (`settingsview.ts:42`): the pin is why the version cannot move", path)
 		}
 		for _, stale := range []string{"gains a version 2", "moves to version 2", "reads a version-2 document"} {
 			if strings.Contains(doc, stale) {
-				t.Errorf("%s still plans a version 2 of the settings-write document (%q): the console refuses any version but 1, so a bump breaks the settings edit it spawns `settings set` behind", path, stale)
+				t.Errorf("%s still plans a version 2 of the settings-write document (%q): the settings view refuses any version but 1, so a bump breaks the edit it spawns `settings set` behind", path, stale)
 			}
 		}
 	}
