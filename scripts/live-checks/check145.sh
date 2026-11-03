@@ -61,9 +61,10 @@
 # REFUSES a run whose shell arrived with tracing on.
 #
 # CHECK145_OAUTH_URL, CHECK145_API_URL and CHECK145_CURL_SECONDS exist for this
-# script's own test: the first two may only name a LOOPBACK address (the test's
-# fake Bitbucket), so no environment can send a minted token anywhere but
-# Bitbucket Cloud's own endpoints, and the third shortens the requests' cap.
+# script's own test: the first two may only name a loopback address of exactly
+# the form http://127.0.0.1:<port> (the test's fake Bitbucket), so no
+# environment can send a minted token anywhere but Bitbucket Cloud's own
+# endpoints, and the third shortens the requests' cap.
 set -Eeuo pipefail
 
 # No xtrace, whatever the shell it was started from had. `bash -x check145.sh`
@@ -256,8 +257,26 @@ guard_xtrace() {
 # refused. A check that could be pointed at another host would mint the token
 # and then send it wherever the environment said.
 loopback_url() {
+  local rest port
+  # A value with userinfo is refused outright: curl reads everything before the
+  # '@' as a username and password and connects to the host AFTER it, so
+  # `http://127.0.0.1:1@host/` is not a loopback address at all -- it is a
+  # request that hands the consumer's Basic credential to `host`.
   case "$1" in
-  http://127.0.0.1:* | http://localhost:* | "http://[::1]:"*) return 0 ;;
+  *@*) return 1 ;;
+  http://127.0.0.1:*) rest=${1#http://127.0.0.1:} ;;
+  *) return 1 ;;
+  esac
+  # What is left must be the port and then a path or the end of the string, and
+  # the port must be digits: a query, a fragment, a backslash or a space after
+  # the port is refused rather than passed to curl, which is free to read such a
+  # value as a different address than the one this check means.
+  port=${rest%%/*}
+  case "$port" in
+  "" | *[!0-9]*) return 1 ;;
+  esac
+  case "$rest" in
+  "$port" | "$port"/*) return 0 ;;
   esac
   return 1
 }
@@ -267,7 +286,7 @@ guard_endpoints() {
     value=$(printenv "$name" 2>/dev/null || true)
     [ -n "$value" ] || continue
     loopback_url "$value" \
-      || die "Check 145 refused: $name may only name a loopback address, so a minted token can never leave this machine (it is set for this check's own test and for nothing else)"
+      || die "Check 145 refused: $name may only name a loopback address of the form http://127.0.0.1:<port> (with no userinfo, query, fragment or space), so a minted token can never leave this machine (it is set for this check's own test and for nothing else)"
   done
 }
 

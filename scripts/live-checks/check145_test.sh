@@ -480,6 +480,47 @@ test_guards() {
   assert_no_secret "$dir" "guards"
 }
 
+# Every override shape that is not exactly http://127.0.0.1:<port> is refused
+# before a request is made. The '@' one is the one that matters: curl reads
+# everything before it as userinfo and connects to the host AFTER it, so a guard
+# that matched the address with a glob would hand the consumer's Basic credential
+# to whatever host the value named.
+#
+# Both variables are tried, and the OTHER one is always the fake, so a guard that
+# let a value through would send its request to the fake rather than anywhere
+# real -- and the fake's token file is then the evidence that something was sent:
+# every shape that can be read as an address does reach the fake under a looser
+# guard, and the ones curl would choke on are caught by the message a refusal
+# gives.
+test_endpoint_override_shapes_are_refused() {
+  local dir=$work/override-shapes host name other value
+  mkdir -p "$dir/tmp"
+  write_consumer "$dir/consumer.json"
+  start_fake "$dir" ok || return 1
+  host="127.0.0.1:$FAKE_PORT"
+  for name in CHECK145_OAUTH_URL CHECK145_API_URL; do
+    if [ "$name" = CHECK145_OAUTH_URL ]; then other=CHECK145_API_URL; else other=CHECK145_OAUTH_URL; fi
+    for value in \
+      "http://127.0.0.1:1@$host/2.0" \
+      "http://127.0.0.1:1@evil.invalid/2.0" \
+      "http://$host?x" \
+      "http://$host#x" \
+      "http://$host\\x" \
+      "http://$host x"; do
+      status=0
+      env TMPDIR="$dir/tmp" "$name=$value" "$other=http://$host" \
+        bash "$script" --consumer-file "$dir/consumer.json" --workspace sandbox-a \
+        --second-workspace sandbox-b >"$dir/out" 2>"$dir/err" || status=$?
+      out=$(cat "$dir/out")
+      expect_status "$status" 2 "$name='$value'"
+      expect_contains "$(cat "$dir/err" 2>/dev/null || true)" "loopback" "$name='$value': the guard names why"
+      assert_no_secret "$dir" "$name='$value'"
+      [ ! -s "$dir/tokens" ] \
+        || fail "$name='$value': a request reached the fake, so the guard let the credential out"
+    done
+  done
+}
+
 # The dev installation is refused whatever case it is spelled in: the guard
 # compares a lowercased value, so `bElong` cannot slip past a check that only
 # knows the three spellings someone thought of.
@@ -605,6 +646,7 @@ t test_seats_not_read
 t test_allowlist_offered
 t test_refused_exchange
 t test_guards
+t test_endpoint_override_shapes_are_refused
 t test_belong_in_any_case_is_refused
 t test_consumer_file_complaints
 t test_xtrace_is_refused
