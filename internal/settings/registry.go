@@ -356,6 +356,7 @@ const (
 	docLayer  = "docs/project-layer.md"
 	docModels = "docs/multi-model.md"
 	docRigor  = "docs/rigor-modes/spec.md"
+	docImages = "docs/project-image-catalog/spec.md"
 )
 
 // layerRow is a row of the project layer's file. The layer is its only store,
@@ -681,6 +682,21 @@ var localRows = []Row{
 	loc("review_floor", "none: no floor is added", "rigor floor", docRigor),
 
 	loc("verifier_accounts", "none: nobody may ask the credentials service to verify a signature", "secrets", docSetup),
+
+	// The image catalog decides which image a run's job executes in, so it is
+	// the operator's own list in the local file like the verifier list above,
+	// and every member of an entry is a row because a settings read names the
+	// leaf a value came from rather than the block.
+	loc("image_catalog.entries.*.name", "none", "project", docImages),
+	loc("image_catalog.entries.*.tags", "none", "project", docImages),
+	loc("image_catalog.entries.*.source.kind", "none", "project", docImages),
+	loc("image_catalog.entries.*.source.repo", "none", "project", docImages),
+	loc("image_catalog.entries.*.source.path", "none", "project", docImages),
+	loc("image_catalog.entries.*.source.branch", "none", "project", docImages),
+	loc("image_catalog.entries.*.source.inline", "none", "project", docImages),
+	loc("image_catalog.entries.*.source.image", "none", "project", docImages),
+	loc("image_catalog.entries.*.description", "none", "project", docImages),
+	loc("image_catalog.entries.*.default", "false", "project", docImages),
 
 	loc("repos.*.provider", "none", "project", docSetup),
 	loc("repos.*.base_branch", "the project's base_branch", "project", docSetup),

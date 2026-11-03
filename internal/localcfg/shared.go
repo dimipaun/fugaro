@@ -116,6 +116,15 @@ func (c *Config) Shared() *Config {
 	// besides, because a shared config carrying it was not written by the
 	// converge.
 	s.VerifierAccounts = nil
+	// ImageCatalog travels the verifier list's way and is dropped here for a
+	// sharper reason than the floor's: the catalog decides which image a run's
+	// job executes in and which Dockerfile is fetched to build it, so a
+	// launcher who could write it into the runs bucket's shared file would be
+	// choosing what code every teammate's runs run (D1140). It is published
+	// through the policy node instead, which the runner reads and fails closed
+	// on, and ParseShared refuses the key besides — a shared config carrying
+	// it was not written by the converge.
+	s.ImageCatalog = nil
 	s.Repos = withoutBaseBranches(c.Repos)
 	return &s
 }

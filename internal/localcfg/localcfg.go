@@ -217,6 +217,23 @@ type Config struct {
 	// ParseShared refuses the key. Only the owner sets it, here, never in
 	// fugaro.yaml.
 	VerifierAccounts []string `yaml:"verifier_accounts,omitempty"`
+	// ImageCatalog is the project's image catalog (D1140): the named images
+	// the project's jobs are built from, each a Dockerfile definition or a
+	// reference to a prebuilt image, and the one a repository names with
+	// image: or the tags it needs. It is the owner's policy, written here and
+	// never in fugaro.yaml, and `fugaro update`'s policy stage copies it into
+	// the published policy node, where the runner reads it — the node is
+	// written only by the owner and the runner fails closed on it, while the
+	// shared config in the runs bucket is writable by any launcher, so a
+	// catalog there would let a launcher choose the image every teammate's
+	// runs execute in. Shared nils it and ParseShared refuses the key.
+	//
+	// It is a pointer because its emptiness is a statement: a written catalog
+	// is published, and a written catalog with no entry is how a published one
+	// is taken away on purpose (ImageCatalogEffective), while a config that
+	// does not write the key at all is a machine whose file has nothing to say
+	// about the catalog and must not empty the node's.
+	ImageCatalog *config.Catalog `yaml:"image_catalog,omitempty"`
 	// Profiles are the project's job profiles (design
 	// docs/design/project-centric.md §4.1), by name: what a Cloud Run job is
 	// deployed as, and what a repository's workflow selects with job_profile.
@@ -1378,6 +1395,30 @@ func (c *Config) VerifierAccountsEffective(published []string) []string {
 	return published
 }
 
+// ImageCatalogEffective is the keep rule for the image catalog, stated here
+// beside the field for the verifier list's reason (D1140, D1156): this file's
+// catalog when it writes one — a written catalog with no entry included, which
+// is how a published one is taken away on purpose — and the published node's
+// otherwise.
+//
+// A nil answer is the whole of the answer, and not an empty catalog: the
+// publisher omits the key when the effective catalog names no entry, so a
+// project with no catalog has a node byte for byte what it had before the key
+// existed and no launcher of an older CLI meets the key's skew (D1156). That
+// is why the two halves cannot be spelled as one field: "this file says
+// nothing" must keep the node's catalog, and "this file says nothing is in
+// it" must take it away.
+func (c *Config) ImageCatalogEffective(published *config.Catalog) *config.Catalog {
+	effective := published
+	if c.ImageCatalog != nil {
+		effective = c.ImageCatalog
+	}
+	if effective == nil || len(effective.Entries) == 0 {
+		return nil
+	}
+	return effective
+}
+
 func (c *Config) validate() error {
 	var errs []error
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf("local config: "+f, a...)) }
@@ -1675,6 +1716,20 @@ func (c *Config) validate() error {
 	// node to the same function, so the file and the node cannot disagree.
 	if err := policy.ValidVerifierAccounts(c.VerifierAccounts); err != nil {
 		bad("%v", err)
+	}
+	// The image catalog is held to the node's own rule here, the way the
+	// verifier list and the floor are: it is copied into the policy node, and
+	// a definition this file accepts and the node refuses would leave a
+	// repository naming an entry that never arrives — while a definition the
+	// node accepts and this file refuses would never reach it at all.
+	// config.ValidateCatalog is that one rule, the same function
+	// projectpolicy's decoder applies to the node's block, so the file the
+	// operator writes and the node a run reads cannot disagree about what an
+	// entry is.
+	if c.ImageCatalog != nil {
+		for _, p := range config.ValidateCatalog("image_catalog", *c.ImageCatalog) {
+			bad("%v", p)
+		}
 	}
 	for repo, r := range c.Repos {
 		if !repoRE.MatchString(repo) {
