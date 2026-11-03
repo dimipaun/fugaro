@@ -52,8 +52,8 @@ type SelftestSpec struct {
 	SkipVerify bool `json:"skip_verify,omitempty"`
 	// Tools runs the presence checks of images/base/tools.tsv: "critical"
 	// (a derived image's smoke, which is also where the runtime contract is
-	// reported as one check: the critical rows are the contract list) or
-	// "all" (the base's CI smoke), or "" (none).
+	// reported as one check: the critical rows are the contract list),
+	// "all" (the base's CI smoke) or "" (none).
 	Tools string `json:"tools,omitempty"`
 	// ToolsOnly runs the presence checks alone (Tools, default "all"), for
 	// the base image itself, which has no checkout. CheckMiseCache is
@@ -76,10 +76,9 @@ type SelftestSpec struct {
 // candidate image, as `fugaro image render --cloud-outputs` writes it: the
 // runtime contract on any base, the structural checks, init and hardening,
 // and the baked checkout at commit with origin, but never the workflow's
-// build. With dockerfile: the
-// repository controls the whole image, its fugaro included, so the smoke
-// runs repository code: it gets no secrets and no network, and nothing in
-// it may need them.
+// build. With dockerfile: the repository controls the whole image, its
+// fugaro included, so the smoke runs repository code: it gets no secrets
+// and no network, and nothing in it may need them.
 func SpecForCloud(cfg *config.Config, workflow, commit, origin string) (SelftestSpec, error) {
 	if _, ok := cfg.Workflows[workflow]; !ok {
 		return SelftestSpec{}, fmt.Errorf("fugaro.yaml has no workflow %q", workflow)
