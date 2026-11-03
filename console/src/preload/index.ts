@@ -192,16 +192,20 @@ export const BRIDGE_VERSION = 1
  * argv is caller-influenced -- and the window is the console's own closed set
  * (`src/main/ipc.ts`'s `SUMMARY_SINCE_WINDOWS`), which is why a renderer cannot
  * ask this read for the whole history under another spelling of `--since`.
- * **No screen calls it yet**: the tabs that will are drawn by a later task, and
- * this row is the main process's half of the read.
+ * **The Coordinator's strip calls it** (`src/renderer/entry.ts`, `loadSummary`):
+ * the week is the strip's second region, drawn beside its K1 figures under an
+ * attempt token of its own, so an answer to a window the operator has already
+ * asked again never lands under another.
  *
  * **Console 0.119.0 added the twenty-ninth** (`models.list` / `listModels`, the
  * Project tab's read-only models panel -- `fugaro models ls --json`, the
  * owner's ruling of 2026-11-02) and left the other twenty-eight exactly where
  * they were. It sits directly under `accounts.inventory`, the other read of
- * what this installation's own configuration says. **No screen calls it yet**
- * either: the panel is a later task, and this row is the main process's half of
- * it. Its method takes **no argument at all** -- the command is cobra's
+ * what this installation's own configuration says. **The panel calls it**
+ * (`src/renderer/entry.ts`, `loadModels`): the tab starts it as a section of its
+ * own, under an attempt token of its own, so a refusal or a document it does not
+ * read leaves that section with its own sentence and nothing else. Its method
+ * takes **no argument at all** -- the command is cobra's
  * `NoArgs`, and the operation declares no key -- and it is the one row here
  * whose command belongs to a group the console may otherwise not touch: the
  * other four words of `fugaro models` (`search`, `add`, `rm`, `use`) are words
@@ -212,14 +216,17 @@ export const BRIDGE_VERSION = 1
  * `readSettings`, the Project tab's settings section -- `fugaro settings
  * --json`) and left the other twenty-nine exactly where they were. It is **not
  * in 0.119.0**, which shipped without it: it lands in the next console version
- * (0.120.0). It sits
- * directly under `models.list`, the other read the Project tab draws from.
- * **No screen calls it yet**: the section is a later task, and this row is the
- * main process's half of it. Its method takes **no argument at all** -- the
- * operation declares no key, and the command's keys, its globs and its seven
- * flags are all off the argv -- and what the document adds is the writability
- * half of each row (`writable`, `owner`, `target_layer`, D1102), which is what
- * lets a screen draw an edit **without a copy of the generic path's allowlist**.
+ * (0.120.0). It sits directly under `models.list`, the other read the Project
+ * tab draws from, and **the Project tab's settings section is what calls it**
+ * (`src/renderer/entry.ts`): that section starts this read with the tab's other
+ * reads, on a sequence token of its own, and paints when its own answer lands
+ * (`buildProjectsSettings` / `fillProjectsSettings`), so the section is drawn
+ * whether or not the other two reads have answered. Its method takes **no
+ * argument at all** -- the operation declares no key, and the command's keys,
+ * its globs and its seven flags are all off the argv -- and what the document
+ * adds is the writability half of each row (`writable`, `owner`,
+ * `target_layer`, D1102), which is what lets a screen draw an edit **without a
+ * copy of the generic path's allowlist**.
  * A `sensitive: true` row carries no value member at all and the screen drops it
  * whole (D1111), so nothing this operation returns is a credential.
  */
