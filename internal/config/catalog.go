@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 // Catalog is a project's image catalog (spec.md §Catalog entry): a handful of
@@ -140,9 +142,14 @@ const (
 // outside the entry's own directory.
 func CatalogDockerfileKey(name string) (string, error) {
 	if !catalogNameRE.MatchString(name) {
-		// The message names the rule and not the value, the way every
-		// refusal of a name that reaches a key or a log does here.
-		return "", fmt.Errorf("the catalog entry's name %s", catalogNameMessage)
+		// The refusal names the value through pluginwire.Printable, the way
+		// layer.go's showKey prints a key and every other message here prints
+		// a name that did not pass a rule: the name reaching this helper is
+		// the one that failed the check, so escaping it is what lets the
+		// message name it — an operator copying (or reading) a build's
+		// definition has no entry index to look up, and the escaped name
+		// cannot carry a control or bidi character into the log it lands in.
+		return "", fmt.Errorf("the catalog entry name %s %s", pluginwire.Printable(name), catalogNameMessage)
 	}
 	return buildsPrefix + "catalog/" + name + "/Dockerfile", nil
 }

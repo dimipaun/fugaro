@@ -252,8 +252,12 @@ func CatalogDockerfileStep(bucket, name string) (*cloudbuild.BuildStep, error) {
 	// quoted "$$VAR" (the rule images/derived/cloudbuild.yaml states:
 	// substitution is textual, so no ${_…} ever appears in a shell script).
 	// /workspace/context is created here because a catalog build has no
-	// source step to create it, with the source step's own mode so a later
-	// step that runs as the image's user can read the context.
+	// source step to create it: 0755, not the 0777 the source step uses,
+	// because nothing here writes into the directory as another user — this
+	// step writes the Dockerfile as itself and every later step reads it —
+	// so the directory needs no write bit beyond its owner's. A catalog step
+	// that does write there as the image's user needs the source step's mode
+	// and not this one.
 	return &cloudbuild.BuildStep{
 		Id:         catalogDockerfileStepID,
 		Name:       "gcr.io/google.com/cloudsdktool/cloud-sdk:slim",
@@ -261,7 +265,7 @@ func CatalogDockerfileStep(bucket, name string) (*cloudbuild.BuildStep, error) {
 		Env:        []string{"BUCKET=" + bucket, "KEY=" + key},
 		Args: []string{"-c", `set -eu
 case "$$BUCKET" in gs://*) ;; *) echo "the runs bucket must be a gs:// URL" >&2; exit 1 ;; esac
-install -d -m 0777 /workspace/context
+install -d -m 0755 /workspace/context
 gcloud storage cp --quiet "$$BUCKET/$$KEY" /workspace/context/Dockerfile
 echo "read $$KEY"`},
 	}, nil

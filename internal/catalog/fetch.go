@@ -55,11 +55,14 @@ func Fetch(ctx context.Context, open gitprov.Opener, kind string, e config.Entry
 
 // fetchDockerfile reads a dockerfile source's file out of its repository.
 //
-// The repository and the path are checked before the provider is opened, not
-// only where the catalog is validated: this is where both reach an API path
-// and a build, and a value that got past a validation is still not one to
-// hand a provider (a path outside the repository, an owner/name that is not
-// one).
+// The repository, the path and the ref are checked before the provider is
+// opened, not only where the catalog is validated: this is where all three
+// reach an API path and a build, and a value that got past a validation is
+// still not one to hand a provider (a path outside the repository, an
+// owner/name that is not one, a ref the API would read as something else).
+// The ref is held to config.ValidBranchName, the rule the catalog's own
+// validation applies, so this guard tightens or loosens with that one
+// instead of being a second, weaker rule that reads like a safety net.
 func fetchDockerfile(ctx context.Context, open gitprov.Opener, kind string, e config.Entry) ([]byte, error) {
 	s := e.Source
 	if !validRepo(s.Repo) {
@@ -68,8 +71,8 @@ func fetchDockerfile(ctx context.Context, open gitprov.Opener, kind string, e co
 	if !gitprov.ValidRepoPath(s.Path) {
 		return nil, fmt.Errorf("the catalog entry %s: the source's path must be a relative path inside %s, with no .. segment", nameOf(e), pluginwire.Printable(s.Repo))
 	}
-	if strings.ContainsFunc(s.Branch, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
-		return nil, fmt.Errorf("the catalog entry %s: the source's branch holds a control character", nameOf(e))
+	if s.Branch != "" && !config.ValidBranchName(s.Branch) {
+		return nil, fmt.Errorf("the catalog entry %s: the source's branch must be a git branch name", nameOf(e))
 	}
 	if open == nil {
 		return nil, fmt.Errorf("the catalog entry %s: no git provider was given to read %s with", nameOf(e), pluginwire.Printable(s.Repo))
