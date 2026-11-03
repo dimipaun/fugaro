@@ -72,6 +72,33 @@ func TestCatalogFetchRejectsAPathOutsideTheRepository(t *testing.T) {
 	}
 }
 
+// TestCatalogFetchRefusesARefTheCatalogWouldRefuse: the branch a source
+// names is held to the rule the catalog's own validation applies
+// (config.ValidBranchName) and not to a narrower one of this package's, so a
+// ref the catalog refuses never reaches a provider and this guard cannot
+// drift below what the catalog checked.
+func TestCatalogFetchRefusesARefTheCatalogWouldRefuse(t *testing.T) {
+	ctx := context.Background()
+	for _, branch := range []string{
+		"../main",
+		"feat/x..y",
+		"release.lock",
+		"main//x",
+		"main/",
+		"-b",
+		"a b",
+	} {
+		o := &fetchOpener{p: &fake.Provider{Repo: "acme/app"}, cred: fakeCredential(t)}
+		e := dockerfileEntry("agent", "docker/agent.Dockerfile", branch)
+		if _, err := Fetch(ctx, o.open, gitprov.KindGitHub, e); err == nil {
+			t.Fatalf("the branch %q was accepted", branch)
+		}
+		if len(o.opened) != 0 {
+			t.Fatalf("the branch %q reached the provider", branch)
+		}
+	}
+}
+
 // TestCatalogFetchUsesTheExistingCredentialAndLogsNone: a dockerfile source
 // is read through the provider the opener returns — the project's existing
 // credential, at the repository and branch the entry names — and neither the
