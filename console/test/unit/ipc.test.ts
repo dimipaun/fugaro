@@ -736,7 +736,7 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * is still `runs ls --json` and rule 6's row carries the two words in its
  * parenthetical.
  *
- * **It is twenty-one argvs, and this surface is the same twenty-one.** The thirteenth is
+ * **It is twenty-two argvs, and this surface is the same twenty-two.** The thirteenth is
  * `config list --json`, the rail's own read (owner's design ruling of
  * 2026-10-25): until that ruling there were twelve here and it was pinned where
  * the picker's table was, and the ruling made the read the dashboard's own
@@ -760,7 +760,12 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * again takes out what main-process state fills -- the row's `--project <name>`
  * and `[--config <path>]`, which are the same two words every cloud command of
  * that tab carries (`src/main/spawn.ts`'s `takesProject`) -- so what is left is
- * the command and its one fixed flag.
+ * the command and its one fixed flag. The twenty-second is that read's own
+ * write (`settings`, the settings-edit plan's C3, D1103), and it is the one row
+ * here that fixes **no** flag: the dry run's `--dry-run --json` and the
+ * confirmed widening's `--yes` are the phase the main process decides from the
+ * dry run's classification (`SETTINGS_EDIT_PHASE_WORDS`), not words this table
+ * gives a renderer, so what is left is the command alone.
  */
 const DESIGN_ARGV: readonly string[] = [
   'watch --json',
@@ -811,6 +816,12 @@ const DESIGN_ARGV: readonly string[] = [
   // declares no argument of its own (`src/main/spawn.ts`'s empty `args`), which
   // is what keeps the command's `[KEY|GLOB ...]` positional unreachable.
   'settings --json',
+  // The settings write (the settings-edit plan's C3). The row fixes no flag at
+  // all: the phase words are the main process's, so this file's convention has
+  // nothing to take out and nothing to add, and the argv is the command alone
+  // -- the subcommand, the key and the operator's value are the operation's
+  // three arguments (`src/main/spawn.ts`'s `settingsEdit`).
+  'settings',
 ]
 
 /** argvOf is an operation's command and the flags it fixes, as one string. */
@@ -874,7 +885,7 @@ describe("the allow-list's read-only invariant", () => {
     ])
   })
 
-  it('drives every CLI command with at most one operation, except logs', () => {
+  it('drives every CLI command with at most one operation, except logs and settings', () => {
     // Two operations share `logs` and differ by their flags, which is the point
     // of writing the allow-list by exact argv: `logs RUN --json` and
     // `logs RUN --url` cannot be combined (`internal/cli/logs.go:63`), so the
@@ -882,11 +893,22 @@ describe("the allow-list's read-only invariant", () => {
     const shared = CLI_COMMANDS.map((entry) => entry.command).filter(
       (command) => operationsDriving(command).length > 1,
     )
-    expect(shared).toEqual(['logs'])
+    expect(shared).toEqual(['logs', 'settings'])
     expect(operationsDriving('logs').map((operation) => operation.flags.join(' ')).sort()).toEqual([
       '--json',
       '--url',
     ])
+    // `settings` is the second, and it is a different kind of pair: a read and a
+    // write of the same group (the settings-edit plan's C1 and C3, D1102 and
+    // D1103). They differ by their whole argv rather than by a flag -- the read
+    // is `settings --json` and the write is `settings` with its subcommand, key
+    // and value as arguments -- so neither can be expressed through the other,
+    // and the write's own words are pinned below.
+    expect(operationsDriving('settings').map((operation) => operation.name).sort()).toEqual([
+      'settings.edit',
+      'settings.read',
+    ])
+    expect(operationsDriving('settings').map((operation) => operation.flags.join(' ')).sort()).toEqual(['', '--json'])
   })
 
   for (const entry of CLI_COMMANDS) {
@@ -1746,6 +1768,104 @@ describe('the argument schemas', () => {
     // fixed word, filled from the screened context and never from a payload
     // (`src/main/spawn.ts`), so the operation cannot ask for another project's
     // node. `spawn.test.ts` pins that word into the argv.
+  })
+
+  it('pins `settings.edit`’s three keys, which are the whole of what a write may send', () => {
+    // **C3's write is the second operation here whose subject is a document**
+    // (the settings-edit plan's C3, D1103), so its payload is the whole of what
+    // a renderer can influence about the argv: the subcommand, the key and the
+    // operator's own value. Nothing else is a key, and each of the three
+    // absences is a security claim rather than a tidiness one:
+    //
+    //   - **no layer** (D1105, D1114). `--layer` is the read's own
+    //     `target_layer`, held in this process's copy of the document and
+    //     emitted from `argvFor`'s own `settingsEdit`, so no payload can name a
+    //     layer -- which is what keeps an edit from being pointed at a layer
+    //     the window did not draw;
+    //   - **no phase word**: a screen chooses neither `--dry-run`, nor
+    //     `--json`, nor `--yes`. Those are `SETTINGS_EDIT_PHASE_WORDS`'
+    //     (`src/main/spawn.ts`), decided by the main process from the dry run's
+    //     own classification, and the row declares no flag at all -- which is
+    //     the one place it differs from every read beside it;
+    //   - **no `--repo`, no `--add`/`--remove`**: the edit lands in the selected
+    //     installation's layers, and a list edit is a form no control on this
+    //     surface can choose.
+    expect(operationFor('settings.edit').command).toBe('settings')
+    expect(operationFor('settings.edit').flags).toEqual([])
+    expect(operationFor('settings.edit').args.map((spec) => [spec.key, spec.kind, spec.required])).toEqual([
+      ['op', 'settingOp', true],
+      ['key', 'settingKey', true],
+      ['value', 'settingValue', false],
+    ])
+    // The refusal is this schema's own key list, by name, so a surface that
+    // grew one of these keys fails on that word rather than on a child's error.
+    for (const key of [
+      'layer',
+      'yes',
+      'dryRun',
+      'json',
+      'project',
+      'config',
+      'dir',
+      'repo',
+      'add',
+      'remove',
+      'command',
+    ]) {
+      const decision = validateArguments('settings.edit', {
+        ...WELL_FORMED['settings.edit'],
+        [key]: key === 'yes' ? true : 'x',
+      })
+      expect(decision.ok, `settings.edit accepted a ${key}`).toBe(false)
+      expect(decision.ok ? '' : decision.reason, key).toBe(`settings.edit takes no ${key}`)
+    }
+    // The subcommand is a closed set of two (`src/main/ipc.ts` and `spawn.ts`
+    // hold the same two words), because the word decides which subcommand a
+    // child runs; the third member of the group, `get`, is a read no screen here
+    // needs.
+    for (const op of ['get', 'SET', 'set ', '', 0, true, null]) {
+      const decision = validateArguments('settings.edit', { op, key: 'budget.cap_usd', value: '25' })
+      expect(decision.ok, `settings.edit accepted the subcommand ${JSON.stringify(op)}`).toBe(false)
+    }
+    // The pairing, which is the surface's own rule and not the child's: an argv
+    // that can only fail is one this table must not be able to build, because
+    // the failure arrives after a child exists. A `set` carries a value and an
+    // `unset` does not -- the empty box on the screen sends the `unset`.
+    expect(validateArguments('settings.edit', { op: 'unset', key: 'budget.cap_usd' }).ok).toBe(true)
+    expect(validateArguments('settings.edit', WELL_FORMED['settings.edit']).ok).toBe(true)
+    const unpaired = validateArguments('settings.edit', { op: 'set', key: 'budget.cap_usd' })
+    expect(unpaired.ok).toBe(false)
+    expect(unpaired.ok ? '' : unpaired.reason).toBe('value is required to set a setting')
+    const paired = validateArguments('settings.edit', { op: 'unset', key: 'budget.cap_usd', value: '25' })
+    expect(paired.ok).toBe(false)
+    expect(paired.ok ? '' : paired.reason).toBe('value goes with set: unset removes the key')
+    // An empty value is refused rather than written: clearing a key is the other
+    // subcommand, and an empty string here would be a write of the empty value
+    // -- a different thing a run would read.
+    const empty = validateArguments('settings.edit', { op: 'set', key: 'budget.cap_usd', value: '' })
+    expect(empty.ok).toBe(false)
+    expect(empty.ok ? '' : empty.reason).toBe('value must be a value: clearing a key is unset')
+    // The key's shape is checked here; its **membership** is the CLI's own
+    // allow-list and is deliberately not (D1102), so a key outside it is refused
+    // by the child's sentence, which the window shows. A word that is not a
+    // dotted key at all is refused before any child exists.
+    for (const key of ['budget cap', '--layer', '.', '', 'a..b', 'Budget.Cap', 'budget..cap', 'budget.cap_usd ']) {
+      expect(validateArguments('settings.edit', { op: 'set', key, value: '25' }).ok, JSON.stringify(key)).toBe(false)
+    }
+    // A key the registry does not own, on the other hand, is *accepted here* and
+    // refused by the child (D1102): membership is the CLI's own allow-list, and
+    // a console that kept a copy of it would be a second authority on which keys
+    // are writable. `fugaro.yaml` is the example that keeps the two apart -- it
+    // is a dotted lower-case word, so this shape admits it, and no registry owns
+    // it, so the child is the one that says no.
+    expect(validateArguments('settings.edit', { op: 'set', key: 'fugaro.yaml', value: '25' }).ok).toBe(true)
+    // ...and the one value this surface deliberately admits a flag spelling for:
+    // `--layer` as a *value* is one argv element behind the `--` terminator
+    // (D1104), and it is the case the terminator exists for. A value is not a
+    // word of the command, so the alphabet rule that refuses a flag name
+    // everywhere else does not apply to it -- `spawn.ts` pins where the
+    // terminator goes.
+    expect(validateArguments('settings.edit', { op: 'set', key: 'budget.cap_usd', value: '--layer' }).ok).toBe(true)
   })
 
   it('takes no key it does not declare, for every operation', () => {
@@ -3708,7 +3828,13 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // per-million-token figures and not what this project spent, so the reduced
     // mode has nothing to withhold from it either -- there is no
     // `spent_micros`, no `notional_micros` and no cap anywhere in its document.
-    expect(THE_OPEN_OPERATIONS.length).toBe(24)
+    // **`settings.edit` (the settings-edit plan's C3) is the twenty-fifth**, and
+    // it is here for a reason worth stating rather than counting: the operation
+    // is not in `REDUCED_VIEW_OPERATIONS`, so a reduced console answers it and
+    // spawns its dry run. No control reaches it there -- the pencil lives in the
+    // `caps` tab (`src/renderer/entry.ts`'s `VIEWS`), which a reduced mode does
+    // not draw -- and the operation's own answer carries no figure.
+    expect(THE_OPEN_OPERATIONS.length).toBe(25)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(
