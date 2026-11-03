@@ -449,35 +449,39 @@ test_refused_exchange() {
 }
 
 # The two guards that keep this check on a sandbox: a URL that is not loopback
-# (where a real run's token would go) and the workspace it must never name.
+# (where a real run's token would go) and the workspace it must never name. Each
+# case writes its stdout and stderr where assert_no_secret reads them, and is
+# checked on its own, so a later case cannot overwrite the evidence of an
+# earlier one.
 test_guards() {
   local dir=$work/guards
   mkdir -p "$dir/tmp"
   write_consumer "$dir/consumer.json"
 
   status=0
-  out=$(env TMPDIR="$dir/tmp" CHECK145_API_URL="https://api.bitbucket.org/2.0" \
+  env TMPDIR="$dir/tmp" CHECK145_API_URL="https://api.bitbucket.org/2.0" \
     bash "$script" --consumer-file "$dir/consumer.json" --workspace sandbox-a \
-    --second-workspace sandbox-b 2>"$dir/err") || status=$?
+    --second-workspace sandbox-b >"$dir/out" 2>"$dir/err" || status=$?
   expect_status "$status" 2 "non-loopback API URL"
   expect_contains "$(cat "$dir/err" 2>/dev/null || true)" "loopback" "non-loopback API URL: the guard names why"
-  expect_absent "$(cat "$dir/out" "$dir/err" 2>/dev/null || true)" "$SECRET_SENTINEL" "non-loopback API URL: no secret"
+  assert_no_secret "$dir" "non-loopback API URL"
 
   status=0
-  out=$(env TMPDIR="$dir/tmp" \
+  env TMPDIR="$dir/tmp" \
     bash "$script" --consumer-file "$dir/consumer.json" --workspace belong \
-    --second-workspace sandbox-b 2>"$dir/err") || status=$?
+    --second-workspace sandbox-b >"$dir/out" 2>"$dir/err" || status=$?
   expect_status "$status" 2 "belong"
   expect_contains "$(cat "$dir/err" 2>/dev/null || true)" "belong" "belong: the guard names the workspace"
+  assert_no_secret "$dir" "belong"
 
   status=0
-  out=$(env TMPDIR="$dir/tmp" \
-    bash "$script" --consumer-file "$dir/consumer.json" --workspace sandbox-a 2>"$dir/err") || status=$?
+  env TMPDIR="$dir/tmp" \
+    bash "$script" --consumer-file "$dir/consumer.json" --workspace sandbox-a \
+    >"$dir/out" 2>"$dir/err" || status=$?
   expect_status "$status" 2 "missing --second-workspace"
   expect_contains "$(cat "$dir/err" 2>/dev/null || true)" "usage" "missing --second-workspace: the usage line"
   expect_contains "$(cat "$dir/err" 2>/dev/null || true)" "--second-workspace" "missing --second-workspace: the flag is named"
-
-  assert_no_secret "$dir" "guards"
+  assert_no_secret "$dir" "missing --second-workspace"
 }
 
 # Every override shape that is not exactly http://127.0.0.1:<port> is refused
@@ -530,47 +534,46 @@ test_belong_in_any_case_is_refused() {
   write_consumer "$dir/consumer.json"
   for ws in bElong BELONG BeLoNg; do
     status=0
-    out=$(env TMPDIR="$dir/tmp" \
+    env TMPDIR="$dir/tmp" \
       bash "$script" --consumer-file "$dir/consumer.json" --workspace "$ws" \
-      --second-workspace sandbox-b 2>"$dir/err") || status=$?
+      --second-workspace sandbox-b >"$dir/out" 2>"$dir/err" || status=$?
     expect_status "$status" 2 "belong spelled '$ws'"
     expect_contains "$(cat "$dir/err" 2>/dev/null || true)" "belong" "belong spelled '$ws': the guard names the workspace"
-    expect_absent "$(cat "$dir/out" "$dir/err" 2>/dev/null || true)" "$SECRET_SENTINEL" "belong spelled '$ws': no secret"
+    assert_no_secret "$dir" "belong spelled '$ws'"
   done
-  assert_no_secret "$dir" "belong in any case"
 }
 
 # The file the owner names is the one place the consumer lives, and a run that
 # cannot read it stops before it makes a request -- with no value in what it
-# says about why.
+# says about why. Each case is checked on its own, the two fixtures this test
+# writes with a sentinel in them excepted (assert_no_secret knows them).
 test_consumer_file_complaints() {
   local dir=$work/consumer
   mkdir -p "$dir/tmp"
 
   status=0
-  out=$(env TMPDIR="$dir/tmp" bash "$script" --consumer-file "$dir/missing.json" \
-    --workspace sandbox-a --second-workspace sandbox-b 2>"$dir/err") || status=$?
+  env TMPDIR="$dir/tmp" bash "$script" --consumer-file "$dir/missing.json" \
+    --workspace sandbox-a --second-workspace sandbox-b >"$dir/out" 2>"$dir/err" || status=$?
   expect_status "$status" 2 "missing consumer file"
   expect_contains "$(cat "$dir/err" 2>/dev/null || true)" "missing.json" "missing consumer file: the path is named"
-  expect_absent "$(cat "$dir/out" "$dir/err" 2>/dev/null || true)" "$SECRET_SENTINEL" "missing consumer file: no secret"
+  assert_no_secret "$dir" "missing consumer file"
 
   printf '{"key": "%s"}\n' "$KEY_SENTINEL" >"$dir/no-secret.json"
   status=0
-  out=$(env TMPDIR="$dir/tmp" bash "$script" --consumer-file "$dir/no-secret.json" \
-    --workspace sandbox-a --second-workspace sandbox-b 2>"$dir/err") || status=$?
+  env TMPDIR="$dir/tmp" bash "$script" --consumer-file "$dir/no-secret.json" \
+    --workspace sandbox-a --second-workspace sandbox-b >"$dir/out" 2>"$dir/err" || status=$?
   expect_status "$status" 2 "consumer file with no secret"
   expect_contains "$(cat "$dir/err" 2>/dev/null || true)" "secret" "consumer file with no secret: the missing field is named"
-  expect_absent "$(cat "$dir/out" "$dir/err" 2>/dev/null || true)" "$KEY_SENTINEL" "consumer file with no secret: no key"
+  assert_no_secret "$dir" "consumer file with no secret"
 
   # A file the check cannot read is refused rather than sent anywhere.
   printf 'not json at all\n' >"$dir/not-json.json"
   status=0
-  out=$(env TMPDIR="$dir/tmp" bash "$script" --consumer-file "$dir/not-json.json" \
-    --workspace sandbox-a --second-workspace sandbox-b 2>"$dir/err") || status=$?
+  env TMPDIR="$dir/tmp" bash "$script" --consumer-file "$dir/not-json.json" \
+    --workspace sandbox-a --second-workspace sandbox-b >"$dir/out" 2>"$dir/err" || status=$?
   expect_status "$status" 2 "consumer file that is not JSON"
   expect_contains "$(cat "$dir/err" 2>/dev/null || true)" "not-json.json" "consumer file that is not JSON: the path is named"
-
-  assert_no_secret "$dir" "consumer file complaints"
+  assert_no_secret "$dir" "consumer file that is not JSON"
 }
 
 # A run that arrived with tracing on is refused: `bash -x` prints every command
