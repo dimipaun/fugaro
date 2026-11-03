@@ -32,10 +32,10 @@ streams:
     # which is the CLI's Camel, and it never goes below 0.110.0: the console's
     # updater refuses a downgrade (docs/release.md, "Console releases"). Apple
     # and Lemon are avoided, and internal/streams refuses them.
-    names: [Cherry, Mango, Melon, Nectarine, Orange, Papaya, Peach, Pear, Plum, Pomelo]
-    # The last console release, console-v0.118.0 "Plum"; 0.119.0 "Pomelo" is next.
-    current: "0.118.0"
-    next: Pomelo
+    names: [Cherry, Mango, Melon, Nectarine, Orange, Papaya, Peach, Pear, Plum, Pomelo, Quince]
+    # The last console release, console-v0.119.0 "Pomelo"; 0.120.0 "Quince" is next.
+    current: "0.119.0"
+    next: Quince
     tag_prefix: console-v
 
   - name: mobile
