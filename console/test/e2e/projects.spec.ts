@@ -83,16 +83,19 @@
 // `FUGARO_CONSOLE_GOLDENS=skip`, which skips exactly the golden tests and says
 // so in the report; nothing skips them silently.
 
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
+import { CONFIRM_ENTRY_URL } from '../../src/main/confirm'
 import { SPAWN_LOG_ENV } from '../../src/main/spawnlog'
 import type { SpawnLogEntry } from '../../src/main/spawnlog'
+import { SETTINGS_TICK_LABEL } from '../../src/main/settingsview'
 import type { JSONDoc } from '../../src/source/source'
+import { CANCEL_LABEL, SAVE_LABEL, TICK_ID, TITLE_SETTINGS } from '../../src/renderer/confirm'
 import { PROJECT_PANEL_KEYS, PROJECTS_BUSY, PROJECTS_THEMES } from '../../src/renderer/screens/projects'
 import { CLI_VERSION_BUILT_AGAINST, MODELS_LIST_CLI_FLOOR } from '../../src/shared/version'
 import { inRangeCliStub } from '../support/cliStub'
@@ -226,13 +229,14 @@ function domFactory() {
 `
 
 /** draw is the expression the window evaluates: load the compiled screen, build
- * the model from the three documents, and mount what it draws. */
+ * the model from the documents, and mount what it draws. */
 function draw(
   budget: JSONDoc,
   accounts: JSONDoc,
   secrets: readonly JSONDoc[],
   theme: string,
   models: JSONDoc | null = MODELS,
+  settings: JSONDoc | null = SETTINGS,
 ): string {
   return `(function () {
 ${LOADER}${MODULES.map(moduleSource).join('\n')}${FACTORY}
@@ -252,7 +256,9 @@ var modelsModel = projects.buildProjectsModels({
   tooOld: false,
   version: '1.2.3'
 });
-var tree = projects.renderProjects(factory, model, ${JSON.stringify(theme)}, modelsModel);
+var settingsRaw = ${JSON.stringify(settings)};
+var settingsModel = projects.buildProjectsSettings({ raw: settingsRaw, because: null });
+var tree = projects.renderProjects(factory, model, ${JSON.stringify(theme)}, modelsModel, settingsModel);
 var previous = document.getElementById('projects-mount');
 if (previous) previous.remove();
 var host = document.createElement('div');
@@ -523,6 +529,19 @@ const MODELS: JSONDoc = {
   repositories: [],
 }
 
+/**
+ * SETTINGS is `settings --json` (the settings-edit plan's C4), and it is the
+ * committed fixture read from disk rather than restated here: the e2e stub
+ * answers the same read with the same file (`test/fixtures/bin/fugaro`), and a
+ * second copy in this spec would be a second document to keep in step. Its four
+ * rows are the four the screen's rules are about -- a narrowing the generic path
+ * writes, a widening it writes, a key another writer owns, and a sensitive one
+ * that is drawn nowhere at all (D1111).
+ */
+const SETTINGS: JSONDoc = JSON.parse(
+  readFileSync(join(consoleDir, 'test', 'fixtures', 'settings.json'), 'utf8'),
+) as JSONDoc
+
 test.describe('the Projects screen', () => {
   // One window, one page, and the tests in order: each draws the screen it is
   // about into the same document, and the goldens are taken from what the test
@@ -579,9 +598,11 @@ test.describe('the Projects screen', () => {
     // The eighth panel is the models panel (console 0.119.0): the tab's second
     // read, drawn by `fillProjectsModels` rather than by the seven-panel model,
     // and last in the tree because it is a sibling of the body those seven are
-    // filled into.
-    expect(drawn.panels).toEqual([...PROJECT_PANEL_KEYS, 'models'])
-    expect(drawn.states).toEqual(['read', 'read', 'read', 'read', 'read', 'not-built', 'not-built', 'read'])
+    // filled into. The ninth is the settings panel (the settings-edit plan's C1
+    // and this task's C4), a third sibling drawn the same way -- which is what
+    // these two frames gain: the settings section (D1118).
+    expect(drawn.panels).toEqual([...PROJECT_PANEL_KEYS, 'models', 'settings'])
+    expect(drawn.states).toEqual(['read', 'read', 'read', 'read', 'read', 'not-built', 'not-built', 'read', 'read'])
     // Every panel names the command it read, drawn on the panel itself: a panel
     // whose source is nowhere is a panel a reader cannot check. There is one
     // command behind the three panels that read the cap document -- `budget show`
@@ -594,7 +615,7 @@ test.describe('the Projects screen', () => {
     // only channel: `read` on the six that read a document (the models panel
     // among them), the design's `locked` on the two cards this CLI cannot read
     // at all.
-    expect(drawn.stateWords).toEqual(['read', 'read', 'read', 'read', 'read', 'locked', 'locked', 'read'])
+    expect(drawn.stateWords).toEqual(['read', 'read', 'read', 'read', 'read', 'locked', 'locked', 'read', 'read'])
   })
 
   test('renders the two sections with no command as not-built, and never as a zero', async () => {
@@ -611,11 +632,11 @@ test.describe('the Projects screen', () => {
     // The two panels say *why* they have nothing, with the design's own phrase
     // for the state: "not readable with this CLI".
     expect(text).toContain('not readable with this CLI')
-    // The six panels that read a document have a count (the models panel counts
-    // its routes and models); the two that did not have none. This is the
-    // mechanism behind "never as a zero": there is no reading to format, so
-    // nothing can render as `0`.
-    expect(drawn.counts.length).toBe(6)
+    // The seven panels that read a document have a count (the models panel
+    // counts its routes and models, the settings panel its rows); the two that
+    // did not have none. This is the mechanism behind "never as a zero": there
+    // is no reading to format, so nothing can render as `0`.
+    expect(drawn.counts.length).toBe(7)
   })
 
   test('names the binding scope of every cap', async () => {
@@ -741,12 +762,14 @@ test.describe('the Projects screen', () => {
       'not-built',
       'not-built',
       'read',
+      'read',
     ])
     expect(drawn.text).toContain('the project could not be selected')
     // An incomplete inventory has no count: `0 accounts` would be a false
-    // statement about the project, not a missing one. The models panel is a
-    // read of its own and is unaffected by this document either way.
-    expect(drawn.counts.length).toBe(5)
+    // statement about the project, not a missing one. The models panel and the
+    // settings panel are reads of their own and are unaffected by this document
+    // either way.
+    expect(drawn.counts.length).toBe(6)
   })
 
   test('offers no link, and nothing to click', async () => {
@@ -851,7 +874,7 @@ test.describe('the Projects screen', () => {
     // The state is in the DOM twice over: as the attribute a reader's tools read, and
     // as the sentence a reader reads.
     expect(forced.states).toContain('not-built')
-    expect(forced.words).toEqual(['read', 'read', 'read', 'read', 'read', 'locked', 'locked', 'read'])
+    expect(forced.words).toEqual(['read', 'read', 'read', 'read', 'read', 'locked', 'locked', 'read', 'read'])
     // The switches' state words survive too, `KILLED` among them.
     expect(forced.killWords).toEqual(['live', 'live', 'KILLED'])
     expect(forced.because.join(' '), 'a panel with no document lost its reason').toContain(
@@ -904,6 +927,146 @@ function readsOf(where: string): readonly SpawnLogEntry[] {
     .map((line) => JSON.parse(line) as SpawnLogEntry)
 }
 
+/** SETTINGS_KEY is the row the narrowing below edits, and SETTINGS_WIDENING_KEY
+ * the one the widening edits: both are rows of `test/fixtures/settings.json`,
+ * whose `target_layer` the console takes the `--layer` word from (D1102). The
+ * first writes the layer that wins and the second a layer the CLI's dry run
+ * classifies as a widening, which is the whole of the difference between the two
+ * windows. */
+const SETTINGS_KEY = 'agent.review_rounds'
+const SETTINGS_WIDENING_KEY = 'claude_account_auto'
+
+/** DRY_RUNS are the documents the stub answers the dry run with, one per key, as
+ * `settings set --dry-run --json` prints them (`settingsWriteDoc`,
+ * `internal/cli/settings_set.go`): the key, the layer written, the file written,
+ * whether the edit changes anything, whether it widens, the CLI's own `why`, the
+ * two values, and the `refusal` member a real document always carries empty. */
+const DRY_RUNS: Readonly<Record<string, JSONDoc>> = {
+  [SETTINGS_KEY]: {
+    version: 1,
+    key: SETTINGS_KEY,
+    layer: 'project',
+    path: '/home/owner/.config/fugaro/projects/example.yaml',
+    changed: true,
+    widening: false,
+    why: '',
+    old: '2',
+    new: '3',
+    refusal: '',
+  },
+  [SETTINGS_WIDENING_KEY]: {
+    version: 1,
+    key: SETTINGS_WIDENING_KEY,
+    layer: 'local',
+    path: '/home/owner/.config/fugaro/local.yaml',
+    changed: true,
+    widening: true,
+    why: 'this raises the per-run ceiling the project layer sets',
+    old: 'false',
+    new: 'true',
+    refusal: '',
+  },
+}
+
+/** seedSettings writes the settings documents beside **every** copy of the stub,
+ * the way `cliStub`'s own seeders do: either copy can be the one the console's
+ * resolution runs, and the stub answers a read from the files beside itself. The
+ * read is the committed fixture; the dry runs are keyed the way the stub looks
+ * them up (`settings-dryrun-<KEY>.json`). Hermetic: three files in a scratch
+ * directory, and no CLI but the stub. */
+function seedSettings(cli: CliStub): void {
+  const read = readFileSync(join(consoleDir, 'test', 'fixtures', 'settings.json'), 'utf8')
+  for (const where of [join(cli.home, '.local', 'bin'), cli.dir]) {
+    mkdirSync(where, { recursive: true })
+    writeFileSync(join(where, 'settings.json'), read)
+    for (const [key, document] of Object.entries(DRY_RUNS)) {
+      writeFileSync(join(where, `settings-dryrun-${key}.json`), `${JSON.stringify(document)}\n`)
+    }
+  }
+}
+
+/** confirmWindow is the settings window the edit flow opens, found the way the
+ * operator finds it: the window whose URL is the confirmation document. It is
+ * the second window this app has, so the first one is never it. */
+async function confirmWindow(app: ElectronApplication): Promise<Page> {
+  let found: Page | null = null
+  await expect
+    .poll(
+      () => {
+        found = app.windows().find((page) => page.url() === CONFIRM_ENTRY_URL) ?? null
+        return found === null ? 'none' : 'there'
+      },
+      { timeout: 15_000, message: 'the confirmation window never opened' },
+    )
+    .toBe('there')
+  if (found === null) throw new Error('the confirmation window went away between the poll and this line')
+  return found
+}
+
+/** shownArgv is the command line the window draws: the `Command` row's own
+ * values, field by field and in order -- which is the argv and not a summary of
+ * it, and therefore the thing this spec compares the stub's record against. */
+function shownArgv(confirm: Page): Promise<readonly string[]> {
+  return confirm.evaluate(() => {
+    const fields = document.getElementById('confirm-fields')
+    const nodes = Array.from(fields?.children ?? [])
+    const at = nodes.findIndex((node) => node.tagName.toLowerCase() === 'dt' && node.textContent === 'Command')
+    if (at < 0) return []
+    const words: string[] = []
+    for (const node of nodes.slice(at + 1)) {
+      if (node.tagName.toLowerCase() !== 'dd') break
+      words.push(node.textContent ?? '')
+    }
+    return words
+  })
+}
+
+/** pressWhenReady presses one of the window's two buttons until the window is
+ * gone. It is `launch.spec.ts`'s rule for the other question, one window over: a
+ * press that lands inside the main process's readiness delay is refused with
+ * `CONFIRM_NOT_YET`, so the spec waits on the state -- the window closed --
+ * rather than on a sleep, and a press the window took is the one that closed it.
+ */
+async function pressWhenReady(confirm: Page, label: string): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        if (confirm.isClosed()) return 'answered'
+        await confirm
+          .getByRole('button', { name: label })
+          .click({ timeout: 3_000 })
+          .catch((error: unknown) => {
+            // A press that arrived before the button existed is the poll's to
+            // retry; a window that went away is the answer itself.
+            if (error instanceof Error && (error.name === 'TimeoutError' || /has been closed|Target closed/.test(error.message))) {
+              return undefined
+            }
+            throw error
+          })
+        return confirm.isClosed() ? 'answered' : 'waiting'
+      },
+      { timeout: 20_000, intervals: [100], message: `the ${label} press was never taken by the window` },
+    )
+    .toBe('answered')
+}
+
+/** settingsWrites is the argv of every settings write the console has run so far,
+ * read from the spawn log: the record of what was spawned, and the second
+ * reading of "the console ran the command line it showed". */
+function settingsWrites(where: string): readonly (readonly string[])[] {
+  return readsOf(where)
+    .map((record) => record.argv)
+    .filter((argv) => argv[1] === 'settings' && argv.includes('--yes'))
+}
+
+/** stubWrites is the stub's own record of every settings line it was handed,
+ * phase by phase: the dry run's line and the write's, in the order it answered
+ * them. It is what a case waits on for a write that must have happened, and for
+ * one that must not. */
+function stubWrites(cli: CliStub): readonly string[] {
+  return cli.answeredReads().filter((line) => line.includes(' settings set '))
+}
+
 test.describe('the Projects view in the dashboard', () => {
   test.describe.configure({ mode: 'serial' })
 
@@ -925,6 +1088,13 @@ test.describe('the Projects view in the dashboard', () => {
     // is seeded -- which is what makes the panel's own refusal path reachable
     // here without a second stub.
     cli.seedModels({ document: MODELS })
+    // The tab's **third** read and its two write phases (the settings-edit
+    // plan's C4): `settings --json` is answered from the committed fixture, and
+    // the dry run from the document seeded for the key the console names --
+    // which is why the cases below can drive a narrowing and a widening without
+    // a second stub. Unseeded, both are refused with exit 2 rather than answered
+    // with a document claiming something no installation said.
+    seedSettings(cli)
     // **The stub's own line is below the models read's floor**
     // (`CLI_VERSION_BUILT_AGAINST` is 0.13.0 and `MODELS_LIST_CLI_FLOOR` is
     // 0.16.0), so a view on it draws the console's floor sentence for the panel
@@ -1034,6 +1204,141 @@ test.describe('the Projects view in the dashboard', () => {
     // installation's `--project`, and nothing a renderer chose.
     expect(asked).toContainEqual(['models', 'ls', '--json', '--project', 'e2e'])
     expect(asked.filter((argv) => argv[0] === 'runs')).toEqual([])
+  })
+
+  test('draws the settings section from the read, and records that read', async () => {
+    // The tab's third section, drawn from the document the stub answered
+    // `settings --json` with: three rows, because the fixture's fourth is
+    // sensitive and a sensitive row is drawn nowhere (D1111).
+    const rows = page.locator(`${THE_PROJECTS} li.projects-settings-row`)
+    await expect(rows).toHaveCount(3)
+    await expect(rows.first()).toContainText(SETTINGS_KEY)
+
+    const asked = readsOf(spawnLog).map((record) => record.argv.slice(1))
+    expect(asked).toContainEqual(['settings', '--json', '--project', 'e2e'])
+  })
+
+  test('writes a narrowing with the argv it showed, and records that same argv', async () => {
+    // The first edit this spec drives, so the stub's record holds this flow's two
+    // phases and nothing else: the dry run's line and the write's.
+    expect(stubWrites(cli)).toEqual([])
+    const row = page.locator(`${THE_PROJECTS} li.projects-settings-row`).filter({ hasText: SETTINGS_KEY })
+    await row.locator('button.projects-settings-pencil').click()
+    const editor = page.locator(`${THE_PROJECTS} .projects-settings-editor`)
+    await expect(editor).toBeVisible()
+    // The value is typed into the row's own box; an empty box is the unset, and
+    // this case is the write of one value (the terminator is C3's unit test).
+    await editor.locator('input').fill('3')
+    await editor.getByRole('button', { name: 'Review and write' }).click()
+
+    const confirm = await confirmWindow(app)
+    await expect(confirm.locator('#confirm-title')).toHaveText(TITLE_SETTINGS)
+    // The window is the settings question and not the launch's: its confirming
+    // button is the settings window's word, and a narrowing has no tick at all
+    // (D1109) -- the tick is the widening's.
+    await expect(confirm.getByRole('button', { name: SAVE_LABEL })).toBeVisible()
+    await expect(confirm.locator(`#${TICK_ID}`)).toHaveCount(0)
+
+    const shown = await shownArgv(confirm)
+    expect(shown.slice(1)).toEqual([
+      'settings', 'set', SETTINGS_KEY, '--layer', 'project', '--yes', '--project', 'e2e', '--', '3',
+    ])
+    await pressWhenReady(confirm, SAVE_LABEL)
+
+    // The write's own outcome, in the CLI's words, and the row it leaves behind:
+    // an edit does not change a run until `fugaro update` publishes it (D1119).
+    await expect(editor.locator('.projects-settings-editor-outcome')).toContainText('next: fugaro update')
+    // **The property this spec exists for**, from outside the process: the stub's
+    // own record of the command line it was handed -- written by the stub, from
+    // `$0` and every argument -- is the command line the window drew, word for
+    // word, for both phases of the flow. The dry run's is the spelling that
+    // carries **no** `--yes`: the CLI's confirmation is its own question and
+    // `--yes` is the console's answer to it (D1107).
+    const dryLine = [
+      shown[0], 'settings', 'set', SETTINGS_KEY, '--layer', 'project', '--dry-run', '--json', '--project', 'e2e', '--', '3',
+    ].join(' ')
+    await expect
+      .poll(() => stubWrites(cli).length, { message: 'the write never reached the stub' })
+      .toBe(2)
+    expect(stubWrites(cli)).toEqual([dryLine, shown.join(' ')])
+    // And the spawn log agrees from the other side: the write the console ran is
+    // that argv, and not a second spelling built for the spawn.
+    await expect.poll(() => settingsWrites(spawnLog).length).toBeGreaterThan(0)
+    expect(settingsWrites(spawnLog).at(-1)).toEqual(shown)
+  })
+
+  test('asks for the tick on a widening, and writes the argv the ticked window showed', async () => {
+    const row = page.locator(`${THE_PROJECTS} li.projects-settings-row`).filter({ hasText: SETTINGS_WIDENING_KEY })
+    await row.locator('button.projects-settings-pencil').click()
+    const editor = page.locator(`${THE_PROJECTS} .projects-settings-editor`)
+    await expect(editor).toBeVisible()
+    await editor.locator('input').fill('true')
+    await editor.getByRole('button', { name: 'Review and write' }).click()
+
+    const confirm = await confirmWindow(app)
+    await expect(confirm.locator('#confirm-title')).toHaveText(TITLE_SETTINGS)
+    // A widening draws the console's own extra confirmation (D1101): the tick is
+    // a real checkbox with the owner's own words, and Confirm is disabled until
+    // it is set. The tick is not an argv word -- the window below carries the
+    // same argv ticked or not.
+    const tick = confirm.locator(`#${TICK_ID}`)
+    await expect(tick).toBeVisible()
+    await expect(confirm.locator(`label[for="${TICK_ID}"]`)).toHaveText(SETTINGS_TICK_LABEL)
+    await expect(confirm.getByRole('button', { name: SAVE_LABEL })).toBeDisabled()
+
+    const shown = await shownArgv(confirm)
+    expect(shown.slice(1)).toEqual([
+      'settings', 'set', SETTINGS_WIDENING_KEY, '--layer', 'local', '--yes', '--project', 'e2e', '--', 'true',
+    ])
+    await tick.check()
+    await expect(confirm.getByRole('button', { name: SAVE_LABEL })).toBeEnabled()
+    const before = stubWrites(cli).length
+    await pressWhenReady(confirm, SAVE_LABEL)
+
+    await expect.poll(() => stubWrites(cli).length, { message: 'the widened write never reached the stub' }).toBe(before + 1)
+    expect(stubWrites(cli).at(-1)).toBe(shown.join(' '))
+    await expect.poll(() => settingsWrites(spawnLog).length).toBeGreaterThan(1)
+    expect(settingsWrites(spawnLog).at(-1)).toEqual(shown)
+  })
+
+  test('spawns no write when the window is cancelled', async () => {
+    const writes = settingsWrites(spawnLog).length
+    const before = stubWrites(cli).length
+    const row = page.locator(`${THE_PROJECTS} li.projects-settings-row`).filter({ hasText: SETTINGS_KEY })
+    await row.locator('button.projects-settings-pencil').click()
+    const editor = page.locator(`${THE_PROJECTS} .projects-settings-editor`)
+    await expect(editor).toBeVisible()
+    await editor.locator('input').fill('5')
+    await editor.getByRole('button', { name: 'Review and write' }).click()
+
+    const confirm = await confirmWindow(app)
+    await pressWhenReady(confirm, CANCEL_LABEL)
+
+    // The dry run went out -- the window was drawn from its answer -- and the
+    // write did not: a no is the operator's, and the only argv this case may
+    // add to either record is the dry run's.
+    await expect.poll(() => stubWrites(cli).length, { message: 'the cancelled edit’s dry run never reached the stub' }).toBe(
+      before + 1,
+    )
+    expect(stubWrites(cli).at(-1)).toContain('--dry-run')
+    expect(stubWrites(cli).at(-1)).not.toContain('--yes')
+    expect(settingsWrites(spawnLog)).toHaveLength(writes)
+  })
+
+  test('draws an owned row without a pencil, and never draws a sensitive row', async () => {
+    const rows = page.locator(`${THE_PROJECTS} li.projects-settings-row`)
+    // A row the generic path does not write is drawn -- with the family the
+    // read's `owner` names -- and offers no pencil (D1111).
+    const owned = rows.filter({ hasText: 'mailbox.keychain_item' })
+    await expect(owned).toHaveCount(1)
+    await expect(owned.locator('button.projects-settings-pencil')).toHaveCount(0)
+    // A sensitive row is not drawn at all: the fixture carries
+    // `budget.firebase_api_key`, and neither its key nor a pencil for it is
+    // anywhere on the tab. The console keeps no list of its own -- the field is
+    // the CLI's (D1102).
+    const text = (await page.locator(THE_PROJECTS).textContent()) ?? ''
+    expect(text).not.toContain('budget.firebase_api_key')
+    await expect(rows.locator('button.projects-settings-pencil')).toHaveCount(2)
   })
 })
 

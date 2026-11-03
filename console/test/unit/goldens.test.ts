@@ -52,6 +52,7 @@ import {
   themeStylesheets,
 } from '../support/goldens'
 import type { GroundReading } from '../support/goldens'
+import { PROJECTS_THEMES } from '../../src/renderer/screens/projects'
 
 const consoleDir = fileURLToPath(new URL('../../', import.meta.url))
 
@@ -219,6 +220,34 @@ describe('the theme directory, as the freshness bar', () => {
       expect(statSync(join(consoleDir, sheet.path)).isFile()).toBe(true)
     }
     expect(sheets.map((sheet) => sheet.name)).toContain('palette.css')
+  })
+})
+
+describe('the golden list the Projects screen adds to', () => {
+  it('is one recording per theme the screen names, and the frames are what moved, not the list', () => {
+    // C4 gives the Projects tab its settings section, so both of the screen's
+    // frames gain a panel's content and the coordinator re-records them. What is
+    // held here is **the list and nothing else**: one recording per theme the
+    // screen names, for this platform, on the path the template resolves -- and
+    // no PNG is read, because a recording that is not there is the state the
+    // owner's machine fixes and this one must not depend on.
+    const frames = PROJECTS_THEMES.map((theme) =>
+      join('__screenshots__', 'projects', `${theme}-${process.platform}.png`),
+    )
+    expect(frames).toEqual([
+      join('__screenshots__', 'projects', `light-${process.platform}.png`),
+      join('__screenshots__', 'projects', `dark-${process.platform}.png`),
+    ])
+    // And each of them is a frame the freshness preflight refuses while it is
+    // missing, with the exact command that writes it: a section added to the tab
+    // is a frame that must be re-recorded rather than one that quietly keeps the
+    // previous build's picture.
+    const root = scratch('projects-frames')
+    for (const frame of frames) {
+      const stale = staleGolden(join(root, frame), 'projects.spec.ts', root)
+      expect(stale).toContain(join(root, frame))
+      expect(stale).toContain(recordCommand('projects.spec.ts'))
+    }
   })
 })
 
