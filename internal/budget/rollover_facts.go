@@ -122,10 +122,12 @@ func (b BucketFacts) Facts(ctx context.Context, from, to int64) (map[int64][]Run
 	// writes only its own index, so the pass below is the same walk whichever
 	// read finishes first.
 	//
-	// A read that fails the pass ends it: the reads in flight and the ones
-	// still to come are cancelled rather than waited out, so a bucket that
-	// refused a read does not cost the rest of the window's round trips
-	// before the caller hears about it.
+	// A read that fails the pass ends it: the cancelled reads in flight
+	// return quickly (the bucket's I/O respects context cancellation), and
+	// unstarted reads are skipped, so a bucket that refused a read does not
+	// cost the rest of the window's round trips before the caller hears
+	// about it. pool.Run still joins every goroutine, so a read that does
+	// not check its context is waited out.
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	recs := make([]*runstore.Record, len(refs))
