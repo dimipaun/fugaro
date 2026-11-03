@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // Catalog is a project's image catalog (spec.md §Catalog entry): a handful of
@@ -94,7 +95,10 @@ type Source struct {
 	// Inline is a SourceInline's Dockerfile definition, held in the catalog
 	// itself.
 	Inline string `yaml:"inline,omitempty" json:"inline,omitempty"`
-	// Image is a SourceImage's reference to a prebuilt image.
+	// Image is a SourceImage's reference to a prebuilt image. It reaches the
+	// job spec, the sentences a selection writes and a listing, so it is one
+	// container image reference within catalogImageRE, and no longer than
+	// maxCatalogImageRefLen.
 	Image string `yaml:"image,omitempty" json:"image,omitempty"`
 }
 
@@ -108,6 +112,11 @@ const (
 	// maxCatalogDescriptionLen bounds an entry's description, which a listing
 	// prints to a terminal.
 	maxCatalogDescriptionLen = 200
+	// maxCatalogImageRefLen bounds a source image reference. A reference is
+	// written into the job spec and the sentences a selection writes, and 255
+	// is the length a registry accepts for a repository name, so no reference
+	// a registry would serve is refused by it.
+	maxCatalogImageRefLen = 255
 	// maxCatalogInlineBytes bounds an inline Dockerfile definition: it
 	// travels in the published policy node, which every launcher and every run
 	// reads, so a definition that is not a Dockerfile's size must be refused
@@ -139,6 +148,17 @@ var (
 	// not repeat the tag: a refusal that echoed one would put whatever it
 	// holds, an escape sequence among it, into a log (validateKeyFiles' rule).
 	catalogTagMessage = fmt.Sprintf("must be a tag of 1 to %d of a-z, 0-9, '.', '_' and '-', starting with a letter or a digit", maxCatalogTagLen)
+	// catalogImageRE is a container image reference: an optional registry host
+	// with an optional port, a repository path of lower-case components, an
+	// optional tag and an optional sha256 digest. It is an allowlist for the
+	// same reason the tag grammar is: a reference is written into the job spec
+	// and the sentences a selection writes, and a value carrying a newline, an
+	// escape sequence or a bidi override is one a person cannot read back as
+	// the reference it is.
+	catalogImageRE = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*(?::[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(?:@sha256:[a-f0-9]{64})?$`)
+	// catalogImageMessage is the refusal of a reference outside catalogImageRE.
+	// It names a shape rather than repeating the value, for the reason above.
+	catalogImageMessage = "must be a container image reference such as ghcr.io/owner/image:1.2"
 )
 
 // ValidateCatalog checks a project's image catalog (spec.md §Catalog entry).
@@ -244,8 +264,13 @@ func validateCatalogSource(path string, s Source, add func(path, format string, 
 		}
 		addCatalogWrongKind(path, s, SourceInline, add)
 	case SourceImage:
-		if s.Image == "" {
+		switch {
+		case s.Image == "":
 			add(path+".image", "is required for an image source")
+		case utf8.RuneCountInString(s.Image) > maxCatalogImageRefLen:
+			add(path+".image", "must be at most %d characters", maxCatalogImageRefLen)
+		case !catalogImageRE.MatchString(s.Image):
+			add(path+".image", "%s", catalogImageMessage)
 		}
 		addCatalogWrongKind(path, s, SourceImage, add)
 	default:

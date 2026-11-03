@@ -120,6 +120,58 @@ func TestCatalogEntryTagsRefuseADuplicate(t *testing.T) {
 	}
 }
 
+// catalogWithImage is one entry whose source is the given prebuilt image
+// reference, built as a value for the reason catalogWithTags is.
+func catalogWithImage(ref string) Catalog {
+	return Catalog{Entries: []Entry{{
+		Name:   "backend",
+		Source: Source{Kind: SourceImage, Image: ref},
+	}}}
+}
+
+// TestCatalogSourceImageIsAReference pins a prebuilt image's grammar (spec.md
+// §Catalog entry): the reference is written into the job spec, a listing and
+// the sentences a selection writes, so it is one container image reference,
+// within maxCatalogImageRefLen. A newline with an escape sequence, a bidi
+// override, a space or a command after the reference is a value no registry
+// serves and no person can read back as the image it names; a hundred thousand
+// bytes of valid characters is the same value at a size the node, the job spec
+// and every reader of the run would carry.
+func TestCatalogSourceImageIsAReference(t *testing.T) {
+	const refMsg = "must be a container image reference"
+	const lenMsg = "must be at most 255 characters"
+	for _, tc := range []struct{ name, ref, msg string }{
+		{"a newline and an escape sequence", "ghcr.io/acme/agent:1\n\x1b[31m", refMsg},
+		{"a bidi override", "ghcr.io/acme/‮gnih:1", refMsg},
+		{"a space", "ghcr.io/acme/my image:1", refMsg},
+		{"an upper-case host", "GHCR.IO/acme/agent", refMsg},
+		{"a command after the reference", "ghcr.io/acme/agent:1; rm -rf /", refMsg},
+		{"over the length bound", strings.Repeat("a", maxCatalogImageRefLen+1), lenMsg},
+		{"a hundred thousand bytes", strings.Repeat("a", 100000), lenMsg},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ps := ValidateCatalog("image_catalog", catalogWithImage(tc.ref))
+			if !hasProblem(ps, "image_catalog.entries[0].source.image", tc.msg, 0) {
+				t.Fatalf("problems = %v, want one at image_catalog.entries[0].source.image: %s", ps, tc.msg)
+			}
+		})
+	}
+	// The shapes a registry serves are references: a bare name and tag, a
+	// registry host, a host with a port, a path of several components, and a
+	// digest pin.
+	for _, ref := range []string{
+		"node:24",
+		"ghcr.io/acme/agent:1.2.3",
+		"us-central1-docker.pkg.dev/project/repo/agent:2026-11-03",
+		"localhost:5000/agent:1",
+		"ghcr.io/acme/agent@sha256:" + strings.Repeat("a", 64),
+	} {
+		if ps := ValidateCatalog("image_catalog", catalogWithImage(ref)); len(ps) > 0 {
+			t.Errorf("reference %q: unexpected problems: %v", ref, ps)
+		}
+	}
+}
+
 // TestCatalogDefaultIsOneEntryOrNone pins the default marker (spec.md
 // §Catalog entry: "The project marks one entry as default"): a catalog marks
 // one entry, or none, and two entries marked are refused because the choice
