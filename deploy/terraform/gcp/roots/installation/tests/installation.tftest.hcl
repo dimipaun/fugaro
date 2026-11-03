@@ -1251,6 +1251,133 @@ run "coordinator_job" {
     condition     = output.coordinator_job == "fugarocoord"
     error_message = "the coordinator job's name is an output"
   }
+  # The run's variable is the coordinator's own (BB5), and this run has no
+  # credentials service: the sweep's Bitbucket path has no root to mint at and
+  # no service to be admitted by, so the entry is absent and a Bitbucket
+  # repository stays StaleUnsupported rather than the sweep guessing one. The
+  # six-name set above is exact, so an extra entry fails there too; this is the
+  # named half of the same fact.
+  assert {
+    condition     = length([for e in one(one(one(google_cloud_run_v2_job.coordinator[0].template).template).containers).env : e if e.name == "FUGARO_COORDINATOR_CREDENTIALS_SERVICE_URL"]) == 0
+    error_message = "without the credentials service the coordinator job carries no service URL: FUGARO_COORDINATOR_CREDENTIALS_SERVICE_URL is not FUGARO_CREDENTIALS_SERVICE_URL, and the sweep reads only the first"
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.credentials_coordinator) == 0
+    error_message = "with no credentials service there is no invoker grant to make: the coordinator's read mint arrives with the service it calls"
+  }
+}
+
+# The read mint's second class (BB5, G4), read off a plan: the coordinator's
+# own account may call the credentials service — roles/run.invoker on that one
+# service, and the service's own environment naming the same address — and the
+# sweep is handed the coordinator's variable, which names that service's URL
+# and never the run path's own.
+#
+# The installation here is Bitbucket's alone and has no GitHub App (F24): the
+# sweep's GitHub path is what mints a token from the App key, so an
+# installation whose repositories are all Bitbucket deploys the same job
+# without the App ID, without the key's mount and without the grant that reads
+# it. That is the state every installation migrated from GitHub to Bitbucket
+# passes through, and it must plan rather than be refused for a credential
+# nothing reads.
+run "coordinator_sweep_reads_bitbucket_through_the_service" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  override_resource {
+    target          = google_service_account.coordinator[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-coordinator@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-coordinator@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+  override_resource {
+    target          = google_service_account.scheduler
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+  override_resource {
+    target          = google_project_iam_custom_role.job_runner
+    override_during = plan
+    values = {
+      name = "projects/proj-1234/roles/fugaroJobRunner"
+    }
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+    }
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "bitbucket"
+        repo     = "owner/repo-a"
+        workflow = "web"
+      }]
+      verifier_accounts = ["person-1@example.com"]
+      url               = "https://fugaro-credentials-123456789012.us-east5.run.app"
+    }
+    coordinator = {
+      account_id       = "fugaro-coordinator"
+      job              = "fugarocoord"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-coordinator-sweep"
+      scheduler_region = "us-east1"
+      deploy_job       = true
+      firebase_project = "fp-1234"
+      rtdb_url         = "https://fp-1234-default-rtdb.firebaseio.com"
+      repos            = [{ provider = "bitbucket", repo = "owner/repo-a" }]
+    }
+  }
+
+  assert {
+    condition = (toset([for e in one(one(one(google_cloud_run_v2_job.coordinator[0].template).template).containers).env : e.name]) == toset([
+      "FUGARO_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL", "FUGARO_RUNS_BUCKET",
+      "FUGARO_COORDINATOR_REPOS", "FUGARO_COORDINATOR_CREDENTIALS_SERVICE_URL",
+    ]))
+    error_message = "a Bitbucket-only sweep's whole configuration is those six environment variables: the credentials service's URL takes the App ID's place, and no entry is taken from a source, because there is no App key to mount"
+  }
+  assert {
+    condition = (one([for e in one(one(one(google_cloud_run_v2_job.coordinator[0].template).template).containers).env : e.value if e.name == "FUGARO_COORDINATOR_CREDENTIALS_SERVICE_URL"]) == "https://fugaro-credentials-123456789012.us-east5.run.app" &&
+    length([for e in one(one(one(google_cloud_run_v2_job.coordinator[0].template).template).containers).env : e if e.name == "FUGARO_CREDENTIALS_SERVICE_URL"]) == 0)
+    error_message = "the sweep is handed the service's URL under the coordinator's own name (F23): FUGARO_CREDENTIALS_SERVICE_URL is the run path's variable, and a sweep that read it would let a run's environment move the root its token is minted at"
+  }
+  assert {
+    condition = (length(google_secret_manager_secret_iam_member.coordinator_app_key) == 0 &&
+    length([for e in one(one(one(google_cloud_run_v2_job.coordinator[0].template).template).containers).env : e if e.name == "FUGARO_GITHUB_APP_ID" || length(coalesce(e.value_source, [])) > 0]) == 0)
+    error_message = "F24: with no GitHub repository the job carries no App ID, no key mount and no grant to read the key — the sweep mints its read tokens at the credentials service instead"
+  }
+  assert {
+    condition = (length(google_cloud_run_v2_service_iam_member.credentials_coordinator) == 1 &&
+      google_cloud_run_v2_service_iam_member.credentials_coordinator[0].role == "roles/run.invoker" &&
+      google_cloud_run_v2_service_iam_member.credentials_coordinator[0].name == "fugaro-credentials" &&
+    google_cloud_run_v2_service_iam_member.credentials_coordinator[0].member == "serviceAccount:fugaro-coordinator@proj-1234.iam.gserviceaccount.com")
+    error_message = "the coordinator's account may invoke this one service and no other grant is added: without it the front end refuses the sweep before the container runs, and every Bitbucket repository stays StaleUnsupported"
+  }
+  assert {
+    condition     = one([for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.value if e.name == "FUGARO_COORDINATOR_ACCOUNT"]) == "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"
+    error_message = "the service admits the account the job runs as, under the coordinator's own environment name: the identity that may knock (the invoker grant above) and the identity that may be served are one address"
+  }
 }
 
 run "coordinator_deploy_needs_firebase_outputs" {
@@ -2490,6 +2617,15 @@ run "credentials_service_on" {
       FUGARO_PERSON_ACCOUNTS         = "[\"operator@example.com\"]"
     })
     error_message = "the container's environment is the names the service reads and nothing else: no secret ID, no credential value, and no entry beyond the ones the module sets for this run"
+  }
+  # This run records no coordinator, so the read mint's coordinator class is not
+  # rendered at all: the process reads the absence as an empty class and admits
+  # no coordinator, which is the fail-closed direction (BB5). The exact map
+  # above already fails on an extra entry; this is the named half of the same
+  # fact, and the run below is the coordinator's own.
+  assert {
+    condition     = length([for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e if e.name == "FUGARO_COORDINATOR_ACCOUNT"]) == 0
+    error_message = "an installation that runs no coordinator names none on its service: the entry arrives with the coordinator's own account (BB5)"
   }
   # The service's own URL is the audience its callers' ID tokens are minted
   # for, and it is the one entry the module cannot fill on the apply that
