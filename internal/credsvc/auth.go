@@ -339,6 +339,13 @@ type AuthConfig struct {
 	// It is empty by default, and an empty list is a statement rather than a
 	// missing gate: an installation that admits nobody to the read route has
 	// none, and the route answers every call with the class's own refusal.
+	//
+	// A person is a class of its own and this list may not overlap another
+	// one: NewAuthenticator refuses a person that is also a job, a shared job,
+	// a review job or a verifier, and a person whose address is a
+	// *.gserviceaccount.com one. A service account is not a human operator,
+	// and an address two lists admit would be a caller whose class depends on
+	// which route it reached.
 	PersonAccounts []string
 	// Now is the clock, for tests; nil means time.Now.
 	Now func() time.Time
@@ -458,12 +465,44 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 	}
 	// The person list is read the same way and for the same reason: its
 	// entries are bare addresses, and a duplicate admits the same caller
-	// either way.
+	// either way. It is the one list held to two rules more than the verifier
+	// list is, and both are fail-closed here rather than at the route:
+	//
+	//   - a person may not be an account another class admits. Neither the
+	//     read mint nor any other route would then have one answer for that
+	//     caller: the class a call is served by would be decided by which list
+	//     its route happens to read, and an installation that configured a job
+	//     or a verifier as a person would be one whose classes are not the
+	//     sets its deployment names. The overlap is therefore a deployment
+	//     that disagrees with itself, which is a configuration error and not a
+	//     caller that is admitted twice (G4).
+	//   - a person may not be a service account address. The people are the
+	//     installation's operators — the humans who already mint run tokens
+	//     and read the database — and *.gserviceaccount.com is the shape every
+	//     one of this installation's jobs, its verifier and its coordinator
+	//     has. Admitting one as a person would hand the workspace-wide token
+	//     the read mint issues to an automation, which is exactly the caller
+	//     the class is not for.
 	people := make(map[string]string, len(cfg.PersonAccounts))
 	for _, email := range cfg.PersonAccounts {
 		folded, ok := foldEmail(email)
 		if !ok {
 			return nil, errors.New("credsvc: a person account is not a printable ASCII email address")
+		}
+		if _, isJob := accounts[folded]; isJob {
+			return nil, errors.New("credsvc: a person account is also one of the job service accounts, so one caller would be two classes")
+		}
+		if shared[folded] {
+			return nil, errors.New("credsvc: a person account is also a shared job service account, so one caller would be two classes")
+		}
+		if _, isReview := review[folded]; isReview {
+			return nil, errors.New("credsvc: a person account is also a review job service account, so one caller would be two classes")
+		}
+		if _, isVerifier := verifiers[folded]; isVerifier {
+			return nil, errors.New("credsvc: a person account is also one of the verifiers, so one caller would be two classes")
+		}
+		if strings.HasSuffix(folded, ".gserviceaccount.com") {
+			return nil, errors.New("credsvc: a person account is a service account address, and the person class is the installation's operators")
 		}
 		people[folded] = email
 	}
