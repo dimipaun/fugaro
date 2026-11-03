@@ -4,8 +4,10 @@
 // do (design section 5.1 rule 11; console V2.5.1a part 2b-1).
 //
 // **Two methods, and that is the whole surface**: `fields()`, which reads the
-// display-only view this window was opened for, and `answer(true|false)`, which
-// is the operator's answer. There is no read of the CLI, no spawn, no
+// display-only view this window was opened for, and `answer(true|false, ticked?)`,
+// which is the operator's answer -- the second argument being a widening's tick,
+// which the window draws for one shape of question (rule 12, D1109) and which the
+// main process checks rather than trusts. There is no read of the CLI, no spawn, no
 // `openExternal`, no `installation.*` row and no channel of the dashboard's: the
 // window shows the task and asks one question, and everything else it might want
 // is something it must not have.
@@ -61,10 +63,14 @@ export type ConfirmReply =
   | { readonly ok: true; readonly data: unknown }
   | { readonly ok: false; readonly reason: string }
 
-/** ConfirmBridge is what the confirmation document sees. */
+/** ConfirmBridge is what the confirmation document sees. `ticked` is the
+ * widening's checkbox and it is read for a yes: a no is a no whatever a tick
+ * says, and the main process ignores it there. A window that draws no tick sends
+ * none, and `answer` is the only method whose argument set depends on the
+ * question. */
 export interface ConfirmBridge {
   readonly fields: () => Promise<ConfirmReply>
-  readonly answer: (yes: boolean) => Promise<ConfirmReply>
+  readonly answer: (yes: boolean, ticked?: boolean) => Promise<ConfirmReply>
 }
 
 /** isConfirmReply narrows what came back off the channel. A main process that
@@ -104,7 +110,8 @@ async function invokeConfirm(
 export function createConfirmBridge(renderer: RendererLike): ConfirmBridge {
   return Object.freeze({
     fields: () => invokeConfirm(renderer, 'fields', []),
-    answer: (yes: boolean) => invokeConfirm(renderer, 'answer', [yes]),
+    answer: (yes: boolean, ticked?: boolean) =>
+      invokeConfirm(renderer, 'answer', ticked === undefined ? [yes] : [yes, ticked]),
   })
 }
 

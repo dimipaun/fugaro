@@ -52,6 +52,8 @@ import { describe, expect, it } from 'vitest'
 
 import { parseInstallationsDocument } from '../../src/main/installlist'
 import { decodeLaunchResult } from '../../src/main/launchrules'
+import { settingsDryRun } from '../../src/main/settingsview'
+import { buildProjectsSettings } from '../../src/renderer/screens/projects'
 import { decodeCoordinatorStatus, decodePlanStatus, decodeRunsSummary, RUNS_SUMMARY_VERSION } from '../../src/shared/schema'
 
 /** STUB is the fixture this file runs, at the path the e2e helper copies from. */
@@ -392,5 +394,204 @@ describe('the e2e stub’s own answers', () => {
     // named in that same sentence rather than answered by a fallback.
     expect(answered.stderr).toContain('run --task-file - --json')
     expect(answered.stderr).toContain("was asked for 'runs'")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The settings arms (the settings-edit plan's C4, D1118).
+// ---------------------------------------------------------------------------
+
+/** SETTINGS_FIXTURE is the committed `settings --json` document the stub's read
+ * arm answers with, at the path `cliStub.ts`-installed stubs are given it. */
+const SETTINGS_FIXTURE = join(__dirname, '..', 'fixtures', 'settings.json')
+
+/** recorded is every line the stub appended to `reads.log` beside itself. */
+function recorded(directory: string): readonly string[] {
+  let text: string
+  try {
+    text = readFileSync(join(directory, 'reads.log'), 'utf8')
+  } catch {
+    return []
+  }
+  return text.split('\n').filter((line) => line !== '')
+}
+
+/** settingsArgvs is the **command lines** the stub recorded for the settings
+ * arms: the lines that begin with the stub's own path. The read arms' labels are
+ * words (`settings`, `budget`), and the settings write's arm is the one that
+ * records a whole invocation -- the program as `$0` and then the words it was
+ * handed, which is the same list the confirmation window draws. */
+function settingsArgvs(directory: string): readonly string[] {
+  return recorded(directory).filter((line) => line.startsWith(`${join(directory, 'fugaro')} settings`))
+}
+
+describe('the stub’s settings arms', () => {
+  it('answers `settings --json` with the committed document, and the console reads it', () => {
+    // The Project tab's third read (the settings-edit plan's C1, contract section
+    // 6.19): the document the section is a function of. A shape the console's own
+    // reader refuses would put the tab in front of the panel's refusal instead of
+    // a table, and -- worse for this plan -- the rows' three writability members
+    // are what every pencil is drawn from.
+    const directory = install()
+    writeFileSync(join(directory, 'project.txt'), 'e2e\n')
+    const seeded = readFileSync(SETTINGS_FIXTURE, 'utf8')
+    writeFileSync(join(directory, 'settings.json'), seeded)
+    const asked = ['settings', '--json', '--project', 'e2e']
+    const answered = run(directory, asked)
+    expect(answered.status).toBe(0)
+    expect(answered.stdout).toBe(seeded)
+    // Read through the console's own builder, which is what the section draws.
+    const built = buildProjectsSettings({ raw: JSON.parse(answered.stdout), because: null })
+    expect(built.panel.state).toBe('read')
+    expect(built.panel.source).toContain('settings --json')
+    // The rows the tab draws, and the two facts the pencil hangs on: the
+    // document's own `writable` **and** a non-empty `target_layer` (D1102,
+    // D1111). The owned row has neither, and the sensitive row is not here at
+    // all -- it is dropped whole rather than drawn without a value.
+    expect(built.rows.map((row) => row.key)).toEqual([
+      'agent.review_rounds',
+      'claude_account_auto',
+      'mailbox.keychain_item',
+    ])
+    expect(built.rows.map((row) => row.pencil)).toEqual([true, true, false])
+    expect(built.rows.map((row) => row.targetLayer)).toEqual(['project', 'local', ''])
+    expect(built.rows[2]?.owner).toBe('secrets')
+    expect(built.rows.map((row) => row.key)).not.toContain('budget.firebase_api_key')
+    // The read is one of the answers `reads.log` records, so a spec that waits on
+    // it rather than on a sleep has something to wait for.
+    expect(recorded(directory)).toContain('settings')
+  })
+
+  it('answers the dry run from the document seeded for its key, and records its argv', () => {
+    // C3's first spawn: `settings set|unset KEY --layer <L> --dry-run --json`.
+    // The document is seeded per key, the way every other answer of this stub is
+    // seeded per file, and the argv is recorded so a spec can hold the window's
+    // own drawing to what was actually spawned.
+    const directory = install()
+    writeFileSync(join(directory, 'project.txt'), 'e2e\n')
+    const dry = `${JSON.stringify({
+      version: 1,
+      key: 'agent.review_rounds',
+      layer: 'project',
+      path: '/home/owner/.config/fugaro/projects/example.yaml',
+      changed: true,
+      widening: false,
+      why: '',
+      old: '2',
+      new: '3',
+      refusal: '',
+    })}\n`
+    writeFileSync(join(directory, 'settings-dryrun-agent.review_rounds.json'), dry)
+    const asked = [
+      'settings',
+      'set',
+      'agent.review_rounds',
+      '--layer',
+      'project',
+      '--dry-run',
+      '--json',
+      '--project',
+      'e2e',
+      '--',
+      '3',
+    ]
+    const answered = run(directory, asked)
+    expect(answered.status).toBe(0)
+    expect(answered.stdout).toBe(dry)
+    // The console's own reader, which both the window and the flow read this
+    // document with: `refusal` empty is the document this CLI produces.
+    const read = settingsDryRun(JSON.parse(answered.stdout))
+    expect(read.ok).toBe(true)
+    expect(read.ok && read.dryRun.key).toBe('agent.review_rounds')
+    expect(read.ok && read.dryRun.widening).toBe(false)
+    expect(read.ok && read.dryRun.new).toBe('3')
+    // The recorded line is the whole command line, `$0` included: that is the
+    // list the confirmation window draws word for word.
+    expect(settingsArgvs(directory)).toEqual([`${join(directory, 'fugaro')} ${asked.join(' ')}`])
+  })
+
+  it('answers the write with the CLI’s own sentence, and records the same argv', () => {
+    // C3's second spawn: the same words with `--yes` instead of `--dry-run
+    // --json` (D1107). Its answer is a sentence rather than a document -- the
+    // console reads it as text and draws it (`settingsedit.ts`) -- and it ends
+    // with the line every settings write ends with.
+    const directory = install()
+    writeFileSync(join(directory, 'project.txt'), 'e2e\n')
+    const asked = [
+      'settings',
+      'set',
+      'agent.review_rounds',
+      '--layer',
+      'project',
+      '--yes',
+      '--project',
+      'e2e',
+      '--',
+      '3',
+    ]
+    const answered = run(directory, asked)
+    expect(answered.status).toBe(0)
+    expect(answered.stdout).toContain('wrote /home/owner/.config/fugaro/projects/example.yaml')
+    expect(answered.stdout).toContain('next: fugaro update')
+    expect(settingsArgvs(directory)).toEqual([`${join(directory, 'fugaro')} ${asked.join(' ')}`])
+    // An `unset` carries no value and no terminator, and this stub answers it
+    // too: the console sends the same subcommand for an empty box
+    // (`openSettingsEdit`), so the arm's second spelling is reachable without a
+    // second stub.
+    const unset = ['settings', 'unset', 'agent.review_rounds', '--layer', 'project', '--yes', '--project', 'e2e']
+    expect(run(directory, unset).status).toBe(0)
+    expect(settingsArgvs(directory)).toHaveLength(2)
+  })
+
+  it('refuses what the write’s row cannot carry, and a dry run with nothing seeded', () => {
+    // Every word of the row is held, the way `run`'s is: a console that asked
+    // for something the spawn table cannot produce must rather fail here, with
+    // the argv it was handed, than be answered by a fallback.
+    const directory = install()
+    writeFileSync(join(directory, 'project.txt'), 'e2e\n')
+    // A verb of `settings` that is neither the read nor a write.
+    const verb = run(directory, ['settings', 'ls', '--project', 'e2e'])
+    expect(verb.status).toBe(2)
+    expect(verb.stderr).toContain("was asked for 'settings'")
+    // A `--layer` with no value, a value on an `unset`, and a `set` with no
+    // value at all: the terminator is the write's own shape for a value.
+    const layerless = run(directory, ['settings', 'set', 'agent.review_rounds', '--project', 'e2e', '--layer'])
+    expect(layerless.status).toBe(2)
+    expect(layerless.stderr).toContain("'--layer' with no value")
+    const valued = run(directory, [
+      'settings',
+      'unset',
+      'agent.review_rounds',
+      '--layer',
+      'project',
+      '--yes',
+      '--project',
+      'e2e',
+      '--',
+      '3',
+    ])
+    expect(valued.status).toBe(2)
+    expect(valued.stderr).toContain('an unset carries no value')
+    const valueless = run(directory, ['settings', 'set', 'agent.review_rounds', '--layer', 'project', '--yes', '--project', 'e2e'])
+    expect(valueless.status).toBe(2)
+    expect(valueless.stderr).toContain('a set carries one behind --')
+    // And a key with no dry-run document seeded beside the stub is refused by
+    // name: a document for another key would be a classification of an edit the
+    // console never asked about.
+    const missing = run(directory, [
+      'settings',
+      'set',
+      'agent.review_rounds',
+      '--layer',
+      'project',
+      '--dry-run',
+      '--json',
+      '--project',
+      'e2e',
+      '--',
+      '3',
+    ])
+    expect(missing.status).toBe(2)
+    expect(missing.stderr).toContain("no dry run document is seeded for 'agent.review_rounds'")
   })
 })

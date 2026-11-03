@@ -586,7 +586,15 @@ func TestGoldenInstallationPlanCarriesTheDeployer(t *testing.T) {
 // TestTheCoordinatorIsInTheOptInGoldensOnly: the coordinator is the owner's
 // opt-in (P5, the security review's MAJOR-1), so the goldens of the default
 // state — what every existing installation plans — hold no coordinator
-// resource at all, and the two opt-in goldens hold all of them.
+// resource at all, and the opt-in goldens hold exactly the ones below.
+//
+// installation-credentials opts in too since BB5, and with the job off: the
+// credentials service's tenth environment entry is the coordinator account's
+// email, rendered from the account itself, so that fixture names the opt-in to
+// put the entry and its value on a real plan (TestGoldenCredentialsServiceCarriesItsNames).
+// The account arrives with the entry, which is the whole of what the two
+// resources there are; the job, its schedule and its App key need the Firebase
+// root's outputs and a deploy_job no fixture of the service's state sets.
 func TestTheCoordinatorIsInTheOptInGoldensOnly(t *testing.T) {
 	want := map[string][]string{
 		"installation-coordinator": {
@@ -594,6 +602,11 @@ func TestTheCoordinatorIsInTheOptInGoldensOnly(t *testing.T) {
 			"module.installation.google_cloud_run_v2_job_iam_member.coordinator_runner[0]",
 			"module.installation.google_cloud_scheduler_job.coordinator_sweep[0]",
 			"module.installation.google_secret_manager_secret_iam_member.coordinator_app_key[0]",
+			"module.installation.google_service_account.coordinator[0]",
+			"module.installation.google_storage_bucket_iam_member.coordinator_runs_reader[0]",
+		},
+		"installation-credentials": {
+			"module.installation.google_cloud_run_v2_service_iam_member.credentials_coordinator[0]",
 			"module.installation.google_service_account.coordinator[0]",
 			"module.installation.google_storage_bucket_iam_member.coordinator_runs_reader[0]",
 		},

@@ -143,8 +143,13 @@ type CoordinatorSpec struct {
 	GitHubAppID     string            `json:"github_app_id"`
 	Repos           []CoordinatorRepo `json:"repos"`
 	// DeployJob is set once the Firebase root's outputs are known, the image
-	// exists and an App ID is recorded: the job needs all three, and without
-	// the credential the sweep could read no repository at all.
+	// exists and the credential this sweep's repositories need is recorded:
+	// a GitHub App ID where it reconciles a GitHub repository, which is the
+	// one credential its GitHub path can mint from, and the credentials
+	// service's URL where every repository it has is Bitbucket's (F24). The
+	// App ID is therefore empty on such an installation and it is not a spec
+	// that cannot be planned — internal/cli's coordinatorJob is what decides
+	// which of the two credentials a run is looking at.
 	DeployJob       bool   `json:"deploy_job"`
 	FirebaseProject string `json:"firebase_project,omitempty"`
 	RTDBURL         string `json:"rtdb_url,omitempty"`
@@ -206,10 +211,11 @@ func Coordinator(lc *localcfg.Config) (CoordinatorSpec, error) {
 // together (task.Slug). A provider the config does not name is therefore a
 // repository the job could not address at all.
 //
-// Every other provider is carried, bitbucket included: the project-wide read
-// serves github only (Q12 A, finding #30), and the sweep records such a
-// repository as one this installation cannot reconcile rather than dropping it
-// from the view.
+// Every other provider is carried, bitbucket included: which of them a sweep
+// can read is not this function's to decide. A Bitbucket repository is read
+// through the installation's credentials service where it has one (Q12's
+// amendment of 2026-11-01, BB5) and recorded as one the installation cannot
+// reconcile where it has none, rather than dropped from the view.
 func CoordinatorRepos(lc *localcfg.Config) []CoordinatorRepo {
 	out := make([]CoordinatorRepo, 0, len(lc.Repos))
 	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {

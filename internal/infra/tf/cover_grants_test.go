@@ -699,8 +699,10 @@ func TestCredentialsAccountIsItsOwnPrincipalKind(t *testing.T) {
 // principal for the credentials account's reason (ledger #903): as one of
 // FugaroAccounts it would pass every toAccounts row, so one confirmation would
 // cover granting the account that writes under the rules' floor a job runner's
-// or the history account's roles. It holds the FP's database admin and the two
-// reads its own job makes (P5): the runs bucket and the GitHub App's key.
+// or the history account's roles. It holds the FP's database admin, the two
+// reads its own job makes (P5) — the runs bucket and the GitHub App's key —
+// and, since BB5, the credentials service's read mint, the one Cloud Run
+// service it may invoke and the way its Bitbucket reads are minted at all.
 func TestCoordinatorAccountIsItsOwnPrincipalKind(t *testing.T) {
 	const coordinator = "serviceAccount:" + CoordinatorAccountID + "@proj-1.iam.gserviceaccount.com"
 
@@ -711,6 +713,7 @@ func TestCoordinatorAccountIsItsOwnPrincipalKind(t *testing.T) {
 		"google_project_iam_member":               {"roles/firebasedatabase.admin": true},
 		"google_storage_bucket_iam_member":        {"roles/storage.objectViewer": true},
 		"google_secret_manager_secret_iam_member": {"roles/secretmanager.secretAccessor": true},
+		"google_cloud_run_v2_service_iam_member":  {"roles/run.invoker": true},
 	}
 	for typ, row := range grantRules {
 		for key, w := range row {

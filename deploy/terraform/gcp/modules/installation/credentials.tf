@@ -498,6 +498,28 @@ resource "google_cloud_run_v2_service" "credentials" {
           value = env.value
         }
       }
+      # The read mint's SECOND class (BB5): the coordinator's own service
+      # account, which is the identity the scheduled sweep calls with — the
+      # class the coordinator's job holds no run identity for and therefore
+      # cannot present anything else as. It is rendered only on an installation
+      # whose coordinator is on, for the reason the two lists above are rendered
+      # conditionally: the process reads it as an optional value, so an
+      # installation that runs no coordinator starts with an EMPTY coordinator
+      # class — a read mint that admits no coordinator — rather than refusing to
+      # bind a port.
+      #
+      # The value is the account this module creates and one address, which is
+      # what internal/cli's credentialsServiceCoordinator reads. It is the same
+      # account iam.tf grants roles/run.invoker to on this service, so the
+      # identity that may knock and the identity that may be served are one
+      # value read twice.
+      dynamic "env" {
+        for_each = local.coordinator_on ? [google_service_account.coordinator[0].email] : []
+        content {
+          name  = "FUGARO_COORDINATOR_ACCOUNT"
+          value = env.value
+        }
+      }
     }
   }
 

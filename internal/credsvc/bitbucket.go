@@ -1,20 +1,21 @@
 package credsvc
 
-// The Bitbucket read mint (BB4, B1/B2): a PERSON asks this service for a
-// read-scoped Bitbucket token, and the service mints it from the read consumer
-// its bundle holds. It is the first route of this service whose caller is not a
-// run of the installation, and the second whose caller holds no job at all
-// (C3.9f's verify route is the first).
+// The Bitbucket read mint (BB4, B1/B2; BB5, B5): a PERSON and the installation's
+// COORDINATOR ask this service for a read-scoped Bitbucket token, and the
+// service mints it from the read consumer its bundle holds. It is the first
+// route of this service whose caller is not a run of the installation, and the
+// second whose caller holds no job at all (C3.9f's verify route is the first).
 //
 // Four things are the whole of the route's design, and each is why the others
 // are what they are:
 //
-//   - The caller is a person, and the class is C3.9f's mechanism rather than a
-//     second way to be one (BB4, B2): VerifyPerson is the same token check as
-//     the verifier class with a different list, and the route is answered ahead
-//     of RequestFromHTTP for the same reason the verify route is — a person
-//     holds no run identity, and the shared parse refuses a call that has none.
-//     A caller that presents one anyway is refused by name: the class takes no
+//   - The caller is one of two classes — the installation's people, and its
+//     coordinator (BB5) — and either is C3.9f's mechanism rather than a second
+//     way to be one (BB4, B2): VerifyReadCaller is the same token check as the
+//     verifier class with a different list, and the route is answered ahead of
+//     RequestFromHTTP for the same reason the verify route is — neither class
+//     holds a run identity, and the shared parse refuses a call that has none.
+//     A caller that presents one anyway is refused by name: the route takes no
 //     run identity, so a whole identity beside the token is a call of a shape
 //     this route does not have.
 //   - The token is minted from the READ consumer and from nothing else
@@ -330,7 +331,7 @@ func (s *Server) bitbucketRead(ctx context.Context, w http.ResponseWriter, r *ht
 		s.refuse(w, StatusUnverified, ErrorUnverifiedJobIdentity, err.Error())
 		return
 	}
-	caller, err := s.cfg.Auth.VerifyPerson(ctx, tok)
+	caller, err := s.cfg.Auth.VerifyReadCaller(ctx, tok)
 	if err != nil {
 		// The class's own refusal, answered the way the verify route answers
 		// the verifier class's: a typed refusal and no line, because a line's
@@ -340,12 +341,12 @@ func (s *Server) bitbucketRead(ctx context.Context, w http.ResponseWriter, r *ht
 	}
 	if id := r.Header.Get(HeaderRunIdentity); id != "" {
 		s.refuseRead(ctx, w, caller, "", StatusUnverified, ErrorUnverifiedRunIdentity,
-			"this route takes no run identity: it mints for a person, and a caller presenting a run is a call of a shape it does not have")
+			"this route takes no run identity: it mints for a person or the coordinator, and a caller presenting a run is a call of a shape it does not have")
 		return
 	}
 	if job := r.Header.Get(HeaderRunJob); job != "" {
 		s.refuseRead(ctx, w, caller, "", StatusUnverified, ErrorUnverifiedRunIdentity,
-			"this route takes no run identity: it mints for a person, and a caller naming a job is a call of a shape it does not have")
+			"this route takes no run identity: it mints for a person or the coordinator, and a caller naming a job is a call of a shape it does not have")
 		return
 	}
 	cl, err := readCall(r, []string{tok})

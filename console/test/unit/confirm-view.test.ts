@@ -44,6 +44,11 @@ import {
   CANCEL_LABEL,
   CONFIRM_LABEL,
   NONE,
+  SAVE_LABEL,
+  TASK_HEADING,
+  TICK_ID,
+  TITLE_LAUNCH,
+  TITLE_SETTINGS,
   mountConfirm,
   taskSizeText,
 } from '../../src/renderer/confirm'
@@ -52,7 +57,9 @@ import type {
   ConfirmElement,
   ConfirmEvent,
   ConfirmFields,
+  SettingsFields,
 } from '../../src/renderer/confirm'
+import { SETTINGS_SHADOWED_SENTENCE, SETTINGS_TICK_LABEL } from '../../src/main/settingsview'
 import type { ConfirmBridge, ConfirmReply } from '../../src/preload/confirm'
 
 // ---------------------------------------------------------------------------
@@ -66,6 +73,11 @@ import type { ConfirmBridge, ConfirmReply } from '../../src/preload/confirm'
 class FakeElement implements ConfirmElement {
   textContent: string | null = null
   tabIndex = 0
+  /** checked and disabled are the checkbox's and the button's own properties:
+   * the tick's box and the button it gates are the two elements the view reads
+   * and writes them on. */
+  checked = false
+  disabled = false
   readonly attributes = new Map<string, string>()
   readonly children: FakeElement[] = []
   /** focused is whether `focus()` was called on this element. */
@@ -187,6 +199,7 @@ const HOSTILE = {
  * process, with a test's own values over it. */
 function aView(overrides: Partial<ConfirmFields> = {}): ConfirmFields {
   return {
+    kind: 'launch',
     runId: 'run-0000000000000001',
     installation: HOSTILE.installation,
     recordedRepository: HOSTILE.recordedRepository,
@@ -197,6 +210,45 @@ function aView(overrides: Partial<ConfirmFields> = {}): ConfirmFields {
     argv: ['/usr/local/bin/fugaro', 'run', '--task-file', '-', '--json'],
     taskByteLength: 4_096,
     taskText: HOSTILE_TASK,
+    ...overrides,
+  }
+}
+
+/** SETTINGS_ARGV is the exact command line the confirmed write spawns, in the
+ * order `argvFor` builds it (`settings set KEY --layer L <phase> --project P --
+ * VALUE`): the window shows it rather than a summary of it. */
+const SETTINGS_ARGV: readonly string[] = Object.freeze([
+  '/usr/local/bin/fugaro',
+  'settings',
+  'set',
+  'budget.cap_usd',
+  '--layer',
+  'project',
+  '--project',
+  'sandbox',
+  '--',
+  '30',
+])
+
+/** aSettingsView is the window's **second** subject (D1115): the settings half
+ * of the union, shaped like `SettingsConfirmView` in the main process, with a
+ * test's own values over it. */
+function aSettingsView(overrides: Partial<SettingsFields> = {}): SettingsFields {
+  return {
+    kind: 'settings',
+    project: 'sandbox',
+    key: 'budget.cap_usd',
+    oldValue: '25',
+    newValue: '30',
+    layer: 'project',
+    wins: 'project',
+    sentence: '',
+    widening: false,
+    why: '',
+    argv: SETTINGS_ARGV,
+    defaultButton: 'confirm',
+    tick: '',
+    confirmNeedsTick: false,
     ...overrides,
   }
 }
@@ -212,9 +264,11 @@ function fakeBridge(
 ): {
   readonly bridge: ConfirmBridge
   readonly answered: readonly boolean[]
+  readonly ticks: readonly (boolean | undefined)[]
   readonly calls: string[]
 } {
   const answered: boolean[] = []
+  const ticks: (boolean | undefined)[] = []
   const calls: string[] = []
   const bridge: ConfirmBridge = {
     fields: async () => {
@@ -222,24 +276,26 @@ function fakeBridge(
       if (options.fieldsError !== undefined) throw options.fieldsError
       return options.fields ?? { ok: true, data: aView() }
     },
-    answer: async (yes: boolean) => {
+    answer: async (yes: boolean, ticked?: boolean) => {
       calls.push('answer')
       answered.push(yes)
+      ticks.push(ticked)
       return options.answerReply ?? { ok: true, data: { answered: true } }
     },
   }
-  return { bridge, answered, calls }
+  return { bridge, answered, ticks, calls }
 }
 
 /** mount builds the view over a fresh fake document, and returns the pieces a
  * test needs. Every test starts here. */
 async function mount(options: Parameters<typeof fakeBridge>[0] = {}) {
   const document = fakeDocument()
-  const { bridge, answered, calls } = fakeBridge(options)
+  const { bridge, answered, ticks, calls } = fakeBridge(options)
   await mountConfirm(document, bridge)
   return {
     document,
     answered,
+    ticks,
     calls,
     element: (id: string): FakeElement => document.byId.get(id) as FakeElement,
   }
@@ -527,5 +583,181 @@ describe('the confirmation document and its view', () => {
     // The class is on the box the document declares, so the rule is not styling
     // nothing.
     expect(html).toContain('class="console-confirm-task"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The same document's second question: the settings edit (D1108, D1109, D1115;
+// rule 12). One window, two questions, and the tag is what decides which set of
+// rows is drawn -- so the launch cases above and these are the two halves of the
+// same view, and a view that drew one question's rows for the other's subject
+// fails here.
+// ---------------------------------------------------------------------------
+
+describe('the settings question the same document draws', () => {
+  it('draws the edit’s own rows, its own heading, and no task at all', async () => {
+    const { document, element } = await mount({
+      fields: { ok: true, data: aSettingsView({ sentence: SETTINGS_SHADOWED_SENTENCE, why: 'this raises the cap' }) },
+    })
+
+    expect(element('confirm-title').textContent).toBe(TITLE_SETTINGS)
+    expect(TITLE_SETTINGS).not.toBe(TITLE_LAUNCH)
+    // The launch's task heading names a box this question does not fill, so it
+    // loses its words rather than standing over an empty box.
+    expect(element('confirm-task-heading').textContent).toBe('')
+    expect(TASK_HEADING).not.toBe('')
+    expect(element('confirm-task').textContent).toBeNull()
+
+    expect(fieldValue(document, 'Project')).toBe('sandbox')
+    expect(fieldValue(document, 'Setting')).toBe('budget.cap_usd')
+    expect(fieldValue(document, 'Current value')).toBe('25')
+    expect(fieldValue(document, 'New value')).toBe('30')
+    // The two layers D1113 turns on: the one written and the one that decides
+    // today. The comparison is the view's sentence below, never this document's
+    // reading of the two fields.
+    expect(fieldValue(document, 'Written at')).toBe('project')
+    expect(fieldValue(document, 'Decides today')).toBe('project')
+    expect(fieldValue(document, 'What this changes')).toBe(SETTINGS_SHADOWED_SENTENCE)
+    expect(fieldValue(document, 'Why the CLI asks')).toBe('this raises the cap')
+    // None of the launch's own rows: no run id, no title, no plan task, and no
+    // task size, because this question has none of them.
+    for (const absent of ['Run id', 'Title', 'Plan task', 'Task size', 'Ref', 'Installation']) {
+      expect(fieldValue(document, absent), `the settings window drew ${absent}`).toBeNull()
+    }
+    expect(commandWords(document)).toEqual(SETTINGS_ARGV)
+
+    // The launch's own mount is unchanged: the union added a branch and took
+    // nothing from the question it already had.
+    const launch = await mount()
+    expect(launch.element('confirm-title').textContent).toBe(TITLE_LAUNCH)
+    expect(launch.element('confirm-task-heading').textContent).toBe(TASK_HEADING)
+    expect(fieldValue(launch.document, 'Run id')).toBe(aView().runId)
+  })
+
+  it('draws the shadowed sentence and the CLI’s why only where the view carries them', async () => {
+    const bare = await mount({ fields: { ok: true, data: aSettingsView() } })
+    expect(fieldValue(bare.document, 'What this changes')).toBeNull()
+    expect(fieldValue(bare.document, 'Why the CLI asks')).toBeNull()
+
+    const shadowed = await mount({
+      fields: { ok: true, data: aSettingsView({ sentence: SETTINGS_SHADOWED_SENTENCE }) },
+    })
+    expect(fieldValue(shadowed.document, 'What this changes')).toBe(SETTINGS_SHADOWED_SENTENCE)
+    expect(fieldValue(shadowed.document, 'Why the CLI asks')).toBeNull()
+  })
+
+  it('draws every settings value as a literal text node', async () => {
+    // A key, an old value and the CLI's own sentence are text the CLI printed,
+    // and an old value is whatever the operator wrote last time: the same rule
+    // the launch's values are held to, asserted for this half of the union.
+    const { document } = await mount({
+      fields: {
+        ok: true,
+        data: aSettingsView({
+          key: '<img src=x onerror=alert(1)>',
+          oldValue: '<b>25</b>',
+          newValue: 'javascript:alert(1)',
+          sentence: '<script>alert(1)</script>',
+        }),
+      },
+    })
+    expect(fieldValue(document, 'Setting')).toBe('<img src=x onerror=alert(1)>')
+    expect(fieldValue(document, 'Current value')).toBe('<b>25</b>')
+    expect(fieldValue(document, 'What this changes')).toBe('<script>alert(1)</script>')
+    expect(document.created.filter((tag) => ['img', 'b', 'script', 'a'].includes(tag))).toEqual([])
+    // This edit is a narrowing, so it draws no tick: the elements are the two
+    // buttons and the field rows, exactly as the launch's are.
+    expect([...new Set(document.created)].sort()).toEqual(['button', 'dd', 'dt'])
+  })
+
+  it('shapes a narrowing as one click: no tick, Confirm is the default and it answers', async () => {
+    const { element, answered, ticks } = await mount({ fields: { ok: true, data: aSettingsView() } })
+    const actions = element('confirm-actions')
+    expect(actions.children.map((child) => child.textContent)).toEqual([SAVE_LABEL, CANCEL_LABEL])
+    const confirm = actions.button(SAVE_LABEL)
+    expect(confirm.disabled).toBe(false)
+    // The default button is the view's own decision (D1109) and it is a focus,
+    // never a keystroke: the confirming button stays out of the tab order, and a
+    // synthesized click on it still decides nothing.
+    expect(confirm.focused).toBe(true)
+    expect(confirm.tabIndex).toBe(-1)
+    await confirm.fire('click', 0)
+    expect(answered).toEqual([])
+    await confirm.fire('click', 1)
+    expect(answered).toEqual([true])
+    // No tick was drawn, so the answer carries none: the channel's second member
+    // means "the widening's tick", and a narrowing has no box for one.
+    expect(ticks).toEqual([undefined])
+  })
+
+  it('shapes a widening as two answers: the tick, Confirm disabled until it is set, and Cancel focused', async () => {
+    const { element, answered, ticks } = await mount({
+      fields: {
+        ok: true,
+        data: aSettingsView({
+          widening: true,
+          why: 'this raises the cap',
+          tick: SETTINGS_TICK_LABEL,
+          confirmNeedsTick: true,
+          defaultButton: 'cancel',
+        }),
+      },
+    })
+    const actions = element('confirm-actions')
+    const box = actions.children[0] as FakeElement
+    const label = actions.children[1] as FakeElement
+    const confirm = actions.button(SAVE_LABEL)
+
+    // The tick is a real checkbox beside its own words: the label is a `for=`
+    // pointing at the box rather than a text node a screen reader would read on
+    // its own.
+    expect(box.tag).toBe('input')
+    expect(box.attributes.get('type')).toBe('checkbox')
+    expect(box.attributes.get('id')).toBe(TICK_ID)
+    expect(label.tag).toBe('label')
+    expect(label.attributes.get('for')).toBe(TICK_ID)
+    expect(label.textContent).toBe(SETTINGS_TICK_LABEL)
+    expect(actions.children.map((child) => child.textContent)).toEqual([
+      null,
+      SETTINGS_TICK_LABEL,
+      SAVE_LABEL,
+      CANCEL_LABEL,
+    ])
+
+    // A widening starts as a window nothing can confirm: Confirm is disabled and
+    // the focused control is the one that declines.
+    expect(box.checked).toBe(false)
+    expect(confirm.disabled).toBe(true)
+    expect(actions.button(CANCEL_LABEL).focused).toBe(true)
+    expect(confirm.focused).toBe(false)
+    expect(confirm.tabIndex).toBe(-1)
+
+    box.checked = true
+    await box.fire('change', 1)
+    expect(confirm.disabled).toBe(false)
+    await confirm.fire('click', 1)
+    expect(answered).toEqual([true])
+    expect(ticks).toEqual([true])
+  })
+
+  it('carries the tick’s own state to the main process, which is where it is enforced', async () => {
+    // The document disables Confirm, and the main process refuses an unticked yes
+    // as well (`CONFIRM_TICK_NEEDED`, C3): this is the second half's input -- the
+    // answer with the box still clear -- and the sentence a refusal draws is the
+    // same path the launch's will-not-yet click takes.
+    const { element, answered, ticks } = await mount({
+      fields: {
+        ok: true,
+        data: aSettingsView({ widening: true, tick: SETTINGS_TICK_LABEL, confirmNeedsTick: true }),
+      },
+      answerReply: { ok: false, reason: 'this confirmation raises a limit: tick the box that says so before confirming' },
+    })
+    const actions = element('confirm-actions')
+    await actions.button(SAVE_LABEL).fire('click', 1)
+    expect(answered).toEqual([true])
+    expect(ticks).toEqual([false])
+    expect(element('confirm-status').textContent).toBe(
+      'this confirmation raises a limit: tick the box that says so before confirming',
+    )
   })
 })
