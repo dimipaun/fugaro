@@ -94,7 +94,7 @@ landed.
   the managed plan's own §2 says a row that has not landed leaves its command agent-refused, which is
   the same direction.
 
-## G0. The generic writer's wildcard rows (D1160, D1161). **SEC**
+## G0. The generic writer's wildcard rows and the two budget keys (D1160, D1161, D1179). **SEC**
 
 - **Interface.** `settingsGenericKeys` (`internal/cli/settings_set.go:68`) gains the wildcard rows this
   design manages, **and the two budget keys D1179 gives the generic path** (`budget.mode`,
