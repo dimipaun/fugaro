@@ -608,14 +608,16 @@ cat "$2"
 ECHO_EOF
   bash "$dir/echoing.sh" --consumer-file "$dir/consumer.json" \
     >"$dir/out" 2>"$dir/err" || true
-  # The assertions run in a subshell with a counter of their own, so the four
+  # The assertions run in a subshell with a counter of its own, so the four
   # FAIL lines this provokes on purpose are COUNTED instead of printed: output
-  # that reads 'FAIL' beside a suite that passed is output nobody trusts.
+  # that reads 'FAIL' beside a suite that passed is output nobody trusts. The
+  # counter is a variable of the subshell and not the suite's `failures`, which
+  # is what shellcheck reads as a lost modification when the two share a name.
   caught=$(
-    failures=0
-    fail() { failures=$((failures + 1)); }
+    local caught_failures=0
+    fail() { caught_failures=$((caught_failures + 1)); }
     assert_no_secret "$dir" "detector"
-    printf '%s' "$failures"
+    printf '%s' "$caught_failures"
   )
   [ "${caught:-0}" -eq 4 ] \
     || fail "detector: an echoing script raised $caught of the four secret assertions (the secret and the key in the output, the secret and the key in a file left behind), so at least one of them is vacuous"
