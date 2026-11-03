@@ -2793,9 +2793,19 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 }
 
 // catalogDockerAsk answers whether this run needs a Docker daemon because the
-// image the project's catalog gave its job carries the docker tag (D1149),
-// and refuses the launch where the backend it is about to use cannot give it
-// one.
+// image the job it is about to start IS DEPLOYED WITH carries the docker tag
+// (D1149), and refuses the launch where the backend that job would run on
+// cannot give it one.
+//
+// The image is the deployed job's own and never a fresh selection. A job's
+// image is fixed when the job is deployed (F7) — Cloud Run cannot vary it per
+// execution — so a catalog.Choose run here would answer about an image the
+// run does not start on: the catalog may have been edited, or the published
+// policy republished, between the deploy and this launch. The entry is
+// therefore read back from the deployed image (CatalogImageEntry of the
+// shared registry's catalog-<entry>:latest, or the entry's own reference when
+// the catalog uses a prebuilt image), and the tag's rule is asked of that
+// entry.
 //
 // It is the tag's own rule and not the workflow's `docker: true`, which the
 // backend refuses by itself (LaunchSpec.Docker is that ask, and the workflow
@@ -2812,11 +2822,16 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 // and asking the rule on its behalf would refuse a launch for an entry the job
 // does not run.
 //
-// Nothing else the selection can say refuses a launch: an uncovered needed set
-// is a condition of the project's configuration and is refused where the job
-// spec is built (F7), before the job exists at all, and a catalog the launcher
-// cannot read — no checkout of this repository, no fugaro.yaml, a file this
-// binary cannot parse — is "cannot tell", which is never a refusal.
+// A catalog that no longer agrees with the deployed image — the entry the
+// image is was removed or renamed, the workflow now pins another one, or the
+// entry no longer covers what the workflow needs — is refused, naming `fugaro
+// update`: the launcher cannot change a deployed job's image, and going on
+// would apply the tag's rule to an entry the run does not have. Nothing else
+// the ask can say refuses a launch: a backend that has no deployed job to read
+// (Cloud Batch starts one per run and keeps none), a job not deployed yet, and
+// a catalog the launcher cannot read — no checkout of this repository, no
+// fugaro.yaml, a file this binary cannot parse — are all "cannot tell", and
+// the launch's own steps speak for the two that are errors.
 //
 // The workflow it judges is the one in this launcher's working tree, as the
 // artifact gate's recipe is (recipeForLaunch) and for the same reason: the
@@ -2824,7 +2839,7 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 // launch whose ref says something else is therefore judged by the tree, which
 // is the residual the deploy-time arm does not have — that arm builds the spec
 // the job is deployed with, from the same file (F7).
-func catalogDockerAsk(ctx context.Context, env *cloudEnv, spec *task.Spec) (bool, error) {
+func catalogDockerAsk(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, job *launchProjectJob) (bool, error) {
 	co := checkoutConfig(ctx, spec.Repo)
 	if co == nil {
 		return false, nil
@@ -2834,36 +2849,110 @@ func catalogDockerAsk(ctx context.Context, env *cloudEnv, spec *task.Spec) (bool
 		return false, nil
 	}
 	var published *config.Catalog
-	if p, found, err := env.policy.read(ctx, env.lc); err == nil && found {
+	if p, found, err := env.policy.read(ctx, env.lc); err != nil {
+		return false, remote(policyReadErr(err))
+	} else if found {
 		published = p.ImageCatalog
 	}
 	cat := env.lc.ImageCatalogEffective(published)
 	if cat == nil || !catalog.Applies(*cat, w) {
 		return false, nil
 	}
-	be := catalog.Backend(launchBackend(env.be))
-	choice, err := catalog.Choose(catalog.Job{
-		Catalog: *cat,
-		Repos:   []catalog.Repo{{Slug: spec.Repo, Pin: w.ImageName, Needs: w.Needs}},
-		Backend: be,
-	})
+	name := deployedJobName(slug, spec, job)
+	be, ok := env.be.(jobImageReader)
+	if name == "" || !ok {
+		// No job to read: a backend that keeps no deployed job, and a
+		// workflow whose variant is not a job name, which the launch itself
+		// refuses a few lines on.
+		return false, nil
+	}
+	image, deployed, err := be.JobImage(ctx, name)
 	if err != nil {
-		if errors.Is(err, catalog.ErrDockerOnCloudRun) {
-			return false, userErr("workflow %s: %v", spec.Workflow, err)
-		}
+		return false, remote(err)
+	}
+	if !deployed {
+		// Not deployed: nothing can start on an image this rule has not seen,
+		// and the launch's own step refuses the missing job.
 		return false, nil
 	}
-	if !slices.Contains(choice.Entry.Tags, catalog.DockerTag) {
+	entry, ok := catalogEntryOf(*cat, image)
+	if !ok {
+		return false, catalogMovedErr(spec.Workflow, name, image)
+	}
+	// A pin is the repository's own claim about which entry its job runs, and
+	// it is a claim about the deployed image too (D1155): a repository that
+	// now names another entry has a job deployed with an image this catalog
+	// does not give it.
+	if w.ImageName != "" && w.ImageName != entry.Name {
+		return false, catalogMovedErr(spec.Workflow, name, image)
+	}
+	// The tags the workflow needs, against the entry the job actually runs:
+	// the deploy refused an uncovered needed set before the job existed, so
+	// this one changed under it.
+	if !catalog.Covers(entry.Tags, w.Needs) {
+		return false, catalogMovedErr(spec.Workflow, name, image)
+	}
+	if !slices.Contains(entry.Tags, catalog.DockerTag) {
 		return false, nil
 	}
-	if be == catalog.Batch {
+	if catalog.Backend(launchBackend(env.be)) == catalog.Batch {
 		return true, nil
 	}
-	// The choice carries the tag on a backend with no daemon. Choose refuses
-	// this itself for a pin and for the default; an entry chosen from the
-	// candidates never carries the tag, so this is the same rule reached from
-	// the launcher's own backend rather than from the deploy-time one.
+	// The deployed image carries the tag on a backend with no daemon.
 	return false, userErr("workflow %s: %v", spec.Workflow, catalog.DockerOnCloudRunError())
+}
+
+// jobImageReader is the backend's deployment read (gcp.Backend.JobImage): the
+// image a job is deployed with. Declared where it is used, like the optional
+// backend methods the warnings take (installedChecks): a backend whose jobs
+// exist only for the length of a run answers it not at all.
+type jobImageReader interface {
+	JobImage(ctx context.Context, job string) (string, bool, error)
+}
+
+// deployedJobName is the job this launch runs on: the shared project job it
+// resolved, or the per-repository job the workflow's variant names, which is
+// the name the deploy gave it (internal/infra's WorkflowSpec.Job). "" when
+// the workflow's variant is not a job name, which the launch itself refuses.
+func deployedJobName(slug string, spec *task.Spec, job *launchProjectJob) string {
+	if job != nil {
+		return job.Name
+	}
+	if variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken); ok {
+		return gcp.JobName(slug, variant)
+	}
+	return ""
+}
+
+// catalogEntryOf is the one catalog entry whose image image is, and whether
+// the catalog holds exactly one: the deployed image read against the
+// spellings the deploy gives a job's image (internal/infra's repoCtx.
+// catalogImage) — an entry the catalog builds is the shared registry's
+// catalog-<entry>:latest (D1152), and one whose source is a prebuilt
+// reference is that reference itself. No entry is a catalog that no longer
+// gives this job its image, and two would make the tag rule's answer a guess.
+func catalogEntryOf(cat config.Catalog, image string) (config.Entry, bool) {
+	built, shared := gcp.CatalogImageEntry(image)
+	var found config.Entry
+	n := 0
+	for _, e := range cat.Entries {
+		matches := e.Source.Kind == config.SourceImage && e.Source.Image == image
+		if !matches && shared && e.Source.Kind != config.SourceImage {
+			matches = e.Name == built
+		}
+		if matches {
+			found, n = e, n+1
+		}
+	}
+	return found, n == 1
+}
+
+// catalogMovedErr refuses a launch whose job was deployed with an image this
+// catalog no longer gives its workflow. The job keeps the image it was
+// deployed with (F7), so the fix is to deploy it again, and the message names
+// the one command that does.
+func catalogMovedErr(workflow, job, image string) error {
+	return userErr("workflow %s: the job %s is deployed with the image %s, which this project's image catalog no longer gives it; a job keeps the image it was deployed with, so run `fugaro update` to deploy it again with this project's catalog", workflow, job, image)
 }
 
 // launchRun starts spec's execution, stored under slug, at most once, however many CLIs race
@@ -2974,13 +3063,13 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, userErr("run %s was cancelled; start a new one", res.Run)
 	}
 	// The docker tag's rule, before anything of this launch is written or
-	// reported (D1149): a run whose job image the catalog gave the docker tag
+	// reported (D1149): a run whose DEPLOYED job image carries the docker tag
 	// is refused here on a backend with no daemon, and on the VM backend the
 	// answer asks the backend for the socket. Before the mint below, so a
 	// refused launch has no token to drop, and before the declaration, which
 	// is the coordinator's record that this run is about to work — a refusal
 	// must leave nothing behind that says otherwise.
-	docker, err := catalogDockerAsk(hctx, env, spec)
+	docker, err := catalogDockerAsk(hctx, env, slug, spec, job)
 	if err != nil {
 		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		releaseClaim(rctx, env, s, holder)

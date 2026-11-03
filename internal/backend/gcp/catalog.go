@@ -1,8 +1,10 @@
 package gcp
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -11,6 +13,7 @@ import (
 
 	cloudbuild "google.golang.org/api/cloudbuild/v1"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 )
@@ -127,6 +130,60 @@ func SharedCatalogImage(region, project, entry string) (string, error) {
 		return "", err
 	}
 	return host + "/" + SharedRegistryRepoID() + "/catalog-" + entry, nil
+}
+
+// CatalogImageEntry reads the entry's name back out of a catalog image's
+// reference: <region>-docker.pkg.dev/<project>/<SharedRegistryRepoID()>/
+// catalog-<entry>:latest, the image SharedCatalogImage names and the deploy
+// gives a job the catalog chose for it (D1152). It is the reader of that
+// writer, and false for every other reference — a repository's own derived
+// image, an entry whose source is a prebuilt reference (which is that
+// reference and nothing else), a digest rather than the moving tag.
+//
+// It makes no calls, and the entry it returns is grammar-checked by the same
+// helper the keys are derived with: a name that could not be an entry never
+// comes out of it.
+func CatalogImageEntry(image string) (string, bool) {
+	host, tail, ok := strings.Cut(image, "/"+SharedRegistryRepoID()+"/catalog-")
+	if !ok || !registryHostRE.MatchString(host) {
+		return "", false
+	}
+	entry, ok := strings.CutSuffix(tail, ":latest")
+	if !ok {
+		return "", false
+	}
+	if _, err := config.CatalogDockerfileKey(entry); err != nil {
+		return "", false
+	}
+	return entry, true
+}
+
+// JobImage reads job (a job name in the backend's region) and returns the
+// image its container is deployed with, and whether the job exists. A job
+// whose template carries no container gives "", true.
+//
+// It is the deployment read the docker tag's rule is answered from
+// (internal/cli's catalogDockerAsk, D1149): a job's image is fixed when the
+// job is deployed (F7) — Cloud Run cannot vary it per execution — so the
+// image a run will start on is the deployed job's own and never the one a
+// selection made now would choose. It is JobFullEnv's and JobSecretRefs'
+// shape, and reads one field of the same Jobs.Get.
+func (b *Backend) JobImage(ctx context.Context, job string) (string, bool, error) {
+	if !nameRE.MatchString(job) {
+		return "", false, fmt.Errorf("bad job name %q", job)
+	}
+	j, err := b.run.Projects.Locations.Jobs.Get(b.location() + "/jobs/" + job).Context(ctx).Do()
+	if err != nil {
+		err = apiError("reading job "+job, err)
+		if errors.Is(err, backend.ErrNotFound) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if j.Template != nil && j.Template.Template != nil && len(j.Template.Template.Containers) > 0 {
+		return j.Template.Template.Containers[0].Image, true, nil
+	}
+	return "", true, nil
 }
 
 // CatalogRecordKey is where a catalog build writes the entry's record and

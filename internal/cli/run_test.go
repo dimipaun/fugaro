@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1514,17 +1515,84 @@ const (
 	needsNode   = "{ needs: [node], commands: { build: sh b.sh, test: sh t.sh } }"
 )
 
+// minimalCatalogYAML is dockerCatalogYAML without its docker entry: the
+// catalog a project has after it drops the entry a job is deployed with.
+const minimalCatalogYAML = `image_catalog:
+  entries:
+    - name: minimal
+      tags: [node]
+      source: { kind: image, image: ghcr.io/acme/minimal:1 }
+`
+
+// dockerTagDroppedCatalogYAML is dockerCatalogYAML with the docker tag taken
+// off the dind entry: the entry the deployed image is stays, and no longer
+// covers what the job needs.
+const dockerTagDroppedCatalogYAML = `image_catalog:
+  entries:
+    - name: minimal
+      tags: [node]
+      source: { kind: image, image: ghcr.io/acme/minimal:1 }
+    - name: dind
+      tags: [node]
+      source: { kind: image, image: ghcr.io/acme/dind:1 }
+`
+
+// builtCatalogYAML is a catalog whose images the catalog builds itself, so
+// the deploy gives their jobs the shared registry's catalog-<entry>:latest
+// (D1152) rather than the entry's own reference.
+const builtCatalogYAML = `image_catalog:
+  entries:
+    - name: base
+      tags: [node]
+      source: { kind: inline, inline: "FROM scratch" }
+    - name: dind
+      tags: [node, docker]
+      source: { kind: inline, inline: "FROM scratch" }
+`
+
+// deployedJob is a backend whose codec names a backend and whose deployed job
+// carries image: the two things the docker tag's rule reads of it at launch
+// (backendNamed's Codec, and the deployment read gcp.Backend.JobImage makes of
+// the job's container). readErr is the platform failing the read, which a
+// launcher must never take for an answer.
+type deployedJob struct {
+	backend.Backend
+	codec   backend.Codec
+	image   string
+	readErr error
+}
+
+func (b deployedJob) Codec() backend.Codec { return b.codec }
+
+func (b deployedJob) JobImage(_ context.Context, job string) (string, bool, error) {
+	if job != gcp.JobName(appSlug, "web") {
+		return "", false, fmt.Errorf("the launcher read job %s, not the workflow's own", job)
+	}
+	if b.readErr != nil {
+		return "", false, b.readErr
+	}
+	return b.image, true, nil
+}
+
+// catalogImageOf is the image the deploy gives this workflow's job for the
+// catalog entry named name, as internal/infra's spec builder spells it: an
+// entry the catalog builds is the shared registry's catalog-<name>:latest,
+// and one whose source is a prebuilt reference is that reference itself.
+func catalogImageOf(name string) string {
+	return gcp.DefaultRegistryHost("us-east5", "proj-1234") + "/" + gcp.SharedRegistryRepoID() + "/catalog-" + name + ":latest"
+}
+
 // catalogLaunchEnv is the fixture's local config with catalog appended, as
-// the launcher reads it, and the backend named by codec: the two things the
-// docker tag's rule is judged against at launch.
-func catalogLaunchEnv(t *testing.T, f *cloudFixture, codec backend.Codec, catalog string) *cloudEnv {
+// the launcher reads it, and the backend named by codec whose job is deployed
+// with image: what the docker tag's rule is judged against at launch.
+func catalogLaunchEnv(t *testing.T, f *cloudFixture, codec backend.Codec, catalog, image string) *cloudEnv {
 	t.Helper()
 	f.appendConfig(t, catalog)
 	lc, err := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &cloudEnv{lc: lc, be: backendNamed{codec: codec}}
+	return &cloudEnv{lc: lc, be: deployedJob{codec: codec, image: image}}
 }
 
 // startedAny reports whether the fake started any execution: the "nothing was
@@ -1551,6 +1619,9 @@ func TestACatalogDockerImageIsRefusedOnCloudRunBeforeTheLaunch(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, dockerCatalogYAML)
 	dockerCheckout(t, needsDocker)
+	// The job this launch runs on, deployed with the image the catalog gave
+	// it: the rule reads the deployed job, and not a fresh selection.
+	f.run.SetJob(gcp.JobName(appSlug, "web"), nil, "ghcr.io/acme/dind:1")
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261103-100000-a1b2", "Add a feature")
 	if err == nil || !strings.Contains(err.Error(), "Cloud Run gen-2 has no Docker daemon") {
 		t.Fatalf("err = %v, want the docker tag's Cloud Run refusal", err)
@@ -1574,7 +1645,7 @@ func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
 	t.Run("the VM backend is given the socket", func(t *testing.T) {
 		f := newCloudFixture(t)
 		dockerCheckout(t, needsDocker)
-		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.BatchCodec(), dockerCatalogYAML), spec)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.BatchCodec(), dockerCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec, nil)
 		if err != nil {
 			t.Fatalf("the VM backend refused a docker-tagged image: %v", err)
 		}
@@ -1585,7 +1656,7 @@ func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
 	t.Run("Cloud Run refuses it", func(t *testing.T) {
 		f := newCloudFixture(t)
 		dockerCheckout(t, needsDocker)
-		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML), spec)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec, nil)
 		if ask || err == nil || !strings.Contains(err.Error(), "Cloud Run gen-2 has no Docker daemon") {
 			t.Fatalf("ask = %v, err = %v, want the Cloud Run refusal", ask, err)
 		}
@@ -1593,15 +1664,28 @@ func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
 			t.Errorf("the refusal is not a user error: %v", err)
 		}
 	})
-	// The control for both: the same catalog and the same checkout, with a
-	// workflow that needs no daemon. Nothing is refused and nothing is asked
-	// for, so what the two subtests above see is the tag and not the catalog.
+	// The control for both: the same catalog and the same checkout, with the
+	// entry that carries no daemon deployed on the job. Nothing is refused and
+	// nothing is asked for, so what the two subtests above see is the tag and
+	// not the catalog.
 	t.Run("a job that needs no daemon asks for nothing", func(t *testing.T) {
 		f := newCloudFixture(t)
 		dockerCheckout(t, needsNode)
-		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML), spec)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML, "ghcr.io/acme/minimal:1"), appSlug, spec, nil)
 		if err != nil || ask {
 			t.Fatalf("ask = %v, err = %v, want neither", ask, err)
+		}
+	})
+	// An entry the catalog builds is read back from the shared registry's
+	// catalog-<entry>:latest, the spelling the deploy gives such a job
+	// (D1152) — the reference case above is the other half of the same
+	// spelling.
+	t.Run("an entry the catalog builds is read by its own name", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dockerCheckout(t, needsNode)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.BatchCodec(), builtCatalogYAML, catalogImageOf("dind")), appSlug, spec, nil)
+		if err != nil || !ask {
+			t.Fatalf("ask = %v, err = %v, want the socket dind's image needs", ask, err)
 		}
 	})
 	// A pin reaches the entry by name and not by coverage, and the tag's rule
@@ -1610,7 +1694,7 @@ func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
 	t.Run("a pin to the docker entry is refused on Cloud Run", func(t *testing.T) {
 		f := newCloudFixture(t)
 		dockerCheckout(t, "{ image_name: dind, commands: { build: sh b.sh, test: sh t.sh } }")
-		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML), spec)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec, nil)
 		if ask || err == nil || !strings.Contains(err.Error(), "Cloud Run gen-2 has no Docker daemon") {
 			t.Fatalf("ask = %v, err = %v, want the Cloud Run refusal for the pin", ask, err)
 		}
@@ -1621,24 +1705,139 @@ func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
 	t.Run("no catalog, nothing to judge", func(t *testing.T) {
 		f := newCloudFixture(t)
 		dockerCheckout(t, needsDocker)
-		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), ""), spec)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), "", "ghcr.io/acme/dind:1"), appSlug, spec, nil)
 		if err != nil || ask {
 			t.Fatalf("ask = %v, err = %v, want neither", ask, err)
 		}
 	})
 	// A workflow that keeps its own image definition is not the catalog's job
 	// at all (D1155): the deploy gave it the image this project builds for the
-	// repository, so the launcher must not judge it against an entry it does
-	// not run — here the catalog's default is the docker entry, which would
-	// otherwise refuse this launch on Cloud Run and ask a VM for a socket.
+	// repository, which no catalog entry is, so the launcher must not judge it
+	// — here the catalog's default is the docker entry, which would otherwise
+	// refuse this launch on Cloud Run and ask a VM for a socket.
 	t.Run("its own image definition is not the catalog's", func(t *testing.T) {
+		derived := gcp.ImageName(gcp.DefaultRegistryHost("us-east5", "proj-1234")+"/"+gcp.RegistryRepoID(appSlug), appSlug, "web") + ":latest"
 		for name, codec := range map[string]backend.Codec{"cloud-run": backend.CloudRunCodec(), "cloud-batch": backend.BatchCodec()} {
 			f := newCloudFixture(t)
 			dockerCheckout(t, "{ image: { apt: [jq] }, commands: { build: sh b.sh, test: sh t.sh } }")
-			ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, codec, dockerDefaultCatalogYAML), spec)
+			ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, codec, dockerDefaultCatalogYAML, derived), appSlug, spec, nil)
 			if err != nil || ask {
 				t.Fatalf("%s: ask = %v, err = %v, want neither", name, ask, err)
 			}
+		}
+	})
+}
+
+// The docker tag's answer is the image the job IS DEPLOYED WITH (F7, D1149),
+// and never the entry this launcher's catalog would choose now: the job's
+// image was fixed when the job was deployed, so a catalog that moved under it
+// must not change what the run asks for. Here the deploy gave the job dind
+// while the catalog this launcher reads would choose minimal for a job that
+// needs node — the answer follows the deployed image, which is the one the run
+// starts with.
+//
+// Mutation (run catalog.Choose again): the VM backend is not asked for the
+// socket and Cloud Run is not refused, so a run whose image carries the tag
+// starts on a backend that cannot serve it.
+func TestTheDockerAskReadsTheDeployedImageNotTheCatalogsChoice(t *testing.T) {
+	spec := &task.Spec{Version: 1, RunID: "20261103-100000-a1b2", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "Add a feature"}
+	t.Run("the VM backend is given the socket", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dockerCheckout(t, needsNode)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.BatchCodec(), dockerCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec, nil)
+		if err != nil {
+			t.Fatalf("the VM backend refused the deployed image: %v", err)
+		}
+		if !ask {
+			t.Error("the run did not ask for the socket its deployed image needs, because the catalog would have chosen another entry")
+		}
+	})
+	t.Run("Cloud Run refuses it", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dockerCheckout(t, needsNode)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec, nil)
+		if ask || err == nil || !strings.Contains(err.Error(), "Cloud Run gen-2 has no Docker daemon") {
+			t.Fatalf("ask = %v, err = %v, want the Cloud Run refusal of the deployed image", ask, err)
+		}
+	})
+}
+
+// A catalog that moved between the deploy and the launch is refused, naming
+// fugaro update: the image the job runs is not what this catalog reads back as
+// the entry the job needs, so which daemon the run needs cannot be told from
+// it, and the launch must not go on with an answer about an entry the job does
+// not run — nor with no answer at all, which is what it used to do (the
+// finding this task fixes: catalog.Choose's ErrNoCoveringEntry was swallowed
+// as "no daemon needed").
+//
+// Mutation (drop the lookup's refusals): every case below launches without a
+// socket and without a word.
+func TestACatalogMoveBetweenDeployAndLaunchIsRefused(t *testing.T) {
+	spec := &task.Spec{Version: 1, RunID: "20261103-100000-a1b2", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "Add a feature"}
+	// The entry the deployed image is was dropped from the catalog: the
+	// launcher reads an image no entry of the catalog names any more.
+	t.Run("the entry the deployed image is is gone", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dockerCheckout(t, needsDocker)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), minimalCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec, nil)
+		if err == nil || !strings.Contains(err.Error(), "fugaro update") {
+			t.Fatalf("ask = %v, err = %v, want a refusal naming fugaro update", ask, err)
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("the refusal is not a user error: %v", err)
+		}
+	})
+	// The entry is still there and no longer covers what the job needs: the
+	// catalog changed the entry under the job, and the deployed image is not
+	// the one the entry names now.
+	t.Run("the entry no longer covers what the job needs", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dockerCheckout(t, needsDocker)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerTagDroppedCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec, nil)
+		if err == nil || !strings.Contains(err.Error(), "fugaro update") {
+			t.Fatalf("ask = %v, err = %v, want a refusal naming fugaro update", ask, err)
+		}
+	})
+	// The job predates the catalog, or its entry's source moved to another
+	// image: the deployed image is no entry of the catalog at all.
+	t.Run("the deployed image is no entry of the catalog", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dockerCheckout(t, needsNode)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.BatchCodec(), dockerCatalogYAML, "us-east5-docker.pkg.dev/proj-1234/acme-app/tiny:latest"), appSlug, spec, nil)
+		if err == nil || !strings.Contains(err.Error(), "fugaro update") {
+			t.Fatalf("ask = %v, err = %v, want a refusal naming fugaro update", ask, err)
+		}
+	})
+}
+
+// TestADeployedImageTheLauncherCannotReadIsNeverSwallowed: the read of the
+// job's image is the launcher's own question, and the two ways it can go
+// unanswered are told apart. A platform that fails the read refuses the launch
+// (nothing may start on an answer nobody has), and a backend that has no
+// deployed job to read at all — Cloud Batch creates one per run and keeps
+// none, and this build selects Cloud Run alone — is not judged at all.
+func TestADeployedImageTheLauncherCannotReadIsNeverSwallowed(t *testing.T) {
+	spec := &task.Spec{Version: 1, RunID: "20261103-100000-a1b2", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "Add a feature"}
+	t.Run("a failing read refuses the launch", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dockerCheckout(t, needsDocker)
+		env := catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML, "")
+		env.be = deployedJob{codec: backend.CloudRunCodec(), readErr: errors.New("the platform is unreachable")}
+		if ask, err := catalogDockerAsk(context.Background(), env, appSlug, spec, nil); ask || err == nil {
+			t.Fatalf("ask = %v, err = %v, want the read's own failure", ask, err)
+		}
+	})
+	t.Run("a backend with no deployed job is not judged", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dockerCheckout(t, needsDocker)
+		f.appendConfig(t, dockerCatalogYAML)
+		lc, err := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		env := &cloudEnv{lc: lc, be: backendNamed{codec: backend.CloudRunCodec()}}
+		if ask, err := catalogDockerAsk(context.Background(), env, appSlug, spec, nil); ask || err != nil {
+			t.Fatalf("ask = %v, err = %v, want neither", ask, err)
 		}
 	})
 }
@@ -1656,6 +1855,7 @@ func TestARefusedLaunchDeclaresNothing(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, dockerCatalogYAML)
 	dockerCheckout(t, needsDocker)
+	f.run.SetJob(gcp.JobName(appSlug, "web"), nil, "ghcr.io/acme/dind:1")
 	env := memEnv(t, f)
 	spec := raceSpecAt(t, env, "20261103-100002-abcd")
 	declared := 0
