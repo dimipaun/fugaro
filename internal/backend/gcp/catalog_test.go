@@ -241,6 +241,20 @@ func TestCatalogBuildWritesARecordTheCheckReads(t *testing.T) {
 	if !strings.Contains(script, `"version":`) {
 		t.Fatalf("the record carries no version: %q", script)
 	}
+	// One build time, not two: the record reads the timestamp the pin step
+	// wrote, which is the one the build step stamps the image's created label
+	// with, so a build whose record and image disagree about when it ran is
+	// not a thing this can produce.
+	if !strings.Contains(script, "/workspace/out/built-at") {
+		t.Fatalf("the record does not read the pinned build time: %q", script)
+	}
+	if strings.Contains(script, "date -u") || strings.Contains(script, "$$(date") {
+		t.Fatalf("the record reads the clock a second time: %q", script)
+	}
+	pinScript := strings.Join(step(t, b, catalogPinStepID).Args, "\n")
+	if !strings.Contains(pinScript, "/workspace/out/built-at") || !strings.Contains(pinScript, "date -u") {
+		t.Fatalf("the pin step does not write the build time the record reads: %q", pinScript)
+	}
 	// The pin step writes what the record and the build step read, and reads
 	// nothing else.
 	pin := step(t, b, catalogPinStepID)
