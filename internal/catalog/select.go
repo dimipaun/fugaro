@@ -281,6 +281,9 @@ func Choose(j Job) (Choice, error) {
 		return Choice{}, NoCoveringEntryError(needed, j.Catalog.Entries, j.Backend)
 	}
 	slices.SortFunc(covering, func(a, b config.Entry) int {
+		// The count compared is the set's size: validateCatalogTags refuses
+		// a tag an entry lists twice, so "the fewest tags" (§3.1 step 5)
+		// cannot be won by an entry that lists one tag twice.
 		if c := len(a.Tags) - len(b.Tags); c != 0 {
 			return c
 		}
