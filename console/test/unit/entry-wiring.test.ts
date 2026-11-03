@@ -95,6 +95,8 @@ import {
   COORDINATOR_SUMMARY_SINCE,
   GRAPH_BUSY,
   RUNS_SINCE,
+  SETTINGS_EDITOR_CLASS,
+  SETTINGS_EDIT_OUTCOME_CLASS,
   VIEW_PANEL_CLASS,
   VIEWS,
   bootDashboard,
@@ -181,6 +183,7 @@ import {
   PROJECTS_BUSY,
   PROJECTS_MODELS_BUSY,
   PROJECTS_SETTINGS_BUSY,
+  SETTINGS_PENCIL_CLASS,
 } from '../../src/renderer/screens/projects'
 import type { SkeletonShape } from '../../src/renderer/skeleton'
 import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
@@ -1439,9 +1442,16 @@ describe('the launch the entry wires', () => {
     // the one the surface and the cancel paths read.
     expect(withoutComments(index).match(/createLaunchRunner\(/g) ?? []).toHaveLength(2)
 
-    // And the runner built in `main` is over the window's own confirmer, never
-    // over the declining one.
-    expect(body).toContain('confirmer: createConfirmWindow(')
+    // And **both** of `main`'s flows are over that one window's confirmer, never
+    // over the declining one: D1115's "one window, two questions" is one
+    // `createConfirmWindow` call in this whole file and two runners built over
+    // it -- a second window would be a second implementation of the tick, the
+    // delay and the sender gate.
+    const asked = /const confirmer = createConfirmWindow\(\{[\s\S]*?\n  \}\)\n/.exec(body)
+    if (asked === null) throw new Error('the entry builds no confirmer to read')
+    expect(withoutComments(index).match(/createConfirmWindow\(/g) ?? []).toHaveLength(1)
+    expect(body).toContain('launchRunner = createLaunchRunner(')
+    expect(body).toContain('settingsEditRunner = createSettingsEdit(')
     expect(body).not.toContain('DECLINING_CONFIRMER')
 
     // Both places the entry learns an installation moved cancel the launch its
@@ -1456,10 +1466,16 @@ describe('the launch the entry wires', () => {
       chosen[0].indexOf('lifecycle.choose'),
     )
     expect(chosen[0]).toContain('lifecycle.choose')
+    // **And the settings edit with it** (D1115): an installation that moved
+    // closes the edit's window too, and one already read for that installation
+    // must not write. Both flows are named, in both places, because the mark the
+    // edit leaves is only reachable while its window is not.
+    expect(chosen[0]).toContain('settingsEditRunner.cancelFor(chosen.project)')
 
     const removed = /onRecordRemoved: \(project\) => \{[\s\S]*?\n    \},\n/.exec(body)
     if (removed === null) throw new Error('the entry has no onRecordRemoved to read')
     expect(removed[0]).toContain('launchRunner.cancelFor(project)')
+    expect(removed[0]).toContain('settingsEditRunner.cancelFor(project)')
   })
 
   it('brings the update policy up with the launcher it defers to, and stops it on the way out', () => {
@@ -3276,6 +3292,31 @@ function operationOf(document: FakeDocument): string | null {
 /** holdsText is whether any node under a root draws exactly this text. */
 function holdsText(root: FakeNode, text: string): boolean {
   return everyNode(root).some((node) => node.textContent === text)
+}
+
+/** controlUnder is the one drawn button carrying exactly this label under a
+ * root. The settings editor's controls carry words rather than class hooks --
+ * they are drawn by the entry into a row a screen drew -- so a case finds the
+ * one it means by the word the operator reads. */
+function controlUnder(root: FakeNode, label: string): FakeNode {
+  const found = everyNode(root).filter((node) => node.tagName === 'BUTTON' && node.textContent === label)
+  expect(found, `expected exactly one control labelled ${JSON.stringify(label)}`).toHaveLength(1)
+  return found[0] as FakeNode
+}
+
+/** theBox is the one input under a root: the settings editor's value box. A
+ * screen's interfaces carry text and attributes and never a value, so a case
+ * writes one on the node behind the drawn element, exactly as `valueOf` reads
+ * it. */
+function theBox(root: FakeNode): FakeNode {
+  const found = everyNode(root).filter((node) => node.tagName === 'INPUT')
+  expect(found, 'expected exactly one box').toHaveLength(1)
+  return found[0] as FakeNode
+}
+
+/** typeValue writes what an operator would type into one control. */
+function typeValue(box: FakeNode, value: string): void {
+  ;(box as unknown as { value: string }).value = value
 }
 
 /** textIn is the text of the single node carrying one class under a root: the
@@ -5302,6 +5343,154 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     // document that did arrive are not on screen.
     expect(classed(section as FakeNode, 'projects-settings-row')).toEqual([])
     expect(calls.some((call) => call.name === 'readSettings')).toBe(true)
+  })
+
+  it('opens the row’s own editor on a pencil press, and sends only what the operator’s control asks', async () => {
+    // The press draws the editor and sends nothing: an edit is the operator's
+    // value, and the pencil is a control that opens a box (C3). What leaves the
+    // renderer is the three members `settings.edit`'s schema closes -- the
+    // subcommand, the key and the value -- and the layer, the dry run, the
+    // window and the `--yes` are the main process's.
+    const sent: unknown[] = []
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+      },
+    })
+    bridge['editSetting'] = (args: unknown): unknown => {
+      sent.push(args)
+      return {
+        ok: true,
+        data: { ok: true, sentence: 'wrote layers/project.yaml (backup at layers/project.yaml.bak)' },
+      }
+    }
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+
+    const pencil = classed(panelOf(document), SETTINGS_PENCIL_CLASS)[0] as FakeNode
+    expect(pencil, 'the settings table drew no pencil').toBeDefined()
+    const row = pencil.closest('li')
+    expect(row, 'the pencil is not inside a row').not.toBeNull()
+
+    pencil.click()
+    await flush()
+    expect(sent, 'a pencil press sent an edit').toEqual([])
+
+    const editor = classed(panelOf(document), SETTINGS_EDITOR_CLASS)[0] as FakeNode
+    expect(editor, 'the pencil drew no editor').toBeDefined()
+    // The editor is drawn **inside the row it edits**, so the key, the layer
+    // that decides it and the value a run gets stay on the screen around the
+    // box the operator is typing in.
+    expect(editor.closest('li')).toBe(row)
+    expect(holdsText(editor, 'New value for budget.per_run_usd')).toBe(true)
+    expect(holdsText(editor, 'Leave the box empty to remove the key.')).toBe(true)
+    // The sentence the flow ends with is an announced region, like the launch
+    // form's: a refusal can arrive while the operator is looking elsewhere.
+    expect(classed(editor, SETTINGS_EDIT_OUTCOME_CLASS)[0]?.getAttribute('aria-live')).toBe('polite')
+
+    typeValue(theBox(editor), '25')
+    controlUnder(editor, 'Review and write').click()
+    await flush()
+    expect(sent).toEqual([{ op: 'set', key: 'budget.per_run_usd', value: '25' }])
+    expect(holdsText(editor, 'wrote layers/project.yaml (backup at layers/project.yaml.bak)')).toBe(true)
+
+    // The empty box is the **unset** subcommand and never a value of `""`.
+    controlUnder(editor, 'Cancel').click()
+    await flush()
+    expect(classed(panelOf(document), SETTINGS_EDITOR_CLASS)).toEqual([])
+
+    pencil.click()
+    await flush()
+    const reopened = classed(panelOf(document), SETTINGS_EDITOR_CLASS)[0] as FakeNode
+    controlUnder(reopened, 'Review and write').click()
+    await flush()
+    expect(sent).toEqual([
+      { op: 'set', key: 'budget.per_run_usd', value: '25' },
+      { op: 'unset', key: 'budget.per_run_usd' },
+    ])
+  })
+
+  it('disables the control that starts an edit while one is in flight', async () => {
+    // A double press is not two flows over one row: the control that sends is
+    // disabled and the editor says it is busy for as long as the edit takes --
+    // the dry run, the window and, on a yes, the write.
+    const held = holding()
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+      },
+    })
+    bridge['editSetting'] = () => held.reply()
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+
+    ;(classed(panelOf(document), SETTINGS_PENCIL_CLASS)[0] as FakeNode).click()
+    await flush()
+    const editor = classed(panelOf(document), SETTINGS_EDITOR_CLASS)[0] as FakeNode
+    typeValue(theBox(editor), '25')
+    const submit = controlUnder(editor, 'Review and write')
+    submit.click()
+    await flush()
+
+    expect((submit as unknown as { readonly disabled: boolean }).disabled).toBe(true)
+    expect(editor.getAttribute('aria-busy')).toBe('true')
+
+    held.release({ ok: true, data: { ok: true, sentence: 'wrote layers/project.yaml (backup at layers/project.yaml.bak)' } })
+    await flush()
+    expect(editor.getAttribute('aria-busy')).toBe('false')
+    expect((submit as unknown as { readonly disabled: boolean }).disabled).toBe(true)
+  })
+
+  it('draws the refusal’s own sentence and offers a read, and never sends the edit again', async () => {
+    // D1112: the CLI's compare-and-swap refuses an edit built on bytes that
+    // moved, and the console shows that sentence and offers the section's own
+    // `settings --json` again. A silent second write would be this console
+    // deciding an edit it was told not to make.
+    const sent: unknown[] = []
+    const stale =
+      'layers/project.yaml changed since it was read: nothing was written; read it again and repeat the edit'
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+      },
+    })
+    bridge['editSetting'] = (args: unknown): unknown => {
+      sent.push(args)
+      return { ok: true, data: { ok: false, sentence: stale } }
+    }
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+
+    ;(classed(panelOf(document), SETTINGS_PENCIL_CLASS)[0] as FakeNode).click()
+    await flush()
+    const editor = classed(panelOf(document), SETTINGS_EDITOR_CLASS)[0] as FakeNode
+    typeValue(theBox(editor), '25')
+    controlUnder(editor, 'Review and write').click()
+    await flush()
+
+    expect(holdsText(editor, stale), 'the refusal’s sentence is not drawn').toBe(true)
+    const reads = calls.filter((call) => call.name === 'readSettings').length
+
+    controlUnder(editor, 'Read again').click()
+    await flush()
+    // The control is a **read**, and the edit went out once.
+    expect(calls.filter((call) => call.name === 'readSettings')).toHaveLength(reads + 1)
+    expect(sent).toHaveLength(1)
+    // The editor goes with the read: the row it was drawn into is one of the
+    // rows that read's repaint replaces.
+    expect(classed(panelOf(document), SETTINGS_EDITOR_CLASS)).toEqual([])
   })
 
   it('asks for no models read at all below the command’s floor, and says which version it needs', async () => {

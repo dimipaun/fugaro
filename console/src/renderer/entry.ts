@@ -698,12 +698,12 @@ const SETTINGS_EDIT_READ_AGAIN_LABEL = 'Read again'
  * a row a screen drew and carries no rule of this theme's: the row's own layout
  * is what places it (`li.projects-settings-row` wraps and gaps its children), so
  * a hook here would be a selector for something the stylesheet does not paint. */
-const SETTINGS_EDITOR_CLASS = 'projects-settings-editor'
+export const SETTINGS_EDITOR_CLASS = 'projects-settings-editor'
 
 /** SETTINGS_EDIT_OUTCOME_CLASS is the editor's sentence, marked `aria-live` when
  * it is drawn: a refusal that arrived while the operator was looking at the
  * window is announced, the way the launch form's outcome region is. */
-const SETTINGS_EDIT_OUTCOME_CLASS = 'projects-settings-editor-outcome'
+export const SETTINGS_EDIT_OUTCOME_CLASS = 'projects-settings-editor-outcome'
 
 /** OpenSettingsEditor is the one editor this session has open, if any. It holds
  * the key it edits -- so the same pencil pressed twice is one box -- and the two
