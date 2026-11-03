@@ -736,7 +736,7 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * is still `runs ls --json` and rule 6's row carries the two words in its
  * parenthetical.
  *
- * **It is twenty-one argvs, and this surface is the same twenty-one.** The thirteenth is
+ * **It is twenty-two argvs, and this surface is the same twenty-two.** The thirteenth is
  * `config list --json`, the rail's own read (owner's design ruling of
  * 2026-10-25): until that ruling there were twelve here and it was pinned where
  * the picker's table was, and the ruling made the read the dashboard's own
@@ -760,7 +760,12 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * again takes out what main-process state fills -- the row's `--project <name>`
  * and `[--config <path>]`, which are the same two words every cloud command of
  * that tab carries (`src/main/spawn.ts`'s `takesProject`) -- so what is left is
- * the command and its one fixed flag.
+ * the command and its one fixed flag. The twenty-second is that read's own
+ * write (`settings`, the settings-edit plan's C3, D1103), and it is the one row
+ * here that fixes **no** flag: the dry run's `--dry-run --json` and a confirmed
+ * write's `--yes`, which both write phases carry, are the phase the main process
+ * decides (`SETTINGS_EDIT_PHASE_WORDS`), not words this table gives a renderer,
+ * so what is left is the command alone.
  */
 const DESIGN_ARGV: readonly string[] = [
   'watch --json',
@@ -811,6 +816,12 @@ const DESIGN_ARGV: readonly string[] = [
   // declares no argument of its own (`src/main/spawn.ts`'s empty `args`), which
   // is what keeps the command's `[KEY|GLOB ...]` positional unreachable.
   'settings --json',
+  // The settings write (the settings-edit plan's C3). The row fixes no flag at
+  // all: the phase words are the main process's, so this file's convention has
+  // nothing to take out and nothing to add, and the argv is the command alone
+  // -- the subcommand, the key and the operator's value are the operation's
+  // three arguments (`src/main/spawn.ts`'s `settingsEdit`).
+  'settings',
 ]
 
 /** argvOf is an operation's command and the flags it fixes, as one string. */
@@ -874,7 +885,7 @@ describe("the allow-list's read-only invariant", () => {
     ])
   })
 
-  it('drives every CLI command with at most one operation, except logs', () => {
+  it('drives every CLI command with at most one operation, except logs and settings', () => {
     // Two operations share `logs` and differ by their flags, which is the point
     // of writing the allow-list by exact argv: `logs RUN --json` and
     // `logs RUN --url` cannot be combined (`internal/cli/logs.go:63`), so the
@@ -882,11 +893,22 @@ describe("the allow-list's read-only invariant", () => {
     const shared = CLI_COMMANDS.map((entry) => entry.command).filter(
       (command) => operationsDriving(command).length > 1,
     )
-    expect(shared).toEqual(['logs'])
+    expect(shared).toEqual(['logs', 'settings'])
     expect(operationsDriving('logs').map((operation) => operation.flags.join(' ')).sort()).toEqual([
       '--json',
       '--url',
     ])
+    // `settings` is the second, and it is a different kind of pair: a read and a
+    // write of the same group (the settings-edit plan's C1 and C3, D1102 and
+    // D1103). They differ by their whole argv rather than by a flag -- the read
+    // is `settings --json` and the write is `settings` with its subcommand, key
+    // and value as arguments -- so neither can be expressed through the other,
+    // and the write's own words are pinned below.
+    expect(operationsDriving('settings').map((operation) => operation.name).sort()).toEqual([
+      'settings.edit',
+      'settings.read',
+    ])
+    expect(operationsDriving('settings').map((operation) => operation.flags.join(' ')).sort()).toEqual(['', '--json'])
   })
 
   for (const entry of CLI_COMMANDS) {
@@ -1314,6 +1336,12 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // (the settings-edit plan's C1), so the command's keys, globs and seven
   // remaining flags are all words no renderer can reach.
   'settings.read': {},
+  // The three keys the settings write's schema closes (the settings-edit plan's
+  // C3): the subcommand, the key and the operator's own value. **No layer**:
+  // it is the read's own `target_layer`, held in the main process and emitted
+  // from `argvFor`'s own `settingsEdit` (D1105, D1114), so a renderer has no
+  // word for one -- which the pin below reads back, key by key.
+  'settings.edit': { op: 'set', key: 'budget.cap_usd', value: '25' },
   'cli.version': {},
   'startup.compatibility': {},
   'installation.current': {},
@@ -1740,6 +1768,104 @@ describe('the argument schemas', () => {
     // fixed word, filled from the screened context and never from a payload
     // (`src/main/spawn.ts`), so the operation cannot ask for another project's
     // node. `spawn.test.ts` pins that word into the argv.
+  })
+
+  it('pins `settings.edit`’s three keys, which are the whole of what a write may send', () => {
+    // **C3's write is the second operation here whose subject is a document**
+    // (the settings-edit plan's C3, D1103), so its payload is the whole of what
+    // a renderer can influence about the argv: the subcommand, the key and the
+    // operator's own value. Nothing else is a key, and each of the three
+    // absences is a security claim rather than a tidiness one:
+    //
+    //   - **no layer** (D1105, D1114). `--layer` is the read's own
+    //     `target_layer`, held in this process's copy of the document and
+    //     emitted from `argvFor`'s own `settingsEdit`, so no payload can name a
+    //     layer -- which is what keeps an edit from being pointed at a layer
+    //     the window did not draw;
+    //   - **no phase word**: a screen chooses neither `--dry-run`, nor
+    //     `--json`, nor `--yes`. Those are `SETTINGS_EDIT_PHASE_WORDS`'
+    //     (`src/main/spawn.ts`), decided by the main process from the dry run's
+    //     own classification, and the row declares no flag at all -- which is
+    //     the one place it differs from every read beside it;
+    //   - **no `--repo`, no `--add`/`--remove`**: the edit lands in the selected
+    //     installation's layers, and a list edit is a form no control on this
+    //     surface can choose.
+    expect(operationFor('settings.edit').command).toBe('settings')
+    expect(operationFor('settings.edit').flags).toEqual([])
+    expect(operationFor('settings.edit').args.map((spec) => [spec.key, spec.kind, spec.required])).toEqual([
+      ['op', 'settingOp', true],
+      ['key', 'settingKey', true],
+      ['value', 'settingValue', false],
+    ])
+    // The refusal is this schema's own key list, by name, so a surface that
+    // grew one of these keys fails on that word rather than on a child's error.
+    for (const key of [
+      'layer',
+      'yes',
+      'dryRun',
+      'json',
+      'project',
+      'config',
+      'dir',
+      'repo',
+      'add',
+      'remove',
+      'command',
+    ]) {
+      const decision = validateArguments('settings.edit', {
+        ...WELL_FORMED['settings.edit'],
+        [key]: key === 'yes' ? true : 'x',
+      })
+      expect(decision.ok, `settings.edit accepted a ${key}`).toBe(false)
+      expect(decision.ok ? '' : decision.reason, key).toBe(`settings.edit takes no ${key}`)
+    }
+    // The subcommand is a closed set of two (`src/main/ipc.ts` and `spawn.ts`
+    // hold the same two words), because the word decides which subcommand a
+    // child runs; the third member of the group, `get`, is a read no screen here
+    // needs.
+    for (const op of ['get', 'SET', 'set ', '', 0, true, null]) {
+      const decision = validateArguments('settings.edit', { op, key: 'budget.cap_usd', value: '25' })
+      expect(decision.ok, `settings.edit accepted the subcommand ${JSON.stringify(op)}`).toBe(false)
+    }
+    // The pairing, which is the surface's own rule and not the child's: an argv
+    // that can only fail is one this table must not be able to build, because
+    // the failure arrives after a child exists. A `set` carries a value and an
+    // `unset` does not -- the empty box on the screen sends the `unset`.
+    expect(validateArguments('settings.edit', { op: 'unset', key: 'budget.cap_usd' }).ok).toBe(true)
+    expect(validateArguments('settings.edit', WELL_FORMED['settings.edit']).ok).toBe(true)
+    const unpaired = validateArguments('settings.edit', { op: 'set', key: 'budget.cap_usd' })
+    expect(unpaired.ok).toBe(false)
+    expect(unpaired.ok ? '' : unpaired.reason).toBe('value is required to set a setting')
+    const paired = validateArguments('settings.edit', { op: 'unset', key: 'budget.cap_usd', value: '25' })
+    expect(paired.ok).toBe(false)
+    expect(paired.ok ? '' : paired.reason).toBe('value goes with set: unset removes the key')
+    // An empty value is refused rather than written: clearing a key is the other
+    // subcommand, and an empty string here would be a write of the empty value
+    // -- a different thing a run would read.
+    const empty = validateArguments('settings.edit', { op: 'set', key: 'budget.cap_usd', value: '' })
+    expect(empty.ok).toBe(false)
+    expect(empty.ok ? '' : empty.reason).toBe('value must be a value: clearing a key is unset')
+    // The key's shape is checked here; its **membership** is the CLI's own
+    // allow-list and is deliberately not (D1102), so a key outside it is refused
+    // by the child's sentence, which the window shows. A word that is not a
+    // dotted key at all is refused before any child exists.
+    for (const key of ['budget cap', '--layer', '.', '', 'a..b', 'Budget.Cap', 'budget..cap', 'budget.cap_usd ']) {
+      expect(validateArguments('settings.edit', { op: 'set', key, value: '25' }).ok, JSON.stringify(key)).toBe(false)
+    }
+    // A key the registry does not own, on the other hand, is *accepted here* and
+    // refused by the child (D1102): membership is the CLI's own allow-list, and
+    // a console that kept a copy of it would be a second authority on which keys
+    // are writable. `fugaro.yaml` is the example that keeps the two apart -- it
+    // is a dotted lower-case word, so this shape admits it, and no registry owns
+    // it, so the child is the one that says no.
+    expect(validateArguments('settings.edit', { op: 'set', key: 'fugaro.yaml', value: '25' }).ok).toBe(true)
+    // ...and the one value this surface deliberately admits a flag spelling for:
+    // `--layer` as a *value* is one argv element behind the `--` terminator
+    // (D1104), and it is the case the terminator exists for. A value is not a
+    // word of the command, so the alphabet rule that refuses a flag name
+    // everywhere else does not apply to it -- `spawn.ts` pins where the
+    // terminator goes.
+    expect(validateArguments('settings.edit', { op: 'set', key: 'budget.cap_usd', value: '--layer' }).ok).toBe(true)
   })
 
   it('takes no key it does not declare, for every operation', () => {
@@ -2320,7 +2446,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these thirty, and no others".
+ * channel. The claim is "these thirty-one, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -2345,8 +2471,9 @@ describe('the spend read’s arguments', () => {
  * coordinator's stored view -- the first operation here whose document the CLI
  * serves from a store rather than from a live walk) and left the other
  * twenty-two exactly where they were. **The console v2 plan's V2.5.1a added the
- * twenty-fourth** (`run.launch` / `launchRun`, the console's one write and the
- * only operation here that is not a read, rule 11) and left the other twenty-
+ * twenty-fourth** (`run.launch` / `launchRun`, the console's first write and,
+ * until the settings-edit plan's C3, the only operation here that was not a
+ * read, rule 11) and left the other twenty-
  * three exactly where they were; its part 2b-3b-1 then built the confirmation
  * window into the entry point, so that row's spawn happens on a yes from the
  * window's own top frame and on nothing else. **The coordinator-v2 plan's K2a
@@ -2392,6 +2519,16 @@ describe('the spend read’s arguments', () => {
  * able to fill. It is the second operation the reduced mode withholds under
  * `caps` (`REDUCED_VIEW_OPERATIONS` above, and the withheld list below), because
  * the table it draws carries the project's configured caps.
+ * **The settings-edit plan's C3 added the thirty-first** (`settings.edit` /
+ * `editSetting`: one key set or unset at the layer the read named, after the
+ * operator has read the change in the confirmation window -- the console's
+ * second write, rule 12) and left the other thirty exactly where they were. It
+ * is next to `settings.read`, whose own row names the layer this one writes to,
+ * and it is the first operation here whose argv depends on a **phase** the main
+ * process decides (the dry run's `--dry-run --json`, a write's `--yes`, which
+ * both write phases carry) rather than on a flag the row fixes -- which is why
+ * its `flags` is empty and why its three arguments are the whole of what a
+ * renderer may say.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -2408,6 +2545,7 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['accounts.inventory', 'listAccounts'],
   ['models.list', 'listModels'],
   ['settings.read', 'readSettings'],
+  ['settings.edit', 'editSetting'],
   ['cli.version', 'cliVersion'],
   ['startup.compatibility', 'getCompatibility'],
   ['installation.current', 'getInstallation'],
@@ -2454,7 +2592,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these thirty, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these thirty-one, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -2471,11 +2609,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A thirty-first channel: what each task added must stay one row, and the
+    // A thirty-second channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
-    const thirtyFirst = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(thirtyFirst).toContain('fleet.report: a channel this console does not ship')
-    expect(thirtyFirst).toContain('31 rows, and this console ships 30')
+    const thirtySecond = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(thirtySecond).toContain('fleet.report: a channel this console does not ship')
+    expect(thirtySecond).toContain('32 rows, and this console ships 31')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -2489,7 +2627,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('29 rows, and this console ships 30')
+    expect(withoutTheNewRow).toContain('30 rows, and this console ships 31')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -2504,8 +2642,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the thirty methods and nothing else', () => {
-    // The bridge the window is handed: the thirty methods and the names,
+  it('is frozen, and hands the window a bridge with the thirty-one methods and nothing else', () => {
+    // The bridge the window is handed: the thirty-one methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -3692,7 +3830,13 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // per-million-token figures and not what this project spent, so the reduced
     // mode has nothing to withhold from it either -- there is no
     // `spent_micros`, no `notional_micros` and no cap anywhere in its document.
-    expect(THE_OPEN_OPERATIONS.length).toBe(24)
+    // **`settings.edit` (the settings-edit plan's C3) is the twenty-fifth**, and
+    // it is here for a reason worth stating rather than counting: the operation
+    // is not in `REDUCED_VIEW_OPERATIONS`, so a reduced console answers it and
+    // spawns its dry run. No control reaches it there -- the pencil lives in the
+    // `caps` tab (`src/renderer/entry.ts`'s `VIEWS`), which a reduced mode does
+    // not draw -- and the operation's own answer carries no figure.
+    expect(THE_OPEN_OPERATIONS.length).toBe(25)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(

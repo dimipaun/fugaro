@@ -1921,6 +1921,48 @@ func catalogSwitchSkew(repo string, names []string, ref string, shipped bool, wa
 	return nil
 }
 
+// imageCatalogSkew is the image family's own gate for the node's
+// image_catalog key (D1156, F14), the shape catalogSwitchSkew has for the
+// price catalog's switches: it judges the installation's base image, the
+// one the job a catalog image replaces is built from, because a job whose
+// runner predates imageCatalogSince reads a node carrying the key as an
+// unknown document. It is spelled with imageCatalogSince/imageCatalogShipped
+// and never with catalogSince/catalogShipped, which are the price catalog's
+// (F14): the two documents ship on their own schedules.
+//
+// shipped is the constant, passed rather than read so a test can ask both
+// halves of the gate, exactly as catalogSwitchSkew's tests do. While no
+// release reads the key, only a job image this release builds itself is
+// safe: an image that is a release, or one nothing can date, is refused,
+// because no release can be named that reads the key and an operator told
+// otherwise would be sent to a CLI that does not exist. Once it ships, a
+// release older than imageCatalogSince is refused and an undated ref is
+// only warned about, the way checkCloneImageSince judges one.
+//
+// where names what the gate is being asked about, and ref is the
+// installation's base image ("" when the config names none, which passes:
+// infra.Repo then builds the job from this release's own image, which reads
+// the key).
+func imageCatalogSkew(where, ref string, shipped bool, warn io.Writer) error {
+	if ref == "" {
+		return nil
+	}
+	rel, ok := releaseOf(ref)
+	switch {
+	case !ok:
+		if !shipped {
+			return userErr("%s needs a job image whose fugaro reads the project policy's image_catalog key, but no fugaro release reads it yet (it ships at fugaro %s) and the installation's base image %s is not a release image, so nothing can be told about it. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, and fugaro update, before a catalog entry is named",
+				where, imageCatalogSince, pluginwire.Printable(ref))
+		}
+		fmt.Fprintf(warn, "warning: %s needs a job image whose fugaro reads the project policy's image_catalog key, but the installation's base image is %s, which is not a release base image; whether it does is not checked\n",
+			where, pluginwire.Printable(ref))
+	case imagePredates(rel, imageCatalogSince):
+		return userErr("%s needs a job image whose fugaro reads the project policy's image_catalog key (fugaro %s or later), but the installation's base image is %s, release %s. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, then fugaro update",
+			where, imageCatalogSince, pluginwire.Printable(ref), rel)
+	}
+	return nil
+}
+
 // checkGitAuthorImage and checkCloneGitAuthorImage are the launch's own
 // gitAuthorSince gate, for a workflow whose job image is a derived one and for
 // a checkout: clone workflow respectively: the pair every other config-key
