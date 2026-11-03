@@ -762,7 +762,7 @@ func TestRestoreCreatingPathRemarksTheProjectAndRebuildsTheDeployer(t *testing.T
 	if !ok {
 		t.Fatalf("the creating path wrote no %s in gs://%s: the project this run created is not marked as managed\n%s", managed.MarkerObject, bucket, out.String())
 	}
-	want := `{"version":2,"gcp_project":"` + newProj + `","budget":{"amount":7,"currency":"USD"}}`
+	want := `{"version":3,"gcp_project":"` + newProj + `","budget":{"amount":7,"currency":"USD"},"max_image_builds":1}`
 	if b != want {
 		t.Errorf("gs://%s/%s = %s, want %s", bucket, managed.MarkerObject, b, want)
 	}

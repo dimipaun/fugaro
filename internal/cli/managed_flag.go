@@ -56,8 +56,10 @@ import (
 //     bucket proved to be that project's own by its project number and the
 //     installation's label (a bucket name is global, so a mark proves nothing
 //     without them), and in the version that carries the budget amount the
-//     owner states. A project whose bucket fails that proof is not flagged,
-//     and the command says so rather than writing anywhere else.
+//     owner states — with it, the bound on billable image builds the object's
+//     own default records, which this command asks the owner for no more than
+//     fugaro setup does (D1013). A project whose bucket fails that proof is not
+//     flagged, and the command says so rather than writing anywhere else.
 //   - It writes once, with one exception. A project that already records an
 //     amount is refused — the amount is the owner's decision at the time it
 //     was taken, and this command adds a budget rather than editing one — and
@@ -115,14 +117,18 @@ PROJECT_ID must be the exact GCP project ID of the installation selected by
 --project, --config or the checkout: one invocation names one project, and
 there is no bulk form, no wildcard and no prefix.
 
-It records two things in gs://<runs bucket>/fugaro/managed.json: that this
-project is managed, and the monthly budget amount and currency the owner
-states with --budget and --budget-currency. The amount is required, with no
-default (D64), because the marker's amount is what the apply-time budget read
-opens the gate on: a marked project that records no amount is refused by every
-managed apply rather than applied without a budget control. The amount is the
-budget ALERT amount the installation's Terraform creates and nothing else —
-this command does not create or change a budget, and it makes no billing call.
+It records three things in gs://<runs bucket>/fugaro/managed.json: that this
+project is managed, the monthly budget amount and currency the owner states
+with --budget and --budget-currency, and the bound on the billable image
+builds one invocation of fugaro image refresh may start (design D1013). The
+amount is required, with no default (D64), because the marker's amount is what
+the apply-time budget read opens the gate on: a marked project that records no
+amount is refused by every managed apply rather than applied without a budget
+control. The amount is the budget ALERT amount the installation's Terraform
+creates and nothing else — this command does not create or change a budget,
+and it makes no billing call. The bound is not a question: it is the marker's
+own default of one build per invocation, and this command asks the owner for
+no count, exactly as fugaro setup asks for none.
 
 It writes BOTH marks a managed project carries, in one step: that object and
 the label fugaro_managed=true on the GCP project itself (Task 3.0). The read
@@ -273,7 +279,7 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	// is printed rather than left to be inferred.
 	fmt.Fprintf(w, "⚠ CONFIRM (project %s): flagging GCP project %s as managed writes gs://%s/%s\n", safetext.Field(lc.Name), safetext.Field(lc.GCPProject), safetext.Field(bucket), managed.MarkerObject)
 	fmt.Fprintf(w, "  and the label %s=%s on the project itself: a managed project carries both, and the read requires both, so the object alone would change nothing about this project's runs\n", managed.ProjectLabelKey, managed.ProjectLabelValue)
-	fmt.Fprintf(w, "  it records: this project is managed, with the budget alert amount %d %s\n", amount, safetext.Field(currency))
+	fmt.Fprintf(w, "  it records: this project is managed, with the budget alert amount %d %s and the bound on billable image builds (one build per invocation, D1013)\n", amount, safetext.Field(currency))
 	fmt.Fprintf(w, "  it gives up: the typed confirmation for this project's applies. From the next apply on, a plan a coding agent's session authored is applied with no human prompt when the deterministic gate admits it (D55), and what stands in the confirmation's place is the gate, the whole-project inventory, the owner's delete list (fugaro allow-delete) and the budget above.\n")
 	fmt.Fprintf(w, "  it creates nothing: no resource is created, no billing call is made, and the amount above is recorded rather than spent.\n")
 	fmt.Fprintf(w, "  it does not protect against: a coding agent's session, which holds these credentials and can write this object directly (SECURITY.md).\n")

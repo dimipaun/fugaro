@@ -931,9 +931,12 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// --managed is the one flag that says this creation is managed, and its
 	// own check refuses a run that passed it without the trio
 	// (init_project.go), so a non-nil budget here is one this run was given
-	// and the installation's Terraform budget carries the same figures. A
-	// creation that is not managed passes nil and writes the object it
-	// always wrote, byte for byte (Task 4.2: the change reaches nobody else).
+	// and the installation's Terraform budget carries the same figures. The
+	// bound on billable image builds is not passed and not asked for: it is the
+	// marker's own default, recorded by the same write (managed.WriteMarker,
+	// D1013), so a creation that is not managed passes nil and writes the
+	// object it always wrote, byte for byte (Task 4.2: the change reaches
+	// nobody else).
 	var budget *managed.Budget
 	if r.o.managed {
 		budget = &managed.Budget{Amount: r.o.budget, Currency: r.o.budgetCurrency}

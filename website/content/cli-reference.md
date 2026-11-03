@@ -2408,14 +2408,18 @@ PROJECT_ID must be the exact GCP project ID of the installation selected by
 --project, --config or the checkout: one invocation names one project, and
 there is no bulk form, no wildcard and no prefix.
 
-It records two things in gs://<runs bucket>/fugaro/managed.json: that this
-project is managed, and the monthly budget amount and currency the owner
-states with --budget and --budget-currency. The amount is required, with no
-default (D64), because the marker's amount is what the apply-time budget read
-opens the gate on: a marked project that records no amount is refused by every
-managed apply rather than applied without a budget control. The amount is the
-budget ALERT amount the installation's Terraform creates and nothing else —
-this command does not create or change a budget, and it makes no billing call.
+It records three things in gs://<runs bucket>/fugaro/managed.json: that this
+project is managed, the monthly budget amount and currency the owner states
+with --budget and --budget-currency, and the bound on the billable image
+builds one invocation of fugaro image refresh may start (design D1013). The
+amount is required, with no default (D64), because the marker's amount is what
+the apply-time budget read opens the gate on: a marked project that records no
+amount is refused by every managed apply rather than applied without a budget
+control. The amount is the budget ALERT amount the installation's Terraform
+creates and nothing else — this command does not create or change a budget,
+and it makes no billing call. The bound is not a question: it is the marker's
+own default of one build per invocation, and this command asks the owner for
+no count, exactly as fugaro setup asks for none.
 
 It writes BOTH marks a managed project carries, in one step: that object and
 the label fugaro_managed=true on the GCP project itself (Task 3.0). The read
