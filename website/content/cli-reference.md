@@ -2332,6 +2332,7 @@ Subcommands:
 
 - `fugaro managed apply` -- Apply the agent-authored Terraform root of a managed project, as the deployer account
 - `fugaro managed flag` -- Flag an existing GCP project as managed (the project's owner)
+- `fugaro managed unflag` -- Remove both marks that make a GCP project managed (the project's owner)
 
 ## `fugaro managed apply`
 
@@ -2466,6 +2467,57 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for flag |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro managed unflag`
+
+Remove both marks that make a GCP project managed (the project's owner)
+
+Remove the marks that make GCP project PROJECT_ID a managed project.
+
+A managed project carries two marks, written together by the run that created
+it (fugaro setup --create-project --managed) or by fugaro managed flag: the
+creation fact gs://<runs bucket>/fugaro/managed.json in that project's own runs
+bucket, and the label fugaro_managed=true on the GCP project itself. The read
+requires both, so the project is managed only while the two are there — and
+unflagging removes both, in one command, so an owner never has to do the
+deletion and the label write by hand.
+
+A project that is already half-removed — the state a manual removal leaves,
+with the object gone and the label there, or the reverse — is converged rather
+than refused: which half was already gone is said, and the other is removed.
+After this command the project is not managed, and its applies take the typed
+confirmation again.
+
+What it does not remove is the deployer fence. The seven scoped roles and their
+conditioned bindings stay in the project and in the installation, and fugaro
+update --forget stays refused for a fenced installation. This command makes no
+IAM call at all; undoing the fence is not revocation and is not offered here
+(docs/design/managed-projects.md §10.2).
+
+Run it in your own terminal, as an operator, with your own credentials, and
+type the GCP project ID it asks for. A coding agent's session is refused, a
+Fugaro run's own process is refused, and nothing stands in for the typed ID —
+not --yes, not --non-interactive, not a pipe.
+
+PROJECT_ID must be the exact GCP project ID of the installation selected by
+--project, --config or the checkout: one invocation names one project, and
+there is no bulk form, no wildcard and no prefix.
+
+Usage: `fugaro managed unflag PROJECT_ID`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for unflag |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
