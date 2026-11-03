@@ -482,7 +482,8 @@ for**. **Findings:** F13, **F24**. **Depends on:** CSR3. **Unblocked:** the answ
   it takes it). **At most 10 files.** The settings posture itself is **CSR4a's**; this task only adds
   the five rules D891(a) names.
 - **Interfaces:** produces the bounded, opt-in check of [spec.md](spec.md) §2 — one mutant, one
-  named test, a worktree that is reverted before the stage ends, and **no push ever**
+  named test, a worktree that is reverted, **the check run after the review stage with only the
+  artifact write following it** (the owner's ruling on D891(a), 2026-11-02, §2), and **no push ever**
   (`gitops`'s push functions are not reachable from the path). The artefact records what was applied,
   what was observed and that it was reverted. **The mutant is applied, run and reverted by the
   runner, not by the agent's Bash** — a subprocess of the runner's own with **`CLAUDE_CODE_OAUTH_TOKEN`

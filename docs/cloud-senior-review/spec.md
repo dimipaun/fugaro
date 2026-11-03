@@ -320,8 +320,13 @@ is unavoidable it runs with hooks and fsmonitor off, filters ignored and `.git` 
 mutation path reaches **`gitops`'s push functions not at all** — which is what makes this section's
 "never pushes" a fact rather than a convention. That is a scratch edit inside a container that is
 thrown away. It
-is off unless asked for, it is bounded (one mutant, one named test, a time limit, and a revert
-before the stage ends), and the artifact says which test was run and what it did.
+is off unless asked for, it is bounded (one mutant, one named test, a time limit, and a revert), and
+**it runs after the review stage, with only the artifact write following it** — the owner's ruling on
+D891(a) of 2026-11-02, which is also what keeps the mutant's own child out of the reviewer's way: that
+child runs the head's test code in the very worktree the reviewer read, so a head that plants a
+`core.fsmonitor` command in the checkout's `.git/config` or a settings file in the tree would otherwise
+be writing them in front of the stage still to come. The artifact says which test was run and what it
+did.
 
 **The job never holds a credential it does not need — which is why CSR7's variant is not optional.**
 **Under O1 it mounts no secret at all**: not the account's Claude OAuth token (the model calls go
@@ -856,8 +861,12 @@ prompt-injection reaches has nothing to steal" — was false**, and it was false
 by the **runner** as its own subprocess with the token scrubbed from that subprocess's environment and
 **egress denied**, and **Bash, Edit, Write, NotebookEdit and `Read(/proc/**)` are denied for the rest
 of the review stage** (`DenyRules` gains them), so the agent's own shell stops being a general
-exfiltration path, the agent cannot rewrite the tree it is being checked against while the check runs,
-and the reviewer's environment and the network are no longer routes out. **Under O1 there is no token
+exfiltration path, and the reviewer's environment and the network are no longer routes out. **The
+check runs after the review stage, with only the artifact write following it** (the owner's ruling of
+2026-11-02, §2), so the tree it runs the head's test against is one no stage is mid-read of either:
+the agent has returned before the mutant's child exists, and a `.git/config` `fsmonitor` command or a
+settings file that child leaves behind is written into a worktree the stage has finished with rather
+than one it is about to read. **Under O1 there is no token
 in that environment for the scrub to remove** — the environment route is closed by not mounting the
 token at all, and the scrub is what remains for the fallback — so what D891(a) still has to close is
 `/proc` and the network. **How egress is denied for a subprocess inside a Cloud Run container is U7, and U7 is ANSWERED
