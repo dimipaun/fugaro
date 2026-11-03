@@ -51,16 +51,10 @@ type SelftestSpec struct {
 	// would run repository code, and it runs without the network.
 	SkipVerify bool `json:"skip_verify,omitempty"`
 	// Tools runs the presence checks of images/base/tools.tsv: "critical"
-	// (a derived image's smoke), "all" (the base's CI smoke) or "" (none).
+	// (a derived image's smoke, which is also where the runtime contract is
+	// reported as one check: the critical rows are the contract list) or
+	// "all" (the base's CI smoke), or "" (none).
 	Tools string `json:"tools,omitempty"`
-	// Contract asserts the runtime contract on whatever base the image was
-	// built FROM (D1151, the spec's §Runtime contract): the critical rows of
-	// images/base/tools.tsv — which carry the agent binary, git and the rest
-	// of the contract list — as one check, plus a shell. Nothing reads the
-	// FROM line: a catalog image may be built from any base, so the check
-	// has to ask what the image can do, not what it was built on. It is the
-	// wider of the two and stands in for Tools: "critical".
-	Contract bool `json:"contract,omitempty"`
 	// ToolsOnly runs the presence checks alone (Tools, default "all"), for
 	// the base image itself, which has no checkout. CheckMiseCache is
 	// honoured with them; every other field is ignored.
@@ -91,8 +85,7 @@ func SpecForCloud(cfg *config.Config, workflow, commit, origin string) (Selftest
 		return SelftestSpec{}, fmt.Errorf("fugaro.yaml has no workflow %q", workflow)
 	}
 	return SelftestSpec{Base: config.BaseKind, RepoDir: "/work/repo", Commit: commit, Origin: origin,
-		CheckInit: true, CheckHardening: true, SkipVerify: true, Tools: "critical", Contract: true,
-		Mise: true, CheckMiseCache: true}, nil
+		CheckInit: true, CheckHardening: true, SkipVerify: true, Tools: "critical", Mise: true, CheckMiseCache: true}, nil
 }
 
 // Check is one smoke-test result.
@@ -225,13 +218,18 @@ func Selftest(ctx context.Context, spec SelftestSpec, log io.Writer) Report {
 	} else {
 		add("claude", true, "%s", out)
 	}
-	if spec.Contract {
-		checkContract(ctx, add)
-	}
-	// The contract check is the critical tier's rows plus a shell, so asking
-	// for both would report the same rows twice: it stands for both.
-	if spec.Tools != "" && !(spec.Contract && spec.Tools == "critical") {
+	if spec.Tools != "" {
+		first := len(r.Checks)
 		checkTools(ctx, spec.Tools, add)
+		// A derived image's smoke asks for the critical tier, and that tier
+		// is the runtime contract (D1151): the rows it just reported are
+		// summarised, with the shell the table does not carry, as the one
+		// check a caller reads to know the image meets the contract. The
+		// base image's own smoke (ToolsOnly) has no contract to report: it
+		// is the image the contract is written for.
+		if spec.Tools == "critical" && !spec.ToolsOnly {
+			checkContract(r.Checks[first:], add)
+		}
 	}
 	checkoutOK := checkCheckout(ctx, spec, add)
 	if spec.Mise && checkoutOK {
@@ -264,21 +262,17 @@ const contractShell = "sh"
 
 // checkContract reports the "contract" check: the runtime contract of the
 // spec's §Runtime contract, asserted on whatever base the image was built
-// FROM (D1151). The list is images/base/tools.tsv's critical rows, read
-// through checkTools rather than restated — the built table is the contract
-// list — plus a shell, as one check that names everything missing. The FROM
-// line is never read: the spec says Fugaro does not check it, and a catalog
-// image may come from any base, so what is judged is what the image can do.
-// The structural and hardening checks the same smoke runs (not root, no
-// passwordless sudo, tini as PID 1, the setuid and capability scan) are the
-// rest of the contract and are untouched by this check.
-func checkContract(ctx context.Context, add func(string, bool, string, ...any)) {
-	var rows Report
-	checkTools(ctx, "critical", func(name string, ok bool, format string, args ...any) {
-		rows.Checks = append(rows.Checks, Check{Name: name, OK: ok, Detail: fmt.Sprintf(format, args...)})
-	})
+// FROM (D1151). Its list is images/base/tools.tsv's critical rows — the
+// rows a derived image's smoke has just run, read from the table rather
+// than restated, and that built table is the contract list — plus a shell.
+// The FROM line is never read: the spec says Fugaro does not check it, and
+// a catalog image may come from any base, so what is judged is what the
+// image can do. The structural and hardening checks the same smoke runs
+// (not root, no passwordless sudo, tini as PID 1, the setuid and capability
+// scan) are the rest of the contract and are untouched by this check.
+func checkContract(rows []Check, add func(string, bool, string, ...any)) {
 	var missing []string
-	for _, c := range rows.Checks {
+	for _, c := range rows {
 		// Every detail checkTools writes names what is wrong, the tool
 		// included, and a table it could not parse names the table.
 		if !c.OK {
@@ -297,7 +291,7 @@ func checkContract(ctx context.Context, add func(string, bool, string, ...any)) 
 		add("contract", false, "the image does not meet the runtime contract: %s", strings.Join(missing, "; "))
 		return
 	}
-	add("contract", true, "%d critical tools and %s are present", len(rows.Checks), contractShell)
+	add("contract", true, "%d critical tools and %s are present", len(rows), contractShell)
 }
 
 // checkCheckout checks the baked checkout and the baked-checkout contract.

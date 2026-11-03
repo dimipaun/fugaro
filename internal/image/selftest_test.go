@@ -518,8 +518,7 @@ workflows:
 		t.Fatal(err)
 	}
 	want := SelftestSpec{Base: config.BaseKind, RepoDir: "/work/repo", Commit: "abc123", Origin: "https://github.com/acme/webapp.git",
-		CheckInit: true, CheckHardening: true, SkipVerify: true, Tools: "critical", Contract: true,
-		Mise: true, CheckMiseCache: true}
+		CheckInit: true, CheckHardening: true, SkipVerify: true, Tools: "critical", Mise: true, CheckMiseCache: true}
 	if !reflect.DeepEqual(spec, want) {
 		t.Fatalf("SpecForCloud = %+v\nwant %+v", spec, want)
 	}
@@ -1029,14 +1028,14 @@ func dropTool(t *testing.T, bin, name string) {
 	}
 }
 
-// contractSpec is a spec asking for the contract check on a base that is not
-// Fugaro's: an image may be built from any base that meets the contract, so
-// nothing about the check may depend on Base. The workflow's build is left
-// out, and no tools tier is asked for beside the contract's own list.
+// contractSpec is a derived image's smoke on a base that is not Fugaro's: an
+// image may be built from any base that meets the contract, so nothing about
+// the check may depend on Base. It asks for the critical tier, which is the
+// contract, and leaves the workflow's build out.
 func contractSpec(t *testing.T) SelftestSpec {
 	t.Helper()
 	spec := selftestFixture(t)
-	spec.Contract, spec.Base, spec.SkipVerify = true, "ghcr.io/example/any-base:1.2", true
+	spec.Tools, spec.Base, spec.SkipVerify = "critical", "ghcr.io/example/any-base:1.2", true
 	return spec
 }
 
@@ -1048,7 +1047,6 @@ func TestContractCheckPassesOnANonFugaroBaseThatMeetsTheContract(t *testing.T) {
 	contractTable(t, "kit")
 	spec := contractSpec(t)
 	contractEnv(t, 1)
-	spec.Tools = "critical"
 	var log bytes.Buffer
 	r := Selftest(context.Background(), spec, &log)
 	if !r.Passed {
@@ -1058,10 +1056,10 @@ func TestContractCheckPassesOnANonFugaroBaseThatMeetsTheContract(t *testing.T) {
 	if !ok || !c.OK {
 		t.Fatalf("no passing contract check: %+v", r)
 	}
-	// The contract check is the critical tier's: asking for both must not
-	// report the same rows twice.
-	if _, ok := checkNamed(r, "tool:git"); ok {
-		t.Errorf("the critical rows are checked twice: %+v", r)
+	// The contract's rows are the critical tier's, reported one by one as
+	// before: the contract check summarises them rather than replacing them.
+	if c, ok := checkNamed(r, "tool:git"); !ok || !c.OK {
+		t.Errorf("the critical rows are no longer reported: %+v", r)
 	}
 }
 
