@@ -410,6 +410,58 @@ func TestCatalogImageLandsInTheSharedRegistryWithAContentTag(t *testing.T) {
 	}
 }
 
+// TestCatalogBuildRefusesAnImageOutsideTheSharedRegistry: the image a
+// catalog build pushes is not taken from the caller, so the request is only
+// built for the entry's own name in the installation's shared registry of
+// the project the build runs in. The host is what precedes the registry id
+// in the name, and registryHostRE is what says it is a registry host of
+// this project: it cannot match an empty host, so an image whose host is
+// empty — "/<registry>/catalog-agent" — is refused here like any other name
+// in no registry. SharedRegistryRepoID never being empty is what keeps that
+// from being the only thing between the comparison and a bypass, and
+// TestSharedRegistryRepoIDNeverEqualsARepositorysOwn pins it.
+func TestCatalogBuildRefusesAnImageOutsideTheSharedRegistry(t *testing.T) {
+	s := catalogBuildSpec(t)
+	other, err := SharedCatalogImage("us-east5", "proj-5678", "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	regID := SharedRegistryRepoID()
+	for name, image := range map[string]string{
+		"no host":                  "/" + regID + "/catalog-agent",
+		"another project":          other,
+		"another repository":       "us-east5-docker.pkg.dev/proj-1234/fugaro-other/catalog-agent",
+		"another entry's image":    "us-east5-docker.pkg.dev/proj-1234/" + regID + "/catalog-other",
+		"the entry's image + more": s.Image + "-x",
+		"a tag on it":              s.Image + ":latest",
+		"a digest on it":           s.Image + "@sha256:" + strings.Repeat("a", 64),
+		"a host that is not one":   "example.com/proj-1234/" + regID + "/catalog-agent",
+	} {
+		bad := s
+		bad.Image = image
+		if _, err := CatalogBuildRequest("proj-1234", bad); err == nil || !strings.Contains(err.Error(), "invalid Cloud Build request") {
+			t.Errorf("%s: the image %q was accepted (%v)", name, image, err)
+		}
+	}
+	if _, err := CatalogBuildRequest("proj-1234", s); err != nil {
+		t.Fatalf("the entry's own image %q was refused: %v", s.Image, err)
+	}
+	// The host's region is not part of what this check pins, and cannot be:
+	// registryHostRE says the host is a registry host of this project, and
+	// the spec carries no region to compare the host's against. An image in
+	// another region of the same project therefore passes here and is refused
+	// where it matters, at the registry, whose grant is on one region's
+	// repository (build_shared, deploy/terraform/gcp/modules/repo/registry.tf).
+	// BuildSpec.check, which predates this path, has the same shape, so this
+	// is not a catalog build's own gap. Pinned so a change to it is not
+	// silent.
+	inRegion := s
+	inRegion.Image = "us-east1-docker.pkg.dev/proj-1234/" + regID + "/catalog-agent"
+	if _, err := CatalogBuildRequest("proj-1234", inRegion); err != nil {
+		t.Fatalf("an image in another region of this project was refused: %v", err)
+	}
+}
+
 // keyOf is the Dockerfile key of an entry, as a test reads it.
 func keyOf(t *testing.T, entry string) string {
 	t.Helper()
