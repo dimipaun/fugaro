@@ -705,7 +705,16 @@ test.describe('the Projects screen', () => {
     // sentence (`may send data to`) and never a bare list, and the route open to
     // every repository says so in words rather than by an empty allow-list.
     expect(drawn.modelsRoutes).toEqual(['anthropic', 'gateway'])
-    expect(drawn.modelsHosts).toEqual(['api.anthropic.com', 'gateway.example.test'])
+    // **The host here is the console's marker for a machine name and not the
+    // name the document wrote.** `routes[].host` is the `host` class in the
+    // decoder's own table (`WIRE_TEXT_CLASSES`, `src/shared/schema.ts`), and that
+    // class draws `HOST_PLACEHOLDER` for every machine name, valid or not --
+    // which is the recorder's rule as well (`src/source/redact.ts`). No other
+    // class draws the name either: `label` and `sentence` run the free-text
+    // rules, whose hostname rule replaces one before any class branch reads the
+    // value. The hostname the route points at is not hidden by this: it is drawn
+    // whole inside the `base_url` below, which is a `url`.
+    expect(drawn.modelsHosts).toEqual(['<host>', '<host>'])
     expect(drawn.text).toContain('open to every repository')
     expect(drawn.modelsAllowed).toEqual(['example-owner/example-repo'])
     // The models: one priced, one not. A price the document does not carry is

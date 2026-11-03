@@ -1276,6 +1276,18 @@ function modelsPrice(value: number | null): Reading {
  * about the route and not a destination at all. Both go through `putText` with
  * their wire class, so markup, bidi controls and newlines are flattened to inert
  * text rather than read as markup.
+ *
+ * **The host is drawn as the console's marker and not as the machine's name, and
+ * that is the decoder's own row for the key.** `routes[].host` is `host` in
+ * `WIRE_TEXT_CLASSES` (`../../shared/schema.ts`), and `sanitizeText`'s host class
+ * returns `HOST_PLACEHOLDER` for every machine name it is given, valid or not: a
+ * machine name is the one thing this console does not draw, whichever field it
+ * arrives in. **Another class cannot be asked instead**: `label` and
+ * `sentence` run the free-text rules, whose hostname and address rules replace a
+ * machine name before any class branch reads the value, so the value comes out as
+ * the marker there too (`sanitize.ts`). The row is recognised without it: the
+ * `name` above is the document's own word for the route, and the hostname itself
+ * is drawn whole inside the `base_url` beside it, which is a `url`.
  */
 function modelsRouteLine(parent: ScreenElement, factory: ScreenFactory, route: ModelsListRoute): void {
   const element = cell(parent, factory, 'li', 'projects-models-route')

@@ -943,6 +943,16 @@ describe('the read-only models panel', () => {
     expect(texts(tree, 'projects-models-to-every')).toHaveLength(1)
     expect(texts(tree, 'projects-models-allow')).toEqual(['example-owner/example-repo'])
     expect(texts(tree, 'projects-models-to-word')).toEqual(['may send data to', 'may send data to'])
+    // **The host is the console's marker, and not the machine's own name.**
+    // `routes[].host` is `host` in the decoder's table (`WIRE_TEXT_CLASSES`), and
+    // that class returns `HOST_PLACEHOLDER` for every machine name it is given,
+    // valid or not (`sanitize.ts`) -- which is the console's rule for a machine
+    // and the recorder's too. No other class would draw the name either: `label`
+    // and `sentence` run the free-text rules, and their hostname rule replaces
+    // one before any class branch reads the value. The route is recognised
+    // without the host: its `name` is the document's own word for it, and the
+    // full hostname is drawn inside the `base_url` beside it.
+    expect(texts(tree, 'projects-models-route-host')).toEqual(['<host>', '<host>'])
     // A route that claims no model at all: the panel's own word, not a blank.
     const empty = modelsTree(
       modelsInputs({

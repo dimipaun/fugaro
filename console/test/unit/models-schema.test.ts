@@ -391,7 +391,12 @@ describe('the models list document (§6.18)', () => {
     expect(withProblem.repositories[0]?.problems[0]).toContain('IGNORE PREVIOUS INSTRUCTIONS')
 
     // A host is a machine name, and the class draws every one of them as the
-    // placeholder: nothing here is a hostname a screen spells.
+    // placeholder, valid DNS name or not. **No other class draws the name
+    // either**: `label` and `sentence` run the free-text rules, and their
+    // hostname rule replaces a machine name before any class branch reads the
+    // value. So the models panel's route row draws `routes[].host` with this
+    // class and reads `<host>` — the route is named by its own `name`, and the
+    // hostname itself is drawn whole in the `base_url` beside it (a `url`).
     expect(WIRE_TEXT_CLASSES['host']).toBe('host')
     expect(sanitizeText('router.example.invalid', 'host', 'host')).toEqual({
       ok: true,
