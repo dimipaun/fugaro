@@ -375,6 +375,12 @@ func AdversarialPrompt(reviewPrompt, focus string) string {
 // their focus is added here; level 3 reads AdversarialPrompt's, which quotes
 // its own focus the same way. A level with no focus is handed the brief
 // unchanged, so a run no layer gave one looks exactly as it did before.
+//
+// The focus is appended rather than prepended: a configured review may be a
+// slash command (agent.review starting with "/"), and reviewBrief's branch for
+// one hands back a prompt that begins with that command — the reviewer's skill
+// only loads when the prompt starts with it, so the focus follows the brief and
+// never leads it.
 func reviewPromptWithFocus(reviewPrompt, focus string) string {
 	if fp := FocusPrompt(focus); fp != "" {
 		return reviewPrompt + "\n\n" + fp
