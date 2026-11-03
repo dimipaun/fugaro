@@ -321,6 +321,25 @@ type AuthConfig struct {
 	// start without it would be one an installation that never set it could not
 	// run at all (D1068).
 	VerifierAccounts []string
+	// PersonAccounts are the people an installation admits as the person
+	// caller class (BB4, B1/B2): the identities that may ask the Bitbucket
+	// read mint for a token. They are the installation's operators
+	// (internal/infra/firebase.go) — the people list that already mints run
+	// tokens and reads the database — and not its launchers, because the token
+	// the mint returns reaches the installing person's whole workspace, which a
+	// launcher may have no Bitbucket access to.
+	//
+	// A person is NOT a job of this installation and holds no run identity, so
+	// this is the same shape VerifierAccounts has: an entry is a bare `email`
+	// claim and never an IAM member spelling, matched against the caller's
+	// Google ID token by the same fold. An email with a member prefix on it
+	// could never be matched, so it is a configuration error here rather than a
+	// class that silently admits nobody.
+	//
+	// It is empty by default, and an empty list is a statement rather than a
+	// missing gate: an installation that admits nobody to the read route has
+	// none, and the route answers every call with the class's own refusal.
+	PersonAccounts []string
 	// Now is the clock, for tests; nil means time.Now.
 	Now func() time.Time
 }
@@ -343,7 +362,13 @@ type Authenticator struct {
 	// route is answered ahead of the shared parse, so no branch of Verify
 	// consults it.
 	verifierAccounts map[string]string
-	now              func() time.Time
+	// personAccounts maps a presented email, folded the same way, to the
+	// configured spelling of that person: the list the read mint's caller
+	// class is (BB4). Like verifierAccounts it is read by one entry point and
+	// by nothing else — the read route is answered ahead of the shared parse,
+	// so no branch of Verify consults it.
+	personAccounts map[string]string
+	now            func() time.Time
 }
 
 // NewAuthenticator validates the configuration and returns the verifier.
@@ -431,6 +456,17 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		}
 		verifiers[folded] = email
 	}
+	// The person list is read the same way and for the same reason: its
+	// entries are bare addresses, and a duplicate admits the same caller
+	// either way.
+	people := make(map[string]string, len(cfg.PersonAccounts))
+	for _, email := range cfg.PersonAccounts {
+		folded, ok := foldEmail(email)
+		if !ok {
+			return nil, errors.New("credsvc: a person account is not a printable ASCII email address")
+		}
+		people[folded] = email
+	}
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
@@ -441,6 +477,7 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		sharedAccounts:   shared,
 		reviewAccounts:   review,
 		verifierAccounts: verifiers,
+		personAccounts:   people,
 		now:              now,
 	}, nil
 }
@@ -662,6 +699,42 @@ func (a *Authenticator) VerifyVerifier(ctx context.Context, tok string) (string,
 		// own claim set, and the package doc's no-echo rule is that no refusal
 		// repeats what a caller presented.
 		return "", fmt.Errorf("%w: the caller is not one of this installation's verifiers, so it may not ask about a verdict", ErrUnverifiedJob)
+	}
+	if err := checkCallerToken(claims, now); err != nil {
+		return "", err
+	}
+	return account, nil
+}
+
+// VerifyPerson admits the caller of the Bitbucket read mint, or refuses it
+// with ErrUnverifiedJob (the caller is not one of the installation's people)
+// or ErrUnavailable (the key set could not be read). It answers the configured
+// spelling of the address that matched, which is what the audit line carries,
+// or the empty string with an error — never a partially verified caller.
+//
+// It is VerifyVerifier's mechanism and not a second way to be a person (BB4,
+// B2): the signature, the audience, the issuer, the email fold and the token's
+// own window are the same shared code (callerClaims, checkCallerToken), and
+// the only difference is which list the folded address is looked up in — this
+// is the installation's operators rather than its verifiers. Which set a
+// caller is looked up in is what makes it a class, so the two are branches
+// beside each other and not one function with a list argument: the two lists
+// are configured separately and admit their callers to different routes.
+//
+// It takes the caller's token directly for VerifyVerifier's reason: the read
+// route is answered ahead of RequestFromHTTP (server.go), because a person
+// holds no run identity and the shared parse refuses a call that has none.
+func (a *Authenticator) VerifyPerson(ctx context.Context, tok string) (string, error) {
+	now := a.now()
+	claims, folded, err := a.callerClaims(ctx, tok)
+	if err != nil {
+		return "", err
+	}
+	account, ok := a.personAccounts[folded]
+	if !ok {
+		// The reason names the class and never the address, for the reason
+		// VerifyVerifier's does.
+		return "", fmt.Errorf("%w: the caller is not one of this installation's people, so it may not mint a Bitbucket read token", ErrUnverifiedJob)
 	}
 	if err := checkCallerToken(claims, now); err != nil {
 		return "", err

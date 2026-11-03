@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -37,10 +38,11 @@ func TestClientCredentialsExchange(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tok, exp, err := MintAccessToken(ctx, Consumer{Key: testConsumerKey, Secret: testConsumerSecret}, srv.URL, srv.Client())
+	minted, err := MintAccessToken(ctx, Consumer{Key: testConsumerKey, Secret: testConsumerSecret}, srv.URL, srv.Client())
 	if err != nil {
 		t.Fatalf("MintAccessToken: %v", err)
 	}
+	tok, exp := minted.Token, minted.ExpiresAt
 	if tok != testAccessToken {
 		t.Fatalf("token = %q, want the answer's access_token", tok)
 	}
@@ -60,13 +62,20 @@ func TestClientCredentialsExchange(t *testing.T) {
 	if want := time.Now().Add(7200 * time.Second); exp.Sub(want) > time.Minute || exp.Sub(want) < -time.Minute {
 		t.Errorf("expiry = %s, want about two hours from now, the answer's own expires_in", exp)
 	}
+	// The scopes are the answer's own list: whether the endpoint states what a
+	// token is scoped to is what decides whether a holder of it can enforce a
+	// minimum scope at all (U11), so the exchange reads the field rather than
+	// dropping it.
+	if want := []string{"repository", "pullrequest"}; !slices.Equal(minted.Scopes, want) {
+		t.Errorf("scopes = %v, want the answer's own list (%v)", minted.Scopes, want)
+	}
 
 	t.Run("an answer with no access token is refused", func(t *testing.T) {
 		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			io.WriteString(w, `{"expires_in":7200,"token_type":"bearer"}`)
 		}))
 		defer s.Close()
-		if _, _, err := MintAccessToken(ctx, Consumer{Key: testConsumerKey, Secret: testConsumerSecret}, s.URL, s.Client()); err == nil {
+		if _, err := MintAccessToken(ctx, Consumer{Key: testConsumerKey, Secret: testConsumerSecret}, s.URL, s.Client()); err == nil {
 			t.Fatal("an answer with no access token was accepted")
 		}
 	})
@@ -80,7 +89,7 @@ func TestClientCredentialsExchange(t *testing.T) {
 			io.WriteString(w, `{"access_token":"`+testAccessToken+`","token_type":"bearer"}`)
 		}))
 		defer s.Close()
-		if _, _, err := MintAccessToken(ctx, Consumer{Key: testConsumerKey, Secret: testConsumerSecret}, s.URL, s.Client()); err == nil {
+		if _, err := MintAccessToken(ctx, Consumer{Key: testConsumerKey, Secret: testConsumerSecret}, s.URL, s.Client()); err == nil {
 			t.Fatal("an answer with no expires_in was accepted")
 		}
 	})
@@ -114,7 +123,7 @@ func TestClientCredentialsExchange(t *testing.T) {
 		}))
 		defer redirect.Close()
 
-		if _, _, err := MintAccessToken(ctx, Consumer{Key: testConsumerKey, Secret: testConsumerSecret}, redirect.URL, redirect.Client()); err == nil {
+		if _, err := MintAccessToken(ctx, Consumer{Key: testConsumerKey, Secret: testConsumerSecret}, redirect.URL, redirect.Client()); err == nil {
 			t.Fatal("a redirected exchange was followed")
 		}
 		if landed != 0 {
@@ -135,7 +144,7 @@ func TestExchangeErrorCarriesNoSecret(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, _, err := MintAccessToken(ctx, Consumer{Key: testConsumerKey, Secret: testConsumerSecret}, srv.URL, srv.Client())
+	_, err := MintAccessToken(ctx, Consumer{Key: testConsumerKey, Secret: testConsumerSecret}, srv.URL, srv.Client())
 	if err == nil {
 		t.Fatal("an exchange the endpoint refused returned no error")
 	}
@@ -157,10 +166,11 @@ func TestExchangeDropsRefreshToken(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tok, exp, err := MintAccessToken(ctx, Consumer{Key: testConsumerKey, Secret: testConsumerSecret}, srv.URL, srv.Client())
+	minted, err := MintAccessToken(ctx, Consumer{Key: testConsumerKey, Secret: testConsumerSecret}, srv.URL, srv.Client())
 	if err != nil {
 		t.Fatalf("MintAccessToken: %v", err)
 	}
+	tok, exp := minted.Token, minted.ExpiresAt
 	if tok != testAccessToken || exp.IsZero() {
 		t.Fatalf("token = %q, expiry = %s, want the answer's access token with its life", tok, exp)
 	}
