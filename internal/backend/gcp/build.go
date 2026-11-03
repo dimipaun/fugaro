@@ -222,6 +222,51 @@ func reservedEnv(build *cloudbuild.BuildStep) map[string]bool {
 	return used
 }
 
+// catalogDockerfileStepID is the id of the step below, in the build a
+// catalog entry's image is built by (PIC4).
+const catalogDockerfileStepID = "dockerfile"
+
+// CatalogDockerfileStep is the step a catalog build starts with: it copies
+// the Dockerfile the catalog copy left in the runs bucket — at
+// config.CatalogDockerfileKey, builds/catalog/<name>/Dockerfile (PIC3) — into
+// the build's context, so a catalog build reads one object instead of a
+// checkout and the record of what was built names exactly that object
+// (D1140, spec.md §Where Dockerfiles live).
+//
+// bucket is the runs bucket as gs://<name>, the form BuildSpec.Bucket
+// carries, and name the entry's own name. The key is derived here through
+// the helper the copy used and never taken from a request: a request cannot
+// point the step at another object, and the name's grammar keeps the key
+// inside builds/catalog/. The step runs as the build's own service account,
+// like every step of the build, so it reads the bucket with that account's
+// grants and nothing wider. It makes no calls.
+func CatalogDockerfileStep(bucket, name string) (*cloudbuild.BuildStep, error) {
+	if !bucketURLRE.MatchString(bucket) {
+		return nil, fmt.Errorf("the runs bucket %q is not gs://<bucket>; a catalog build reads its Dockerfile there", bucket)
+	}
+	key, err := config.CatalogDockerfileKey(name)
+	if err != nil {
+		return nil, err
+	}
+	// The bucket and the key reach the script through env: and are read as
+	// quoted "$$VAR" (the rule images/derived/cloudbuild.yaml states:
+	// substitution is textual, so no ${_…} ever appears in a shell script).
+	// /workspace/context is created here because a catalog build has no
+	// source step to create it, with the source step's own mode so a later
+	// step that runs as the image's user can read the context.
+	return &cloudbuild.BuildStep{
+		Id:         catalogDockerfileStepID,
+		Name:       "gcr.io/google.com/cloudsdktool/cloud-sdk:slim",
+		Entrypoint: "bash",
+		Env:        []string{"BUCKET=" + bucket, "KEY=" + key},
+		Args: []string{"-c", `set -eu
+case "$$BUCKET" in gs://*) ;; *) echo "the runs bucket must be a gs:// URL" >&2; exit 1 ;; esac
+install -d -m 0777 /workspace/context
+gcloud storage cp --quiet "$$BUCKET/$$KEY" /workspace/context/Dockerfile
+echo "read $$KEY"`},
+	}, nil
+}
+
 // CheckRepoURL refuses a clone URL the provider's credential must not be
 // sent to: anything but an https URL without credentials or a port on the
 // provider's own host. The build's clone and the credential step both
