@@ -318,6 +318,9 @@ func TestCatalogBuildRefusesWhenTheCopyIsMissing(t *testing.T) {
 		"a bad commit":  func(s *CatalogBuildSpec) { s.Definition.SourceCommit = "main" },
 		"no selftest":   func(s *CatalogBuildSpec) { s.Selftest = nil },
 	} {
+		// bad is a copy of the spec, made here and never stored: a row's
+		// mutation reaches the request built from it and nothing else, so the
+		// rows are independent of each other and of the spec above.
 		bad := s
 		mod(&bad)
 		if _, err := CatalogBuildRequest("proj-1234", bad); err == nil || !strings.Contains(err.Error(), "invalid Cloud Build request") {
