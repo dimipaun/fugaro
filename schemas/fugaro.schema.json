@@ -407,10 +407,10 @@
           "type": "array",
           "maxItems": 32,
           "uniqueItems": true,
-          "description": "The tags a job of this workflow needs, for example [node, postgres] (docs/project-image-catalog, D1155). Fugaro picks the catalog entry with the fewest tags that covers every tag the job's repositories need, and a job no entry covers is refused before it starts. A repository sets this or its own image definition, never both. Needs fugaro 0.17.0: an older runner decodes fugaro.yaml strictly and refuses the key alone.",
+          "description": "The tags a job of this workflow needs, for example [node, postgres] (docs/project-image-catalog, D1155). A tag is 1 to 64 of a-z, 0-9, '.', '_' and '-', starting with a letter or a digit, the same allowlist the catalog's tags: entries are held to: a tag is compared for equality by the tag-cover rule, so a denylist would let Node and node, or a tag carrying a zero-width or bidi character, name two tags a person reads as one. Fugaro picks the catalog entry with the fewest tags that covers every tag the job's repositories need, and a job no entry covers is refused before it starts. A repository sets this or its own image definition, never both. Needs fugaro 0.17.0: an older runner decodes fugaro.yaml strictly and refuses the key alone.",
           "items": {
             "type": "string",
-            "pattern": "^[^ \\t\\n\\v\\f\\r\\x00-\\x1f\\x7f]{1,64}$"
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
           }
         },
         "commands": {

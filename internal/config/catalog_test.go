@@ -59,6 +59,67 @@ entries:
 	}
 }
 
+// catalogWithTags is one entry of the given tags, built as a value rather than
+// decoded from YAML: a tag under test may hold a bidi override, a zero-width
+// space or a fullwidth letter, and a fixture carrying one of those in a YAML
+// literal is a line no reader can tell from the tag it imitates.
+func catalogWithTags(tags ...string) Catalog {
+	return Catalog{Entries: []Entry{{
+		Name:   "backend",
+		Tags:   tags,
+		Source: Source{Kind: SourceImage, Image: "example.invalid/backend:1"},
+	}}}
+}
+
+// TestCatalogTagsAreAnAllowlist pins the tag grammar (spec.md §Catalog
+// entry): 1 to 64 of a-z, 0-9, '.', '_' and '-', starting with a letter or a
+// digit. It is an allowlist and not "no whitespace, no control character"
+// because a tag is compared for equality by the tag-cover rule: an upper-case
+// N, a zero-width space, a fullwidth letter or a bidi override is a tag a
+// person reads as node and that no entry's tags: node will ever match, so a
+// repository's needs: would be refused for a tag it appears to spell.
+func TestCatalogTagsAreAnAllowlist(t *testing.T) {
+	const msg = "must be a tag of 1 to 64"
+	for _, tc := range []struct{ name, tag string }{
+		{"upper case", "Node"},
+		{"a zero-width space", "no​de"},
+		{"a bidi override", "node‮gnih"},
+		{"a fullwidth letter", "ｎode"},
+		{"a space", "postgres redis"},
+		{"a colon", "node:24"},
+		{"a leading dash", "-node"},
+		{"an empty tag", ""},
+		{"over 64 characters", strings.Repeat("a", maxCatalogTagLen+1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ps := ValidateCatalog("image_catalog", catalogWithTags(tc.tag))
+			if !hasProblem(ps, "image_catalog.entries[0].tags[0]", msg, 0) {
+				t.Fatalf("problems = %v, want one at image_catalog.entries[0].tags[0]: %s", ps, msg)
+			}
+		})
+	}
+	// The allowlist's own shapes are tags, at both ends of the length bound:
+	// a tag is what an entry provides and what a repository asks for, so a
+	// catalog of them is valid.
+	for _, tag := range []string{"a", "node", "postgres", "firebase-emulator", "python3.12", "golang-1.24", strings.Repeat("a", maxCatalogTagLen)} {
+		if ps := ValidateCatalog("image_catalog", catalogWithTags(tag)); len(ps) > 0 {
+			t.Errorf("tag %q: unexpected problems: %v", tag, ps)
+		}
+	}
+}
+
+// TestCatalogEntryTagsRefuseADuplicate pins the entry-tags half of the
+// duplicate rule (validateCatalogTags' needs: half is exercised through a
+// workflow): two entries of one tag on one entry would make the tag-cover rule
+// compare a set with a repeat in it, and the message names the first position
+// so a person can find the pair.
+func TestCatalogEntryTagsRefuseADuplicate(t *testing.T) {
+	ps := ValidateCatalog("image_catalog", catalogWithTags("node", "postgres", "node"))
+	if !hasProblem(ps, "image_catalog.entries[0].tags[2]", "duplicates image_catalog.entries[0].tags[0]", 0) {
+		t.Fatalf("problems = %v, want the second node refused at its own index", ps)
+	}
+}
+
 // TestCatalogDefaultIsOneEntryOrNone pins the default marker (spec.md
 // §Catalog entry: "The project marks one entry as default"): a catalog marks
 // one entry, or none, and two entries marked are refused because the choice

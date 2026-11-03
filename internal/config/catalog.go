@@ -36,8 +36,8 @@ type Entry struct {
 	// Tags are what the image provides — node, postgres, redis,
 	// firebase-emulator, docker — and are what a repository's needs: is
 	// matched against (reconciliation §3.1: a candidate covers the needed set
-	// iff every needed tag is one of its tags). Free-form, within
-	// catalogTagRE.
+	// iff every needed tag is one of its tags). One of the allowlist
+	// catalogTagRE states, so the tag a person reads as node is the tag node.
 	Tags []string `yaml:"tags,omitempty" json:"tags,omitempty"`
 	// Source is what the image is built from, one of three kinds.
 	Source Source `yaml:"source" json:"source"`
@@ -125,16 +125,20 @@ var catalogNameRE = ProjectNameRE
 var (
 	// catalogNameMessage is the refusal of a name outside catalogNameRE.
 	catalogNameMessage = "must be a catalog entry name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit"
-	// catalogTagRE is the shape a tag must have: at most maxCatalogTagLen
-	// characters, none of them whitespace or a control character. A tag is
-	// written on a command line and in a flow list where whitespace separates
-	// the entries, and it is compared for equality by the tag-cover rule, so a
-	// tag holding one would have to be quoted at every use.
-	catalogTagRE = regexp.MustCompile(fmt.Sprintf("^[^ \t\n\v\f\r\x00-\x1f\x7f]{1,%d}$", maxCatalogTagLen))
+	// catalogTagRE is the shape a tag must have: an allowlist of 1 to
+	// maxCatalogTagLen lower-case letters, digits, '.', '_' and '-', the first
+	// a letter or a digit. It is an allowlist and not "no whitespace, no
+	// control character" because a tag is compared for equality by the
+	// tag-cover rule and printed in the sentences a selection writes: under
+	// the denylist, Node and node, no​de and node, ｎode and node and
+	// node‮gnih and node all name different tags that a person reads as
+	// the same one, so a repository's needs: could fail to match an entry
+	// whose tag it appears to spell.
+	catalogTagRE = regexp.MustCompile(fmt.Sprintf("^[a-z0-9][a-z0-9._-]{0,%d}$", maxCatalogTagLen-1))
 	// catalogTagMessage is the refusal of a tag outside catalogTagRE. It does
 	// not repeat the tag: a refusal that echoed one would put whatever it
 	// holds, an escape sequence among it, into a log (validateKeyFiles' rule).
-	catalogTagMessage = fmt.Sprintf("must be a tag of 1 to %d characters, holding no whitespace and no control character", maxCatalogTagLen)
+	catalogTagMessage = fmt.Sprintf("must be a tag of 1 to %d of a-z, 0-9, '.', '_' and '-', starting with a letter or a digit", maxCatalogTagLen)
 )
 
 // ValidateCatalog checks a project's image catalog (spec.md §Catalog entry).
