@@ -37,8 +37,15 @@ package cli
 //    row this folder moves is moved, and the figure in it is the live count of
 //    the folders' pins rather than a number somebody typed.
 //  * TestDocsConfigManagementNoSecondWritePath -- the property the plan states
-//    for every task it adds: one write path, and the eight commands of its
-//    fifth section are the ones it names.
+//    for every task it adds: one write path, and the ten commands of its fifth
+//    section are the ones it names.
+//  * TestDocsConfigManagementKeepsTheSettingsWriteVersion -- the settings-write
+//    document's version, pinned against the console that refuses any other, so
+//    the design can never plan a bump that breaks the console's own edit.
+//  * TestDocsConfigManagementLeavesTheBudgetKeysWithTheGenericWriter -- the four
+//    repo-layer budget keys, pinned against the scope table that makes them
+//    repository rows, so the design can never hand them to the command that
+//    writes the budget database instead.
 //
 // The citation resolver is the cloud senior review's (`csrBareNames`,
 // `csrResolveCitation`), through the console-settings-edit folder's
@@ -404,38 +411,86 @@ func TestDocsRigorModesReconciliationCountsTheConfigManagementPin(t *testing.T) 
 
 // TestDocsConfigManagementNoSecondWritePath: the property the plan states for
 // every task it adds -- one write path, the diff, the confirmation, the fence,
-// the backup and the compare-and-swap, in `applySettingsEdit` -- and the eight
+// the backup and the compare-and-swap, in `applySettingsEdit` -- and the ten
 // commands whose tasks carry it. The property is a claim about code that does
-// not exist yet, so what is pinned here is that the plan states it, names the
-// helper, and names the same eight tasks in its fifth section as it writes
-// headings for.
+// not exist yet, so this is a pin on the plan's own words and not a source
+// check: what it asserts is that the plan states the property, names the helper,
+// and names the same ten tasks in its fifth section as it writes headings for.
 func TestDocsConfigManagementNoSecondWritePath(t *testing.T) {
 	plan := readDoc(t, cfmPlan)
 	for _, want := range []string{
 		"*Every* write here goes through `applySettingsEdit`",
 		"`internal/cli/settings_write.go:86`",
-		"none of the eight commands in §5 carries a second one",
+		"none of the ten commands in §5 carries a second one",
 	} {
 		if !strings.Contains(flattenDoc(plan), want) {
 			t.Errorf("%s lacks %q: the one-write-path property is the reason no task here re-implements the diff, the fence or the compare-and-swap", cfmPlan, want)
 		}
 	}
 	// §5 names the tasks that need the managed build's gate and its audit
-	// writer. Each of the eight is a task of this plan, and each has a heading --
-	// a task a section names and the plan never writes is a dependency on
-	// nothing.
+	// writer, and the two that add to `settings set` without one. Each of the ten
+	// is a task of this plan, and each has a heading -- a task a section names and
+	// the plan never writes is a dependency on nothing.
 	start := strings.Index(plan, "## 5. The tasks that need")
 	end := strings.Index(plan, "## G0. ")
 	if start < 0 || end < start {
 		t.Fatalf("%s has no fifth section, or no first task heading after it: the section that says which tasks wait on the managed build is the one a reader checks the order against", cfmPlan)
 	}
 	section := plan[start:end]
-	for _, task := range []string{"G3", "G4", "G6", "G7", "G8", "G9", "G10", "G11"} {
+	for _, task := range []string{"G0", "G1", "G3", "G4", "G6", "G7", "G8", "G9", "G10", "G11"} {
 		if !regexp.MustCompile(`\b` + task + `\b`).MatchString(section) {
 			t.Errorf("%s' §5 does not name %s among the tasks that call the managed build's gate or its audit writer", cfmPlan, task)
 		}
 		if !strings.Contains(plan, "\n## "+task+". ") {
 			t.Errorf("%s names %s in §5 and writes no task heading for it", cfmPlan, task)
+		}
+	}
+}
+
+// TestDocsConfigManagementKeepsTheSettingsWriteVersion: the settings-write
+// document is read by a console that pins its version, so the design may not
+// bump it -- and the claim is checked against the console file that makes it
+// true rather than restated. A design that plans a version bump breaks every
+// settings edit the console makes, with no other symptom.
+func TestDocsConfigManagementKeepsTheSettingsWriteVersion(t *testing.T) {
+	console := readDoc(t, "console/src/main/settingsview.ts")
+	if !strings.Contains(console, "SETTINGS_VIEW_DOC_VERSION = 1") {
+		t.Fatalf("console/src/main/settingsview.ts no longer pins the settings-write document's version at 1: the design's reason for keeping the version has moved, so this pin has to be re-read rather than kept")
+	}
+	for _, path := range []string{cfmSpec, cfmReconciled} {
+		doc := flattenDoc(readDoc(t, path))
+		if !strings.Contains(doc, "console/src/main/settingsview.ts:42") {
+			t.Errorf("%s plans the settings-write document's members without naming the console's version pin (`console/src/main/settingsview.ts:42`): the pin is why the version cannot move", path)
+		}
+		for _, stale := range []string{"gains a version 2", "moves to version 2", "reads a version-2 document"} {
+			if strings.Contains(doc, stale) {
+				t.Errorf("%s still plans a version 2 of the settings-write document (%q): the console refuses any version but 1, so a bump breaks the settings edit it spawns `settings set` behind", path, stale)
+			}
+		}
+	}
+}
+
+// TestDocsConfigManagementLeavesTheBudgetKeysWithTheGenericWriter: the four
+// budget keys are a repository's own rows, and `fugaro budget set` writes the
+// budget database's caps rather than the repository's fugaro.yaml. The rows are
+// re-read from the scope table and the claim from the documents, so a design
+// that hands the four to `fugaro budget set` -- which would refuse the two keys
+// the generic path writes today -- fails here instead of at a person's settings
+// edit.
+func TestDocsConfigManagementLeavesTheBudgetKeysWithTheGenericWriter(t *testing.T) {
+	scopes := flattenDoc(readDoc(t, "internal/config/scope.go"))
+	for _, key := range []string{"budget.mode", "budget.per_run_usd", "budget.allowed_models", "budget.per_day_usd"} {
+		if !strings.Contains(scopes, `{Key: "`+key+`", In: InRepo`) {
+			t.Errorf("internal/config/scope.go no longer holds %s as an InRepo row, so the design's reading of the four budget keys has moved", key)
+		}
+	}
+	for _, path := range []string{cfmSpec, cfmReconciled} {
+		doc := flattenDoc(readDoc(t, path))
+		if !strings.Contains(doc, "stay the generic writer's") {
+			t.Errorf("%s does not say the four budget keys stay the generic writer's: naming `fugaro budget set` for them refuses the two the allowlist carries today", path)
+		}
+		if strings.Contains(doc, "are owned by `fugaro budget set`") {
+			t.Errorf("%s hands the budget caps to `fugaro budget set`, which writes the budget database and no registry row", path)
 		}
 	}
 }
