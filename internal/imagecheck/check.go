@@ -177,22 +177,36 @@ func Decide(_ context.Context, in Inputs) Decision {
 	if !last.Equal(cur) {
 		return d
 	}
-	// The last build ran on these very inputs.
+	if dec, reason, ok := backOffDecision(in.LastBuildStatus); ok {
+		d.Decision = dec
+		if reason != "" {
+			d.Reasons = append(d.Reasons, reason)
+		}
+	}
+	return d
+}
+
+// backOffDecision is the back-off a check applies once a trigger has fired
+// and the last build of these very inputs is known: the workflow check's
+// tail, and the catalog check's (DecideCatalog), so an entry is backed off
+// from the same way a workflow is. It answers the decision to use instead of
+// the rebuild, the note to record beside it ("" for none), and whether it
+// applies at all — false leaves the rebuild standing, which is also the
+// answer for a build status that is neither running, failed nor final.
+func backOffDecision(status string) (decision, reason string, ok bool) {
 	switch {
-	case RunningBuild(in.LastBuildStatus):
-		d.Decision = Skip
-		d.Reasons = append(d.Reasons, ReasonBuildRunning)
-	case FailedBuild(in.LastBuildStatus):
-		d.Decision = RebuildFailedLast
-	case FinalBuild(in.LastBuildStatus):
+	case RunningBuild(status):
+		return Skip, ReasonBuildRunning, true
+	case FailedBuild(status):
+		return RebuildFailedLast, "", true
+	case FinalBuild(status):
 		// It ended without failing, yet a trigger still fires: it didn't
 		// clear it (a gate that kept a newer record after a force-push to
 		// an older commit, say). Another build of the same inputs would do
 		// the same, every night: a human is needed.
-		d.Decision = RebuildFailedLast
-		d.Reasons = append(d.Reasons, ReasonLastBuildIneffective)
+		return RebuildFailedLast, ReasonLastBuildIneffective, true
 	}
-	return d
+	return "", "", false
 }
 
 // ReasonCatalogDefinition is the catalog trigger: the definition a catalog
@@ -231,17 +245,44 @@ type CatalogInputs struct {
 	// is none.
 	Entry  string
 	Record *CatalogRecordState
+	// LastCheck is the entry's previous check.json (CatalogCheckKey); nil
+	// when there is none, and LastBuildStatus the Cloud Build status of
+	// LastCheck's build.
+	LastCheck       *CatalogCheckState
+	LastBuildStatus string
 	// DefinitionSHA256 is the sha256 of the definition in the runs bucket
 	// now: config.CatalogDockerfileKey's object, as the caller read it.
 	DefinitionSHA256 string
 	// BaseRef is the base the entry would be built FROM and BaseDigest its
 	// current digest ("" when it couldn't be read).
 	BaseRef, BaseDigest string
+	// Lockfiles reports that the dependency files of the baked repository
+	// the entry was built from moved since the record's commit, which the
+	// caller decides from its tree (imagecheck.KeyFiles), the way the
+	// workflow check's lockfiles trigger does. It is false for an entry
+	// that bakes no repository.
+	Lockfiles bool
 	// MaxAge is the entry's rebuild.max_age; 0 is off.
 	MaxAge time.Duration
 	Now    time.Time
 	Force  bool
 }
+
+// CatalogInputsFingerprint is what a catalog build would be built from, the
+// back-off compares it with the one the last build ran with, and the check
+// state holds it. It is InputsFingerprint's counterpart for an entry, which
+// has no commit, no image-config hash and no lockfile blobs of its own: the
+// definition the build would read stands where a workflow's image config
+// does.
+type CatalogInputsFingerprint struct {
+	DefinitionSHA256 string `json:"definition_sha256"`
+	BaseRef          string `json:"base_ref"`
+	BaseDigest       string `json:"base_digest"`
+	Lockfiles        bool   `json:"lockfiles,omitempty"`
+}
+
+// Equal reports whether f and o are the same inputs.
+func (f CatalogInputsFingerprint) Equal(o CatalogInputsFingerprint) bool { return f == o }
 
 // CatalogDecision is one entry's decision: Decision's shape under the
 // entry's name, since an entry has no workflow.
@@ -249,21 +290,33 @@ type CatalogDecision struct {
 	Entry    string   `json:"entry"`
 	Decision string   `json:"decision"`
 	Reasons  []string `json:"reasons"`
+	// Error is why the check failed (CheckFailed only).
+	Error string `json:"error,omitempty"`
+	// Inputs are what a build submitted now would be built from.
+	Inputs CatalogInputsFingerprint `json:"inputs"`
 }
 
 // DecideCatalog evaluates one catalog entry's triggers, in the order the
 // workflow check evaluates them: force, the definition the last build read,
-// the base, then the image's age. Every trigger that fires is recorded, and
-// the reasons keep that order, so a night when both the definition and the
-// base moved records catalog-definition before base. It makes no calls: the
-// caller reads everything first.
+// the base, the baked repository's dependency files, then the image's age.
+// Every trigger that fires is recorded, and the reasons keep that order, so a
+// night when both the definition and the base moved records
+// catalog-definition before base. It makes no calls: the caller reads
+// everything first.
 //
-// An entry is not backed off: a back-off compares the inputs of a build
-// that just failed, and an entry has no per-entry check state to hold them.
-// Its definition and max-age triggers are what a nightly rebuild runs on,
-// and a definition that does not change is not rebuilt twice.
+// An entry is backed off exactly as a workflow is (backOffDecision): when a
+// trigger fires and the last build of these very inputs is known, a build
+// still running leaves it a skip, and one that failed — or that ended without
+// clearing the trigger — leaves it rebuild-failed-last, so a definition that
+// cannot build is not paid for every night. The caller reads the entry's
+// check.json (CatalogCheckKey) and its build's status for that, the way the
+// workflow check reads builds/<slug>/<workflow>/check.json.
 func DecideCatalog(in CatalogInputs) CatalogDecision {
 	d := CatalogDecision{Entry: in.Entry, Decision: Skip}
+	d.Inputs = CatalogInputsFingerprint{
+		DefinitionSHA256: in.DefinitionSHA256, BaseRef: in.BaseRef,
+		BaseDigest: in.BaseDigest, Lockfiles: in.Lockfiles,
+	}
 	var fired, notes []string
 	if in.Force {
 		fired = append(fired, ReasonForce)
@@ -273,29 +326,100 @@ func DecideCatalog(in CatalogInputs) CatalogDecision {
 		// Nothing to compare with and nothing to age: the image has to be
 		// built (or, on a forced run, rebuilt) before there is anything to
 		// decide about.
-		d.Decision = Rebuild
-		d.Reasons = append(fired, ReasonNoRecord)
-		return d
-	}
-	if in.DefinitionSHA256 != rec.DefinitionSHA256 {
-		fired = append(fired, ReasonCatalogDefinition)
-	}
-	switch {
-	case in.BaseRef != rec.BaseRef:
-		fired = append(fired, ReasonBase)
-	case in.BaseDigest == "":
-		notes = append(notes, ReasonBaseUnknown)
-	case in.BaseDigest != rec.BaseDigest:
-		fired = append(fired, ReasonBase)
-	}
-	if age := in.MaxAge; age > 0 && in.Now.Sub(rec.BuiltAt) > age {
-		fired = append(fired, ReasonMaxAge)
+		fired = append(fired, ReasonNoRecord)
+	} else {
+		if in.DefinitionSHA256 != rec.DefinitionSHA256 {
+			fired = append(fired, ReasonCatalogDefinition)
+		}
+		switch {
+		case in.BaseRef != rec.BaseRef:
+			fired = append(fired, ReasonBase)
+		case in.BaseDigest == "":
+			notes = append(notes, ReasonBaseUnknown)
+		case in.BaseDigest != rec.BaseDigest:
+			fired = append(fired, ReasonBase)
+		}
+		if in.Lockfiles {
+			fired = append(fired, ReasonLockfiles)
+		}
+		if age := in.MaxAge; age > 0 && in.Now.Sub(rec.BuiltAt) > age {
+			fired = append(fired, ReasonMaxAge)
+		}
 	}
 	d.Reasons = append(fired, notes...)
-	if len(fired) > 0 {
-		d.Decision = Rebuild
+	if len(fired) == 0 {
+		return d
+	}
+	d.Decision = Rebuild
+	if in.Force || in.LastCheck == nil || in.LastCheck.BuildID == "" || in.LastCheck.BuildInputs == nil {
+		return d
+	}
+	last := *in.LastCheck.BuildInputs
+	cur := d.Inputs
+	if cur.BaseDigest == "" {
+		cur.BaseDigest = last.BaseDigest
+	}
+	if !last.Equal(cur) {
+		return d
+	}
+	if dec, reason, ok := backOffDecision(in.LastBuildStatus); ok {
+		d.Decision = dec
+		if reason != "" {
+			d.Reasons = append(d.Reasons, reason)
+		}
 	}
 	return d
+}
+
+// CatalogCheckKey is where one catalog entry's check state is written, beside
+// its build record (gcp.CatalogRecordKey, whose directory it shares): under
+// the repository whose build account the entry is built as, so the same
+// builds/<slug>/ grant the build account already holds covers it. It makes no
+// calls, and takes the slug and entry gcp.CatalogRecordKey validated.
+func CatalogCheckKey(slug, entry string) string {
+	return "builds/" + slug + "/catalog/" + entry + "/check.json"
+}
+
+// CatalogCheckVersion is the CatalogCheckState schema version this package
+// writes.
+const CatalogCheckVersion = 1
+
+// CatalogCheckState is the last check of one catalog entry, as the catalog
+// check job writes it to CatalogCheckKey: CheckState's fields under the
+// entry's own inputs, since an entry has no workflow. It is what the entry's
+// back-off is read from, and it is kept beside the record rather than in it:
+// the build's record step writes on success alone, so a failed build leaves
+// no record and this state is the only trace that says one was tried.
+type CatalogCheckState struct {
+	Version   int       `json:"version"`
+	CheckedAt time.Time `json:"checked_at"`
+	Decision  string    `json:"decision"`
+	Reasons   []string  `json:"reasons"`
+	Error     string    `json:"error,omitempty"`
+	// BuildID is the last build a check submitted, and BuildInputs what it
+	// was built from; both carry over until the next submission.
+	BuildID     string                      `json:"build_id,omitempty"`
+	BuildInputs *CatalogInputsFingerprint   `json:"build_inputs,omitempty"`
+	// LastBuildStatus is BuildID's status as this check read it, and
+	// LastBuildAt when it was submitted.
+	LastBuildStatus string     `json:"last_build_status,omitempty"`
+	LastBuildAt     *time.Time `json:"last_build_at,omitempty"`
+}
+
+// Marshal encodes s as the entry's check.json.
+func (s *CatalogCheckState) Marshal() ([]byte, error) { return json.MarshalIndent(s, "", "  ") }
+
+// ParseCatalogCheckState decodes an entry's check.json. Unknown fields are
+// ignored.
+func ParseCatalogCheckState(data []byte) (*CatalogCheckState, error) {
+	var s CatalogCheckState
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, fmt.Errorf("the catalog check state: %w", err)
+	}
+	if s.Version < 1 {
+		return nil, errors.New("the catalog check state has no version")
+	}
+	return &s, nil
 }
 
 // CheckVersion is the CheckState schema version this package writes.
