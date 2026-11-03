@@ -156,6 +156,17 @@ export const MAX_REPLY_REASON_LENGTH = 2048
  * and the bound bites first. */
 export const MAX_REPOSITORY_LENGTH = 200
 
+/**
+ * SETTINGS_VALUE_MAX_LENGTH bounds the one argument of this surface that is
+ * **not** held to the renderer's own alphabet: a setting's new value (the
+ * settings-edit plan's C3, D1104). It is the console's own bound -- the CLI
+ * takes a value of any length -- and it is here rather than in the grammar
+ * because the value is passed behind a `--` terminator as one argv element, so
+ * what has to be bounded is how large a word this process will hand a child.
+ * `MAX_PAYLOAD_WIDTH` still bounds the whole payload, so this is the widest
+ * single value a screen may send and not the only bound on it. */
+export const SETTINGS_VALUE_MAX_LENGTH = 1024
+
 /** MAX_RUN_ID_LENGTH bounds a run id argument. */
 export const MAX_RUN_ID_LENGTH = 64
 
@@ -311,6 +322,20 @@ export const SUMMARY_SINCE_WINDOWS: readonly string[] = Object.freeze(['7d', '1d
  * invented here, and `test/unit/installationstate.test.ts`'s sibling
  * `test/unit/ipc.test.ts` holds the two implementations to the same verdicts
  * value for value.
+ *
+ * **The last three are the settings write's** (the settings-edit plan's C3, and
+ * they are the only kinds on this surface whose operation is a write of a
+ * *document* rather than of a run). `settingOp` is the edit's subcommand, a
+ * closed set of two (`set`, `unset`); `settingKey` is a key of the read's own
+ * document, a dotted identifier whose shape this module checks and whose
+ * *membership* the CLI owns (D1102 -- the console keeps no key list of its
+ * own); and `settingValue` is the operator's new value, the one argument here
+ * that is passed to the child behind a `--` terminator and the one that is not
+ * held to the renderer's alphabet, because a value may be any text at all
+ * (D1104). Its bound is `SETTINGS_VALUE_MAX_LENGTH`, its hidden-character rule
+ * is the common one, and `settingsEdit`'s pairing rule in `validateArguments`
+ * is what ties the three together: a `set` carries a value and an `unset` does
+ * not.
  */
 export type ArgumentKind =
   | 'repository'
@@ -332,6 +357,9 @@ export type ArgumentKind =
   | 'launchTask'
   | 'launchTitle'
   | 'launchPlanTask'
+  | 'settingOp'
+  | 'settingKey'
+  | 'settingValue'
 
 /** ArgumentSpec is one field of an operation's closed argument schema. */
 export interface ArgumentSpec {
@@ -978,6 +1006,65 @@ export const CONSOLE_OPERATIONS = [
     flags: ['--json'],
     summary: 'the project’s settings, what decides each one, and which of them the console may edit',
     args: [],
+  },
+  // **The settings write, and the console's second write** (the settings-edit
+  // plan's C3, D1103): one key of one document, set or unset, at the layer the
+  // read's own row named, after the operator has read the change in the
+  // confirmation window (rule 12).
+  //
+  // **`flags` is empty, and that is the one place this row differs from every
+  // read beside it.** The dry run's argv carries `--dry-run --json` and a
+  // confirmed write's carries `--yes` -- which is not a set of flags this
+  // operation *fixes*, so it is the phase the main process decides
+  // (`SETTINGS_EDIT_PHASE_WORDS`, `src/main/spawn.ts`) rather than a column
+  // here. A screen chooses none of them: not `--dry-run`, not `--yes`, not even
+  // `--json`.
+  //
+  // **The schema is three keys and no more**, and the layer is not one of them:
+  // it is the read's own `target_layer`, held in this process's copy of the
+  // document and emitted from `argvFor`'s own `settingsEdit` (D1105, D1114), so
+  // no payload of a renderer's can name one. `op` and `key` are the two the
+  // screen knows -- it drew the pencil for that row -- and `value` is the
+  // operator's own text: one argv element, so it is in the process table on the
+  // host route and in the spawn log when that log is on (rule 10), which is the
+  // trade rule 6's row states. Nothing keeps a credential out of it but D1111's
+  // rule: a sensitive row is dropped whole by the read, so it has no pencil and
+  // reaches this operation not at all.
+  //
+  // **What this operation does not have**: no `--repo` (the edit lands in the
+  // selected installation's own layers, and the layer a repository's own config
+  // file would be is the fourth one the read's `target_layer` would name if that
+  // were the one), no `--add`/`--remove` (a list edit is a form no control can
+  // choose: the read carries no member that says a key is list-shaped), and no
+  // third subcommand: `settings get` and every other word of the group stay off
+  // this surface and are on the never table below with the reason they are
+  // there.
+  {
+    name: 'settings.edit',
+    method: 'editSetting',
+    command: 'settings',
+    flags: [],
+    summary: 'the second write: one setting set or unset, at the layer the read named, after the operator confirms it',
+    args: [
+      {
+        key: 'op',
+        kind: 'settingOp',
+        required: true,
+        why: 'which of the command’s two subcommands this is. A closed set of two, because the word decides what the child does, and the third subcommand (`get`) is a read this screen does not need.',
+      },
+      {
+        key: 'key',
+        kind: 'settingKey',
+        required: true,
+        why: 'the setting to write — a key of the document the read answered, so the console invents none. Its membership in the generic path’s allow-list is the CLI’s (D1102): a key the generic path does not own is refused by the child’s own sentence, which the console shows.',
+      },
+      {
+        key: 'value',
+        kind: 'settingValue',
+        required: false,
+        why: 'the operator’s new value, passed behind a `--` terminator as one argv element (D1104): a value spelled `--layer` is the case the terminator exists for. Absent for an `unset`, which is what clearing the screen’s box sends.',
+      },
+    ],
   },
   {
     name: 'cli.version',
@@ -1909,6 +1996,41 @@ const REPORT_DIMENSIONS: readonly string[] = Object.freeze([
 ])
 const SECRET_SCOPES: readonly string[] = Object.freeze(['project-wide', 'repo'])
 
+/** SETTINGS_OP_WORDS is the settings write's two subcommands, and the whole of
+ * them: `spawn.ts`'s `settingOp` case holds the same two, so the word that
+ * decides what a child does is closed in both the renderer's gate and the
+ * argv's. */
+const SETTINGS_OP_WORDS: readonly string[] = Object.freeze(['set', 'unset'])
+
+/** MAX_SETTING_KEY_LENGTH bounds a setting's key before its grammar runs, so a
+ * hostile payload cannot make the expression work. Every key the registry holds
+ * is far shorter: the longest is a `rigor.areas.N.<member>` spelling. */
+const MAX_SETTING_KEY_LENGTH = 120
+
+/**
+ * SETTINGS_KEY_RE is a key's shape: dot-separated segments of lowercase
+ * letters, digits and `_`, with `*` allowed for the registry's one wildcard row
+ * (`stages.*.claude_account`), and no leading or trailing dot.
+ *
+ * **`*` is admitted anywhere a letter is, on purpose.** A standalone segment is
+ * the spelling the registry uses, but `stages.rev*iew.x` passes this grammar
+ * too, and that is the honest shape of the claim: this expression bounds the
+ * **word** a key can be, and `internal/cli/settings_set.go:305` refuses any key
+ * carrying a `*` with its own sentence -- "varies with a name this command does
+ * not take" -- before the allow-list is consulted. Tightening the segment here
+ * would move that refusal from the CLI's words to a schema refusal of this
+ * console's, for a key the CLI was always going to refuse.
+ *
+ * **It is a shape and not the allow-list.** Whether the generic write path owns
+ * a key is `settingsGenericKeys`/`settingsGenericPrefixes`
+ * (`internal/cli/settings_set.go:68`, `:92`) -- the CLI's own list, which the
+ * console keeps no copy of (D1102). What this grammar does is keep the argv
+ * word a key can be: no space, no dash, no `=`, nothing that could be read as a
+ * flag or quoted by a shell, so the key never needs the terminator the value
+ * does.
+ */
+const SETTINGS_KEY_RE = /^[a-z0-9_*]+(\.[a-z0-9_*]+)*$/
+
 /** PROTOTYPE_KEYS are the three names a payload may never carry. They are not
  * arguments of any operation, so the closed-schema check would refuse them
  * anyway; naming them means the refusal says what it is. */
@@ -2339,6 +2461,30 @@ function validateValue(
       if (!decision.ok) return refuse(`${spec.key} ${decision.reason}`)
       return decision.value === null ? refuse(`${spec.key} must be a plan task`) : { ok: true, value: decision.value }
     }
+    case 'settingOp': {
+      // The closed set of two, checked here as well as in `spawn.ts`'s own
+      // `settingOp` case: this is the renderer's gate and that one is the
+      // argv's, and the word decides which subcommand a child runs.
+      if (!SETTINGS_OP_WORDS.includes(value)) {
+        return refuse(`${spec.key} must be one of ${SETTINGS_OP_WORDS.join(', ')}`)
+      }
+      return { ok: true, value }
+    }
+    case 'settingKey': {
+      // The key's **shape** and not its membership: whether the generic path
+      // owns a key is the CLI's own allow-list (D1102), so a key outside it is
+      // refused by the child's own sentence, which the console shows verbatim.
+      if (!SETTINGS_KEY_RE.test(value)) return refuse(`${spec.key} must be a setting's key`)
+      return { ok: true, value }
+    }
+    case 'settingValue': {
+      // **An empty value is refused rather than written.** Clearing a key is
+      // `unset`, the other subcommand -- and the screen sends that one when the
+      // operator's box is empty -- so an empty string here would be a write of
+      // the empty value, which is a different thing a run would read.
+      if (value === '') return refuse(`${spec.key} must be a value: clearing a key is unset`)
+      return { ok: true, value }
+    }
     default:
       return refuse(`${operation} does not take ${spec.key}`)
   }
@@ -2443,6 +2589,18 @@ function kindLimit(kind: ArgumentKind): number {
       return LAUNCH_TITLE_RAW_LIMIT
     case 'launchPlanTask':
       return LAUNCH_PLAN_TASK_RAW_LIMIT
+    // The settings write's three (C3). The subcommand's bound is the longest of
+    // the two words (`unset`); the key's is `MAX_SETTING_KEY_LENGTH`, checked
+    // before its grammar runs; the value's is the console's own
+    // `SETTINGS_VALUE_MAX_LENGTH`, which is the widest single argument this
+    // surface admits -- so a payload of several is bounded by the whole-payload
+    // check above this one and not by these.
+    case 'settingOp':
+      return 5
+    case 'settingKey':
+      return MAX_SETTING_KEY_LENGTH
+    case 'settingValue':
+      return SETTINGS_VALUE_MAX_LENGTH
     default:
       return 0
   }
@@ -2539,6 +2697,18 @@ export function validateArguments(name: OperationName, raw: unknown): ArgumentDe
   const reachesArgv = (key: string): boolean => args[key] !== undefined && args[key] !== false
   for (const [first, second, sentence] of REFUSED_PAIRS[operation.name] ?? []) {
     if (reachesArgv(first) && reachesArgv(second)) return refuse(sentence)
+  }
+
+  // The settings write's pairing (C3): a `set` is a value and an `unset` is no
+  // value at all. Both halves are refused here rather than by the child, because
+  // either one reaching an argv is a child spawned to answer a command that
+  // cannot mean anything -- and the screen's own rule is the same one, one box
+  // over: an empty box is the `unset` it sends (`renderer/entry.ts`).
+  if (operation.name === 'settings.edit') {
+    const op = args['op']
+    const value = args['value']
+    if (op === 'set' && value === undefined) return refuse('value is required to set a setting')
+    if (op === 'unset' && value !== undefined) return refuse('value goes with set: unset removes the key')
   }
 
   // The pairing the design states for the secret inventory: the command resolves

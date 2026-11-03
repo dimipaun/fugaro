@@ -1245,7 +1245,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the twenty-one argvs and nothing else -- the console's one spawn table
+// the twenty-two argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1320,8 +1320,16 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// and globs are not words of the argv, so the row spells the whole
 		// argv back with no argument an operation's schema fills.
 		"settings --json --project <name> [--config <path>]",
+		// The settings write (the settings-edit plan's C3, the `settings.edit`
+		// operation, D1103): one key of the document the row above reads, set
+		// or unset, at the layer that read named. It is the console's second
+		// write and the reason rule 6's fence grew a row, so it is spelled
+		// exactly as rule 12 spawns it -- the dry run's phase words first,
+		// then the write's -- with the value last, after the terminator, and
+		// the `unset` form the same words with no value at all.
+		"settings set KEY --layer <L> [--dry-run --json] [--yes] --project <name> [--config <path>] -- <VALUE>",
 		// The launch (console v2 plan V2.5.1a, the `run.launch` operation):
-		// the console's one write and the one thing this table is a fence
+		// the console's first write and the one thing this table is a fence
 		// against, spelled as rule 11's exact argv and nothing else.
 		"run --task-file - --json --run-id <run id> --repo <owner/name> [--title=<T>] [--plan-task=<P>] --project <name> [--config <path>]",
 	}
@@ -1458,7 +1466,7 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Twenty commands: the thirteen dashboard reads (logs has two argvs), the
+	// Twenty-one commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the project view's
 	// `coordinator status --from-store --all --json` (Bitbucket credentials
@@ -1468,9 +1476,11 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// totals read `runs summary --json` (console 0.119.0, B4/#1580), the models
 	// read `models ls --json` (console 0.119.0, the owner's ruling of
 	// 2026-11-02), the settings read `settings --json` (the settings-edit
-	// plan's C1) and the launch `fugaro run` (V2.5.1a).
-	if len(allowed) != 20 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 20 (logs has two argvs)", path, argvs, len(allowed))
+	// plan's C1), the settings write `settings set KEY ...` (the same plan's
+	// C3, and the row that is not a read at all) and the launch `fugaro run`
+	// (V2.5.1a).
+	if len(allowed) != 21 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 21 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -1486,12 +1496,19 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 }
 
 // consoleLaunchPaths is §5.1's allow-list written as an exemption rather
-// than as a hole: `fugaro run` is the console's one write (rule 11, D22), so
-// it is deliberately absent from consoleReadPaths -- a write is not a read
-// and must not be -- and a table that grew a second writer would have to
-// come back here and say so. The reason sits beside the exemption because
-// the exemption is the security claim: one write, named, and nothing else.
-var consoleLaunchPaths = map[string]bool{"fugaro run": true}
+// than as a hole: the writers the console spawns are deliberately absent from
+// consoleReadPaths -- a write is not a read and must not be -- and this map is
+// where each one is named instead. There are two: `fugaro run` is the launch
+// (rule 11, D22), and `fugaro settings set`/`fugaro settings unset` are the
+// settings write (the settings-edit plan's C3, D1103, rule 12), whose row on
+// §5.1's table is the `set` form and whose two words share this one entry's
+// reason. The exemption is the security claim, so it sits beside the reason:
+// a table that grew a third writer comes back here and says so.
+var consoleLaunchPaths = map[string]bool{
+	"fugaro run":            true,
+	"fugaro settings set":   true,
+	"fugaro settings unset": true,
+}
 
 // planPhaseRow returns the "What ships" cell of the project-centric plan's
 // phase table row whose Phase cell names phase (a substring of it), and the
@@ -9288,7 +9305,7 @@ func consoleProductName(t *testing.T) string {
 }
 
 // TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown pins §5.1 rule 11 — the
-// launch, the console's one write — and the never table's moved row, which is
+// launch, the console's first write — and the never table's moved row, which is
 // the fence that rule moves.
 //
 // Rule 11 was added by the console v2 plan's V2.5.1 (2026-10-27) and amended the
@@ -9313,13 +9330,19 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 	const path = "docs/design/desktop-console.md"
 	doc := readDoc(t, path)
 
-	start := strings.Index(doc, "\n11. **The launch is the console's one write")
+	start := strings.Index(doc, "\n11. **The launch is the console's first write")
 	if start < 0 {
 		t.Fatalf("%s has no §5.1 rule 11: the launch's fence is not written down", path)
 	}
 	end := strings.Index(doc[start:], "\n### 5.2 ")
 	if end < 0 {
 		t.Fatalf("%s never closes §5.1: no `### 5.2` heading follows rule 11", path)
+	}
+	// Rule 12 (the settings write's four steps) is written between rule 11 and
+	// the section heading, and it is not this rule's fence: the slice stops at
+	// whichever of the two comes first.
+	if twelve := strings.Index(doc[start:], "\n12. **"); twelve >= 0 && twelve < end {
+		end = twelve
 	}
 	rule := flattenDoc(doc[start : start+end])
 
@@ -9520,8 +9543,8 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 		t.Errorf("%s §5.1 rule 11 still bounds the task at 64 KiB: the operator confirms by reading it, so the bound is 16 KiB", path)
 	}
 
-	if !strings.Contains(doc, "**The dashboard's surface is thirty operations**") {
-		t.Errorf("%s no longer says the surface is thirty operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull request read to twenty-seven, console 0.119.0's totals read to twenty-eight, console 0.119.0's models read to twenty-nine and the settings-edit plan's C1 to thirty), and the two cannot disagree", path)
+	if !strings.Contains(doc, "**The dashboard's surface is thirty-one operations**") {
+		t.Errorf("%s no longer says the surface is thirty-one operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull request read to twenty-seven, console 0.119.0's totals read to twenty-eight, console 0.119.0's models read to twenty-nine, the settings-edit plan's C1 to thirty and the same plan's C3 to thirty-one), and the two cannot disagree", path)
 	}
 
 	var neverRows [][]string
