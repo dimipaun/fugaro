@@ -182,6 +182,29 @@ func writeScopeOf(scopes []string) string {
 	return ""
 }
 
+// readRefusalMessage is a read refusal's message with the call's own repository
+// attached, and the text is attached only while it is one this contract may
+// repeat.
+//
+// req.Repository is the caller's own text: readReadRequest holds it to
+// gitprov.SplitRepo, which is deliberately permissive about what a repository
+// path may contain (it accepts control characters, escape sequences and ".."),
+// so echoing it unconditionally would put whatever a caller sent into an
+// answer, the operator's log and the audit line beside it — a newline forges a
+// line in a text log, an escape sequence rewrites the terminal an operator
+// reads the refusal in, and a relative path names something this service never
+// looked at. task.CanonicalRepo is this program's own shape rule for a
+// repository name (ASCII owner/name, no "." or ".." segment) and the echo is
+// held to it: a text that is not that shape is refused all the same, and the
+// refusal names the field rather than the value, which is the package's no-echo
+// rule for a caller's own claim.
+func readRefusalMessage(err error, repository string) string {
+	if _, cerr := task.CanonicalRepo(repository); cerr != nil {
+		return err.Error() + ": the call's repository is not a name this service reads"
+	}
+	return err.Error() + ": " + repository
+}
+
 // readReadRequest reads a read mint's body out of the call the handler already
 // read (readCall), which is where the person's own ID token was registered with
 // the service's redaction for the length of this call.
@@ -335,9 +358,10 @@ func (s *Server) bitbucketRead(ctx context.Context, w http.ResponseWriter, r *ht
 	if err != nil {
 		// The refusal names the repository, which is the caller's own text and
 		// not a credential: an operator reading it has to know which repository
-		// was asked about.
+		// was asked about — and only while that text is a repository NAME, so
+		// nothing a caller sent that is not one is repeated (readRefusalMessage).
 		s.refuseRead(ctx, w, caller, "", StatusRequestRefused, ErrorRequestRefused,
-			fmt.Sprintf("%s: %s", err.Error(), req.Repository))
+			readRefusalMessage(err, req.Repository))
 		return
 	}
 	if workspace != consumerWorkspace {
@@ -345,7 +369,7 @@ func (s *Server) bitbucketRead(ctx context.Context, w http.ResponseWriter, r *ht
 		// workspace is not, which is all a caller needs to act on and one fact
 		// less about the installation than it already had.
 		s.refuseRead(ctx, w, caller, slug, StatusRequestRefused, ErrorRequestRefused,
-			fmt.Sprintf("%s: %s", ErrReadOtherWorkspace.Error(), req.Repository))
+			readRefusalMessage(ErrReadOtherWorkspace, req.Repository))
 		return
 	}
 	minted, err := bitbucket.MintAccessToken(ctx, bitbucket.Consumer{Key: key, Secret: secret}, bitbucket.DefaultOAuthRoot, s.cfg.Client)

@@ -535,6 +535,92 @@ func TestReadMintRefusesAnotherWorkspace(t *testing.T) {
 	}
 }
 
+// TestReadMintRepeatsNoRepositoryTextThatIsNotAName: the repository a refusal
+// names is the CALLER'S OWN TEXT, and readReadRequest holds it to
+// gitprov.SplitRepo — which is permissive on purpose, because a repository path
+// is the caller's to spell. So the echo is held to the stricter rule as well
+// (task.CanonicalRepo): a text that is not an "owner/name" this program would
+// read is refused all the same and named as the field it is.
+//
+// The three shapes below are why: a relative path names something the service
+// never looked at, an escape sequence rewrites the terminal an operator reads
+// the refusal in, and a newline forges a line in the text log the same refusal
+// goes to. Each is checked in the answer AND in the service's own log, because
+// a refusal that is clean on the wire and hostile in the log is the half of
+// this that an operator is the one to suffer.
+func TestReadMintRepeatsNoRepositoryTextThatIsNotAName(t *testing.T) {
+	for _, tc := range []struct {
+		repo string
+		// class is the refusal the call is owed, and it is nil for the values
+		// readReadRequest refuses before a repository is resolved at all (no
+		// "owner/name" shape whatever): those reach no echo either, and the
+		// test holds them to the same rule.
+		class error
+	}{
+		{"../repo-a", ErrReadUnknownRepository},
+		{"\x1b[31m/repo-a", ErrReadUnknownRepository},
+		{testWorkspace + "/repo-a\x1b[0m", ErrReadUnknownRepository},
+		{testWorkspace + "/repo-a\ncredsvc: a line nobody wrote", ErrReadUnknownRepository},
+		{testWorkspace + "/repo-a\rforged", ErrReadUnknownRepository},
+		{"\x1b[31mrepo-a", nil},
+		{testWorkspace + "/../repo-a", nil},
+		{testWorkspace + "/repo-a/../..", nil},
+	} {
+		t.Run(fmt.Sprintf("%q", tc.repo), func(t *testing.T) {
+			s, f := bitbucketSvc(t, testPersonAccount)
+			resp, body := s.readMint(t, tc.repo, testPersonAccount)
+			if resp.StatusCode != StatusRequestRefused {
+				t.Fatalf("the read mint answered a call naming %q: HTTP %d %s", tc.repo, resp.StatusCode, body)
+			}
+			e := refusal(t, resp.StatusCode, body)
+			if e.Error != ErrorRequestRefused {
+				t.Errorf("the refusal is %q, want %q: %s", e.Error, ErrorRequestRefused, e.Message)
+			}
+			for _, where := range []struct{ what, text string }{
+				{"the refusal", e.Message},
+				{"the service's log", s.logs.String()},
+			} {
+				if strings.Contains(where.text, tc.repo) {
+					t.Errorf("%s repeats the text the call sent: %q", where.what, where.text)
+				}
+			}
+			// The refusal still says which class it is — a repository the
+			// installation does not hold, or the call's own missing shape — so
+			// an operator reading it has a reason and not just a no.
+			want := "the call names no repository"
+			if tc.class != nil {
+				want = tc.class.Error()
+			}
+			if !strings.Contains(e.Message, want) {
+				t.Errorf("the refusal is %q, want it to name the class it refused (%s)", e.Message, want)
+			}
+			if n := len(f.seen()); n != 0 {
+				t.Errorf("the service exchanged the read consumer %d times for a call it refused, want none", n)
+			}
+		})
+	}
+}
+
+// TestReadMintStillNamesARepositoryItRefused: the rule above is about text that
+// is not a repository name, and a caller that spells one the service does not
+// hold still hears which one it was — the reason an operator reads a refusal at
+// all (G11).
+func TestReadMintStillNamesARepositoryItRefused(t *testing.T) {
+	s, _ := bitbucketSvc(t, testPersonAccount)
+	repo := testOtherWorkspace + "/repo-not-held"
+	resp, body := s.readMint(t, repo, testPersonAccount)
+	if resp.StatusCode != StatusRequestRefused {
+		t.Fatalf("the read mint answered for a repository the installation does not hold: HTTP %d %s", resp.StatusCode, body)
+	}
+	e := refusal(t, resp.StatusCode, body)
+	if !strings.Contains(e.Message, ErrReadUnknownRepository.Error()) {
+		t.Errorf("the refusal is %q, want the unknown-repository class", e.Message)
+	}
+	if !strings.Contains(e.Message, repo) {
+		t.Errorf("the refusal does not name the repository it refused: %q", e.Message)
+	}
+}
+
 // TestReadMintAuditedOnce: one granted mint writes exactly one line, and the
 // line is the read mint's own shape — the person as the caller, the repository
 // as the installation's slug, the read consumer as the credential, and NEITHER
