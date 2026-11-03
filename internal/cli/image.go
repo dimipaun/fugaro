@@ -32,7 +32,7 @@ func newImageCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "image", Short: "Build and inspect a workflow's derived container image"}
 	cmd.AddCommand(newImageBuildCmd(), newImageRenderCmd(), newImageSelftestCmd(), newImageGitCredentialCmd(),
 		newImageGateCmd(), newImageRecordCmd(), newImageCheckCmd(), newImageStatusCmd(), newImageRefreshCmd(),
-		newImageLsCmd(), newImageAddCmd(), newImageRmCmd())
+		newImageLsCmd(), newImageAddCmd(), newImageRmCmd(), newImagePromoteCmd())
 	return cmd
 }
 
