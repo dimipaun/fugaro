@@ -2513,7 +2513,7 @@ describe('the surface the project view is read through (T1.2)', () => {
   })
 })
 
-describe('the queue’s runs list is decoded closed', () => {
+describe('the queue’s runs list is decoded', () => {
   it('admits a well-formed page, in the CLI’s order, and keeps only the rows that are waiting', () => {
     // The four rows below are D810’s two grounds and the two states that are
     // not them: a run that failed, one a person halted, one that succeeded and
@@ -2528,25 +2528,31 @@ describe('the queue’s runs list is decoded closed', () => {
     expect(queued(page).map((row) => row.run)).toEqual(['20261101-090000-aa01', '20261101-060000-dd04'])
   })
 
-  it('refuses a row carrying a key the run record does not have', () => {
-    // A row is `runview.Row` and nothing else: a member outside its key set is
-    // a row this console has not read. It is refused rather than ignored
-    // because the queue does not draw a document -- it decides from one: the
-    // rows become the console’s own acts, and the plan task beside them is what
-    // a launch is prefilled with. Nothing the console cannot vouch for reaches
-    // a button.
-    const page = runsDocument([
-      aRunRow({ run: '20261101-090000-aa01', status: 'failed' }),
-      withMember(aRunRow({ run: '20261101-080000-bb02', status: 'failed' }), 'widget', 'x'),
+  it('ignores a key the run record does not have, at the root and in a row', () => {
+    // The owner’s ruling of 2026-10-30 holds at this door too: the CLI’s JSON
+    // only grows, so a key outside `lsDoc`’s or `runview.Row`’s own set is a
+    // column a newer CLI added, and a console that refused the addition would
+    // refuse a document the CLI wrote correctly. The queue reads its rows field
+    // by field, so a member it does not know reaches neither the drawing nor an
+    // act -- and the row beside it is the row it always was.
+    const page = {
+      ...(runsDocument([
+        aRunRow({ run: '20261101-090000-aa01', status: 'failed' }),
+        withMember(aRunRow({ run: '20261101-080000-bb02', status: 'failed' }), 'widget', 'x'),
+      ]) as Record<string, unknown>),
+      notice: 'a newer CLI wrote this',
+    }
+    expect(queued(page).map((row) => row.run)).toEqual([
+      '20261101-090000-aa01',
+      '20261101-080000-bb02',
     ])
-    expect(refusalFor(page)).toEqual({ field: 'runs[1].widget', name: 'unknown-key' })
   })
 
-  it('refuses a row whose count is a string', () => {
-    // A count is a number or it is a document this console does not know: the
-    // record’s own `artifact_count` is written as a JSON number by the CLI, so
-    // a string in its place is a shape no `runs ls` wrote -- read as absent it
-    // would be a row the console has quietly repaired rather than refused.
+  it('refuses a known member whose value is not the kind the struct writes', () => {
+    // Strict on types is the other half of the ruling, and it is what the queue
+    // needs: `artifact_count` is a member this build reads, so a string in its
+    // place is a document no `runs ls` wrote -- read as absent it would be a
+    // row the console had quietly repaired rather than refused.
     const page = runsDocument([
       withMember(aRunRow({ run: '20261101-090000-aa01', status: 'failed' }), 'artifact_count', '3'),
     ])
@@ -2564,27 +2570,27 @@ describe('the queue’s runs list is decoded closed', () => {
   it('refuses the document as a whole rather than drawing the rows around the one it cannot read', () => {
     // The queue’s own list is all-or-nothing: a page holding one row it cannot
     // read is refused whole, so no row of it reaches a screen or a button --
-    // and the refusal is the one the section draws in its own place.
+    // and the refusal is the one the section draws in its own place. Ignorance
+    // of an unknown key does not soften this: what refuses the page is a member
+    // this build *does* read, arriving as something the struct cannot write.
     const page = runsDocument([
       aRunRow({ run: '20261101-090000-aa01', status: 'failed' }),
-      withMember(aRunRow({ run: '20261101-080000-bb02', status: 'failed' }), 'widget', 'x'),
+      withMember(aRunRow({ run: '20261101-080000-bb02', status: 'failed' }), 'terminal', 'yes'),
     ])
     const decoded = queueRuns(page)
     expect(decoded.ok).toBe(false)
-    if (!decoded.ok) expect(decoded.skew.because).toContain('runs[1].widget')
+    if (!decoded.ok) expect(decoded.skew.because).toContain('runs[1].terminal')
   })
 
   it('refuses a document whose root is not the shape `runs ls` prints', () => {
-    // The root is `lsDoc`’s own key set -- `project`, `runs`, `totals`,
-    // `warnings` -- and the one key the reader needs is `runs`, an array. An
-    // unknown root key is a document no `runs ls` wrote, and a document without
-    // `runs` is one this console cannot find the jobs in.
+    // The one key the reader needs is `runs`, an array: a document without it is
+    // one this console cannot find the jobs in, and a `runs` that is not a list
+    // is one it cannot read. Everything else the root carries is ignored -- the
+    // document’s own `project`, `totals` and `warnings`, and a key no `runs ls`
+    // wrote.
     expect(refusalFor({ runs: 'not a list' })).toEqual({ field: 'runs', name: 'not-an-array' })
     expect(refusalFor({ runs: [] })).toBeNull()
-    expect(refusalFor({ runs: [], notice: 'a newer CLI wrote this' })).toEqual({
-      field: 'notice',
-      name: 'unknown-key',
-    })
+    expect(refusalFor({ runs: [], notice: 'a newer CLI wrote this' })).toBeNull()
     expect(refusalFor({})).toEqual({ field: 'runs', name: 'missing' })
     expect(refusalFor([])).toEqual({ field: 'the document', name: 'not-an-object' })
   })

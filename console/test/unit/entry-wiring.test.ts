@@ -5363,12 +5363,12 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
   })
 
   it('draws a queue it cannot decode as `runs ls`’s own refusal, with no item and no button', async () => {
-    // The queue's reader is the console's one closed decoder (K4's follow-up):
-    // a row carrying a key `runview.Row` does not have refuses the **whole**
-    // document, and what is drawn is the section's own refusal -- the state a
-    // read that failed already draws, naming `runs ls` -- rather than the rows
-    // around it. A queue that dropped the row it could not read would draw a
-    // shorter list than the document holds, and the operator would have no way
+    // The queue's reader refuses a page holding a row it cannot read -- here a
+    // `terminal` that is a word where the struct writes a boolean -- and it
+    // refuses it **whole**: what is drawn is the section's own refusal, the
+    // state a read that failed already draws, naming `runs ls`, rather than the
+    // rows around it. A queue that dropped the row it could not read would draw
+    // a shorter list than the document holds, and the operator would have no way
     // to tell that from a shorter day.
     const { bridge } = queueBridge({
       coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
@@ -5376,7 +5376,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
       listRuns: () => ({
         ok: true,
-        data: { document: { runs: [{ ...QUEUE_RUN, widget: 'a key no run record has' }] } },
+        data: { document: { runs: [{ ...QUEUE_RUN, terminal: 'yes' }] } },
       }),
     })
     const document = await boot(bridge, new FakeDocument())
@@ -5387,7 +5387,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     if (job === undefined) throw new Error('the queue drew no runs part')
     expect(classed(job, 'unavailable-operation')[0]?.textContent).toBe('runs.list')
     expect(classed(job, 'unavailable-sentence')[0]?.textContent).toBe(
-      'the runs list document is not one the console reads: runs[0].widget is unknown-key',
+      'the runs list document is not one the console reads: runs[0].terminal is not-a-boolean',
     )
     // The row the decoder refused reached neither the drawing nor an act: the
     // runs part holds no item and no button, and the run's own id is nowhere on
