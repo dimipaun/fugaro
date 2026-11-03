@@ -646,7 +646,7 @@ a quarter of a minute. A screen this session has already read is drawn at once, 
 | Repositories | `projects-repos`, `projects-repo-card`, `projects-repo-card-title`, `projects-repo-list`, `projects-repo-enrolled`, `projects-repo-card-none` |
 | Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-account-none`, `projects-accounts-note` |
 | Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed`, `projects-secret-bound`, `projects-secret-bound-word`, `projects-secrets-managed` |
-| Settings | `projects-settings`, `projects-settings-list`, `projects-settings-row`, `projects-settings-key`, `projects-settings-scope`, `projects-settings-value`, `projects-settings-wins`, `projects-settings-state`, `projects-settings-owner-word`, `projects-settings-owner`, `projects-settings-owner-generic`, `projects-settings-pencil` |
+| Settings | `projects-settings`, `projects-settings-list`, `projects-settings-row`, `projects-settings-key`, `projects-settings-scope`, `projects-settings-value`, `projects-settings-wins`, `projects-settings-state`, `projects-settings-owner-word`, `projects-settings-owner`, `projects-settings-owner-generic`, `projects-settings-pencil`, `projects-settings-editor`, `projects-settings-editor-outcome` |
 | Models | `projects-models`, `projects-models-body`, `projects-models-heading`, `projects-models-route-list`, `projects-models-route`, `projects-models-route-name`, `projects-models-route-kind`, `projects-models-route-host`, `projects-models-route-fee`, `projects-models-claims`, `projects-models-claims-word`, `projects-models-claim`, `projects-models-to`, `projects-models-to-word`, `projects-models-to-every`, `projects-models-to-none`, `projects-models-allow`, `projects-models-route-base`, `projects-models-route-note`, `projects-models-list`, `projects-models-row`, `projects-models-id`, `projects-models-route-of`, `projects-models-input`, `projects-models-output`, `projects-models-catalog`, `projects-models-catalog-checked`, `projects-models-catalog-age`, `projects-models-catalog-stale` |
 
 `data-*`: `data-theme`; `data-panel`; `data-state` — **the panel states are
@@ -725,6 +725,37 @@ state on a tone alone. A route's `base_url` and `note` are drawn as text and are
 offered as links** — a link built from a document's string is a navigable attribute the
 document wrote — and the panel has no control of any kind: nothing under
 `div.projects-models` adds, removes or uses a model.
+
+**The settings section is the tab's third section, and it is the one of the three that
+writes** (console 0.120.0, the settings-edit plan's C2 and C3; `desktop-console.md` §5.1
+rule 12 is the fence). The pencil is the row's only control, and pressing it draws the row's
+own editor into the row: `span.projects-settings-editor` holds the labelled box, the hint
+that an empty box removes the key, `Review and write` and `Cancel`, and the editor's
+sentence is `span.projects-settings-editor-outcome`, marked `aria-live` so a refusal is
+spoken when it lands. **The editor is the row's state and not a second control beside the
+pencil**: it carries `aria-busy="true"` while an edit is in flight with its one control
+disabled then, and once a write happened the box and that control are both disabled, because
+the row behind them is stale until the section is read again. Every outcome — a refusal, a
+sentence, a write — carries `Read again`, and it **reads the section** rather than repeating
+the write: the write's own compare-and-swap refuses an edit built on bytes of the target file that moved (it does not re-measure the dry run's classification), and a
+console that retried it silently would be deciding what it was told not to. A refusal is the
+CLI's own sentence and never a tone; a successful write shows the CLI's own
+`next: fugaro update` line as text.
+
+**The confirmation window is §2.13's, with a settings subject, and it has two shapes.**
+`confirm.ts` and `confirm.html` are one implementation for both questions, so this window
+carries the same four declared ids, the same three `console-confirm-*` hooks, no `data-*` and
+no theme-attribute rule — what is this screen's is the field list (the key, the old value,
+the new value, the layer written and the layer that decides today, the last two as fields
+rather than as a sentence the window computes) and **the tick**. A **widening** — the dry
+run's own `widening` member, never the console's reading of a limit — draws the tick
+`I understand this raises a limit` as a real `<label for=…>` on a real checkbox, leaves the
+confirming button **disabled** until the box is ticked, and makes **Cancel** the window's
+default button. A **narrowing** draws no tick at all and makes the confirming button the
+default: that is the whole of the difference between the two shapes. The tick's checkbox and
+label carry **no hook of this theme** — no rule here selects them, and its id is the
+document's own — and the confirming button is out of the tab order in both shapes and
+answers only a pointer click, so a keyboard-synthesized click confirms nothing.
 
 **`projects-accounts-note` is a hook no document this CLI produces can reach.** `fugaro
 accounts ls --json` writes `note` with `omitempty` and answers `complete: false` whenever
@@ -2774,7 +2805,7 @@ in `base.css` and the rows' and badges' is in `screens.css`.
 ### 6.5 The docs test
 
 `internal/cli/docs_console_styling_test.go` (new), in the shape of
-`docs_budget_token_channel_test.go`, with thirteen tests:
+`docs_budget_token_channel_test.go`, with fourteen tests:
 
 1. a **presence test** over this document's eleven section headings and its load-bearing
    strings — the status line, `SERVED_FILES`, "No inline style attribute", `Never colour
@@ -2824,7 +2855,7 @@ in `base.css` and the rows' and badges' is in `screens.css`.
    or one whose capitalisation a sentence changes (`matchMedia` for `matchmedia`), is the
    same phrase to the test as it is to a reader;
 
-**Items 5 to 9 — five of the thirteen — read §3.4's numbers rather than its prose**, which is the
+**Items 5 to 9 — five of the fourteen — read §3.4's numbers rather than its prose**, which is the
 half the review of the first revision asked for. They recompute WCAG 2.1's relative luminance
 (`(L1+0.05)/(L2+0.05)`) and circular hue distance
 (`min(|Δh|, 360°−|Δh|)`) from the literal values in §3.2 and §3.3, in four lines of Go each,
@@ -2865,7 +2896,7 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    that branch; the synthetic table here is what keeps the branch itself tested rather than
    dead code. It also pins both thresholds as inclusive, which is how §3.4 writes them ("at
    least 50°", "at least 3:1").
-10. a **phase-ordering test**, the tenth, the one case of the thirteen that is about the two
+10. a **phase-ordering test**, the tenth, the one case of the fourteen that is about the two
    documents' agreement on the phase's order rather than about either alone — it reads
    [§7](#7-the-build-plan-phase-6) and the plan together: it cuts the plan's
    Phase 6 at its six task headings and §7 at its seven, and fails when a task's `**Files**`
@@ -2884,7 +2915,7 @@ deliberately not shared with the console's own token test: that one is TypeScrip
 11. a **counts test** over this section and §7.7, which is what keeps the numbers above from
    rotting: it numbers the ordered list here and requires it to run 1 to N with no gap and N
    to be the count this section's opening line prints in words; it reads the group sentence
-   ("Items 5 to 9 — five of the thirteen") against the list it names, in every number the
+   ("Items 5 to 9 — five of the fourteen") against the list it names, in every number the
    sentence prints;
    it counts the rows of §7.7's red-step table and the clauses of its two mutation lists
    against the words above them; and it counts this document's `## ` headings against the
@@ -2916,6 +2947,15 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    keys in 6.5 — because a design that describes a region and a plan whose tasks do not name
    it is a region nobody builds. It reads the plan as text for the same boundary reason the
    rest of this file does.
+14. a **settings-section test** over §2.5, the fourteenth: it reads the Settings row for the two
+   hooks the entry draws and a rule selects — `projects-settings-editor` and
+   `projects-settings-editor-outcome`, since a hook this table does not name is a hook no rule may
+   select — and it requires the section to describe the pencil's editor and the confirmation
+   window's **two shapes**: "Review and write", "Read again", the widening tick's words "I
+   understand this raises a limit", the names `widening` and `narrowing`, and the §2.13 pointer
+   that says the window is the launch's own document rather than a second one beside it. The
+   settings section is the one part of the Project tab that writes (console 0.120.0), and a shape
+   a reader cannot find in this document is a shape no review checks the code against.
 
 **The citation test stats a file; these five read the file**, which is the difference
 between a citation that exists and a citation that is true. Neither substitutes for the

@@ -305,3 +305,33 @@ func TestDocsConsoleSettingsEditRelativeCitationsResolve(t *testing.T) {
 		t.Logf("%s: %d relative references resolved against their paragraph's anchor", path, refs)
 	}
 }
+
+// TestDocsSettingsCommandsD846CarriesTheConsoleHalf: this folder's plan splits
+// the D846 amendment in two, and the half that is not the CLI's is the console's
+// (D1121, plan §5 C5): `docs/settings-commands/reconciliation.md`'s D846 row
+// gains the sentence saying what the console passes for a widening, and it is
+// pinned here because this folder is where that amendment was decided.
+//
+// The three facts are the ones a reader cannot reconstruct from the console's
+// own documents: the console passes `--yes` and **nothing else**, its tick is
+// the console's own confirmation and not the security control, and `fugaro
+// update`'s typed form is untouched. An entry that lost the first would read as
+// if a console-only hook were still coming; one that lost the second would give
+// the window's tick a fence's weight it does not have.
+func TestDocsSettingsCommandsD846CarriesTheConsoleHalf(t *testing.T) {
+	const path = "docs/settings-commands/reconciliation.md"
+	doc := readDoc(t, path)
+	row := mdRow(t, path, doc, "| **D846** |")
+	for _, want := range []string{
+		"The console's half",
+		"`--yes`",
+		"`I understand this raises a limit`",
+		"no console-only flag",
+		"`fugaro update`",
+		"typed",
+	} {
+		if !strings.Contains(row, want) {
+			t.Errorf("%s's D846 entry does not state %q: the console half of this row is C5's to write, and the CLI half alone leaves the read path unexplained", path, want)
+		}
+	}
+}

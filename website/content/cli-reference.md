@@ -1924,33 +1924,86 @@ Flags:
 
 Subcommands:
 
-- `fugaro image build` -- Build the derived image with Cloud Build; --local builds it with local Docker and smoke-tests it
+- `fugaro image add` -- Add an image catalog entry to this machine's project config
+- `fugaro image build` -- Build a catalog entry's image with Cloud Build, or the workflow's derived image; --local builds the derived one with local Docker
 - `fugaro image check` -- Decide whether each workflow's image needs a rebuild (the daily check; locally it only prints the decision)
+- `fugaro image ls` -- List the project's image catalog entries, or the shared-image lock's with --shared
+- `fugaro image promote` -- Copy a repository's image definition into the catalog and point the repository at it
 - `fugaro image refresh` -- Move a repository onto this release's base image: pin it, point the daily image check job at it, rebuild what is stale
 - `fugaro image render` -- Print the Dockerfile that builds the workflow's derived image
+- `fugaro image rm` -- Remove an image catalog entry from this machine's project config
 - `fugaro image status` -- Show each workflow's image: when it was built and from what, and its last daily check
+
+## `fugaro image add`
+
+Add an image catalog entry to this machine's project config
+
+Add a named image to the project's image catalog, in this machine's project
+config: the copy fugaro update publishes to the project's policy node
+(image_catalog). The entry's source is a Dockerfile in one of the project's
+repositories (--dockerfile owner/name:path, with --branch) or a Dockerfile
+written out here (--inline <file>), and its tags are what a repository's
+needs: is matched against.
+
+Nothing is built and nothing is published here: fugaro image build <name>
+builds the entry's image, and fugaro update publishes the catalog. --default
+marks the entry a job whose repositories name no needs runs; a catalog marks
+one entry, or none.
+
+Usage: `fugaro image add <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--branch` | string | "" | no | the branch --dockerfile reads (default: the repository's base branch) |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--default` | bool | `false` | no | the entry a job whose repositories name no needs runs (one entry, or none) |
+| `--description` | string | "" | no | what the entry is for, printed by fugaro image ls |
+| `--dockerfile` | string | "" | no | a Dockerfile in one of the project's repositories, as owner/name:path |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--inline` | string | "" | no | a file whose contents are the entry's Dockerfile |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--tags` | stringSlice | `[]` | no | the tags the image provides (node, postgres, redis, firebase-emulator, docker); comma-separated or repeated |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro image build`
 
-Build the derived image with Cloud Build; --local builds it with local Docker and smoke-tests it
+Build a catalog entry's image with Cloud Build, or the workflow's derived image; --local builds the derived one with local Docker
 
-Build the workflow's derived image.
+Build an image with Cloud Build.
 
-Without --local, Cloud Build builds it from the repository's base branch
-as the repository's build account (cloning with its bitbucket-token, or
-a read-only token its GitHub App mints) and pushes it to the repository's
-own registry, which fugaro update --repo creates. It pushes a candidate,
-smoke-tests it without network, and only then points latest at it and
-records what it was built from, unless a newer build is already
-recorded. Run it from the repository's checkout: the checkout's
-fugaro.yaml and origin say what to build.
+With an image catalog published (fugaro image ls lists its entries), it
+builds the catalog entry you name, or every entry whose source is a
+Dockerfile: the entry's Dockerfile is copied into the project's bucket,
+the build reads that one object, mounts the workflow's secrets as file
+secrets, smoke-tests the candidate without network and promotes it into
+the installation's shared registry with a content tag naming the
+definition it built. Run it from the checkout of the entry's own
+repository: the build account, the provider credential and the secrets
+are that repository's.
+
+Without a catalog — or with --workflow, which selects the per-workflow
+case — Cloud Build builds the workflow's derived image from the
+repository's base branch as the repository's build account (cloning with
+its bitbucket-token, or a read-only token its GitHub App mints) and
+pushes it to the repository's own registry, which fugaro update --repo
+creates. It pushes a candidate, smoke-tests it without network, and only
+then points latest at it and records what it was built from, unless a
+newer build is already recorded. Run it from the repository's checkout:
+the checkout's fugaro.yaml and origin say what to build.
 
 A Cloud Build is billable, so it asks for the project's name typed at a real
 terminal: --json, a pipe and a coding agent's session never confirm it (it
 prints the one line to run in your own terminal window and exits 1).
 --local builds with your own Docker and costs nothing in the cloud.
 
-Usage: `fugaro image build`
+Usage: `fugaro image build [name]`
 
 Flags:
 
@@ -2010,6 +2063,80 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--workflow` | string | "" | no | check only this workflow |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro image ls`
+
+List the project's image catalog entries, or the shared-image lock's with --shared
+
+List what this project's image catalog names: each entry's name, the tags it
+provides, which one is the default, what it is built from and the digest the
+last build of it recorded.
+
+The catalog is the project's; the installation's shared images are a different
+inventory, and --shared prints those instead: each image's key, reference and
+digest, and the repositories and jobs on it. The two are one command with a
+flag, never two ls commands, so there is no question of which one to run.
+
+A project with no catalog of its own lists nothing: fugaro image add writes
+an entry, and fugaro update publishes the catalog to the project's policy
+node (image_catalog), which is what a job reads.
+
+Usage: `fugaro image ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--shared` | bool | `false` | no | list the installation's shared images instead of the catalog |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro image promote`
+
+Copy a repository's image definition into the catalog and point the repository at it
+
+Read the repository's existing image definition, write it into the project's
+image catalog as an entry, and point the repository's workflow at that entry
+(image_name:), in the checkout you are in. Run it from the repository's own
+checkout; the entry is named [name], else the repository's name.
+
+Nothing is converted on its own: a repository's image: block or dockerfile:
+keeps working untouched until this command is run for it, and fugaro update
+never runs it. A definition taken from the workflow's image: block is
+rendered and held in the entry (source: inline); a dockerfile: path stays a
+pointer at that file (source: dockerfile), so the entry follows it.
+
+The change to fugaro.yaml is a file in your working tree, not a commit: it is
+yours to review and commit beside whatever else the same change carries.
+
+This promote is not the promote step of a Cloud Build (images/derived/
+cloudbuild.yaml): that step moves a build's latest tag onto the image it
+just built, and this command copies a definition into the catalog. The two
+share the word and nothing else.
+
+Usage: `fugaro image promote <repo> [name]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for promote |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -2090,6 +2217,36 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for render |
 | `--workflow` | string | "" | no | workflow to render; optional when fugaro.yaml defines one |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro image rm`
+
+Remove an image catalog entry from this machine's project config
+
+Remove a named image from the project's image catalog, in this machine's
+project config. The removal is refused while a repository's job still runs
+the entry — because a workflow names it (image_name:), or because the
+tag-cover rule picks it for the tags the workflow needs — since that job
+would then be on an image no catalog describes. Point the repository at
+another entry first, run fugaro update, and remove the entry after.
+
+Nothing is deleted from the registry: the entry's built image stays where
+it is, and the next fugaro update publishes the catalog without the entry.
+
+Usage: `fugaro image rm <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 

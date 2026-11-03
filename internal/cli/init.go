@@ -1551,6 +1551,25 @@ func (r *initRun) warn(msg string) {
 	fmt.Fprintln(r.w, "warning: "+msg)
 }
 
+// printWorkflowWarnings prints what the workflows' deploy-time specs carry
+// for a person: D1146's pin warning, which only the job's own spec can
+// compute — a repository pinning a catalog entry its needs have outgrown is
+// told in the run that moves the job, which is this one. The spec's text is
+// printed as it is, and once: every account a workflow may choose among gets
+// its own WorkflowSpec, and the same warning in each.
+func printWorkflowWarnings(r *initRun, spec infra.RepoSpec) {
+	printed := map[string]bool{}
+	for _, key := range slices.Sorted(maps.Keys(spec.Workflows)) {
+		for _, w := range spec.Workflows[key].Warnings {
+			if printed[w] {
+				continue
+			}
+			printed[w] = true
+			r.warn(w)
+		}
+	}
+}
+
 // canConfirmTyped is initflow.CanConfirm, the one rule of who may give a
 // money or permanent confirmation. A package variable only so a test that is
 // about something else can type through --yes: the tests of the rule itself
@@ -3263,6 +3282,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}
+	printWorkflowWarnings(r, spec)
 	if err := t.Init(ctx, backend); err != nil {
 		return remote(err)
 	}

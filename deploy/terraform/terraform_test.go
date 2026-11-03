@@ -1319,6 +1319,16 @@ func TestHistorySchedulerHoldsJobRunnerOnTheJob(t *testing.T) {
 // as the account the Firebase root grants the FP's database admin to — the
 // account and no default Compute account.
 //
+// Three of those entries are conditional, and the two facts behind them are
+// what the conditions below pin. The App's ID and the App's key arrive
+// together and only where the sweep reads a GitHub repository (F24): where it
+// reconciles Bitbucket only, it reads through the credentials service's read
+// mint and needs neither — an installation with no GitHub repository has no
+// App to name, and internal/cli/init_firebase.go deploys its job all the same.
+// The service's URL arrives with the service, and it is the coordinator's own
+// variable, never the run path's (F23): a run's environment must not be able
+// to move the root a sweep's token is minted at.
+//
 // Mutation (run, restore): replace the value_source with a literal value — a
 // plan, a `terraform show` and the job's own describe would then carry the
 // App's private key, and this fails on the entry that has no value_source.
@@ -1351,32 +1361,23 @@ func TestTheCoordinatorJobTakesItsCredentialFromASecretAndNothingElse(t *testing
 		}
 	}
 
-	// Every env entry of the container: one is the key through a secret, and
-	// the rest are the plain environment the command reads.
-	envs := nestedBlocks(job.body, "env")
-	if len(envs) == 0 {
-		t.Fatalf("%s: %s declares no env blocks", path, job.name)
+	// Every env entry of the container, in both spellings: the plain entries
+	// every installation's job carries, and the dynamic ones, which is how an
+	// entry that only some installations need arrives (F24, F23).
+	static := nestedBlocks(job.body, "env")
+	dynamic := dynamicBlocks(job.body, "env")
+	if len(static) == 0 || len(dynamic) == 0 {
+		t.Fatalf("%s: %s declares %d plain and %d conditional env blocks, want both", path, job.name, len(static), len(dynamic))
 	}
+	names := map[string]bool{}
 	plain := map[string]string{}
-	mounted := 0
-	for _, env := range envs {
+	for _, env := range static {
 		name := strings.Trim(firstAttr(env, "name"), `"`)
+		names[name] = true
+		// A mount in an entry every installation gets would give a job that
+		// reads no GitHub an App key it has no container for (F24).
 		if strings.Contains(env, "value_source") {
-			mounted++
-			if name != "FUGARO_GITHUB_APP_PRIVATE_KEY" {
-				t.Errorf("%s: %s mounts %s through a secret: the App key is the one credential this job holds", path, job.name, name)
-			}
-			for _, want := range []string{
-				`(?m)^\s*secret_key_ref\s*\{`,
-				// The project-wide container of the logical name the local
-				// config records (config.GitHubAppKeySecret), never a path.
-				`(?m)^\s*secret\s*=\s*var\.project_secrets\[var\.coordinator\.app_key_secret\]\s*$`,
-				`(?m)^\s*version\s*=\s*"latest"\s*$`,
-			} {
-				if !regexp.MustCompile(want).MatchString(env) {
-					t.Errorf("%s: %s mounts the App key without %s:\n%s", path, job.name, want, env)
-				}
-			}
+			t.Errorf("%s: %s mounts %s through a secret in an entry every installation gets: the App key arrives only where the sweep reads GitHub (F24)", path, job.name, name)
 			continue
 		}
 		if name == "FUGARO_GITHUB_APP_PRIVATE_KEY" {
@@ -1384,22 +1385,86 @@ func TestTheCoordinatorJobTakesItsCredentialFromASecretAndNothingElse(t *testing
 		}
 		plain[name] = firstAttr(env, "value")
 	}
-	if mounted != 1 {
-		t.Errorf("%s: %s mounts %d entries through a secret, want the App key's one", path, job.name, mounted)
+	mounted := map[string]string{}
+	conditional := map[string]string{}
+	for _, env := range dynamic {
+		name := strings.Trim(firstAttr(env, "name"), `"`)
+		names[name] = true
+		forEach := firstAttr(env, "for_each")
+		if forEach == "" {
+			t.Errorf("%s: %s declares the conditional entry %s with no for_each, which is the only thing that makes it conditional", path, job.name, name)
+		}
+		conditional[name] = forEach
+		if strings.Contains(env, "value_source") {
+			mounted[name] = env
+			continue
+		}
+		if name == "FUGARO_GITHUB_APP_PRIVATE_KEY" {
+			t.Errorf("%s: %s carries the App's private key as a plain environment value:\n%s", path, job.name, env)
+		}
+	}
+	if len(mounted) != 1 {
+		t.Errorf("%s: %s mounts %d entries through a secret (%v), want the App key's one", path, job.name, len(mounted), slices.Sorted(maps.Keys(mounted)))
+	}
+	for name, env := range mounted {
+		if name != "FUGARO_GITHUB_APP_PRIVATE_KEY" {
+			t.Errorf("%s: %s mounts %s through a secret: the App key is the one credential this job holds", path, job.name, name)
+		}
+		for _, want := range []string{
+			`(?m)^\s*secret_key_ref\s*\{`,
+			// The project-wide container of the logical name the local
+			// config records (config.GitHubAppKeySecret) — the value the
+			// dynamic block iterates over, never a path.
+			`(?m)^\s*secret\s*=\s*var\.project_secrets\[env\.value\]\s*$`,
+			`(?m)^\s*version\s*=\s*"latest"\s*$`,
+		} {
+			if !regexp.MustCompile(want).MatchString(env) {
+				t.Errorf("%s: %s mounts the App key without %s:\n%s", path, job.name, want, env)
+			}
+		}
 	}
 	for _, want := range []string{
 		"FUGARO_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL",
-		"FUGARO_RUNS_BUCKET", "FUGARO_COORDINATOR_REPOS", "FUGARO_GITHUB_APP_ID",
+		"FUGARO_RUNS_BUCKET", "FUGARO_COORDINATOR_REPOS",
 	} {
 		if _, ok := plain[want]; !ok {
 			t.Errorf("%s: %s does not set %s, which the sweep refuses to run without (ee/coordinator/cli/coordinator.go's runCoordinatorSweep)", path, job.name, want)
 		}
 	}
-	if len(plain) != 6 {
-		t.Errorf("%s: %s sets %d plain environment values (%v), want the six the command reads", path, job.name, len(plain), slices.Sorted(maps.Keys(plain)))
+	if len(plain) != 5 {
+		t.Errorf("%s: %s sets %d plain environment values every installation gets (%v), want the five the command reads whatever it reconciles", path, job.name, len(plain), slices.Sorted(maps.Keys(plain)))
 	}
-	// And no plain value is key material, whatever its entry is called: a PEM
-	// in a plan is the leak this test exists for.
+	// F24: the App's ID and the App's key arrive together, and only where the
+	// sweep reads a GitHub repository. A job whose Bitbucket reads go through
+	// the credentials service and whose repositories are all Bitbucket has
+	// nothing to sign with, so an entry that arrived anyway would mount a
+	// container the installation may not have.
+	for name, want := range map[string]string{
+		"FUGARO_GITHUB_APP_ID":          `local.coordinator_github ? [var.coordinator.github_app_id] : []`,
+		"FUGARO_GITHUB_APP_PRIVATE_KEY": `local.coordinator_github ? [var.coordinator.app_key_secret] : []`,
+	} {
+		if conditional[name] != want {
+			t.Errorf("%s: %s's %s arrives on `for_each = %s`, want `%s`: the App is the sweep's GitHub read's, and an installation with no GitHub repository has no App to name (F24)", path, job.name, name, conditional[name], want)
+		}
+	}
+	// And the condition behind them is asked of the repositories, not of the
+	// config: "does the sweep read GitHub" is exactly "is there a github entry
+	// in the list the job reconciles".
+	code := stripComments(string(b))
+	if !strings.Contains(code, "coordinator_github = local.deploy_coordinator && anytrue([") ||
+		!strings.Contains(code, `for r in var.coordinator.repos : r.provider == "github"`) {
+		t.Errorf("%s: whether the App credential arrives is not asked of the repositories the sweep reconciles (F24)", path)
+	}
+	// F23: the read mint is the coordinator's own variable, and the run path's
+	// is never on this job, conditional or not.
+	if names["FUGARO_CREDENTIALS_SERVICE_URL"] {
+		t.Errorf("%s: %s sets FUGARO_CREDENTIALS_SERVICE_URL, which is the RUN path's variable: a run's environment must not be able to move the root a sweep's token is minted at (F23)", path, job.name)
+	}
+	if !strings.Contains(conditional["FUGARO_COORDINATOR_CREDENTIALS_SERVICE_URL"], "local.credentials_service_on") {
+		t.Errorf("%s: %s does not point its Bitbucket reads at the credentials service (BB5, F23): the entry arrives on `for_each = %s`", path, job.name, conditional["FUGARO_COORDINATOR_CREDENTIALS_SERVICE_URL"])
+	}
+	// And no value is key material, whatever its entry is called: a PEM in a
+	// plan is the leak this test exists for.
 	for name, value := range plain {
 		if strings.Contains(value, "PRIVATE KEY") || strings.Contains(value, "BEGIN ") {
 			t.Errorf("%s: %s's value looks like key material: %s", path, name, value)
@@ -1411,7 +1476,18 @@ func TestTheCoordinatorJobTakesItsCredentialFromASecretAndNothingElse(t *testing
 // body: resourceBlocks reads resource headers only, and a job's env blocks sit
 // inside its container.
 func nestedBlocks(body, typ string) []string {
-	re := regexp.MustCompile(`(?m)^\s*` + typ + `\s*\{`)
+	return blocksMatching(body, regexp.MustCompile(`(?m)^\s*`+typ+`\s*\{`))
+}
+
+// dynamicBlocks returns the bodies of body's `dynamic "<typ>" {` blocks, which
+// nestedBlocks does not see: a dynamic block is the only way an HCL block
+// arrives conditionally, so an entry only some installations get — the
+// coordinator's App credential (F24) — is written as one and read here.
+func dynamicBlocks(body, typ string) []string {
+	return blocksMatching(body, regexp.MustCompile(`(?m)^\s*dynamic\s+"`+regexp.QuoteMeta(typ)+`"\s*\{`))
+}
+
+func blocksMatching(body string, re *regexp.Regexp) []string {
 	var out []string
 	for _, m := range re.FindAllStringIndex(body, -1) {
 		open := strings.LastIndex(body[m[0]:m[1]], "{") + m[0]

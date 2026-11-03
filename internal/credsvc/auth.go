@@ -342,11 +342,34 @@ type AuthConfig struct {
 	//
 	// A person is a class of its own and this list may not overlap another
 	// one: NewAuthenticator refuses a person that is also a job, a shared job,
-	// a review job or a verifier, and a person whose address is a
-	// *.gserviceaccount.com one. A service account is not a human operator,
-	// and an address two lists admit would be a caller whose class depends on
-	// which route it reached.
+	// a review job, a verifier or the coordinator, and a person whose address
+	// is a *.gserviceaccount.com one. A service account is not a human
+	// operator, and an address two lists admit would be a caller whose class
+	// depends on which route it reached.
 	PersonAccounts []string
+	// CoordinatorAccount is the installation's coordinator service account: the
+	// SECOND class the Bitbucket read mint admits (BB5, B5), because the sweep
+	// is not a run of this installation and holds no run identity either.
+	//
+	// It is one bare `email` claim — the coordinator Cloud Run job's own service
+	// account, which the installation module gives the read mint's invoker role
+	// and this variable — and it is matched against the caller's Google ID token
+	// by the same fold every other account is. It is empty by default, and an
+	// empty one is a statement rather than a missing gate: an installation that
+	// runs no coordinator admits nobody through this class, and the read mint
+	// answers every such call with the class's own refusal (F24/G8).
+	//
+	// It may NOT also be one of PersonAccounts: the two are the read mint's two
+	// classes, so an address in both would be a caller the route admits twice
+	// and a class decided by which list the lookup happened to read. It MAY be
+	// one of VerifierAccounts, and on an installation that has both that is the
+	// ordinary configuration (C3.9f): the two are classes of DIFFERENT routes —
+	// the verify route is not the read mint — and one address being admitted by
+	// both is not the overlap the class rule is about.
+	//
+	// The name is recorded in the audit line exactly as the person class's is,
+	// and it is an address like any other: never a credential.
+	CoordinatorAccount string
 	// Now is the clock, for tests; nil means time.Now.
 	Now func() time.Time
 }
@@ -370,12 +393,17 @@ type Authenticator struct {
 	// consults it.
 	verifierAccounts map[string]string
 	// personAccounts maps a presented email, folded the same way, to the
-	// configured spelling of that person: the list the read mint's caller
-	// class is (BB4). Like verifierAccounts it is read by one entry point and
+	// configured spelling of that person: one of the read mint's two caller
+	// classes (BB4). Like verifierAccounts it is read by one entry point and
 	// by nothing else — the read route is answered ahead of the shared parse,
 	// so no branch of Verify consults it.
 	personAccounts map[string]string
-	now            func() time.Time
+	// coordinatorAccount is the read mint's OTHER class, folded (BB5): the
+	// installation's coordinator service account, or "" when it has none. It is
+	// the folded key alone because the spelling the identity carries is
+	// cfg.CoordinatorAccount, and there is exactly one entry.
+	coordinatorAccount string
+	now                func() time.Time
 }
 
 // NewAuthenticator validates the configuration and returns the verifier.
@@ -463,6 +491,25 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		}
 		verifiers[folded] = email
 	}
+	// The coordinator class is one address and not a list (BB5): the read
+	// mint's second admission is the installation's own coordinator account, and
+	// an installation has one. It is held to the same printable-ASCII rule, and
+	// an empty one is not validated at all — an installation that runs no
+	// coordinator has named none, and the class admits nobody (F24).
+	//
+	// It is deliberately NOT held to the rule that keeps people off the service
+	// account shape: the coordinator IS a service account, which is the whole
+	// point of the class. Nor is it refused for also being a verifier: that list
+	// is the verify route's class and this one is the read mint's, and an
+	// installation whose coordinator verifies is the ordinary configuration.
+	var coordinator string
+	if cfg.CoordinatorAccount != "" {
+		folded, ok := foldEmail(cfg.CoordinatorAccount)
+		if !ok {
+			return nil, errors.New("credsvc: the coordinator account is not a printable ASCII email address")
+		}
+		coordinator = folded
+	}
 	// The person list is read the same way and for the same reason: its
 	// entries are bare addresses, and a duplicate admits the same caller
 	// either way. It is the one list held to two rules more than the verifier
@@ -501,6 +548,14 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		if _, isVerifier := verifiers[folded]; isVerifier {
 			return nil, errors.New("credsvc: a person account is also one of the verifiers, so one caller would be two classes")
 		}
+		if coordinator != "" && folded == coordinator {
+			// The two are the SAME route's classes (BB5), which is what makes
+			// this overlap different from the verifier one above: the read mint
+			// would then admit that caller through whichever of the two lists its
+			// admission happened to read, and the class would be an accident of
+			// the lookup rather than the deployment's statement.
+			return nil, errors.New("credsvc: a person account is also the coordinator's account, so one caller would be two classes on the read mint")
+		}
 		if strings.HasSuffix(folded, ".gserviceaccount.com") {
 			return nil, errors.New("credsvc: a person account is a service account address, and the person class is the installation's operators")
 		}
@@ -511,13 +566,14 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		now = time.Now
 	}
 	return &Authenticator{
-		cfg:              cfg,
-		jobAccounts:      accounts,
-		sharedAccounts:   shared,
-		reviewAccounts:   review,
-		verifierAccounts: verifiers,
-		personAccounts:   people,
-		now:              now,
+		cfg:                cfg,
+		jobAccounts:        accounts,
+		sharedAccounts:     shared,
+		reviewAccounts:     review,
+		verifierAccounts:   verifiers,
+		personAccounts:     people,
+		coordinatorAccount: coordinator,
+		now:                now,
 	}, nil
 }
 
@@ -745,35 +801,54 @@ func (a *Authenticator) VerifyVerifier(ctx context.Context, tok string) (string,
 	return account, nil
 }
 
-// VerifyPerson admits the caller of the Bitbucket read mint, or refuses it
-// with ErrUnverifiedJob (the caller is not one of the installation's people)
-// or ErrUnavailable (the key set could not be read). It answers the configured
-// spelling of the address that matched, which is what the audit line carries,
-// or the empty string with an error — never a partially verified caller.
+// VerifyReadCaller admits the caller of the Bitbucket read mint, or refuses it
+// with ErrUnverifiedJob (the caller is neither one of the installation's people
+// nor its coordinator) or ErrUnavailable (the key set could not be read). It
+// answers the configured spelling of the address that matched, which is what
+// the audit line carries, or the empty string with an error — never a partially
+// verified caller.
 //
-// It is VerifyVerifier's mechanism and not a second way to be a person (BB4,
-// B2): the signature, the audience, the issuer, the email fold and the token's
-// own window are the same shared code (callerClaims, checkCallerToken), and
-// the only difference is which list the folded address is looked up in — this
-// is the installation's operators rather than its verifiers. Which set a
-// caller is looked up in is what makes it a class, so the two are branches
-// beside each other and not one function with a list argument: the two lists
-// are configured separately and admit their callers to different routes.
+// The route has TWO classes and this one function is both, because they are
+// one admission read twice (BB5, B5). The person class is BB4's: the
+// installation's operators, who run `fugaro coordinator status` on their own
+// machine. The coordinator class is the coordinator Cloud Run job's service
+// account, which runs the sweep — also not a run of this installation, also
+// holding no run identity. Both ask the same question of the same route (may
+// this caller have a read-scoped token for a repository of this installation's
+// workspace), and both are answered by the same mint, so a second entry point
+// would be a second place for the token check to be spelled.
+//
+// What makes them two classes is still the list the folded address is looked up
+// in, and the order is the whole of the rule: the people first, then the
+// coordinator, and nothing else. Neither lookup may widen — the class is the
+// deployment's statement and not the shape of an address — which is why the
+// coordinator's OWN planned resident service (coordinator P7) is refused like
+// any other stranger even though it has exactly this account's shape.
+//
+// It is VerifyVerifier's mechanism and not a third spelling of the token check:
+// the signature, the audience, the issuer, the email fold and the token's own
+// window are the same shared code (callerClaims, checkCallerToken).
 //
 // It takes the caller's token directly for VerifyVerifier's reason: the read
-// route is answered ahead of RequestFromHTTP (server.go), because a person
-// holds no run identity and the shared parse refuses a call that has none.
-func (a *Authenticator) VerifyPerson(ctx context.Context, tok string) (string, error) {
+// route is answered ahead of RequestFromHTTP (server.go), because neither class
+// holds a run identity and the shared parse refuses a call that has none.
+func (a *Authenticator) VerifyReadCaller(ctx context.Context, tok string) (string, error) {
 	now := a.now()
 	claims, folded, err := a.callerClaims(ctx, tok)
 	if err != nil {
 		return "", err
 	}
 	account, ok := a.personAccounts[folded]
+	if !ok && a.coordinatorAccount != "" && folded == a.coordinatorAccount {
+		// The configured spelling, not the claim's, for the reason verifyJob
+		// returns the configured one: it is what an operator searches the audit
+		// log for.
+		account, ok = a.cfg.CoordinatorAccount, true
+	}
 	if !ok {
-		// The reason names the class and never the address, for the reason
+		// The reason names both classes and never the address, for the reason
 		// VerifyVerifier's does.
-		return "", fmt.Errorf("%w: the caller is not one of this installation's people, so it may not mint a Bitbucket read token", ErrUnverifiedJob)
+		return "", fmt.Errorf("%w: the caller is neither one of this installation's people nor its coordinator, so it may not mint a Bitbucket read token", ErrUnverifiedJob)
 	}
 	if err := checkCallerToken(claims, now); err != nil {
 		return "", err

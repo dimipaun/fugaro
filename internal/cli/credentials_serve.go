@@ -183,6 +183,17 @@ const (
 	// or empty is the empty list the read mint already refuses every caller
 	// with (BB4).
 	envPersonAccounts = "FUGARO_PERSON_ACCOUNTS"
+	// envCoordinatorAccount is the installation's coordinator service account
+	// (BB5): ONE bare address, which is the read mint's second class — the
+	// identity the scheduled sweep calls with — and not a list, because an
+	// installation has one coordinator. Like the verifier list and the person
+	// list it is read as OPTIONAL and lives outside credentialsServiceEnvNames:
+	// the module renders the entry only on an installation whose coordinator is
+	// on, and one that never opted in must still start, with a read mint that
+	// admits no coordinator at all. Absent or empty is that empty state, and a
+	// value that is present and is not one address is a deployment that is
+	// wrong (F24).
+	envCoordinatorAccount = "FUGARO_COORDINATOR_ACCOUNT"
 )
 
 // credentialsServiceEnvNames is the whole of this command's environment: the
@@ -340,6 +351,14 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	if err != nil {
 		return credsvc.Config{}, userErr("%v", err)
 	}
+	// The read mint's other class (BB5), read the same way and for the same
+	// reason: the entry is rendered only on an installation whose coordinator is
+	// on, and one that never opted in gets a route that admits no coordinator
+	// rather than a service that will not bind a port (F24).
+	coordinator, err := credentialsServiceCoordinator(getenv(envCoordinatorAccount))
+	if err != nil {
+		return credsvc.Config{}, userErr("%v", err)
+	}
 	// The database's shape, then the database itself: a URL that is not a
 	// Firebase Realtime Database at all is a different refusal from one that
 	// names another installation's database.
@@ -406,9 +425,13 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// state an installation that named no operator starts in, and the
 		// route answers every caller with the class's refusal.
 		PersonAccounts: persons,
-		Keys:           credsvc.NewGoogleKeys(),
-		JobKeys:        credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
-		Outcomes:       credsvc.RTDBOutcomes{DB: db},
+		// ... and its second class (BB5): the coordinator's own service
+		// account, which is the identity the scheduled sweep calls with. Empty
+		// is the state an installation that runs no coordinator starts in.
+		CoordinatorAccount: coordinator,
+		Keys:               credsvc.NewGoogleKeys(),
+		JobKeys:            credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
+		Outcomes:           credsvc.RTDBOutcomes{DB: db},
 	})
 	if err != nil {
 		return credsvc.Config{}, userErr("the credentials service cannot verify its callers, so it will not start: %v", err)
@@ -531,6 +554,35 @@ func credentialsServicePersons(raw string) ([]string, error) {
 		return nil, fmt.Errorf("%s is not the installation's person list: it must be a JSON array of the bare email addresses a Google ID token carries, one per person who may ask the service to mint a read-scoped Bitbucket token. Nothing was started and no credential was issued", envPersonAccounts)
 	}
 	return persons, nil
+}
+
+// credentialsServiceCoordinator turns FUGARO_COORDINATOR_ACCOUNT into the read
+// mint's second class (BB5): the coordinator Cloud Run job's own service
+// account, as the bare address a Google ID token's email claim carries.
+//
+// The two rules the lists above are read by hold here too, and this one adds a
+// third because a single value is not a document:
+//
+//   - absent or empty is the empty account and not a refusal, because the
+//     module renders the entry only on an installation whose coordinator is on
+//     (F24), and a service that would not start without it is one every
+//     installation that never opted in could not run;
+//   - what is present is held to the shape the module renders — one address,
+//     with no space in it and nothing around it — because the value reaches an
+//     authenticator that matches it against a claim, and a value carrying a
+//     quote or a newline is a deployment that is wrong rather than an account
+//     that admits nobody. Whether it is an ADDRESS at all is
+//     credsvc.NewAuthenticator's to say, the rule the verifier list is left to;
+//   - the refusal names the variable and never the value. It is an account, and
+//     the environment is this process's own (the no-echo rule).
+func credentialsServiceCoordinator(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	if raw != strings.TrimSpace(raw) || strings.ContainsAny(raw, " \t\r\n") {
+		return "", fmt.Errorf("%s is not the installation's coordinator account: it must be one bare email address, the one a Google ID token's email claim carries, with no space and nothing else in the value. Nothing was started and no credential was issued", envCoordinatorAccount)
+	}
+	return raw, nil
 }
 
 // credentialsServiceJobAccounts turns FUGARO_JOB_ACCOUNTS into the two things

@@ -51,12 +51,14 @@ import {
   resolveBinary,
   resolveInstalledBinary,
   runToCompletion,
+  sameArgv,
   startSidecar,
 } from '../main/spawn'
 import type {
   ChildSpawner,
   JSONObject,
   Notice,
+  SettingsEditPhase,
   Sidecar,
   SpawnPlan,
   SpawnTarget,
@@ -65,13 +67,14 @@ import { createSpawnLog } from '../main/spawnlog'
 import type { SpawnLogWriter } from '../main/spawnlog'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
 import { MAX_TEXT_INPUT_LENGTH } from '../shared/sanitize'
-import { SourceRefusal, refusalFrom, NO_PLAN_CHECKOUT } from './source'
+import { SourceRefusal, refusalFrom, NO_PLAN_CHECKOUT, SETTINGS_EDIT_MOVED } from './source'
 import type {
   FeedEnd,
   FugaroSource,
   InstallationRef,
   JSONDoc,
   LiveFeed,
+  SettingsEditSpawn,
   Snapshot,
   TextSnapshot,
   Unsubscribe,
@@ -354,12 +357,17 @@ export class CliSource implements FugaroSource {
     })
   }
 
-  #plan(operation: OperationName, args: ValidatedArguments): SpawnPlan {
+  #plan(
+    operation: OperationName,
+    args: ValidatedArguments,
+    settingsEdit?: { readonly phase: SettingsEditPhase; readonly layer: string },
+  ): SpawnPlan {
     return planFor(operation, args, {
       target: this.#options.target,
       binaryPath: this.#binaryPath,
       directory: this.#directory,
       appEnv: this.#env,
+      ...(settingsEdit === undefined ? {} : { settingsEdit }),
     })
   }
 
@@ -597,6 +605,64 @@ export class CliSource implements FugaroSource {
    * nothing and mints nothing of the host's. */
   readSettings(args: ValidatedArguments): Promise<Snapshot> {
     return this.#readDocument('settings.read', args)
+  }
+
+  /** settingsEditArgv is `settings.edit`'s plan for one phase, and it is the
+   * plan `settingsEdit` below spawns: both go through `#plan`, so the argv the
+   * confirmation window shows and the argv the child is started with cannot be
+   * two spellings of one edit (`argvFor` is the only producer of either, and
+   * `#plan` is the only caller that adds this binary, this directory and this
+   * environment to it). */
+  settingsEditArgv(args: ValidatedArguments, phase: SettingsEditPhase, layer: string): Promise<readonly string[]> {
+    return Promise.resolve(this.#plan('settings.edit', args, { phase, layer }).argv)
+  }
+
+  /**
+   * settingsEdit runs one phase of the settings write (the settings-edit plan's
+   * C3): the dry run, which classifies the edit and writes nothing (D1106), or
+   * the write itself, which carries `--yes` (D1107).
+   *
+   * **A non-zero exit is a returned refusal and not a thrown one**, unlike every
+   * read beside it: a dry run the CLI refuses is a sentence the settings window
+   * shows with a re-read control rather than a failed read of a screen
+   * (D1112), and a write the CLI refuses -- the compare-and-swap, a coding
+   * agent's session, a managed layer -- is the same sentence in the same place.
+   * What is thrown stays thrown: a spawn that could not start at all
+   * (`runToCompletion` rejects) reaches the caller as the console's own
+   * failure, because there is no CLI sentence to show.
+   *
+   * **The document is parsed the way a read's is** (`parseStdout`), so a dry
+   * run's JSON is read whole and a write's sentence is its `text`. Nothing is
+   * decoded here: `settingsview.ts` reads the dry run's members strictly and
+   * the caller reads the write's sentence.
+   *
+   * **`shown` is checked before anything is spawned.** The plan is built first
+   * and its argv compared with the one the confirmation window drew; a
+   * difference is `SETTINGS_EDIT_MOVED` and no child at all. Comparing the
+   * plans rather than the phase and the layer is deliberate: the binding's own
+   * words (`--project`, `--config`, the working directory) are part of what the
+   * operator read, so a project re-chosen between the window and the write is a
+   * refusal here even though the phase and the layer are unchanged.
+   */
+  async settingsEdit(
+    args: ValidatedArguments,
+    phase: SettingsEditPhase,
+    layer: string,
+    shown: readonly string[],
+  ): Promise<SettingsEditSpawn> {
+    const plan = this.#plan('settings.edit', args, { phase, layer })
+    if (!sameArgv(plan.argv, shown)) {
+      return { refusal: SETTINGS_EDIT_MOVED, document: null, text: '' }
+    }
+    const result = await runToCompletion(plan, {
+      log: this.#log,
+      ...(this.#options.spawner === undefined ? {} : { spawner: this.#options.spawner }),
+    })
+    if (result.code !== 0) {
+      return { refusal: cliSentence(result.stderr) ?? `${plan.operation} failed`, document: null, text: '' }
+    }
+    const read = parseStdout(result.stdout, this.#stamp())
+    return { refusal: null, document: read.document, text: result.stdout.trim() }
   }
 
   environmentReport(args: ValidatedArguments): Promise<Snapshot> {
@@ -1105,6 +1171,22 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * `target_layer`), and a screen that had to wait a minute between the write
      * and the re-read would draw a table it knows is out of date. */
     readSettings: (args) => read('settings.read', (source) => source.readSettings(args)),
+    /**
+     * settingsEditArgv and settingsEdit are the settings write's two halves (the
+     * settings-edit plan's C3), and neither is a read: the first answers the
+     * exact argv one phase spawns, which the confirmation window shows, and the
+     * second spawns that phase.
+     *
+     * They go through `read`'s resolution for the reason every other method
+     * does -- a console with no installation must refuse rather than plan over
+     * nothing -- and **not** through any cadence or precondition: each call is
+     * one edit the operator asked for, and a dry run cached from a minute ago
+     * would be a classification the file may have moved under.
+     */
+    settingsEditArgv: (args, phase, layer) =>
+      read('settings.edit', async (source) => source.settingsEditArgv(args, phase, layer)),
+    settingsEdit: (args, phase, layer, shown) =>
+      read('settings.edit', (source) => source.settingsEdit(args, phase, layer, shown)),
     environmentReport: (args) => read('environment.report', (source) => source.environmentReport(args)),
     forget: drop,
     close: drop,

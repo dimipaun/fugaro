@@ -35,6 +35,15 @@ type credentialsFixture struct {
 		} `json:"job_accounts"`
 		VerifierAccounts []string `json:"verifier_accounts"`
 	} `json:"credentials_service"`
+	// Coordinator is the coordinator's opt-in (coordinator plan P5), which this
+	// fixture names so that the service's tenth environment entry — the read
+	// mint's second class (BB5), the account the sweep calls with — is on a real
+	// plan and its value read back: only the account's ID and the project are
+	// needed for that, so the job itself stays off (deploy_job false, which is
+	// the state every installation's first apply plans).
+	Coordinator struct {
+		AccountID string `json:"account_id"`
+	} `json:"coordinator"`
 	// Operators are the installation's, not the service's: BB4's read mint
 	// admits their user members, and the module renders them into the service's
 	// own environment as bare addresses (FUGARO_PERSON_ACCOUNTS).
@@ -107,10 +116,12 @@ func credentialsServiceEnvOf(t *testing.T, rc ResourceChange) (plain map[string]
 // every one of them is there and well formed (internal/cli's
 // credentialsServiceConfig) — and the eighth, the verifier list, which this
 // fixture names and which the process reads as an optional value (C3.9g1,
-// D1068). So a variable the Go side computes and the module drops — or one the
-// module sets from a value the fixture does not carry — is a service that never
-// answers a job, or a verify route that admits nobody, on an installation whose
-// init reports success.
+// D1068), the ninth, the read mint's admitted people (BB4), and the tenth, the
+// read mint's coordinator class (BB5), which arrives with the installation's
+// coordinator account. So a variable the Go side computes and the module drops
+// — or one the module sets from a value the fixture does not carry — is a
+// service that never answers a job, or a verify route that admits nobody, on an
+// installation whose init reports success.
 //
 // The Terraform tftest (roots/installation/tests/installation.tftest.hcl)
 // pins the same map against its own variable, and both halves are needed: the
@@ -143,6 +154,13 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if f.Coordinator.AccountID == "" {
+		t.Fatalf("the credentials fixture names no coordinator: this plan is the one that exercises the module's conditional tenth entry, and a fixture that names none could not tell it from the seven the module always sets: %v", f)
+	}
+	// The coordinator class's one address, spelled the way Google spells the
+	// account the module creates from these two inputs — the same derivation
+	// the service's own revision runs as (below).
+	coordinator := f.Coordinator.AccountID + "@" + f.Project + ".iam.gserviceaccount.com"
 	want := map[string]string{
 		"FUGARO_PROJECT":                 f.FugaroProject,
 		"FUGARO_GCP_PROJECT":             f.Project,
@@ -153,6 +171,7 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 		"FUGARO_JOB_ACCOUNTS":            string(jobAccounts),
 		"FUGARO_VERIFIER_ACCOUNTS":       string(verifiers),
 		"FUGARO_PERSON_ACCOUNTS":         string(people),
+		"FUGARO_COORDINATOR_ACCOUNT":     coordinator,
 	}
 	// The map's keys are the allow-list the cover holds the service to: a name
 	// here that the allow-list does not carry would make this test pass on an
@@ -206,6 +225,15 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 	}
 	if got := str(rc.Change.After["template"].([]any)[0].(map[string]any)["service_account"]); got != c.AccountID+"@"+f.Project+".iam.gserviceaccount.com" {
 		t.Errorf("the revision runs as %q, want the account this module creates", got)
+	}
+	// And the tenth entry is the email of the coordinator account THIS plan
+	// creates: the class the read mint admits is the identity the sweep runs as,
+	// and the same one iam.tf grants roles/run.invoker to on this service, so a
+	// module that rendered another address — or the account of another project —
+	// is a service that admits nobody the job can present, or somebody else.
+	coordSA := resource(t, p, "module.installation.google_service_account.coordinator[0]")
+	if got := str(coordSA.Change.After["email"]); got != coordinator {
+		t.Errorf("the plan creates the coordinator account %q, want %q", got, coordinator)
 	}
 	// And the environment names no secret: the whole point of the four facts is
 	// that the service derives the bundle's container itself and reads it as

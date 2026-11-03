@@ -144,7 +144,7 @@ export type SettingsViewRead =
 
 /** SettingsDryRun is P3's dry-run document (`settingsWriteDoc`), read
  * strictly: the ten members the contract gives it, and no others. */
-interface SettingsDryRun {
+export interface SettingsDryRun {
   readonly key: string
   readonly layer: string
   readonly path: string
@@ -174,7 +174,7 @@ function textAt(raw: unknown): string | null {
  * so the whole document is refused and the window is not drawn
  * (`SETTINGS_VIEW_SHAPE_BECAUSE`).
  */
-function dryRunAt(document: Record<string, unknown>): SettingsViewRead | SettingsDryRun {
+function dryRunAt(document: Record<string, unknown>): SettingsDryRunRefusal | SettingsDryRun {
   if (document['version'] !== SETTINGS_VIEW_DOC_VERSION) {
     return {
       ok: false,
@@ -209,8 +209,39 @@ function dryRunAt(document: Record<string, unknown>): SettingsViewRead | Setting
 /** isRefusal is whether `dryRunAt` answered with a reason rather than a
  * document. The two shapes are told apart by the one member a document always
  * carries and a reason never does. */
-function isRefusal(read: SettingsViewRead | SettingsDryRun): read is SettingsViewRead {
+function isRefusal(read: SettingsDryRunRefusal | SettingsDryRun): read is SettingsDryRunRefusal {
   return 'ok' in read
+}
+
+/** SettingsDryRunRefusal is the reason there is no dry run to read. */
+interface SettingsDryRunRefusal {
+  readonly ok: false
+  readonly because: string
+}
+
+/** SettingsDryRunRead is the parsed dry run, or the reason there is none. */
+export type SettingsDryRunRead = { readonly ok: true; readonly dryRun: SettingsDryRun } | SettingsDryRunRefusal
+
+/**
+ * settingsDryRun is the dry run's document read once, for the two callers that
+ * must read the **same** document: `settingsView`, which draws the window from
+ * it, and the flow that spawns the write (`settingsedit.ts`), which refuses a
+ * document that answers for another key or another layer, or that carries a
+ * refusal. A reader of its own on that side could answer differently from this
+ * one, and the two would then build a window and a write over two readings of
+ * one document.
+ *
+ * A document that is not there at all answers `SETTINGS_VIEW_ABSENT_BECAUSE`:
+ * the caller with the CLI's own sentence for a refused dry run substitutes it
+ * (`SettingsViewInputs.because`), which is what makes a refusal the CLI's
+ * words rather than this console's.
+ */
+export function settingsDryRun(document: unknown): SettingsDryRunRead {
+  if (document === null || typeof document !== 'object' || Array.isArray(document)) {
+    return { ok: false, because: SETTINGS_VIEW_ABSENT_BECAUSE }
+  }
+  const read = dryRunAt(document as Record<string, unknown>)
+  return isRefusal(read) ? { ok: false, because: read.because } : { ok: true, dryRun: read }
 }
 
 /**
@@ -223,34 +254,37 @@ function isRefusal(read: SettingsViewRead | SettingsDryRun): read is SettingsVie
  * the CLI's sentence and `absent()`'s is only the fallback when there is none.
  */
 export function settingsView(inputs: SettingsViewInputs): SettingsViewRead {
-  const raw = inputs.dryRun
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-    return { ok: false, because: inputs.because ?? SETTINGS_VIEW_ABSENT_BECAUSE }
+  const read = settingsDryRun(inputs.dryRun)
+  if (!read.ok) {
+    // A dry run that answered **no document** is the CLI's own sentence when
+    // there is one to show; every other refusal is this console's, and a shape
+    // it cannot decode is never explained away by a sentence about a read.
+    const absent = read.because === SETTINGS_VIEW_ABSENT_BECAUSE
+    return { ok: false, because: absent ? (inputs.because ?? SETTINGS_VIEW_ABSENT_BECAUSE) : read.because }
   }
-  const read = dryRunAt(raw as Record<string, unknown>)
-  if (isRefusal(read)) return read
+  const dry = read.dryRun
   const { row } = inputs
   // D1108: the old value is the dry run's `old`, and the read's `value` when
   // the key is unset in the layer being written -- the dry run prints no old
   // value there, and an empty cell would read as "the old value is the empty
   // string", which is a different fact from "nothing is set here".
-  const oldValue = read.old !== '' ? read.old : (row.value ?? '')
+  const oldValue = dry.old !== '' ? dry.old : (row.value ?? '')
   const shadowed = row.targetLayer !== row.wins
   return {
     ok: true,
     view: Object.freeze({
-      key: read.key,
+      key: dry.key,
       oldValue,
-      newValue: read.new,
+      newValue: dry.new,
       layer: row.targetLayer,
       wins: row.wins,
       sentence: shadowed ? SETTINGS_SHADOWED_SENTENCE : '',
-      widening: read.widening,
-      why: read.why,
+      widening: dry.widening,
+      why: dry.why,
       argv: Object.freeze([...inputs.argv]),
-      defaultButton: read.widening ? 'cancel' : 'confirm',
-      tick: read.widening ? SETTINGS_TICK_LABEL : '',
-      confirmNeedsTick: read.widening,
+      defaultButton: dry.widening ? 'cancel' : 'confirm',
+      tick: dry.widening ? SETTINGS_TICK_LABEL : '',
+      confirmNeedsTick: dry.widening,
     }),
   }
 }

@@ -31,7 +31,8 @@ import (
 func newImageCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "image", Short: "Build and inspect a workflow's derived container image"}
 	cmd.AddCommand(newImageBuildCmd(), newImageRenderCmd(), newImageSelftestCmd(), newImageGitCredentialCmd(),
-		newImageGateCmd(), newImageRecordCmd(), newImageCheckCmd(), newImageStatusCmd(), newImageRefreshCmd())
+		newImageGateCmd(), newImageRecordCmd(), newImageCheckCmd(), newImageStatusCmd(), newImageRefreshCmd(),
+		newImageLsCmd(), newImageAddCmd(), newImageRmCmd(), newImagePromoteCmd())
 	return cmd
 }
 
@@ -74,23 +75,39 @@ type imageBuildOptions struct {
 func newImageBuildCmd() *cobra.Command {
 	var o imageBuildOptions
 	cmd := &cobra.Command{
-		Use:   "build",
-		Short: "Build the derived image with Cloud Build; --local builds it with local Docker and smoke-tests it",
-		Long: "Build the workflow's derived image.\n\n" +
-			"Without --local, Cloud Build builds it from the repository's base branch\n" +
-			"as the repository's build account (cloning with its bitbucket-token, or\n" +
-			"a read-only token its GitHub App mints) and pushes it to the repository's\n" +
-			"own registry, which fugaro update --repo creates. It pushes a candidate,\n" +
-			"smoke-tests it without network, and only then points latest at it and\n" +
-			"records what it was built from, unless a newer build is already\n" +
-			"recorded. Run it from the repository's checkout: the checkout's\n" +
-			"fugaro.yaml and origin say what to build.\n\n" +
+		Use:   "build [name]",
+		Short: "Build a catalog entry's image with Cloud Build, or the workflow's derived image; --local builds the derived one with local Docker",
+		Long: "Build an image with Cloud Build.\n\n" +
+			"With an image catalog published (fugaro image ls lists its entries), it\n" +
+			"builds the catalog entry you name, or every entry whose source is a\n" +
+			"Dockerfile: the entry's Dockerfile is copied into the project's bucket,\n" +
+			"the build reads that one object, mounts the workflow's secrets as file\n" +
+			"secrets, smoke-tests the candidate without network and promotes it into\n" +
+			"the installation's shared registry with a content tag naming the\n" +
+			"definition it built. Run it from the checkout of the entry's own\n" +
+			"repository: the build account, the provider credential and the secrets\n" +
+			"are that repository's.\n\n" +
+			"Without a catalog — or with --workflow, which selects the per-workflow\n" +
+			"case — Cloud Build builds the workflow's derived image from the\n" +
+			"repository's base branch as the repository's build account (cloning with\n" +
+			"its bitbucket-token, or a read-only token its GitHub App mints) and\n" +
+			"pushes it to the repository's own registry, which fugaro update --repo\n" +
+			"creates. It pushes a candidate, smoke-tests it without network, and only\n" +
+			"then points latest at it and records what it was built from, unless a\n" +
+			"newer build is already recorded. Run it from the repository's checkout:\n" +
+			"the checkout's fugaro.yaml and origin say what to build.\n\n" +
 			"A Cloud Build is billable, so it asks for the project's name typed at a real\n" +
 			"terminal: --json, a pipe and a coding agent's session never confirm it (it\n" +
 			"prints the one line to run in your own terminal window and exits 1).\n" +
 			"--local builds with your own Docker and costs nothing in the cloud.",
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error { return runImageBuild(cmd, o) },
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := ""
+			if len(args) > 0 {
+				name = args[0]
+			}
+			return runImageBuild(cmd, name, o)
+		},
 	}
 	f := cmd.Flags()
 	f.BoolVar(&o.local, "local", false, "build with the local Docker daemon from the checkout you are in")
@@ -106,11 +123,28 @@ func newImageBuildCmd() *cobra.Command {
 	return cmd
 }
 
-func runImageBuild(cmd *cobra.Command, o imageBuildOptions) error {
-	ctx := cmd.Context()
-	if !o.local {
+func runImageBuild(cmd *cobra.Command, name string, o imageBuildOptions) error {
+	if o.local {
+		if name != "" {
+			return &ExitError{Code: ExitUserError, Err: errors.New("a catalog entry is built by Cloud Build; --local builds the derived image of the workflow you are in")}
+		}
+		return runImageBuildLocal(cmd, o)
+	}
+	// --workflow selects the per-workflow case, which a catalog entry's name
+	// is not: one command names one image (D1144).
+	if o.workflow != "" {
+		if name != "" {
+			return &ExitError{Code: ExitUserError, Err: errors.New("--workflow names a workflow's derived image and a positional name names a catalog entry: give one of them, not both")}
+		}
 		return runImageBuildCloud(cmd, o)
 	}
+	return runImageBuildCatalogOrDerived(cmd, name, o)
+}
+
+// runImageBuildLocal builds the derived image of the workflow the checkout
+// declares with the local Docker daemon.
+func runImageBuildLocal(cmd *cobra.Command, o imageBuildOptions) error {
+	ctx := cmd.Context()
 	if o.repo != "" {
 		return &ExitError{Code: ExitUserError, Err: errors.New("--repo applies to Cloud Build; --local builds the checkout you are in")}
 	}
@@ -362,7 +396,15 @@ func buildNotConfirmable(conds initflow.Conditions, repo, workflow string) error
 	if workflow != "" {
 		cmd += " --workflow " + quoteWord(workflow)
 	}
-	return userErr("a Cloud Build is billable, so its confirmation (the project's name) is typed at a real terminal: --json, a pipe and a coding agent never give it; run %s in your own terminal window", cmd)
+	return userErr("%s", buildNotConfirmableRoute(cmd))
+}
+
+// buildNotConfirmableRoute is the sentence buildNotConfirmable and the
+// catalog arm's refusal both end with, over the command each of them says to
+// run (cmd, without the leading words): stated once, so the two ways into
+// `fugaro image build` cannot refuse with two different sentences.
+func buildNotConfirmableRoute(cmd string) string {
+	return fmt.Sprintf("a Cloud Build is billable, so its confirmation (the project's name) is typed at a real terminal: --json, a pipe and a coding agent never give it; run %s in your own terminal window", cmd)
 }
 
 // confirmBuild shows the ⚠ CONFIRM banner on stderr and reads the project's

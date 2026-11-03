@@ -11,6 +11,7 @@ import (
 
 	secretmanager "google.golang.org/api/secretmanager/v1"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -445,6 +446,31 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 			if !built {
 				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("the local config has no base_images.%s, which workflow %s's checkout: clone job runs: fugaro update --base %s", config.BaseKind, ws.Name, config.BaseKind)})
 			}
+		} else if entry := catalogImageEntry(ws.Image); entry != "" {
+			// A catalog image is not a tag in the repository's own registry
+			// (spec.go's catalogJobImage routes a workflow that pins an entry
+			// through the installation's shared one), so hasLatest's question
+			// would be about a package this repository's build never writes
+			// and its answer would refuse the entry's job. Whether the entry
+			// is built is asked of the entry instead, and only once a release
+			// that reads the key exists at all: an older fugaro's image
+			// cannot read the catalog the entry is named in, so its job is
+			// held back with the fix that gives it one.
+			if !imageCatalogShipped {
+				built = false
+				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("workflow %s's job runs the project image catalog's entry %s (%s), and no released fugaro publishes or reads the project policy's image_catalog key yet: this installation's fugaro is older than the release that does, so run fugaro update, or give the workflow an image: or dockerfile: block of its own and leave the catalog to a newer fugaro",
+					ws.Name, entry, ws.Image)})
+			} else {
+				b, err := catalogImageBuilt(ctx, c, tg, spec, entry)
+				if err != nil {
+					return RepoSpec{}, nil, err
+				}
+				built = b
+				if !built {
+					reasons = append(reasons, gate{MissingImage, fmt.Sprintf("the project image catalog's entry %s is not built yet, so workflow %s's job has no image to run: fugaro image build %s builds it in the installation's shared registry %s",
+						entry, ws.Name, entry, spec.Installation.SharedRegistry)})
+				}
+			}
 		} else {
 			b, err := hasLatest(ctx, c, tg, spec, ws.Image)
 			if err != nil {
@@ -475,6 +501,13 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 					if ws.Checkout == config.CheckoutClone {
 						what = fmt.Sprintf("the local config has no base_images.%s", config.BaseKind)
 						fix = fmt.Sprintf("set it (fugaro update --base %s)", config.BaseKind)
+					} else if entry := catalogImageEntry(ws.Image); entry != "" {
+						what = fmt.Sprintf("the project image catalog's entry %s is not built yet", entry)
+						fix = fmt.Sprintf("build it (fugaro image build %s)", entry)
+						if !imageCatalogShipped {
+							what = fmt.Sprintf("workflow %s's job runs the project image catalog's entry %s, and no released fugaro reads that key yet", ws.Name, entry)
+							fix = "run fugaro update, or give the workflow an image: or dockerfile: block of its own"
+						}
 					}
 					return RepoSpec{}, nil, userErr("Cloud Run job %s exists but has no container image, and %s; %s or fix the job, then run fugaro update again",
 						ws.Job, what, fix)
@@ -700,6 +733,62 @@ func hasLatest(ctx context.Context, c *Clients, tg target, spec RepoSpec, image 
 	name := "projects/" + spec.GCPProject + "/locations/" + m[1] + "/repositories/" + spec.Registry.RepositoryID +
 		"/packages/" + pkg + "/tags/latest"
 	_, err := c.AR.Projects.Locations.Repositories.Packages.Tags.Get(name).Context(ctx).Do()
+	switch {
+	case absent(err, serviceArtifactRegistry, tg):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("reading tag %s: %w", name, err)
+	}
+	return true, nil
+}
+
+// imageCatalogShipped is the gate the release that publishes — and reads —
+// the project policy's image_catalog key flips (D1140, D1156). False means no
+// released fugaro writes that key, so a job whose image is a catalog entry is
+// not one this fugaro update made, and readiness holds it back with the fix
+// that gives the operator one that is.
+//
+// internal/cli's imageCatalogShipped (recipes_skew.go) is the same fact at
+// the CLI's own edges, and this package cannot read it — internal/cli imports
+// internal/infra, never the other way round. The release that flips one flips
+// both in the same commit.
+var imageCatalogShipped = false
+
+// catalogImageEntry is the catalog entry a job image belongs to, "" when the
+// image is not a catalog image. isCatalogImage is the recogniser, so what
+// readiness accepts and what the mover's read of a job's container accepts
+// are the same images.
+func catalogImageEntry(image string) string {
+	if !isCatalogImage(image) {
+		return ""
+	}
+	base, _, _ := strings.Cut(image, ":")
+	parts := strings.Split(base, "/")
+	return strings.TrimPrefix(parts[len(parts)-1], catalogImagePrefix)
+}
+
+// catalogImageBuilt reports whether the catalog entry's image is built: its
+// build record in the runs bucket, which the catalog build writes and the
+// daily check reads (gcp.CatalogRecordKey), or the moving :latest tag the
+// job pulls from the installation's shared registry. Either is enough — the
+// tag is what a job runs, so an entry whose record was pruned still deploys,
+// and the record is what a build moves first.
+func catalogImageBuilt(ctx context.Context, c *Clients, tg target, spec RepoSpec, entry string) (bool, error) {
+	key, err := gcp.CatalogRecordKey(spec.Slug, entry)
+	if err != nil {
+		return false, err
+	}
+	ok, err := hasRecord(ctx, c, tg, spec.Installation.RunsBucket, key)
+	if err != nil || ok {
+		return ok, err
+	}
+	m := registryHostRE.FindStringSubmatch(spec.Installation.RegistryHost)
+	if m == nil {
+		return false, fmt.Errorf("the registry host %s is not <region>-docker.pkg.dev/<project>", spec.Installation.RegistryHost)
+	}
+	name := "projects/" + spec.GCPProject + "/locations/" + m[1] + "/repositories/" + spec.Installation.SharedRegistry +
+		"/packages/" + catalogImagePrefix + entry + "/tags/latest"
+	_, err = c.AR.Projects.Locations.Repositories.Packages.Tags.Get(name).Context(ctx).Do()
 	switch {
 	case absent(err, serviceArtifactRegistry, tg):
 		return false, nil

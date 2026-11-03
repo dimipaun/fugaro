@@ -51,7 +51,7 @@
 import { createHash } from 'node:crypto'
 
 import { FeedTracker } from '../main/spawn'
-import type { Notice, Timers } from '../main/spawn'
+import type { Notice, SettingsEditPhase, Timers } from '../main/spawn'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
 import { stringifyDeep } from '../shared/stringify'
 import { MAX_REDACTABLE_LINE_LENGTH, REDACTOR_VERSION, RedactionRefusal, assertRedacted } from './redact'
@@ -63,6 +63,7 @@ import type {
   JSONDoc,
   LiveFeed,
   Snapshot,
+  SettingsEditSpawn,
   TextSnapshot,
   Unsubscribe,
 } from './source'
@@ -74,6 +75,12 @@ import type {
  * format is refused rather than half-read.
  */
 export const FIXTURE_FORMAT_VERSION = 1
+
+/** FIXTURE_WRITES_NOTHING is the sentence the replaying source refuses the
+ * settings edit's two phases with: a recording is reads, and an argv built for a
+ * write would be the one thing this source must never invent. */
+export const FIXTURE_WRITES_NOTHING =
+  'a fixture replays reads and writes nothing: there is no recorded dry run or write for a settings edit'
 
 /** FIXTURE_HEADER_KEY is the header line's one key. A file whose first line has
  * no such key is not a fixture, and saying so is better than reporting a JSON
@@ -592,6 +599,24 @@ export class FixtureSource implements FugaroSource {
 
   readSettings(args: ValidatedArguments): Promise<Snapshot> {
     return this.#document('settings.read', args)
+  }
+
+  /** A recording replays reads and holds no write, so the settings edit's two
+   * phases are refused by name: there is no recorded document to build a dry
+   * run or a write from, and a fixture that answered one would be inventing a
+   * child's argv. The refusal is a `SourceRefusal` like every other one here, so
+   * the caller shows the sentence and not a stack. */
+  settingsEditArgv(): Promise<readonly string[]> {
+    return Promise.reject(new SourceRefusal(FIXTURE_WRITES_NOTHING))
+  }
+
+  settingsEdit(
+    _args: ValidatedArguments,
+    _phase: SettingsEditPhase,
+    _layer: string,
+    _shown: readonly string[],
+  ): Promise<SettingsEditSpawn> {
+    return Promise.reject(new SourceRefusal(FIXTURE_WRITES_NOTHING))
   }
 
   environmentReport(args: ValidatedArguments): Promise<Snapshot> {

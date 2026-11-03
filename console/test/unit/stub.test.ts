@@ -17,8 +17,8 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { SPAWN_COMMANDS } from '../../src/main/spawn'
-import { STUB_COMMAND_KEYS, commandKey, installStub } from './stub'
+import { SETTINGS_EDIT_OPERATION, SPAWN_COMMANDS } from '../../src/main/spawn'
+import { SETTINGS_EDIT_KEY, STUB_COMMAND_KEYS, commandKey, installStub } from './stub'
 
 /** freshDirectory is a temporary directory this test owns. */
 function freshDirectory(): string {
@@ -59,6 +59,13 @@ describe('the stub’s command keys', () => {
       // other words are not on the spawn table at all -- and the scenario
       // keyed `'settings'` is what a test hands the section's fixture.
       'settings',
+      // The settings-edit plan's C3 (`settings.edit` / `editSetting`): the
+      // write, and the one key a row's own words cannot produce. `set`/`unset`
+      // and the key it names are the edit's, so the child's leading words are
+      // `settings set <KEY>` -- a key per edit -- and the read above would
+      // otherwise own the whole group. Its key is the operation, and both
+      // spellings of a write answer to it (the assertions below).
+      'settings edit',
       'version',
       'doctor',
       'config list',
@@ -75,12 +82,18 @@ describe('the stub’s command keys', () => {
     ])
     // The console's one spawn table, which since the owner's design ruling of
     // 2026-10-25 includes the installation rail's own read (`config list
-    // --json`, the discovery the whole first run is built on) and, since V2.5.1a
-    // part 2a, the surface's one write (`run.launch`, whose argv is `run
-    // --task-file - --json`, so the child's key is the command word `run`). A
+    // --json`, the discovery the whole first run is built on), since V2.5.1a
+    // part 2a the surface's first write (`run.launch`, whose argv is `run
+    // --task-file - --json`, so the child's key is the command word `run`) and
+    // since the settings-edit plan's C3 the second (`settings.edit`, the one
+    // row whose words do not produce its own key: see `SETTINGS_EDIT_KEY`). A
     // stub that answered every row but one would make every discovery test pass
     // for the wrong reason.
-    expect(STUB_COMMAND_KEYS).toEqual(SPAWN_COMMANDS.map((row) => commandKey([...row.words])))
+    expect(STUB_COMMAND_KEYS).toEqual(
+      SPAWN_COMMANDS.map((row) =>
+        row.operation === SETTINGS_EDIT_OPERATION ? SETTINGS_EDIT_KEY : commandKey([...row.words]),
+      ),
+    )
     // One key per operation: two rows sharing one would make one of them
     // unreachable and its scenario silently wrong.
     expect(new Set(STUB_COMMAND_KEYS).size).toBe(STUB_COMMAND_KEYS.length)
@@ -94,6 +107,25 @@ describe('the stub’s command keys', () => {
     expect(commandKey(['logs', '20261015-120000-aa01', '--url'])).toBe('logs --url')
     expect(commandKey(['version'])).toBe('version')
     expect(commandKey(['budget', 'show', '--json', '--project', 'fugaro'])).toBe('budget show')
+  })
+
+  it('tells the settings write apart from the settings read, under one key for both spellings', () => {
+    // The settings group is two operations on one command word, and the write's
+    // own words are not a key: `set`/`unset` and the key it names vary per edit,
+    // so a child reading them would compute `settings set budget.cap_usd` -- a
+    // key no scenario can name, and one that changes the day a different key is
+    // edited. These are real write argvs, in the order `argvFor` emits them
+    // (`spawn.test.ts` pins the vectors themselves): the subcommand, the key,
+    // the layer, the phase and, for a set, the value behind the terminator.
+    expect(
+      commandKey(['settings', 'set', 'budget.cap_usd', '--layer', 'local', '--dry-run', '--json', '--project', 'fugaro']),
+    ).toBe('settings edit')
+    expect(
+      commandKey(['settings', 'unset', 'budget.cap_usd', '--layer', 'local', '--yes', '--project', 'fugaro', '--config', '/tmp/config.toml']),
+    ).toBe('settings edit')
+    // ...and the read keeps its own key, which is the key the row's words
+    // produce and the one every settings section's fixture already uses.
+    expect(commandKey(['settings', '--json', '--project', 'fugaro'])).toBe('settings')
   })
 
   it('carries the key derivation into the child rather than a second copy', () => {

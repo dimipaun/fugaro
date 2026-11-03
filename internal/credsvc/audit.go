@@ -126,11 +126,11 @@ const (
 	// credentialWithoutTier).
 	//
 	// Its line is the one line of this service that carries a repository and no
-	// run: the caller is a person, not a job of this installation, so there is
-	// no run identity to state and the repository is what says which repository
-	// the token was minted for. It is the second purpose whose caller holds no
-	// job (see callerWithoutJobPurpose) and the only one whose line names a
-	// repository (see repositoryOnlyPurpose).
+	// run: the caller is a person or the coordinator (BB5), not a job of this
+	// installation, so there is no run identity to state and the repository is
+	// what says which repository the token was minted for. It is the second
+	// purpose whose caller holds no job (see callerWithoutJobPurpose) and the
+	// only one whose line names a repository (see repositoryOnlyPurpose).
 	PurposeBitbucketRead = "bitbucket_read"
 )
 
@@ -161,8 +161,9 @@ func credentialWithoutTier(purpose string) bool {
 		purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead
 }
 
-// callerWithoutJobPurpose reports whether a line records a PERSON's act rather
-// than a run's: a verifier's, and a read mint's. Both callers hold no run
+// callerWithoutJobPurpose reports whether a line records a caller's act rather
+// than a run's: a verifier's, and a read mint's — whose callers are a person or
+// the coordinator (BB5). All of them hold no run
 // identity and are not a job of this installation, so the Caller-without-Job
 // rule and the StatusOK line's "a run and a job, or neither" rule are relaxed
 // for them and for no other purpose — a job purpose that dropped its job is
@@ -230,9 +231,9 @@ type AuditEvent struct {
 	// refused before the run identity was verified, and they are set together
 	// or not at all: a run id without its repository is not a run this service
 	// can name. A read mint's line is the one line that carries a repository
-	// and no run (see repositoryOnlyPurpose), because the person who minted is
-	// not a run of this installation and the repository is what the token was
-	// for.
+	// and no run (see repositoryOnlyPurpose), because the caller who minted —
+	// a person or the coordinator — is not a run of this installation and the
+	// repository is what the token was for.
 	Run        string
 	Repository string
 	// Job is the Cloud Run job the run reported (Identity.Job — the caller's
@@ -241,8 +242,8 @@ type AuditEvent struct {
 	// installation's own spelling): "which job called" is the account's answer
 	// and not the header's (auth.go's verifyJob), and the two are recorded
 	// together because the identity is what carries them — except on a person's
-	// line, which is the one line whose caller is not a job of this
-	// installation and therefore carries no job. See callerWithoutJobPurpose.
+	// or the coordinator's line, which is the one line whose caller is not a
+	// job of this installation and therefore carries no job. See callerWithoutJobPurpose.
 	Job    string
 	Caller string
 	// Credential is the credential's NAME, never its value, and Tier is the
@@ -508,7 +509,7 @@ func (a *Auditor) checked(ev AuditEvent) (AuditEvent, auditRefusal) {
 		return AuditEvent{}, auditRefusal{"run", refusalUnexpected}
 	case repositoryOnlyPurpose(ev.Purpose) && ev.Job != "":
 		// For the same reason the line carries no run, it carries no job: the
-		// person minting is not a job of this installation.
+		// caller minting is not a job of this installation.
 		return AuditEvent{}, auditRefusal{"job", refusalUnexpected}
 	case (ev.Run == "") != (ev.Repository == "") && !repositoryOnlyPurpose(ev.Purpose):
 		// The identity carries both: a run id without the repository it
@@ -525,7 +526,7 @@ func (a *Auditor) checked(ev AuditEvent) (AuditEvent, auditRefusal) {
 		// The identity carries both, so a line that names one names the other.
 		// A person's act — a verifier's, a read mint's — is the exception, and
 		// it is only about WHO may be recorded: it is not a run in a job of
-		// this installation, so its line carries the verified email as the
+		// this installation, so its line carries the verified account as the
 		// caller and no job — and a job-purpose line that dropped its job is
 		// still refused here.
 		return AuditEvent{}, auditRefusal{"job", refusalMissing}
@@ -551,8 +552,8 @@ func (a *Auditor) checked(ev AuditEvent) (AuditEvent, auditRefusal) {
 		return AuditEvent{}, auditRefusal{"tier", refusalUnknown}
 	}
 	// A line that says a credential was used names the whole act; a refusal
-	// carries only what was known when it was refused. A person's act is the
-	// exception: it holds no run identity and is not a job of this
+	// carries only what was known when it was refused. A person's or the
+	// coordinator's act is the exception: it holds no run identity and is not a job of this
 	// installation, so its OK line states the purpose and the credential the
 	// answer was computed with and no run and no job — and a read mint's states
 	// the repository the token was minted for into the bargain, which is the
