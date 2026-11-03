@@ -320,8 +320,13 @@ func WriteAudit(ctx context.Context, s *storage.Service, bucket string, r AuditR
 	}
 	if _, err := s.Objects.Insert(bucket, &storage.Object{Name: key, ContentType: "application/json"}).
 		IfGenerationMatch(0).Media(bytes.NewReader(data)).Context(ctx).Do(); err != nil {
-		return "", fmt.Errorf("%w: gs://%s/%s could not be written (%v), and an unattended apply that leaves no trail is the state this record exists to end, so the command fails",
-			ErrAuditWrite, bucket, key, safetext.Field(err.Error()))
+		// The cloud's own error stays wrapped (%w and not its text): the caller
+		// tells a missing grant from an outage — the two need different
+		// sentences and different exit codes — and it can only do that if the
+		// *googleapi.Error is still in the chain. bucketErrFor wraps the same
+		// way for the same reason. key is bounded because it is built here.
+		return "", fmt.Errorf("%w: gs://%s/%s could not be written, and an unattended apply that leaves no trail is the state this record exists to end, so the command fails: %w",
+			ErrAuditWrite, safetext.Field(bucket), safetext.Field(key), err)
 	}
 	return key, nil
 }

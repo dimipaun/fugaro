@@ -385,7 +385,13 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 	m, ok, reason, gen, err = readFactObject(ctx, s, project, gcpProject, number)
 	switch {
 	case labelWhy == "":
-		return m, ok, reason, 0, err
+		// The generation goes back with the answer: it is the object's own,
+		// read off the same reply as its bytes, and it is what the audit
+		// record names (M6, D1024) — a caller that asked for it and was
+		// answered 0 for an object the read DID place would file a record
+		// saying nothing was in force. It is 0 only where no object was
+		// believed, and those are the returns below.
+		return m, ok, reason, gen, err
 	case err == nil && refusedFigure(m):
 		// The two answer functions' own conditions, deliberately (see
 		// refusedFigure): all three have to agree about which refusals carry a
