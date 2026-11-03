@@ -849,9 +849,10 @@ var previewStageKinds = [...]string{"implement", "review_first", "fix", "review"
 // them), each read as at most one round: a loop the number leaves at 0 never
 // runs, so its stages are not counted -- the sum here is StageBound(rp, f, n,
 // n3) for the same f, n and n3, which the tests pin for every catalog recipe.
-// level3 is the mode's own row where the run's resolved levels run level 3 and
-// 0 where they leave it off (previewLevel3Rounds), so a mode that does not run
-// the level is not quoted one.
+// level3 is agent.adversarial_rounds where a layer set it, else the mode's own
+// row, where the run's resolved levels run level 3, and 0 where they leave it
+// off (previewLevel3Rounds), so a mode that does not run the level is not
+// quoted one.
 func previewTypicalCounts(rp *recipe.Recipe, first, rounds, level3 int) map[string]int {
 	if rp.Mode == recipe.ModeReview {
 		return map[string]int{"review": 1}

@@ -70,10 +70,9 @@ func levelsOf(t *testing.T, rcp *recipe.Recipe, derived bool, mode rigor.Mode, a
 // the round readiness reads) and the adversarial pass after it (level 3, on at
 // Critical — the levels row this runner reads).
 //
-// Red before the change: the default's steps were first_line and review, so
-// the plan ran level 3 only as the step O7 inserts for a level a recipe has
-// none for, never as the step the recipe itself writes — the bounce it runs
-// was O7's, not the catalog's.
+// The plan is the same as before the recipe wrote the step itself: O7 inserted
+// an identical bouncing step for a level the recipe had none for, so what this
+// test pins is the recipe's own step and its bounce, not a change in the plan.
 func TestDefaultRecipeRunsThreeLevelsWhenEachIsOn(t *testing.T) {
 	def := catalogRecipe(t, recipe.DefaultName)
 	a, providers := providerCoderAgent()
