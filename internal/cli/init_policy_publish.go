@@ -101,6 +101,13 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	if lc.VerifierAccounts != nil {
 		add("verifier_accounts", lc.VerifierAccounts, p.VerifierAccounts, false)
 	}
+	// The same rule for the image catalog (D1140): a config silent about it
+	// keeps the node's, and a config that states one, an empty one included,
+	// differs from a node that carries another, so a catalog-only edit reaches
+	// the node through `fugaro update` with no second command.
+	if lc.ImageCatalog != nil {
+		add("image_catalog", lc.ImageCatalogEffective(nil), p.ImageCatalog, false)
+	}
 	// The members a publish DERIVES from the local config are compared too, by
 	// their own derivation: the accounts block, which is the operator's
 	// claude_accounts.<name>.allow_data_to qualified with the provider of the

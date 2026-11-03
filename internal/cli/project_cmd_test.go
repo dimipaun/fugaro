@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -273,6 +274,41 @@ func TestUpdatePublishesTheCatalogWithNoSecondCommand(t *testing.T) {
 	}
 	if st.State != initflow.Done {
 		t.Errorf("the stage has %s %q after the update: publishing a catalog asks for no second command", st.State, st.Detail)
+	}
+}
+
+// TestUpdatePublishesACatalogOnlyChange: the node already agrees with the config
+// in everything except the catalog, so the only reason the stage has anything to
+// publish is the catalog itself. The test above passes through a stale budget
+// node and would pass without the catalog being compared at all.
+func TestUpdatePublishesACatalogOnlyChange(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if p := publishedPolicy(t, f); p.ImageCatalog != nil {
+		t.Fatalf("the first publish carries a catalog: %+v", p.ImageCatalog)
+	}
+	// The operator then adds the catalog to the file and nothing else: the node
+	// differs from the config only in that member.
+	cfg := readFileString(t, f.path)
+	if err := os.WriteFile(f.path, []byte(cfg+"\n"+catalogConfigYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the update's policy stage says %s %q, want a pending publish: a node that differs only in the catalog is not up to date", st.State, st.Detail)
+	}
+	if _, err := h.apply(t, true); err != nil {
+		t.Fatal(err)
+	}
+	if p := publishedPolicy(t, f); p.ImageCatalog == nil || len(p.ImageCatalog.Entries) != 2 {
+		t.Fatalf("ImageCatalog = %+v, want the config's two entries", p.ImageCatalog)
 	}
 }
 
