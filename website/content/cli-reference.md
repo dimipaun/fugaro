@@ -1940,10 +1940,10 @@ Add an image catalog entry to this machine's project config
 
 Add a named image to the project's image catalog, in this machine's project
 config: the copy fugaro update publishes to the project's policy node
-(image_catalog). The entry has one of three sources — a Dockerfile in one of
-the project's repositories (--dockerfile owner/name:path, with --branch), a
-Dockerfile written out here (--inline <file>), or a prebuilt image — and its
-tags are what a repository's needs: is matched against.
+(image_catalog). The entry's source is a Dockerfile in one of the project's
+repositories (--dockerfile owner/name:path, with --branch) or a Dockerfile
+written out here (--inline <file>), and its tags are what a repository's
+needs: is matched against.
 
 Nothing is built and nothing is published here: fugaro image build <name>
 builds the entry's image, and fugaro update publishes the catalog. --default

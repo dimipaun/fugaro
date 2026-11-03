@@ -115,17 +115,22 @@ func runImagePromote(cmd *cobra.Command, o cloudOptions, repo, name string) erro
 	if err := imageCatalogGate(onDisk, "the catalog entry "+pluginwire.Printable(e.Name), cmd.ErrOrStderr()); err != nil {
 		return err
 	}
-	if err := userSave(cmd.OutOrStdout(), path, old, next); err != nil {
-		return err
-	}
+	// The checkout is edited in memory before either file is written: both
+	// changes are one change (D1147), and a fugaro.yaml this command cannot
+	// read or edit must leave the project config as it was rather than an
+	// entry nothing is pointed at. Only the last write can then leave the
+	// two halves apart.
 	yamlPath := filepath.Join(root, "fugaro.yaml")
 	raw, err := readFugaroYAML(yamlPath)
 	if err != nil {
-		return userErr("the catalog entry %s is written, but %s could not be read to point the workflow at it: %v", pluginwire.Printable(e.Name), pluginwire.Printable(yamlPath), err)
+		return userErr("%s could not be read to point the workflow %s at the catalog entry %s: %v", pluginwire.Printable(yamlPath), pluginwire.Printable(workflow), pluginwire.Printable(e.Name), err)
 	}
 	edited, err := setWorkflowImageName(raw, workflow, e.Name)
 	if err != nil {
-		return userErr("the catalog entry %s is written, but %s could not be edited to point the workflow at it: %v", pluginwire.Printable(e.Name), pluginwire.Printable(yamlPath), err)
+		return userErr("%s could not be edited to point the workflow %s at the catalog entry %s: %v", pluginwire.Printable(yamlPath), pluginwire.Printable(workflow), pluginwire.Printable(e.Name), err)
+	}
+	if err := userSave(cmd.OutOrStdout(), path, old, next); err != nil {
+		return err
 	}
 	if err := writeFileAtomic(yamlPath, edited); err != nil {
 		return userErr("the catalog entry %s is written, but pointing the workflow at it failed: %v", pluginwire.Printable(e.Name), err)

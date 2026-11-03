@@ -286,10 +286,10 @@ func newImageAddCmd() *cobra.Command {
 		Short: "Add an image catalog entry to this machine's project config",
 		Long: "Add a named image to the project's image catalog, in this machine's project\n" +
 			"config: the copy fugaro update publishes to the project's policy node\n" +
-			"(image_catalog). The entry has one of three sources — a Dockerfile in one of\n" +
-			"the project's repositories (--dockerfile owner/name:path, with --branch), a\n" +
-			"Dockerfile written out here (--inline <file>), or a prebuilt image — and its\n" +
-			"tags are what a repository's needs: is matched against.\n\n" +
+			"(image_catalog). The entry's source is a Dockerfile in one of the project's\n" +
+			"repositories (--dockerfile owner/name:path, with --branch) or a Dockerfile\n" +
+			"written out here (--inline <file>), and its tags are what a repository's\n" +
+			"needs: is matched against.\n\n" +
 			"Nothing is built and nothing is published here: fugaro image build <name>\n" +
 			"builds the entry's image, and fugaro update publishes the catalog. --default\n" +
 			"marks the entry a job whose repositories name no needs runs; a catalog marks\n" +

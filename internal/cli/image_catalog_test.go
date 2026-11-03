@@ -231,6 +231,66 @@ func TestImageAddWritesAnEntry(t *testing.T) {
 	if string(before) != string(after) {
 		t.Error("a refused add still wrote the config")
 	}
+
+	// --dockerfile names a Dockerfile in one of the project's repositories,
+	// as owner/name:path, and --branch is the branch the build reads it from:
+	// the entry keeps the pointer, so it follows the file rather than a copy
+	// of it.
+	if _, _, err := execute(t, "image", "add", "app", "--tags", "node", "--dockerfile", "acme/app:.fugaro/app.Dockerfile", "--branch", "release-1.0"); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc, err = localcfg.Parse(data)
+	if err != nil {
+		t.Fatalf("the config after the add: %v\n%s", err, data)
+	}
+	if lc.ImageCatalog == nil || len(lc.ImageCatalog.Entries) != 4 {
+		t.Fatalf("ImageCatalog = %+v, want the three entries plus the new one", lc.ImageCatalog)
+	}
+	src := lc.ImageCatalog.Entries[3].Source
+	if src.Kind != config.SourceDockerfile || src.Repo != "acme/app" || src.Path != ".fugaro/app.Dockerfile" || src.Branch != "release-1.0" {
+		t.Errorf("the written source = %+v, want the repository, the path and the branch", src)
+	}
+
+	// A --dockerfile that is not owner/name:path is refused before anything
+	// is written: a pointer the build could not read is not an entry.
+	for _, df := range []string{"acme/app", ":path", "acme/app:"} {
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, err = execute(t, "image", "add", "bad", "--dockerfile", df)
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "owner/name:path") {
+			t.Errorf("--dockerfile %q: exit %d, err %v, want it refused as owner/name:path", df, ExitCode(err), err)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != string(before) {
+			t.Errorf("--dockerfile %q wrote the config", df)
+		}
+	}
+
+	// The two definitions are one entry's alternatives, and --branch belongs
+	// to the pointer alone: neither pair may be given together.
+	for _, c := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"both definitions", []string{"--dockerfile", "acme/app:.fugaro/app.Dockerfile", "--inline", df}, "--inline"},
+		{"a branch for an inline definition", []string{"--inline", df, "--branch", "main"}, "--branch"},
+		{"no definition at all", []string{"--tags", "node"}, "needs a definition"},
+	} {
+		_, _, err := execute(t, append([]string{"image", "add", "bad"}, c.args...)...)
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: exit %d, err %v, want it refused naming %q", c.name, ExitCode(err), err, c.want)
+		}
+	}
 }
 
 // TestImageRmRefusesAnEntryAJobStillPointsAt: removing an entry a
