@@ -690,7 +690,15 @@ func runCoordinatorStatus(cmd *cobra.Command, o *coordinatorOptions) error {
 	if err != nil {
 		return err
 	}
-	reader, tokens, err := coordinatorReader(env.Config(), warn)
+	// No local config, deliberately: this read serves GitHub only and refuses a
+	// Bitbucket repository (coordinator.ErrBitbucket), while `show` reads one
+	// through the service's read mint (BB4). Handing the config over would make
+	// the mere presence of a credentials_service block turn that refusal into a
+	// read — a behaviour that arrived with a config block and not with a task.
+	// The project-wide read of Bitbucket is BB5's
+	// (docs/bitbucket-credentials/implementation-plan.md) and lands with its own
+	// wiring, as the sweep's does.
+	reader, tokens, err := coordinatorReader(nil, warn)
 	if err != nil {
 		return err
 	}

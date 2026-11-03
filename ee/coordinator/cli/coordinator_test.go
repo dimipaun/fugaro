@@ -1045,6 +1045,26 @@ func TestCoordinatorStatusRefusesABitbucketProject(t *testing.T) {
 	}
 }
 
+// The refusal above is a property of the READ and not of the installation's
+// configuration: an installation that has opted into the credentials service
+// — the block IS the opt-in (localcfg.CredentialsService) — still gets it from
+// status, which is the read it has always been. `show` reads one Bitbucket
+// repository through the service's read mint (BB4); the project-wide read of
+// Bitbucket is BB5's, and a status read that widened with the block would be
+// BB5 arriving as a side effect of `fugaro update` writing a URL.
+func TestCoordinatorStatusBitbucketUnchangedWithService(t *testing.T) {
+	f := newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	f.appendConfig(t, "  acme/legacy: { provider: bitbucket, base_branch: main, workflows: [web] }\n")
+	f.appendConfig(t, "credentials_service: { url: https://fugaro-credentials-abcde-uc.a.run.app }\n")
+	if lc := f.config(t); lc.CredentialsService == nil || lc.CredentialsService.URL == "" {
+		t.Fatal("the fixture's config carries no credentials_service block, so this test aims at nothing")
+	}
+	_, _, err := execute(t, "coordinator", "status", "--all", "--since", "0")
+	if fcli.ExitCode(err) != fcli.ExitUserError || !strings.Contains(err.Error(), "cannot be widened to a project") {
+		t.Fatalf("status on an installation with the credentials service: exit %d, %v", fcli.ExitCode(err), err)
+	}
+}
+
 // secretErrHost fails every read of a pull request with an error carrying the
 // credential, which is what a real host's 401 does.
 type secretErrHost struct {
