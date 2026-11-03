@@ -230,7 +230,7 @@ run "shared_registry" {
       [for m in google_artifact_registry_repository_iam_member.base_writer : m.member != "allUsers" && m.member != "allAuthenticatedUsers"],
       [for m in google_artifact_registry_repository_iam_member.ghcr_reader : m.member != "allUsers" && m.member != "allAuthenticatedUsers"],
     ))
-    error_message = "no member this module grants on a registry may be public. It grants none on the shared registry at all: that registry's writer is each repository's build account and its readers are each repository's job accounts, granted by that repository's own root (modules/repo/registry.tf), which TestSharedRegistryRepoIDMatchesTheModule pins over this module's text."
+    error_message = "no member this module grants on a registry may be public. It grants none on the shared registry at all: that registry's writer and tag mover are each repository's build account and its readers are each repository's job accounts, granted by that repository's own root (modules/repo/registry.tf), which TestSharedRegistryRepoIDMatchesTheModule pins over this module's text."
   }
 }
 

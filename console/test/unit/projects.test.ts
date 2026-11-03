@@ -49,14 +49,18 @@ import { putText } from '../../src/renderer/app'
 import {
   PROJECT_PANEL_KEYS,
   PROJECTS_THEMES,
+  SETTINGS_PENCIL_KEY,
   buildProjectsModel,
   buildProjectsModels,
+  buildProjectsSettings,
   fillProjectsModels,
+  fillProjectsSettings,
   renderProjects,
 } from '../../src/renderer/screens/projects'
 import type {
   ProjectsInputs,
   ProjectsModelsInputs,
+  ProjectsSettingsInputs,
   ScreenElement,
   ScreenFactory,
 } from '../../src/renderer/screens/projects'
@@ -1050,6 +1054,374 @@ describe('the read-only models panel', () => {
       }),
     )
     expect(texts(fresh, 'projects-models-catalog-stale')).toEqual(['current'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The settings section, and the pencils' row set (the settings-edit plan's C1).
+// ---------------------------------------------------------------------------
+
+/** SETTINGS is `settings --json` (contract section 6.19), invented: four rows,
+ * one per case the screen has to tell apart. The first is writable with a
+ * target layer and gets a pencil; the second is owned by a family command and
+ * names it instead; the third is sensitive and is **not drawn at all**; the
+ * fourth is writable with **no** target layer, which is a row the generic path
+ * would not write, so it gets no pencil either. */
+const SETTINGS = {
+  version: 1,
+  project: 'example-project',
+  generated_at: '2026-11-03T06:00:00Z',
+  sources: [{ layer: 'default', read_at: '2026-11-03T06:00:00Z', duration_ms: 0, status: 'ok' }],
+  settings: [
+    {
+      key: 'budget.per_run_usd',
+      scope: 'project',
+      value: '8',
+      wins: 'project',
+      default: { value: '10', source: 'settings.DefaultPerRunUSD' },
+      state: 'ok',
+      writable: true,
+      owner: '',
+      target_layer: 'project',
+    },
+    {
+      key: 'agent.models.coder',
+      scope: 'project',
+      value: 'example-model',
+      wins: 'default',
+      default: { value: 'example-model', source: 'settings.DefaultCoder' },
+      state: 'ok',
+      writable: false,
+      owner: 'fugaro models',
+      target_layer: '',
+    },
+    {
+      key: 'credentials.example_key_name',
+      scope: 'project',
+      value: 'a-value-the-table-must-not-draw',
+      wins: 'local',
+      default: { unset: 'no value is stored' },
+      state: 'ok',
+      sensitive: true,
+      writable: false,
+      owner: '',
+      target_layer: '',
+    },
+    {
+      key: 'budget.mode',
+      scope: 'project',
+      value: 'enforce',
+      wins: 'project',
+      default: { value: 'observe', source: 'settings.DefaultMode' },
+      state: 'ok',
+      writable: true,
+      owner: '',
+      target_layer: '',
+    },
+  ],
+}
+
+/** settingsInputs is a complete set of settings inputs: the document above. */
+function settingsInputs(overrides: Partial<ProjectsSettingsInputs> = {}): ProjectsSettingsInputs {
+  return { raw: SETTINGS, because: null, ...overrides }
+}
+
+/** settingsTree draws the settings panel into a host of its own, the way the
+ * entry does. */
+function settingsTree(inputs: ProjectsSettingsInputs): FakeScreen {
+  const host = new FakeScreen('div')
+  fillProjectsSettings(factory, buildProjectsSettings(inputs), host)
+  return host
+}
+
+/** settingsRow is the row drawn for one key, asserted to be single. The key is
+ * the row's own first cell and never an attribute: a key is a dotted string a
+ * document chose, and the screen sanitizes every string it draws rather than
+ * putting one in an attribute. */
+function settingsRow(node: ScreenElement, key: string): FakeScreen {
+  const found = all(node, 'projects-settings-row').filter((row) =>
+    all(row, 'projects-settings-key').some((cell) => cell.textContent === key),
+  )
+  expect(found, `expected exactly one settings row for ${key}`).toHaveLength(1)
+  const first = found[0]
+  if (first === undefined) throw new Error(`no settings row ${key}`)
+  return first
+}
+
+/** settingsKeys is every row's key, in the order the table draws them. */
+function settingsKeys(node: ScreenElement): readonly (string | null)[] {
+  return texts(node, 'projects-settings-key')
+}
+
+/** DOC_SHAPE_REASON is the console's own sentence for a `settings` member that
+ * is not a list of rows, and ROW_SHAPE_REASON is its sentence for a row that
+ * carries a member of a type the contract does not give it. Both are the
+ * screen's words and not the CLI's -- no CLI prints either -- so they are
+ * pinned here as text, the way the version sentence is below. */
+const DOC_SHAPE_REASON =
+  'settings --json is not a document this console reads: its settings member is not a list of rows'
+const ROW_SHAPE_REASON =
+  'settings --json carried a row this console does not read: a member the table draws is not the type the contract gives it, so no row of it is drawn'
+
+/** settingsWithRow is the document above with **one** row: the first row, with
+ * one member replaced. It is how the two shape rules are tested one member at a
+ * time without writing out a document per case. */
+function settingsWithRow(member: string, value: unknown): unknown {
+  const first = SETTINGS.settings[0] as unknown as Record<string, unknown>
+  return { ...SETTINGS, settings: [{ ...first, [member]: value }] }
+}
+
+describe('the settings section', () => {
+  it('draws one row per setting the document carries, in its own order', () => {
+    const tree = settingsTree(settingsInputs())
+    expect(settingsKeys(tree)).toEqual([
+      'budget.per_run_usd',
+      'agent.models.coder',
+      'budget.mode',
+    ])
+    expect(texts(tree, 'projects-settings-key')).toEqual([
+      'budget.per_run_usd',
+      'agent.models.coder',
+      'budget.mode',
+    ])
+    expect(texts(tree, 'projects-settings-value')).toEqual(['8', 'example-model', 'enforce'])
+  })
+
+  it('gives a writable row with a target layer a pencil that names its key, and no other row one', () => {
+    const tree = settingsTree(settingsInputs())
+    const row = settingsRow(tree, 'budget.per_run_usd')
+    expect(all(row, 'projects-settings-pencil')).toHaveLength(1)
+    // D1116: the pencil is a real control, in the tab order, and its accessible
+    // name names the row it edits -- a column of six identical "Edit"s names
+    // none of them. It is **not** `aria-disabled`: the release that draws this
+    // pencil is the one that binds it (the entry's own seam, below).
+    const pencil = one(row, 'projects-settings-pencil')
+    expect(pencil.tag).toBe('button')
+    expect(pencil.getAttribute('type')).toBe('button')
+    expect(pencil.getAttribute('aria-label')).toBe('Edit budget.per_run_usd')
+    expect(pencil.getAttribute('aria-disabled')).toBeNull()
+    expect(pencil.getAttribute('disabled')).toBeNull()
+    expect(pencil.getAttribute('tabindex')).toBeNull()
+    // The key travels on the button as well, because the entry binds the click
+    // on the element the drawing answered with and has no row of its own.
+    expect(pencil.getAttribute('data-setting-key')).toBe('budget.per_run_usd')
+    // The state is never colour alone (styling design section 3.5): the control
+    // says what it does in a word, and the word is the button's own text.
+    expect(pencil.textContent).toBe('Edit')
+    // The owned row, and the writable row with no target layer, each draw none.
+    expect(all(settingsRow(tree, 'agent.models.coder'), 'projects-settings-pencil')).toEqual([])
+    expect(all(settingsRow(tree, 'budget.mode'), 'projects-settings-pencil')).toEqual([])
+  })
+
+  it('names the pencil with the key as the sanitizer drew it, never with the raw text', () => {
+    // The key reaches an **attribute** on the pencil and the sanitizer is the
+    // door it goes through, the same door the key's own cell uses: a key this
+    // build will not draw as a key is the console's own mark in the name and in
+    // the attribute alike, so no document string rides into either.
+    const tree = settingsTree(
+      settingsInputs({
+        raw: {
+          ...SETTINGS,
+          settings: [
+            {
+              ...(SETTINGS.settings[0] as unknown as Record<string, unknown>),
+              key: 'budget per run',
+            },
+          ],
+        },
+      }),
+    )
+    const pencil = one(tree, 'projects-settings-pencil')
+    expect(pencil.getAttribute(SETTINGS_PENCIL_KEY)).toBe(UNAVAILABLE_MARK)
+    expect(pencil.getAttribute('aria-label')).toBe(`Edit ${UNAVAILABLE_MARK}`)
+  })
+
+  it('draws the row with no pencil when the read carries no `writable` member', () => {
+    // The owner's ruling of 2026-11-03: the console keeps no floor of its own
+    // for this screen. A CLI whose read carries none of the three writability
+    // members (`writable`, `owner`, `target_layer`, the D1102 half of the row)
+    // draws the table it can -- key, value, wins, state -- and **no pencil, and
+    // no sentence about one**: an absent member is a CLI that does not offer the
+    // edit, which is not the same fact as a row that refuses it.
+    const row = {
+      key: 'budget.per_run_usd',
+      scope: 'project',
+      value: '8',
+      wins: 'project',
+      state: 'ok',
+    }
+    const tree = settingsTree(settingsInputs({ raw: { ...SETTINGS, settings: [row] } }))
+    expect(settingsKeys(tree)).toEqual(['budget.per_run_usd'])
+    expect(texts(tree, 'projects-settings-value')).toEqual(['8'])
+    expect(all(tree, 'projects-settings-pencil')).toEqual([])
+    expect(texts(tree, 'projects-settings-owner')).toEqual([])
+    expect(drawn(tree)).not.toContain(ROW_SHAPE_REASON)
+    // Each of the three on its own: none of them is required to draw the row,
+    // and the pencil goes when the member that decides it goes. `owner` is the
+    // exception -- it says which family writes a row the generic path may not,
+    // so a writable row with a target layer keeps its pencil without it.
+    for (const member of ['writable', 'owner', 'target_layer']) {
+      const absent = settingsTree(
+        settingsInputs({
+          raw: {
+            ...SETTINGS,
+            settings: [
+              Object.fromEntries(
+                Object.entries(SETTINGS.settings[0] as unknown as Record<string, unknown>).filter(
+                  ([name]) => name !== member,
+                ),
+              ),
+            ],
+          },
+        }),
+      )
+      expect(settingsKeys(absent), `${member} absent dropped the row`).toEqual(['budget.per_run_usd'])
+      expect(all(absent, 'projects-settings-pencil'), `${member} absent drew a pencil`).toHaveLength(
+        member === 'owner' ? 1 : 0,
+      )
+    }
+  })
+
+  it('names the family that writes an owned row, in the command’s own words', () => {
+    const tree = settingsTree(settingsInputs())
+    expect(texts(tree, 'projects-settings-owner')).toEqual(['fugaro models'])
+    expect(texts(tree, 'projects-settings-owner-word')).toEqual(['written by '])
+    expect(texts(tree, 'projects-settings-owner-generic')).toEqual([', not by the generic path'])
+  })
+
+  it('a Sensitive row is absent from the rendered table', () => {
+    const tree = settingsTree(settingsInputs())
+    // The owner's ruling of 2026-11-01 (D1111): a sensitive row is never
+    // editable and **never shown**, so the key, the value and the pencil are
+    // all absent -- not redacted, not blanked: absent.
+    expect(settingsKeys(tree)).not.toContain('credentials.example_key_name')
+    expect(drawn(tree)).not.toContain('credentials.example_key_name')
+    expect(drawn(tree)).not.toContain('a-value-the-table-must-not-draw')
+  })
+
+  it('drops a row whose `sensitive` is anything but a false one, whatever its type', () => {
+    // The check **fails closed**: only an absent member or exactly `false` may
+    // draw a row, so a document that spells the flag `"true"`, `1`, `"false"`,
+    // `0` or `null` loses the row rather than drawing it. A coercion here would
+    // draw exactly the row the ruling of 2026-11-01 (D1111) says is never shown.
+    for (const sensitive of ['true', 1, 'false', 0, null, {}]) {
+      const tree = settingsTree(
+        settingsInputs({
+          raw: {
+            ...SETTINGS,
+            settings: [
+              {
+                ...(SETTINGS.settings[0] as unknown as Record<string, unknown>),
+                sensitive,
+              },
+            ],
+          },
+        }),
+      )
+      expect(settingsKeys(tree), `sensitive: ${JSON.stringify(sensitive)} drew a row`).toEqual([])
+      expect(drawn(tree)).not.toContain('a-value-the-table-must-not-draw')
+      expect(all(tree, 'projects-settings-pencil')).toEqual([])
+    }
+  })
+
+  it('draws no pencil for a sensitive row that is otherwise writable, so nothing of it reaches the window', () => {
+    // The one mutation proof on D1111's guard, and it is aimed at the **pencil**
+    // rather than at the row: this row carries `writable: true` and a target
+    // layer, so the `sensitive` check is the only thing keeping the pencil off
+    // it -- remove that one check and the pencil below appears, and with it the
+    // door C3 opens a dry run, a window and an argv behind. `settingsview.ts`
+    // carries no member a sensitive value could arrive through; this is the half
+    // that keeps such a row from ever being drawn for it. The same row without
+    // the flag is the control: it draws one.
+    const drawable = SETTINGS.settings[0] as unknown as Record<string, unknown>
+    const sensitive = settingsTree(
+      settingsInputs({ raw: { ...SETTINGS, settings: [{ ...drawable, sensitive: true }] } }),
+    )
+    expect(settingsKeys(sensitive)).toEqual([])
+    expect(all(sensitive, 'projects-settings-pencil')).toEqual([])
+    const control = settingsTree(settingsInputs({ raw: { ...SETTINGS, settings: [drawable] } }))
+    expect(all(settingsRow(control, 'budget.per_run_usd'), 'projects-settings-pencil')).toHaveLength(1)
+  })
+
+  it('refuses the table rather than coercing a member of a type the contract does not give it', () => {
+    // The owner's rule of 2026-10-30: unknown keys are ignored and **types are
+    // strict**. Every member the table draws is checked, and a wrong one makes
+    // the document an unavailable panel rather than a `''`, a `null` or a
+    // `false` the CLI never printed -- a coerced owner would draw a row as
+    // writable, or as owned by nobody, without a word about it.
+    const wrong: readonly (readonly [string, unknown])[] = [
+      ['scope', 3],
+      ['value', 8],
+      ['wins', false],
+      ['state', null],
+      ['writable', 'true'],
+      ['owner', 5],
+      ['target_layer', {}],
+    ]
+    for (const [member, value] of wrong) {
+      const tree = settingsTree(settingsInputs({ raw: settingsWithRow(member, value) }))
+      expect(all(tree, 'projects-settings-row'), `${member}: ${JSON.stringify(value)} drew a row`).toEqual([])
+      expect(all(tree, 'projects-settings-pencil'), `${member} drew a pencil`).toEqual([])
+      expect(drawn(tree), `${member} drew no reason`).toContain(ROW_SHAPE_REASON)
+    }
+  })
+
+  it('refuses the document when `settings` is not a list of rows', () => {
+    for (const settings of [undefined, null, {}, 'none', 0]) {
+      const tree = settingsTree(settingsInputs({ raw: { ...SETTINGS, settings } }))
+      expect(all(tree, 'projects-settings-row')).toEqual([])
+      expect(drawn(tree), `settings: ${JSON.stringify(settings)} drew no reason`).toContain(
+        DOC_SHAPE_REASON,
+      )
+    }
+  })
+
+  it('draws no row that has no key, or a key that is not text', () => {
+    // The code matches the comment: a row is keyed by its key, so an entry with
+    // no key at all -- or one whose key is a number -- is not a row of this
+    // table. The other rows are drawn: a table is not refused for a row that
+    // cannot be named.
+    for (const key of [undefined, null, 7, {}, '']) {
+      const tree = settingsTree(settingsInputs({ raw: settingsWithRow('key', key) }))
+      expect(settingsKeys(tree), `key: ${JSON.stringify(key)} drew a row`).toEqual([])
+      expect(drawn(tree)).not.toContain(ROW_SHAPE_REASON)
+    }
+    const mixed = settingsTree(
+      settingsInputs({
+        raw: {
+          ...SETTINGS,
+          settings: [
+            { ...(SETTINGS.settings[0] as unknown as Record<string, unknown>), key: 7 },
+            SETTINGS.settings[1],
+          ],
+        },
+      }),
+    )
+    expect(settingsKeys(mixed)).toEqual(['agent.models.coder'])
+  })
+
+  it('draws a refusal rather than an empty table when no document arrived', () => {
+    const tree = settingsTree(settingsInputs({ raw: null, because: 'the CLI refused the read' }))
+    expect(all(tree, 'projects-settings-row')).toEqual([])
+    expect(drawn(tree)).toContain('the CLI refused the read')
+  })
+
+  it('refuses a document whose version this build does not read', () => {
+    const tree = settingsTree(settingsInputs({ raw: { ...SETTINGS, version: 2 } }))
+    expect(all(tree, 'projects-settings-row')).toEqual([])
+    expect(drawn(tree)).toContain('settings --json is version 2 and this console reads version 1')
+  })
+
+  it('draws the settings section beside the budget panels, under one frame', () => {
+    const tree = renderProjects(
+      factory,
+      buildProjectsModel({ budget: BUDGET, accounts: null, secrets: null, sentences: {} }),
+      'light',
+      undefined,
+      buildProjectsSettings(settingsInputs()),
+    )
+    expect(all(tree, 'projects-settings')).toHaveLength(1)
+    expect(all(settingsRow(tree, 'budget.per_run_usd'), 'projects-settings-pencil')).toHaveLength(1)
   })
 })
 

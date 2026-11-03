@@ -283,6 +283,26 @@ export interface FugaroSource {
    * (`src/main/ipc.ts`).
    */
   listModels(args: ValidatedArguments): Promise<Snapshot>
+  /**
+   * readSettings is the Project tab's settings section (`settings --json`, the
+   * settings-edit plan's C1; `console/docs/json-contract.md` §6.19): the
+   * project's settings, each with the value a run gets, the layer that decided
+   * it, its built-in default, its state and the three writability facts
+   * (`writable`, `owner`, `target_layer`) the row set draws its pencils from.
+   *
+   * It takes **no argument at all** -- the operation declares no key -- so an
+   * implementation adds no word of its own to the argv, which is the spawn row's
+   * own two words plus the installation's `--project`. `--offline` is not among
+   * them: the read records the layers it could not reach as `state: unread: …`,
+   * which is the answer the screen draws.
+   *
+   * The method is **named for what it reads rather than for the operation it
+   * drives** -- `settings` is also the group's write (`settings set`), and a
+   * name that did not say which half would be the one a reader mistook. Nothing
+   * it answers is a credential: a `sensitive: true` row carries no value member
+   * at all and the screen drops the row whole (D1111).
+   */
+  readSettings(args: ValidatedArguments): Promise<Snapshot>
   environmentReport(args: ValidatedArguments): Promise<Snapshot>
   /** close stops every feed and every child this source started. */
   close(): Promise<void>
@@ -457,6 +477,7 @@ export function handlersFor(
     'secrets.inventory': (args) => source.listSecrets(args),
     'accounts.inventory': (args) => source.listAccounts(args),
     'models.list': (args) => source.listModels(args),
+    'settings.read': (args) => source.readSettings(args),
     'environment.report': (args) => source.environmentReport(args),
     'link.openExternal': async (args) => {
       await deps.openExternal(args['url'])

@@ -2393,6 +2393,120 @@ contract.
 (`cobra.NoArgs`): the console's argv is `models ls --json` plus the project
 flags and nothing else.
 
+### 6.19 `fugaro settings --json` (**CLI 0.16.0**)
+
+**Command:** `internal/cli/settings.go` `newSettingsCmd` / `runSettings`, the
+read whose `--json` document this section describes; `internal/cli/settings_render.go`
+`writeSettingsJSON` prints it, and `internal/cli/settings_read.go` builds the
+rows. Cited by symbol, not by line, for §6.11's reason. **The console spawns
+the read since the settings-edit plan's C1** (operation `settings.read`,
+`console/src/main/ipc.ts`, design §5.1 rule 6's `settings --json --project <name>
+[--config <path>]` row), and it is that row's whole argv. Unlike §6.17 and
+§6.18 above, this row carries **no console-side CLI floor**: C1 adds none, so a
+CLI older than 0.16.0 answers the read with its own refusal (a 0.15.x `fugaro
+settings` has no `--project`), which the section draws as the read's own reason.
+
+**Why it exists: every setting, what decides it, and what a write would have to
+respect.** The command answers one row per registry key: the value a run gets,
+the layer that decided it, the built-in default and its constant, and the state
+of the read. It writes nothing — no file, no cache, no cloud object — so it
+runs anywhere, a coding agent's session included (D850), and it is the read the
+**settings-edit feature** is built on: the three writability members below are
+what lets a console draw an edit without keeping a copy of the generic path's
+own key allowlist, which is the copy that drifts the day a key is added to the
+registry (D1102).
+
+**The document is one object.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `version` | int | never | never | the document's version, `1` today (`settingsDocVersion`, pinned by `schemas/settings.schema.json`). Members are only ever added within a version: a renamed or re-meant member is a new name and the old one stays, and removing or retyping one bumps this number (D848) |
+| `project` | string | never | never | the project the read was aimed at — the selected project's name, or the empty string when the read resolved none |
+| `generated_at` | string | never | never | when the read ran, `RFC3339` |
+| `sources` | array of layer rows | never | never | **the layers this read touched**, one row each. A layer that was not read is not listed, so a consumer never sees a source that answered nothing |
+| `settings` | array of row rows | never | never | one row per key, in the registry's own order |
+
+**A source row is one layer the read touched.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `layer` | string | never | never | the layer's own name (`settings.Layers`, plus the levels below) |
+| `read_at` | string | **yes** | never | when that layer was read, `RFC3339` |
+| `duration_ms` | int | never | never | how long its read took |
+| `status` | string | never | never | what came of it |
+| `note` | string | **yes** | never | why, when the status needs one |
+
+**A settings row is one key.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `key` | string | never | never | the registry key, dotted (`agent.review_rounds`). It is the row's identity and the sort order, and it is the name every other member describes |
+| `scope` | string | never | never | which scope the row answers for: the project's own keys, or a repository's under `--repo`/`--all-repos`, where the same key is a row per scope |
+| `value` | string | **yes** | never | the value a run gets. **Absent on a `sensitive: true` row and on no other row**: an absent member is the one spelling a consumer cannot mistake for the value, and the row's own text (`set`, `unset`) is what the human table prints in its place |
+| `wins` | string | never | never | the layer that decided the row, in the read's own vocabulary: `default`, `project`, `profile`, `repo`, `flag`, `local`, `shared`, `policy`, `caps` or `env`, plus the two levels `job` and `branch` that `WINS` may name and no `--layer` selects. `default` means **no layer decides it** and the row prints its default |
+| `default` | object | never | never | the built-in default: the value and the constant that holds it, or the sentence saying what unset means. **Exactly one of the two is set** |
+| `state` | string | never | never | the read's own words for the row: a stale layer's age (`stale 3h`), or `unread: <what could not be read>`. The console's argv deliberately omits `--offline`, so an unreachable layer says so and the row is drawn as unread rather than as a value |
+| `sensitive` | bool | **yes** | never | `omitempty`, so it appears only on a sensitive row. **The console drops such a row whole** — no key, no value, no control (D1111, the owner's ruling of 2026-11-01) — which is why the `value` member above is absent for one |
+| `writable` | bool | never | never | whether the **generic path** may write this key (`settings set KEY --layer <L> --yes -- <VALUE>`). Written on every row — a consumer branches on the value, never on the member's presence |
+| `owner` | string | never | never | the command family that writes the key when the generic path may not (`settingsFamilyCommands`, `internal/cli/settings_set.go`: `fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`, `fugaro project`), or `""` when there is none. `writable` and `owner` are answers about the same question, and a row with neither is a row no command writes |
+| `target_layer` | string | never | never | the layer an edit would write (`project` or `local`, the two the generic path writes), or `""` when the generic path would not write the key at all. **Empty is a refusal, not a default**: a console offers no pencil for such a row |
+| `levels` | array of level rows | **yes** | never | one row per layer that sets the key, for `--why`. Absent when the read did not compute them |
+
+**The default block is the built-in default, and exactly one of its two
+spellings is set:**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `value` | string | **yes** | never | the value the loaders leave in place |
+| `source` | string | **yes** | never | the qualified Go constant holding that value |
+| `unset` | string | **yes** | never | the sentence saying what **unset means**, where the answer is a decision rather than a value. It is text, and a screen draws it as a sentence |
+
+**A level row is one layer that sets the key** (`--why`):
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `layer` | string | never | never | the layer's own name |
+| `value` | string | never | never | what that layer gives the key |
+| `outcome` | string | never | never | that layer's part in the result (`wins`, and the tightening or union rules of the keys whose layers combine) |
+
+**The three writability members are the whole point of the console's half**
+(D1102), and they are the reason no list of the generic path's keys is kept in
+`console/`: `writable` says whether the generic path may write the key at all,
+`target_layer` says which layer it would write and is **empty** for a key it
+would not, and `owner` names the family that does write the key when the
+generic path may not — in S5's own words, so the sentence the screen draws
+("`written by <owner>, not by the generic path`") is the CLI's refusal
+sentence and not the console's invention. A screen reads the three and draws a
+control from them; it never decides for itself which keys are editable.
+
+**A `sensitive` row's value is never in this document.** `settingsJSON` writes
+no `value` member for one at all, and the human table prints `set`/`unset`
+(`sensitiveText`) in place of the value — the set/unset fact and nothing a
+consumer could mistake for the value. The console's own rule is one step
+further: the row is **dropped whole**, so not even the key is drawn.
+
+**Never on this surface: the writes.** `fugaro settings`' other subcommands —
+`get` (one key) and the pair `set`/`unset` — are not operations of the console:
+`get` reads a single key this screen does not need (the row set is the whole
+document), and the write's operation and its `NEVER_REACHABLE` rows are the
+settings-edit plan's C3, the task after C1. Until C3 lands no console operation
+drives either write, and the group's positional keys and globs, its `--repo`,
+`--all-repos`, `--layer`, `--grep`, `--changed`, `--why` and `--offline` flags
+are not words of design §5.1's row: they narrow the table by a rule no screen
+control sets.
+
+**Flags** (`newSettingsCmd`): `--json`, the aiming pair `--project` and
+`--config` (`settingsAimFlags`), and the read's own `--repo`, `--all-repos`,
+`--layer`, `--grep`, `--changed`, `--why` and `--offline`. **It does not carry
+the other two cloud flags** — `--gcp-project` and `--region` are `addCloudFlags`'
+and this command does not call it — so it is the one row of §8's inventory
+whose pair is the command's own flag group rather than that helper's, and the
+console's argv is unaffected either way: neither word was ever on it.
+**The console's argv is `settings --json` plus the two project flags and
+nothing else** (design §5.1 rule 6): the command takes arbitrary positional
+arguments, and the row's own `args` is empty, so no renderer names a key, a
+scope or a layer.
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
@@ -2448,6 +2562,7 @@ and **not** off this document or the design:
 | `logs` | yes (`newLogsCmd`) |
 | `secrets ls` | yes (`secretsOptions.addFlags`) |
 | `accounts ls` | yes (`newAccountsLsCmd`) |
+| `settings` | yes (`newSettingsCmd`, §6.19) — the settings read (the settings-edit plan's C1): the pair is **`settingsAimFlags`' own** rather than `addCloudFlags`', so it carries `--project` and `--config` and **not** `--gcp-project` or `--region`. It is the console's third read of the Project tab, and its argv is the command, `--json` and those two words and nothing else |
 | `doctor` | yes (`newDoctorCmd`) |
 | **`version`** | **no — it takes no flags at all** (`internal/cli/root.go`; the root's `--version`/`-v` is the root's own, not this subcommand's — §6.7) |
 | **`config list`** | **no — it reads the operator's local project configs, not a cloud** (`internal/cli/config_list.go`, §6.8) |

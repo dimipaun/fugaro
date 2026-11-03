@@ -54,6 +54,11 @@ describe('the stub’s command keys', () => {
       // key here whose command path is also a group the never table refuses,
       // so `models ls` is the whole of what the stub may be asked for.
       'models ls',
+      // The settings-edit plan's C1 (`settings.read` / `readSettings`): the
+      // Project tab's third read. Its key is the command alone -- the group's
+      // other words are not on the spawn table at all -- and the scenario
+      // keyed `'settings'` is what a test hands the section's fixture.
+      'settings',
       'version',
       'doctor',
       'config list',

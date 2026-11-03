@@ -597,7 +597,10 @@ exported: it is the sentence a row draws, not a vocabulary anything reads.
 Seven panels of the tab's first read, each `section.projects-panel` carrying `data-panel`,
 `data-state` and (where there is one) `data-operation`: `caps`, `kill`, `repositories`,
 `accounts`, `secrets`, `policy`, `enrollment` — and an **eighth panel**, `models`, which
-belongs to the tab's **second** read and is filled on its own (see below). **The panel's state is a word as well as a frame**:
+belongs to the tab's **second** read and is filled on its own (see below). The settings
+rows are the tab's **third** read's and are not a `projects-panel` at all: they are the
+contents of their own host (see below), because the read has its own state and its own
+refusal rather than a panel's. **The panel's state is a word as well as a frame**:
 `span.projects-state` draws `read`, `not read`, or the design's word for a card this CLI
 cannot read at all — `locked` — so no rule has to carry a state on a tone alone (§3.5).
 
@@ -605,8 +608,9 @@ cannot read at all — `locked` — so no rule has to carry a state on a tone al
 2026-10-31: that list "is slow and serves no purpose there"). `runs ls --json` is about
 248 KB and six seconds for a day of runs, and this screen started it before the caps —
 the whole of the panel's content — could be drawn, which is what made the tab about
-twenty seconds with nothing on screen. The screen makes **two** reads — `budget show
---json`, and `models ls --json` for the models panel of console 0.119.0 — and each has its
+twenty seconds with nothing on screen. The screen makes **three** reads — `budget show
+--json`, `models ls --json` for the models panel of console 0.119.0, and `settings --json`
+for the settings section of the settings-edit plan's C1 — and each has its
 own section, its own mark and its own refusal; the jobs table, the `projects-jobs-*` hooks
 beside it, `data-operation="runs.list"`
 and the two repository claims the run list carried (the enrolled-and-seen split and the
@@ -619,7 +623,15 @@ and the entry mounts it in the frame the tab is opened in. The models read has a
 its own beside it — `section.projects > div.projects-models > div.console-busy-slot` — and
 it is a **sibling** of the body rather than a child of it, because `fillProjects` appends
 the seven panels to the body and a host inside it would push the models panel ahead of
-them. The mark, the skeleton and the `aria-busy` on each section's own host are
+them. The settings read is the third of those hosts —
+`section.projects > div.projects-settings > div.console-busy-slot` — and it is a sibling
+of both for the same reason: one row per setting, in a `ul.projects-settings-list`, with a
+pencil on a row the document says is writable and a target layer it names, the owning
+command family on a row the generic path may not write, and **no row at all** for one the
+document marks sensitive. The pencil is a real `<button>`, in the tab order and bound by the
+entry, whose accessible name is the key of the row it edits — a column of pencils names as
+many settings rather than as many "Edit"s — and it says what it does in that word and not in a
+tone, so its rule draws a hover and the theme's one focus ring and no state of its own. The mark, the skeleton and the `aria-busy` on each section's own host are
 `src/renderer/section.ts`'s (§2.11, and the console rule in `.claude/rules/console.md`):
 the section is dimmed while its read is out, never blanked, and says "still reading" after
 a quarter of a minute. A screen this session has already read is drawn at once, stamped
@@ -634,6 +646,7 @@ a quarter of a minute. A screen this session has already read is drawn at once, 
 | Repositories | `projects-repos`, `projects-repo-card`, `projects-repo-card-title`, `projects-repo-list`, `projects-repo-enrolled`, `projects-repo-card-none` |
 | Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-account-none`, `projects-accounts-note` |
 | Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed`, `projects-secret-bound`, `projects-secret-bound-word`, `projects-secrets-managed` |
+| Settings | `projects-settings`, `projects-settings-list`, `projects-settings-row`, `projects-settings-key`, `projects-settings-scope`, `projects-settings-value`, `projects-settings-wins`, `projects-settings-state`, `projects-settings-owner-word`, `projects-settings-owner`, `projects-settings-owner-generic`, `projects-settings-pencil` |
 | Models | `projects-models`, `projects-models-body`, `projects-models-heading`, `projects-models-route-list`, `projects-models-route`, `projects-models-route-name`, `projects-models-route-kind`, `projects-models-route-host`, `projects-models-route-fee`, `projects-models-claims`, `projects-models-claims-word`, `projects-models-claim`, `projects-models-to`, `projects-models-to-word`, `projects-models-to-every`, `projects-models-to-none`, `projects-models-allow`, `projects-models-route-base`, `projects-models-route-note`, `projects-models-list`, `projects-models-row`, `projects-models-id`, `projects-models-route-of`, `projects-models-input`, `projects-models-output`, `projects-models-catalog`, `projects-models-catalog-checked`, `projects-models-catalog-age`, `projects-models-catalog-stale` |
 
 `data-*`: `data-theme`; `data-panel`; `data-state` — **the panel states are

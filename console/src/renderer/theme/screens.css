@@ -823,6 +823,86 @@ p.projects-models-catalog {
   gap: var(--space-2xs) var(--space-sm);
 }
 
+/* ---- The settings panel (the settings-edit plan's C1) ----------------------
+ *
+ * The Project tab's **third** read, `settings --json`: one row per setting of the
+ * registry, with what decides it and which of them the generic path may write
+ * (design section 2.5). Its rules are here rather than in `flight-deck.css` for
+ * the models panel's reason -- the redesign did not redraw this panel, it did
+ * not exist -- and the panel is the shape the screen already draws: one panel
+ * box (`section.projects-panel`, above) and one list of rows.
+ *
+ * **The key and the value are the two figures of the row**, so they are drawn
+ * mono with tabular figures (section 3.7): a key and a value are read character
+ * by character against what the operator's own configuration says. **Nothing
+ * here is coloured by a state**: the read's state is the document's own words
+ * (`span.projects-settings-state`), an unread row says so in those words, and
+ * the stylesheet is not the channel a state reaches a reader on (section 3.5).
+ */
+
+ul.projects-settings-list {
+  display: grid;
+  gap: var(--space-2xs);
+  margin-block: var(--space-2xs) var(--space-md);
+}
+
+li.projects-settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  min-height: var(--row-height);
+  padding-block: var(--space-2xs);
+  border-bottom: var(--rule-width) solid var(--border);
+}
+
+span.projects-settings-key,
+span.projects-settings-value,
+span.projects-settings-owner {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+/* The muted half: the scope a key belongs to, the layer that decided it, the
+ * document's state word, and the two halves of the sentence that names the
+ * family writing an owned key (`SETTINGS_OWNED_WORD`/`SETTINGS_NOT_GENERIC_WORD`,
+ * S5's own phrase). The family between them is an identifier and keeps the mono
+ * figure above. */
+span.projects-settings-scope,
+span.projects-settings-wins,
+span.projects-settings-state,
+span.projects-settings-owner-word,
+span.projects-settings-owner-generic {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* The pencil: the write this row offers, and it is a **live** control now (the
+ * settings-edit plan's C2): a real `button` the entry binds, in the tab order,
+ * whose accessible name is the key of the row it edits. It is painted as a
+ * control and not as a figure, the words `button.projects-kill-action` is
+ * painted with, and it is the row's last cell, so the writes of a column of
+ * settings line up. Its states are a hover and the theme's one focus ring
+ * (`base.css`, `:focus-visible`) and never a tone of their own: the control says
+ * what it does in a word, so nothing about it is carried by colour (styling
+ * design section 3.5). */
+button.projects-settings-pencil {
+  margin-left: auto;
+  padding: var(--space-3xs) var(--space-sm);
+  font: inherit;
+  color: var(--text-3);
+  background: var(--surface-sunken);
+  border: var(--rule-width) solid var(--control-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+button.projects-settings-pencil:hover {
+  color: var(--accent-ink);
+  border-color: var(--border-strong);
+}
+
 /* ---- Run detail -----------------------------------------------------------
  *
  * The Run screen's header, its status strip, its stage timeline, its ledger, its
@@ -1909,9 +1989,11 @@ p.graph-empty {
   li.projects-secret,
   li.projects-account,
   li.projects-kill-row,
+  li.projects-settings-row,
   article.projects-repo-card,
   table.projects-cap-table,
   button.projects-kill-action,
+  button.projects-settings-pencil,
   li.degraded-run,
   li.run-stage,
   li.run-spend-stage,

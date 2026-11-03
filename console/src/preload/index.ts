@@ -89,7 +89,7 @@ export const BRIDGE_VERSION = 1
  * nothing failing, because the runtime tests in `test/unit/ipc.test.ts` pin the
  * same sets against the table and the object is built from that table anyway.
  * `satisfies` checks each row's shape without widening anything, so a row that
- * is not a name and a method is still a compile error, and the twenty-nine names
+ * is not a name and a method is still a compile error, and the thirty names
  * stay literal -- which is what makes `ExposedName`, `ExposedMethod` and
  * `ConsoleBridge` below the closed things their comments say they are.
  *
@@ -192,21 +192,43 @@ export const BRIDGE_VERSION = 1
  * argv is caller-influenced -- and the window is the console's own closed set
  * (`src/main/ipc.ts`'s `SUMMARY_SINCE_WINDOWS`), which is why a renderer cannot
  * ask this read for the whole history under another spelling of `--since`.
- * **No screen calls it yet**: the tabs that will are drawn by a later task, and
- * this row is the main process's half of the read.
+ * **The Coordinator's strip calls it** (`src/renderer/entry.ts`, `loadSummary`):
+ * the week is the strip's second region, drawn beside its K1 figures under an
+ * attempt token of its own, so an answer to a window the operator has already
+ * asked again never lands under another.
  *
  * **Console 0.119.0 added the twenty-ninth** (`models.list` / `listModels`, the
  * Project tab's read-only models panel -- `fugaro models ls --json`, the
  * owner's ruling of 2026-11-02) and left the other twenty-eight exactly where
  * they were. It sits directly under `accounts.inventory`, the other read of
- * what this installation's own configuration says. **No screen calls it yet**
- * either: the panel is a later task, and this row is the main process's half of
- * it. Its method takes **no argument at all** -- the command is cobra's
+ * what this installation's own configuration says. **The panel calls it**
+ * (`src/renderer/entry.ts`, `loadModels`): the tab starts it as a section of its
+ * own, under an attempt token of its own, so a refusal or a document it does not
+ * read leaves that section with its own sentence and nothing else. Its method
+ * takes **no argument at all** -- the command is cobra's
  * `NoArgs`, and the operation declares no key -- and it is the one row here
  * whose command belongs to a group the console may otherwise not touch: the
  * other four words of `fugaro models` (`search`, `add`, `rm`, `use`) are words
  * of this command on `src/main/ipc.ts`'s never table, so this is the group's
  * only reachable argv and no models write is on this surface.
+ *
+ * **The settings-edit plan's C1 added the thirtieth** (`settings.read` /
+ * `readSettings`, the Project tab's settings section -- `fugaro settings
+ * --json`) and left the other twenty-nine exactly where they were. It is **not
+ * in 0.119.0**, which shipped without it: it lands in the next console version
+ * (0.120.0). It sits directly under `models.list`, the other read the Project
+ * tab draws from, and **the Project tab's settings section is what calls it**
+ * (`src/renderer/entry.ts`): that section starts this read with the tab's other
+ * reads, on a sequence token of its own, and paints when its own answer lands
+ * (`buildProjectsSettings` / `fillProjectsSettings`), so the section is drawn
+ * whether or not the other two reads have answered. Its method takes **no
+ * argument at all** -- the operation declares no key, and the command's keys,
+ * its globs and its seven flags are all off the argv -- and what the document
+ * adds is the writability half of each row (`writable`, `owner`,
+ * `target_layer`, D1102), which is what lets a screen draw an edit **without a
+ * copy of the generic path's allowlist**.
+ * A `sensitive: true` row carries no value member at all and the screen drops it
+ * whole (D1111), so nothing this operation returns is a credential.
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -237,6 +259,14 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // word (`src/main/ipc.ts`'s never table refuses `search`, `add`, `rm` and
   // `use` on this command).
   ['models.list', 'listModels'],
+  // The settings read (the settings-edit plan's C1, in the console version after
+  // 0.119.0 -- that release shipped without it):
+  // `fugaro settings --json`, the project's settings with the writability facts
+  // the Project tab's settings section draws its pencils from. One row, no
+  // argument, and the group's read alone -- `settings set` and `settings unset`
+  // are writes this surface does not carry (the plan's C3 is where the edit and
+  // its never rows land).
+  ['settings.read', 'readSettings'],
   ['cli.version', 'cliVersion'],
   ['startup.compatibility', 'getCompatibility'],
   ['installation.current', 'getInstallation'],
@@ -305,7 +335,7 @@ export const EXPOSED_OPERATIONS = Object.freeze([
 
 /**
  * ExposedName is the closed union of the operation names this file exposes --
- * twenty-nine string literals, not `string`. It is the type of the `operations` list
+ * thirty string literals, not `string`. It is the type of the `operations` list
  * a screen switches on, so the closure is what lets a screen be exhaustive.
  */
 export type ExposedName = (typeof EXPOSED_OPERATIONS)[number][0]
@@ -425,9 +455,9 @@ async function invokeOperation(
  *
  * The returned object is not cast into `ConsoleBridge`: it is checked against
  * it, like any other value, and that is the point of the accumulator's type. It
- * is `Record<ExposedMethod, ConsoleMethod>` -- twenty-nine *named* properties,
+ * is `Record<ExposedMethod, ConsoleMethod>` -- thirty *named* properties,
  * because `ExposedMethod` is a union of literals -- so spreading it gives the
- * object literal those twenty-nine properties as properties rather than as an index
+ * object literal those thirty properties as properties rather than as an index
  * signature. (Before that type was literal, this line needed `as ConsoleBridge`
  * to silence the compiler, which is what made the claim untested rather than
  * checked.) The loop is what actually writes them, and a loop is a thing the
@@ -456,7 +486,7 @@ export function createConsoleBridge(ipcRenderer: RendererLike): ConsoleBridge {
  * `exposeInMainWorld` is what keeps rule 5's promise concrete: the renderer gets
  * a copy of this object, in its own world, with `contextIsolation` in between.
  * It cannot reach the preload's scope, `ipcRenderer`, or Node -- only these
- * twenty-nine methods.
+ * thirty methods.
  */
 export function exposeConsoleBridge(
   contextBridge: ContextBridgeLike,

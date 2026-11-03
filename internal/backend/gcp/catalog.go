@@ -299,8 +299,9 @@ echo "pinned $$KEY at generation $$GENERATION"`},
 
 // catalogTagStep adds the content tag to the digest the build pushed, so
 // the tag a rebuild moves and latest are the same image (D1152). A registry
-// retag by digest, like promote: the build account's writer role on the
-// shared registry covers it.
+// retag by digest, like promote: it needs the build account's tag mover role
+// on the shared registry, which writer alone is not (modules/repo/registry.tf
+// holds both, beside each other).
 func catalogTagStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
 	return &cloudbuild.BuildStep{
 		Id:         catalogTagStepID,
