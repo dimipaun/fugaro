@@ -1756,9 +1756,18 @@ function settingsRowLine(parent: ScreenElement, factory: ScreenFactory, row: Pro
  * entry is the only place holding the bridge, the row set and the focus to hand
  * back -- and what pressing it opens (the dry run, `settingsView`'s window, the
  * argv) is C3's.
+ *
+ * **It is drawn through the raw `create`/`setAttribute` pair rather than through
+ * `make`, and the hook is the reason.** `theme-selectors.test.ts` checks each
+ * rule of this theme against the element the renderer draws, and it reads a
+ * `tag.class` pair out of that pair (resolving a class constant) where an
+ * emitter call whose class is a constant is a pair nothing checks -- so
+ * `button.projects-settings-pencil` in `screens.css` would be a rule the scan
+ * refuses rather than one it verifies.
  */
 function settingsPencil(factory: ScreenFactory, key: string): ScreenElement {
-  const button = make(factory, 'button', SETTINGS_PENCIL_CLASS)
+  const button = factory.create('button')
+  button.setAttribute('class', SETTINGS_PENCIL_CLASS)
   button.setAttribute('type', 'button')
   const named = settingsKeyText(key)
   button.setAttribute(SETTINGS_PENCIL_KEY, named)

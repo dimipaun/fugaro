@@ -24,13 +24,13 @@
 // **D1113's sentence is a comparison of two fields the CLI printed, and it has
 // one known limit.** "The layer written is not the layer that wins" is drawn as
 // "no run reads differently", which is exactly right when the layer written
-// loses to the winner (a local edit under a project layer that wins, a
-// project-layer edit under a repository `fugaro.yaml` that wins) and wrong when
-// it outranks the winner -- a key no layer sets has `wins: default`, and a
-// project-layer write to it does change what a run reads. Telling those two
-// apart needs the layers' order, which is the CLI's and which the console keeps
-// no copy of (D1102); P3's document carries no `shadowed` field, and the plan
-// says the console uses one if it ever grows there instead of comparing.
+// loses to the winner (a local edit under the project layer that wins, a
+// project-layer edit under the repository layer the CLI reads that wins) and
+// wrong when it outranks the winner -- a key no layer sets has `wins: default`,
+// and a project-layer write to it does change what a run reads. Telling those
+// two apart needs the layers' order, which is the CLI's and which the console
+// keeps no copy of (D1102); P3's document carries no `shadowed` field, and the
+// plan says the console uses one if it ever grows there instead of comparing.
 
 /**
  * SETTINGS_VIEW_DOC_VERSION is the dry run's document version this window reads

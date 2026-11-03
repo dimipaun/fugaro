@@ -49,6 +49,7 @@ import { putText } from '../../src/renderer/app'
 import {
   PROJECT_PANEL_KEYS,
   PROJECTS_THEMES,
+  SETTINGS_PENCIL_KEY,
   buildProjectsModel,
   buildProjectsModels,
   buildProjectsSettings,
@@ -1210,6 +1211,29 @@ describe('the settings section', () => {
     // The owned row, and the writable row with no target layer, each draw none.
     expect(all(settingsRow(tree, 'agent.models.coder'), 'projects-settings-pencil')).toEqual([])
     expect(all(settingsRow(tree, 'budget.mode'), 'projects-settings-pencil')).toEqual([])
+  })
+
+  it('names the pencil with the key as the sanitizer drew it, never with the raw text', () => {
+    // The key reaches an **attribute** on the pencil and the sanitizer is the
+    // door it goes through, the same door the key's own cell uses: a key this
+    // build will not draw as a key is the console's own mark in the name and in
+    // the attribute alike, so no document string rides into either.
+    const tree = settingsTree(
+      settingsInputs({
+        raw: {
+          ...SETTINGS,
+          settings: [
+            {
+              ...(SETTINGS.settings[0] as unknown as Record<string, unknown>),
+              key: 'budget per run',
+            },
+          ],
+        },
+      }),
+    )
+    const pencil = one(tree, 'projects-settings-pencil')
+    expect(pencil.getAttribute(SETTINGS_PENCIL_KEY)).toBe(UNAVAILABLE_MARK)
+    expect(pencil.getAttribute('aria-label')).toBe(`Edit ${UNAVAILABLE_MARK}`)
   })
 
   it('draws the row with no pencil when the read carries no `writable` member', () => {
