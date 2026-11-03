@@ -35,6 +35,26 @@ type credentialsFixture struct {
 		} `json:"job_accounts"`
 		VerifierAccounts []string `json:"verifier_accounts"`
 	} `json:"credentials_service"`
+	// Operators are the installation's, not the service's: BB4's read mint
+	// admits their user members, and the module renders them into the service's
+	// own environment as bare addresses (FUGARO_PERSON_ACCOUNTS).
+	Operators []string `json:"operators"`
+}
+
+// credentialsReadPeople is the admitted people as the module derives them from
+// the fixture's operators: the user members with their IAM spelling stripped,
+// which is the address a Google ID token's email claim carries. This is the
+// fixture's side of the derivation the module does in one local, so a module
+// that rendered something else — a whole IAM member, or another spelling's
+// address — fails here rather than admitting nobody at runtime.
+func credentialsReadPeople(operators []string) []string {
+	out := []string{}
+	for _, m := range operators {
+		if after, ok := strings.CutPrefix(m, "user:"); ok {
+			out = append(out, after)
+		}
+	}
+	return out
 }
 
 func credentialsGoldenFixture(t *testing.T) credentialsFixture {
@@ -116,6 +136,13 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(f.Operators) == 0 {
+		t.Fatalf("the credentials fixture names no operator: this plan is the one that exercises the module's conditional read-mint entry, and a fixture that names none could not tell it from the seven the module always sets: %v", f)
+	}
+	people, err := json.Marshal(credentialsReadPeople(f.Operators))
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := map[string]string{
 		"FUGARO_PROJECT":                 f.FugaroProject,
 		"FUGARO_GCP_PROJECT":             f.Project,
@@ -125,6 +152,7 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 		"FUGARO_CREDENTIALS_SERVICE_URL": c.URL,
 		"FUGARO_JOB_ACCOUNTS":            string(jobAccounts),
 		"FUGARO_VERIFIER_ACCOUNTS":       string(verifiers),
+		"FUGARO_PERSON_ACCOUNTS":         string(people),
 	}
 	// The map's keys are the allow-list the cover holds the service to: a name
 	// here that the allow-list does not carry would make this test pass on an

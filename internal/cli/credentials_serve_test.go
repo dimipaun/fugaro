@@ -503,11 +503,12 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 // The other direction is a name this command reads that nothing sets, which is
 // a fact the service silently does not have.
 //
-// The list is the seven REQUIRED names plus the one optional name, which is
-// the whole of what the module renders: the optional one belongs here because
+// The list is the seven REQUIRED names plus the two optional ones, which is
+// the whole of what the module renders: the optional ones belong here because
 // a name the module sets and this command does not read is the same mistake
 // whether the command requires it or reads it outside the loop. Which of the
-// two each name is is pinned by the two tests above, not by this comparison.
+// names is which is pinned by the tests around this one, not by this
+// comparison.
 //
 // internal/infra/tf's credentialsServiceEnv is the third side of this, and it
 // is held to the module by that package's own test (the cover's allow-list
@@ -519,7 +520,7 @@ func TestCredentialsServiceEnvIsTheDeploymentsOwn(t *testing.T) {
 	for _, m := range regexp.MustCompile(`name\s*=\s*"(FUGARO_[A-Z0-9_]+)"`).FindAllStringSubmatch(tf, -1) {
 		inModule[m[1]] = true
 	}
-	for _, n := range append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts) {
+	for _, n := range append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts) {
 		if !inModule[n] {
 			t.Errorf("this command reads %s, which credentials.tf does not set on the service: the service would refuse to start on a deployment that is right", n)
 		}

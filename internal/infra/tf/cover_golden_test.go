@@ -56,10 +56,16 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 		"installation-accounts": nil,
 		"installation-managed":  nil,
 		// The credentials service ON (C1.14): the same root and run with the
-		// service's seven environment variables on its revision, read off a
-		// real plan. TestGoldenCredentialsServiceCarriesItsSevenNames reads
-		// their values back against the fixture.
-		"installation-credentials": nil,
+		// service's environment on its revision, read off a real plan.
+		// TestGoldenCredentialsServiceCarriesItsNames reads those names back
+		// against the fixture — the seven the process requires, the verifier
+		// list (C3.9g1) and, since BB4, the read mint's admitted people. Only
+		// this golden's fixture names an operator, so this is the only plan that
+		// carries the person's invoker grant on the service (the grant BB4 adds)
+		// and the environment entry it is derived from; the person is listed here
+		// for the same reason any other person-grant is, and the one grant of
+		// theirs the run does not cover whole is pinned below.
+		"installation-credentials": {"user:person-1@example.com"},
 		// The coordinator's opt-in ON (coordinator plan P5): its account, the
 		// account's two reads, its job and schedule, and the Firebase root's
 		// database grant to it. TestTheCoordinatorIsInTheOptInGoldensOnly
@@ -71,8 +77,28 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := goldenPlan(t, name)
-			if got := goldenCover(listed...).NotCovered(p, nil); len(got) != 0 {
-				t.Fatalf("a real %s plan is not covered: %q", name, got)
+			got := goldenCover(listed...).NotCovered(p, nil)
+			// installation-credentials is the one golden whose fixture names an
+			// operator, so it is also the one plan that creates the grants an
+			// operator receives (iam.tf's `for_each = toset(var.operators)`) —
+			// and one of those, objectAdmin on the installation's state bucket,
+			// is on a bucket a run's own cover does not carry: Cover.Buckets is
+			// the runs bucket alone, because `fugaro setup` creates the state
+			// bucket before any Terraform runs (Cover.Buckets,
+			// internal/cli/init_review.go). So this one grant is outside what the
+			// review announced and its step asks its own typed confirmation —
+			// which is what happens to every operator added to a running
+			// installation, on main as much as here, and is a fact about that
+			// bucket and not about the read mint's grant. Pinned whole, in both
+			// directions: any other refusal fails this test, and so does this
+			// refusal going away, which is what would say the cover learned the
+			// bucket and this exception is stale.
+			want := []string{}
+			if name == "installation-credentials" {
+				want = []string{`module.installation.google_storage_bucket_iam_member.state["user:person-1@example.com"] (on bucket fugaro-tfstate-proj-1234, which is not this run's)`}
+			}
+			if !slices.Equal(got, want) {
+				t.Fatalf("a real %s plan is not covered: %q, want %q", name, got, want)
 			}
 			for _, rc := range p.ResourceChanges {
 				if !slices.Equal(rc.Change.Actions, []string{"create"}) {
