@@ -278,9 +278,12 @@ guard_endpoints() {
 guard_workspaces() {
   local ws
   for ws in "$WORKSPACE" "$SECOND_WORKSPACE"; do
-    case "$ws" in
-    "" ) die "usage: $USAGE" ;;
-    belong | BELONG | Belong)
+    [ -n "$ws" ] || die "usage: $USAGE"
+    # A lowercased copy, so every spelling of the dev installation is refused:
+    # a list of the spellings someone thought of ('belong', 'Belong', 'BELONG')
+    # is exactly the guard a typo gets past.
+    case "${ws,,}" in
+    belong)
       die "Check 145 refused: 'belong' is the installation's own workspace and this check runs on sandboxes only. Nothing was sent anywhere"
       ;;
     esac
@@ -574,7 +577,11 @@ step_write_refused() {
     fact write-refused FAIL "a write that would create a repository in '${WORKSPACE}' was ANSWERED ${status}: a WRITE WITH THE READ TOKEN WAS NOT REFUSED. Check what it created in '${WORKSPACE}' by hand — this check sent no name it could have used, so nothing should be there — and do not merge the read mint on this consumer"
     ;;
   *)
-    fact write-refused INFO "the write probe was answered ${status}${code:+, ${code#error=}}${status:+$(curl_note)}, which is neither a refusal (401 or 403) nor a completed write, so whether the read token can write is not settled by it"
+    # The probe did not settle: the answer is neither the refusal the read mint
+    # depends on nor a completed write. A row that read as a pass here would
+    # vouch for a guard nobody measured, so it FAILs and says UNVERIFIED, the
+    # same convention as a row the run never reached.
+    fact write-refused FAIL "the write probe was answered ${status}${code:+, ${code#error=}}${status:+$(curl_note)}, which is neither a refusal (401 or 403) nor a completed write: whether the read token can write stays UNVERIFIED, so the read-only guard the read mint is written to is NOT vouched for by this run. Check by hand whether this token can write in '${WORKSPACE}', or run the check again, before the read mint merges"
     ;;
   esac
 }

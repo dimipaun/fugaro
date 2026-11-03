@@ -7,7 +7,7 @@
 # The fake answers as a hostile endpoint as well as an ordinary one: every body
 # it sends carries back the consumer secret it was given in the request's
 # Authorization header, and in its "hostile" mode the fields the check reads --
-# the granted scopes, an error code, a member count -- carry that secret too. An
+# the granted scopes and an error code -- carry that secret too. An
 # endpoint (or anything between this machine and it) that prints back what it
 # was given is exactly the case a check that handles a credential has to
 # survive, so the ordinary run exercises it too.
@@ -188,6 +188,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             elif method == "POST":
                 if MODE == "write-allowed":
                     self.reply(201, {"slug": "a-write-that-must-never-happen"})
+                elif MODE == "write-unsettled":
+                    self.reply(400, {"error": {"code": "bad_request"}})
                 else:
                     self.reply(403, {"error": {"code": "insufficient_scope"}})
             elif slug == "sandbox-b" and MODE == "no-reach":
@@ -248,7 +250,6 @@ run145() {
   start_fake "$dir" "$mode" || return 1
   status=0
   out=""
-  err=""
   env TMPDIR="$dir/tmp" \
     CHECK145_OAUTH_URL="http://127.0.0.1:$FAKE_PORT" \
     CHECK145_API_URL="http://127.0.0.1:$FAKE_PORT/2.0" \
@@ -259,20 +260,21 @@ run145() {
     ${RUN145_ARGS[@]+"${RUN145_ARGS[@]}"} \
     >"$dir/out" 2>"$dir/err" || status=$?
   out=$(cat "$dir/out")
-  err=$(cat "$dir/err")
   RUN145_ARGS=()
   RUN145_ENV=()
 }
 
 # assert_no_secret DIR WHAT — nothing the run printed, and no file it left
-# behind, carries the consumer's key, its secret or a token it minted.
+# behind, carries the consumer's key, its secret or a token it minted. The two
+# files this TEST writes with a sentinel in them on purpose are its input
+# fixtures, and they are the only ones a sentinel may be in.
 assert_no_secret() {
   local dir=$1 what=$2 hits token
   expect_absent "$(cat "$dir/out" "$dir/err" 2>/dev/null || true)" "$SECRET_SENTINEL" "$what: the secret in the output"
   expect_absent "$(cat "$dir/out" "$dir/err" 2>/dev/null || true)" "$KEY_SENTINEL" "$what: the key in the output"
-  hits=$(grep -rl -- "$SECRET_SENTINEL" "$dir" 2>/dev/null | grep -v -F -x "$dir/consumer.json" || true)
+  hits=$(grep -rl -- "$SECRET_SENTINEL" "$dir" 2>/dev/null | grep -v -F -x -e "$dir/consumer.json" -e "$dir/no-secret.json" || true)
   [ -z "$hits" ] || fail "$what: the consumer secret is in $hits"
-  hits=$(grep -rl -- "$KEY_SENTINEL" "$dir" 2>/dev/null | grep -v -F -x "$dir/consumer.json" || true)
+  hits=$(grep -rl -- "$KEY_SENTINEL" "$dir" 2>/dev/null | grep -v -F -x -e "$dir/consumer.json" -e "$dir/no-secret.json" || true)
   [ -z "$hits" ] || fail "$what: the consumer key is in $hits"
   while IFS= read -r token; do
     [ -n "$token" ] || continue
@@ -355,8 +357,22 @@ test_write_allowed_is_a_fail() {
   assert_no_secret "$work/write-allowed" "write allowed"
 }
 
-# A hostile endpoint: the scopes, an error code and a member count all carry the
-# consumer secret back, and none of it may reach the block.
+# A probe that does not settle -- neither the refusal the read mint depends on
+# nor a completed write -- must not read as a pass: the row FAILs, says
+# UNVERIFIED, and the whole run fails with it.
+test_write_probe_unsettled_is_not_a_pass() {
+  run145 write-unsettled write-unsettled
+  expect_status "$status" 1 "write unsettled"
+  expect_contains "$out" "FACT write-refused: FAIL — " "write unsettled: the row is not a pass"
+  expect_contains "$out" "UNVERIFIED" "write unsettled: the row says the guard was not measured"
+  expect_contains "$out" "400" "write unsettled: the status the endpoint answered"
+  expect_contains "$out" "CHECK 145 RESULT END (exit 1)" "write unsettled: the block says the run failed"
+  assert_no_secret "$work/write-unsettled" "write unsettled"
+}
+
+# A hostile endpoint: the granted scopes and an error code carry the consumer
+# secret back, and neither may reach the block. (A member count cannot carry it:
+# the members listing reports a number, never a string from the request.)
 test_a_hostile_endpoint_prints_nothing_it_was_given() {
   run145 hostile hostile
   expect_status "$status" 0 "hostile"
@@ -365,6 +381,59 @@ test_a_hostile_endpoint_prints_nothing_it_was_given() {
   expect_absent "$out" "FACT U11: PASS — repository" "hostile: the echo is not read as a scope list"
   expect_contains "$out" "FACT U5: PASS — " "hostile: U5 is still answered"
   assert_no_secret "$work/hostile" "hostile"
+}
+
+# U1's other answer: a token the endpoint gives a shorter life, so the row
+# reports the lifetime this endpoint gave rather than one baked into the script.
+test_short_life() {
+  run145 short-life short-life
+  expect_status "$status" 0 "short life"
+  expect_contains "$out" "FACT U1: PASS — " "short life: the lifetime is measured"
+  expect_contains "$out" "3600" "short life: the lifetime the endpoint reported"
+  assert_no_secret "$work/short-life" "short life"
+}
+
+# U2 without a refresh token coming back: the grant and the revocation are still
+# measured, and the row states which of the two the endpoint gave.
+test_no_refresh() {
+  run145 no-refresh no-refresh
+  expect_status "$status" 0 "no refresh"
+  expect_contains "$out" "FACT U2: PASS — " "no refresh: the grant and the revocation are measured"
+  expect_contains "$out" "carried no refresh token" "no refresh: the absent refresh token is stated"
+  assert_no_secret "$work/no-refresh" "no refresh"
+}
+
+# U2's other answer: the revoke endpoint refuses, so the row must report that the
+# token could not be revoked rather than a revocation this run never saw.
+test_revoke_refused() {
+  run145 revoke-404 revoke-404
+  expect_status "$status" 0 "revoke refused"
+  expect_contains "$out" "FACT U2: INFO — " "revoke refused: U2 stays unverified"
+  expect_contains "$out" "UNVERIFIED" "revoke refused: the row says so"
+  expect_contains "$out" "404" "revoke refused: the status the endpoint answered"
+  assert_no_secret "$work/revoke-404" "revoke refused"
+}
+
+# U5's other answer: the members listing is refused, so the seat count was never
+# read and the row is UNVERIFIED rather than a count nobody saw.
+test_seats_not_read() {
+  run145 members-forbidden members-forbidden
+  expect_status "$status" 0 "seats not read"
+  expect_contains "$out" "FACT U5: INFO — " "seats not read: U5 stays unverified"
+  expect_contains "$out" "UNVERIFIED" "seats not read: the row says so"
+  assert_no_secret "$work/members-forbidden" "seats not read"
+}
+
+# U8's other answer: the plan does expose an allowlist. That is still not what
+# U8 asks -- whether a request from an address that is NOT allowlisted is
+# refused -- so the row stays INFO.
+test_allowlist_offered() {
+  run145 allowlist-offered allowlist-offered
+  expect_status "$status" 0 "allowlist offered"
+  expect_contains "$out" "FACT U8: INFO — " "allowlist offered: U8 stays unverified"
+  expect_contains "$out" "UNVERIFIED" "allowlist offered: the row says so"
+  expect_contains "$out" "200" "allowlist offered: the status the endpoint answered"
+  assert_no_secret "$work/allowlist-offered" "allowlist offered"
 }
 
 # An exchange the endpoint refuses, with a body that echoes the secret back.
@@ -407,6 +476,27 @@ test_guards() {
   expect_status "$status" 2 "missing --second-workspace"
   expect_contains "$(cat "$dir/err" 2>/dev/null || true)" "usage" "missing --second-workspace: the usage line"
   expect_contains "$(cat "$dir/err" 2>/dev/null || true)" "--second-workspace" "missing --second-workspace: the flag is named"
+
+  assert_no_secret "$dir" "guards"
+}
+
+# The dev installation is refused whatever case it is spelled in: the guard
+# compares a lowercased value, so `bElong` cannot slip past a check that only
+# knows the three spellings someone thought of.
+test_belong_in_any_case_is_refused() {
+  local dir=$work/belong-case ws
+  mkdir -p "$dir/tmp"
+  write_consumer "$dir/consumer.json"
+  for ws in bElong BELONG BeLoNg; do
+    status=0
+    out=$(env TMPDIR="$dir/tmp" \
+      bash "$script" --consumer-file "$dir/consumer.json" --workspace "$ws" \
+      --second-workspace sandbox-b 2>"$dir/err") || status=$?
+    expect_status "$status" 2 "belong spelled '$ws'"
+    expect_contains "$(cat "$dir/err" 2>/dev/null || true)" "belong" "belong spelled '$ws': the guard names the workspace"
+    expect_absent "$(cat "$dir/out" "$dir/err" 2>/dev/null || true)" "$SECRET_SENTINEL" "belong spelled '$ws': no secret"
+  done
+  assert_no_secret "$dir" "belong in any case"
 }
 
 # The file the owner names is the one place the consumer lives, and a run that
@@ -438,6 +528,8 @@ test_consumer_file_complaints() {
     --workspace sandbox-a --second-workspace sandbox-b 2>"$dir/err") || status=$?
   expect_status "$status" 2 "consumer file that is not JSON"
   expect_contains "$(cat "$dir/err" 2>/dev/null || true)" "not-json.json" "consumer file that is not JSON: the path is named"
+
+  assert_no_secret "$dir" "consumer file complaints"
 }
 
 # A run that arrived with tracing on is refused: `bash -x` prints every command
@@ -485,15 +577,38 @@ ECHO_EOF
     || fail "detector: an echoing script raised $caught of the four secret assertions (the secret and the key in the output, the secret and the key in a file left behind), so at least one of them is vacuous"
 }
 
-test_happy_path
-test_no_reach
-test_write_allowed_is_a_fail
-test_a_hostile_endpoint_prints_nothing_it_was_given
-test_refused_exchange
-test_guards
-test_consumer_file_complaints
-test_xtrace_is_refused
-test_the_secret_assertions_catch_an_echoing_script
+# Sharding, so the package's Go test can run the tests of this file side by
+# side: CHECK_TEST_SHARD="i/n" runs every n-th test starting at i (each test
+# works in its own directory under $work), CHECK_TEST_ONLY=name runs that one
+# test alone. Neither set: all run.
+test_index=0
+t() {
+  local i=$test_index
+  test_index=$((test_index + 1))
+  if [ -n "${CHECK_TEST_ONLY:-}" ]; then
+    [ "$1" = "$CHECK_TEST_ONLY" ] || return 0
+  elif [ -n "${CHECK_TEST_SHARD:-}" ]; then
+    [ $((i % ${CHECK_TEST_SHARD#*/})) -eq "${CHECK_TEST_SHARD%/*}" ] || return 0
+  fi
+  "$1"
+}
+
+t test_happy_path
+t test_no_reach
+t test_write_allowed_is_a_fail
+t test_a_hostile_endpoint_prints_nothing_it_was_given
+t test_write_probe_unsettled_is_not_a_pass
+t test_short_life
+t test_no_refresh
+t test_revoke_refused
+t test_seats_not_read
+t test_allowlist_offered
+t test_refused_exchange
+t test_guards
+t test_belong_in_any_case_is_refused
+t test_consumer_file_complaints
+t test_xtrace_is_refused
+t test_the_secret_assertions_catch_an_echoing_script
 
 if [ "$failures" -ne 0 ]; then
   echo "check145_test: $failures failure(s)" >&2
