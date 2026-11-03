@@ -33,11 +33,16 @@ var _ gitprov.ContentsReader = (*Provider)(nil)
 // token the provider's other API calls carry (scoped to this repository,
 // design §6.2; with the credentials service on, the token is the service's,
 // C2.2), so no access beyond what the project already holds is used. The
-// reply is decoded into the file's bytes and nothing else: anything but a
-// regular file (a symlink, a directory, a submodule) is refused rather than
-// followed, and so is an answer that is not base64 or is larger than
-// gitprov.MaxContentsBytes — a caller may put these bytes into an image's
-// build, so what it gets is a bounded regular file or an error.
+// reply is decoded into the file's bytes and nothing else: an answer that is
+// not a regular file is refused rather than followed — a directory, a
+// submodule, or a "symlink" entry. A symlink to a file of this repository is
+// not that case: the contents API answers it with the target's content as a
+// regular file, which is safe to read because the target is inside this
+// repository and nothing wider, so what is refused here is a reply that is
+// not a file's bytes rather than symlinks as such. An answer that is not
+// base64, or is larger than gitprov.MaxContentsBytes, is refused too — a
+// caller may put these bytes into an image's build, so what it gets is a
+// bounded regular file or an error.
 func (p *Provider) Contents(ctx context.Context, path, ref string) ([]byte, error) {
 	// The path in a message is the caller's value printed through
 	// pluginwire.Printable, as every other value that reaches a log here is:
