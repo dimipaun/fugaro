@@ -398,8 +398,8 @@ type CatalogCheckState struct {
 	Error     string    `json:"error,omitempty"`
 	// BuildID is the last build a check submitted, and BuildInputs what it
 	// was built from; both carry over until the next submission.
-	BuildID     string                      `json:"build_id,omitempty"`
-	BuildInputs *CatalogInputsFingerprint   `json:"build_inputs,omitempty"`
+	BuildID     string                    `json:"build_id,omitempty"`
+	BuildInputs *CatalogInputsFingerprint `json:"build_inputs,omitempty"`
 	// LastBuildStatus is BuildID's status as this check read it, and
 	// LastBuildAt when it was submitted.
 	LastBuildStatus string     `json:"last_build_status,omitempty"`
