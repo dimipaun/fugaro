@@ -99,6 +99,17 @@ import {
   COORDINATOR_TOTAL_PLANS_WORD,
   COORDINATOR_TOTAL_REPOS_WORD,
   COORDINATOR_TRANSCRIPT_MISSING_WORD,
+  COORDINATOR_WINDOW_CANCELLED_WORD,
+  COORDINATOR_WINDOW_COMPUTE_WORD,
+  COORDINATOR_WINDOW_FAILED_WORD,
+  COORDINATOR_WINDOW_HALTED_WORD,
+  COORDINATOR_WINDOW_INFRA_WORD,
+  COORDINATOR_WINDOW_NOTIONAL_WORD,
+  COORDINATOR_WINDOW_OTHER_WORD,
+  COORDINATOR_WINDOW_RUNS_WORD,
+  COORDINATOR_WINDOW_SPENT_WORD,
+  COORDINATOR_WINDOW_SUCCEEDED_WORD,
+  COORDINATOR_WINDOW_UNKNOWN_WORD,
   COORDINATOR_TRANSCRIPT_WORD,
   COORDINATOR_UNREAD_WORD,
   PULL_PROVIDERS,
@@ -121,14 +132,25 @@ import type {
   CoordinatorInputs,
   CoordinatorQueueItem,
   CoordinatorRepoPanel,
+  CoordinatorRunRow,
   ScreenElement,
   ScreenFactory,
 } from '../../src/renderer/screens/coordinator'
 import { BUSY_SLOT_CLASS } from '../../src/renderer/section'
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
 import { PATH_PLACEHOLDER, TOKEN_PLACEHOLDER, sanitizeText, type TextClass } from '../../src/shared/sanitize'
-import { decodeCoordinatorIntents, decodeCoordinatorStatus, decodePlanStatus } from '../../src/shared/schema'
-import type { CoordinatorIntentsView, CoordinatorStatusView, PlanStatusView } from '../../src/shared/schema'
+import {
+  decodeCoordinatorIntents,
+  decodeCoordinatorStatus,
+  decodePlanStatus,
+  decodeRunsSummary,
+} from '../../src/shared/schema'
+import type {
+  CoordinatorIntentsView,
+  CoordinatorStatusView,
+  PlanStatusView,
+  RunsSummaryView,
+} from '../../src/shared/schema'
 import type { JSONDoc } from '../../src/source/source'
 
 // ---------------------------------------------------------------------------
@@ -491,6 +513,39 @@ function plans(nodes: readonly unknown[]): PlanStatusView {
   return result.value
 }
 
+/** queued is the queue's rows for a `runs ls --json` document, through the
+ * console's own strict decoder, or the refusal it made of one. A case that is
+ * about what the decoder admits uses it the way the entry point does; a case
+ * about a refusal reads `refusal` instead. */
+function queued(document: unknown): readonly CoordinatorRunRow[] {
+  const decoded = queueRuns(document)
+  if (!decoded.ok) throw new Error(decoded.skew.because)
+  return decoded.value
+}
+
+/** refusalFor is what the queue's decoder refused a document over, or `null`
+ * when it admitted it: the field and the reason, without the sentence. */
+function refusalFor(document: unknown): { readonly field: string; readonly name: string } | null {
+  const decoded = queueRuns(document)
+  if (decoded.ok) return null
+  const { field, name } = decoded.skew.refusal
+  return { field, name }
+}
+
+/** withMember is a row with one member added or replaced, which is how a
+ * document a newer CLI wrote, or one whose count is the wrong type, is spelled. */
+function withMember(row: unknown, key: string, value: unknown): Record<string, unknown> {
+  return { ...(row as Record<string, unknown>), [key]: value }
+}
+
+/** without is a row with one member removed, which is the shape of a document
+ * that cannot say what a row is. */
+function without(row: unknown, key: string): Record<string, unknown> {
+  const copy = { ...(row as Record<string, unknown>) }
+  delete copy[key]
+  return copy
+}
+
 /** aBudget is a `budget show --json` document: the global block and one
  * repository row, which are where the queue's alerts and the totals' money come
  * from. The defaults are a fleet under its caps and a repository under its own,
@@ -573,6 +628,10 @@ function queueInputs(inputs: Partial<CoordinatorInputs>): CoordinatorInputs {
     // state every case that is not about the pane is in: a document here would
     // draw intent lines under assertions that are about the queue or a record.
     intents: null,
+    // `null` is the same for the fleet's window (console 0.119.0): the strip's
+    // second read has not answered, and a window here would put eleven figures in
+    // front of every assertion about the strip's own six.
+    summary: null,
     ...inputs,
   }
 }
@@ -1109,7 +1168,7 @@ describe('the action queue (K1)', () => {
     // in that order.
     const node = drawsQueue({
       view: decodes(aStore([aRecord({})])),
-      runs: queueRuns(runsDocument([aRunRow({ halted: true })])),
+      runs: queued(runsDocument([aRunRow({ halted: true })])),
       plans: plans([aTask('C2', 'ready')]),
     })
     const items = all(node, 'coordinator-queue-item')
@@ -1152,7 +1211,7 @@ describe('the action queue (K1)', () => {
           aRecord({ number: 1460, inFlight: true }),
         ]),
       ),
-      runs: queueRuns(
+      runs: queued(
         runsDocument([
           // A run that is still going, a terminal run that succeeded, and the
           // body's own record of a halt: none of them is waiting for a person.
@@ -1176,7 +1235,7 @@ describe('the action queue (K1)', () => {
     const model = buildCoordinatorModel(
       queueInputs({
         view: decodes(aStore([aRecord({ number: 1458 })])),
-        runs: queueRuns(
+        runs: queued(
           runsDocument([aRunRow({ run: '20261030-220114-77bd', planTask: 'C9', title: 'a run title' })]),
         ),
         plans: plans([aTask('C2', 'ready')]),
@@ -1232,7 +1291,7 @@ describe('the action queue (K1)', () => {
     const rows = Array.from({ length: COORDINATOR_LIST_CAP + 3 }, (_unused, index) =>
       aRunRow({ run: `20261031-15150${String(index % 10)}-a${String(index).padStart(2, '0')}` }),
     )
-    const model = buildCoordinatorModel(queueInputs({ runs: queueRuns(runsDocument(rows)) }))
+    const model = buildCoordinatorModel(queueInputs({ runs: queued(runsDocument(rows)) }))
     expect(model.queue.runs?.items).toHaveLength(COORDINATOR_LIST_CAP)
     expect(model.queue.runs?.items[0]?.subject).toBe('20261031-151500-a00')
     expect(model.queue.runs?.items[COORDINATOR_LIST_CAP - 1]?.subject).toBe('20261031-151509-a19')
@@ -1352,7 +1411,7 @@ describe('the action queue (K1)', () => {
     for (const value of hostile) {
       const node = drawsQueue({
         view: decodes(aStore([aRecord({ title: value })])),
-        runs: queueRuns(runsDocument([aRunRow({ halted: true, run: value, title: value })])),
+        runs: queued(runsDocument([aRunRow({ halted: true, run: value, title: value })])),
         plans: plans([aTask(value, 'ready', value)]),
         caps: capsOf(aBudgetFor(value)),
       })
@@ -2001,6 +2060,159 @@ function drawsPane(inputs: Partial<CoordinatorInputs>): ScreenElement {
   return renderCoordinator(factory, buildCoordinatorModel(queueInputs(inputs)), 'dark')
 }
 
+/** anEmptyWindow is a `runs summary --json` document (console 0.119.0) whose
+ * every figure the case does not name is zero: the window a screen draws when
+ * the read answered and the week was quiet. `computeMicros` defaults to a priced
+ * window (every run's compute known), so a case that is not about the bound
+ * draws none. */
+function aWindow(
+  options: {
+    readonly runs?: number
+    readonly states?: Readonly<Record<string, number>>
+    readonly spentMicros?: number
+    readonly notionalMicros?: number
+    readonly computeMicros?: number | null
+    readonly computeRuns?: number
+    readonly daysUnknown?: readonly string[]
+  } = {},
+): JSONDoc {
+  const runs = options.runs ?? 0
+  return {
+    v: 1,
+    project: 'acme',
+    since: '2026-10-27',
+    until: '2026-11-02',
+    repositories: [],
+    totals: {
+      runs,
+      states: {
+        succeeded: 0,
+        failed: 0,
+        halted: 0,
+        cancelled: 0,
+        infra_error: 0,
+        other: 0,
+        ...options.states,
+      },
+      spent_micros: options.spentMicros ?? 0,
+      notional_micros: options.notionalMicros ?? 0,
+      compute_micros: options.computeMicros === undefined ? 0 : options.computeMicros,
+      compute_runs: options.computeRuns ?? runs,
+    },
+    days_unknown: options.daysUnknown ?? [],
+    notes: [],
+  }
+}
+
+/** windowOf is a document that must decode, or the failure is the decoder's own
+ * sentence rather than an assertion three lines later. */
+function windowOf(raw: unknown): RunsSummaryView {
+  const result = decodeRunsSummary(raw)
+  if (!result.ok) throw new Error(result.skew.because)
+  return result.value
+}
+
+/** drawsWindow draws the screen with the window's read answered, as the entry
+ * does when `runs summary` lands: the other reads are `queueInputs`' own. */
+function drawsWindow(inputs: Partial<CoordinatorInputs>): ScreenElement {
+  return renderCoordinator(factory, buildCoordinatorModel(queueInputs(inputs)), 'dark')
+}
+
+describe('the fleet’s window, off the jobs-free totals read (console 0.119.0)', () => {
+  it('draws the window’s runs and their six states, and the money as three figures it never sums', () => {
+    // The document counts the window and nothing else: the six states are the
+    // contract's own, zero included, and the three money figures are three
+    // quantities of the same document -- what the model money was, what a
+    // subscription's list price was, and what the runs' compute was. A strip
+    // that drew their sum would draw a figure no CLI ever wrote.
+    const node = drawsWindow({
+      summary: windowOf(
+        aWindow({
+          runs: 9,
+          states: { succeeded: 6, failed: 2, halted: 1 },
+          spentMicros: 4_500_000,
+          notionalMicros: 12_500_000,
+          computeMicros: 3_500_000,
+        }),
+      ),
+    })
+    const totals = one(node, 'coordinator-totals')
+    expect(figureOf(totals, 'coordinator-window-runs')).toEqual([COORDINATOR_WINDOW_RUNS_WORD, '9'])
+    expect(figureOf(totals, 'coordinator-window-succeeded')).toEqual([COORDINATOR_WINDOW_SUCCEEDED_WORD, '6'])
+    expect(figureOf(totals, 'coordinator-window-failed')).toEqual([COORDINATOR_WINDOW_FAILED_WORD, '2'])
+    expect(figureOf(totals, 'coordinator-window-halted')).toEqual([COORDINATOR_WINDOW_HALTED_WORD, '1'])
+    // A state the window never reached is drawn as the CLI's own zero: it
+    // counted the window and said so.
+    expect(figureOf(totals, 'coordinator-window-cancelled')).toEqual([COORDINATOR_WINDOW_CANCELLED_WORD, '0'])
+    expect(figureOf(totals, 'coordinator-window-infra')).toEqual([COORDINATOR_WINDOW_INFRA_WORD, '0'])
+    expect(figureOf(totals, 'coordinator-window-other')).toEqual([COORDINATOR_WINDOW_OTHER_WORD, '0'])
+    expect(figureOf(totals, 'coordinator-window-spent')).toEqual([COORDINATOR_WINDOW_SPENT_WORD, '$4.50'])
+    expect(figureOf(totals, 'coordinator-window-notional')).toEqual([
+      COORDINATOR_WINDOW_NOTIONAL_WORD,
+      '~$12.50',
+    ])
+    expect(figureOf(totals, 'coordinator-window-compute')).toEqual([COORDINATOR_WINDOW_COMPUTE_WORD, 'est. $3.50'])
+    // **Never summed.** The three figures are three cells, and no cell on the
+    // strip is the addition of any two of them: 4.50 + 12.50, 4.50 + 3.50 and
+    // 12.50 + 3.50 are all absent from the drawing.
+    const cells = all(totals, 'coordinator-count-value').map((cell) => cell.textContent)
+    expect(cells).not.toContain('$17.00')
+    expect(cells).not.toContain('~$17.00')
+    expect(cells).not.toContain('$8.00')
+    expect(cells).not.toContain('$16.00')
+  })
+
+  it('draws the CLI’s own compute as a lower bound, and n/a rather than $0 when it priced no run', () => {
+    // `compute_micros` is `null` when the window has runs and no run's compute
+    // is known -- the one figure of this document whose absence is a fact of its
+    // own. Drawn as `$0.00` it would say the week was free.
+    const unpriced = drawsWindow({ summary: windowOf(aWindow({ runs: 2, computeMicros: null })) })
+    const cell = one(one(unpriced, 'coordinator-totals'), 'coordinator-window-compute')
+    expect(textOf(cell, 'coordinator-count-value')).toBe(UNAVAILABLE_MARK)
+    expect(textOf(cell, 'coordinator-count-value')).not.toBe('$0.00')
+
+    // Priced in part: the CLI's figure covers fewer runs than the window
+    // counted, so it is a floor and says so.
+    const partial = drawsWindow({
+      summary: windowOf(aWindow({ runs: 9, computeMicros: 3_500_000, computeRuns: 4 })),
+    })
+    expect(figureOf(partial, 'coordinator-window-compute')).toEqual([
+      COORDINATOR_WINDOW_COMPUTE_WORD,
+      '≥ est. $3.50',
+    ])
+  })
+
+  it('names the days neither source answered for, rather than drawing the window as a smaller one', () => {
+    const node = drawsWindow({
+      summary: windowOf(aWindow({ runs: 4, daysUnknown: ['2026-10-26', '2026-10-28'] })),
+    })
+    const line = one(node, 'coordinator-window-unknown')
+    expect(textOf(line, 'coordinator-window-unknown-word')).toBe(COORDINATOR_WINDOW_UNKNOWN_WORD)
+    expect(all(line, 'coordinator-window-unknown-day').map((day) => day.textContent)).toEqual([
+      '2026-10-26',
+      '2026-10-28',
+    ])
+
+    // A window every source answered for draws no such line: the sentence is
+    // about a gap, and there is none.
+    expect(all(drawsWindow({ summary: windowOf(aWindow({ runs: 4 })) }), 'coordinator-window-unknown')).toEqual([])
+  })
+
+  it('draws no window at all while the strip’s own read has not answered', () => {
+    // `null` is "not read, or not answered", and a strip of zeroes is a claim
+    // about a week nobody read.
+    const node = drawsWindow({ summary: null })
+    expect(all(node, 'coordinator-window-runs')).toEqual([])
+    expect(all(node, 'coordinator-window-compute')).toEqual([])
+    // The strip's own figures are still drawn: the window is a second read of
+    // the same panel and never a gate on the first (`queueInputs` answers them).
+    expect(figureOf(one(node, 'coordinator-totals'), 'coordinator-total-repos')).toEqual([
+      COORDINATOR_TOTAL_REPOS_WORD,
+      '1',
+    ])
+  })
+})
+
 describe('the read-only transcript pane (K5)', () => {
   const DECLARED = anIntentsDocument([
     { repo: 'owner/repo-a', intents: [anIntent({ declaredBy: 'person-1', files: ['a/b.ts', 'c/d.ts'] })] },
@@ -2298,5 +2510,88 @@ describe('the surface the project view is read through (T1.2)', () => {
     const element = new FakeScreen('span')
     putText(element, 'a value', 'sentence', 'a field')
     expect(element.textContent).toBe('a value')
+  })
+})
+
+describe('the queue’s runs list is decoded', () => {
+  it('admits a well-formed page, in the CLI’s order, and keeps only the rows that are waiting', () => {
+    // The four rows below are D810’s two grounds and the two states that are
+    // not them: a run that failed, one a person halted, one that succeeded and
+    // one still going. A row that a person halted is kept whatever its status
+    // says, and the order is the document’s -- the queue re-sorts nothing.
+    const page = runsDocument([
+      aRunRow({ run: '20261101-090000-aa01', status: 'failed' }),
+      aRunRow({ run: '20261101-080000-bb02', status: 'running', terminal: false }),
+      aRunRow({ run: '20261101-070000-cc03', status: 'succeeded' }),
+      aRunRow({ run: '20261101-060000-dd04', status: 'succeeded', halted: true }),
+    ])
+    expect(queued(page).map((row) => row.run)).toEqual(['20261101-090000-aa01', '20261101-060000-dd04'])
+  })
+
+  it('ignores a key the run record does not have, at the root and in a row', () => {
+    // The owner’s ruling of 2026-10-30 holds at this door too: the CLI’s JSON
+    // only grows, so a key outside `lsDoc`’s or `runview.Row`’s own set is a
+    // column a newer CLI added, and a console that refused the addition would
+    // refuse a document the CLI wrote correctly. The queue reads its rows field
+    // by field, so a member it does not know reaches neither the drawing nor an
+    // act -- and the row beside it is the row it always was.
+    const page = {
+      ...(runsDocument([
+        aRunRow({ run: '20261101-090000-aa01', status: 'failed' }),
+        withMember(aRunRow({ run: '20261101-080000-bb02', status: 'failed' }), 'widget', 'x'),
+      ]) as Record<string, unknown>),
+      notice: 'a newer CLI wrote this',
+    }
+    expect(queued(page).map((row) => row.run)).toEqual([
+      '20261101-090000-aa01',
+      '20261101-080000-bb02',
+    ])
+  })
+
+  it('refuses a known member whose value is not the kind the struct writes', () => {
+    // Strict on types is the other half of the ruling, and it is what the queue
+    // needs: `artifact_count` is a member this build reads, so a string in its
+    // place is a document no `runs ls` wrote -- read as absent it would be a
+    // row the console had quietly repaired rather than refused.
+    const page = runsDocument([
+      withMember(aRunRow({ run: '20261101-090000-aa01', status: 'failed' }), 'artifact_count', '3'),
+    ])
+    expect(refusalFor(page)).toEqual({ field: 'runs[0].artifact_count', name: 'not-a-number' })
+  })
+
+  it('refuses a row that names no run', () => {
+    // There is no id to draw, to open or to offer a re-run of, so the row is
+    // refused rather than dropped: a queue that dropped it would draw a shorter
+    // list than the document holds and say nothing about the difference.
+    const nameless = without(without(aRunRow({ status: 'failed' }), 'run'), 'run_id')
+    expect(refusalFor(runsDocument([nameless]))).toEqual({ field: 'runs[0].run', name: 'missing' })
+  })
+
+  it('refuses the document as a whole rather than drawing the rows around the one it cannot read', () => {
+    // The queue’s own list is all-or-nothing: a page holding one row it cannot
+    // read is refused whole, so no row of it reaches a screen or a button --
+    // and the refusal is the one the section draws in its own place. Ignorance
+    // of an unknown key does not soften this: what refuses the page is a member
+    // this build *does* read, arriving as something the struct cannot write.
+    const page = runsDocument([
+      aRunRow({ run: '20261101-090000-aa01', status: 'failed' }),
+      withMember(aRunRow({ run: '20261101-080000-bb02', status: 'failed' }), 'terminal', 'yes'),
+    ])
+    const decoded = queueRuns(page)
+    expect(decoded.ok).toBe(false)
+    if (!decoded.ok) expect(decoded.skew.because).toContain('runs[1].terminal')
+  })
+
+  it('refuses a document whose root is not the shape `runs ls` prints', () => {
+    // The one key the reader needs is `runs`, an array: a document without it is
+    // one this console cannot find the jobs in, and a `runs` that is not a list
+    // is one it cannot read. Everything else the root carries is ignored -- the
+    // document’s own `project`, `totals` and `warnings`, and a key no `runs ls`
+    // wrote.
+    expect(refusalFor({ runs: 'not a list' })).toEqual({ field: 'runs', name: 'not-an-array' })
+    expect(refusalFor({ runs: [] })).toBeNull()
+    expect(refusalFor({ runs: [], notice: 'a newer CLI wrote this' })).toBeNull()
+    expect(refusalFor({})).toEqual({ field: 'runs', name: 'missing' })
+    expect(refusalFor([])).toEqual({ field: 'the document', name: 'not-an-object' })
   })
 })

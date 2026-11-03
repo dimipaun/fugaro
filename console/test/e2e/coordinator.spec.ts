@@ -79,6 +79,7 @@ import {
   COORDINATOR_TRANSCRIPT_MISSING_WORD,
   COORDINATOR_TRANSCRIPT_QUESTIONS,
   COORDINATOR_TRANSCRIPT_WORD,
+  COORDINATOR_WINDOW_FLOOR_WORD,
 } from '../../src/renderer/screens/coordinator'
 import { CLI_VERSION_BUILT_AGAINST } from '../../src/shared/version'
 import { inRangeCliStub } from '../support/cliStub'
@@ -226,7 +227,7 @@ var coordinator = load('/renderer/screens/coordinator.js');
 var decoded = schema.decodeCoordinatorStatus(${JSON.stringify(document)}, 'the committed coordinator document');
 if (!decoded.ok) return { error: 'the decoder refused the fixture: ' + decoded.skew.because };
 var factory = domFactory();
-var model = coordinator.buildCoordinatorModel({ view: decoded.value, runs: null, plans: null, caps: null, intents: null, checkout: true, capsHidden: false });
+var model = coordinator.buildCoordinatorModel({ view: decoded.value, runs: null, plans: null, caps: null, intents: null, summary: null, checkout: true, capsHidden: false });
 var tree = coordinator.renderCoordinator(factory, model, ${JSON.stringify(theme)});
 var previous = document.getElementById('coordinator-mount');
 if (previous) previous.remove();
@@ -690,6 +691,25 @@ test.describe('the Coordinator view in the dashboard', () => {
     const repos = await totals.locator('span.coordinator-total-repos .coordinator-count-value').textContent()
     expect(Number(repos), 'the stored view lists no repository').toBeGreaterThan(0)
     await expect(page.locator(`${THE_VIEW} section.coordinator-repo`)).toHaveCount(Number(repos))
+
+    // And the fleet's window inside that strip: this window's CLI is 0.13.0,
+    // below `RUNS_SUMMARY_CLI_FLOOR`, so the console's own sentence naming the
+    // version it needs is drawn and **nothing is spawned for it** -- no figures,
+    // no skeleton left behind, and no refusal, because a read that was never
+    // made has no sentence of its own. A `$0.00` or a run count of zero here
+    // would be a window nobody read.
+    await expect(totals.locator('p.coordinator-window-note')).toHaveText(
+      `${COORDINATOR_WINDOW_FLOOR_WORD}${CLI_VERSION_BUILT_AGAINST}`,
+    )
+    await expect(totals.locator('span.coordinator-window-runs')).toHaveCount(0)
+    await expect(totals.locator('span.coordinator-window-spent')).toHaveCount(0)
+    await expect(totals.locator('.unavailable-operation')).toHaveCount(0)
+    // **And the strip's second busy host is not there either.** A slot is a flex
+    // item of the strip, and the window's can never be filled on this visit: a
+    // console that kept it would hold a line open for a read it will not make.
+    // The K1 documents' own slot stays -- its read is out and then answered.
+    await expect(totals.locator('div.console-busy-slot')).toHaveCount(1)
+    await expect(totals.locator('div.console-busy-slot[aria-busy="true"]')).toHaveCount(0)
   })
 
   test('says which CLI the job list needs, and spawns no read for one older than that', async () => {

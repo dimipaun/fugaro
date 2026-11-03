@@ -81,6 +81,18 @@
 #     row's own words, because the screen has no control that turns either off,
 #     so the stub holds all three flags exactly rather than answering a question
 #     this console should never have been able to ask.
+#   * `runs summary --json [--since=<window>] --project P` -- one document per
+#     `--since`, in `runs-summary-<window>.json` beside this script, which a
+#     spec writes there itself (the stub's directory is `CliStub.dir`), with
+#     `runs-summary-<window>-delay.txt` holding the seconds to sleep first when
+#     the spec is about the order the answers land in. This is the read the
+#     **Coordinator** view's fleet strip makes (console 0.119.0, contract
+#     section 6.17), and the window is written the `=` way (`--since=7d`)
+#     because the console's own allow-list emits it as one word. A window with
+#     no document seeded is refused (exit 2) rather than answered with a
+#     document for another window: the strip's figures are a claim about a
+#     window, and a stub that answered the wrong one would make them wrong
+#     without saying so.
 #   * `run --task-file - --json --run-id <id> --repo <owner/name> [--title=<T>]
 #     [--plan-task=<P>] --project <name> [--config <path>]` -- the console's one
 #     **write** (design section 5.1 rule 11, V2.5.1a; `src/main/spawn.ts`'s
@@ -125,6 +137,15 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 refuse() {
   echo "the stub fugaro: $1" >&2
+  exit 2
+}
+
+# refuse_allowlist is the refusal for a command -- or a verb of a command -- this
+# stub does not answer. It names **every** answer it does give, because a
+# failing spec's message is the only place a reader learns what it would have
+# answered.
+refuse_allowlist() {
+  echo "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'coordinator status --from-store --all --json', 'doctor --json', 'watch --json', 'report --json', 'budget show --json', 'runs summary --json' and 'run --task-file - --json', and was asked for '$1'" >&2
   exit 2
 }
 
@@ -366,6 +387,53 @@ case "$command" in
     fi
     cat "${here}/coordinator-status.json"
     ;;
+  runs)
+    # The Coordinator view's fleet strip (console 0.119.0): the window's run
+    # counts and its spend, without a bucket listing. `summary` is the verb and
+    # `--json` the row's fixed flag -- anything else is refused -- and `--since`
+    # is the window, which the console's allow-list emits as one word
+    # (`--since=7d`, `src/main/spawn.ts`'s `summarySince` kind), so this branch
+    # reads it in the `=` form and no other.
+    if [ "${1:-}" != 'summary' ]; then
+      # Any other verb of `runs` is outside the allow-list, so it is refused the
+      # way every such command is -- with the whole list in the sentence.
+      refuse_allowlist 'runs'
+    fi
+    if [ "${2:-}" != '--json' ]; then
+      refuse "the stub fugaro answers 'runs summary --json' and was asked for 'runs $*'"
+    fi
+    shift 2
+    since=''
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --since=*)
+          since=${1#*=}
+          if [ "$since" = '' ]; then
+            refuse "'runs summary --json' was given '--since=' with no window"
+          fi
+          shift
+          ;;
+        --project | --config)
+          if [ $# -lt 2 ]; then
+            refuse "'runs summary --json' was given '$1' with no value"
+          fi
+          shift 2
+          ;;
+        *)
+          refuse "'runs summary --json' was asked for '$1'"
+          ;;
+      esac
+    done
+    if [ -z "$since" ]; then
+      # The window is not defaulted here, for the reason `report` does not
+      # default it: the document is a claim about a window, and the console
+      # always names one.
+      refuse "'runs summary --json' was asked for no --since, and this stub answers one document per window"
+    fi
+    if ! print_seeded "${here}/runs-summary-${since}.json" "${here}/runs-summary-${since}-delay.txt" "runs summary ${since}"; then
+      refuse "no runs summary document is seeded for '${since}' beside this stub"
+    fi
+    ;;
   run)
     # The launch (design section 5.1 rule 11): the row's argv word for word, and
     # the task on stdin. `arguments` is the whole invocation as one string, for
@@ -419,6 +487,6 @@ case "$command" in
       "$project" "$run_id" "$repository" "$run_id"
     ;;
   *)
-    refuse "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'coordinator status --from-store --all --json', 'doctor --json', 'watch --json', 'report --json', 'budget show --json' and 'run --task-file - --json', and was asked for '$command'"
+    refuse_allowlist "$command"
     ;;
 esac

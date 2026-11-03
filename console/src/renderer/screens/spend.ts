@@ -234,8 +234,11 @@ export type SpendTheme = (typeof SPEND_THEMES)[number]
 
 /** MICROS_PER_USD is `budget.Micros`' own scale: the contract's `*_micros` are
  * millionths of a dollar (`USD6` formats the same integer as a 6-decimal
- * string). */
-const MICROS_PER_USD = 1_000_000
+ * string). It is exported because it is the scale of **every** `*_micros` on the
+ * wire and not of this screen's: the Coordinator's fleet window draws
+ * `runs summary`'s three money figures through it, and a second copy of the
+ * constant would be a second opinion about what a micro is. */
+export const MICROS_PER_USD = 1_000_000
 
 /**
  * PARTIAL_MARKER is the marker the design draws beside a partial day. It is the

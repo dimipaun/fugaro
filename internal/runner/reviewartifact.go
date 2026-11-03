@@ -843,7 +843,7 @@ func (r *run) writeReviewArtifact(ctx context.Context, res agent.Result) error {
 		Reviewer: ReviewReviewer{
 			Account: selectedName(r.spec.OAuthToken),
 			Model:   r.stageModel("review"),
-			Effort:  r.reviewEffort(),
+			Effort:  r.artifactReviewEffort(),
 		},
 		Verdict:        answer.Verdict,
 		Overview:       answer.Overview,
@@ -908,10 +908,10 @@ func (r *run) writeReviewArtifact(ctx context.Context, res agent.Result) error {
 	return nil
 }
 
-// reviewEffort is the effort the artifact's reviewer block records: the review
-// stage's own level's, read through the same ladder the stage reads it through
-// (reviewStageOf, resolvedLevel) rather than a second answer beside it.
-func (r *run) reviewEffort() string {
+// artifactReviewEffort is the effort the artifact's reviewer block records: the
+// review stage's own level's, read through the same ladder the stage reads it
+// through (reviewStageOf, resolvedLevel) rather than a second answer beside it.
+func (r *run) artifactReviewEffort() string {
 	s, ok := reviewStageOf("review")
 	if !ok {
 		return ""
