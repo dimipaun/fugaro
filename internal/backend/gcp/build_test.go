@@ -125,6 +125,10 @@ func TestBuildRequest(t *testing.T) {
 		func(s *BuildSpec) { s.ServiceAccount = "" },
 		func(s *BuildSpec) { s.Image = "" },
 		func(s *BuildSpec) { s.Base = "" },
+		// The base is substituted into the build and written into the image's
+		// labels, so it is a reference and nothing else.
+		func(s *BuildSpec) { s.Base = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc\n" },
+		func(s *BuildSpec) { s.Base = `us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-"abc` },
 		// The record goes to the runs bucket on GCS, and nowhere else.
 		func(s *BuildSpec) { s.Bucket = "" },
 		func(s *BuildSpec) { s.Bucket = "file:///tmp/runs" },

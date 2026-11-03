@@ -46,6 +46,15 @@
 # script: a crafted value (a branch named x$(…) is a valid git ref) would
 # run as shell next to the credential. Each value a script needs reaches it
 # through the step's env: and is read as a quoted "$$VAR".
+#
+# A catalog build (gcp.CatalogBuildRequest, PIC4) runs these steps too, by
+# id: prep, credential, build, smoke, promote and untag as they stand, with
+# the same base, the same file-secret handling (_SECRET_ENVS) and the same
+# smoke. Source, render, gate and record are left out — an entry's
+# definition is the Dockerfile the catalog copy left in the runs bucket, not
+# a checkout — and the catalog build's own read, pin, content-tag and record
+# steps take their place. Only those four steps read _CATALOG_TAG and
+# _SELFTEST_B64.
 substitutions:
   _REPO_URL: ""       # https clone URL without credentials; also the checkout's origin
   _BASE_BRANCH: main
@@ -58,6 +67,8 @@ substitutions:
   _BUCKET: ""         # the runs bucket, gs://<name>, which holds the build record
   _SLUG: ""           # the repository's storage slug: the record is builds/<slug>/<workflow>/image.json
   _PROJECT_LAYER_SHA256: ""  # the project layer's sha256, "" for none: render reads builds/<slug>/project-layer.yaml and refuses another (docs/design/layered-config.md §8)
+  _CATALOG_TAG: ""    # a catalog build's content tag: the sha256 of the definition it built. A repository's own build never reads it
+  _SELFTEST_B64: ""   # a catalog build's smoke spec, base64 (image.SpecForCloud as the submitter rendered it). A repository's own build never reads it
 options:
   logging: CLOUD_LOGGING_ONLY
 availableSecrets:

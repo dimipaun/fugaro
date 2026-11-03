@@ -2114,3 +2114,49 @@ run "non_proxied_bitbucket_keeps_its_token" {
     error_message = "a repository the node does not admit as proxied keeps its Bitbucket token mounted: the flip touches proxied repositories alone (G9)"
   }
 }
+
+# The build account's read of the copied catalog definitions (PIC4): the
+# definitions PIC3 copies are project-wide (one repo module's build and every
+# other's read the same objects), so the grant is one clause on
+# builds/catalog/ with no slug, read-only, and computed from the bucket's own
+# name. The expression and the title are gcp.CatalogReadCondition's bytes and
+# gcp.CatalogReadConditionTitle's spelling: internal/infra/tf accepts this
+# binding as that pair and refuses it as anything else, so a clause that
+# stopped matching the builder — a slug smuggled in, a wider prefix — would
+# fail to plan here and to be covered there.
+run "catalog_read_exact" {
+  command = plan
+
+  module {
+    source = "../../modules/repo"
+  }
+
+  variables {
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    installation   = var.bitbucket.installation
+    repo           = var.bitbucket.repo
+  }
+
+  assert {
+    condition     = google_storage_bucket_iam_member.catalog_read.role == "roles/storage.objectViewer" && google_storage_bucket_iam_member.catalog_read.bucket == "fugaro-runs-proj-1234"
+    error_message = "a build account reads the copied definitions and never writes them: objectViewer on the runs bucket"
+  }
+  assert {
+    condition     = google_storage_bucket_iam_member.catalog_read.condition[0].expression == "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/builds/catalog/\")"
+    error_message = "the catalog grant must be exactly builds/catalog/ of the runs bucket: no slug, no other prefix, nothing after the trailing slash"
+  }
+  assert {
+    condition     = google_storage_bucket_iam_member.catalog_read.condition[0].title == "fugaro-catalog-read-fugaro-b-acme-sandbox-78cbc6a5"
+    error_message = "the condition's title must be gcp.CatalogReadConditionTitle of the repository's own build account"
+  }
+  assert {
+    condition     = google_storage_bucket_iam_member.catalog_read.condition[0].description == null
+    error_message = "the module sets no condition description, so none may be planned"
+  }
+  assert {
+    condition     = length(google_storage_bucket_iam_member.catalog_read.condition) == 1
+    error_message = "the catalog grant carries exactly one condition; a second one would widen it"
+  }
+}

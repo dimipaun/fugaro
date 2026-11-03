@@ -58,7 +58,7 @@ var secretReaderExceptions = []struct {
 		},
 	},
 	{id: "E5", keys: []string{"internal/backend/batch/run.go"}},
-	{id: "E6", keys: []string{"internal/backend/gcp/build.go"}},
+	{id: "E6", keys: []string{"internal/backend/gcp/build.go", "internal/backend/gcp/catalog.go"}},
 	{
 		id: "E7",
 		keys: []string{

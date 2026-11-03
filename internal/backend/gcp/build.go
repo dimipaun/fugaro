@@ -27,6 +27,34 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 )
 
+// The two things every request built from the embedded cloudbuild.yaml
+// needs it to state, and neither a derived nor a catalog build may do
+// without.
+var (
+	errNoGitTokenSecret = errors.New("the embedded cloudbuild.yaml does not declare exactly the git token secret")
+	errNoCredentialStep = errors.New("the embedded cloudbuild.yaml has no build step, or no credential step in its Bitbucket form")
+)
+
+// embeddedBuild is images/derived/cloudbuild.yaml as a Cloud Build request,
+// before any substitution is set or any step is chosen: the derived build
+// (BuildRequest) runs it as it stands, and a catalog build
+// (CatalogBuildRequest) reuses its steps.
+func embeddedBuild() (*cloudbuild.Build, error) {
+	var raw map[string]any
+	if err := yaml.Unmarshal(images.CloudBuild, &raw); err != nil {
+		return nil, fmt.Errorf("parsing the embedded cloudbuild.yaml: %w", err)
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("converting the embedded cloudbuild.yaml: %w", err)
+	}
+	var b cloudbuild.Build
+	if err := json.Unmarshal(data, &b); err != nil {
+		return nil, fmt.Errorf("converting the embedded cloudbuild.yaml: %w", err)
+	}
+	return &b, nil
+}
+
 // BuildSpec is one derived-image build of (repository, workflow).
 type BuildSpec struct {
 	Slug        string // the repository's storage slug, for its workflow secrets' IDs
@@ -98,6 +126,17 @@ var (
 	bucketURLRE = regexp.MustCompile(`^gs://[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$`)
 	// digestRE is an image digest.
 	digestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	// imageRefRE is a container image reference: an optional registry host
+	// with an optional port, a repository path of lower-case components, an
+	// optional tag and an optional sha256 digest — the grammar
+	// internal/config's catalogImageRE holds a prebuilt catalog entry's
+	// reference to. A base image reaches a build's substitutions, the
+	// image's own labels and, for a catalog build, a record the record step
+	// composes with printf and no escaping, so the base is checked against
+	// this allowlist: a value carrying a quote, a backslash, a newline or
+	// any other control character would rewrite one of those instead of
+	// naming an image.
+	imageRefRE = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*(?::[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(?:@sha256:[a-f0-9]{64})?$`)
 	// registryHostRE is <region>-docker.pkg.dev/<project>.
 	registryHostRE = regexp.MustCompile(`^([a-z]+-[a-z]+[0-9]+)-docker\.pkg\.dev/([a-z][a-z0-9-]{4,28}[a-z0-9])$`)
 	// sha256HexRE is a sha256 sum as 64 hex digits.
@@ -128,20 +167,12 @@ var credentialSecretEnv = map[string]string{gitprov.KindBitbucket: gitTokenEnv, 
 // account: a request without one would run as the project's default build
 // identity. It makes no calls.
 func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
-	var raw map[string]any
-	if err := yaml.Unmarshal(images.CloudBuild, &raw); err != nil {
-		return nil, fmt.Errorf("parsing the embedded cloudbuild.yaml: %w", err)
-	}
-	data, err := json.Marshal(raw)
+	b, err := embeddedBuild()
 	if err != nil {
-		return nil, fmt.Errorf("converting the embedded cloudbuild.yaml: %w", err)
-	}
-	var b cloudbuild.Build
-	if err := json.Unmarshal(data, &b); err != nil {
-		return nil, fmt.Errorf("converting the embedded cloudbuild.yaml: %w", err)
+		return nil, err
 	}
 	if b.AvailableSecrets == nil || len(b.AvailableSecrets.SecretManager) != 1 || b.AvailableSecrets.SecretManager[0].Env != gitTokenEnv {
-		return nil, errors.New("the embedded cloudbuild.yaml does not declare exactly the git token secret")
+		return nil, errNoGitTokenSecret
 	}
 	var build, cred *cloudbuild.BuildStep
 	for _, st := range b.Steps {
@@ -153,7 +184,7 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 		}
 	}
 	if build == nil || cred == nil || !slices.Equal(cred.SecretEnv, []string{gitTokenEnv}) || !slices.Equal(cred.Env, credentialEnv[gitprov.KindBitbucket]) {
-		return nil, errors.New("the embedded cloudbuild.yaml has no build step, or no credential step in its Bitbucket form")
+		return nil, errNoCredentialStep
 	}
 	if err := s.check(project, reservedEnv(build)); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrBadBuildSpec, err)
@@ -200,7 +231,7 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 	b.Options.MachineType = s.MachineType
 	b.Options.Logging = "CLOUD_LOGGING_ONLY"
 	b.Timeout = "3600s"
-	return &b, nil
+	return b, nil
 }
 
 // reservedEnv is every variable a workflow secret may not reuse: the build
@@ -301,6 +332,9 @@ func (s BuildSpec) check(project string, reserved map[string]bool) error {
 		if f.v == "" {
 			return fmt.Errorf("the Cloud Build request has no %s", f.name)
 		}
+	}
+	if !imageRefRE.MatchString(s.Base) {
+		return fmt.Errorf("the base image %q is not a container image reference such as ghcr.io/owner/image:1.2", s.Base)
 	}
 	switch s.GitProvider {
 	case gitprov.KindBitbucket:

@@ -1532,7 +1532,10 @@ var tokenClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/b
 // its own budget token objects, budget-token-channel.md §7.2) — and then only
 // for a Fugaro job account of this run that the grant's own module holds or
 // creates, under the condition title built from that account
-// (jobAccountGrant) — or, in the
+// (jobAccountGrant) — or exactly one whole-builds/catalog/ clause
+// (gcp.CatalogReadCondition, a build account's read of the copied catalog
+// definitions, PIC4), under the same account rule and that condition's own
+// title (catalogReadGrant) — or, in the
 // project module and for an account that module creates, exactly one
 // whole-tokens/ clause (gcp.ProjectTokenBucketCondition, the shared job's
 // read of every repository's sealed token, plan task 3.2 step 2); a person's
@@ -1582,12 +1585,22 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 		m := tokenClause.FindStringSubmatch(expr)
 		if m == nil || !slices.Contains(c.Buckets, m[1]) || (bucket != "" && bucket != m[1]) {
 			// Not a per-repository job's tokens/<slug>/: it may still be a
-			// project job's, which is the project module's own widening and
-			// is accepted only for an account that module creates.
+			// project job's, or a build account's read of the copied catalog
+			// definitions, each of which is a widening of its own and is
+			// accepted only for the accounts its own builder's title names.
 			if c.projectJobTokenCondition(rc, createdSAIDs, heldSAIDs, title, expr) {
 				return ""
 			}
-			return "grants objectViewer on the bucket to an account under a condition that is not one repository's tokens/ condition of this run's bucket, nor a project job's whole-tokens/ one"
+			if c.catalogReadGrant(rc, createdSAIDs, heldSAIDs, title, expr) {
+				return ""
+			}
+			// The title says which grant this claims to be: when it is the
+			// catalog builder's spelling, the refusal names that grant rather
+			// than the tokens/ ones the expression alone would suggest.
+			if strings.HasPrefix(title, gcp.CatalogReadConditionTitlePrefix) {
+				return "grants objectViewer on the bucket under a build account's builds/catalog/ condition to a member that is not the build account its title names, which the modules never do"
+			}
+			return "grants objectViewer on the bucket to an account under a condition that is not one repository's tokens/ condition of this run's bucket, a project job's whole-tokens/ one, nor a build account's builds/catalog/ one"
 		}
 		// A per-repository job's read of its own repository's tokens/
 		// (gcp.TokenBucketCondition): the expression alone is not that grant.
@@ -1696,6 +1709,33 @@ func (c Cover) projectJobTokenCondition(rc ResourceChange, createdSAIDs, heldSAI
 			continue
 		}
 		if expr == gcp.ProjectTokenBucketCondition(b) {
+			return true
+		}
+	}
+	return false
+}
+
+// catalogReadGrant reports whether a bucket grant is a repository's build
+// account reading the copied catalog definitions (gcp.CatalogReadCondition,
+// PIC4): objectViewer, which the branch this is called from has already
+// established, on exactly builds/catalog/ of one of this run's buckets, with
+// the condition title built from the account the grant's own module holds or
+// creates (gcp.CatalogReadConditionTitle) — the account rule the tokens/
+// grants pass (jobAccountGrant).
+//
+// The clause has no slug, so the expression is one builder's bytes for the
+// whole string: the grant the repository module writes is accepted, and any
+// other clause under objects/ — or the same clause on no run bucket — is not.
+func (c Cover) catalogReadGrant(rc ResourceChange, createdSAIDs, heldSAIDs map[string]bool, title, expr string) bool {
+	if _, ok := c.jobAccountGrant(rc, createdSAIDs, heldSAIDs, title, gcp.CatalogReadConditionTitlePrefix); !ok {
+		return false
+	}
+	bucket := str(rc.Change.After["bucket"])
+	for _, b := range c.Buckets {
+		if !gcp.ValidBucketName(b) || (bucket != "" && bucket != b) {
+			continue
+		}
+		if expr == gcp.CatalogReadCondition(b) {
 			return true
 		}
 	}
