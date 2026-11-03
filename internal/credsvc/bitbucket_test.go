@@ -433,27 +433,62 @@ func TestReadMintUsesOnlyTheReadKind(t *testing.T) {
 // of the check is that this route does not trust the name the operator gave the
 // consumer, it trusts what the endpoint says the token can do.
 func TestReadMintRefusesWriteScopes(t *testing.T) {
-	for _, tc := range []struct{ name, scopes string }{
-		{"a write scope", "repository:write pullrequest:read"},
-		{"an admin scope", "repository:admin"},
-		{"a delete scope", "pullrequest:delete"},
+	for _, tc := range []struct {
+		name, scopes string
+		// named is whether the refusal may repeat the scope word. It may when
+		// the word has the shape bitbucket.org writes (readScopeRE) and never
+		// when it does not: an answer's bytes that are not a scope word are
+		// text this exchange did not write.
+		named bool
+	}{
+		{"a write scope", "repository:write pullrequest:read", true},
+		{"an admin scope", "repository:admin", true},
+		{"a delete scope", "pullrequest:delete", true},
+		{"another noun's scope", "webhook", true},
+		{"a second noun's scope", "wiki repository:read", true},
+		// The run consumer may carry `account` for Self detection (T3.5, O1)
+		// and the read mint does not hand it on: the read mint's own scope set
+		// is U11's question, and until Check 145 answers it this is refused.
+		{"an account scope", "account pullrequest", true},
+		{"an email scope", "email", true},
+		{"a scope in another case", "Repository:Read", false},
+		{"a word that is not a scope word", "\x1b[31mwrite", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, f := bitbucketSvc(t, testPersonAccount)
 			f.scopes = tc.scopes
 			resp, body := s.readMint(t, testBitbucketRepo, testPersonAccount)
 			if resp.StatusCode != StatusUnavailable {
-				t.Fatalf("the read mint handed out a token the endpoint says can write: HTTP %d %s", resp.StatusCode, body)
+				t.Fatalf("the read mint handed out a token the endpoint says carries a scope this route does not hand on: HTTP %d %s", resp.StatusCode, body)
 			}
 			e := refusal(t, resp.StatusCode, body)
-			if e.Error != ErrorStateUnavailable || !strings.Contains(e.Message, ErrReadWriteScopes.Error()) {
-				t.Errorf("the refusal is %+v, want state_unavailable and the write-scope class", e)
+			if e.Error != ErrorStateUnavailable || !strings.Contains(e.Message, ErrReadUnexpectedScopes.Error()) {
+				t.Errorf("the refusal is %+v, want state_unavailable and the unexpected-scope class", e)
 			}
 			// The value reaches nobody: not the answer, and not the operator's
-			// own log, which names the offending SCOPE and never the token.
+			// own log, which names the offending SCOPE when it is one and never
+			// the token.
 			for _, where := range []struct{ what, text string }{{"the answer", string(body)}, {"the service's log", s.logs.String()}} {
 				if strings.Contains(where.text, f.token) {
 					t.Fatalf("%s carries the token a refused read mint was handed", where.what)
+				}
+			}
+			// The word the guard stopped at is the one it may name, and a word
+			// that is not a scope word is repeated NOWHERE: not in the answer,
+			// not in the operator's log.
+			stopped := ""
+			for _, word := range strings.FieldsFunc(tc.scopes, func(r rune) bool {
+				return r == ' ' || r == ',' || r == '\t' || r == '\n'
+			}) {
+				if !readScopeAllowed[word] {
+					stopped = word
+					break
+				}
+			}
+			named := readScopeRE.MatchString(stopped) && tc.named
+			for _, where := range []struct{ what, text string }{{"the refusal", e.Message}, {"the service's log", s.logs.String()}} {
+				if strings.Contains(where.text, stopped) != named {
+					t.Errorf("%s carries %q = %v, want %v: %s", where.what, stopped, !named, named, where.text)
 				}
 			}
 			lines := auditLines(t, s.audit)
@@ -474,22 +509,25 @@ func TestReadMintRefusesWriteScopes(t *testing.T) {
 		})
 	}
 
-	// The other half, and the reason the rule is written to the endpoint's
-	// words rather than to the word "read": a list that names reads and the
-	// bare nouns bitbucket.org writes for them is not a write scope, and an
-	// answer that lists nothing is the "the endpoint did not say" case
-	// (oauth.go's Minted.Scopes) rather than a refusal.
+	// The other half: the scopes this route DOES hand on pass, and an answer
+	// that lists nothing is the "the endpoint did not say" case
+	// (oauth.go's Minted.Scopes) rather than a refusal. The empty list is a
+	// documented choice and not an oversight — what stands against it is the
+	// consumer's own scope, which the operator sets when they create it
+	// (BB2's release note) and which Check 145 (U11) reads on the real
+	// endpoint.
 	for _, tc := range []struct{ name, scopes string }{
-		{"bare read nouns", "repository pullrequest account"},
+		{"bare read nouns", "repository pullrequest"},
 		{"reads spelled out", "repository:read pullrequest:read"},
+		{"reads listed with a separator between them", "repository:read,pullrequest"},
 		{"no scopes listed at all", ""},
 	} {
-		t.Run(tc.name+" is not a write scope", func(t *testing.T) {
+		t.Run(tc.name+" is not a scope this route refuses", func(t *testing.T) {
 			s, f := bitbucketSvc(t, testPersonAccount)
 			f.scopes = tc.scopes
 			resp, body := s.readMint(t, testBitbucketRepo, testPersonAccount)
 			if resp.StatusCode != http.StatusOK {
-				t.Fatalf("the read mint refused a token whose scopes are reads: HTTP %d %s", resp.StatusCode, body)
+				t.Fatalf("the read mint refused a token whose scopes are the read consumer's own: HTTP %d %s", resp.StatusCode, body)
 			}
 		})
 	}

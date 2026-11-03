@@ -130,13 +130,15 @@ var (
 	// to any other entry would be a token minted from a credential the operator
 	// never chose.
 	ErrReadNoConsumer = errors.New("credsvc: the credentials bundle holds no Bitbucket read consumer")
-	// ErrReadWriteScopes is a token the endpoint granted write scopes to. It is
-	// refused rather than handed on (U11): the read mint exists to hand out a
-	// credential that cannot write, and a consumer the installing person
-	// created with write scopes — or a workspace whose grant was widened under
-	// it — would otherwise make this route the very thing it is written to
-	// avoid. The refusal names the scope word and never a credential.
-	ErrReadWriteScopes = errors.New("credsvc: the Bitbucket token minted carries a write scope")
+	// ErrReadUnexpectedScopes is a token the endpoint granted a scope to that
+	// this mint does not hand on (U11). It is refused rather than handed on:
+	// the read mint exists to hand out a credential that reads the
+	// installation's repositories and pull requests and does nothing else, and
+	// a consumer the installing person created with wider scopes — or a
+	// workspace whose grant was widened under it — would otherwise make this
+	// route the very thing it is written to avoid. The refusal names the scope
+	// word when it is one, and never a credential.
+	ErrReadUnexpectedScopes = errors.New("credsvc: the Bitbucket token minted carries a scope this read mint does not hand on")
 	// ErrReadBitbucket is the exchange failing or bitbucket.org refusing it.
 	ErrReadBitbucket = errors.New("credsvc: bitbucket.org did not mint a read token")
 	// ErrReadUnaudited is a token bitbucket.org granted and C1.13's auditor
@@ -155,31 +157,62 @@ var (
 // the exchange's error field.
 var readScopeRE = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}(:[a-z][a-z0-9_]{0,31})?$`)
 
-// writeScopeOf returns the first scope in scopes that grants more than a read,
-// or "" when every one is a read.
+// readScopeAllowed is the whole of the scopes the read mint hands on: the two
+// nouns the read consumer is created for, bare (bitbucket.org's own spelling of
+// the read) or with ":read" written out.
 //
-// A scope is a write one when it is QUALIFIED and its verb is not "read":
-// bitbucket.org's read scopes are the bare nouns ("repository", "pullrequest",
-// "account") and, for a grant that spells it out, the noun with ":read";
-// everything else it documents — ":write", ":admin", ":delete" — reaches
-// beyond a read. An empty list is not a write scope and is not treated as one:
-// oauth.go's Minted.Scopes documents that an answer which listed none is the
-// "the endpoint did not say" case, and refusing every token from an endpoint
-// that says less than this code hopes would break the mint rather than tighten
-// it. What stands against that case is the consumer's own scope, which the
-// operator sets when they create it (BB2's release note) and which Check 145
-// (U11) reads on the real endpoint.
-func writeScopeOf(scopes []string) string {
+// It is an ALLOWLIST, and that is the difference between a guard and a guess.
+// Bitbucket documents more scope words than any list here could enumerate —
+// webhook, wiki, snippet, issue, pipeline, team, account, email — and a guard
+// built the other way round, refusing the write, admin and delete forms of the
+// two nouns, hands on every one of them and every word a later endpoint invents
+// without so much as a line saying it did. What this route hands on is what it
+// was built for: reads of the installation's repositories and pull requests.
+//
+// `account` and `email` are deliberately NOT here even though the RUN consumer
+// may carry `account` (T3.5, O1): the read mint's own scope set is U11's open
+// question, and Check 145 is what backs the answer. Until it does, a token that
+// lists either is refused — the fail-closed half of the same sentence, and the
+// one U11 must revisit.
+var readScopeAllowed = map[string]bool{
+	"repository":       true,
+	"repository:read":  true,
+	"pullrequest":      true,
+	"pullrequest:read": true,
+}
+
+// readScopeFix is what a refusal of an unexpected scope tells the operator to
+// do about it. It is one sentence for every scope this guard refuses, because
+// the way out is the same one whatever the endpoint listed: the consumer is
+// recreated with the two read scopes and its entry is set again.
+const readScopeFix = "recreate the read consumer with the read scopes `repository` and `pullrequest` only, and run `fugaro creds set bitbucket-read-consumer` again"
+
+// refusedScope returns the first scope in scopes that this mint will not hand
+// on, and whether it found one.
+//
+// The name it answers with is one a refusal may carry, and that is why the
+// shape rule is asked as well: a word that does not have the shape
+// bitbucket.org writes (readScopeRE) is text this exchange did not write, so it
+// is refused with no name at all rather than repeated into an answer and an
+// operator's log.
+//
+// An empty list is a refusal of nothing: oauth.go's Minted.Scopes documents
+// that an answer which listed none is the "the endpoint did not say" case, and
+// refusing every token from an endpoint that says less than this code hopes
+// would break the mint rather than tighten it. What stands against that case is
+// the consumer's own scope, which the operator sets when they create it (BB2's
+// release note) and which Check 145 (U11) reads on the real endpoint.
+func refusedScope(scopes []string) (refused bool, name string) {
 	for _, s := range scopes {
-		verb, qualified := "", false
-		if i := strings.LastIndexByte(s, ':'); i >= 0 {
-			verb, qualified = s[i+1:], true
+		if readScopeAllowed[s] {
+			continue
 		}
-		if qualified && verb != "read" && readScopeRE.MatchString(s) {
-			return s
+		if readScopeRE.MatchString(s) {
+			return true, s
 		}
+		return true, ""
 	}
-	return ""
+	return false, ""
 }
 
 // readRefusalMessage is a read refusal's message with the call's own repository
@@ -384,15 +417,25 @@ func (s *Server) bitbucketRead(ctx context.Context, w http.ResponseWriter, r *ht
 		s.refuseRead(ctx, w, caller, slug, StatusUnavailable, ErrorStateUnavailable, ErrReadBitbucket.Error())
 		return
 	}
-	if scope := writeScopeOf(minted.Scopes); scope != "" {
+	if refused, scope := refusedScope(minted.Scopes); refused {
 		// U11's guard, and it is the one refusal of this route that is about
-		// what BUCKETBORG granted rather than about what was asked for: the
-		// endpoint's own list says the token can write, so it is not a read
-		// token and this route does not hand it on.
-		s.log.Warn("credsvc: the Bitbucket token minted for a read carries a write scope",
-			"purpose", purpose, "credential", credential, "repository", slug, "scope", scope)
-		s.refuseRead(ctx, w, caller, slug, StatusUnavailable, ErrorStateUnavailable,
-			fmt.Sprintf("%s (%s): recreate the read consumer with read scopes only, and run `fugaro creds set bitbucket-read-consumer` again", ErrReadWriteScopes.Error(), scope))
+		// what bitbucket.org granted rather than about what was asked for: the
+		// endpoint's own list names a scope this route does not hand on, so it
+		// is refused rather than passed along (readScopeAllowed).
+		//
+		// The operator's way out is the same whatever the scope was, so it is
+		// written once, and the scope itself is named only when it has the
+		// shape a scope word has (refusedScope): a word that is not one is text
+		// this exchange did not write, and it reaches neither the answer nor
+		// the line below it.
+		attrs := []any{"purpose", purpose, "credential", credential, "repository", slug}
+		message := ErrReadUnexpectedScopes.Error() + ": " + readScopeFix
+		if scope != "" {
+			attrs = append(attrs, "scope", scope)
+			message = fmt.Sprintf("%s (%s): %s", ErrReadUnexpectedScopes.Error(), scope, readScopeFix)
+		}
+		s.log.Warn("credsvc: the Bitbucket token minted for a read carries a scope this route does not hand on", attrs...)
+		s.refuseRead(ctx, w, caller, slug, StatusUnavailable, ErrorStateUnavailable, message)
 		return
 	}
 	s.answerRead(ctx, w, caller, slug, BitbucketReadResponse{Token: minted.Token, ExpiresAt: minted.ExpiresAt, Repository: req.Repository})
