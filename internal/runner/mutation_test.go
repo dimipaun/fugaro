@@ -697,15 +697,22 @@ func mutationPlantReads(dir string) []string {
 }
 
 // mutationStageAgent is the review stage as the ordering test meets it: it
-// reads the two places a head's planted file would be read from, and answers
-// with the artifact's own shape.
+// reads the two places a head's planted file would be read from and answers
+// what it read, as a reviewer asked to judge a head would.
 type mutationStageAgent struct {
+	t      *testing.T
 	answer agent.Result
 	seen   []string
 }
 
 func (a *mutationStageAgent) Run(_ context.Context, req agent.Request) (agent.Result, error) {
 	a.seen = mutationPlantReads(req.Dir)
+	if len(a.seen) != 0 {
+		// What a reviewer that found the head's own test writing into the
+		// worktree would answer, and the answer the ordering exists to keep
+		// off the artifact.
+		return reviewResult(a.t, reviewAnswerOf("reject", strings.Join(a.seen, "; "))), nil
+	}
 	return a.answer, nil
 }
 
@@ -774,7 +781,7 @@ func mutationOrderingRun(t *testing.T, spec *task.Spec, stage agent.Agent) (*run
 // stage is over before either exists.
 func TestMutationRunsAfterTheReviewStage(t *testing.T) {
 	mutationUnfenced(t)
-	stage := &mutationStageAgent{answer: reviewResult(t, reviewAnswerOf("ship", "the change is one boolean and one test"))}
+	stage := &mutationStageAgent{t: t, answer: reviewResult(t, reviewAnswerOf("ship", "the change is one boolean and one test"))}
 	r, _ := mutationOrderingRun(t, mutationAsk(t, `,"mutate":[{"file":"strict.go","test":"TestPlant"}]`), stage)
 
 	r.reviewMode(context.Background())
@@ -802,7 +809,7 @@ func TestMutationRunsAfterTheReviewStage(t *testing.T) {
 		t.Fatalf("the artifact's mutation_checks = %+v, want the check this run ran before writing it", artifact.MutationChecks)
 	}
 	if artifact.Verdict != "ship" {
-		t.Errorf("the artifact's verdict = %q, want the reviewer's own word", artifact.Verdict)
+		t.Errorf("the artifact's verdict = %q, want the answer the reviewer gave: a stage that found the head's plant answers what it read", artifact.Verdict)
 	}
 	if r.rec.Status != runstore.StatusSucceeded || r.rec.Outcome != runstore.OutcomeReviewed {
 		t.Errorf("the run ended %s/%s (%s), want it reviewed: nothing the check left behind changed the meeting's ending", r.rec.Status, r.rec.Outcome, r.rec.Reason)
