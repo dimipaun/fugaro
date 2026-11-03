@@ -586,6 +586,19 @@ export class CliSource implements FugaroSource {
     return this.#readDocument('models.list', args)
   }
 
+  /** readSettings reads `settings --json`: the project's settings, each with
+   * the value a run gets, the layer that decided it, its default, its state and
+   * the three writability facts the row set draws its pencils from (the
+   * settings-edit plan's C1, D1102; contract §6.19). The argv is the spawn
+   * row's own two words and the installation's `--project`, because the
+   * operation takes no argument at all -- and `--offline` is deliberately not
+   * among them: the layers the read could not reach come back as
+   * `state: unread: …`, which is the answer the section draws. It writes
+   * nothing and mints nothing of the host's. */
+  readSettings(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('settings.read', args)
+  }
+
   environmentReport(args: ValidatedArguments): Promise<Snapshot> {
     // The one one-shot read that carries a `--dir` (the installation's directory
     // or the private one), because doctor's checks are about the checkout it is
@@ -1085,6 +1098,13 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * so there is no directory on this machine to refuse for and nothing to be
      * gained by holding a floor between two calls. */
     listModels: (args) => read('models.list', (source) => source.listModels(args)),
+    /** readSettings has no precondition and no cadence either: the read is the
+     * registry, the project layer's cache, the local config and the checkouts
+     * this machine remembers, with no bucket, no database and no host behind
+     * it. It is the read an edit is decided against (`writable`, `owner`,
+     * `target_layer`), and a screen that had to wait a minute between the write
+     * and the re-read would draw a table it knows is out of date. */
+    readSettings: (args) => read('settings.read', (source) => source.readSettings(args)),
     environmentReport: (args) => read('environment.report', (source) => source.environmentReport(args)),
     forget: drop,
     close: drop,

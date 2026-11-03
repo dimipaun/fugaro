@@ -638,6 +638,12 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(modelsLsDoc{}), reflect.TypeOf(modelsCatalog{}),
 		reflect.TypeOf(modelsRoute{}), reflect.TypeOf(modelsModel{}),
 		reflect.TypeOf(modelsRepo{}), reflect.TypeOf(priceCatalog{}),
+		// §6.19, the settings document and its four row shapes (CLI 0.16.0,
+		// S5/#1525): the document, a layer the read touched, a settings row,
+		// the built-in default and one `--why` level.
+		reflect.TypeOf(settingsDoc{}), reflect.TypeOf(settingsLayer{}),
+		reflect.TypeOf(settingsJSON{}), reflect.TypeOf(settingsDefault{}),
+		reflect.TypeOf(settingsLevelJS{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -877,7 +883,12 @@ func TestDocsDesktopConsoleContractNamesTheFlagInventory(t *testing.T) {
 		"logs":        newLogsCmd,
 		"secrets ls":  newSecretsLsCmd,
 		"accounts ls": newAccountsLsCmd,
-		"doctor":      newDoctorCmd,
+		// The Project tab's settings read (the settings-edit plan's C1): it is
+		// the one command here whose aiming pair is `settingsAimFlags`' own
+		// rather than `addCloudFlags`', and the two flags are the pair either
+		// way, which is what this inventory is about.
+		"settings": newSettingsCmd,
+		"doctor":   newDoctorCmd,
 	}
 	for name, newCmd := range spawned {
 		for _, flag := range []string{"project", "config"} {
@@ -955,6 +966,12 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// describes its flags, so they are checked against this constructor like
 	// any other command's.
 	"models ls": newModelsLsCmd,
+	// §6.19 documents the settings read (CLI 0.16.0, S5/#1525), and the console
+	// spawns it since the settings-edit plan's C1, as §5.1 rule 6's
+	// `settings --json --project <name> [--config <path>]` row. The document
+	// describes its flags, so they are checked against this constructor like
+	// any other command's.
+	"settings": newSettingsCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
@@ -1228,7 +1245,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the seventeen argvs and nothing else -- the console's one spawn table
+// the twenty-one argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1294,6 +1311,15 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// fixed words -- so this list spells the whole argv back with nothing
 		// an operation's schema fills.
 		"coordinator intents --all --json",
+		// The settings read (the settings-edit plan's C1, the `settings.read`
+		// operation, D1102): the selected project's settings, each with the
+		// layer that won, the value it gives and the writability facts the
+		// Project tab's settings section draws its pencils from. The two
+		// project flags §3.4 rule 3 gives every cloud command are the
+		// installation's, and the group's own flags and its positional keys
+		// and globs are not words of the argv, so the row spells the whole
+		// argv back with no argument an operation's schema fills.
+		"settings --json --project <name> [--config <path>]",
 		// The launch (console v2 plan V2.5.1a, the `run.launch` operation):
 		// the console's one write and the one thing this table is a fence
 		// against, spelled as rule 11's exact argv and nothing else.
@@ -1432,7 +1458,7 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Nineteen commands: the thirteen dashboard reads (logs has two argvs), the
+	// Twenty commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the project view's
 	// `coordinator status --from-store --all --json` (Bitbucket credentials
@@ -1441,9 +1467,10 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// `coordinator intents --all --json` (coordinator v2 C4c), the jobs-free
 	// totals read `runs summary --json` (console 0.119.0, B4/#1580), the models
 	// read `models ls --json` (console 0.119.0, the owner's ruling of
-	// 2026-11-02) and the launch `fugaro run` (V2.5.1a).
-	if len(allowed) != 19 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 19 (logs has two argvs)", path, argvs, len(allowed))
+	// 2026-11-02), the settings read `settings --json` (the settings-edit
+	// plan's C1) and the launch `fugaro run` (V2.5.1a).
+	if len(allowed) != 20 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 20 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -9493,8 +9520,8 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 		t.Errorf("%s §5.1 rule 11 still bounds the task at 64 KiB: the operator confirms by reading it, so the bound is 16 KiB", path)
 	}
 
-	if !strings.Contains(doc, "**The dashboard's surface is twenty-nine operations**") {
-		t.Errorf("%s no longer says the surface is twenty-nine operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull request read to twenty-seven, console 0.119.0's totals read to twenty-eight and console 0.119.0's models read to twenty-nine), and the two cannot disagree", path)
+	if !strings.Contains(doc, "**The dashboard's surface is thirty operations**") {
+		t.Errorf("%s no longer says the surface is thirty operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull request read to twenty-seven, console 0.119.0's totals read to twenty-eight, console 0.119.0's models read to twenty-nine and the settings-edit plan's C1 to thirty), and the two cannot disagree", path)
 	}
 
 	var neverRows [][]string

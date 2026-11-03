@@ -433,7 +433,7 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Twenty-eight operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Thirty operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -948,6 +948,35 @@ export const CONSOLE_OPERATIONS = [
     command: 'models ls',
     flags: ['--json'],
     summary: 'the project’s routes, the models a run can name, and each repository’s pins',
+    args: [],
+  },
+  // The settings read (the settings-edit plan's C1, D1102): the project's
+  // settings, each with the value a run gets, the layer that decided it, the
+  // built-in default and its state -- and the three writability facts
+  // (`writable`, `owner`, `target_layer`) the Project tab's settings section
+  // draws its pencils from. **The console keeps no list of its own**: D1102 is
+  // the ruling that the CLI's read carries those three, so there is no fourth
+  // copy of the generic path's allowlist here to drift the day a key is added
+  // to the registry.
+  //
+  // **No argument at all.** The command takes positional keys or globs and
+  // seven flags of its own, and no renderer chooses any of them -- the row's
+  // `args` is empty, its two words are fixed, and `--project`/`--config` are
+  // the installation's (`src/main/spawn.ts`). So no word of this argv is
+  // caller-influenced and the read is not a way to steer a child anywhere.
+  //
+  // **A sensitive row is never drawn** (the owner's ruling of 2026-11-01,
+  // D1111). The document carries no `value` member for one at all
+  // (`settingsJSON`), and the screen drops the row whole: no key, no value, no
+  // pencil. That is the screen's rule and not this table's; what belongs here
+  // is that the row's *edit* is the next task's (`settings.edit`), and this
+  // operation reads.
+  {
+    name: 'settings.read',
+    method: 'readSettings',
+    command: 'settings',
+    flags: ['--json'],
+    summary: 'the project’s settings, what decides each one, and which of them the console may edit',
     args: [],
   },
   {
@@ -3127,6 +3156,15 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
  *     `spent_micros` and `notional_micros` over the window and over each
  *     repository, so it is withheld with them for the same reason: a totals
  *     read answered in reduced mode is the withheld figure by another name;
+ *   - **`caps` names the Projects tab's reads, and the settings read with
+ *     `budget show`.** The tab's own `VIEWS` entry declares the view this list
+ *     is the other half of (`src/renderer/entry.ts`, `{ id: 'projects', … view:
+ *     'caps' }`), so the section is offered and drawn only where `budget.show`
+ *     may be read. `settings.read` (the settings-edit plan's C1) carries the
+ *     same kind of figure under a different name: the registry's `budget.*` and
+ *     `agent.max_budget_usd` rows are the project's configured caps, and the
+ *     reduced mode withholds caps -- a settings table answered here would put a
+ *     limit on screen through the third section that the caps panel is refused;
  *   - **`kill` is empty, and that is the answer rather than a gap.** There is no
  *     kill-switch operation in the surface: the controls live in the live feed's
  *     own fields (design C10, and `src/shared/version.ts`'s `HIDDEN_VIEW_WORDS`
@@ -3143,7 +3181,7 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
 export const REDUCED_VIEW_OPERATIONS: Readonly<Record<ReducedView, readonly OperationName[]>> =
   Object.freeze({
     spend: Object.freeze(['spend.report', 'runs.stats', 'runs.summary'] as const),
-    caps: Object.freeze(['budget.show'] as const),
+    caps: Object.freeze(['budget.show', 'settings.read'] as const),
     kill: Object.freeze([] as const),
   })
 

@@ -110,6 +110,7 @@ export const PROJECTS_SOURCE_LINES: Readonly<Record<string, string>> = Object.fr
   'accounts.inventory': 'fugaro accounts ls --json',
   'secrets.inventory': 'fugaro secrets ls --json',
   'models.list': 'fugaro models ls --json',
+  'settings.read': 'fugaro settings --json',
 })
 
 /**
@@ -156,10 +157,12 @@ export type ProjectsPanelKey =
   | 'policy'
   | 'enrollment'
   | 'models'
+  | 'settings'
 
 /** PROJECT_PANEL_KEYS is that list as a value: the model carries one panel per
  * member and a test walks it. It is the seven the tab's first read builds; the
- * models panel is the eighth (`ProjectsPanelKey`) and a second read's. */
+ * models panel is the eighth (`ProjectsPanelKey`) and a second read's, and the
+ * settings panel the ninth, a third read's. */
 export const PROJECT_PANEL_KEYS: readonly ProjectsPanelKey[] = Object.freeze([
   'caps',
   'kill',
@@ -385,6 +388,66 @@ export interface ProjectsModelsInputs {
   readonly because: string | null
   readonly tooOld: boolean
   readonly version: string
+}
+
+/**
+ * ProjectsSettingsRow is one setting the table draws: the key, the value a run
+ * gets, the layer that decided it, the read's own state -- and the three
+ * writability facts the CLI's read carries (D1102), which are what decide the
+ * row's pencil.
+ *
+ * `value` is `null` for a row the document carried no `value` member for. That
+ * is a fact about the *read* and not about the setting -- the value is unknown,
+ * which this table draws as the console's own `n/a` marker rather than as an
+ * empty cell, which would read as "the value is the empty string".
+ *
+ * `pencil` is the one decision this screen makes, and it is made **once**, here,
+ * so a test can assert the row set without walking a tree: the document says
+ * `writable` and the document names a `target_layer` the generic path would
+ * write, and nothing else. A key the generic path does not write gets no pencil
+ * however the document spells it (D1111).
+ */
+export interface ProjectsSettingsRow {
+  readonly key: string
+  readonly scope: string
+  readonly value: string | null
+  readonly wins: string
+  readonly state: string
+  readonly writable: boolean
+  readonly owner: string
+  readonly targetLayer: string
+  readonly pencil: boolean
+}
+
+/**
+ * ProjectsSettings is the settings section: one panel and one row per setting
+ * the document carries. It is drawn from `settings --json` (contract §6.19),
+ * the read the settings-edit plan's C1 puts on the dashboard, and it is a
+ * section of its own for the reason the models panel is: it lands apart from
+ * `budget show` and from `models ls`, and none of the three waits for another.
+ *
+ * **A `sensitive: true` row is not here at all** (the owner's ruling of
+ * 2026-11-01, D1111): the document carries no value member for one, and this
+ * model drops the row whole -- no key, no value, no pencil -- rather than
+ * blanking a cell. `buildProjectsSettings` is where that happens, so no drawing
+ * code can be handed one.
+ */
+export interface ProjectsSettings {
+  readonly panel: ProjectsPanel
+  readonly rows: readonly ProjectsSettingsRow[]
+}
+
+/**
+ * ProjectsSettingsInputs is everything the settings section is built from.
+ *
+ * `raw` is the document **as it arrived**, not a decoded view: this screen reads
+ * its own documents (the header's rule), so it checks the version and the shape
+ * itself and answers an unavailable panel rather than a table it cannot vouch
+ * for. `because` is the CLI's own sentence for a read that was refused.
+ */
+export interface ProjectsSettingsInputs {
+  readonly raw: unknown
+  readonly because: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -839,6 +902,207 @@ export function buildProjectsModels(inputs: ProjectsModelsInputs): ProjectsModel
   }
 }
 
+/**
+ * SETTINGS_DOC_VERSION is the document version this section reads
+ * (`settingsDocVersion`, `internal/cli/settings_render.go`). A document of
+ * another version is refused rather than read as the one this build knows: the
+ * CLI's own rule is that members are only ever added within a version, so a
+ * different number means a shape this screen cannot vouch for.
+ */
+const SETTINGS_DOC_VERSION = 1
+
+/** SETTINGS_VERSION_WORD is the console's own sentence for a document it does
+ * not read, with the version the CLI printed interpolated -- untrusted text, so
+ * the whole sentence goes through `unavailablePanel`'s sanitizer like every
+ * other reason. */
+const SETTINGS_VERSION_WORD = 'settings --json is version '
+
+/** SETTINGS_OWNED_WORD introduces the command family that writes a key the
+ * generic path does not. The words after it are the document's own `owner`,
+ * which is S5's mapping of the registry's owner to a command family
+ * (`settingsFamilyCommands`, `internal/cli/settings_set.go`), so the console
+ * names no family of its own and keeps no list to drift. */
+const SETTINGS_OWNED_WORD = 'written by '
+
+/** SETTINGS_NOT_GENERIC_WORD is the rest of that sentence, S5's own phrase
+ * (`settings set`'s refusal: "%s is written by %s, not by the generic path"). */
+const SETTINGS_NOT_GENERIC_WORD = ', not by the generic path'
+
+/** SETTINGS_PENCIL_LABEL is the pencil's control word. The button is drawn
+ * through `disabledWrite`, so its accessible name is this word plus the
+ * console's own sentence that the write is not in this release; the task that
+ * makes it a button (`C2`) is the one that names the key in it (D1116). */
+const SETTINGS_PENCIL_LABEL = 'Edit'
+
+/** SETTINGS_PENCIL_CLASS is the pencil's hook, and the class the stylesheet
+ * gives the pencil's states. */
+export const SETTINGS_PENCIL_CLASS = 'projects-settings-pencil'
+
+/**
+ * SETTINGS_DOC_SHAPE_BECAUSE and SETTINGS_ROW_SHAPE_BECAUSE are the console's
+ * own sentences for a document it will not read. **The console's and not the
+ * CLI's**: no command prints either, and both say what the screen did -- it
+ * withheld the table -- rather than what the CLI should have printed.
+ *
+ * They are two sentences because they are two facts: the first is about the
+ * document's own `settings` member, the second about one row of a list that is
+ * otherwise a list of rows.
+ */
+const SETTINGS_DOC_SHAPE_BECAUSE =
+  'settings --json is not a document this console reads: its settings member is not a list of rows'
+
+const SETTINGS_ROW_SHAPE_BECAUSE =
+  'settings --json carried a row this console does not read: a member the table draws is not the type the contract gives it, so no row of it is drawn'
+
+/** SettingsRowRead is one entry of the document's `settings` list, read
+ * strictly: a row to draw, an entry that is not a row at all, or an entry that
+ * is a row of a shape this console refuses the table for. */
+type SettingsRowRead =
+  | { readonly kind: 'row'; readonly row: ProjectsSettingsRow }
+  | { readonly kind: 'skip' }
+  | { readonly kind: 'shape' }
+
+/** SettingsRowsRead is the whole list: the rows, or the reason there is no
+ * table to draw. */
+type SettingsRowsRead =
+  | { readonly ok: true; readonly rows: readonly ProjectsSettingsRow[] }
+  | { readonly ok: false; readonly because: string }
+
+/**
+ * settingsRowAt reads one entry of the document's `settings` list.
+ *
+ * **Types are strict and unknown keys are ignored** -- the owner's ruling of
+ * 2026-10-30, which `src/shared/schema.ts` applies to the documents it admits,
+ * applied here because this screen reads its own documents. A member of another
+ * type is **never coerced**: a `scope` that is a number would become `''`, an
+ * `owner` that is a number would make the row look like one no family writes,
+ * and a `writable` spelled `"true"` would decide against a pencil on a wrong
+ * reading of the document -- each of them a claim the CLI never made. The table
+ * is refused instead, whole, and the panel says so (`SETTINGS_ROW_SHAPE_BECAUSE`).
+ *
+ * Only `value` may be absent: the contract writes no `value` member on a
+ * sensitive row at all, and `*string` is the one member the CLI omits.
+ *
+ * Two entries are dropped rather than refused, and each is **not a row** of this
+ * table rather than a row of the wrong shape:
+ *
+ *   - an entry that is not an object, and one whose `key` is missing, not text
+ *     or empty. The table is keyed by its keys and every cell is drawn beside
+ *     one; a row with no key is a row this screen cannot name;
+ *   - a row whose `sensitive` member is neither absent nor exactly `false`. The
+ *     owner's ruling of 2026-11-01 (D1111) is that a sensitive setting is never
+ *     editable and never shown, so the check **fails closed on the type**: a
+ *     document that spells the flag `"true"`, `1`, `"false"` or `null` loses the
+ *     row. Reading it as `=== true` would draw exactly the row the ruling says is
+ *     never drawn.
+ */
+function settingsRowAt(entry: unknown): SettingsRowRead {
+  const row = objectAt(entry)
+  if (row === null) return { kind: 'skip' }
+  const key = textAt(row['key'])
+  if (key === null || key === '') return { kind: 'skip' }
+  const sensitive = row['sensitive']
+  if (sensitive !== undefined && sensitive !== false) return { kind: 'skip' }
+  const scope = textAt(row['scope'])
+  const wins = textAt(row['wins'])
+  const state = textAt(row['state'])
+  const owner = textAt(row['owner'])
+  const targetLayer = textAt(row['target_layer'])
+  const rawValue = row['value']
+  const value = rawValue === undefined ? null : textAt(rawValue)
+  const writable = row['writable']
+  if (
+    scope === null ||
+    wins === null ||
+    state === null ||
+    owner === null ||
+    targetLayer === null ||
+    (value === null && rawValue !== undefined) ||
+    typeof writable !== 'boolean'
+  ) {
+    return { kind: 'shape' }
+  }
+  // `state` is drawn in the document's own words, which include the unread
+  // spelling (`unread: <what could not be read>`) the plan's argv is written
+  // for: the read is **not** passed `--offline`, so a layer that could not be
+  // reached says so and the row is drawn as unread rather than as a value.
+  return {
+    kind: 'row',
+    row: {
+      key,
+      scope,
+      value,
+      wins,
+      state,
+      writable,
+      owner,
+      targetLayer,
+      pencil: writable && targetLayer !== '',
+    },
+  }
+}
+
+/** settingsRowsAt reads the document's `settings` member: every row it may
+ * draw, or the reason the whole table is withheld -- which is the document
+ * member that is not a list at all, or one row of a shape the screen refuses. */
+function settingsRowsAt(raw: unknown): SettingsRowsRead {
+  const settings = arrayAt(raw)
+  if (settings === null) return { ok: false, because: SETTINGS_DOC_SHAPE_BECAUSE }
+  const rows: ProjectsSettingsRow[] = []
+  for (const entry of settings) {
+    const read = settingsRowAt(entry)
+    if (read.kind === 'shape') return { ok: false, because: SETTINGS_ROW_SHAPE_BECAUSE }
+    if (read.kind === 'row') rows.push(read.row)
+  }
+  return { ok: true, rows }
+}
+
+/**
+ * buildProjectsSettings turns the settings read into the section: one row per
+ * setting, and the pencil's subjects.
+ *
+ * **Four rules are decided here and nowhere else** (the plan's D1111):
+ *
+ *   - a row whose `sensitive` member is neither absent nor exactly `false` is
+ *     **not drawn at all** -- no key, no value, no pencil, whatever type the
+ *     flag is spelled in (`settingsRowAt`). The owner's ruling of 2026-11-01 is
+ *     that a sensitive setting is never editable and never shown, and the
+ *     document carries no `value` member for one either; the row is dropped
+ *     whole rather than blanked, so a later drawing change cannot leak a cell of
+ *     it;
+ *   - a row gets a pencil only when the document says `writable: true` **and**
+ *     names a non-empty `target_layer`. The second half matters: `target_layer`
+ *     empty is a key S5 would not write with the layer it has, so there is no
+ *     write to offer and the row is drawn without a pencil;
+ *   - a row with `writable: false` is drawn with the family that *does* write it
+ *     -- `owner`, in the document's own words, empty when no family is known;
+ *   - **a member of the wrong type withholds the table** rather than being
+ *     coerced (`settingsRowAt`), and so does a `settings` member that is not a
+ *     list at all: the panel is the read's own unavailable state with the
+ *     console's sentence for the shape, because a table drawn from coerced
+ *     members is a table of claims the CLI never made.
+ *
+ * It touches no element, so every one of those is testable in plain Node.
+ */
+export function buildProjectsSettings(inputs: ProjectsSettingsInputs): ProjectsSettings {
+  const document = objectAt(inputs.raw)
+  if (document === null || document.version !== SETTINGS_DOC_VERSION) {
+    const because =
+      document === null
+        ? (inputs.because ?? absent('settings.read', undefined))
+        : `${SETTINGS_VERSION_WORD}${String(document.version)} and this console reads version ${SETTINGS_DOC_VERSION}`
+    return { panel: unavailablePanel('settings', 'settings', 'settings.read', because), rows: [] }
+  }
+  const read = settingsRowsAt(document.settings)
+  if (!read.ok) {
+    return { panel: unavailablePanel('settings', 'settings', 'settings.read', read.because), rows: [] }
+  }
+  return {
+    panel: readPanel('settings', 'settings', 'settings.read', read.rows.length),
+    rows: read.rows,
+  }
+}
+
 /** labelOf is a repository's own name for a sentence: `owner/name` when the
  * document carries it, the bucket key when it does not. */
 function labelOf(entry: RepoEntry): string {
@@ -1252,6 +1516,9 @@ const PANEL_BODIES: Readonly<Record<ProjectsPanelKey, (factory: ScreenFactory, m
     // from a `ProjectsModel` at all: `fillProjectsModels` draws it into a host
     // of its own when `models ls` answers, so there is no body here to give it.
     models: () => null,
+    // The ninth is the third read's, on the same terms: `fillProjectsSettings`
+    // draws it when `settings --json` answers.
+    settings: () => null,
   })
 
 /**
@@ -1405,6 +1672,79 @@ export function fillProjectsModels(factory: ScreenFactory, model: ProjectsModels
   host.append(element)
 }
 
+/**
+ * settingsRowLine is one setting: the key, the scope it belongs to, the value a
+ * run gets, the layer that decided it, the read's state, and the row's write.
+ *
+ * **The write is the whole point of the row set.** A writable row with a target
+ * layer carries the pencil, drawn through `disabledWrite`: a real `button` in
+ * the tab order that says it is not available in this release, so nothing here
+ * looks like a control that quietly does nothing and **no listener is bound**.
+ * The task that turns it into the edit's door is the plan's C2. A row the
+ * generic path does not write draws the family that does instead -- the
+ * document's own `owner`, in S5's own words -- and a row with no family at all
+ * draws no word about one, because the console does not know who writes it.
+ *
+ * Everything from the document goes through `putText` with the class its wire
+ * key declares; the two console sentences go through `literal`. The state is
+ * drawn as the document's **words** and the panel carries no tone of its own, so
+ * an unread row is legible to a reader who cannot see colour (styling design
+ * section 3.5).
+ *
+ * **The key is drawn `branch`, and the class is a shape rather than a claim
+ * about what a key is.** A key is a dotted identifier (`agent.models.coder`,
+ * `agent.levels.l1.model`, `rigor.areas.0.name`), and `label`'s free-text pass
+ * reads a three-label dotted name as a machine name: it would draw the key of
+ * the coder's model, and the key of every level's model, as `<host>` -- a
+ * placeholder for a value the row is the one place to name. `branch` is the
+ * class whose grammar admits a dotted identifier whole (`WHOLE_BRANCH_RE`),
+ * which is the shape a key has, and the same reading the contract already gives
+ * two identifiers that are not branches either (`revision` and `base`,
+ * `src/shared/schema.ts`). Its one loss is the recorder's own `<branch>` marker
+ * for a key that is credential-shaped, which the CLI's registry has none of.
+ */
+function settingsRowLine(parent: ScreenElement, factory: ScreenFactory, row: ProjectsSettingsRow): void {
+  const element = cell(parent, factory, 'li', 'projects-settings-row')
+  textCell(element, factory, 'span', row.key, 'branch', 'settings[].key', 'projects-settings-key')
+  if (row.scope !== '') textCell(element, factory, 'span', row.scope, 'label', 'settings[].scope', 'projects-settings-scope')
+  if (row.value !== null) textCell(element, factory, 'span', row.value, 'label', 'settings[].value', 'projects-settings-value')
+  if (row.wins !== '') textCell(element, factory, 'span', row.wins, 'label', 'settings[].wins', 'projects-settings-wins')
+  if (row.state !== '') textCell(element, factory, 'span', row.state, 'sentence', 'settings[].state', 'projects-settings-state')
+  if (row.pencil) element.append(disabledWrite(factory, SETTINGS_PENCIL_CLASS, SETTINGS_PENCIL_LABEL))
+  else if (!row.writable && row.owner !== '') {
+    literal(cell(element, factory, 'span', 'projects-settings-owner-word'), SETTINGS_OWNED_WORD)
+    textCell(element, factory, 'span', row.owner, 'label', 'settings[].owner', 'projects-settings-owner')
+    literal(cell(element, factory, 'span', 'projects-settings-owner-generic'), SETTINGS_NOT_GENERIC_WORD)
+  }
+}
+
+/** settingsPanelBody is the settings panel's content: one row per setting, in
+ * the document's own order. The panel is drawn only for a document this build
+ * read, and a document with no settings at all draws an empty list rather than
+ * a sentence: `[]` is the read's own answer about a registry that had no rows,
+ * which is a different fact from a read that did not land. */
+function settingsPanelBody(factory: ScreenFactory, model: ProjectsSettings): ScreenElement {
+  const element = make(factory, 'div', 'projects-settings-body')
+  const list = cell(element, factory, 'ul', 'projects-settings-list')
+  for (const row of model.rows) settingsRowLine(list, factory, row)
+  return element
+}
+
+/**
+ * fillProjectsSettings draws the settings section into the host the frame gave
+ * it, and it is the third read's filler beside the other two: `settings --json`
+ * lands apart from `budget show` and from `models ls`, so this panel is drawn
+ * the moment its own document arrives and nothing waits for anything else.
+ *
+ * It appends to the host and not to the slot, for `fillProjects`'s reason: the
+ * slot is where the mark of the read that is still out lives.
+ */
+export function fillProjectsSettings(factory: ScreenFactory, model: ProjectsSettings, host: ScreenElement): void {
+  const element = panelShell(factory, model.panel)
+  if (model.panel.state === 'read') element.append(settingsPanelBody(factory, model))
+  host.append(element)
+}
+
 /** PROJECTS_THEMES is the set of themes a screenshot golden is taken for, and
  * it is the same two the Live and Spend screens name: design section 6.1 rule 5
  * has a light and a dark palette and a small phosphor set besides, the tokens
@@ -1442,6 +1782,17 @@ export const PROJECTS_MODELS_BUSY = 'Reading the project’s models…'
  * (`COORDINATOR_WINDOW_SHAPE`'s reason, one tab over). */
 export const PROJECTS_MODELS_CLASS = 'projects-models'
 
+/** PROJECTS_SETTINGS_BUSY is the tab's **third** section's mark (the
+ * settings-edit plan's C1): `settings --json`, the project's settings and the
+ * three writability facts the pencils are drawn from. The three reads of this
+ * tab have a lifecycle each, so each mark names the read it belongs to. */
+export const PROJECTS_SETTINGS_BUSY = 'Reading the project’s settings…'
+
+/** PROJECTS_SETTINGS_CLASS is the host the settings read is drawn into, a third
+ * sibling of `projects-body` and `projects-models` inside the same
+ * `section.projects`, for `PROJECTS_MODELS_CLASS`'s reason. */
+export const PROJECTS_SETTINGS_CLASS = 'projects-settings'
+
 /** DrawnProjectsFrame is the screen with nothing in it: the root, the section a
  * read fills, and the slot the entry's busy mark goes in. `models` and
  * `modelsSlot` are the second section's pair, drawn the same way. */
@@ -1451,6 +1802,8 @@ export interface DrawnProjectsFrame {
   readonly slot: ScreenElement
   readonly models: ScreenElement
   readonly modelsSlot: ScreenElement
+  readonly settings: ScreenElement
+  readonly settingsSlot: ScreenElement
 }
 
 /**
@@ -1480,9 +1833,15 @@ export function renderProjectsFrame(factory: ScreenFactory, theme: ProjectsTheme
   // would be pushed ahead of them and the models panel would draw above the caps.
   const models = make(factory, 'div', PROJECTS_MODELS_CLASS)
   const modelsSlot = cell(models, factory, 'div', BUSY_SLOT_CLASS)
+  // The third read's host is a sibling of both, for the same reason: each
+  // section owns the mark of its own read and none of the three may take
+  // another's claim down.
+  const settings = make(factory, 'div', PROJECTS_SETTINGS_CLASS)
+  const settingsSlot = cell(settings, factory, 'div', BUSY_SLOT_CLASS)
   root.append(body)
   root.append(models)
-  return { root, body, slot, models, modelsSlot }
+  root.append(settings)
+  return { root, body, slot, models, modelsSlot, settings, settingsSlot }
 }
 
 /**
@@ -1525,19 +1884,21 @@ export function fillProjects(
  * section filled. It is what the tests and the spec draw, because both want the
  * screen an operator sees rather than the shell the entry mounts first.
  *
- * `models` is the tab's **second read's** model (console 0.119.0), and it is
- * optional because the two reads are independent: a caller with no models
- * document draws the budget's screen and nothing where the models panel would
- * be -- which is the whole of what "that read has not answered" looks like in
- * this frame. */
+ * `models` is the tab's **second read's** model (console 0.119.0) and `settings`
+ * the **third** (the settings-edit plan's C1), and both are optional because the
+ * three reads are independent: a caller with no models document draws the
+ * budget's screen and nothing where the models panel would be -- which is the
+ * whole of what "that read has not answered" looks like in this frame. */
 export function renderProjects(
   factory: ScreenFactory,
   model: ProjectsModel,
   theme: ProjectsTheme,
   models?: ProjectsModels,
+  settings?: ProjectsSettings,
 ): ScreenElement {
   const frame = renderProjectsFrame(factory, theme)
   fillProjects(factory, model, frame.body)
   if (models !== undefined) fillProjectsModels(factory, models, frame.models)
+  if (settings !== undefined) fillProjectsSettings(factory, settings, frame.settings)
   return frame.root
 }
