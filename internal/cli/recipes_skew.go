@@ -700,6 +700,13 @@ func embeddedRecipeOf(spec *task.Spec) *recipe.Recipe {
 	return r
 }
 
+// carriedDefaultAlt is the way out a launch that carries another recipe has:
+// the catalog's own default. It is not a way out of an old image either — a
+// carried default is judged by the constructs it carries, and it carries the
+// adversarial step since adversarialSince — so the sentence names that release
+// rather than sending the user to a second refusal.
+var carriedDefaultAlt = "; or launch with --recipe default, which is the catalog's own loop and needs a " + adversarialSince + " job image itself (it carries the adversarial step)"
+
 // checkRecipeImage refuses a launch whose job image runs a fugaro older than
 // recipesSince (decision D2), or than the newer constant the task's own
 // recipe — its embedded text, or the manifest it carries — needs
@@ -712,7 +719,7 @@ func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 	if spec.Recipe != nil {
 		subject = "recipe " + spec.Recipe.Name
 		if spec.Recipe.Name != recipe.DefaultName { // a carried default cannot be the way out
-			alt = "; or launch with --recipe default to run today's loop"
+			alt = carriedDefaultAlt
 		}
 	}
 	return checkImageSince(ctx, env, slug, spec, kind, recipeSinceFor(spec, repoRecipeForGate(ctx, spec)), subject, "recipes", alt, warn)
@@ -1100,7 +1107,7 @@ func checkCloneRecipeImage(ctx context.Context, lc *localcfg.Config, spec *task.
 	if spec.Recipe != nil {
 		subject = "recipe " + spec.Recipe.Name
 		if spec.Recipe.Name != recipe.DefaultName { // a carried default cannot be the way out
-			alt = "; or launch with --recipe default to run today's loop"
+			alt = carriedDefaultAlt
 		}
 	}
 	return checkCloneImageSince(lc, spec, recipeSinceFor(spec, repoRecipeForGate(ctx, spec)), subject, "recipes", alt, warn)
