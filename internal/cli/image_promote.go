@@ -8,12 +8,12 @@ import (
 	"slices"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
 func newImagePromoteCmd() *cobra.Command {
@@ -168,53 +168,22 @@ func promotedEntry(root string, cfg *config.Config, repo, workflow string, w con
 	return e, nil
 }
 
-// setWorkflowImageName sets workflows.<workflow>.image_name in a checkout's
-// fugaro.yaml. The document is edited as a node tree rather than marshalled
-// from a config: a re-marshal would drop every comment the file carries and
-// reorder its keys, and this command's whole change is one line.
+// setWorkflowImageName points a checkout's fugaro.yaml at a catalog entry:
+// workflows.<workflow>.image_name is set, and the definition the promotion
+// copied — the workflow's image: or dockerfile: — goes out in the same edit.
+// A workflow naming both its own definition and an entry is refused by every
+// reader of the file (D1155, config.validateCatalogRef), so a promotion that
+// only added the pin would leave the repository unable to validate, let alone
+// launch. The document is spliced rather than marshalled from a config: a
+// re-marshal would drop every comment the file carries and reorder its keys.
 func setWorkflowImageName(raw []byte, workflow, entry string) ([]byte, error) {
-	var doc yaml.Node
-	if err := yaml.Unmarshal(raw, &doc); err != nil {
-		return nil, fmt.Errorf("it is not a YAML document this command can edit")
-	}
-	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("its root is not a mapping")
-	}
-	flows := yamlMappingValue(doc.Content[0], "workflows")
-	if flows == nil || flows.Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("it has no workflows mapping")
-	}
-	w := yamlMappingValue(flows, workflow)
-	if w == nil || w.Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("it has no workflow %s", pluginwire.Printable(workflow))
-	}
-	yamlSetMappingValue(w, "image_name", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: entry})
-	out, err := yaml.Marshal(&doc)
-	if err != nil {
-		return nil, fmt.Errorf("it could not be written back as YAML")
-	}
-	return out, nil
-}
-
-// yamlMappingValue is the node a mapping holds under key, nil when it holds
-// none.
-func yamlMappingValue(m *yaml.Node, key string) *yaml.Node {
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		if m.Content[i].Value == key {
-			return m.Content[i+1]
+	out := raw
+	for _, key := range []string{"image", "dockerfile"} {
+		next, err := yamledit.RemoveKey(out, []string{"workflows", workflow, key})
+		if err != nil {
+			return nil, err
 		}
+		out = next
 	}
-	return nil
-}
-
-// yamlSetMappingValue sets key to value in a mapping, replacing the value
-// where the key is already there and appending both where it is not.
-func yamlSetMappingValue(m *yaml.Node, key string, value *yaml.Node) {
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		if m.Content[i].Value == key {
-			m.Content[i+1] = value
-			return
-		}
-	}
-	m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, value)
+	return yamledit.SetScalar(out, []string{"workflows", workflow, "image_name"}, entry)
 }

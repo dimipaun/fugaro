@@ -46,8 +46,19 @@ func catalogFixture(t *testing.T) *cloudFixture {
 // repositories still point at an entry).
 func catalogCheckout(t *testing.T, yaml string) string {
 	t.Helper()
+	return catalogCheckoutFiles(t, yaml, nil)
+}
+
+// catalogCheckoutFiles is catalogCheckout with the other files a fixture's
+// definition needs: a workflow's dockerfile: has to be a file that is there,
+// or config.Parse refuses the checkout before the command under test reads it.
+func catalogCheckoutFiles(t *testing.T, yaml string, extra map[string]string) string {
+	t.Helper()
 	files := npmFiles()
 	files["fugaro.yaml"] = yaml
+	for name, body := range extra {
+		files[name] = body
+	}
 	dir := checkoutWith(t, files)
 	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
 	return dir
