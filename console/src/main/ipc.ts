@@ -2009,8 +2009,17 @@ const MAX_SETTING_KEY_LENGTH = 120
 
 /**
  * SETTINGS_KEY_RE is a key's shape: dot-separated segments of lowercase
- * letters, digits and `_`, with `*` for the one wildcard segment the registry
- * uses (`stages.*.claude_account`), and no leading or trailing dot.
+ * letters, digits and `_`, with `*` allowed for the registry's one wildcard row
+ * (`stages.*.claude_account`), and no leading or trailing dot.
+ *
+ * **`*` is admitted anywhere a letter is, on purpose.** A standalone segment is
+ * the spelling the registry uses, but `stages.rev*iew.x` passes this grammar
+ * too, and that is the honest shape of the claim: this expression bounds the
+ * **word** a key can be, and `internal/cli/settings_set.go:305` refuses any key
+ * carrying a `*` with its own sentence -- "varies with a name this command does
+ * not take" -- before the allow-list is consulted. Tightening the segment here
+ * would move that refusal from the CLI's words to a schema refusal of this
+ * console's, for a key the CLI was always going to refuse.
  *
  * **It is a shape and not the allow-list.** Whether the generic write path owns
  * a key is `settingsGenericKeys`/`settingsGenericPrefixes`

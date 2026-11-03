@@ -387,7 +387,15 @@ export function createSettingsEdit(deps: SettingsEditDeps): SettingsEditRunner {
   /** openWindow asks the operator, once. The promise it answers is resolved by
    * the window's own main-side path (`confirm.ts`), and by the confirmer
    * throwing -- which is a window that did not open, so the edit declines
-   * rather than waiting for an answer nothing will give. */
+   * rather than waiting for an answer nothing will give.
+   *
+   * **There is no deadline here, and one would be a decision this module cannot
+   * make.** Every way a window can go away settles this promise -- an answer, a
+   * close, the `close(id)` of an installation that moved -- so what a wait means
+   * is that the operator still has the window open and is reading it, which is
+   * exactly what the flow is for: a timer would cancel a window the person had
+   * not finished with, and how long a person may read a settings change for is
+   * the owner's answer rather than this file's. */
   function openWindow(id: string, subject: SettingsConfirmView): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       pending.set(id, resolve)
@@ -484,6 +492,18 @@ export function createSettingsEdit(deps: SettingsEditDeps): SettingsEditRunner {
       const write = await deps.spawnEdit(args, phaseOf(view.view), layer, writeArgv)
       if (write.refusal !== null) return refused(write.refusal)
       return Object.freeze({ ok: true, sentence: write.text })
+    } catch (error) {
+      // The steps above await a **source** rather than a pure function:
+      // `argvForEdit` builds a plan over an installation that can have moved,
+      // and `spawnEdit` runs a child that can fail to start, time out or be
+      // killed with the console (`runToCompletion` rejects for all three). The
+      // read has its own refusal above, and these two are the same one: `edit`
+      // answers an outcome -- that is the whole of its contract with the
+      // operation, which draws a sentence -- so a throw is the refusal a
+      // returned one is, in the source's own words when it has any
+      // (`sentenceOf`), and never a rejected promise for a caller that has
+      // nothing to do with one.
+      return refused(sentenceOf(error))
     } finally {
       editing.delete(project)
       cancelled.delete(project)
@@ -493,7 +513,12 @@ export function createSettingsEdit(deps: SettingsEditDeps): SettingsEditRunner {
   return Object.freeze({
     edit,
     cancelFor(project: string): void {
-      if (editing.has(project)) cancelled.add(project)
+      // A project with no edit in flight has no window of this flow's to close
+      // -- the window exists only while `editing` holds the project -- so this
+      // returns before the confirmer rather than leaving the no-op to it, as
+      // `launch.ts`'s own `cancelFor` does for a project with nothing in flight.
+      if (!editing.has(project)) return
+      cancelled.add(project)
       deps.confirmer.close(settingsConfirmID(project))
     },
   })

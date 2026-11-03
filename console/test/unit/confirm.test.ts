@@ -1730,6 +1730,57 @@ describe('the settings edit behind the same window', () => {
     expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
   })
 
+  it('answers a sentence, rather than rejecting, when a source throws', async () => {
+    // `edit` answers an outcome: the operation draws a sentence and has nothing
+    // to do with a rejected promise. Three of the four steps await a process --
+    // a plan built over an installation that can have moved, a child that can
+    // fail to start, time out or be killed with the console (`runToCompletion`
+    // rejects for all three) -- so a throw is the refusal a returned one is.
+    const cases: readonly (readonly [string, Partial<Omit<SettingsEditDeps, 'confirmer'>>])[] = [
+      [
+        'the argv could not be built',
+        { argvForEdit: (): Promise<readonly string[]> => Promise.reject(new Error(SETTINGS_PLAN_FAILED)) },
+      ],
+      [
+        'the child could not be started',
+        { spawnEdit: (): Promise<SettingsEditSpawn> => Promise.reject(new Error(SETTINGS_SPAWN_FAILED)) },
+      ],
+    ]
+    for (const [name, over] of cases) {
+      const { confirmer, windows } = confirmOver()
+      const source = settingsEditSource()
+      const runner = createSettingsEdit({ ...source.deps, ...over, confirmer })
+
+      expect(await runner.edit({ op: 'set', key: SETTINGS_KEY, value: '30' }), name).toStrictEqual({
+        ok: false,
+        sentence: name === 'the argv could not be built' ? SETTINGS_PLAN_FAILED : SETTINGS_SPAWN_FAILED,
+      })
+      expect(windows, name).toStrictEqual([])
+    }
+  })
+
+  it('reaches no window when an installation with no edit in flight moves', () => {
+    // The runner's own contract, and `launch.ts`'s shape for the same case: a
+    // cancel that arrives between two edits decides nothing and closes nothing,
+    // because there is no window of this flow's open. The no-op is the flow's
+    // own rather than the confirmer's -- an id the confirmer does not hold is a
+    // detail of one implementation of it.
+    const closes: string[] = []
+    const runner = createSettingsEdit({
+      ...settingsEditSource().deps,
+      confirmer: {
+        open: (): void => undefined,
+        close: (id: string): void => {
+          closes.push(id)
+        },
+      },
+    })
+
+    runner.cancelFor(PROJECT)
+
+    expect(closes).toStrictEqual([])
+  })
+
   it('refuses a dry run that answered for another key, and writes nothing', async () => {
     // The window's key is the **dry run's** and the layer written is the
     // **row's**, so a document about another key would be drawn as this edit's
@@ -2070,6 +2121,14 @@ const SETTINGS_WRITE_TEXT = 'wrote layer.yaml (backup at layer.yaml.bak)'
 const DRY_RUN_REFUSAL = 'budget.cap_usd is not a key this project may write'
 const STALE_WRITE_REFUSAL =
   'layer.yaml changed since it was read: nothing was written; read it again and repeat the edit'
+
+/** SETTINGS_PLAN_FAILED and SETTINGS_SPAWN_FAILED are the two errors a source
+ * throws rather than answers with: a plan it could not build, and a child it
+ * could not start (`runToCompletion` rejects for a spawn that never began, a
+ * timeout and a shutdown alike). `sentenceOf` shows an error's own message when
+ * it has one, so these are the sentences the screen would draw. */
+const SETTINGS_PLAN_FAILED = 'the installation moved while the plan was being built'
+const SETTINGS_SPAWN_FAILED = 'the settings write could not be started'
 
 /** DRY_RUN_MEMBER_REFUSAL is the impossible state rule 12 fails closed on: a
  * **zero-exit** dry run document whose `refusal` member is not empty. The CLI
