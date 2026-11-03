@@ -71,9 +71,10 @@ func DefaultRounds(m Mode) Rounds {
 // the layer key the senior loop reads (agent.review_rounds, and the project
 // layer's default for it) still set another number, up or down, as they do
 // there: this is a default and not a ceiling, and the recipe's bounds are what
-// holds it. An agent.adversarial_rounds key does not exist yet — L1.3 of
-// docs/review-levels-ab-jobmax/implementation-plan.md is where it would land —
-// so no key of the step's own is read here.
+// holds it. Level 3's own number sits above it in one place — the step's
+// max_rounds, and agent.adversarial_rounds (L1.3) beside it — so this is the
+// row internal/runner's planOf and internal/cli's budget preview fall back to
+// only where neither of the two is set.
 //
 // A mode the table cannot place takes DefaultRounds' answer for it, which is
 // the strictest row — an unplaced mode raises nothing and drops nothing.

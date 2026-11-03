@@ -40,7 +40,7 @@
   "pushed_head": "<sha>",
   "recipe": {
     "name": "default",
-    "sha256": "a2cf31f5587b76d59a60b590d76425d3c14bed67c67d8323c320580e9b6614f9",
+    "sha256": "0c42726a0cc37a5415cfac83a74d25cfc041eb1d5a52a7d0533fcdcffb5202fc",
     "source": "catalog"
   },
   "repo": "acme/app",

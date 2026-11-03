@@ -2,7 +2,7 @@
 
 Recipes need fugaro 0.5.0 or later; the format this document describes (`use_when`, `mode`, `roles: { coder: reviewer }`, the `check` step and `bounce: first_line`) needs 0.7.0 or later, and the `adversarial` step (review level 3) needs 0.16.0 or later. Design: [design/recipes.md](design/recipes.md), [design/generic-tool.md](design/generic-tool.md) (§3).
 
-A Fugaro run implements the task, then loops: an optional first-line review by the coder's model, then the senior review, each followed by a fix when the review asks for changes, and optionally a harder review after the senior one. A **recipe** names that loop after `implement` so you can pick it per run, per repository or per project. A repository that names no recipe runs the `default` recipe, which is the loop Fugaro has always had.
+A Fugaro run implements the task, then loops: an optional first-line review by the coder's model, then the senior review, each followed by a fix when the review asks for changes, and optionally a harder review after the senior one. A **recipe** names that loop after `implement` so you can pick it per run, per repository or per project. A repository that names no recipe runs the `default` recipe, which is that whole loop: up to three review levels, each one running only where its own condition holds (section 4).
 
 ## 1. What a recipe is
 
@@ -53,7 +53,7 @@ steps:
 
 | Name | Behaviour | Use when |
 |---|---|---|
-| `default` | Today's loop. A first-line review only when `agent.first_line_review` turns it on (`auto`, the default for that key, turns it on when a provider serves the coder and none serves the reviewer), for `agent.first_line_rounds` rounds, then the senior review for `agent.review_rounds` rounds. | The implicit choice: what runs when nothing else names a recipe. Its rounds are not fixed: a repository that sets neither round knob runs the rigor mode's own row (section 4), so an unconfigured repository, which resolves `pro`, runs 3/3 where it used to run 1/2, and the same recipe takes more stages. |
+| `default` | The whole loop, up to three review levels (0.16.0): a first-line review only when `agent.first_line_review` turns it on (`auto`, the default for that key, turns it on when a provider serves the coder and none serves the reviewer), then the senior review, then the adversarial review (level 3) only where the run's review levels run it, which is Critical by default today: `agent.levels.l3`, the task's `review_levels` and the owner's floor can turn it on at any mode. | The implicit choice: what runs when nothing else names a recipe. Its rounds are not fixed: a repository that sets neither round knob runs the rigor mode's own row (section 4), so an unconfigured repository, which resolves `pro`, runs 3/3 where it used to run 1/2, and the same recipe takes more stages. |
 | `solo` | `roles: { reviewer: coder }`; `review: {}`. | Small, low-risk changes confined to one or two files, where a second model's review would cost more than it finds. |
 | `standard` | `first_line: {}`; `review: { bounce: first_line }`. | Typical feature or bug-fix work that needs a real review. Choose it when nothing more specific fits. |
 | `premium` | `roles: { coder: reviewer } `; `review: {}`. No cheap stage. | High-stakes or subtle work (concurrency, security, data migrations) where a cheap model's attempt is likely to waste the review. |
