@@ -108,6 +108,7 @@ import {
   wslStopArgs,
   wslWrapperMarker,
   SpawnTimeout,
+  SETTINGS_EDIT_PHASE_WORDS,
 } from '../../src/main/spawn'
 import { WSL_UTF8_VAR, WSL_UTF8_VALUE } from '../../src/main/wsl'
 import type {
@@ -153,7 +154,9 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * fifteenth, coordinator v2 C4's `coordinator.intents` the sixteenth, and
  * console 0.119.0's jobs-free totals read, `runs.summary`, the seventeenth, and
  * console 0.119.0's read-only models panel, `models.list`, the eighteenth, and
- * the settings read, `settings.read`, the nineteenth. The
+ * the settings read, `settings.read`, the nineteenth, and the settings write,
+ * `settings.edit`, the twentieth -- the same command's second row, since an edit
+ * reads the project's configuration the read does. The
  * complement -- the commands
  * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
@@ -176,6 +179,7 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'accounts.inventory',
   'models.list',
   'settings.read',
+  'settings.edit',
   'environment.report',
   'coordinator.status',
   'coordinator.show',
@@ -253,17 +257,28 @@ function safeContext(overrides: {
  * `argvFor` refuses an id on a row that has no `runIdFlag`. */
 const LAUNCH_RUN_ID = '20261028-152618-a2fc'
 
+/** SETTINGS_EDIT_CONTEXT is the two facts the settings write cannot be built
+ * without (the settings-edit plan's C3): the phase and the layer, and both of
+ * them are the main process's -- no schema key declares either. The loops over
+ * the whole table supply them here, so the row that needs them is built like
+ * every other one, and a row that starts requiring a third fact fails in the
+ * loop that builds it. */
+const SETTINGS_EDIT_CONTEXT = Object.freeze({ phase: 'narrowing', layer: 'project' } as const)
+
 /** contextFor is the plan context one row is built with: `safeContext` for
  * every read, and the same plus the run id for the launch, which cannot be
- * built without one. A loop over the whole table goes through here rather than
- * asking each row what it needs, so a row that starts requiring a new piece of
- * main-process state fails in the loop that builds it. */
+ * built without one, or the phase and the layer for the settings write. A loop
+ * over the whole table goes through here rather than asking each row what it
+ * needs, so a row that starts requiring a new piece of main-process state fails
+ * in the loop that builds it. */
 function contextFor(
   operation: OperationName,
   overrides: Parameters<typeof safeContext>[0] = {},
 ): Parameters<typeof planFor>[2] {
   const context = safeContext(overrides)
-  return operation === 'run.launch' ? { ...context, runId: LAUNCH_RUN_ID } : context
+  if (operation === 'run.launch') return { ...context, runId: LAUNCH_RUN_ID }
+  if (operation === 'settings.edit') return { ...context, settingsEdit: SETTINGS_EDIT_CONTEXT }
+  return context
 }
 
 /**
@@ -469,7 +484,7 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: twenty-one argvs, twenty commands, nineteen of them with --project', () => {
+  it('fixes the design allow-list exactly: twenty-two argvs, twenty-one commands, twenty of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
@@ -485,7 +500,11 @@ describe('the spawn table and the argv it builds', () => {
     // are, console 0.119.0's models read the nineteenth, whose whole argv is
     // its own three words -- the group's one reachable word -- and the settings
     // read the twentieth, whose whole argv is its own two words and the
-    // installation's, no argument a renderer can fill. The Go side pins
+    // installation's, no argument a renderer can fill -- and the settings write
+    // the twenty-first, whose words are the group alone: its subcommand, its key
+    // and its value are arguments, so the row's own word is `settings` and the
+    // rest of the argv is built from the main process's phase and layer. The Go
+    // side pins
     // the document's list (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
     // console's; the two are held in step by hand on purpose.
@@ -504,6 +523,7 @@ describe('the spawn table and the argv it builds', () => {
       'accounts ls --json',
       'models ls --json',
       'settings --json',
+      'settings',
       'version',
       'doctor --json',
       'config list --json',
@@ -513,8 +533,9 @@ describe('the spawn table and the argv it builds', () => {
       'run --task-file - --json',
     ])
     // The commands that take the flag (addCloudFlags, internal/cli/cloud.go:51)
-    // are nineteen rows plus one: `logs` has two rows, `--json` and `--url`, and
-    // neither of them may be the one that forgets --project.
+    // are twenty rows plus one: `logs` has two rows, `--json` and `--url`, and
+    // neither of them may be the one that forgets --project -- and `settings`
+    // has two as well, the read and the edit.
     // A word is a flag or a separator if it begins with `-`, which is what
     // keeps the launch's literal `-` -- the argv word that means "read the task
     // from stdin" -- out of the command path it is compared as.
@@ -543,7 +564,7 @@ describe('the spawn table and the argv it builds', () => {
         'run',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(19)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(20)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -1031,9 +1052,226 @@ describe('the spawn table and the argv it builds', () => {
     // read would answer less and say less about it.
     expect(SPAWN_COMMANDS.filter((row) => row.words[0] === 'settings').map((row) => row.operation)).toEqual([
       'settings.read',
+      'settings.edit',
     ])
     for (const key of ['key', 'glob', 'layer', 'grep', 'repo', 'allRepos', 'dir', 'project', 'config']) {
       expect(() => argvFor('settings.read', { [key]: 'x' }, safeContext()), key).toThrow(/does not declare/)
+    }
+  })
+
+  it('spawns `settings set` for a narrowing with exactly these words, and no `--yes`', () => {
+    // The settings write (the settings-edit plan's C3, D1103, D1104, D1107).
+    // One argv, written out word by word: the group, the subcommand, the key,
+    // the layer the read's own row named (**D1105** -- it is the main process's
+    // fact and no schema key declares it), the installation's two flags, and
+    // last of all the terminator with the operator's value behind it.
+    //
+    // **The value is behind `--` and the `--` is last but one** (D1104, and the
+    // reason this row is the one that terminates): the value is a positional, so
+    // a value spelled `-draft` or `--layer` would otherwise be read as a flag,
+    // and the CLI's own parser stops reading flags at the terminator -- a
+    // `--project` written after it would be a positional rather than a flag. The
+    // terminator is emitted by `argvFor` after every flag this row knows, which
+    // is why the order below is the order a child gets.
+    const args = { op: 'set', key: 'budget.cap_usd', value: '25' }
+    const narrowing = [...argvFor('settings.edit', args, {
+      ...safeContext({ project: 'chosen' }),
+      settingsEdit: { phase: 'narrowing', layer: 'project' },
+    })]
+    expect(narrowing).toEqual([
+      'settings',
+      'set',
+      'budget.cap_usd',
+      '--layer',
+      'project',
+      '--project',
+      'chosen',
+      '--',
+      '25',
+    ])
+    // A write the operator confirmed and the dry run did **not** classify a
+    // widening carries no `--yes`: the flag is the CLI's own answer to the typed
+    // form, and passing it where the CLI did not ask would be this console
+    // confirming an edit on the operator's behalf (D1107).
+    expect(narrowing).not.toContain('--yes')
+  })
+
+  it('passes `--yes` for a widening and never for a narrowing', () => {
+    // **This is the test the `--yes` guard fails without.** The phase is the
+    // main process's (`settingsedit.ts`'s `phaseOf`, from the dry run's own
+    // `widening` field) and `SETTINGS_EDIT_PHASE_WORDS` is the only place a
+    // phase becomes words: with the widening row's words dropped -- the mutation
+    // is `widening: Object.freeze([])` -- this case's widening vector loses its
+    // `--yes` and fails, which is what makes the two vectors below a guard
+    // rather than a description.
+    const args = { op: 'set', key: 'budget.cap_usd', value: '25' }
+    const context = (phase: 'widening' | 'narrowing'): Parameters<typeof argvFor>[2] => ({
+      ...safeContext({ project: 'chosen' }),
+      settingsEdit: { phase, layer: 'project' },
+    })
+    const widening = [...argvFor('settings.edit', args, context('widening'))]
+    const narrowing = [...argvFor('settings.edit', args, context('narrowing'))]
+    expect(widening).toEqual([
+      'settings',
+      'set',
+      'budget.cap_usd',
+      '--layer',
+      'project',
+      '--yes',
+      '--project',
+      'chosen',
+      '--',
+      '25',
+    ])
+    // The two are the same command line but for that one word: a widening and a
+    // narrowing are one argv with one flag, which is what D1107's ruling left
+    // for the console to do -- and **there is no console-only flag**: every
+    // other word is a word the narrowing carries too.
+    expect(widening.filter((word) => word !== '--yes')).toEqual(narrowing)
+    expect(narrowing).not.toContain('--yes')
+  })
+
+  it('never puts `--yes` on a dry run, and never puts a value anywhere but after `--`', () => {
+    // The dry run is the first of the two spawns and it writes nothing (D1106):
+    // `--dry-run` and `--json` are its two words, and `--yes` is not one of them
+    // whatever the edit turns out to be -- the phase is decided **after** this
+    // document comes back, so a dry run cannot carry a write's flag.
+    const args = { op: 'set', key: 'budget.cap_usd', value: '25' }
+    const dry = [...argvFor('settings.edit', args, {
+      ...safeContext({ project: 'chosen' }),
+      settingsEdit: { phase: 'dry-run', layer: 'project' },
+    })]
+    expect(dry).toEqual([
+      'settings',
+      'set',
+      'budget.cap_usd',
+      '--layer',
+      'project',
+      '--dry-run',
+      '--json',
+      '--project',
+      'chosen',
+      '--',
+      '25',
+    ])
+    expect(dry).not.toContain('--yes')
+    // A value that is spelled like this row's own flags is still a value: it is
+    // one element of an array argv spawned with `shell: false`, and the
+    // terminator is what keeps the child's parser from reading it as a flag. The
+    // layer word the child is given is the read's, not the value's.
+    const tricky = [...argvFor(
+      'settings.edit',
+      { op: 'set', key: 'budget.cap_usd', value: '--layer' },
+      { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'narrowing', layer: 'local' } },
+    )]
+    expect(tricky).toEqual([
+      'settings',
+      'set',
+      'budget.cap_usd',
+      '--layer',
+      'local',
+      '--project',
+      'chosen',
+      '--',
+      '--layer',
+    ])
+    expect(tricky.indexOf('--')).toBe(tricky.length - 2)
+    expect(tricky[tricky.length - 1]).toBe('--layer')
+  })
+
+  it('spawns `settings unset` with no value, no terminator and no `--yes` when it narrows', () => {
+    // **The unset form has nothing behind a terminator at all** (D1103): there
+    // is no value to protect, and a row that emitted a bare `--` would be a
+    // command line with an empty positional the CLI does not take. The key is
+    // the only positional this argv has, and the layer is still the read's.
+    expect([
+      ...argvFor(
+        'settings.edit',
+        { op: 'unset', key: 'budget.cap_usd' },
+        { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'narrowing', layer: 'local' } },
+      ),
+    ]).toEqual(['settings', 'unset', 'budget.cap_usd', '--layer', 'local', '--project', 'chosen'])
+    // An `unset` that **widens** -- the CLI classifies it, and the console asks
+    // the same question of either subcommand -- carries `--yes` and still no
+    // terminator.
+    expect([
+      ...argvFor(
+        'settings.edit',
+        { op: 'unset', key: 'rigor.areas' },
+        { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'widening', layer: 'repo' } },
+      ),
+    ]).toEqual(['settings', 'unset', 'rigor.areas', '--layer', 'repo', '--yes', '--project', 'chosen'])
+  })
+
+  it('carries the installation’s config path on a settings write, and refuses every word a renderer could not be trusted with', () => {
+    // The two flags every cloud command of this tab takes (rule 3): the write is
+    // not special, and an installation that declares a config file gets it.
+    expect([
+      ...argvFor(
+        'settings.edit',
+        { op: 'set', key: 'budget.cap_usd', value: '25' },
+        {
+          ...safeContext({ project: 'chosen', configPath: '/tmp/owner/config.yaml' }),
+          settingsEdit: { phase: 'narrowing', layer: 'project' },
+        },
+      ),
+    ]).toEqual([
+      'settings',
+      'set',
+      'budget.cap_usd',
+      '--layer',
+      'project',
+      '--project',
+      'chosen',
+      '--config',
+      '/tmp/owner/config.yaml',
+      '--',
+      '25',
+    ])
+    // **Three words of this argv are not the renderer's to name.** `layer` and
+    // `phase` are not keys of the operation's schema, so a payload carrying one
+    // is refused before a word is built; the layer reaches the argv only through
+    // `context.settingsEdit`, which only the main process holds.
+    const context = { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'narrowing' as const, layer: 'project' } }
+    for (const key of ['layer', 'phase', 'yes', 'dir', 'project', 'config', 'add', 'remove']) {
+      expect(() => argvFor('settings.edit', { op: 'set', key: 'k', value: 'v', [key]: 'x' }, context), key).toThrow(
+        /does not declare/,
+      )
+    }
+    // A row that carries a layer flag with no layer to write is refused rather
+    // than defaulted, and a layer outside the three documents an edit lands in
+    // is refused by name.
+    expect(() => argvFor('settings.edit', { op: 'set', key: 'k', value: 'v' }, {
+      ...safeContext(),
+    } as Parameters<typeof argvFor>[2])).toThrow(/needs the layer/)
+    expect(() => argvFor('settings.edit', { op: 'set', key: 'k', value: 'v' }, {
+      ...safeContext(),
+      settingsEdit: { phase: 'narrowing', layer: 'global' },
+    })).toThrow(/which is not one of the three documents/)
+    // And **no other row may carry a phase**: the table column that emits
+    // `--layer`/`--yes` is this row's alone.
+    expect(() => argvFor('settings.read', {}, {
+      ...safeContext(),
+      settingsEdit: { phase: 'narrowing', layer: 'project' },
+    })).toThrow(/takes no settings phase/)
+  })
+
+  it('has exactly one settings row for each question, and no `settings` verb on the never table', () => {
+    // The group's other verbs are not on this table at all: `settings get`,
+    // `settings layers` and the rest are reads the console does not make, and
+    // the only two `settings` rows are the read and the edit above -- so a third
+    // one is a test failure rather than a review finding.
+    expect(SPAWN_COMMANDS.filter((row) => row.words[0] === 'settings').map((row) => row.operation)).toEqual([
+      'settings.read',
+      'settings.edit',
+    ])
+    // `--yes` is the settings write's own word, and the phase table is the only
+    // thing that can produce it: `widening`'s row is the one place it appears,
+    // and the two other phases carry no words at all or the dry run's two. A
+    // fourth phase, or a `--yes` on another row, fails here.
+    expect(Object.keys(SETTINGS_EDIT_PHASE_WORDS).sort()).toEqual(['dry-run', 'narrowing', 'widening'])
+    for (const [phase, words] of Object.entries(SETTINGS_EDIT_PHASE_WORDS)) {
+      expect(words.includes('--yes'), phase).toBe(phase === 'widening')
     }
   })
 
