@@ -26,9 +26,9 @@ gate's rows.** The order inside a step is a task's own business; the order betwe
 | Order | Tasks | What forces it |
 | --- | --- | --- |
 | 1 | **G0**, **G1**, **G2** | D1160: the primitive. A dedicated command written before these pays for the same mechanism twice |
-| 2 | **G3**, **G4**, **G6** | G0 and G1 (the wildcard allowlist and the entry shapes); G4 is the widest surface of the three and takes the reviewer |
-| 3 | **G5** | G4 — the publish is a layer *write*'s next step, and there is no write to publish before it |
-| 4 | **G7**, **G8**, **G9**, **G10**, **G11**, **G12** | G2 (the document's members, for the commands the console can see) and their own block's task from step 2 |
+| 2 | **G3**, **G4** | G0 and G1 (the wildcard allowlist and the entry shapes); G4 is the widest surface of the two and takes the reviewer |
+| 3 | **G5**, **G6** | G4 for both — the publish is a layer *write*'s next step and there is no write to publish before it, and G6's own design (R1) publishes the layer the rigor command writes in the same run |
+| 4 | **G7**, **G8**, **G9**, **G10**, **G11**, **G12** | G2 (the document's members, for the commands the console can see) and their own block's task from step 2 or 3 |
 | 5 | **G13** | Every command's final rules: a gate row written before its command's refusals are settled is a row that has to be rewritten |
 
 **The signature of the order** — the plan's own reading of its dependencies, and what a reader is owed
