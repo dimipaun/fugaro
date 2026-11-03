@@ -66,6 +66,12 @@ type settingsEdit struct {
 	// Yes is --yes. It answers the y/N confirmation, and the typed one too
 	// wherever the caller says a flag may (D1107).
 	Yes bool
+	// DryRun, when it is not nil, is the classification the caller made: this
+	// edit is never confirmed, never backed up and never written, and what
+	// would have happened is printed as the dry run's document instead
+	// (D1106). It comes after the coding-agent-session refusal below, so a dry
+	// run is refused exactly where the write it describes would be.
+	DryRun *settingsDryRun
 }
 
 // settingsEditDiff is the line diff the confirmation shows. It is built here
@@ -79,7 +85,8 @@ func settingsEditDiff(old, new []byte) string {
 // refusal leaves the file byte-identical and says why.
 func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) error {
 	out := cmd.OutOrStdout()
-	if !yamledit.Changed(e.Old, e.New) {
+	changed := yamledit.Changed(e.Old, e.New)
+	if !changed && e.DryRun == nil {
 		fmt.Fprintf(out, "%s: no change\n", e.Path)
 		return nil
 	}
@@ -97,6 +104,15 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 		fmt.Fprintf(out, "%s\n%s", e.Path, diff)
 		return userErr("refusing to write %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
 			e.Path, marker, e.What, e.Command)
+	}
+
+	// The dry run stops here: the classification is the caller's, and what is
+	// left of this function is the confirmation, the backup and the write,
+	// none of which a dry run does (D1106). It is after the refusal above on
+	// purpose — a dry run answers for the write, so it is refused wherever the
+	// write would be, and the fence stays the first thing either path meets.
+	if e.DryRun != nil {
+		return writeSettingsWriteDoc(out, e.DryRun.document(e, changed), e.DryRun.jsonOut)
 	}
 
 	fmt.Fprintf(out, "%s\n%s", e.Path, diff)

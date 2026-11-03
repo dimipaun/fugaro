@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/settings-write.schema.json",
+  "title": "Fugaro settings write",
+  "description": "The document `fugaro settings set|unset … --dry-run --json` prints: what one edit would do and how the write path classifies it, with nothing written, no backup left and no confirmation asked (D1106). It is the document the console's confirmation window is drawn from, so every member is one the CLI produced and the consumer computes nothing. Members are only ever added within a version (D848), so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which D848 promises to keep readable under the same version.",
+  "type": "object",
+  "required": [
+    "version",
+    "key",
+    "layer",
+    "path",
+    "changed",
+    "widening",
+    "why",
+    "old",
+    "new",
+    "refusal"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "$comment": "settingsWriteDocVersion in internal/cli/settings_set.go."
+    },
+    "key": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The key the edit names, as the command line spelled it, with the characters this program drops from anything it prints (safetext.Field) removed."
+    },
+    "layer": {
+      "enum": [
+        "local",
+        "project",
+        "repo"
+      ],
+      "description": "The layer the edit would land in: the one --layer named, or the narrowest layer the key may be set in when the caller named none. It is settingsWriteLayers, the closed vocabulary --layer accepts, and `default` is never a target.",
+      "$comment": "settingsWriteLayers in internal/cli/settings_set.go, and settings.LayerLocal, settings.LayerProject and settings.LayerRepo in internal/settings/registry.go."
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The file the edit would be written to, as the caller's own read resolved it."
+    },
+    "changed": {
+      "type": "boolean",
+      "description": "Whether the edit would change the file at all: the write path's own comparison of the bytes it read against the bytes it built. False is a classification and not an error — the command exits 0 with this document — and it is the answer to an edit that asks for the value the file already holds."
+    },
+    "widening": {
+      "type": "boolean",
+      "description": "Whether the edit is one D846 reserves for the project's own hand: a loosened ceiling, a followup key turned on, a name added to a followup list. It is the value of the write path's own settingsTypedWrite call — the same call that decides whether the project's name is demanded at a terminal — so it is never a second derivation, and a key added to settingsCeilingKey or a list rule changed in settingsListSubset moves this member with no consumer edit. A consumer must not re-derive it: a rule it did not know about answers `narrowing` where the CLI answers `widening`, which is the one direction that must never be got wrong (D1106)."
+    },
+    "why": {
+      "type": "string",
+      "description": "The sentence saying why this edit is the typed form, empty when widening is false. It is the CLI's own sentence and not the consumer's: it names the project's name typed at a terminal and --yes outside a coding agent's session, and it is the sentence the confirmation prints (D1107)."
+    },
+    "old": {
+      "type": "string",
+      "description": "The value the target layer's document holds at the key now, empty when it holds none. It is the value at that key in that file and not the value a run gets: what another layer decides is the read's own answer, and a consumer that needs it reads `fugaro settings --json` (D1108)."
+    },
+    "new": {
+      "type": "string",
+      "description": "The value the target layer's document would hold at the key after the edit, empty for a removal. A list key renders as its members comma-separated, the one spelling every comparison in this program reads a list by."
+    },
+    "refusal": {
+      "type": "string",
+      "description": "Always empty in every document this CLI prints, and written out because the shape is the contract: a refusal is the CLI's own sentence with a non-zero exit and no document at all, which is what a consumer branches on — a non-zero exit with no document is a refusal even when its sentence is empty (D1106, D1112). Nothing sets this member."
+    }
+  }
+}
