@@ -136,6 +136,64 @@ entries:
 	}
 }
 
+// TestCatalogSourceNeedsItsOwnKindsFields pins the other two halves of the
+// source grammar (spec.md §Catalog entry): a source states one definition, so
+// a kind's own field is required and the fields of the other two kinds are
+// refused rather than ignored — an inline entry with no definition and an
+// image entry with no reference are both sources a build could not read.
+func TestCatalogSourceNeedsItsOwnKindsFields(t *testing.T) {
+	for _, tc := range []struct{ name, source, path, msg string }{
+		{"inline with no definition", "{ kind: inline }",
+			"image_catalog.entries[0].source.inline", "is required for an inline source"},
+		{"image with no reference", "{ kind: image }",
+			"image_catalog.entries[0].source.image", "is required for an image source"},
+		{"inline carrying a dockerfile pointer", `{ kind: inline, inline: "FROM node:24\n", repo: acme/api }`,
+			"image_catalog.entries[0].source.repo", "belongs to the dockerfile source; this source is inline"},
+		{"image carrying a dockerfile pointer", `{ kind: image, image: "example.invalid/x:1", path: docker/x.Dockerfile }`,
+			"image_catalog.entries[0].source.path", "belongs to the dockerfile source; this source is image"},
+		{"dockerfile carrying an inline definition", `{ kind: dockerfile, repo: acme/api, path: docker/x.Dockerfile, inline: "FROM node:24\n" }`,
+			"image_catalog.entries[0].source.inline", "belongs to the inline source; this source is dockerfile"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := catalogOf(t, "entries:\n  - name: backend\n    source: "+tc.source+"\n")
+			if ps := ValidateCatalog("image_catalog", c); !hasProblem(ps, tc.path, tc.msg, 0) {
+				t.Fatalf("problems = %v, want one at %s: %s", ps, tc.path, tc.msg)
+			}
+		})
+	}
+}
+
+// TestCatalogDefaultEntryIsTheMarkedOne pins CatalogDefaultEntry against the
+// marker ValidateCatalog checks: the entry a repository that names nothing
+// runs (spec.md §Repo configuration item 1, reconciliation §3.1 step 3), and
+// no entry at all for a catalog that marks none.
+func TestCatalogDefaultEntryIsTheMarkedOne(t *testing.T) {
+	c := catalogOf(t, `
+entries:
+  - name: backend
+    tags: [node]
+    source: { kind: image, image: "example.invalid/backend:1" }
+  - name: frontend
+    default: true
+    source: { kind: image, image: "example.invalid/frontend:1" }
+`)
+	e, ok := CatalogDefaultEntry(c)
+	if !ok || e.Name != "frontend" {
+		t.Fatalf("CatalogDefaultEntry = %+v, %v; want the marked frontend entry", e, ok)
+	}
+	c = catalogOf(t, `
+entries:
+  - name: backend
+    source: { kind: image, image: "example.invalid/backend:1" }
+`)
+	if e, ok := CatalogDefaultEntry(c); ok || e.Name != "" {
+		t.Fatalf("CatalogDefaultEntry = %+v, %v; want no entry for a catalog that marks none", e, ok)
+	}
+	if e, ok := CatalogDefaultEntry(Catalog{}); ok || e.Name != "" {
+		t.Fatalf("CatalogDefaultEntry = %+v, %v; want no entry for an empty catalog", e, ok)
+	}
+}
+
 // TestCatalogDockerfileSourceNeedsRepoAndPath pins the dockerfile source's
 // grammar (F3, D1140): the pointer is a repository, a path inside it and an
 // optional branch, so a build can fetch the file without a checkout of its

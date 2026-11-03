@@ -201,7 +201,7 @@ func validateCatalogRef(p string, w Workflow) []Problem {
 		}
 		return ps
 	}
-	if !CatalogNameRE.MatchString(w.ImageName) && w.ImageName != "" {
+	if !catalogNameRE.MatchString(w.ImageName) && w.ImageName != "" {
 		add(p+".image_name", "%s", catalogNameMessage)
 	}
 	validateCatalogTags(p+".needs", w.Needs, add)

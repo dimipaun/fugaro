@@ -31,7 +31,7 @@ type Catalog struct {
 type Entry struct {
 	// Name is the entry's name, unique in the catalog. It reaches a registry
 	// tag, a bucket key and the sentences a selection prints, so its grammar
-	// is an allowlist rather than a denylist (CatalogNameRE).
+	// is an allowlist rather than a denylist (catalogNameRE).
 	Name string `yaml:"name" json:"name"`
 	// Tags are what the image provides — node, postgres, redis,
 	// firebase-emulator, docker — and are what a repository's needs: is
@@ -115,26 +115,26 @@ const (
 	maxCatalogInlineBytes = 64 << 10
 )
 
-// CatalogNameRE is a catalog entry's name. It is ProjectNameRE's shape — 1 to
+// catalogNameRE is a catalog entry's name. It is ProjectNameRE's shape — 1 to
 // 40 of a-z, 0-9 and '-', starting and ending with a letter or digit — and it
 // is deliberately the same rule, because a name reaches a tag of an image in
 // the shared registry and a key of the project's bucket as well as the
 // messages a person reads.
-var CatalogNameRE = ProjectNameRE
+var catalogNameRE = ProjectNameRE
 
 var (
-	// catalogNameMessage is the refusal of a name outside CatalogNameRE.
+	// catalogNameMessage is the refusal of a name outside catalogNameRE.
 	catalogNameMessage = "must be a catalog entry name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit"
-	// catalogTagRE is the shape a tag must have: 1 to 64 characters, none of
-	// them whitespace or a control character. A tag is written on a command
-	// line and in a flow list where whitespace separates the entries, and it
-	// is compared for equality by the tag-cover rule, so a tag holding one
-	// would have to be quoted at every use.
-	catalogTagRE = regexp.MustCompile("^[^ \t\n\v\f\r\x00-\x1f\x7f]{1,64}$")
+	// catalogTagRE is the shape a tag must have: at most maxCatalogTagLen
+	// characters, none of them whitespace or a control character. A tag is
+	// written on a command line and in a flow list where whitespace separates
+	// the entries, and it is compared for equality by the tag-cover rule, so a
+	// tag holding one would have to be quoted at every use.
+	catalogTagRE = regexp.MustCompile(fmt.Sprintf("^[^ \t\n\v\f\r\x00-\x1f\x7f]{1,%d}$", maxCatalogTagLen))
 	// catalogTagMessage is the refusal of a tag outside catalogTagRE. It does
 	// not repeat the tag: a refusal that echoed one would put whatever it
 	// holds, an escape sequence among it, into a log (validateKeyFiles' rule).
-	catalogTagMessage = "must be a tag of 1 to 64 characters, holding no whitespace and no control character"
+	catalogTagMessage = fmt.Sprintf("must be a tag of 1 to %d characters, holding no whitespace and no control character", maxCatalogTagLen)
 )
 
 // ValidateCatalog checks a project's image catalog (spec.md §Catalog entry).
@@ -152,7 +152,7 @@ func ValidateCatalog(p string, c Catalog) []Problem {
 	for i, e := range c.Entries {
 		ep := fmt.Sprintf("%s.entries[%d]", p, i)
 		switch {
-		case !CatalogNameRE.MatchString(e.Name):
+		case !catalogNameRE.MatchString(e.Name):
 			add(ep+".name", "%s", catalogNameMessage)
 		default:
 			if j, dup := names[e.Name]; dup {
@@ -251,7 +251,11 @@ func validateCatalogSource(path string, s Source, add func(path, format string, 
 
 // addCatalogWrongKind refuses the fields that belong to another kind: repo,
 // path and branch to a dockerfile source, inline to an inline one and image
-// to an image one.
+// to an image one. The message names the kind that owns the field and the
+// kind this source is, in that order, rather than phrasing the second as an
+// alternative ("not a inline one"): two of the three kind names begin with a
+// vowel, so no single indefinite article reads correctly in front of all
+// three, and "the" reads for every one of them.
 func addCatalogWrongKind(path string, s Source, kind SourceKind, add func(path, format string, args ...any)) {
 	for _, f := range []struct {
 		key   string
@@ -267,7 +271,7 @@ func addCatalogWrongKind(path string, s Source, kind SourceKind, add func(path, 
 		if f.owner == kind || !f.set {
 			continue
 		}
-		add(path+"."+f.key, "belongs to a %s source, not a %s one", f.owner, kind)
+		add(path+"."+f.key, "belongs to the %s source; this source is %s", f.owner, kind)
 	}
 }
 
