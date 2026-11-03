@@ -284,7 +284,7 @@ variable "history" {
 }
 
 variable "coordinator" {
-  description = "The coordinator's aggregation job (P5, D194), used only with enable_budget: the scheduled sweep that re-reads each repository's runs and pull requests and writes the view. Its job name must not start with fugaro-, which fugaro runs ls and max_parallel count as workflow jobs. deploy_job stays false in the first apply and is set once the Firebase root has output rtdb_url (the third apply), the job's image exists and a GitHub App ID is recorded — without the App credential the sweep could read no repository at all."
+  description = "The coordinator's aggregation job (P5, D194), used only with enable_budget: the scheduled sweep that re-reads each repository's runs and pull requests and writes the view. Its job name must not start with fugaro-, which fugaro runs ls and max_parallel count as workflow jobs. deploy_job stays false in the first apply and is set once the Firebase root has output rtdb_url (the third apply), the job's image exists and the credentials its repositories need are recorded: a GitHub App ID where it reconciles a GitHub repository (the sweep mints its own read-only installation token from the App), and the credentials service where it reconciles a Bitbucket one (the sweep mints a read token there — F24)."
   type = object({
     account_id       = string
     job              = string
@@ -319,10 +319,16 @@ variable "coordinator" {
     condition = var.coordinator == null ? true : (!var.coordinator.deploy_job || (
       try(var.coordinator.firebase_project, null) != null && try(var.coordinator.rtdb_url, null) != null &&
       can(regex("^https://[a-z0-9.-]+$", coalesce(var.coordinator.rtdb_url, "-"))) &&
-      var.coordinator.github_app_id != "" &&
+      # The App ID is required where the sweep reads GitHub, and only there
+      # (F24): its GitHub path mints the coordinator's own read-only
+      # installation token from the App, while its Bitbucket path mints a read
+      # token at the credentials service (BB5) — so an installation whose
+      # repositories are all Bitbucket has no App to name and is not a
+      # deployment that is wrong.
+      (var.coordinator.github_app_id != "" || alltrue([for r in var.coordinator.repos : r.provider != "github"])) &&
       length(var.coordinator.repos) > 0
     ))
-    error_message = "coordinator.deploy_job needs the Firebase root's firebase_project and rtdb_url (an https://<instance>.firebasedatabase.app or .firebaseio.com URL, without a path), the App ID its read mints its own token with, and at least one repository to reconcile."
+    error_message = "coordinator.deploy_job needs the Firebase root's firebase_project and rtdb_url (an https://<instance>.firebasedatabase.app or .firebaseio.com URL, without a path), at least one repository to reconcile, and — unless every one of those repositories is on bitbucket, which the sweep reads through the credentials service — the App ID its read mints its own token with."
   }
 }
 

@@ -170,6 +170,37 @@ resource "google_cloud_run_v2_service_iam_member" "credentials_invoker" {
   member   = each.value
 }
 
+# ... and the read mint's second class (BB5): the coordinator's own service
+# account, which runs the scheduled sweep. It is a grant of its own rather than
+# an entry in the set above because the two are not the same kind of member —
+# that one is a set of operators' USER members, and this one is the one service
+# account this module creates — and because the two are on different switches:
+# the people are on whenever the service is, the coordinator only when the
+# installation runs one.
+#
+# Why this account needs it at all. The sweep reads a Bitbucket repository
+# through a token the service mints, and it is not a run of this installation,
+# so it presents its own Google ID token and nothing else: without this grant
+# the front end refuses it before the container runs, and every Bitbucket
+# repository stays StaleUnsupported however the sweep is configured. An
+# installation whose repositories are all GitHub gets the same nothing it has
+# today, because the sweep's GitHub path reads with the App credential and
+# never calls this service.
+#
+# A role granted to a new kind of principal is not covered by an ordinary
+# update's confirmation until internal/infra/tf's grantRules says so, which is
+# why that table carries the coordinator as a principal of this resource type
+# (`toCoordinator`) — deliberately, in this task.
+resource "google_cloud_run_v2_service_iam_member" "credentials_coordinator" {
+  count = local.credentials_service_on && local.coordinator_on ? 1 : 0
+
+  project  = var.project
+  location = var.region
+  name     = var.credentials_service.service
+  role     = "roles/run.invoker"
+  member   = google_service_account.coordinator[0].member
+}
+
 # The runs bucket (design bucket-iam.md §3). Operators read and write all of
 # it: fugaro/ (the project layer, the shared config, recipes, the marker),
 # builds/, cache/, locks/ and runs/.

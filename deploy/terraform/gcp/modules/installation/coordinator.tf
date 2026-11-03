@@ -34,6 +34,22 @@ locals {
   # installation's outputs).
   coordinator_on     = var.enable_budget && var.coordinator != null
   deploy_coordinator = local.coordinator_on && try(var.coordinator.deploy_job, false)
+
+  # Whether this installation's sweep reads a GitHub repository at all, which is
+  # the whole of whether it needs the App credential (F24). The sweep's GitHub
+  # path mints the coordinator's own read-only installation token from the App
+  # key, and its Bitbucket path (BB5) mints a read token at the credentials
+  # service instead — so an installation whose repositories are all Bitbucket
+  # has nothing to sign with and no container to mount.
+  #
+  # It is asked of the repositories rather than of the config: a repository the
+  # local config records no provider for is not in var.coordinator.repos
+  # (internal/infra's CoordinatorRepos), and one that is in it names its
+  # provider, so "is there a github entry" is exactly "does the sweep read
+  # GitHub".
+  coordinator_github = local.deploy_coordinator && anytrue([
+    for r in var.coordinator.repos : r.provider == "github"
+  ])
 }
 
 resource "google_service_account" "coordinator" {
@@ -71,8 +87,15 @@ resource "google_storage_bucket_iam_member" "coordinator_runs_reader" {
 # level and to this one account — never project-wide, never to a group — and
 # the container's own env entry is what names the container, one grant and one
 # mount, as the project module's jobs have it.
+#
+# It arrives with the job AND with a GitHub repository to read (F24): a sweep
+# whose repositories are all Bitbucket reads them through the credentials
+# service (BB5) and never touches the App, so an installation that has one is
+# not an installation that must hold the other. The precondition below is the
+# other half of that count and not a contradiction of it: it is evaluated only
+# where an instance exists, which is exactly where an App key is needed.
 resource "google_secret_manager_secret_iam_member" "coordinator_app_key" {
-  count = local.deploy_coordinator ? 1 : 0
+  count = local.coordinator_github ? 1 : 0
 
   project   = var.project
   secret_id = var.project_secrets[var.coordinator.app_key_secret]
@@ -127,7 +150,9 @@ resource "google_cloud_run_v2_job" "coordinator" {
         # The job's whole configuration is the environment
         # ee/coordinator/cli/coordinator.go's sweep reads: the project, the Firebase
         # project and database it writes, the runs bucket it reads, the
-        # repositories one tick reconciles, and the App credential.
+        # repositories one tick reconciles, and — each only where the sweep
+        # reads that provider — the App credential and the credentials
+        # service's URL.
         env {
           name  = "FUGARO_PROJECT"
           value = var.fugaro_project
@@ -153,19 +178,45 @@ resource "google_cloud_run_v2_job" "coordinator" {
           name  = "FUGARO_COORDINATOR_REPOS"
           value = jsonencode(var.coordinator.repos)
         }
-        env {
-          name  = "FUGARO_GITHUB_APP_ID"
-          value = var.coordinator.github_app_id
+        # The credentials service's own URL (BB5, F23), and deliberately NOT
+        # FUGARO_CREDENTIALS_SERVICE_URL: the sweep's bitbucket opener reads
+        # this one and nothing else, so the run path's variable cannot move the
+        # root a token is minted at, and a job that has one and not the other is
+        # a job whose Bitbucket reads are its own. It is rendered only when the
+        # service is on, and its value is the service's — the same coalesce the
+        # service's own environment reads, so an installation that has not read
+        # its URL back yet hands the sweep the same placeholder it hands the
+        # service. Without it, a Bitbucket repository stays StaleUnsupported
+        # (G8): the sweep never guesses a service.
+        dynamic "env" {
+          for_each = local.credentials_service_on ? [coalesce(var.credentials_service.url, local.credentials_service_url_unassigned)] : []
+          content {
+            name  = "FUGARO_COORDINATOR_CREDENTIALS_SERVICE_URL"
+            value = env.value
+          }
+        }
+        # The App credential, and only where the sweep reads GitHub (F24): a
+        # Bitbucket-only installation deploys the job without either entry, and
+        # the sweep reads its repositories through the service above.
+        dynamic "env" {
+          for_each = local.coordinator_github ? [var.coordinator.github_app_id] : []
+          content {
+            name  = "FUGARO_GITHUB_APP_ID"
+            value = env.value
+          }
         }
         # The one credential, and the only place it ever appears: a
         # secret_key_ref, so no plan, no `terraform show` and no job describe
         # carries the App's private key.
-        env {
-          name = "FUGARO_GITHUB_APP_PRIVATE_KEY"
-          value_source {
-            secret_key_ref {
-              secret  = var.project_secrets[var.coordinator.app_key_secret]
-              version = "latest"
+        dynamic "env" {
+          for_each = local.coordinator_github ? [var.coordinator.app_key_secret] : []
+          content {
+            name = "FUGARO_GITHUB_APP_PRIVATE_KEY"
+            value_source {
+              secret_key_ref {
+                secret  = var.project_secrets[env.value]
+                version = "latest"
+              }
             }
           }
         }
