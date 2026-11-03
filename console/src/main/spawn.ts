@@ -836,6 +836,40 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     dirFlag: false,
   },
   {
+    // **The settings read** (the settings-edit plan's C1, D1102): the project's
+    // settings, each with the value a run gets, the layer that decided it and
+    // the three writability facts the row set draws its pencils from. It is
+    // `fugaro settings --json`, and two of the command's own flags are
+    // deliberately **not** words of this row. `--offline` would answer less and
+    // say less about it: without it the read records the layers it could not
+    // reach as `state: unread: ...`, which the screen draws as an unread row --
+    // the honest answer, and the one an operator can act on. The seven other
+    // flags of the group (`--repo`, `--all-repos`, `--layer`, `--grep`,
+    // `--changed`, `--why`) narrow the table by a rule a renderer would be
+    // choosing, and no screen control sets one, so `args` is empty and the
+    // command's positional keys and globs are a form this table does not
+    // express at all.
+    //
+    // **The group's other words are not on this table either**, and unlike
+    // `models` they are not on `NEVER_REACHABLE` yet: the settings-edit plan's
+    // C3 is the task that adds the write's own operation and its never rows, and
+    // until it lands no operation drives `settings set` or `settings unset`.
+    // `settings get` is a read of one key this screen does not need -- the row
+    // set is the whole document -- so it stays off the surface too.
+    //
+    // The read writes nothing and reaches no host: it reads the registry, the
+    // project layer's cache, the local config and the checkouts this machine
+    // remembers (`newSettingsCmd`'s own comment). It takes `--project`/`--config`
+    // like every other read of a project (rule 3), because the console's child
+    // carries neither `FUGARO_PROJECT` nor `FUGARO_CONFIG` and an unaimed read
+    // would answer for whichever installation the machine happens to have.
+    operation: 'settings.read',
+    words: ['settings', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
     // The handshake, and the one row that carries no `--project` (rule 3).
     operation: 'cli.version',
     words: ['version'],

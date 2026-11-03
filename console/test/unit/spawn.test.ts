@@ -152,7 +152,8 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * `run.launch`, the fourteenth, coordinator v2 C3's `coordinator.show` the
  * fifteenth, coordinator v2 C4's `coordinator.intents` the sixteenth, and
  * console 0.119.0's jobs-free totals read, `runs.summary`, the seventeenth, and
- * console 0.119.0's read-only models panel, `models.list`, the eighteenth. The
+ * console 0.119.0's read-only models panel, `models.list`, the eighteenth, and
+ * the settings read, `settings.read`, the nineteenth. The
  * complement -- the commands
  * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
@@ -174,6 +175,7 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'secrets.inventory',
   'accounts.inventory',
   'models.list',
+  'settings.read',
   'environment.report',
   'coordinator.status',
   'coordinator.show',
@@ -467,7 +469,7 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: twenty argvs, nineteen commands, eighteen of them with --project', () => {
+  it('fixes the design allow-list exactly: twenty-one argvs, twenty commands, nineteen of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
@@ -480,8 +482,10 @@ describe('the spawn table and the argv it builds', () => {
     // number) are filled by the caller and so are not words of this list -- and
     // coordinator v2 C4's declared intents the eighteenth, whose `--all` and
     // `--json` are the row's own two words, exactly as `coordinator status`'s
-    // are, and console 0.119.0's models read the nineteenth, whose whole argv is
-    // its own three words -- the group's one reachable word. The Go side pins
+    // are, console 0.119.0's models read the nineteenth, whose whole argv is
+    // its own three words -- the group's one reachable word -- and the settings
+    // read the twentieth, whose whole argv is its own two words and the
+    // installation's, no argument a renderer can fill. The Go side pins
     // the document's list (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
     // console's; the two are held in step by hand on purpose.
@@ -499,6 +503,7 @@ describe('the spawn table and the argv it builds', () => {
       'secrets ls --json',
       'accounts ls --json',
       'models ls --json',
+      'settings --json',
       'version',
       'doctor --json',
       'config list --json',
@@ -508,7 +513,7 @@ describe('the spawn table and the argv it builds', () => {
       'run --task-file - --json',
     ])
     // The commands that take the flag (addCloudFlags, internal/cli/cloud.go:51)
-    // are eighteen rows plus one: `logs` has two rows, `--json` and `--url`, and
+    // are nineteen rows plus one: `logs` has two rows, `--json` and `--url`, and
     // neither of them may be the one that forgets --project.
     // A word is a flag or a separator if it begins with `-`, which is what
     // keeps the launch's literal `-` -- the argv word that means "read the task
@@ -530,6 +535,7 @@ describe('the spawn table and the argv it builds', () => {
         'secrets ls',
         'accounts ls',
         'models ls',
+        'settings',
         'doctor',
         'coordinator status',
         'coordinator show',
@@ -537,7 +543,7 @@ describe('the spawn table and the argv it builds', () => {
         'run',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(18)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(19)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -1002,6 +1008,32 @@ describe('the spawn table and the argv it builds', () => {
     ])
     for (const key of ['repo', 'model', 'route', 'text', 'all', 'since', 'dir', 'project']) {
       expect(() => argvFor('models.list', { [key]: 'x' }, safeContext()), key).toThrow(/does not declare/)
+    }
+  })
+
+  it('spawns `settings` with exactly these words and no argument a renderer can fill', () => {
+    // The settings read (the settings-edit plan's C1, D1102). One argv, written
+    // out: the command, its one fixed flag and the installation's own
+    // `--project`. The command takes positional keys or globs (`settings
+    // [KEY|GLOB ...]`) and seven more flags of its own, and **none of them is a
+    // word of this row**: a renderer chooses nothing about this read, which is
+    // why `args` is empty and the `does not declare` loop below is the half
+    // that says so. The keys the screen draws are the document's own rows.
+    expect([...argvFor('settings.read', {}, safeContext({ project: 'chosen' }))]).toEqual([
+      'settings',
+      '--json',
+      '--project',
+      'chosen',
+    ])
+    // **`--offline` is deliberately not a word of this row** (the plan's own
+    // sentence): the read answers the layers that could not be read with a
+    // `state` saying so, and the screen draws that row as unread. An offline
+    // read would answer less and say less about it.
+    expect(SPAWN_COMMANDS.filter((row) => row.words[0] === 'settings').map((row) => row.operation)).toEqual([
+      'settings.read',
+    ])
+    for (const key of ['key', 'glob', 'layer', 'grep', 'repo', 'allRepos', 'dir', 'project', 'config']) {
+      expect(() => argvFor('settings.read', { [key]: 'x' }, safeContext()), key).toThrow(/does not declare/)
     }
   })
 

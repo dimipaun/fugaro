@@ -1284,6 +1284,10 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // 0.119.0), so there is no key a renderer could fill -- which the pin below
   // reads back as well.
   'models.list': {},
+  // The empty payload once more: the settings read takes no argument either
+  // (the settings-edit plan's C1), so the command's keys, globs and seven
+  // remaining flags are all words no renderer can reach.
+  'settings.read': {},
   'cli.version': {},
   'startup.compatibility': {},
   'installation.current': {},

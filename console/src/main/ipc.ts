@@ -433,7 +433,7 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Twenty-eight operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Thirty operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -948,6 +948,35 @@ export const CONSOLE_OPERATIONS = [
     command: 'models ls',
     flags: ['--json'],
     summary: 'the project’s routes, the models a run can name, and each repository’s pins',
+    args: [],
+  },
+  // The settings read (the settings-edit plan's C1, D1102): the project's
+  // settings, each with the value a run gets, the layer that decided it, the
+  // built-in default and its state -- and the three writability facts
+  // (`writable`, `owner`, `target_layer`) the Project tab's settings section
+  // draws its pencils from. **The console keeps no list of its own**: D1102 is
+  // the ruling that the CLI's read carries those three, so there is no fourth
+  // copy of the generic path's allowlist here to drift the day a key is added
+  // to the registry.
+  //
+  // **No argument at all.** The command takes positional keys or globs and
+  // seven flags of its own, and no renderer chooses any of them -- the row's
+  // `args` is empty, its two words are fixed, and `--project`/`--config` are
+  // the installation's (`src/main/spawn.ts`). So no word of this argv is
+  // caller-influenced and the read is not a way to steer a child anywhere.
+  //
+  // **A sensitive row is never drawn** (the owner's ruling of 2026-11-01,
+  // D1111). The document carries no `value` member for one at all
+  // (`settingsJSON`), and the screen drops the row whole: no key, no value, no
+  // pencil. That is the screen's rule and not this table's; what belongs here
+  // is that the row's *edit* is the next task's (`settings.edit`), and this
+  // operation reads.
+  {
+    name: 'settings.read',
+    method: 'readSettings',
+    command: 'settings',
+    flags: ['--json'],
+    summary: 'the project’s settings, what decides each one, and which of them the console may edit',
     args: [],
   },
   {
