@@ -3,6 +3,7 @@ package gcp
 import (
 	"encoding/base64"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -90,10 +91,17 @@ func TestCatalogBuildReadsTheCopiedDockerfile(t *testing.T) {
 	if script := strings.Join(df.Args, "\n"); !strings.Contains(script, "/workspace/context/Dockerfile") {
 		t.Fatalf("the read step does not write the context: %q", script)
 	}
-	// The context the build step builds is the copy and nothing else: no
-	// step clones a repository into it.
-	if script := strings.Join(step(t, b, "build").Args, "\n"); !strings.HasSuffix(strings.TrimSpace(script), "/workspace/context") {
-		t.Fatalf("the build step does not build the copied definition: %q", script)
+	// The context the build step builds is the copy and nothing else: no step
+	// of the request clones a repository, and none reads the workflow's own
+	// source or record.
+	buildScript := strings.Join(step(t, b, "build").Args, "\n")
+	if !strings.Contains(buildScript, `--tag "$$candidate" /workspace/context`) {
+		t.Fatalf("the build step does not build the copied definition: %q", buildScript)
+	}
+	for _, st := range b.Steps {
+		if script := strings.Join(st.Args, "\n"); strings.Contains(script, "clone") || strings.Contains(script, "_WORKFLOW") {
+			t.Fatalf("step %s reaches outside the copied definition: %q", st.Id, script)
+		}
 	}
 	if b.Substitutions["_IMAGE"] != s.Image || b.Substitutions["_FUGARO_BASE"] != s.Base || b.Substitutions["_REPO_URL"] != s.RepoURL {
 		t.Fatalf("substitutions = %v", b.Substitutions)
@@ -200,8 +208,14 @@ func TestCatalogBuildWritesARecordTheCheckReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := step(t, b, catalogRecordStepID)
-	if env := rec.Env; !slices.Equal(env, []string{"BUCKET=" + s.Bucket, "KEY=" + key}) {
-		t.Fatalf("the record step's env = %v", env)
+	want := []string{
+		"BUCKET=" + s.Bucket, "KEY=" + key, "ENTRY=agent", "IMAGE=" + s.Image,
+		"GENERATION=" + strconv.FormatInt(s.Definition.Generation, 10),
+		"SHA256=" + s.Definition.SHA256, "COMMIT=" + s.Definition.SourceCommit,
+		"BASE=" + s.Base, "TAG=${_CATALOG_TAG}",
+	}
+	if env := rec.Env; !slices.Equal(env, want) {
+		t.Fatalf("the record step's env = %v, want %v", env, want)
 	}
 	script := strings.Join(rec.Args, "\n")
 	for _, field := range []string{"definition_generation", "definition_sha256", "source_commit", "digest", "build_id", "entry"} {
@@ -224,8 +238,14 @@ func TestCatalogBuildWritesARecordTheCheckReads(t *testing.T) {
 	// The pin step writes what the record and the build step read, and reads
 	// nothing else.
 	pin := step(t, b, catalogPinStepID)
-	if env := pin.Env; !slices.Equal(env, []string{"BUCKET=" + s.Bucket, "KEY=" + keyOf(t, "agent"), "GENERATION=1712345678901234", "SHA256=" + s.Definition.SHA256, "COMMIT=" + s.Definition.SourceCommit}) {
-		t.Fatalf("the pin step's env = %v", env)
+	pinWant := []string{
+		"BUCKET=" + s.Bucket, "KEY=" + keyOf(t, "agent"),
+		"GENERATION=" + strconv.FormatInt(s.Definition.Generation, 10),
+		"SHA256=" + s.Definition.SHA256, "COMMIT=" + s.Definition.SourceCommit,
+		"SELFTEST_B64=${_SELFTEST_B64}",
+	}
+	if env := pin.Env; !slices.Equal(env, pinWant) {
+		t.Fatalf("the pin step's env = %v, want %v", env, pinWant)
 	}
 }
 

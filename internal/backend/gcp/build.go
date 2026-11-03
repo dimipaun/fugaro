@@ -27,6 +27,34 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 )
 
+// The two things every request built from the embedded cloudbuild.yaml
+// needs it to state, and neither a derived nor a catalog build may do
+// without.
+var (
+	errNoGitTokenSecret = errors.New("the embedded cloudbuild.yaml does not declare exactly the git token secret")
+	errNoCredentialStep = errors.New("the embedded cloudbuild.yaml has no build step, or no credential step in its Bitbucket form")
+)
+
+// embeddedBuild is images/derived/cloudbuild.yaml as a Cloud Build request,
+// before any substitution is set or any step is chosen: the derived build
+// (BuildRequest) runs it as it stands, and a catalog build
+// (CatalogBuildRequest) reuses its steps.
+func embeddedBuild() (*cloudbuild.Build, error) {
+	var raw map[string]any
+	if err := yaml.Unmarshal(images.CloudBuild, &raw); err != nil {
+		return nil, fmt.Errorf("parsing the embedded cloudbuild.yaml: %w", err)
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("converting the embedded cloudbuild.yaml: %w", err)
+	}
+	var b cloudbuild.Build
+	if err := json.Unmarshal(data, &b); err != nil {
+		return nil, fmt.Errorf("converting the embedded cloudbuild.yaml: %w", err)
+	}
+	return &b, nil
+}
+
 // BuildSpec is one derived-image build of (repository, workflow).
 type BuildSpec struct {
 	Slug        string // the repository's storage slug, for its workflow secrets' IDs
@@ -128,20 +156,12 @@ var credentialSecretEnv = map[string]string{gitprov.KindBitbucket: gitTokenEnv, 
 // account: a request without one would run as the project's default build
 // identity. It makes no calls.
 func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
-	var raw map[string]any
-	if err := yaml.Unmarshal(images.CloudBuild, &raw); err != nil {
-		return nil, fmt.Errorf("parsing the embedded cloudbuild.yaml: %w", err)
-	}
-	data, err := json.Marshal(raw)
+	b, err := embeddedBuild()
 	if err != nil {
-		return nil, fmt.Errorf("converting the embedded cloudbuild.yaml: %w", err)
-	}
-	var b cloudbuild.Build
-	if err := json.Unmarshal(data, &b); err != nil {
-		return nil, fmt.Errorf("converting the embedded cloudbuild.yaml: %w", err)
+		return nil, err
 	}
 	if b.AvailableSecrets == nil || len(b.AvailableSecrets.SecretManager) != 1 || b.AvailableSecrets.SecretManager[0].Env != gitTokenEnv {
-		return nil, errors.New("the embedded cloudbuild.yaml does not declare exactly the git token secret")
+		return nil, errNoGitTokenSecret
 	}
 	var build, cred *cloudbuild.BuildStep
 	for _, st := range b.Steps {
@@ -153,7 +173,7 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 		}
 	}
 	if build == nil || cred == nil || !slices.Equal(cred.SecretEnv, []string{gitTokenEnv}) || !slices.Equal(cred.Env, credentialEnv[gitprov.KindBitbucket]) {
-		return nil, errors.New("the embedded cloudbuild.yaml has no build step, or no credential step in its Bitbucket form")
+		return nil, errNoCredentialStep
 	}
 	if err := s.check(project, reservedEnv(build)); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrBadBuildSpec, err)
@@ -200,7 +220,7 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 	b.Options.MachineType = s.MachineType
 	b.Options.Logging = "CLOUD_LOGGING_ONLY"
 	b.Timeout = "3600s"
-	return &b, nil
+	return b, nil
 }
 
 // reservedEnv is every variable a workflow secret may not reuse: the build
