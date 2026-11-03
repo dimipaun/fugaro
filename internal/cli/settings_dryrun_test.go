@@ -11,6 +11,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/settings"
 )
 
@@ -176,6 +177,32 @@ func TestSettingsSetDryRunClassifiesANarrowingAsANarrowing(t *testing.T) {
 	}
 }
 
+// TestSettingsSetDryRunClassifiesAListEdit: --add is a widening direction of
+// its own — a name added to a followup list widens who is trusted, and a member
+// added to a ceiling's list widens the ceiling — and the console edits lists
+// with --add=V, so the dry run answers for it too. The new value is the list
+// the document would hold, which is what a window shows as the result.
+func TestSettingsSetDryRunClassifiesAListEdit(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  allowed_models:\n    - claude-sonnet-5\n"))
+	before := readFileString(t, path)
+	noTerminal(t)
+
+	doc := settingsDryRunDoc(t, "settings", "set", "budget.allowed_models", "--add", "claude-opus-5-5", "--layer", "repo")
+	if !doc.Changed {
+		t.Error("the document says the added member changes nothing")
+	}
+	if !doc.Widening {
+		t.Errorf("a member added to a ceiling's list is not classified as a widening: %+v", doc)
+	}
+	if doc.Old != "claude-sonnet-5" || doc.New != "claude-sonnet-5,claude-opus-5-5" {
+		t.Errorf("the document says %q -> %q, and the file holds one member and the edit adds a second", doc.Old, doc.New)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the dry run changed fugaro.yaml")
+	}
+}
+
 // TestSettingsSetDryRunRefusesASensitiveKey: a sensitive row is refused before
 // the edit is built, so the dry run refuses it the same way the write does —
 // with the CLI's own sentence, a non-zero exit and no document at all, and
@@ -203,6 +230,53 @@ func TestSettingsSetDryRunRefusesASensitiveKey(t *testing.T) {
 	}
 	if readFileString(t, localPath) != before {
 		t.Error("the refused dry run changed the local config")
+	}
+}
+
+// TestSettingsSetDryRunDoesNotLiftTheFence: a dry run writes nothing, and the
+// coding-agent-session refusal is still the first thing it meets — no flag
+// answers that fence (D1107) — so a session gets the CLI's own sentence and no
+// document, exactly where the write it describes would be refused. Inside a
+// repository the ordinary repo-layer edit is the write an agent session may
+// make, and there the dry run answers.
+func TestSettingsSetDryRunDoesNotLiftTheFence(t *testing.T) {
+	for _, marker := range agentenv.Markers {
+		t.Run(marker, func(t *testing.T) {
+			settingsWriteHome(t)
+			path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 10\n"))
+			before := readFileString(t, path)
+			t.Setenv(marker, "1")
+
+			out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo", "--dry-run", "--json")
+			if err == nil {
+				t.Fatalf("--dry-run answered in a coding agent's session:\n%s", out)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+			}
+			if !strings.Contains(err.Error(), marker) {
+				t.Errorf("the refusal does not name %s, so nobody knows which variable to unset: %v", marker, err)
+			}
+			if json.Valid([]byte(out)) {
+				t.Errorf("a refusal printed a document, and a consumer branches on a non-zero exit with none:\n%s", out)
+			}
+			if readFileString(t, path) != before {
+				t.Error("the refused dry run changed fugaro.yaml")
+			}
+
+			// The same session's ordinary repo-layer edit, which the write may
+			// make: the dry run answers for it.
+			out, _, err = execute(t, "settings", "set", "agent.review_rounds", "3", "--layer", "repo", "--dry-run", "--json")
+			if err != nil {
+				t.Fatalf("the dry run of the edit an agent session may make was refused: %v\n%s", err, out)
+			}
+			if !json.Valid([]byte(out)) {
+				t.Errorf("the dry run printed no document:\n%s", out)
+			}
+			if readFileString(t, path) != before {
+				t.Error("the dry run changed fugaro.yaml")
+			}
+		})
 	}
 }
 
