@@ -118,41 +118,68 @@ const (
 	// identity and is not a job of this installation, so the act is the
 	// purpose, the credential and the status (spec §5.5).
 	PurposeReviewVerify = "review_verify"
+	// PurposeBitbucketRead is the read-scoped Bitbucket token a person asks the
+	// service for on the read mint (BB4). The credential's name is the read
+	// consumer's (BitbucketReadConsumerSecret), which — like the App key
+	// and the review-signing key — is not a model credential of the cascade and
+	// has no tier, so a read-mint line names the consumer and no tier (see
+	// credentialWithoutTier).
+	//
+	// Its line is the one line of this service that carries a repository and no
+	// run: the caller is a person, not a job of this installation, so there is
+	// no run identity to state and the repository is what says which repository
+	// the token was minted for. It is the second purpose whose caller holds no
+	// job (see callerWithoutJobPurpose) and the only one whose line names a
+	// repository (see repositoryOnlyPurpose).
+	PurposeBitbucketRead = "bitbucket_read"
 )
 
 // ValidPurpose reports whether purpose is one this service issues a credential
 // for.
 func ValidPurpose(purpose string) bool {
 	switch purpose {
-	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify:
+	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify, PurposeBitbucketRead:
 		return true
 	}
 	return false
 }
 
 // credentialWithoutTier reports whether a purpose's credential is one the
-// cascade never had: the App key a mint signs a JWT with, and the review-signing
-// key a sign line or a verify line names. None is a model credential, none is
-// spent on a call, and none therefore has a tier — so a line of one of these
-// purposes names a credential and NO tier, and a tier on it is a tier this
-// service never assigned.
+// cascade never had: the App key a mint signs a JWT with, the review-signing key
+// a sign line or a verify line names, and the read consumer a read mint exchanges
+// for a Bitbucket token. None is a model credential, none is spent on a call,
+// and none therefore has a tier — so a line of one of these purposes names a
+// credential and NO tier, and a tier on it is a tier this service never
+// assigned.
 //
 // It is one function because the two rules that read it (the tier refusal and
 // the both-or-neither rule, checked) have to agree about who the exemption
 // covers: a purpose added to one and not the other would be a line that is
 // refused for a credential it correctly carries.
 func credentialWithoutTier(purpose string) bool {
-	return purpose == PurposeMint || purpose == PurposeReviewSign || purpose == PurposeReviewVerify
+	return purpose == PurposeMint || purpose == PurposeReviewSign ||
+		purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead
 }
 
-// verifierPurpose reports whether a line records a VERIFIER's act rather than a
-// run's: the one purpose whose caller holds no run identity and is not a job of
-// this installation. Two of checked's field-set rules are relaxed for it and
-// for no other purpose — Caller without Job, and a StatusOK line with no Run
-// and no Job — so they are read off this one function rather than two spellings
-// of the purpose's name, for the reason credentialWithoutTier is one function.
-func verifierPurpose(purpose string) bool {
-	return purpose == PurposeReviewVerify
+// callerWithoutJobPurpose reports whether a line records a PERSON's act rather
+// than a run's: a verifier's, and a read mint's. Both callers hold no run
+// identity and are not a job of this installation, so the Caller-without-Job
+// rule and the StatusOK line's "a run and a job, or neither" rule are relaxed
+// for them and for no other purpose — a job purpose that dropped its job is
+// still refused, which is what TestReadMintAuditShapeRefusedUnderJobPurposes
+// pins for the shape BB4 adds.
+func callerWithoutJobPurpose(purpose string) bool {
+	return purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead
+}
+
+// repositoryOnlyPurpose reports whether a line names a repository and no run:
+// the read mint's, whose act is the repository the token was minted for. The
+// verify purpose is not one of these — its line carries no repository — so the
+// both-or-neither rule that ties a repository to its run (checked) is relaxed
+// for this purpose alone, and a repository recorded under any other purpose is
+// refused exactly as it is today.
+func repositoryOnlyPurpose(purpose string) bool {
+	return purpose == PurposeBitbucketRead
 }
 
 // StatusOK is the one status that is not a refusal: a credential answered —
@@ -202,7 +229,10 @@ type AuditEvent struct {
 	// its repository's slug (Identity.Slug). They are empty only for a call
 	// refused before the run identity was verified, and they are set together
 	// or not at all: a run id without its repository is not a run this service
-	// can name.
+	// can name. A read mint's line is the one line that carries a repository
+	// and no run (see repositoryOnlyPurpose), because the person who minted is
+	// not a run of this installation and the repository is what the token was
+	// for.
 	Run        string
 	Repository string
 	// Job is the Cloud Run job the run reported (Identity.Job — the caller's
@@ -210,9 +240,9 @@ type AuditEvent struct {
 	// is the service account the service verified (Identity.JobAccount, in the
 	// installation's own spelling): "which job called" is the account's answer
 	// and not the header's (auth.go's verifyJob), and the two are recorded
-	// together because the identity is what carries them — except on a
-	// verifier's line, which is the one line whose caller is not a job of this
-	// installation and therefore carries no job.
+	// together because the identity is what carries them — except on a person's
+	// line, which is the one line whose caller is not a job of this
+	// installation and therefore carries no job. See callerWithoutJobPurpose.
 	Job    string
 	Caller string
 	// Credential is the credential's NAME, never its value, and Tier is the
@@ -228,7 +258,8 @@ type AuditEvent struct {
 	Credential string
 	Tier       string
 	// Purpose is what the credential was issued for (PurposeForward,
-	// PurposeProbe, PurposeMint, PurposeReviewSign or PurposeReviewVerify).
+	// PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify or
+	// PurposeBitbucketRead).
 	Purpose string
 	// Status is what happened: StatusOK, or the refusal's status.
 	Status string
@@ -470,20 +501,33 @@ func (a *Auditor) checked(ev AuditEvent) (AuditEvent, auditRefusal) {
 		return AuditEvent{}, auditRefusal{"run", refusalMalformed}
 	case ev.Repository != "" && !token.ValidSegment(ev.Repository):
 		return AuditEvent{}, auditRefusal{"repository", refusalMalformed}
-	case (ev.Run == "") != (ev.Repository == ""):
+	case repositoryOnlyPurpose(ev.Purpose) && ev.Run != "":
+		// The read mint's act names the repository and no run: its caller is a
+		// person, who holds no run identity at all, so a run id on this line is
+		// a run this service never verified.
+		return AuditEvent{}, auditRefusal{"run", refusalUnexpected}
+	case repositoryOnlyPurpose(ev.Purpose) && ev.Job != "":
+		// For the same reason the line carries no run, it carries no job: the
+		// person minting is not a job of this installation.
+		return AuditEvent{}, auditRefusal{"job", refusalUnexpected}
+	case (ev.Run == "") != (ev.Repository == "") && !repositoryOnlyPurpose(ev.Purpose):
 		// The identity carries both: a run id without the repository it
-		// belongs to is not a run this service can name.
+		// belongs to is not a run this service can name. The read mint's line is
+		// the one exception, and it is narrow: the words above refuse a run id
+		// on that line, so what is left here is a repository with no run — the
+		// shape a person's own act has.
 		return AuditEvent{}, auditRefusal{"run", refusalMissing}
 	case ev.Job != "" && !ValidJobName(ev.Job):
 		return AuditEvent{}, auditRefusal{"job", refusalMalformed}
 	case ev.Caller != "" && !validAccount(ev.Caller):
 		return AuditEvent{}, auditRefusal{"caller", refusalMalformed}
-	case (ev.Job == "") != (ev.Caller == "") && !verifierPurpose(ev.Purpose):
+	case (ev.Job == "") != (ev.Caller == "") && !callerWithoutJobPurpose(ev.Purpose):
 		// The identity carries both, so a line that names one names the other.
-		// A verifier is the exception and the only one: it is not a run in a
-		// job of this installation at all, so its line carries its verified
-		// email as the caller and no job — and a job-purpose line that dropped
-		// its job is still refused here.
+		// A person's act — a verifier's, a read mint's — is the exception, and
+		// it is only about WHO may be recorded: it is not a run in a job of
+		// this installation, so its line carries the verified email as the
+		// caller and no job — and a job-purpose line that dropped its job is
+		// still refused here.
 		return AuditEvent{}, auditRefusal{"job", refusalMissing}
 	case ev.Credential != "" && !ValidCredentialName(ev.Credential):
 		return AuditEvent{}, auditRefusal{"credential", refusalMalformed}
@@ -507,22 +551,27 @@ func (a *Auditor) checked(ev AuditEvent) (AuditEvent, auditRefusal) {
 		return AuditEvent{}, auditRefusal{"tier", refusalUnknown}
 	}
 	// A line that says a credential was used names the whole act; a refusal
-	// carries only what was known when it was refused. A verifier's act is the
-	// second exception and the only other one: it holds no run identity and is
-	// not a job of this installation, so its OK line states the purpose and the
-	// credential the answer was computed with and no run and no job. A run's
-	// line — a sign's, a mint's, a model call's — is unchanged, and the run
-	// identity's own rule (a Run with no Repository is refused above) is
-	// untouched.
+	// carries only what was known when it was refused. A person's act is the
+	// exception: it holds no run identity and is not a job of this
+	// installation, so its OK line states the purpose and the credential the
+	// answer was computed with and no run and no job — and a read mint's states
+	// the repository the token was minted for into the bargain, which is the
+	// only thing on that line that says what the mint was for. A run's line — a
+	// sign's, a mint's, a model call's — is unchanged, and the run identity's
+	// own rule (a Run with no Repository is refused above) is untouched.
 	if ev.Status == StatusOK {
-		verify := verifierPurpose(ev.Purpose)
+		person := callerWithoutJobPurpose(ev.Purpose)
 		switch {
 		case ev.Purpose == "":
 			return AuditEvent{}, auditRefusal{"purpose", refusalMissing}
-		case ev.Run == "" && !verify:
+		case ev.Run == "" && !person:
 			return AuditEvent{}, auditRefusal{"run", refusalMissing}
-		case ev.Job == "" && !verify:
+		case ev.Job == "" && !person:
 			return AuditEvent{}, auditRefusal{"job", refusalMissing}
+		case repositoryOnlyPurpose(ev.Purpose) && ev.Repository == "":
+			// A read mint is for one repository (G11), so a line that names
+			// none records a token issued for nothing.
+			return AuditEvent{}, auditRefusal{"repository", refusalMissing}
 		case ev.Credential == "":
 			return AuditEvent{}, auditRefusal{"credential", refusalMissing}
 		}

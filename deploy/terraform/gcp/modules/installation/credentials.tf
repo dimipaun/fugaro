@@ -66,6 +66,21 @@ locals {
     tonumber(split(".", local.credentials_image_release)[1]) >= 15
   )
 
+  # The people the read mint admits, and the only ones it may be invoked by
+  # (BB4). They are the installation's operators' USER members: the class
+  # verifies the `email` claim of a caller's own Google ID token against this
+  # list (G4), so IAM's other spellings are not people at all — a `group:` or
+  # `domain:` member has no address of its own to compare, and admitting a
+  # `serviceAccount:` one would admit exactly the non-person caller the class
+  # exists to refuse (the coordinator's resident service, G4). So the two
+  # locals are the same set in the two spellings the two readers take: the
+  # members go on the invoker grant (iam.tf, the grant every caller passes
+  # through before the container runs) and the bare addresses go into the
+  # service's environment below, which internal/cli reads as the admitted list
+  # (envPersonAccounts).
+  credentials_read_members = [for m in var.operators : m if startswith(m, "user:")]
+  credentials_read_people  = [for m in local.credentials_read_members : trimprefix(m, "user:")]
+
   # The audience for the first apply of an installation whose tfvars carry no
   # credentials_service.url yet (C1.14's `fugaro credentials serve` refuses to
   # bind a port, by name, without one).
@@ -389,8 +404,9 @@ resource "google_cloud_run_v2_service" "credentials" {
       # reads exactly these names, and internal/infra/tf's
       # credentialsServiceEnv is the allow-list that refuses anything else at
       # plan time). Seven of them are always set and the process REQUIRES
-      # them; the eighth, the verifier list below, is rendered only when the
-      # installation names a verifier and is read as an optional value. No
+      # them; the two below, the verifier list and the read mint's admitted
+      # people, are rendered only when the installation names the accounts they
+      # carry and are read as optional values. No
       # credential is among them: it reads the one bundle secret as
       # its own account, by the name it derives from FUGARO_PROJECT (the
       # project-wide container of the logical name "creds-bundle",
@@ -464,6 +480,21 @@ resource "google_cloud_run_v2_service" "credentials" {
         for_each = var.credentials_service.verifier_accounts == null ? [] : [jsonencode(var.credentials_service.verifier_accounts)]
         content {
           name  = "FUGARO_VERIFIER_ACCOUNTS"
+          value = env.value
+        }
+      }
+      # The read mint's admitted people (BB4), rendered the same way and for the
+      # same reason: an installation that names no operator renders the seven
+      # names above and nothing else, and the process reads this one as an
+      # optional value, so a service deployed without it starts with an EMPTY
+      # list — a read mint that admits nobody — rather than refusing to bind a
+      # port. The addresses are the operators' own, already on the review
+      # screen and on the invoker grant beside this service (iam.tf): this name
+      # carries no address the installation did not already hold.
+      dynamic "env" {
+        for_each = length(local.credentials_read_people) == 0 ? [] : [jsonencode(local.credentials_read_people)]
+        content {
+          name  = "FUGARO_PERSON_ACCOUNTS"
           value = env.value
         }
       }

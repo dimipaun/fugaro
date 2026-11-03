@@ -135,6 +135,41 @@ resource "google_project_iam_member" "operator_cloud_asset_reader" {
   depends_on = [google_project_iam_custom_role.cloud_asset_reader]
 }
 
+# The credentials service's invoker grant (BB4), and the only grant in this
+# module that is on a Cloud Run service rather than on the project or a bucket.
+# It is here, in the file every operator grant is in, and not in credentials.tf
+# beside the service it names: that file carries its own test refusing any
+# google_cloud_run_v2_service_iam_member in it (the job accounts' grants live in
+# modules/workflow/sa.tf, one per job), and that fence is worth more than the
+# placement a reader might expect.
+#
+# Why it is needed at all. The service sets invoker_iam_disabled = false, so
+# IAM is the first fence every caller passes and the service's own ID-token
+# check is the second: without this grant a person's read mint is refused by
+# the front end before the container runs, and the read mint BB4 builds would
+# be unreachable for everyone it admits.
+#
+# Why exactly these members. The read mint's admitted people are the
+# operators' user members and nobody else (credentials.tf's own locals, which
+# both this grant and the service's environment are built from): one list, two
+# spellings, so a person who may knock and a person who may be served cannot
+# drift apart. Every other operator spelling is left out for the reason the
+# class refuses those callers — a group or a domain is not a person's address,
+# and a service account is the non-person caller the class exists to refuse.
+# A launcher, an admin or a job account gets nothing here: the token this grant
+# leads to reaches the installing person's whole Bitbucket workspace (U3), and
+# a caller who is not one of the installation's operators has no business
+# asking for one.
+resource "google_cloud_run_v2_service_iam_member" "credentials_invoker" {
+  for_each = local.credentials_service_on ? toset(local.credentials_read_members) : toset([])
+
+  project  = var.project
+  location = var.region
+  name     = var.credentials_service.service
+  role     = "roles/run.invoker"
+  member   = each.value
+}
+
 # The runs bucket (design bucket-iam.md §3). Operators read and write all of
 # it: fugaro/ (the project layer, the shared config, recipes, the marker),
 # builds/, cache/, locks/ and runs/.

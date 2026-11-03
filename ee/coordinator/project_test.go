@@ -62,7 +62,7 @@ func (f *projectFixture) project() *Project {
 			return fmt.Sprintf("ghs_fixture_%s_%d", strings.ReplaceAll(repo, "/", "_"), f.mints[repo]),
 				f.now.Add(time.Hour), nil
 		},
-		Open: func(ctx context.Context, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		Open: func(ctx context.Context, kind, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			// A provider asks for its token on its first API call, so the
 			// fixture asks here: a read then mints the way a real one does,
 			// and the cache is exercised by the reads rather than beside them.
@@ -246,10 +246,10 @@ func TestCoordinatorRedactsTheCredentialsAnOpenerHolds(t *testing.T) {
 		name string
 		open ProviderOpener
 	}{
-		{"opening the provider", func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		{"opening the provider", func(context.Context, string, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			return nil, []string{secret}, fmt.Errorf("github: the App credential %s was refused: %w", secret, sentinel)
 		}},
-		{"reading a pull request", func(_ context.Context, repo string, _ gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		{"reading a pull request", func(_ context.Context, kind, repo string, _ gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			return secretHost{Provider: &fake.Provider{Repo: repo, SelfID: "1"}, secret: secret, cause: sentinel}, []string{secret}, nil
 		}},
 	} {
@@ -297,7 +297,7 @@ func TestCoordinatorRedactsItsMintedToken(t *testing.T) {
 		Mint: func(context.Context, string) (string, time.Time, error) {
 			return minted, time.Now().Add(time.Hour), nil
 		},
-		Open: func(_ context.Context, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		Open: func(_ context.Context, kind, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			return tokenHost{Provider: &fake.Provider{Repo: repo, SelfID: "1"}, src: src}, nil, nil
 		},
 		Redact: agent.Redact,
@@ -326,7 +326,7 @@ func TestCoordinatorRedactsAHostTokenOnTheSingleRead(t *testing.T) {
 		Mint: func(context.Context, string) (string, time.Time, error) {
 			return minted, time.Now().Add(time.Hour), nil
 		},
-		Open: func(_ context.Context, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		Open: func(_ context.Context, kind, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			return tokenHost{Provider: &fake.Provider{Repo: repo, SelfID: "1"}, src: src}, nil, nil
 		},
 		Redact: agent.Redact,
@@ -362,7 +362,7 @@ func hostToken(t *testing.T) string {
 func TestCoordinatorPanicsWithoutARedactor(t *testing.T) {
 	p := &Project{
 		Mint: func(context.Context, string) (string, time.Time, error) { return "ghs_fixture_token", time.Now(), nil },
-		Open: func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		Open: func(context.Context, string, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			return &fake.Provider{Repo: "acme/web", SelfID: "1"}, nil, nil
 		},
 	}
