@@ -12,6 +12,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 // MaxDockerfileBytes bounds a resolved Dockerfile, whatever its source:
@@ -34,7 +35,11 @@ const MaxDockerfileBytes = gitprov.MaxContentsBytes
 //
 // The credential the opener returns is dropped here: nothing in this
 // function writes it, returns it or puts it in a failure — what a caller
-// prints is the entry's repository and path, and the file's own bytes.
+// prints is the entry's repository and path, and the file's own bytes. Those
+// two are printed through pluginwire.Printable, the rule every value that
+// reaches a log follows: the catalog's own validation is not this package's
+// to rely on, and a name or a repository that carried an escape sequence
+// would carry it into whatever reads the message.
 func Fetch(ctx context.Context, open gitprov.Opener, kind string, e config.Entry) ([]byte, error) {
 	switch e.Source.Kind {
 	case config.SourceInline:
@@ -42,9 +47,9 @@ func Fetch(ctx context.Context, open gitprov.Opener, kind string, e config.Entry
 	case config.SourceDockerfile:
 		return fetchDockerfile(ctx, open, kind, e)
 	case config.SourceImage:
-		return nil, fmt.Errorf("the catalog entry %s has no Dockerfile: its source is a prebuilt image, so there is nothing to build or copy", e.Name)
+		return nil, fmt.Errorf("the catalog entry %s has no Dockerfile: its source is a prebuilt image, so there is nothing to build or copy", nameOf(e))
 	default:
-		return nil, fmt.Errorf("the catalog entry %s has no source kind this build knows (%s)", e.Name, strings.Join(config.SourceKinds, ", "))
+		return nil, fmt.Errorf("the catalog entry %s has no source kind this build knows (%s)", nameOf(e), strings.Join(config.SourceKinds, ", "))
 	}
 }
 
@@ -58,28 +63,28 @@ func Fetch(ctx context.Context, open gitprov.Opener, kind string, e config.Entry
 func fetchDockerfile(ctx context.Context, open gitprov.Opener, kind string, e config.Entry) ([]byte, error) {
 	s := e.Source
 	if !validRepo(s.Repo) {
-		return nil, fmt.Errorf("the catalog entry %s: the source's repository is not the owner/name of a repository of this project", e.Name)
+		return nil, fmt.Errorf("the catalog entry %s: the source's repository is not the owner/name of a repository of this project", nameOf(e))
 	}
 	if !gitprov.ValidRepoPath(s.Path) {
-		return nil, fmt.Errorf("the catalog entry %s: the source's path must be a relative path inside %s, with no .. segment", e.Name, s.Repo)
+		return nil, fmt.Errorf("the catalog entry %s: the source's path must be a relative path inside %s, with no .. segment", nameOf(e), pluginwire.Printable(s.Repo))
 	}
 	if strings.ContainsFunc(s.Branch, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
-		return nil, fmt.Errorf("the catalog entry %s: the source's branch holds a control character", e.Name)
+		return nil, fmt.Errorf("the catalog entry %s: the source's branch holds a control character", nameOf(e))
 	}
 	if open == nil {
-		return nil, fmt.Errorf("the catalog entry %s: no git provider was given to read %s with", e.Name, s.Repo)
+		return nil, fmt.Errorf("the catalog entry %s: no git provider was given to read %s with", nameOf(e), pluginwire.Printable(s.Repo))
 	}
 	p, _, err := open(ctx, kind, s.Repo)
 	if err != nil {
-		return nil, fmt.Errorf("the catalog entry %s: opening the provider of %s: %w", e.Name, s.Repo, err)
+		return nil, fmt.Errorf("the catalog entry %s: opening the provider of %s: %w", nameOf(e), pluginwire.Printable(s.Repo), err)
 	}
 	r, ok := p.(gitprov.ContentsReader)
 	if !ok {
-		return nil, fmt.Errorf("the catalog entry %s: the %s provider cannot read a file out of %s, so its Dockerfile cannot be fetched; use an inline definition or a repository on a provider that can", e.Name, kind, s.Repo)
+		return nil, fmt.Errorf("the catalog entry %s: the %s provider cannot read a file out of %s, so its Dockerfile cannot be fetched; use an inline definition or a repository on a provider that can", nameOf(e), pluginwire.Printable(kind), pluginwire.Printable(s.Repo))
 	}
 	data, err := r.Contents(ctx, s.Path, s.Branch)
 	if err != nil {
-		return nil, fmt.Errorf("the catalog entry %s: reading %s from %s: %w", e.Name, s.Path, s.Repo, err)
+		return nil, fmt.Errorf("the catalog entry %s: reading %s from %s: %w", nameOf(e), s.Path, pluginwire.Printable(s.Repo), err)
 	}
 	return bounded(e, data)
 }
@@ -90,13 +95,19 @@ func fetchDockerfile(ctx context.Context, open gitprov.Opener, kind string, e co
 // this package hands on.
 func bounded(e config.Entry, data []byte) ([]byte, error) {
 	if len(data) > MaxDockerfileBytes {
-		return nil, fmt.Errorf("the catalog entry %s: its Dockerfile is %d bytes, more than the %d a definition may be", e.Name, len(data), MaxDockerfileBytes)
+		return nil, fmt.Errorf("the catalog entry %s: its Dockerfile is %d bytes, more than the %d a definition may be", nameOf(e), len(data), MaxDockerfileBytes)
 	}
 	if len(data) == 0 {
-		return nil, fmt.Errorf("the catalog entry %s: its Dockerfile is empty", e.Name)
+		return nil, fmt.Errorf("the catalog entry %s: its Dockerfile is empty", nameOf(e))
 	}
 	return data, nil
 }
+
+// nameOf is e's name for a message this package writes, made safe to print
+// (pluginwire.Printable): the name is validated where a catalog is
+// published, and this package is not that place, so it prints the name the
+// way every value that reaches a log is printed rather than trusting it.
+func nameOf(e config.Entry) string { return pluginwire.Printable(e.Name) }
 
 // validRepo reports whether repo is the owner/name of a repository: two
 // non-empty segments that name a repository rather than a path above the

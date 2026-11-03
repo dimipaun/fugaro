@@ -29,13 +29,16 @@ const catalogDockerfileType = "text/plain; charset=utf-8"
 // bucket-iam.md), so a refused write is reported with the operator text
 // operatorWriteErr writes, and its lead says what did not happen.
 func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.Opener, kind string, e config.Entry) error {
-	data, err := catalog.Fetch(ctx, open, kind, e)
-	if err != nil {
-		return userErr("%v", err)
-	}
+	// The key first: a name that is not one is refused before any credential
+	// is used to read a definition, and the refusal is the helper's own
+	// sentence (it does not repeat the name, which is what reached it).
 	key, err := config.CatalogDockerfileKey(e.Name)
 	if err != nil {
-		return userErr("%v", err)
+		return err
+	}
+	data, err := catalog.Fetch(ctx, open, kind, e)
+	if err != nil {
+		return err
 	}
 	old, gen, err := b.ReadMax(ctx, key, catalog.MaxDockerfileBytes)
 	switch {

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 // contentsFile is one entry of the contents API's reply, a regular file read
@@ -51,9 +52,9 @@ func (p *Provider) Contents(ctx context.Context, path, ref string) ([]byte, erro
 	}
 	switch {
 	case f.Type != "file":
-		return nil, fmt.Errorf("reading %s: the repository holds a %s there, not a file", path, f.Type)
+		return nil, fmt.Errorf("reading %s: the repository holds a %s there, not a file", path, pluginwire.Printable(f.Type))
 	case f.Encoding != "base64":
-		return nil, fmt.Errorf("reading %s: the reply is encoded as %q, not base64", path, f.Encoding)
+		return nil, fmt.Errorf("reading %s: the reply is encoded as %s, not base64", path, pluginwire.Printable(f.Encoding))
 	case f.Size <= 0:
 		return nil, fmt.Errorf("reading %s: the reply is %d bytes", path, f.Size)
 	case f.Size > gitprov.MaxContentsBytes:
