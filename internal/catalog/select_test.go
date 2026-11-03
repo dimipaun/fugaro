@@ -178,6 +178,26 @@ func TestPinnedImageThatDoesNotCoverIsWarnedAndUsed(t *testing.T) {
 	}
 }
 
+// TestPinnedImageThatCoversEveryNeededTagWarnsNothing: the warning is for a pin
+// that leaves a needed tag uncovered, so a pin that covers them all is used
+// without one.
+func TestPinnedImageThatCoversEveryNeededTagWarnsNothing(t *testing.T) {
+	cat := config.Catalog{Entries: []config.Entry{
+		entry("frontend", "node", false),
+		entry("universal", "node postgres redis", true),
+	}}
+	c, err := Choose(job(cat, CloudRun, Repo{Slug: "acme/api", Pin: "universal", Needs: []string{"node", "postgres"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Entry.Name != "universal" || !c.Pinned {
+		t.Fatalf("chose %+v, want the pinned universal", c)
+	}
+	if c.Warn != "" {
+		t.Errorf("a pin that covers every needed tag warns %q", c.Warn)
+	}
+}
+
 func TestPinnedEntryTheProjectDoesNotHaveIsRefused(t *testing.T) {
 	_, err := Choose(job(testCatalog(), CloudRun, Repo{Slug: "acme/api", Pin: "universal"}))
 	if err == nil {
