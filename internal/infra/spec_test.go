@@ -3296,3 +3296,146 @@ func TestGitHubRepositoryIsNeverJudgedAgainstTheBitbucketEntry(t *testing.T) {
 		t.Error("the tfvars carry repo.bitbucket_proxied for a GitHub repository, want the key omitted")
 	}
 }
+
+// catalogYAML is a repository whose workflows exercise every arm of the
+// catalog's selection (reconciliation §3.1): one that needs few enough tags
+// for the narrowest entry to cover, one that needs a tag only the widest
+// entry carries, one that names nothing and so runs the project's default,
+// and one that pins an entry that does not cover what it needs.
+const catalogYAML = `version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+agent: { auth: vertex }
+workflows:
+  api:
+    needs: [postgres, redis]
+    commands: { build: npm run build, test: npm test }
+  web:
+    needs: [node, firebase-emulator]
+    commands: { build: npm run build, test: npm test }
+  bare:
+    commands: { build: npm run build, test: npm test }
+  pinned:
+    image_name: minimal
+    needs: [node]
+    commands: { build: npm run build, test: npm test }
+`
+
+// catalogEntries are the catalog's three entries: minimal covers a
+// database-only job with the fewest tags, standard is what a repository that
+// names nothing runs, and universal is the only one covering
+// firebase-emulator.
+func catalogEntries() []config.Entry {
+	return []config.Entry{
+		{Name: "minimal", Tags: []string{"postgres", "redis"}, Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/images", Path: "minimal/Dockerfile"}},
+		{Name: "standard", Default: true, Tags: []string{"node", "postgres", "redis"}, Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/images", Path: "standard/Dockerfile"}},
+		{Name: "universal", Tags: []string{"node", "postgres", "redis", "firebase-emulator"}, Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/images", Path: "universal/Dockerfile"}},
+	}
+}
+
+// catalogInputs is a GitHub repository whose project publishes catalog under
+// its policy node.
+func catalogInputs(t *testing.T, published *config.Catalog) Inputs {
+	t.Helper()
+	lc := parseLC(t, `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry_host: us-east5-docker.pkg.dev/proj-1234
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
+repos:
+  acme/webapp: { provider: github, base_branch: main, workflows: [api, web, bare, pinned], github_app_id: "123456" }
+`)
+	return Inputs{
+		LC:           lc,
+		Repo:         "acme/webapp",
+		Cfg:          parseCfg(t, []byte(catalogYAML)),
+		Installation: installationOutputs(),
+		Policy:       &projectpolicy.Policy{ImageCatalog: published},
+	}
+}
+
+// TestSpecBakedWorkflowRunsTheCatalogsChoice: the job's image is the
+// selection's answer, computed here where the job spec is built (F7), and no
+// longer the repository's own derived :latest tag.
+//
+// Mutations (run, restore): in workflow(), drop the catalog's arm so Image
+// stays the derived tag — every image assertion below fails with
+// ".../acme-webapp-<hash>/<workflow>:latest".
+func TestSpecBakedWorkflowRunsTheCatalogsChoice(t *testing.T) {
+	in := catalogInputs(t, &config.Catalog{Entries: catalogEntries()})
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := in.Installation.RegistryHost + "/" + gcp.SharedRegistryRepoID()
+	for name, want := range map[string]string{
+		"api":    shared + "/catalog-minimal:latest",
+		"web":    shared + "/catalog-universal:latest",
+		"bare":   shared + "/catalog-standard:latest",
+		"pinned": shared + "/catalog-minimal:latest",
+	} {
+		if got := rs.Workflows[name].Image; got != want {
+			t.Errorf("%s's image = %q, want %q", name, got, want)
+		}
+	}
+	if got := rs.Workflows["pinned"].Warnings; len(got) != 1 || !strings.Contains(got[0], "minimal") || !strings.Contains(got[0], "node") {
+		t.Errorf("the pinned workflow's warnings = %q, want one naming the entry and the tag it does not cover (D1146)", got)
+	}
+	for _, name := range []string{"api", "web", "bare"} {
+		if len(rs.Workflows[name].Warnings) != 0 {
+			t.Errorf("%s's warnings = %q, want none: only a pin that does not cover warns", name, rs.Workflows[name].Warnings)
+		}
+	}
+}
+
+// TestSpecRefusesAJobNoCatalogEntryCovers: §3.3's first refusal is raised
+// where the job spec is built, so the job is never deployed, and it says
+// which tags are missing and what the catalog does cover.
+func TestSpecRefusesAJobNoCatalogEntryCovers(t *testing.T) {
+	in := catalogInputs(t, &config.Catalog{Entries: catalogEntries()})
+	w := in.Cfg.Workflows["api"]
+	w.Needs = []string{"postgres", "cuda"}
+	in.Cfg.Workflows["api"] = w
+	_, err := Repo(in)
+	if err == nil {
+		t.Fatal("a workflow needing a tag no entry covers was accepted")
+	}
+	var ue *UserError
+	if !errors.As(err, &ue) {
+		t.Fatalf("err = %v, want a UserError: the fix is the project's catalog", err)
+	}
+	for _, want := range []string{
+		"no image in this project's catalog covers the tags this job needs: [postgres cuda]",
+		"the catalog's images cover: minimal [postgres redis], standard [node postgres redis], universal [node postgres redis firebase-emulator]",
+		"fugaro image add <name> --tags postgres cuda",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not carry %q", err.Error(), want)
+		}
+	}
+}
+
+// TestSpecCatalogIsTheProjectsOwnWhenTheLocalConfigWritesOne is D1140's keep
+// rule at this seam: a local config that writes a catalog is what the specs
+// are computed from, and the published node is not consulted for it. An entry
+// whose source is a prebuilt image is used exactly as it is written.
+func TestSpecCatalogIsTheProjectsOwnWhenTheLocalConfigWritesOne(t *testing.T) {
+	in := catalogInputs(t, &config.Catalog{Entries: catalogEntries()})
+	in.LC.ImageCatalog = &config.Catalog{Entries: []config.Entry{
+		{Name: "minimal", Tags: []string{"postgres", "redis"}, Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/images", Path: "minimal/Dockerfile"}},
+		{Name: "local-default", Default: true, Tags: []string{"node", "postgres", "redis", "firebase-emulator"}, Source: config.Source{Kind: config.SourceImage, Image: "ghcr.io/acme/local:1"}},
+	}}
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := in.Installation.RegistryHost + "/" + gcp.SharedRegistryRepoID()
+	if got, want := rs.Workflows["bare"].Image, "ghcr.io/acme/local:1"; got != want {
+		t.Errorf("bare's image = %q, want %q: the local config's catalog is the effective one (D1140)", got, want)
+	}
+	if got, want := rs.Workflows["api"].Image, shared+"/catalog-minimal:latest"; got != want {
+		t.Errorf("api's image = %q, want %q", got, want)
+	}
+}
