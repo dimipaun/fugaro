@@ -112,6 +112,10 @@ const (
 	// maxCatalogDescriptionLen bounds an entry's description, which a listing
 	// prints to a terminal.
 	maxCatalogDescriptionLen = 200
+	// maxCatalogPathLen bounds a dockerfile source's path: image.key_files'
+	// maxImageKeyFilePath, for the same kind of value — a repository-relative
+	// path a build reads — so the two keys refuse the same size.
+	maxCatalogPathLen = 200
 	// maxCatalogImageRefLen bounds a source image reference. A reference is
 	// written into the job spec and the sentences a selection writes, and 255
 	// is the length a registry accepts for a repository name, so no reference
@@ -309,8 +313,17 @@ func addCatalogWrongKind(path string, s Source, kind SourceKind, add func(path, 
 // path is fetched from a repository and read by a build, so it is one clean
 // relative path, as it is (image.key_files' rules, stated for this key
 // because the messages a repository reads must name this one).
+//
+// The first two rules are what a path must not carry rather than what it must
+// be: it is written into the fetch's own command line and into the messages a
+// person reads, so a control character (a newline, an escape sequence) or a
+// path of ten thousand bytes is refused before it reaches either.
 func catalogPathMessage(f string) string {
 	switch {
+	case strings.ContainsFunc(f, badKeyRune):
+		return "must hold no control character"
+	case utf8.RuneCountInString(f) > maxCatalogPathLen:
+		return fmt.Sprintf("must be at most %d characters", maxCatalogPathLen)
 	case strings.HasPrefix(f, "/"):
 		return "must be a relative path inside the repository"
 	case slices.Contains(strings.Split(f, "/"), ".."):

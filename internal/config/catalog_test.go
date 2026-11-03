@@ -172,6 +172,53 @@ func TestCatalogSourceImageIsAReference(t *testing.T) {
 	}
 }
 
+// catalogWithPath is one entry whose source is a Dockerfile at the given path,
+// built as a value for the reason catalogWithTags is.
+func catalogWithPath(p string) Catalog {
+	return Catalog{Entries: []Entry{{
+		Name:   "backend",
+		Source: Source{Kind: SourceDockerfile, Repo: "acme/api", Path: p},
+	}}}
+}
+
+// TestCatalogPathHoldsNoHostileText pins what a dockerfile source's path must
+// not carry (F3): the path is fetched with the project's credentials and read
+// by a build, and it is written into the messages a person reads, so a control
+// character — a newline, a tab, a terminal escape sequence — or a path of ten
+// thousand bytes is refused. The refusal names no part of the value: it would
+// otherwise print the escape sequence it is refusing.
+func TestCatalogPathHoldsNoHostileText(t *testing.T) {
+	const ctlMsg = "must hold no control character"
+	const lenMsg = "must be at most 200 characters"
+	for _, tc := range []struct{ name, path, msg string }{
+		{"an escape sequence", "docker/\x1b[31magent.Dockerfile", ctlMsg},
+		{"a bidi override", "docker/‮gnih.Dockerfile", ctlMsg},
+		{"a newline", "docker/agent\n.Dockerfile", ctlMsg},
+		{"a tab", "docker/\tagent.Dockerfile", ctlMsg},
+		{"over the length bound", strings.Repeat("a", maxCatalogPathLen+1), lenMsg},
+		{"ten thousand bytes", "docker/" + strings.Repeat("a", 10000) + ".Dockerfile", lenMsg},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ps := ValidateCatalog("image_catalog", catalogWithPath(tc.path))
+			if !hasProblem(ps, "image_catalog.entries[0].source.path", tc.msg, 0) {
+				t.Fatalf("problems = %v, want one at image_catalog.entries[0].source.path: %s", ps, tc.msg)
+			}
+			for _, p := range ps {
+				if strings.Contains(p.Message, "\x1b") {
+					t.Fatalf("the refusal echoes the value: %q", p.Message)
+				}
+			}
+		})
+	}
+	// The paths a repository really writes are inside the bound and hold no
+	// control character.
+	for _, p := range []string{"Dockerfile", "docker/agent.Dockerfile", ".fugaro/web.Dockerfile", strings.Repeat("a", maxCatalogPathLen)} {
+		if ps := ValidateCatalog("image_catalog", catalogWithPath(p)); len(ps) > 0 {
+			t.Errorf("path %q: unexpected problems: %v", p, ps)
+		}
+	}
+}
+
 // TestCatalogDefaultIsOneEntryOrNone pins the default marker (spec.md
 // §Catalog entry: "The project marks one entry as default"): a catalog marks
 // one entry, or none, and two entries marked are refused because the choice
