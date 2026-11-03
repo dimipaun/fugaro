@@ -83,8 +83,9 @@ facts rather than its conclusion.
   re-meant only by giving the new meaning a new name.
 - **It changes no field's meaning.** For every wire and JSON shape a reader outside this binary
   consumes — the settings read, the settings-write document, the policy node, the run record and the
-  config formats — members are **added only**; the settings-write schema moves to a new version, and
-  the console's settings edit keeps working unchanged ([spec.md](spec.md) §2.4, D1164).
+  config formats — members are **added only**; the settings-write document **keeps the version it has**
+  and gains its entry members as optional ones, so the console's settings edit keeps working unchanged
+  ([spec.md](spec.md) §2.4, D1164).
 - **It does not touch the managed gate's decisions.** D1011–D1026 are cited and extended with a row per
   new command; no decision there is re-opened, and no file of
   [docs/managed-agent-converge/](../managed-agent-converge/README.md) is edited by any task here.
