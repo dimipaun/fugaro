@@ -418,7 +418,7 @@ func TestCheckRebuildsACatalogImageWhenABakedRepositoriesLockfilesMoved(t *testi
 	in = catalogInputs(now)
 	in.Lockfiles = true
 	in.DefinitionSHA256 = strings.Repeat("b", 64)
-	if got := DecideCatalog(in); !slices.Equal(got.Reasons, []string{ReasonCatalogDefinition, ReasonLockfiles}) {
+	if got := DecideCatalog(in); got.Decision != Rebuild || !slices.Equal(got.Reasons, []string{ReasonCatalogDefinition, ReasonLockfiles}) {
 		t.Fatalf("a changed definition and moved lockfiles: %s %v", got.Decision, got.Reasons)
 	}
 }
