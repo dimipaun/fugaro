@@ -109,7 +109,7 @@ type initOptions struct {
 	// spelling of the command): the monthly budget amount is required, with
 	// no default (D64), and it is written into the project's creation fact
 	// so a later run and a restore can read what was chosen
-	// (internal/infra/managed, MarkerVersionBudget). It goes with
+	// (internal/infra/managed, MarkerVersionBuilds). It goes with
 	// --create-project and nothing else — a project that already exists is
 	// made managed by the owner's own command instead, `fugaro managed flag`
 	// (D58; Task 6.1), never by init — and it removes no confirmation: a
