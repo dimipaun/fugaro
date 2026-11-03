@@ -4477,6 +4477,55 @@ func TestSettingsSchema(t *testing.T) {
 	for key := range props {
 		t.Errorf("$defs.keyDefaults carries %s, and the registry has no such row", key)
 	}
+
+	// The writability half of a row (D1102): `writable`, `owner` and
+	// `target_layer` are what a consumer draws an edit from, and they are
+	// members of the document rather than a list in the consumer because a
+	// copy of the CLI's own allowlist is the copy that drifts. Each of the
+	// three is a member **added within version 1** (D848), so it is a typed
+	// member and deliberately not one `required` names: an older CLI's
+	// document, written before they existed, must still validate, which the
+	// instance below is.
+	rowDef, ok := defs["row"].(map[string]any)
+	if !ok {
+		t.Fatal("no $defs.row")
+	}
+	rowRequired := stringsOf(t, rowDef, "required")
+	for _, tc := range []struct{ member, typ string }{
+		{"writable", "boolean"},
+		{"owner", "string"},
+		{"target_layer", "string"},
+	} {
+		node := nodeOf(t, rowDef, "properties", tc.member)
+		if got, _ := node["type"].(string); got != tc.typ {
+			t.Errorf("$defs.row.%s: type = %v, want %s", tc.member, node["type"], tc.typ)
+		}
+		if got, _ := node["description"].(string); strings.TrimSpace(got) == "" {
+			t.Errorf("$defs.row.%s: no description, and it is the member a consumer reads an edit from", tc.member)
+		}
+		if slices.Contains(rowRequired, tc.member) {
+			t.Errorf("$defs.row.required names %s, and a member added within the version is left out of it so a document an older CLI wrote still validates (D848)", tc.member)
+		}
+	}
+	const olderDoc = `
+version: 1
+project: aurora
+generated_at: "2026-11-01T00:00:00Z"
+sources:
+  - layer: default
+    duration_ms: 0
+    status: ok
+settings:
+  - key: commit_name
+    scope: project
+    value: Fugaro
+    wins: default
+    default: {value: Fugaro, source: config.CommitName}
+    state: ok
+`
+	if err := compile(t, "settings.schema.json").Validate(yamlInstance(t, []byte(olderDoc))); err != nil {
+		t.Errorf("a document written before writable, owner and target_layer existed does not validate: %v", err)
+	}
 }
 
 // TestModelsLsSchema holds schemas/models-ls.schema.json to the document
