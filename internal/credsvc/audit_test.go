@@ -848,3 +848,60 @@ func TestVerifyAnswerIsAuditedWithoutARunOrAJob(t *testing.T) {
 		}
 	})
 }
+
+// TestReadMintAuditShapeRefusedUnderJobPurposes: the read mint's line is a
+// Caller with a Repository and no Job and no Run (BB4) — a shape no line of
+// this service had, because a run's line names its run and its job and a
+// verifier's names neither a run nor a repository. The relaxation that lets it
+// be written reaches the read-mint purpose and stops there: a job purpose
+// handed that shape is refused here exactly as it was before the purpose
+// existed, which is what keeps the exemption from spreading to the purposes a
+// reader greps for a run.
+func TestReadMintAuditShapeRefusedUnderJobPurposes(t *testing.T) {
+	if PurposeBitbucketRead != "bitbucket_read" {
+		t.Fatalf("the read-mint purpose is spelled %q, want %q: it is a word an operator greps a line by", PurposeBitbucketRead, "bitbucket_read")
+	}
+	shape := func(purpose string) AuditEvent {
+		return AuditEvent{
+			Caller:     testPersonAccount,
+			Repository: "repo-a",
+			Credential: BitbucketReadConsumerSecret,
+			Purpose:    purpose,
+			Status:     StatusOK,
+		}
+	}
+	for _, purpose := range []string{PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign} {
+		t.Run("under the "+purpose+" purpose", func(t *testing.T) {
+			a, buf := newAudit(t)
+			if err := a.Write(context.Background(), shape(purpose)); err == nil {
+				t.Fatalf("Write accepted the read mint's shape under the %s purpose", purpose)
+			}
+			if field := auditLines(t, buf)[0]["field"]; field != "run" {
+				t.Errorf("the refusal names field %v, want the run the line does not name", field)
+			}
+		})
+	}
+
+	t.Run("and it is the shape the read-mint purpose is relaxed for", func(t *testing.T) {
+		a, buf := newAudit(t)
+		if err := a.Write(context.Background(), shape(PurposeBitbucketRead)); err != nil {
+			t.Fatalf("Write(read mint): %v", err)
+		}
+		line := auditLines(t, buf)[0]
+		checkAuditShape(t, line)
+		for field, want := range map[string]string{
+			"run":        "",
+			"repository": "repo-a",
+			"job":        "",
+			"caller":     testPersonAccount,
+			"credential": BitbucketReadConsumerSecret,
+			"purpose":    PurposeBitbucketRead,
+			"tier":       "",
+			"status":     StatusOK,
+		} {
+			if got := line[field]; got != want {
+				t.Errorf("the read-mint line: %s = %v, want %q", field, got, want)
+			}
+		}
+	})
+}

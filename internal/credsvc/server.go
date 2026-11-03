@@ -83,6 +83,13 @@ func routeAct(path string) (purpose, credential string) {
 		// that name is not in the path. The handler fills it in once the
 		// bundle has it; a refusal answered before then carries none.
 		return PurposeReviewVerify, ""
+	case BitbucketReadPath:
+		// The read mint's credential is the read consumer, which is the
+		// endpoint's own name for what it issues from and not a value read out
+		// of the bundle (BB4, B1): a line for it is written before the bundle is
+		// read and after it alike, and an operator reading one can tell a read
+		// mint from the App key's mint without a second field.
+		return PurposeBitbucketRead, BitbucketReadConsumerSecret
 	case SignPath:
 		// The sign route's credential is the account's review-signing key
 		// (verdict.go), and THAT NAME IS NOT IN THE PATH: it is the caller's
@@ -305,6 +312,12 @@ type Verifier interface {
 	// RequestFromHTTP, so the two identity headers a Request is built from are
 	// not there to read.
 	VerifyVerifier(ctx context.Context, tok string) (string, error)
+	// VerifyPerson admits the caller of the Bitbucket read mint, which presents
+	// a token and no Request for VerifyVerifier's reason and no new one (BB4,
+	// B2): the path is answered ahead of RequestFromHTTP. It is the same check
+	// against a second list, and the two classes are told apart by the list
+	// their caller is in rather than by a flag on a route.
+	VerifyPerson(ctx context.Context, tok string) (string, error)
 }
 
 // PolicyReader is the published policy as the service reads it: the project's
@@ -554,12 +567,13 @@ func NewServer(cfg Config) (*Server, error) {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if r.Method != http.MethodPost || (r.URL.Path != MessagesPath && r.URL.Path != CountTokensPath &&
-		r.URL.Path != MintPath && r.URL.Path != SignPath && r.URL.Path != VerifyPath) {
+		r.URL.Path != MintPath && r.URL.Path != SignPath && r.URL.Path != VerifyPath &&
+		r.URL.Path != BitbucketReadPath) {
 		// There is no other route, and in particular no admin route: D143's
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+" and "+VerifyPath)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+" and "+BitbucketReadPath)
 		return
 	}
 	if r.URL.Path == VerifyPath {
@@ -568,6 +582,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// refuses a call with no run identity, while the caller of this route
 		// holds none and never will (C3.9f, spec §5.4).
 		s.verify(ctx, w, r)
+		return
+	}
+	if r.URL.Path == BitbucketReadPath {
+		// The second route answered before the shared parse, for the verifier
+		// class's reason and not a new one (BB4, B2): its caller is a person,
+		// who holds no run identity either, so RequestFromHTTP would refuse the
+		// call before its own class ever read the token. What replaces the parse
+		// is this route's own read of the body (readReadRequest), and the
+		// run-identity headers are refused by name inside the handler.
+		s.bitbucketRead(ctx, w, r)
 		return
 	}
 	req, err := RequestFromHTTP(r)
