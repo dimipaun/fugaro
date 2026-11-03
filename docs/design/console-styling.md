@@ -737,7 +737,7 @@ pencil**: it carries `aria-busy="true"` while an edit is in flight with its one 
 disabled then, and once a write happened the box and that control are both disabled, because
 the row behind them is stale until the section is read again. Every outcome — a refusal, a
 sentence, a write — carries `Read again`, and it **reads the section** rather than repeating
-the write: the write's own compare-and-swap refuses an edit built on bytes that moved, and a
+the write: the write's own compare-and-swap refuses an edit built on bytes of the target file that moved (it does not re-measure the dry run's classification), and a
 console that retried it silently would be deciding what it was told not to. A refusal is the
 CLI's own sentence and never a tone; a successful write shows the CLI's own
 `next: fugaro update` line as text.

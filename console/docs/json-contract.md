@@ -2510,7 +2510,7 @@ key is list-shaped. **A refusal is not a document**: the CLI exits non-zero with
 its own sentence and prints none of these, so a consumer branches on the exit
 and draws that sentence verbatim — the console does, and **no write is ever
 retried silently** (D1112): the write's own compare-and-swap refuses an edit
-built on bytes that moved, and its `Read again` control re-runs the read rather
+built on bytes of the target file that moved (it does not re-measure the dry run's classification: see the limits in desktop-console.md rule 12), and its `Read again` control re-runs the read rather
 than repeating the write.
 
 **Flags** (`newSettingsCmd`): `--json`, the aiming pair `--project` and
@@ -2552,7 +2552,7 @@ old value and shape come from this document and from nowhere else.
 | `changed` | bool | never | never | the write path's own comparison of the two byte strings — the same comparison that decides whether a write would happen at all — so the document cannot claim a change the write path did not see |
 | `widening` | bool | never | never | the write path's own classification, from `settingsCeilingKey`, `settingsLoosens`, `settingsListSubset` and `settingsTypedWrite` (D1106). **A consumer never re-derives it**: a form the CLI cannot compare counts as a widening, and a re-implementation would answer *narrowing* where the CLI answers *widening* — the one direction a console must not get wrong |
 | `why` | string | never | never | the CLI's own sentence for a widening (`settingsTypedWhy`), empty for a narrowing: the reason the CLI will demand a typed project name, shown beside the fields it explains |
-| `old` | string | never | never | the value a run reads today, before the edit (`settingsWriteRow`'s resolved value). Empty when the key is set nowhere |
+| `old` | string | never | never | the value the TARGET layer's own file holds for the key before the edit, which is not the value a run gets (the winning layer decides that). Empty when that layer's file holds none |
 | `new` | string | never | never | the value the edit would write. Empty for an unset, which is the fact that makes the pair meaningful: `changed` is the CLI's comparison and not a consumer's reading of these two strings |
 | `refusal` | string | never | never | **empty in every document this CLI prints.** A refusal is the CLI's own sentence with a non-zero exit and **no document at all**, which is what a consumer branches on (D1106, D1112); the member is written out because the shape is the contract, and a consumer reads it by name |
 
@@ -2570,7 +2570,8 @@ shapes cannot drift into two contracts.
 and `--dry-run` with `--yes` is refused too ("a dry run says what the edit would
 do and writes nothing, `--yes` answers a write"): a console passes exactly one
 of the two spellings, and the CLI is what makes that a property rather than a
-convention. **No `--layer` default and no guessing** either: the layer must be
+convention. **The layer is never guessed by the console** either: the CLI itself falls back to the narrowest layer when `--layer` is
+omitted, but the console always names one (`argvFor` refuses a settings edit without it), the layer must be
 one `settingsWriteLayers` names, and a layer outside them is a refusal rather
 than a document. The command is the same pair §6.19's paragraph describes, so the
 `--`-terminated value, the two phase words and the layer's provenance are
