@@ -808,11 +808,12 @@ run "build_role_set_on_own_registry" {
 }
 
 # The installation's shared image registry (design
-# docs/forge-authorship-images/shared-images.md §2.6, §11): this repository's
-# build account writes it, because a shared image is built by a repository's
-# own build and pushed into the one repository every repository's shared
-# images live in. Writer and nothing wider — no admin, which could delete
-# another repository's image — and on that one repository, never the project.
+# docs/forge-authorship-images/shared-images.md §2.6, §11; the catalog's D1152):
+# this repository's build account writes it, because a shared image is built by
+# a repository's own build and pushed into the one repository every
+# repository's shared images live in. Writer and the tag mover that moving a
+# tag needs — no admin, which could delete another repository's image — and on
+# that one repository, never the project.
 run "build_writes_shared_registry" {
   command = plan
 
@@ -849,10 +850,28 @@ run "build_writes_shared_registry" {
     condition     = google_artifact_registry_repository_iam_member.build_shared.member == "serviceAccount:fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"
     error_message = "the shared registry's writer must be this repository's own build account"
   }
+  # The tag mover (tags.delete only) beside the writer: moving an existing tag
+  # is gcloud artifacts docker tags add, which deletes the old tag first, and
+  # writer lacks artifactregistry.tags.delete. A catalog build needs it there
+  # for promote (latest) and for its content tag, which is the definition's own
+  # sha256 and so is moved again by a rebuild of the same definition (D1152).
+  # It is the grant the build account holds on its own registry, on the one
+  # other repository it writes.
   assert {
-    condition = toset([for m in [google_artifact_registry_repository_iam_member.build_images, google_artifact_registry_repository_iam_member.build_tag_mover, google_artifact_registry_repository_iam_member.build_base, google_artifact_registry_repository_iam_member.build_ghcr, google_artifact_registry_repository_iam_member.build_shared] :
-    m.role if m.repository == var.github.installation.shared_registry]) == toset(["roles/artifactregistry.writer"])
-    error_message = "writer is the build account's only role on the shared registry: no repoAdmin, no admin, no tag mover"
+    condition = (google_artifact_registry_repository_iam_member.build_shared_tag_mover.role == "projects/proj-1234/roles/fugaroTagMover" &&
+      google_artifact_registry_repository_iam_member.build_shared_tag_mover.repository == "fugaro-shared-images-0829826e4aa4" &&
+      google_artifact_registry_repository_iam_member.build_shared_tag_mover.location == "us-east5" &&
+    google_artifact_registry_repository_iam_member.build_shared_tag_mover.project == "proj-1234")
+    error_message = "the build account must hold the installation's tag mover role on the shared registry, on that one repository and in the installation's project: without it every catalog build fails at promote, and at its content tag after a base change"
+  }
+  assert {
+    condition     = google_artifact_registry_repository_iam_member.build_shared_tag_mover.member == "serviceAccount:fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"
+    error_message = "the shared registry's tag mover must be this repository's own build account"
+  }
+  assert {
+    condition = toset([for m in [google_artifact_registry_repository_iam_member.build_images, google_artifact_registry_repository_iam_member.build_tag_mover, google_artifact_registry_repository_iam_member.build_base, google_artifact_registry_repository_iam_member.build_ghcr, google_artifact_registry_repository_iam_member.build_shared, google_artifact_registry_repository_iam_member.build_shared_tag_mover] :
+    m.role if m.repository == var.github.installation.shared_registry]) == toset(["roles/artifactregistry.writer", "projects/proj-1234/roles/fugaroTagMover"])
+    error_message = "the build account's roles on the shared registry must be exactly writer and fugaroTagMover: no repoAdmin, no admin, which could delete another repository's image"
   }
   assert {
     condition = (google_artifact_registry_repository.images.repository_id == "fugaro-acme-webapp-e9eafd3c6e8c" &&
