@@ -2083,7 +2083,7 @@ func TestCoordinatorSweepRevokesEveryTokenItMinted(t *testing.T) {
 // to take back rather than a nil record to fail on.
 func TestCoordinatorSweepWithAnInjectedReader(t *testing.T) {
 	f := newCoordinatorSweepFixture(t, coordinatorSeeds(), coordinatorPRs()...)
-	reader, _, err := coordinatorReader(nil, io.Discard)
+	reader, _, err := coordinatorReader(nil, os.Getenv, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}

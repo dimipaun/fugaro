@@ -423,7 +423,7 @@ func runCoordinatorSweep(ctx context.Context, cmd *cobra.Command, getenv func(st
 	var tokens *coordinatorTokens
 	if test != nil && test.reader != nil {
 		reader = test.reader
-	} else if reader, tokens, err = coordinatorReader(nil, warn); err != nil {
+	} else if reader, tokens, err = coordinatorReader(nil, getenv, warn); err != nil {
 		return err
 	}
 	// The tick holds each repository's token for as long as it reads and no
@@ -698,7 +698,7 @@ func runCoordinatorStatus(cmd *cobra.Command, o *coordinatorOptions) error {
 	// The project-wide read of Bitbucket is BB5's
 	// (docs/bitbucket-credentials/implementation-plan.md) and lands with its own
 	// wiring, as the sweep's does.
-	reader, tokens, err := coordinatorReader(nil, warn)
+	reader, tokens, err := coordinatorReader(nil, os.Getenv, warn)
 	if err != nil {
 		return err
 	}
@@ -882,7 +882,13 @@ func coordinatorRun(in runview.Input) coordinator.Run {
 // revokes when the command is done (coordinatorTokens). It is returned rather
 // than deferred here because "the command is done" is the caller's fact and not
 // the reader's: the reader has no end of its own.
-func coordinatorReader(lc *localcfg.Config, warn io.Writer) (coordinator.Reader, *coordinatorTokens, error) {
+//
+// lc and getenv are the read mint's two sources: the installation's published
+// block and the override. Each caller passes its own — `show` the local config
+// it loaded and os.Getenv, the sweep no config and the environment it was
+// handed, status no config either — so which environment the override is read
+// from is the caller's fact and never this function's.
+func coordinatorReader(lc *localcfg.Config, getenv func(string) string, warn io.Writer) (coordinator.Reader, *coordinatorTokens, error) {
 	open, err := openCoordinatorProvider(os.Environ(), func(s string) { fmt.Fprintln(warn, safetext.MultiLine(s)) })
 	if err != nil {
 		return nil, nil, fcli.UserErr("%v", err)
@@ -890,7 +896,7 @@ func coordinatorReader(lc *localcfg.Config, warn io.Writer) (coordinator.Reader,
 	// The Bitbucket read mint, wired only where a service URL resolved: with
 	// none, this reader has no Bitbucket credential and refuses one with
 	// ErrBitbucket exactly as it did before BB4 (G8).
-	readTokens := coordinatorBitbucketSource(lc, warn)
+	readTokens := coordinatorBitbucketSource(lc, getenv, warn)
 	// The mint runs on the first call a repository's provider makes, and that
 	// call happens only for a repository whose runs name a pull request: this
 	// read needs no App credential to look at a project with nothing in it, and
@@ -1008,9 +1014,16 @@ const envBitbucketReadServiceURL = "FUGARO_BITBUCKET_READ_SERVICE_URL"
 // The override is an override on the BLOCK and not on the credential: what it
 // names is the service the person's own ID token is presented to, and the
 // block is what an operator's `fugaro update` wrote.
-func coordinatorBitbucketReadURL(lc *localcfg.Config) string {
-	if v := os.Getenv(envBitbucketReadServiceURL); v != "" {
-		return v
+//
+// The environment is the caller's own getenv and not os.Getenv: the sweep is
+// handed the environment it runs in, so that the tick a test runs is one whose
+// every value — this override included — it set itself. A nil getenv is a
+// caller with no environment to read, and the block is then the only source.
+func coordinatorBitbucketReadURL(lc *localcfg.Config, getenv func(string) string) string {
+	if getenv != nil {
+		if v := getenv(envBitbucketReadServiceURL); v != "" {
+			return v
+		}
 	}
 	if lc != nil && lc.CredentialsService != nil {
 		return lc.CredentialsService.URL
@@ -1051,8 +1064,8 @@ var coordinatorBitbucketProvider = func(o bitbucket.Options) (gitprov.Provider, 
 // It is nil when no service URL resolved, and that nil is what keeps the
 // reader's own refusal of Bitbucket (coordinator.ErrBitbucket) in place on an
 // installation that has not opted into the service.
-func coordinatorBitbucketSource(lc *localcfg.Config, warn io.Writer) func(string) gitprov.TokenSource {
-	url := coordinatorBitbucketReadURL(lc)
+func coordinatorBitbucketSource(lc *localcfg.Config, getenv func(string) string, warn io.Writer) func(string) gitprov.TokenSource {
+	url := coordinatorBitbucketReadURL(lc, getenv)
 	if url == "" {
 		return nil
 	}

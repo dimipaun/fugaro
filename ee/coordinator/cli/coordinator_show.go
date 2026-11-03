@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -116,7 +117,7 @@ func runCoordinatorShow(cmd *cobra.Command, o *coordinatorShowOptions) error {
 		return err
 	}
 
-	reader, tokens, err := coordinatorReader(env.Config(), cmd.ErrOrStderr())
+	reader, tokens, err := coordinatorReader(env.Config(), os.Getenv, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
