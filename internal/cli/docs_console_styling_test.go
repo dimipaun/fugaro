@@ -2602,3 +2602,38 @@ func TestDocsConsoleStylingRailIsInThePlan(t *testing.T) {
 		}
 	}
 }
+
+// TestDocsConsoleStylingSettingsSectionCarriesItsEditorAndWindow: §2.5 is the
+// document the Project screen's hooks live in, and the settings section is the
+// one part of it that writes. The stylesheet selects three of its hooks, so the
+// editor's vocabulary has to be named here for the same reason every other
+// hook is -- and the confirmation window's two shapes have to be described
+// here, because the window is a document of its own (§2.13's) that this
+// section's pencil opens, and a shape a reader cannot find is a shape no
+// review checks the code against.
+func TestDocsConsoleStylingSettingsSectionCarriesItsEditorAndWindow(t *testing.T) {
+	const path = "docs/design/console-styling.md"
+	doc := readDoc(t, path)
+	section := mdBetween(t, path, doc, "### 2.5 Project", "### 2.6 Run detail")
+
+	row := mdRow(t, path, section, "| Settings |")
+	for _, hook := range []string{"`projects-settings-editor`", "`projects-settings-editor-outcome`"} {
+		if !strings.Contains(row, hook) {
+			t.Errorf("%s: §2.5's Settings row does not name %s; the entry draws it and this table is the vocabulary a rule may select from", path, hook)
+		}
+	}
+	for _, want := range []string{
+		"Review and write",
+		"Read again",
+		"I understand this raises a limit",
+		"widening",
+		"narrowing",
+		// The window is the launch's own document and module, so the section
+		// has to say which document it is rather than describing a second one.
+		"§2.13",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("%s: §2.5 does not state %q, so the settings section's write -- the editor the pencil opens and the window's two shapes -- is described nowhere in this document", path, want)
+		}
+	}
+}
