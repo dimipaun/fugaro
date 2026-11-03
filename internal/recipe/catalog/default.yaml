@@ -4,4 +4,4 @@ description: The whole loop, up to three review levels. A first-line review when
 steps:
   - first_line: {}
   - review: {}
-  - adversarial: {}
+  - adversarial: { bounce: first_line }

@@ -210,12 +210,12 @@ func TestPlanStepsFollowTheLevels(t *testing.T) {
 		t.Fatalf("level 1 on: %v", got)
 	}
 	// Level 3 on with a step of its own: the catalog default writes
-	// `adversarial: {}`, so the plan runs the step the recipe wrote, taken as
-	// written — it does not bounce.
+	// `adversarial: { bounce: first_line }`, so the plan runs the step the
+	// recipe wrote, bounce and all (O7/D727).
 	withL3 := []planStep{
 		{Kind: recipe.StepFirstLine, Rounds: 2, Precedence: 2},
 		{Kind: recipe.StepReview, Rounds: 4, Precedence: 4, FirstRounds: 2},
-		{Kind: recipe.StepAdversarial, Rounds: rigor.AdversarialDefault(rigor.Critical), FirstRounds: 2},
+		{Kind: recipe.StepAdversarial, Rounds: rigor.AdversarialDefault(rigor.Critical), Bounce: true, FirstRounds: 2},
 	}
 	if got := planOf(def, planLevels(true, true, true), a, nil, rigor.Critical); !slices.Equal(got, withL3) {
 		t.Fatalf("the recipe's own level 3: %v, want %v", got, withL3)

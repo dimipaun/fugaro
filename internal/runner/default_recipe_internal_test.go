@@ -72,7 +72,8 @@ func levelsOf(t *testing.T, rcp *recipe.Recipe, derived bool, mode rigor.Mode, a
 //
 // Red before the change: the default's steps were first_line and review, so
 // the plan ran level 3 only as the step O7 inserts for a level a recipe has
-// none for (with its bounce), never as the step the recipe itself writes.
+// none for, never as the step the recipe itself writes — the bounce it runs
+// was O7's, not the catalog's.
 func TestDefaultRecipeRunsThreeLevelsWhenEachIsOn(t *testing.T) {
 	def := catalogRecipe(t, recipe.DefaultName)
 	a, providers := providerCoderAgent()
@@ -80,12 +81,13 @@ func TestDefaultRecipeRunsThreeLevelsWhenEachIsOn(t *testing.T) {
 	// Critical's own row supplies every number (rigor.DefaultRounds: 3 inner,
 	// 5 senior; rigor.AdversarialDefault is the senior row), so no step carries
 	// a precedence and each takes the mode's number as the plan is built. The
-	// level 3 step is the recipe's own, so it does not bounce: a step a recipe
-	// writes is taken as written.
+	// level 3 step is the recipe's own and bounces to the cheap loop, which is
+	// the catalog's ruling (O7): a rejection runs the fix, then another
+	// first-line loop, then the next adversarial round.
 	want := []planStep{
 		{Kind: recipe.StepFirstLine, Rounds: 3},
 		{Kind: recipe.StepReview, Rounds: 5, FirstRounds: 3},
-		{Kind: recipe.StepAdversarial, Rounds: 5, FirstRounds: 3},
+		{Kind: recipe.StepAdversarial, Rounds: 5, Bounce: true, FirstRounds: 3},
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("plan = %+v, want %+v", got, want)
@@ -142,7 +144,10 @@ func TestDefaultRecipeUnchangedForAClaudeOnlyRepository(t *testing.T) {
 		t.Fatalf("Pro plan = %+v, want %+v", got, want)
 	}
 	got = planOf(def, levelsOf(t, def, true, rigor.Critical, a, providers, nil, nil), a, nil, rigor.Critical)
-	if want := []planStep{{Kind: recipe.StepReview, Rounds: 5}, {Kind: recipe.StepAdversarial, Rounds: 5}}; !slices.Equal(got, want) {
+	// The level 3 step is the recipe's own and bounces; with the first line
+	// off there is no cheap loop for the bounce to run, so its FirstRounds is
+	// 0 and a rejection runs the fix alone.
+	if want := []planStep{{Kind: recipe.StepReview, Rounds: 5}, {Kind: recipe.StepAdversarial, Rounds: 5, Bounce: true}}; !slices.Equal(got, want) {
 		t.Fatalf("Critical plan = %+v, want %+v", got, want)
 	}
 }

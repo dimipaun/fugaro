@@ -215,13 +215,18 @@ func previewProjectRigor(ctx context.Context, lc *localcfg.Config) rigor.Config 
 }
 
 // previewLevel3Rounds is the number the adversarial step takes where no step
-// of its own sets one: the mode's own row (rigor.AdversarialDefault) when the
-// levels this run resolves leave level 3 on, and 0 when they leave it off.
+// of its own sets one, read the way the run reads it (planOf's setRounds):
+// agent.adversarial_rounds where a layer set it, else the mode's own row
+// (rigor.AdversarialDefault) — and 0 when the levels this run resolves leave
+// level 3 off, since then the step does not run at all.
 //
 // A preview that counted the mode's row unconditionally would price a level-3
 // round at every mode, and only some rows turn the level on: a Pro run of the
 // catalog default, which carries the step, runs two levels and would be quoted
-// three. The levels are resolved the way the run resolves them
+// three. A preview that read the row in place of the knob would go the other
+// way and quote a run less than it starts, which is the unsafe direction for a
+// spend estimate; the knob wins over the row wherever it is set, up or down.
+// The levels are resolved the way the run resolves them
 // (config.ResolveLevels, L3.1) over the two layers a preview reads — the
 // mode's own row, and the configuration the preview's figures come from (the
 // checkout's file, which already carries the project layer it resolved over).
@@ -241,6 +246,9 @@ func previewLevel3Rounds(cfg *config.Config, root string, rcp *recipe.Recipe, mo
 	})
 	if err == nil && !levels.L3.On {
 		return 0
+	}
+	if cfg.Agent.AdversarialRounds > 0 {
+		return cfg.Agent.AdversarialRounds
 	}
 	return rigor.AdversarialDefault(mode)
 }
@@ -857,10 +865,10 @@ func previewTypicalCounts(rp *recipe.Recipe, first, rounds, level3 int) map[stri
 		case recipe.StepReview:
 			n, bounce = roundCount(rounds, s.MaxRounds), s.Bounce
 		case recipe.StepAdversarial:
-			// Level 3's rounds come from one knob (agent.adversarial_rounds)
-			// and two defaults under it -- the step's own max_rounds and the
-			// mode's row -- which is what the runner plans and what level3
-			// carries here.
+			// level3 is the number this step resolves to --
+			// agent.adversarial_rounds where a layer set it, else the mode's
+			// row (previewLevel3Rounds) -- and the step's own max_rounds wins
+			// over it, which is the order the runner's planOf reads them in.
 			adv, advBounce = roundCount(level3, s.MaxRounds), s.Bounce
 		}
 	}

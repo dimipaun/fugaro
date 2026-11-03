@@ -1355,10 +1355,11 @@ func TestBudgetPreviewUsesTheProjectsRigorMode(t *testing.T) {
 // never runs.
 //
 // The figures are the default's own steps: the first line, then the senior
-// review, each with its fix, and level 3 with its fix where it runs. The
-// catalog default's review does not bounce and no step caps itself, so the
-// ceiling is first_line_rounds, review_rounds and the level-3 row, each at
-// their mode's value.
+// review, each with its fix, and level 3 with its fix and the cheap loop its
+// bounce inserts where it runs. The catalog default's review does not bounce
+// and no step caps itself, so the ceiling is first_line_rounds, review_rounds
+// and the level-3 row, each at their mode's value, and level 3's own term is
+// n₃·(2 + 2·first).
 func TestBudgetPreviewCountsLevelThreeOnlyWhereTheLevelsRunIt(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -1367,14 +1368,14 @@ func TestBudgetPreviewCountsLevelThreeOnlyWhereTheLevelsRunIt(t *testing.T) {
 		mode   string
 		// want is recipe.StageBound(default, first, rounds, n3) for that mode's
 		// row and the n3 the levels resolve to: 1 + 2*3 + 3*2 = 13 at Pro,
-		// 1 + 2*3 + 5*2 + 5*2 = 27 at Critical, and 13 + 3*2 = 19 at Pro under
-		// a configuration that turns level 3 on.
+		// 1 + 2*3 + 5*2 + 5*(2 + 2*3) = 57 at Critical, and 13 + 3*(2 + 2*3) =
+		// 37 at Pro under a configuration that turns level 3 on.
 		want int
 	}{
 		{name: "pro: the row leaves level 3 off", mode: "pro", want: 13},
-		{name: "critical: the row runs level 3", mode: "critical", want: 27},
+		{name: "critical: the row runs level 3", mode: "critical", want: 57},
 		{name: "pro with level 3 turned on over the row", mode: "pro",
-			levels: "  levels: { l3: { focus: the adversarial pass } }\n", want: 19},
+			levels: "  levels: { l3: { focus: the adversarial pass } }\n", want: 37},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newBudgetFixture(t, "")
@@ -1397,6 +1398,31 @@ func TestBudgetPreviewCountsLevelThreeOnlyWhereTheLevelsRunIt(t *testing.T) {
 				t.Fatalf("preview never says %q:\n%s", want, out)
 			}
 		})
+	}
+}
+
+// TestBudgetPreviewCountsTheLevelThreeKnob: agent.adversarial_rounds is level
+// 3's one round knob, and it wins over the mode's own row wherever it is set
+// (L1.3; the runner's planOf reads it through setRounds). A checkout that sets
+// it above the row therefore runs more level-3 rounds than the row says, so
+// the preview has to quote the run's number: quoting the row would put the
+// ceiling under the run, which is the unsafe direction for a spend estimate.
+func TestBudgetPreviewCountsTheLevelThreeKnob(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 3, 20, 3)
+	f.SetSpentToday(0)
+	agent := "  max_budget_usd: 0.5\n  adversarial_rounds: 7\n"
+	f.Checkout(t, agent)
+	testutil.WriteFiles(t, ".", map[string]string{
+		"fugaro.yaml": previewCheckoutYAML(agent) + "rigor: { default: critical }\n"})
+	out, _, err := execute(t, "budget", "preview", "--recipe", "default", "--runs", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The knob's 7, not Critical's row of 5: 1 + 2*3 + 5*2 + 7*(2 + 2*3) = 73.
+	want := "at most 73 stages (mode critical"
+	if !strings.Contains(out, want) {
+		t.Fatalf("preview never says %q:\n%s", want, out)
 	}
 }
 
