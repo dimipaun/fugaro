@@ -3,26 +3,34 @@ package credsvc
 // The caller-class matrix (BB4, G4): every class this service admits, on every
 // route it serves, admitted or refused exactly as designed.
 //
-// The classes are four — a per-repository job, a review job, a verifier and a
-// person — and each is matched against its OWN list (verifyJob against the job
-// accounts, VerifyVerifier against the verifier list, VerifyPerson against the
-// people). "Which list a caller is looked up in is what makes it a class" is
-// the whole of the design, and it is a property no single-route test can hold:
-// a mutant that made VerifyPerson also read the job or verifier lists left
-// every test in this package green, because each of them only ever presented
-// the token of the class it was about.
+// The classes are five — a per-repository job, a review job, a verifier, a
+// person and the coordinator (BB5) — and each is matched against its OWN list
+// (verifyJob against the job accounts, VerifyVerifier against the verifier
+// list, and the read mint's one admission against the people and, when the
+// installation has one, the coordinator account). "Which list a caller is
+// looked up in is what makes it a class" is the whole of the design, and it is
+// a property no single-route test can hold: a mutant that made the read mint's
+// admission also read the job or verifier lists left every test in this
+// package green, because each of them only ever presented the token of the
+// class it was about.
 //
-// So this file presents all four to all five routes. The table below is the
+// So this file presents all five to all five routes. The table below is the
 // design written down, cell by cell, and a cell that answers something else —
 // including a route that answers 200 to a caller of another class — is a
 // failure that names itself.
 //
 // The refusals a class that holds no run identity gets on the three routes the
 // shared parse reads (mint, sign, messages) are that parse's own
-// (`unverified_run_identity`) and not the class's: a verifier and a person
-// cannot build the call those routes are read by at all, which is why they are
-// answered ahead of RequestFromHTTP on their own routes. That is the designed
-// answer for those cells and not an oversight of the matrix.
+// (`unverified_run_identity`) and not the class's: a verifier, a person and
+// the coordinator cannot build the call those routes are read by at all, which
+// is why they are answered ahead of RequestFromHTTP on their own routes. That
+// is the designed answer for those cells and not an oversight of the matrix.
+//
+// The coordinator's account is deliberately NOT also on the verifier list
+// here, the way an installation's own coordinator is (C3.9f): one address on
+// two lists of two different routes is not the overlap the design refuses —
+// that rule is about two classes admitting the same caller to the SAME route —
+// and aiming the class at the verify route is what says so.
 
 import (
 	"fmt"
@@ -85,29 +93,31 @@ func (h classMatrixTransport) RoundTrip(r *http.Request) (*http.Response, error)
 	return h.upstream.RoundTrip(r)
 }
 
-// classMatrixSvc is one installation configured with ALL four classes at once
+// classMatrixSvc is one installation configured with ALL five classes at once
 // and behind all five routes: the job fixture's own repository, a review job
-// whose account the published node admits, a verifier, a person, the fake
-// GitHub a mint reaches, the fake bitbucket.org the read mint reaches, and the
-// bundle holding every entry the five routes read.
+// whose account the published node admits, a verifier, a person, the
+// coordinator's own account, the fake GitHub a mint reaches, the fake
+// bitbucket.org the read mint reaches, and the bundle holding every entry the
+// five routes read.
 func classMatrixSvc(t *testing.T) (*svc, *bitbucketFake) {
 	t.Helper()
 	bb := newBitbucketFake(t)
 	gh := newGHFake(t)
 	s := newSvcWith(t, func(s *svc, cfg *Config) {
 		auth, err := NewAuthenticator(AuthConfig{
-			Project:           testProject,
-			FirebaseProject:   testFirebase,
-			Audience:          testAudience,
-			JobAccounts:       []string{testJobSA},
-			Keys:              s.keys,
-			JobKeys:           s.jobKeys,
-			Outcomes:          RTDBOutcomes{DB: s.db},
-			SharedJobAccounts: []string{testSharedSA},
-			ReviewJobAccounts: []ReviewJobAccount{{Email: testReviewSA, Account: testReviewAccount}},
-			VerifierAccounts:  []string{testVerifierSA},
-			PersonAccounts:    []string{testPersonAccount},
-			Now:               func() time.Time { return s.now },
+			Project:            testProject,
+			FirebaseProject:    testFirebase,
+			Audience:           testAudience,
+			JobAccounts:        []string{testJobSA},
+			Keys:               s.keys,
+			JobKeys:            s.jobKeys,
+			Outcomes:           RTDBOutcomes{DB: s.db},
+			SharedJobAccounts:  []string{testSharedSA},
+			ReviewJobAccounts:  []ReviewJobAccount{{Email: testReviewSA, Account: testReviewAccount}},
+			VerifierAccounts:   []string{testVerifierSA},
+			PersonAccounts:     []string{testPersonAccount},
+			CoordinatorAccount: testCoordinatorAccount,
+			Now:                func() time.Time { return s.now },
 		})
 		if err != nil {
 			t.Fatalf("the four classes cannot be configured together: %v", err)
@@ -176,9 +186,18 @@ var classVerdicts = map[string]classVerdict{
 	"person/mint":       {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"person/sign":       {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"person/messages":   {StatusUnverified, ErrorUnverifiedRunIdentity},
+
+	// The coordinator's verdicts are the person's and not a class of its own
+	// on any route but the read mint: the same admission answers both, so the
+	// same four cells are refusals and the same one is the 200.
+	"coordinator/read-token": admitted,
+	"coordinator/verify":     {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"coordinator/mint":       {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"coordinator/sign":       {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"coordinator/messages":   {StatusUnverified, ErrorUnverifiedRunIdentity},
 }
 
-// TestRouteCallerClassMatrix is the cross-class matrix: four classes against
+// TestRouteCallerClassMatrix is the cross-class matrix: five classes against
 // five routes, each cell held to the verdict classVerdicts writes down.
 func TestRouteCallerClassMatrix(t *testing.T) {
 	s, _ := classMatrixSvc(t)
@@ -210,6 +229,11 @@ func TestRouteCallerClassMatrix(t *testing.T) {
 		{
 			name:  "person",
 			token: func(s *svc) string { return s.personToken(testPersonAccount) },
+			run:   func(*svc) string { return "" },
+		},
+		{
+			name:  "coordinator",
+			token: func(s *svc) string { return s.personToken(testCoordinatorAccount) },
 			run:   func(*svc) string { return "" },
 		},
 	}
@@ -280,10 +304,10 @@ func TestRouteCallerClassMatrix(t *testing.T) {
 		}
 	}
 	// The upstream's own count is the other half of the matrix: the model path
-	// has exactly two admitted callers, so a cell that admitted a third is a
-	// caller that reached the one route whose reach costs money — which no
-	// status this test read would have shown if the extra call had been
-	// answered beside a refusal.
+	// has exactly two admitted callers (the job's and the review job's), so a
+	// cell that admitted a third is a caller that reached the one route whose
+	// reach costs money — which no status this test read would have shown if
+	// the extra call had been answered beside a refusal.
 	if n := s.up.Count(); n != 2 {
 		t.Errorf("the upstream saw %d model calls, want the two admitted callers' and no more", n)
 	}

@@ -226,6 +226,50 @@ func TestCredentialsServiceVerifierListReachesTheAuthenticator(t *testing.T) {
 	}
 }
 
+// TestCredentialsServiceCoordinatorAccountReachesTheAuthenticator is the same
+// test for the read mint's second class (BB5), and it exists for the same
+// reason the verifier list's does: an empty account and a value quietly
+// dropped on the way to AuthConfig look identical from the outside, and only
+// the read mint's answer would differ -- which takes Google's key set to
+// reach.
+//
+// The entry is again one credsvc's own fold refuses (an account is matched
+// against a Google ID token's email claim), so the refusal is reachable ONLY
+// if the value arrived at NewAuthenticator, and the refusal names the variable
+// and never the account.
+//
+// The second half is the optional half of the same wiring (F24): with the
+// name absent -- the state every installation that runs no coordinator is in
+// -- the configuration builds and the service starts.
+func TestCredentialsServiceCoordinatorAccountReachesTheAuthenticator(t *testing.T) {
+	const entry = "cóordinator@example.com"
+	for _, n := range credentialsServiceEnvNames {
+		t.Setenv(n, credentialsServeEnv[n])
+	}
+	t.Setenv(envCoordinatorAccount, entry)
+	fakeCredentialsService(t)
+
+	_, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: an account the coordinator class cannot fold must refuse the process rather than be dropped on the way to it", err)
+	}
+	if !strings.Contains(err.Error(), "cannot verify its callers") {
+		t.Fatalf("err = %v, want the refusal that says the service cannot verify its callers, which is reachable only if %s reached the authenticator", err, envCoordinatorAccount)
+	}
+	if strings.Contains(err.Error(), entry) {
+		t.Errorf("err = %v, which carries the coordinator account itself: the refusal names the variable and never an account", err)
+	}
+
+	t.Setenv(envCoordinatorAccount, "")
+	cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err != nil {
+		t.Fatalf("credentialsServiceConfig with no %s: %v (the module renders that entry only on an installation whose coordinator is on, so an installation that runs none must start the same service it always did)", envCoordinatorAccount, err)
+	}
+	if _, err := credsvc.NewServer(cfg); err != nil {
+		t.Fatalf("NewServer with no coordinator account: %v", err)
+	}
+}
+
 // TestCredentialsServiceConfigBuildsFromAFullEnvironment is the headline: the
 // whole of this task is that the service can be configured at all, so a
 // complete environment must build a credsvc.Config that NewServer accepts --
@@ -413,6 +457,14 @@ func TestCredentialsServiceConfigRefusesAMalformedVariable(t *testing.T) {
 			set:   map[string]string{envVerifierAccounts: `[{"email":"person-1@example.com"}]`},
 			names: []string{envVerifierAccounts},
 		},
+		{
+			// One address is what the module renders, and the class matches it
+			// against a claim: two of them is a deployment that is wrong rather
+			// than an account that admits nobody (BB5).
+			name:  "the coordinator account is more than one address",
+			set:   map[string]string{envCoordinatorAccount: "coordinator-1@example.com coordinator-2@example.com"},
+			names: []string{envCoordinatorAccount},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, n := range credentialsServiceEnvNames {
@@ -455,6 +507,7 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 		envCredentialsServiceURL: "https://" + secret(envCredentialsServiceURL) + ".run.app",
 		envJobAccounts:           `[{"provider":"github","repo":"` + secret("repo") + `","workflow":"api"}]`,
 		envVerifierAccounts:      `["` + secret("verifier") + `@example.com"]`,
+		envCoordinatorAccount:    secret("coordinator") + "@example.com",
 	}
 	for _, tc := range []struct {
 		name string
@@ -470,6 +523,7 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 		{"the job accounts are malformed", map[string]string{envJobAccounts: "s3cr3t-jobs"}},
 		{"a job cannot be derived", map[string]string{envJobAccounts: `[{"provider":"github","repo":"s3cr3t-nope","workflow":"api"}]`}},
 		{"the verifier list is malformed", map[string]string{envVerifierAccounts: "s3cr3t-verifiers"}},
+		{"the coordinator account carries a space", map[string]string{envCoordinatorAccount: "s3cr3t-coordinator s3cr3t"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for n, v := range values {
@@ -503,7 +557,7 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 // The other direction is a name this command reads that nothing sets, which is
 // a fact the service silently does not have.
 //
-// The list is the seven REQUIRED names plus the two optional ones, which is
+// The list is the seven REQUIRED names plus the three optional ones, which is
 // the whole of what the module renders: the optional ones belong here because
 // a name the module sets and this command does not read is the same mistake
 // whether the command requires it or reads it outside the loop. Which of the
@@ -520,7 +574,7 @@ func TestCredentialsServiceEnvIsTheDeploymentsOwn(t *testing.T) {
 	for _, m := range regexp.MustCompile(`name\s*=\s*"(FUGARO_[A-Z0-9_]+)"`).FindAllStringSubmatch(tf, -1) {
 		inModule[m[1]] = true
 	}
-	for _, n := range append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts) {
+	for _, n := range append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts, envCoordinatorAccount) {
 		if !inModule[n] {
 			t.Errorf("this command reads %s, which credentials.tf does not set on the service: the service would refuse to start on a deployment that is right", n)
 		}

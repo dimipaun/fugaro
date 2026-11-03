@@ -13,6 +13,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -1987,4 +1988,181 @@ func TestVerifierIsNotGatedByTheSharedJobRule(t *testing.T) {
 			t.Errorf("the configuration error is %q, want it to be about the verifier list", err)
 		}
 	})
+}
+
+// testCoordinatorAccount is the coordinator's own account (BB5, B5): the one
+// address the read mint's second class admits. It has the shape every account
+// of this installation has — a service account of the project — which is also
+// why the person class can never admit it and why the two lists cannot be read
+// as one (G4). Like the other identities here it is a name and not a
+// credential.
+const testCoordinatorAccount = "fugaro-coordinator@aurora-dev.iam.gserviceaccount.com"
+
+// testOtherCoordinator is an account of the same shape that is NOT this
+// installation's coordinator: what a second deployment's coordinator, or the
+// coordinator's planned resident service (coordinator P7), would present.
+const testOtherCoordinator = "fugaro-coordinator-resident@aurora-dev.iam.gserviceaccount.com"
+
+// coordinatorSvc is the read mint's own fixture with the coordinator class
+// wired (BB5): the same repository, the same read consumer and the same fake
+// endpoint, plus the one account the second class admits. people is the person
+// list, so a test holds one class or both.
+func coordinatorSvc(t *testing.T, coordinator string, people ...string) (*svc, *bitbucketFake) {
+	t.Helper()
+	return bitbucketSvcWith(t, func(s *svc, cfg *Config) {
+		ac := s.auth.cfg
+		// The people list is restated on the configuration this rebuilds:
+		// bitbucketSvcWith wires the read route's classes into cfg.Auth, and the
+		// authenticator s.auth still carries is the one this fixture's second
+		// list is read off.
+		ac.PersonAccounts = people
+		ac.CoordinatorAccount = coordinator
+		a, err := NewAuthenticator(ac)
+		if err != nil {
+			t.Fatalf("NewAuthenticator: %v", err)
+		}
+		cfg.Auth, s.auth = a, a
+	}, people...)
+}
+
+// TestCoordinatorCallerOnlyOnReadRoute: the coordinator class is the read
+// mint's SECOND admission (BB5, G4), and it is the route's like the person
+// class's: the coordinator's own token opens the read mint, and the same token
+// beside a whole run identity is refused on the model path, which is every
+// other caller's route. The class exists for the sweep, which is not a run of
+// this installation and holds no run identity either.
+func TestCoordinatorCallerOnlyOnReadRoute(t *testing.T) {
+	s, _ := coordinatorSvc(t, testCoordinatorAccount)
+
+	resp, body := s.readMint(t, testBitbucketRepo, testCoordinatorAccount)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the read mint refused the coordinator account: HTTP %d %s", resp.StatusCode, body)
+	}
+	var answer readAnswer
+	if err := json.Unmarshal(body, &answer); err != nil {
+		t.Fatalf("the answer is not one this contract can read: %v (%d bytes)", err, len(body))
+	}
+	if answer.Token == "" || answer.ExpiresAt == "" || answer.Repository != testBitbucketRepo {
+		t.Errorf("the answer does not name the token, its life and the repository: %+v", answer)
+	}
+
+	resp = s.postTokens(t, MessagesPath, callBody("coordinator-on-the-model-path"), s.runToken(), s.personToken(testCoordinatorAccount), s.job)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading the refusal: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("the model path admitted the coordinator's account: HTTP %d %s", resp.StatusCode, body)
+	}
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorUnverifiedJobIdentity {
+		t.Errorf("the refusal is %q, want %q", e.Error, ErrorUnverifiedJobIdentity)
+	}
+}
+
+// TestCoordinatorCallerRefusedOtherAccounts: the class names ONE account, and
+// an address that is not it is refused whether or not it looks like a
+// coordinator's. The residency the class is written against is the point: the
+// coordinator's planned resident service (coordinator P7) has exactly this
+// shape and is not this installation's coordinator account, so it is refused
+// with the read consumer never exchanged (G4).
+//
+// The second case is the other half of the same rule read the other way: an
+// installation that admits people and has a coordinator does not admit a
+// person through the COORDINATOR's entry, and one whose people list is empty —
+// the case's own fixture — names no person at all. The two lookups are two
+// lists and neither widens to the other's addresses.
+func TestCoordinatorCallerRefusedOtherAccounts(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		account string
+		people  []string
+	}{
+		{"another account of the coordinator's own shape", testOtherCoordinator, []string{testPersonAccount}},
+		{"an address on neither list", testPersonAccount, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, f := coordinatorSvc(t, testCoordinatorAccount, tc.people...)
+			resp, body := s.readMint(t, testBitbucketRepo, tc.account)
+			if resp.StatusCode != StatusUnverified {
+				t.Fatalf("the read mint admitted %s: HTTP %d %s", tc.name, resp.StatusCode, body)
+			}
+			if n := len(f.seen()); n != 0 {
+				t.Errorf("the service exchanged the read consumer %d times for a caller it refused, want none", n)
+			}
+			// An unverified caller has no name for a line, so the refusal is
+			// typed and the audit log stays empty.
+			if got := s.audit.String(); got != "" {
+				t.Errorf("a refusal taken before the caller was verified wrote an audit line: %s", got)
+			}
+		})
+	}
+}
+
+// TestCoordinatorClassEmptyEmailAdmitsNobody: the service running with the
+// coordinator OFF admits nobody through this class. An empty account is not a
+// wildcard, which is the reading a default could take and this one does not:
+// the class is the installation's own coordinator, and an installation that
+// has none has named none (BB5, F24).
+func TestCoordinatorClassEmptyEmailAdmitsNobody(t *testing.T) {
+	s, f := coordinatorSvc(t, "")
+	resp, body := s.readMint(t, testBitbucketRepo, testCoordinatorAccount)
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("the read mint admitted the coordinator's account with no coordinator configured: HTTP %d %s", resp.StatusCode, body)
+	}
+	if n := len(f.seen()); n != 0 {
+		t.Errorf("the service exchanged the read consumer %d times for a caller it refused, want none", n)
+	}
+}
+
+// TestRunIdentityRefusedOnReadRoute: the read route takes no run identity, from
+// either class it admits. A run identity is a shape of call this route does not
+// have (BB4), and BB5's second class does not change that: a caller that
+// presents one is refused by name whichever account it is, which is what keeps
+// the route from becoming a second way in for a run.
+func TestRunIdentityRefusedOnReadRoute(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		class string
+		extra func(*http.Request)
+	}{
+		{"the coordinator's account presents a run identity", testCoordinatorAccount, func(r *http.Request) { r.Header.Set(HeaderRunIdentity, "a-run-identity-token") }},
+		{"the coordinator's account names a job", testCoordinatorAccount, func(r *http.Request) { r.Header.Set(HeaderRunJob, "fugaro-a-job") }},
+		{"a person presents a run identity", testPersonAccount, func(r *http.Request) { r.Header.Set(HeaderRunIdentity, "a-run-identity-token") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, f := coordinatorSvc(t, testCoordinatorAccount, testPersonAccount)
+			resp, body := s.readMint(t, testBitbucketRepo, tc.class, tc.extra)
+			if resp.StatusCode != StatusUnverified {
+				t.Fatalf("the read mint answered a call where %s: HTTP %d %s", tc.name, resp.StatusCode, body)
+			}
+			if e := refusal(t, resp.StatusCode, body); e.Error != ErrorUnverifiedRunIdentity {
+				t.Errorf("the refusal is %q, want %q", e.Error, ErrorUnverifiedRunIdentity)
+			}
+			if n := len(f.seen()); n != 0 {
+				t.Errorf("the service exchanged the read consumer %d times for a call it refused, want none", n)
+			}
+			// The refusal IS recorded: the caller was verified by its own
+			// class, so the line names it and the act it asked for, and it
+			// carries no run and no job.
+			lines := auditLines(t, s.audit)
+			if len(lines) != 1 {
+				t.Fatalf("the refused call wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+			}
+			checkAuditShape(t, lines[0])
+			for field, want := range map[string]any{
+				"caller":     tc.class,
+				"purpose":    PurposeBitbucketRead,
+				"status":     ErrorUnverifiedRunIdentity,
+				"run":        "",
+				"job":        "",
+				"tier":       "",
+				"repository": "",
+			} {
+				if got := lines[0][field]; got != want {
+					t.Errorf("the refusal's audit line %s = %v, want %q", field, got, want)
+				}
+			}
+		})
+	}
 }

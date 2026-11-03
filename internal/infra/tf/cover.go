@@ -210,15 +210,26 @@ var grantRules = map[string]map[string]who{
 	},
 	// The credentials service (C1.18): each job account may invoke it, and —
 	// since BB4 — the installation's operators, whose person caller class the
-	// read mint serves. So this is the one row where a person's invoker grant
-	// is the point rather than a mistake, and the row naming toPeople is what
-	// makes it a grant the review screen has to list: the person is on that
-	// screen by name, and a member kind this row did not accept would be
-	// refused outright. Every other kind is still out — the service's own
-	// ID-token check (Q6) is what decides who is served, not an IAM condition,
-	// and the grant stays unconditional.
+	// read mint serves, and — since BB5 — the installation's own coordinator
+	// account, whose coordinator class the same mint serves for the scheduled
+	// sweep. So this is the one row where a person's invoker grant is the point
+	// rather than a mistake, and the row naming toPeople is what makes it a
+	// grant the review screen has to list: the person is on that screen by
+	// name, and a member kind this row did not accept would be refused
+	// outright. Every other kind is still out — the service's own ID-token
+	// check (Q6) is what decides who is served, not an IAM condition, and the
+	// grant stays unconditional.
+	//
+	// toCoordinator is BB5's deliberate widening and it is the only kind on
+	// this row that is neither a job account nor a listed person: it is the
+	// account THIS installation creates (google_service_account.coordinator,
+	// whose email the module also hands the service as
+	// FUGARO_COORDINATOR_ACCOUNT), so it is Fugaro's own and not a stranger's,
+	// and the role is the front end's invoker bit on the one service the sweep
+	// reads Bitbucket through. Nothing wider comes with it: no actAs, no
+	// project role, and no second resource type.
 	"google_cloud_run_v2_service_iam_member": {
-		"roles/run.invoker": toAccounts | toPeople,
+		"roles/run.invoker": toAccounts | toPeople | toCoordinator,
 	},
 	"google_logging_log_view_iam_member": {
 		"roles/logging.viewAccessor": toPeople,
@@ -790,8 +801,10 @@ var knownCommands = [][2][]string{
 // ID tokens are minted for), the installation's per-repository jobs as a
 // JSON array of {provider, repo, workflow} triples, and — only on an
 // installation that names a verifier — the addresses that may ask the verify
-// route, and — only on one that names an operator — the addresses the read
-// mint admits (BB4). No secret ID and no secret value, because the loader
+// route, — only on one that names an operator — the addresses the read
+// mint admits (BB4), and — only on one whose coordinator is on — the
+// coordinator's own account, which is the read mint's second class (BB5). No
+// secret ID and no secret value, because the loader
 // derives the
 // container from the project name and reads it as the service's own account,
 // and the job accounts are derived from the triples rather than carried. The
@@ -803,6 +816,7 @@ var credentialsServiceEnv = []string{
 	"FUGARO_RTDB_URL", "FUGARO_FIREBASE_PROJECT",
 	"FUGARO_CREDENTIALS_SERVICE_URL", "FUGARO_JOB_ACCOUNTS",
 	"FUGARO_VERIFIER_ACCOUNTS", "FUGARO_PERSON_ACCOUNTS",
+	"FUGARO_COORDINATOR_ACCOUNT",
 }
 
 // APITargets are the two services the Firebase web key may call, sorted;
