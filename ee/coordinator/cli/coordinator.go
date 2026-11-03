@@ -990,9 +990,10 @@ const envBitbucketReadServiceURL = "FUGARO_BITBUCKET_READ_SERVICE_URL"
 
 // coordinatorBitbucketReadURL is where the read mint is, for the person
 // running this command: the override when it is set, and otherwise the
-// installation's own published credentials_service block — the value
-// `fugaro init` wrote from Terraform's outputs on the machine that deployed
-// the service and `localcfg.MergeShared` carries to every machine. Empty is an
+// installation's own published credentials_service block — the value the
+// setup run wrote from the installation root's outputs on the machine that
+// deployed the service and `localcfg.MergeShared` carries to every machine.
+// Empty is an
 // installation that has not opted into the service, where Bitbucket is refused
 // exactly as it was before BB4 (G8).
 //
