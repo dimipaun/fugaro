@@ -151,6 +151,31 @@ const catalogSince = "0.7.5"
 // docs/release.md's checklist line for catalogSince in that commit too.
 const catalogShipped = false
 
+// imageCatalogSince names the release that publishes — and reads — the
+// project policy node's image_catalog key (D1140, D1156): the release whose
+// CLI models the key, and therefore the first whose launcher does not refuse
+// a node that carries one (refuseUnknownPolicyKeys). A launcher on an older
+// CLI meets such a node as an unknown key and refuses it, which is why an
+// installation that names a catalog upgrades every launcher before it
+// launches again; a runner tolerates the key and logs it.
+//
+// It is spelled apart from catalogSince/catalogShipped on purpose (F14):
+// those two are the *price* catalog's — a route's require_zdr and
+// price_policy — and the two catalogs ship on their own schedules, so one
+// name for both would judge an image document by the price catalog's
+// knowledge and the other way round. docs/release.md's ("Before you tag")
+// checklist verifies it equals the release that ships the key, the same way
+// it does for catalogSince.
+const imageCatalogSince = "0.17.0"
+
+// imageCatalogShipped is false until the release named by imageCatalogSince
+// is actually tagged: no fugaro release reads the node's image_catalog key
+// yet, so no launcher of a release that can exist today refuses a node
+// carrying it. Flip this to true in the same commit that bumps
+// imageCatalogSince to the release that ships the key, and update
+// docs/release.md's checklist line for it in that commit too.
+const imageCatalogShipped = false
+
 // managedDeployerShipped is true as of 0.10.0, the release the owner's ruling
 // of 2026-10-22 ships the managed deployer in: managed projects ship enabled.
 // Until then it was false, because the deployer's scoped half could not be

@@ -828,6 +828,20 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		publishedVerifiers = old.VerifierAccounts
 	}
 	verifierAccounts := lc.VerifierAccountsEffective(publishedVerifiers)
+	// The image catalog is kept by the same rule (D1140, D1156), and the cost
+	// of the other reading is the floor's and the verifier list's: a machine
+	// whose config predates the key — a teammate's, a CI box's, an operator's
+	// second laptop — would publish a node without the catalog and leave every
+	// repository that names an entry with nothing to run. A config that writes
+	// a catalog replaces what the node holds, and one that writes an empty
+	// catalog takes it away, which is how a published catalog is removed on
+	// purpose; a node with no catalog carries no member at all, so a project
+	// that names none is byte for byte what it was before the key existed.
+	var publishedCatalog *config.Catalog
+	if old != nil {
+		publishedCatalog = old.ImageCatalog
+	}
+	imageCatalog := lc.ImageCatalogEffective(publishedCatalog)
 	pol := &projectpolicy.Policy{
 		Version:           projectpolicy.Version,
 		Budget:            projectpolicy.Budget{Mode: lc.Budget.Mode, PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
@@ -841,6 +855,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		BitbucketAPIRoots: lc.BitbucketAPIRoots,
 		ReviewFloor:       floor,
 		VerifierAccounts:  verifierAccounts,
+		ImageCatalog:      imageCatalog,
 	}
 	switch {
 	case !silent:

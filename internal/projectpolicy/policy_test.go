@@ -1063,3 +1063,142 @@ func TestVerifierAccountsDecodeRefusesAMisspeltEntry(t *testing.T) {
 		}
 	}
 }
+
+// catalogNode is a node carrying the project's image catalog, in the shape a
+// publisher writes one: two entries, the second a Dockerfile at a repository.
+const catalogNode = `{"version": 4, "image_catalog": {"entries": [
+	{"name": "universal", "tags": ["node"], "default": true, "source": {"kind": "image", "image": "ghcr.io/acme/agent:1.2"}},
+	{"name": "rust", "tags": ["cargo"], "source": {"kind": "dockerfile", "repo": "acme/app", "path": "docker/agent.Dockerfile"}}
+]}}`
+
+// TestImageCatalogIsDecoded: the block reaches the run whole — every entry, its
+// tags, its source and the default marker — because the node is where a job's
+// image definition comes from and a member dropped here is an image nobody
+// defined. The empty block and the absent member are the same catalog, which is
+// the other half of the publisher's promise (D1156): a project that names no
+// entry has a node with no member, and that node marshals without one.
+func TestImageCatalogIsDecoded(t *testing.T) {
+	p, found, err := Decode([]byte(catalogNode))
+	if err != nil || !found {
+		t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+	}
+	if len(p.UnknownKeys) != 0 {
+		t.Errorf("UnknownKeys = %v, want none: image_catalog is a key this Fugaro reads", p.UnknownKeys)
+	}
+	if p.ImageCatalog == nil || len(p.ImageCatalog.Entries) != 2 {
+		t.Fatalf("ImageCatalog = %+v, want the node's two entries", p.ImageCatalog)
+	}
+	universal := p.ImageCatalog.Entries[0]
+	if universal.Name != "universal" || !universal.Default || !slices.Equal(universal.Tags, []string{"node"}) {
+		t.Errorf("entries[0] = %+v, want universal marked default with the node tag", universal)
+	}
+	if universal.Source.Kind != config.SourceImage || universal.Source.Image != "ghcr.io/acme/agent:1.2" {
+		t.Errorf("entries[0].source = %+v, want the prebuilt reference", universal.Source)
+	}
+	if rust := p.ImageCatalog.Entries[1]; rust.Source.Kind != config.SourceDockerfile || rust.Source.Path != "docker/agent.Dockerfile" {
+		t.Errorf("entries[1].source = %+v, want the repository pointer", rust.Source)
+	}
+	for _, raw := range []string{
+		`{"version": 4}`,
+		`{"version": 4, "image_catalog": null}`,
+		`{"version": 4, "image_catalog": {"entries": []}}`,
+	} {
+		q, found, err := Decode([]byte(raw))
+		if err != nil || !found {
+			t.Fatalf("Decode(%s) = (%v, %v, %v)", raw, q, found, err)
+		}
+		if q.ImageCatalog != nil {
+			t.Errorf("Decode(%s).ImageCatalog = %+v, want nil: an absent member and a written empty one are one catalog", raw, q.ImageCatalog)
+		}
+		b, err := json.Marshal(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), "image_catalog") {
+			t.Errorf("a policy with no catalog marshals one: %s", b)
+		}
+	}
+}
+
+// TestImageCatalogDecodeRefusesWhatTheCarrierWould: the node's block is held to
+// the same function the local configuration's loader applies to the same value
+// (config.ValidateCatalog), so the file the operator writes and the node a run
+// reads cannot disagree about what an entry is — and a definition the node
+// accepted and the file refused, or the other way round, would be a repository
+// naming an entry one of them has never heard of.
+func TestImageCatalogDecodeRefusesWhatTheCarrierWould(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"a name that is not a catalog name", `{"entries": [{"name": "Universal", "source": {"kind": "image", "image": "ghcr.io/acme/agent:1.2"}}]}`, "must be a catalog entry name"},
+		{"two entries with one name", `{"entries": [{"name": "a", "source": {"kind": "image", "image": "ghcr.io/acme/agent:1.2"}}, {"name": "a", "source": {"kind": "image", "image": "ghcr.io/acme/agent:1.2"}}]}`, "duplicates entries[0]"},
+		{"two defaults", `{"entries": [{"name": "a", "default": true, "source": {"kind": "image", "image": "ghcr.io/acme/agent:1.2"}}, {"name": "b", "default": true, "source": {"kind": "image", "image": "ghcr.io/acme/agent:1.2"}}]}`, "another entry is already the default"},
+		{"a source with no image", `{"entries": [{"name": "a", "source": {"kind": "image"}}]}`, "is required for an image source"},
+		{"a source of no known kind", `{"entries": [{"name": "a", "source": {"kind": "nix", "image": "ghcr.io/acme/agent:1.2"}}]}`, "must be dockerfile, inline or image"},
+		{"a field of another kind", `{"entries": [{"name": "a", "source": {"kind": "image", "image": "ghcr.io/acme/agent:1.2", "repo": "acme/app"}}]}`, "belongs to the dockerfile source; this source is image"},
+		{"an unknown member", `{"entries": [{"name": "a", "tag": ["node"], "source": {"kind": "image", "image": "ghcr.io/acme/agent:1.2"}}]}`, "unknown field"},
+		{"an unknown member of the block", `{"entrie": []}`, "unknown field"},
+		{"a source that is not an object", `{"entries": [{"name": "a", "source": "ghcr.io/acme/agent:1.2"}]}`, "source"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(`{"version": 4, "image_catalog": ` + tc.body + `}`)
+			_, _, err := Decode(raw)
+			if err == nil {
+				t.Fatal("the node was accepted")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal does not name %q: %v", tc.want, err)
+			}
+		})
+	}
+}
+
+// TestImageCatalogDecodeRefusesFoldedMemberNames: encoding/json folds a member
+// name before it matches it, so a block that names the same member twice in two
+// cases is one member this reader would take the last of — for the default
+// marker, that is which image a repository that names nothing runs, decided by
+// the order the keys were written in. The check is the one the budget block and
+// a model_prices entry are held to.
+func TestImageCatalogDecodeRefusesFoldedMemberNames(t *testing.T) {
+	for _, body := range []string{
+		`{"entries": [{"name": "a", "default": true, "Default": false, "source": {"kind": "image", "image": "ghcr.io/acme/agent:1.2"}}]}`,
+		`{"Entries": []}`,
+		`{"entries": [{"name": "a", "source": {"Kind": "image", "image": "ghcr.io/acme/agent:1.2"}}]}`,
+	} {
+		raw := []byte(`{"version": 4, "image_catalog": ` + body + `}`)
+		if _, _, err := Decode(raw); err == nil {
+			t.Errorf("Decode(%s) was accepted: a member spelled in another case is one encoding/json folds onto the documented one", body)
+		}
+	}
+}
+
+// TestImageCatalogIsUnknownToAReaderThatPredatesIt is D1156's skew as a test
+// rather than a sentence, and it is the verifier list's test in shape: this
+// binary reads a node that carries image_catalog and lists no unknown key,
+// while a reader older than the key — every CLI was one before this release —
+// lists it and refuses the node, which is why an installation that names a
+// catalog upgrades its launchers before they launch again. The older reader is
+// not reached by spelling a key this package does not model, because
+// knownTopLevelKeys holds this one: the same node is decoded twice, once under
+// this key set and once under a copy of the list as it stood before the key.
+func TestImageCatalogIsUnknownToAReaderThatPredatesIt(t *testing.T) {
+	raw := []byte(catalogNode)
+	p, found, err := Decode(raw)
+	if err != nil || !found {
+		t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+	}
+	if len(p.UnknownKeys) != 0 {
+		t.Errorf("UnknownKeys = %v, want none: image_catalog is a key this Fugaro reads", p.UnknownKeys)
+	}
+
+	preKey := make(map[string]bool, len(knownTopLevelKeys))
+	for k, v := range knownTopLevelKeys {
+		preKey[k] = v
+	}
+	delete(preKey, "image_catalog")
+	q, found, err := decodeWithKeys(raw, preKey)
+	if err != nil || !found {
+		t.Fatalf("the reader that predates the key refused the node: (%v, %v, %v)", q, found, err)
+	}
+	if want := []string{"image_catalog"}; !slices.Equal(q.UnknownKeys, want) {
+		t.Errorf("the reader that predates the key lists UnknownKeys = %v, want %v: that is the node a CLI of that age refuses and a runner of it logs", q.UnknownKeys, want)
+	}
+}
