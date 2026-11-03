@@ -234,12 +234,16 @@ func Choose(j Job) (Choice, error) {
 	}
 
 	// §3.1 step 1: on Cloud Run every docker-tagged entry is left out of
-	// the candidate set; a VM job keeps the whole catalog.
+	// the candidate set; a VM job keeps the whole catalog. The copy is made
+	// only for a catalog that holds such an entry — carriesDocker is false
+	// on a backend with a daemon, so a VM job never copies — because the
+	// common catalog holds none and an allocation per launch would buy
+	// nothing. The copy itself is what keeps j.Catalog.Entries the caller's
+	// slice: DeleteFunc shifts the entries it keeps into the front of the
+	// array it is given.
 	candidates := j.Catalog.Entries
-	if !j.Backend.hasDockerDaemon() {
-		candidates = slices.DeleteFunc(slices.Clone(candidates), func(e config.Entry) bool {
-			return slices.Contains(e.Tags, DockerTag)
-		})
+	if slices.ContainsFunc(candidates, j.carriesDocker) {
+		candidates = slices.DeleteFunc(slices.Clone(candidates), j.carriesDocker)
 	}
 	if slices.Contains(needed, DockerTag) && !j.Backend.hasDockerDaemon() {
 		// The needed set itself carries the tag, so no candidate can
@@ -382,7 +386,10 @@ func entryNamed(c config.Catalog, name string) (config.Entry, bool) {
 }
 
 // missingTags are the tags of needed that tags does not hold, in needed's
-// order.
+// order. Membership is the whole test, so a tag either list holds twice is
+// reported once: needed is jobNeeds' union, which holds each tag once, and
+// both lists reach here through validateCatalogTags, which refuses a
+// duplicate in a catalog's tags: or a repository's needs:.
 func missingTags(tags, needed []string) []string {
 	var out []string
 	for _, tag := range needed {

@@ -219,6 +219,27 @@ func TestDockerTagOnCloudRunIsNeverAChosenCandidate(t *testing.T) {
 	}
 }
 
+// TestChooseLeavesTheCatalogsOwnEntriesAlone: the docker rule drops entries
+// from the candidate set, and the set it drops them from is a copy. The
+// caller's catalog is the effective one it read once and reuses — the deploy
+// spec chooses for every workflow from it — so a DeleteFunc over that slice
+// would shift the surviving entries into the front of the array it was given
+// and leave the next workflow's choice reading a catalog that had been
+// reordered.
+func TestChooseLeavesTheCatalogsOwnEntriesAlone(t *testing.T) {
+	cat := config.Catalog{Entries: []config.Entry{
+		entry("tiny", "node docker", false),
+		entry("big", "node postgres redis", false),
+	}}
+	before := strings.Join(catalogNames(cat.Entries), " ")
+	if _, err := Choose(job(cat, CloudRun, Repo{Slug: "acme/api", Needs: []string{"node"}})); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(catalogNames(cat.Entries), " "); got != before {
+		t.Fatalf("the catalog reads %q after a choice, want %q: the choice drops docker-tagged entries from a copy, never from the caller's catalog", got, before)
+	}
+}
+
 func TestDockerTagOnCloudRunIsRefusedWhenPinned(t *testing.T) {
 	cat := config.Catalog{Entries: []config.Entry{entry("heavy", "node docker", false)}}
 	_, err := Choose(job(cat, CloudRun, Repo{Slug: "acme/api", Pin: "heavy"}))
