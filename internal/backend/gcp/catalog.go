@@ -317,16 +317,24 @@ gcloud artifacts docker tags add "$$IMAGE@$$digest" "$$IMAGE:$$TAG" --quiet`},
 // catalogRecordStep writes the entry's record where the daily check reads
 // it (CatalogRecordKey). The field names are imagecheck.CatalogRecordState's
 // (and, where the meaning is the same, imagecheck.Record's): base_ref the
-// base as the build was given it, base_digest the base it ran FROM — the
-// build step writes that digest to /workspace/base-digest — and image_digest
-// the digest latest was promoted to. built_at is the pin step's file, the
-// same instant the build step stamps the image's created label with, so the
-// record and the image say one build time and not two readings of a clock.
+// base as the build was given it, base_digest the digest of the base the
+// build ran FROM, and image_digest the digest latest was promoted to. Both
+// digests are a bare sha256:…, the form the field holds everywhere else —
+// imagecheck.Record's, and the digest the check reads a registry's as — and
+// the build step writes the base's as <ref>@sha256:… (the form
+// `fugaro image record` strips as well), so this step strips the reference
+// off it and refuses a file that holds anything but a digest. built_at is
+// the pin step's file, the same instant the build step stamps the image's
+// created label with, so the record and the image say one build time and
+// not two readings of a clock.
 //
-// Every value it carries is constrained — a validated entry name, hex sums,
-// a digits-only generation, a validated image reference, Cloud Build's own
-// build ID, a timestamp the pin step wrote — so the step composes the JSON
-// with printf and no escaping, and no secret is anywhere near it.
+// Every value it carries is constrained, so the step composes the JSON with
+// printf and no escaping, and no secret is anywhere near it: the entry name,
+// the commit, the sums, the generation, the image and the base were checked
+// before the request was built (CatalogBuildSpec.check), the build ID is
+// Cloud Build's own, the build time is the pin step's file, and the two
+// digests are checked here for shape because they come from files this step
+// did not write.
 func catalogRecordStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
 	key, _ := CatalogRecordKey(s.Slug, s.Entry) // checked before this is called
 	return &cloudbuild.BuildStep{
@@ -343,6 +351,8 @@ func catalogRecordStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
 image_digest=$$(cat /workspace/out/image-digest)
 case "$$image_digest" in sha256:*) ;; *) echo "no pushed digest" >&2; exit 1 ;; esac
 base_digest=$$(cat /workspace/base-digest)
+base_digest=$${base_digest#*@}
+case "$$base_digest" in sha256:*) ;; *) echo "no base digest" >&2; exit 1 ;; esac
 built_at=$$(cat /workspace/out/built-at)
 record=$$(mktemp)
 printf '{"version":1,"entry":"%s","source_commit":"%s","definition_generation":%s,"definition_sha256":"%s","base_ref":"%s","base_digest":"%s","image":"%s","content_tag":"%s","image_digest":"%s","build_id":"%s","built_at":"%s"}' \

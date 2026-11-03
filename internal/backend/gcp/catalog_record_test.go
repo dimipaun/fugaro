@@ -124,8 +124,9 @@ func TestCatalogRecordDecodesStrictly(t *testing.T) {
 		builtAt = "2026-11-03T09:00:00Z"
 		buildID = "8f3c1a2b-0000-4000-8000-000000000001"
 	)
-	// The step's own variables come from the files the steps before it wrote
-	// (the pushed digest, the base's digest and the pin's build time).
+	// The step's own variables come from the files the steps before it wrote:
+	// the pushed digest, the base's digest as the step strips the reference
+	// off it, and the pin's build time.
 	imageDigest, baseDigest := "sha256:"+strings.Repeat("c", 64), "sha256:"+strings.Repeat("d", 64)
 	record := renderRecord(t, script, map[string]string{
 		"ENTRY": spec.Entry, "COMMIT": spec.Definition.SourceCommit,

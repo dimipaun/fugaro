@@ -241,6 +241,22 @@ func TestCatalogBuildWritesARecordTheCheckReads(t *testing.T) {
 	if !strings.Contains(script, `"version":`) {
 		t.Fatalf("the record carries no version: %q", script)
 	}
+	// The two values that come from files this step did not write are the
+	// digests, and both are checked for shape before they reach the printf:
+	// a file holding something else fails the build instead of writing a
+	// record the check cannot read.
+	for _, digest := range []string{"image_digest", "base_digest"} {
+		if !strings.Contains(script, `case "$$`+digest+`" in sha256:*)`) {
+			t.Fatalf("the record does not check %s for shape: %q", digest, script)
+		}
+	}
+	// base_digest holds what imagecheck's field holds — a bare sha256:… — and
+	// the file the build step wrote holds the base as <ref>@sha256:…, so the
+	// step strips the reference, as `fugaro image record` does for the
+	// workflow's record of the same field.
+	if !strings.Contains(script, "base_digest=$${base_digest#*@}") {
+		t.Fatalf("the record keeps the base's reference in base_digest: %q", script)
+	}
 	// One build time, not two: the record reads the timestamp the pin step
 	// wrote, which is the one the build step stamps the image's created label
 	// with, so a build whose record and image disagree about when it ran is
