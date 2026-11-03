@@ -939,42 +939,148 @@ const SETTINGS_PENCIL_LABEL = 'Edit'
 export const SETTINGS_PENCIL_CLASS = 'projects-settings-pencil'
 
 /**
- * settingsRowsAt is the document's `settings` array, with the entries that are
- * not objects left out. A row's `state` is drawn in the document's own words,
- * which include the unread spelling (`unread: <what could not be read>`) the
- * plan's argv is written for: the read is **not** passed `--offline`, so a layer
- * that could not be reached says so and the row is drawn as unread rather than
- * as a value. An absent state is not a state this screen invents -- it draws
- * none -- and a row with no `key` is not a row of a table keyed by its key.
+ * SETTINGS_DOC_SHAPE_BECAUSE and SETTINGS_ROW_SHAPE_BECAUSE are the console's
+ * own sentences for a document it will not read. **The console's and not the
+ * CLI's**: no command prints either, and both say what the screen did -- it
+ * withheld the table -- rather than what the CLI should have printed.
+ *
+ * They are two sentences because they are two facts: the first is about the
+ * document's own `settings` member, the second about one row of a list that is
+ * otherwise a list of rows.
  */
-function settingsRowsAt(raw: unknown): readonly Record<string, unknown>[] {
-  const settings = arrayAt(raw)
-  if (settings === null) return []
-  const rows: Record<string, unknown>[] = []
-  for (const entry of settings) {
-    const row = objectAt(entry)
-    if (row !== null) rows.push(row)
+const SETTINGS_DOC_SHAPE_BECAUSE =
+  'settings --json is not a document this console reads: its settings member is not a list of rows'
+
+const SETTINGS_ROW_SHAPE_BECAUSE =
+  'settings --json carried a row this console does not read: a member the table draws is not the type the contract gives it, so no row of it is drawn'
+
+/** SettingsRowRead is one entry of the document's `settings` list, read
+ * strictly: a row to draw, an entry that is not a row at all, or an entry that
+ * is a row of a shape this console refuses the table for. */
+type SettingsRowRead =
+  | { readonly kind: 'row'; readonly row: ProjectsSettingsRow }
+  | { readonly kind: 'skip' }
+  | { readonly kind: 'shape' }
+
+/** SettingsRowsRead is the whole list: the rows, or the reason there is no
+ * table to draw. */
+type SettingsRowsRead =
+  | { readonly ok: true; readonly rows: readonly ProjectsSettingsRow[] }
+  | { readonly ok: false; readonly because: string }
+
+/**
+ * settingsRowAt reads one entry of the document's `settings` list.
+ *
+ * **Types are strict and unknown keys are ignored** -- the owner's ruling of
+ * 2026-10-30, which `src/shared/schema.ts` applies to the documents it admits,
+ * applied here because this screen reads its own documents. A member of another
+ * type is **never coerced**: a `scope` that is a number would become `''`, an
+ * `owner` that is a number would make the row look like one no family writes,
+ * and a `writable` spelled `"true"` would decide against a pencil on a wrong
+ * reading of the document -- each of them a claim the CLI never made. The table
+ * is refused instead, whole, and the panel says so (`SETTINGS_ROW_SHAPE_BECAUSE`).
+ *
+ * Only `value` may be absent: the contract writes no `value` member on a
+ * sensitive row at all, and `*string` is the one member the CLI omits.
+ *
+ * Two entries are dropped rather than refused, and each is **not a row** of this
+ * table rather than a row of the wrong shape:
+ *
+ *   - an entry that is not an object, and one whose `key` is missing, not text
+ *     or empty. The table is keyed by its keys and every cell is drawn beside
+ *     one; a row with no key is a row this screen cannot name;
+ *   - a row whose `sensitive` member is neither absent nor exactly `false`. The
+ *     owner's ruling of 2026-11-01 (D1111) is that a sensitive setting is never
+ *     editable and never shown, so the check **fails closed on the type**: a
+ *     document that spells the flag `"true"`, `1`, `"false"` or `null` loses the
+ *     row. Reading it as `=== true` would draw exactly the row the ruling says is
+ *     never drawn.
+ */
+function settingsRowAt(entry: unknown): SettingsRowRead {
+  const row = objectAt(entry)
+  if (row === null) return { kind: 'skip' }
+  const key = textAt(row['key'])
+  if (key === null || key === '') return { kind: 'skip' }
+  const sensitive = row['sensitive']
+  if (sensitive !== undefined && sensitive !== false) return { kind: 'skip' }
+  const scope = textAt(row['scope'])
+  const wins = textAt(row['wins'])
+  const state = textAt(row['state'])
+  const owner = textAt(row['owner'])
+  const targetLayer = textAt(row['target_layer'])
+  const rawValue = row['value']
+  const value = rawValue === undefined ? null : textAt(rawValue)
+  const writable = row['writable']
+  if (
+    scope === null ||
+    wins === null ||
+    state === null ||
+    owner === null ||
+    targetLayer === null ||
+    (value === null && rawValue !== undefined) ||
+    typeof writable !== 'boolean'
+  ) {
+    return { kind: 'shape' }
   }
-  return rows
+  // `state` is drawn in the document's own words, which include the unread
+  // spelling (`unread: <what could not be read>`) the plan's argv is written
+  // for: the read is **not** passed `--offline`, so a layer that could not be
+  // reached says so and the row is drawn as unread rather than as a value.
+  return {
+    kind: 'row',
+    row: {
+      key,
+      scope,
+      value,
+      wins,
+      state,
+      writable,
+      owner,
+      targetLayer,
+      pencil: writable && targetLayer !== '',
+    },
+  }
+}
+
+/** settingsRowsAt reads the document's `settings` member: every row it may
+ * draw, or the reason the whole table is withheld -- which is the document
+ * member that is not a list at all, or one row of a shape the screen refuses. */
+function settingsRowsAt(raw: unknown): SettingsRowsRead {
+  const settings = arrayAt(raw)
+  if (settings === null) return { ok: false, because: SETTINGS_DOC_SHAPE_BECAUSE }
+  const rows: ProjectsSettingsRow[] = []
+  for (const entry of settings) {
+    const read = settingsRowAt(entry)
+    if (read.kind === 'shape') return { ok: false, because: SETTINGS_ROW_SHAPE_BECAUSE }
+    if (read.kind === 'row') rows.push(read.row)
+  }
+  return { ok: true, rows }
 }
 
 /**
  * buildProjectsSettings turns the settings read into the section: one row per
  * setting, and the pencil's subjects.
  *
- * **Three rules are decided here and nowhere else** (the plan's D1111):
+ * **Four rules are decided here and nowhere else** (the plan's D1111):
  *
- *   - a row with `sensitive: true` is **not drawn at all** -- no key, no value,
- *     no pencil. The owner's ruling of 2026-11-01 is that a sensitive setting is
- *     never editable and never shown, and the document carries no `value` member
- *     for one either; the row is dropped whole rather than blanked, so a later
- *     drawing change cannot leak a cell of it;
+ *   - a row whose `sensitive` member is neither absent nor exactly `false` is
+ *     **not drawn at all** -- no key, no value, no pencil, whatever type the
+ *     flag is spelled in (`settingsRowAt`). The owner's ruling of 2026-11-01 is
+ *     that a sensitive setting is never editable and never shown, and the
+ *     document carries no `value` member for one either; the row is dropped
+ *     whole rather than blanked, so a later drawing change cannot leak a cell of
+ *     it;
  *   - a row gets a pencil only when the document says `writable: true` **and**
  *     names a non-empty `target_layer`. The second half matters: `target_layer`
  *     empty is a key S5 would not write with the layer it has, so there is no
  *     write to offer and the row is drawn without a pencil;
  *   - a row with `writable: false` is drawn with the family that *does* write it
- *     -- `owner`, in the document's own words, empty when no family is known.
+ *     -- `owner`, in the document's own words, empty when no family is known;
+ *   - **a member of the wrong type withholds the table** rather than being
+ *     coerced (`settingsRowAt`), and so does a `settings` member that is not a
+ *     list at all: the panel is the read's own unavailable state with the
+ *     console's sentence for the shape, because a table drawn from coerced
+ *     members is a table of claims the CLI never made.
  *
  * It touches no element, so every one of those is testable in plain Node.
  */
@@ -987,33 +1093,13 @@ export function buildProjectsSettings(inputs: ProjectsSettingsInputs): ProjectsS
         : `${SETTINGS_VERSION_WORD}${String(document.version)} and this console reads version ${SETTINGS_DOC_VERSION}`
     return { panel: unavailablePanel('settings', 'settings', 'settings.read', because), rows: [] }
   }
-  const rows: ProjectsSettingsRow[] = []
-  for (const row of settingsRowsAt(document.settings)) {
-    // **The check fails closed on the type.** Only an absent member or exactly
-    // `false` may draw a row: a document that spells the flag `"true"`, `1`,
-    // `"false"` or `null` loses the row rather than drawing it. Reading it as
-    // `=== true` would draw exactly the row the ruling of 2026-11-01 (D1111)
-    // says is never editable and never shown.
-    const sensitive = row['sensitive']
-    if (sensitive !== undefined && sensitive !== false) continue
-    const key = textAt(row.key) ?? ''
-    const writable = row.writable === true
-    const targetLayer = textAt(row.target_layer) ?? ''
-    rows.push({
-      key,
-      scope: textAt(row.scope) ?? '',
-      value: textAt(row.value),
-      wins: textAt(row.wins) ?? '',
-      state: textAt(row.state) ?? '',
-      writable,
-      owner: textAt(row.owner) ?? '',
-      targetLayer,
-      pencil: writable && targetLayer !== '',
-    })
+  const read = settingsRowsAt(document.settings)
+  if (!read.ok) {
+    return { panel: unavailablePanel('settings', 'settings', 'settings.read', read.because), rows: [] }
   }
   return {
-    panel: readPanel('settings', 'settings', 'settings.read', rows.length),
-    rows,
+    panel: readPanel('settings', 'settings', 'settings.read', read.rows.length),
+    rows: read.rows,
   }
 }
 

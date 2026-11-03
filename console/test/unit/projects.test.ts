@@ -1152,6 +1152,24 @@ function settingsKeys(node: ScreenElement): readonly (string | null)[] {
   return texts(node, 'projects-settings-key')
 }
 
+/** DOC_SHAPE_REASON is the console's own sentence for a `settings` member that
+ * is not a list of rows, and ROW_SHAPE_REASON is its sentence for a row that
+ * carries a member of a type the contract does not give it. Both are the
+ * screen's words and not the CLI's -- no CLI prints either -- so they are
+ * pinned here as text, the way the version sentence is below. */
+const DOC_SHAPE_REASON =
+  'settings --json is not a document this console reads: its settings member is not a list of rows'
+const ROW_SHAPE_REASON =
+  'settings --json carried a row this console does not read: a member the table draws is not the type the contract gives it, so no row of it is drawn'
+
+/** settingsWithRow is the document above with **one** row: the first row, with
+ * one member replaced. It is how the two shape rules are tested one member at a
+ * time without writing out a document per case. */
+function settingsWithRow(member: string, value: unknown): unknown {
+  const first = SETTINGS.settings[0] as unknown as Record<string, unknown>
+  return { ...SETTINGS, settings: [{ ...first, [member]: value }] }
+}
+
 describe('the settings section', () => {
   it('draws one row per setting the document carries, in its own order', () => {
     const tree = settingsTree(settingsInputs())
@@ -1221,6 +1239,63 @@ describe('the settings section', () => {
       expect(drawn(tree)).not.toContain('a-value-the-table-must-not-draw')
       expect(all(tree, 'projects-settings-pencil')).toEqual([])
     }
+  })
+
+  it('refuses the table rather than coercing a member of a type the contract does not give it', () => {
+    // The owner's rule of 2026-10-30: unknown keys are ignored and **types are
+    // strict**. Every member the table draws is checked, and a wrong one makes
+    // the document an unavailable panel rather than a `''`, a `null` or a
+    // `false` the CLI never printed -- a coerced owner would draw a row as
+    // writable, or as owned by nobody, without a word about it.
+    const wrong: readonly (readonly [string, unknown])[] = [
+      ['scope', 3],
+      ['value', 8],
+      ['wins', false],
+      ['state', null],
+      ['writable', 'true'],
+      ['owner', 5],
+      ['target_layer', {}],
+    ]
+    for (const [member, value] of wrong) {
+      const tree = settingsTree(settingsInputs({ raw: settingsWithRow(member, value) }))
+      expect(all(tree, 'projects-settings-row'), `${member}: ${JSON.stringify(value)} drew a row`).toEqual([])
+      expect(all(tree, 'projects-settings-pencil'), `${member} drew a pencil`).toEqual([])
+      expect(drawn(tree), `${member} drew no reason`).toContain(ROW_SHAPE_REASON)
+    }
+  })
+
+  it('refuses the document when `settings` is not a list of rows', () => {
+    for (const settings of [undefined, null, {}, 'none', 0]) {
+      const tree = settingsTree(settingsInputs({ raw: { ...SETTINGS, settings } }))
+      expect(all(tree, 'projects-settings-row')).toEqual([])
+      expect(drawn(tree), `settings: ${JSON.stringify(settings)} drew no reason`).toContain(
+        DOC_SHAPE_REASON,
+      )
+    }
+  })
+
+  it('draws no row that has no key, or a key that is not text', () => {
+    // The code matches the comment: a row is keyed by its key, so an entry with
+    // no key at all -- or one whose key is a number -- is not a row of this
+    // table. The other rows are drawn: a table is not refused for a row that
+    // cannot be named.
+    for (const key of [undefined, null, 7, {}, '']) {
+      const tree = settingsTree(settingsInputs({ raw: settingsWithRow('key', key) }))
+      expect(settingsKeys(tree), `key: ${JSON.stringify(key)} drew a row`).toEqual([])
+      expect(drawn(tree)).not.toContain(ROW_SHAPE_REASON)
+    }
+    const mixed = settingsTree(
+      settingsInputs({
+        raw: {
+          ...SETTINGS,
+          settings: [
+            { ...(SETTINGS.settings[0] as unknown as Record<string, unknown>), key: 7 },
+            SETTINGS.settings[1],
+          ],
+        },
+      }),
+    )
+    expect(settingsKeys(mixed)).toEqual(['agent.models.coder'])
   })
 
   it('draws a refusal rather than an empty table when no document arrived', () => {
