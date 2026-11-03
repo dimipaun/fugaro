@@ -224,8 +224,8 @@ publish a file every writer here has just written (D831's own task, inherited).
 
 A repository's `fugaro.yaml` `workflows.*` block (37 registry keys,
 `internal/config/config.go:572`) has **no writer**: `fugaro config init` writes a
-minimal file (`internal/cli/config_init.go:84`) and the setup skill tells a user's
-agent to edit the YAML.
+minimal file (`internal/cli/config_init.go:84`) and the setup skill writes the rest
+**with the user**, in the user's own agent session (`plugin/skills/setup/SKILL.md:13`).
 
 **Recommendation: `fugaro workflow add NAME` creates a workflow block, `settings set` with a concrete key
 (§2.1) sets its scalars and lists, `--add-entry`/`--remove-entry` (§2.2) set its maps and object lists,

@@ -47,8 +47,8 @@ what the guard at the end of this section re-runs.
   (`internal/config/scope.go:102`), the registry rows at `internal/settings/registry.go:223`, the struct
   at `internal/config/config.go:572`, its blocks at `:627` — `commands` (`:792`), `cache` (`:822`),
   `secrets` (`:828`), `resources` (`:879`), `timeouts` (`:1005`). `fugaro config init` writes a
-  four-line file (`internal/cli/config_init.go:84`) and the setup skill tells a user's agent to open the
-  YAML.
+  four-line file (`internal/cli/config_init.go:84`) and the setup skill writes the rest **with the
+  user**, in the user's own agent session (`plugin/skills/setup/SKILL.md:13`).
 - **F7 — the project layer file is hand-edited and published by a second command.** The file is
   `<config home>/fugaro/projects/<name>.layer.yaml` (`internal/localcfg/localcfg.go:1120`), its rows are
   `layerRows` (`internal/settings/registry.go:411`), and `fugaro config publish`

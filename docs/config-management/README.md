@@ -33,8 +33,8 @@ Today **three** documents a person owns still need a hand edit, and every one of
 that decides where a repository's code may go or what a run may cost:
 
 - a repository's **`fugaro.yaml`** — its `workflows.*` block (37 registry keys) has **no writer at
-  all**: `fugaro config init` writes a minimal file, and the setup skill tells a user's agent to edit
-  the YAML (`internal/cli/config_init.go:84`);
+  all**: `fugaro config init` writes a minimal file, and the setup skill writes the rest with the user
+  in the user's own agent session (`plugin/skills/setup/SKILL.md:13`);
 - the **project layer file** (`<config home>/fugaro/projects/<project>.layer.yaml`,
   `internal/localcfg/localcfg.go:1120`) — its `profiles.*` (36), `defaults.*` and
   `ab.*` entries are hand-edited and then published by a **second** command, `fugaro config publish`,
