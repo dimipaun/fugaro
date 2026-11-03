@@ -821,6 +821,18 @@ func removeManagedLabelForFlag(ctx context.Context, c *crm.Service, project stri
 		labels[k] = v
 	}
 	p.Labels = labels
+	// An update whose body carries no labels field leaves the project's labels
+	// as they are, and this is the one write in this package that can leave the
+	// map EMPTY: when the managed label is the project's only label, taking it
+	// out leaves nothing to send. `Labels` is tagged omitempty, so an empty map
+	// is dropped from the body and the managed label would stay on the project
+	// while this function answered removed == true — and the read would not
+	// catch it either, because the object half is already gone by then and the
+	// managed read requires both halves. ForceSendFields is what puts an empty
+	// `"labels": {}` in the body, which is the request that empties the map.
+	if len(labels) == 0 {
+		p.ForceSendFields = []string{"Labels"}
+	}
 	if _, err := c.Projects.Update(project, p).Context(ctx).Do(); err != nil {
 		return false, fmt.Errorf("removing the %s label from project %s: %w", ProjectLabelKey, project, err)
 	}
