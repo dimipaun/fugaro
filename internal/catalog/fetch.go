@@ -1,0 +1,116 @@
+// Package catalog resolves a project's image catalog (docs/project-image-
+// catalog/spec.md) into what a build reads: the Dockerfile bytes of an
+// entry's source, fetched from a repository through the project's existing
+// git credentials or taken from the entry's own inline definition, and the
+// selection among entries (PIC5).
+package catalog
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov"
+)
+
+// MaxDockerfileBytes bounds a resolved Dockerfile, whatever its source:
+// gitprov.MaxContentsBytes, the ceiling a contents read already has, applied
+// to an inline definition too. What is fetched is copied into the project's
+// bucket and handed to a build, so a definition larger than this is refused
+// where it is resolved rather than carried.
+const MaxDockerfileBytes = gitprov.MaxContentsBytes
+
+// Fetch resolves e's source into the Dockerfile bytes a catalog build reads
+// (D1140, PIC3): a repo reference is read out of the named repository, at
+// the named branch, through the provider the opener returns — the project's
+// existing credentials, and no other access (F9) — and an inline definition
+// is taken from the entry itself, with no repository involved.
+//
+// open and kind are the project's git provider opener and kind
+// (gitprov.KindGitHub or KindBitbucket). A kind whose provider cannot read a
+// file (gitprov.ContentsReader, which the Bitbucket adapter does not
+// implement) is refused: an inline entry needs neither.
+//
+// The credential the opener returns is dropped here: nothing in this
+// function writes it, returns it or puts it in a failure — what a caller
+// prints is the entry's repository and path, and the file's own bytes.
+func Fetch(ctx context.Context, open gitprov.Opener, kind string, e config.Entry) ([]byte, error) {
+	switch e.Source.Kind {
+	case config.SourceInline:
+		return bounded(e, []byte(e.Source.Inline))
+	case config.SourceDockerfile:
+		return fetchDockerfile(ctx, open, kind, e)
+	case config.SourceImage:
+		return nil, fmt.Errorf("the catalog entry %s has no Dockerfile: its source is a prebuilt image, so there is nothing to build or copy", e.Name)
+	default:
+		return nil, fmt.Errorf("the catalog entry %s has no source kind this build knows (%s)", e.Name, strings.Join(config.SourceKinds, ", "))
+	}
+}
+
+// fetchDockerfile reads a dockerfile source's file out of its repository.
+//
+// The repository and the path are checked before the provider is opened, not
+// only where the catalog is validated: this is where both reach an API path
+// and a build, and a value that got past a validation is still not one to
+// hand a provider (a path outside the repository, an owner/name that is not
+// one).
+func fetchDockerfile(ctx context.Context, open gitprov.Opener, kind string, e config.Entry) ([]byte, error) {
+	s := e.Source
+	if !validRepo(s.Repo) {
+		return nil, fmt.Errorf("the catalog entry %s: the source's repository is not the owner/name of a repository of this project", e.Name)
+	}
+	if !gitprov.ValidRepoPath(s.Path) {
+		return nil, fmt.Errorf("the catalog entry %s: the source's path must be a relative path inside %s, with no .. segment", e.Name, s.Repo)
+	}
+	if strings.ContainsFunc(s.Branch, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return nil, fmt.Errorf("the catalog entry %s: the source's branch holds a control character", e.Name)
+	}
+	if open == nil {
+		return nil, fmt.Errorf("the catalog entry %s: no git provider was given to read %s with", e.Name, s.Repo)
+	}
+	p, _, err := open(ctx, kind, s.Repo)
+	if err != nil {
+		return nil, fmt.Errorf("the catalog entry %s: opening the provider of %s: %w", e.Name, s.Repo, err)
+	}
+	r, ok := p.(gitprov.ContentsReader)
+	if !ok {
+		return nil, fmt.Errorf("the catalog entry %s: the %s provider cannot read a file out of %s, so its Dockerfile cannot be fetched; use an inline definition or a repository on a provider that can", e.Name, kind, s.Repo)
+	}
+	data, err := r.Contents(ctx, s.Path, s.Branch)
+	if err != nil {
+		return nil, fmt.Errorf("the catalog entry %s: reading %s from %s: %w", e.Name, s.Path, s.Repo, err)
+	}
+	return bounded(e, data)
+}
+
+// bounded refuses a definition larger than MaxDockerfileBytes. It is applied
+// to a fetched file as well as to an inline one, because a provider's own
+// ceiling is not this package's to rely on: what is bounded here is what
+// this package hands on.
+func bounded(e config.Entry, data []byte) ([]byte, error) {
+	if len(data) > MaxDockerfileBytes {
+		return nil, fmt.Errorf("the catalog entry %s: its Dockerfile is %d bytes, more than the %d a definition may be", e.Name, len(data), MaxDockerfileBytes)
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("the catalog entry %s: its Dockerfile is empty", e.Name)
+	}
+	return data, nil
+}
+
+// validRepo reports whether repo is the owner/name of a repository: two
+// non-empty segments that name a repository rather than a path above the
+// host's root. gitprov.SplitRepo cuts the two apart and nothing more, and
+// an owner of ".." or "." reaches an API path that means something else.
+func validRepo(repo string) bool {
+	owner, name, ok := gitprov.SplitRepo(repo)
+	if !ok {
+		return false
+	}
+	for _, seg := range []string{owner, name} {
+		if seg == "." || seg == ".." || strings.ContainsAny(seg, `\`) {
+			return false
+		}
+	}
+	return true
+}
