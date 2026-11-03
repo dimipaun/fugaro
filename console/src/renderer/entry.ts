@@ -88,6 +88,7 @@ import {
   decodeCoordinatorPullRequest,
   decodeCoordinatorStatus,
   decodePlanStatus,
+  decodeRunsSummary,
   decodeSnapshot,
 } from '../shared/schema'
 import type {
@@ -95,6 +96,7 @@ import type {
   CoordinatorPullRequestDocument,
   CoordinatorStatusView,
   PlanStatusView,
+  RunsSummaryView,
 } from '../shared/schema'
 import { sanitizeRefusal } from '../shared/sanitize'
 import { LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from './screens/live'
@@ -121,6 +123,7 @@ import {
   COORDINATOR_QUEUE_SHAPE,
   COORDINATOR_SHAPE,
   COORDINATOR_TOTALS_SHAPE,
+  COORDINATOR_WINDOW_SHAPE,
   PROJECTS_SHAPE,
   SPEND_CAPS_SHAPE,
   SPEND_REPORT_SHAPE,
@@ -129,6 +132,9 @@ import {
   COORDINATOR_BUSY,
   COORDINATOR_QUEUE_BUSY,
   COORDINATOR_TOTALS_BUSY,
+  COORDINATOR_WINDOW_BUSY,
+  coordinatorWindowNote,
+  fillCoordinatorWindow,
   QUEUE_SOURCES,
   TOTALS_SOURCES,
   buildCoordinatorModel,
@@ -149,6 +155,7 @@ import {
   coordinatorJobsFloorNote,
   coordinatorLoadJobsControl,
   coordinatorOlderJobsControl,
+  coordinatorRefreshLine,
   fillCoordinatorDescription,
   fillCoordinatorJobs,
   fillCoordinatorJobsEmpty,
@@ -217,7 +224,13 @@ import {
 } from './screens/graph'
 import type { GraphScreen } from './screens/graph'
 import type { GraphTab } from './graph/model'
-import { SKEW_HEADLINES, hidesView, launchSupported, runsListPageSupported } from '../shared/version'
+import {
+  SKEW_HEADLINES,
+  hidesView,
+  launchSupported,
+  runsListPageSupported,
+  runsSummarySupported,
+} from '../shared/version'
 import type { ReducedView, SkewElement, SkewFactory, SkewTheme } from '../shared/version'
 import { NOTICE_HIDE_DETAILS, NOTICE_SHOW_DETAILS } from '../shared/notice'
 import type { DrawnNotice } from '../shared/notice'
@@ -437,10 +450,11 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
 }
 
 /**
- * ReadBridge is the twelve reads the screens make (Task 3.4c; console L5b added
- * `statsRuns`, Bitbucket credentials T1.2 added `coordinatorStatus`, GV2.3b
- * added `planStatus`, coordinator v2 K3 added `coordinatorShow` and K5 added
- * `coordinatorIntents`), named one by one
+ * ReadBridge is the thirteen reads the screens make (Task 3.4c; console L5b
+ * added `statsRuns`, Bitbucket credentials T1.2 added `coordinatorStatus`,
+ * GV2.3b added `planStatus`, coordinator v2 K3 added `coordinatorShow`, K5 added
+ * `coordinatorIntents`, and console 0.119.0 added `summaryRuns` -- the
+ * Coordinator's jobs-free totals read), named one by one
  * for the reason `CompatibilityBridge` names one: this file should reach for
  * exactly the operations it draws, and a reader should be able to see which
  * those are without reading the preload.
@@ -456,6 +470,7 @@ export interface ReadBridge {
   runReport(args: Readonly<Record<string, unknown>>): Promise<unknown>
   listRuns(args: Readonly<Record<string, unknown>>): Promise<unknown>
   statsRuns(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  summaryRuns(args: Readonly<Record<string, unknown>>): Promise<unknown>
   coordinatorStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
   coordinatorShow(args: Readonly<Record<string, unknown>>): Promise<unknown>
   coordinatorIntents(args: Readonly<Record<string, unknown>>): Promise<unknown>
@@ -465,7 +480,7 @@ export interface ReadBridge {
   planStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
 }
 
-/** readBridgeFrom is the twelve reads over the structural bridge. A missing
+/** readBridgeFrom is the thirteen reads over the structural bridge. A missing
  * member answers `null` rather than rejecting, and so does a member that fails
  * to answer -- by throwing before it returns, or by returning a promise that
  * rejects, which is what `invoke` does on a channel with nothing behind it.
@@ -493,6 +508,7 @@ export function readBridgeFrom(fugaro: unknown): ReadBridge {
     runReport: (args) => ask('runReport', args),
     listRuns: (args) => ask('listRuns', args),
     statsRuns: (args) => ask('statsRuns', args),
+    summaryRuns: (args) => ask('summaryRuns', args),
     coordinatorStatus: (args) => ask('coordinatorStatus', args),
     coordinatorShow: (args) => ask('coordinatorShow', args),
     coordinatorIntents: (args) => ask('coordinatorIntents', args),
@@ -2239,6 +2255,19 @@ export const LIVE_RIGOR_TTL_MS = 15_000
  * The cut is the console's own: this tree has no `runs ls --limit`.
  */
 export const RUNS_SINCE = '24h'
+
+/**
+ * COORDINATOR_SUMMARY_SINCE is the window the Coordinator's fleet strip reads
+ * its runs for: seven days.
+ *
+ * It is the command's own default and the window `budget show`'s live counters
+ * cover, so the two figures the strip draws about a period -- the window's runs
+ * and the money the caps count -- are about the same one. It is one of the two
+ * words the surface admits (`SUMMARY_SINCE_WINDOWS`, `src/main/ipc.ts`): a
+ * window is the one thing about this read a renderer chooses, and the console's
+ * own closed set is the day a screen opens on and the week.
+ */
+export const COORDINATOR_SUMMARY_SINCE = '7d'
 
 /** GRAPH_BUSY is what the Graph section's mark says it is reading: the plan.
  * The mark belongs to the operator's own controls -- a stream tab, the Refresh
@@ -4630,6 +4659,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * the store holds, and the questions under them are answered from the stored
    * view the body already read. */
   const coordinatorTranscriptRead = sectionRead({ factory, theme })
+  /** The fleet strip's **second** read (console 0.119.0): `runs summary --json`,
+   * the jobs-free totals read. It has a lifecycle of its own for the reason the
+   * K1 sections do -- its own sequence token, its own busy mark, its own refusal
+   * -- and it is the one read of this screen that is not a
+   * `CoordinatorQueueSource`: it fills no part of the queue, and what it answers
+   * is the fleet over the window rather than the sweep's last view of it. */
+  const coordinatorWindowRead = sectionRead({ factory, theme })
 
   /** coordinatorDescriptions is the visit on screen's description reads (K3),
    * keyed by the repository and the pull request number.
@@ -4670,6 +4706,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // The pane's read ends with it too: the declarations are drawn in a section
     // the tab took with it.
     coordinatorTranscriptRead.end()
+    // The window's read ends with the tab like the pane's: the figures it would
+    // draw belong to a strip the operator has taken with them.
+    coordinatorWindowRead.end()
     // Every description the visit read, for that reason and one of its own: a
     // description's mark lives in a block of the row that asked for it, and the
     // row is gone with the tab.
@@ -4755,6 +4794,15 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     let intentsOut = false
     let intentsAttempt = 0
     let intentsToken = 0
+    /** The fleet strip's window (console 0.119.0): the `runs summary --json`
+     * document, the sentence a refused or undecodable one left, and whether the
+     * visit's read is still out. `null` is "not answered", which the strip draws
+     * as nothing at all rather than as a window of zeroes. */
+    let summary: RunsSummaryView | null = null
+    let summarySentence: string | null = null
+    let summaryOut = false
+    let summaryAttempt = 0
+    let summaryToken = 0
     /** sentences is each refused read's own sentence, for this visit and no
      * longer: the next visit's read replaces it rather than inheriting it, so a
      * `budget show` the CLI refused once is not refused for the session. */
@@ -4823,6 +4871,20 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * version is the honest drawing for it. */
     const jobsTooOld = !runsListPageSupported(gate.compatibility.cliVersion ?? '')
 
+    /** windowHidden is whether the surface withholds the window's read. `runs
+     * summary` carries `spent_micros` and `notional_micros`, so it is withheld
+     * with the other two spend reads in the reduced mode
+     * (`REDUCED_VIEW_OPERATIONS`, `src/main/ipc.ts`): this visit makes no read it
+     * knows will be refused, and the strip says what it did not read. */
+    const windowHidden = capsHidden
+    /** windowTooOld is whether the CLI in use predates the command itself
+     * (`runsSummarySupported`). `runs summary` landed after v0.15.0, so a 0.15.x
+     * CLI has no such verb: asking anyway would draw `unknown command "summary"`
+     * as the fleet's state. The floor is asked **before** the read goes out. */
+    const windowTooOld = !runsSummarySupported(gate.compatibility.cliVersion ?? '')
+    /** windowRead is whether this visit asks for the window at all. */
+    const windowRead = !windowHidden && !windowTooOld
+
     /** refusalOperation is the command each of the four reads is, and it is what
      * a refused part names: a refusal names its own command and nothing else, so
      * a queue whose budget part is refusing still draws the pull requests the
@@ -4848,6 +4910,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         checkout,
         capsHidden,
         intents,
+        summary,
       })
 
     /** wants is whether this visit reads one source at all, and `again` is the
@@ -4900,6 +4963,20 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
           skeleton ? COORDINATOR_QUEUE_SHAPE : undefined,
         )
       }
+      // The window's mark goes on the slot **its own read** was given, and not
+      // on the strip: the strip's three documents and the summary are in flight
+      // at once, and `settle` takes the busy attributes off the element it was
+      // handed -- one element wearing both claims would have whichever read
+      // landed first take the other's down.
+      if (summaryOut) {
+        coordinatorWindowRead.mark(
+          summaryToken,
+          drawn.windowSlot,
+          drawn.windowSlot,
+          COORDINATOR_WINDOW_BUSY,
+          skeleton ? COORDINATOR_WINDOW_SHAPE : undefined,
+        )
+      }
       if (pending(TOTALS_SOURCES)) {
         coordinatorTotalsRead.mark(
           totalsToken,
@@ -4941,6 +5018,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       if (!pending(QUEUE_SOURCES)) {
         coordinatorQueueRead.settle(queueToken)
         surface.nodeOf(drawn.queueSlot).replaceChildren()
+      }
+      // The window's host is settled only by a visit that read it: below the
+      // floor and in the reduced mode no mark was ever made on it, and the strip
+      // does not keep the host either.
+      if (windowRead && !summaryOut) {
+        coordinatorWindowRead.settle(summaryToken)
+        surface.nodeOf(drawn.windowSlot).replaceChildren()
       }
       if (!pending(TOTALS_SOURCES)) {
         coordinatorTotalsRead.settle(totalsToken)
@@ -5308,6 +5392,21 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         // press left after a refusal that reads again (the head's own refresh),
         // and that one drops the list and this with it.
         if (!jobsRefusalDrawn) {
+          if (!jobsHeadDrawn) {
+            // A **first** page is the one refusal with no head: the figures the
+            // head holds are a page's `totals`, so the head -- and with it the
+            // stamp's own Refresh -- is drawn only once a page has landed. Here
+            // none has, and without this line the section would hold the CLI's
+            // sentence and no press at all: the head draws the stamp's row with
+            // its one control and no time, because no page was read to date it
+            // with.
+            head.replaceChildren(surface.nodeOf(section.slot))
+            const line = coordinatorRefreshLine(factory)
+            appendTo(section.head, line.root)
+            surface.nodeOf(line.refresh).addEventListener('click', () => {
+              reReadJobs()
+            })
+          }
           appendTo(section.list, refusedScreen(factory, 'runs.list', jobsSentence, theme))
           jobsRefusalDrawn = true
         }
@@ -5460,12 +5559,39 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       paintJobs()
     }
 
-    /** paintTotals fills the fleet's strip: the figures off the stored view and
-     * the plan read, and the money off `budget show`. The slot stays, because it
-     * is where the section's own mark goes. */
+    /** paintTotals fills the fleet's strip: the window off `runs summary`, then
+     * the figures off the stored view and the plan read, and the money off
+     * `budget show`. **Both slots stay** while the visit reads the window,
+     * because they are where the two reads' own marks go, and the two regions are
+     * drawn in the order the strip reads: the fleet over a window first, the
+     * fleet as the sweep last found it under it.
+     *
+     * The window is drawn only when this visit reads it: below the command's
+     * floor the strip draws the console's own sentence naming the version it
+     * needs, and in the reduced mode the sentence for a read the surface
+     * withholds -- neither is a read, so neither has a mark, and the host its
+     * mark would have gone on is not kept either: a slot is a flex item of the
+     * strip, and one that no read can ever fill is a line the strip holds open
+     * for nothing. */
     const paintTotals = (): void => {
       const drawn = mount(false)
-      surface.nodeOf(drawn.totals).replaceChildren(surface.nodeOf(drawn.totalsSlot))
+      const kept = windowRead
+        ? [surface.nodeOf(drawn.windowSlot), surface.nodeOf(drawn.totalsSlot)]
+        : [surface.nodeOf(drawn.totalsSlot)]
+      surface.nodeOf(drawn.totals).replaceChildren(...kept)
+      if (windowHidden) {
+        appendTo(drawn.totals, coordinatorWindowNote(factory, { kind: 'hidden' }))
+      } else if (windowTooOld) {
+        appendTo(
+          drawn.totals,
+          coordinatorWindowNote(factory, { kind: 'floor', version: gate.compatibility.cliVersion ?? '' }),
+        )
+      } else {
+        if (summarySentence !== null) {
+          appendTo(drawn.totals, refusedScreen(factory, 'runs.summary', summarySentence, theme))
+        }
+        fillCoordinatorWindow(factory, model(), drawn.totals)
+      }
       fillCoordinatorTotals(factory, model(), drawn.totals)
     }
 
@@ -5558,6 +5684,15 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         })
       }
       if (intentsSentence !== null) {
+        // The pane's press after a refusal, drawn where the stamp would be and
+        // with no time in it: the refusal is not a dead end, and the one clock in
+        // hand here is the previous read's. It reads the declarations, which is
+        // the read that refused.
+        const line = coordinatorRefreshLine(factory)
+        appendTo(section.host, line.root)
+        surface.nodeOf(line.refresh).addEventListener('click', () => {
+          reReadIntents()
+        })
         appendTo(section.host, refusedScreen(factory, 'coordinator.intents', intentsSentence, theme))
       }
       fillCoordinatorTranscript(factory, model(), section.host)
@@ -5602,6 +5737,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // pane's read ended.
       intentsOut = false
       intents = null
+      // The clock goes with the declarations it belonged to (K5's follow-up): a
+      // read that refused or would not decode leaves this read's own sentence on
+      // the pane, and a stamp still saying `as of 14:05` would date that sentence
+      // with the previous success -- a read that has nothing to do with it.
+      intentsAt = 0
       if (!answer.ok) {
         intentsSentence = answer.sentence
       } else {
@@ -5616,6 +5756,39 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       }
       settleDone(mount(false))
       paintTranscript()
+    }
+
+    /** loadSummary makes the window's read, `runs summary --json --since 7d`.
+     *
+     * It is not one of the four sources and not one of the three sections they
+     * fill: it is the strip's second region, drawn beside the K1 figures and
+     * never instead of them. The attempt is checked before anything is drawn and
+     * `stale(mine)` after it, so an answer to a read the operator has already
+     * asked again -- or to one from a tab they have left -- never lands under
+     * another window. */
+    const loadSummary = async (attempt: number): Promise<void> => {
+      const answer = documentOf(await bridge.summaryRuns({ since: COORDINATOR_SUMMARY_SINCE }))
+      if (summaryAttempt !== attempt) return
+      if (stale(mine)) return
+      summaryOut = false
+      // A read that refused or would not decode leaves the strip with no window
+      // at all rather than with the previous one: the figures on screen are what
+      // **this** read answered, and keeping an older week under a newer read's
+      // failure would be a window dated by nothing.
+      summary = null
+      if (!answer.ok) {
+        summarySentence = answer.sentence
+      } else {
+        const decoded = decodeRunsSummary(answer.data, 'runs.summary')
+        if (!decoded.ok) {
+          summarySentence = decoded.skew.because
+        } else {
+          summarySentence = null
+          summary = decoded.value
+        }
+      }
+      settleDone(mount(false))
+      paintTotals()
     }
 
     /** draw is what every read does when its own answer arrives and this visit
@@ -5769,6 +5942,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       intentsAttempt += 1
       intentsOut = true
       intentsToken = coordinatorTranscriptRead.start()
+      // The window's read is taken with them and for the same reason: the mark
+      // is drawn by the mount below, and a read started after it would leave the
+      // strip's window looking answered with nothing in it.
+      if (windowRead) {
+        summaryAttempt += 1
+        summaryOut = true
+        summaryToken = coordinatorWindowRead.start()
+      }
       mount(true)
       // The job list is drawn with the rest of the frame and marked busy by
       // nobody: its read has not been asked for, and the control it draws is the
@@ -5782,6 +5963,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         else if (source === 'plans') void loadPlans(attempt)
         else void loadBudget(attempt)
       }
+      if (windowRead) void loadSummary(summaryAttempt)
       void loadIntents(intentsAttempt)
     }
 

@@ -33,6 +33,7 @@ type credentialsFixture struct {
 			Repo     string `json:"repo"`
 			Workflow string `json:"workflow"`
 		} `json:"job_accounts"`
+		VerifierAccounts []string `json:"verifier_accounts"`
 	} `json:"credentials_service"`
 }
 
@@ -80,19 +81,22 @@ func credentialsServiceEnvOf(t *testing.T, rc ResourceChange) (plain map[string]
 	return plain, fromSource
 }
 
-// The credentials service's seven environment variables, read off a real plan
-// of the installation module against the fixture the plan was made from (C1.14
-// and C1.24). The service refuses to serve anything unless every one of them
-// is there and well formed (internal/cli's credentialsServiceConfig), so a
-// variable the Go side computes and the module drops — or one the module sets
-// from a value the fixture does not carry — is a service that never answers a
-// job, on an installation whose init reports success.
+// The credentials service's environment variables, read off a real plan of the
+// installation module against the fixture the plan was made from (C1.14 and
+// C1.24): the seven the process REQUIRES — it refuses to bind a port unless
+// every one of them is there and well formed (internal/cli's
+// credentialsServiceConfig) — and the eighth, the verifier list, which this
+// fixture names and which the process reads as an optional value (C3.9g1,
+// D1068). So a variable the Go side computes and the module drops — or one the
+// module sets from a value the fixture does not carry — is a service that never
+// answers a job, or a verify route that admits nobody, on an installation whose
+// init reports success.
 //
 // The Terraform tftest (roots/installation/tests/installation.tftest.hcl)
 // pins the same map against its own variable, and both halves are needed: the
 // tftest never runs the Go code that decides what to write into the tfvars,
 // and this test never exercises a `terraform test` run.
-func TestGoldenCredentialsServiceCarriesItsSevenNames(t *testing.T) {
+func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 	f := credentialsGoldenFixture(t)
 	c := f.Credentials
 	if len(c.JobAccounts) == 0 {
@@ -105,6 +109,13 @@ func TestGoldenCredentialsServiceCarriesItsSevenNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(c.VerifierAccounts) == 0 {
+		t.Fatalf("the credentials fixture names no verifier: this plan is the one that exercises the module's conditional eighth entry, and a fixture that names none could not tell it from the seven the module always sets: %v", f)
+	}
+	verifiers, err := json.Marshal(c.VerifierAccounts)
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := map[string]string{
 		"FUGARO_PROJECT":                 f.FugaroProject,
 		"FUGARO_GCP_PROJECT":             f.Project,
@@ -113,6 +124,7 @@ func TestGoldenCredentialsServiceCarriesItsSevenNames(t *testing.T) {
 		"FUGARO_FIREBASE_PROJECT":        c.FirebaseProject,
 		"FUGARO_CREDENTIALS_SERVICE_URL": c.URL,
 		"FUGARO_JOB_ACCOUNTS":            string(jobAccounts),
+		"FUGARO_VERIFIER_ACCOUNTS":       string(verifiers),
 	}
 	// The map's keys are the allow-list the cover holds the service to: a name
 	// here that the allow-list does not carry would make this test pass on an

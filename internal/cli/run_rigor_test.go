@@ -22,7 +22,11 @@ const release0111 = "ghcr.io/dimipaun/fugaro-base:0.11.1"
 // task.
 func runWithRigor(t *testing.T, f *cloudFixture, id string, extra []string, text string) *task.Spec {
 	t.Helper()
-	writeBuildRecord(t, f, appSlug, "web", release0111)
+	// release0160, not release0111: a case here launches at critical, and a
+	// launch that resolves level 3 needs a job image whose runner acts on
+	// levels (reviewLevelsSince) even when the launcher stands outside the
+	// repository's checkout (TestRecipesSkewRefusesResolvedL3OutsideACheckout).
+	writeBuildRecord(t, f, appSlug, "web", release0160)
 	args := append([]string{"run", "--repo", "acme/app", "--run-id", id}, extra...)
 	args = append(args, text)
 	if _, _, err := execute(t, args...); err != nil {
@@ -193,7 +197,9 @@ func TestRunRigorRequestIsGatedOnACloneWorkflow(t *testing.T) {
 func TestFollowUpCarriesTheRigorRequest(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
-	writeBuildRecord(t, f, appSlug, "web", release0111)
+	// The raise below resolves level 3, so the image has to be one whose
+	// runner acts on levels (reviewLevelsSince).
+	writeBuildRecord(t, f, appSlug, "web", release0160)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID,
 		"--mode", "critical", "--path", "internal/payments/x.go", "also rename x"); err != nil {
 		t.Fatal(err)
@@ -306,7 +312,10 @@ func TestRunNotesAModeThatRaisesNothing(t *testing.T) {
 	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			f := newCloudFixture(t)
-			writeBuildRecord(t, f, appSlug, "web", release0111)
+			// release0160, not release0111: this case's job image has to run
+			// the level 3 a critical mode's own row resolves, and the levels
+			// gate refuses an image older than reviewLevelsSince.
+			writeBuildRecord(t, f, appSlug, "web", release0160)
 			checkoutWorkflows(t, c.rigorYAML, "  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
 			id := fmt.Sprintf("20261025-13000%d-abcd", i)
 			args := []string{"run", "--repo", "acme/app", "--run-id", id, "--mode", c.mode}

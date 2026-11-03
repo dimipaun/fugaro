@@ -210,6 +210,18 @@ type runOptions struct {
 	// lower: areas are defaults, not floors (docs/project-layer.md §2), and
 	// finalize resolves again from the paths the run really changed.
 	paths []string
+	// reviewLevelsPath is --review-levels: a YAML document naming the review
+	// levels this run asks for (D724), or - for stdin. Empty (the default)
+	// is no request at all: the launch writes no field and the run resolves
+	// its levels from its own configuration, exactly as before the flag
+	// existed.
+	reviewLevelsPath string
+	// reviewLevels is reviewLevelsPath's document, decoded once
+	// (reviewLevelsFlag) into the block the task stores, or nil when the
+	// flag is not given. Kept parsed rather than as text so the refusal a
+	// near miss gets is this package's (config.ParseReviewLevelsYAML), not
+	// the runner's at bootstrap after the launch was paid for.
+	reviewLevels *config.ReviewLevels
 }
 
 func newRunCmd() *cobra.Command {
@@ -281,6 +293,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.ModeList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it, and takes no hotfix; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
 	f.StringArrayVar(&o.paths, "path", nil, "declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule")
 	f.StringVar(&o.tier, "tier", "", "the expectation tier to dispatch this run at: "+tier.List()+". It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all")
+	f.StringVar(&o.reviewLevelsPath, "review-levels", "", "read the run's own review levels from this YAML file, or - for stdin: the block the task stores as review_levels (l1, l2, l3, each of model, effort, none and focus), decoded strictly, with no key on no level meaning the configuration decides it. Asking for levels needs a job image whose runner acts on them, so a launch on an older one is refused and names fugaro image refresh; without the flag the run resolves its levels from its configuration and its mode alone")
 	f.IntVar(&o.attempts, "attempts", 0, "launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe")
 	f.BoolVar(&o.noCompression, "no-compression", false, "turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
@@ -290,7 +303,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "tier", "no-compression"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "tier", "no-compression", "review-levels"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -359,6 +372,16 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			return err
 		}
 		if text, err = taskText(cmd, o.tf, args, prSet); err != nil {
+			return err
+		}
+		// --review-levels, after the task text: - reads stdin, and the task
+		// may not have it too (an empty document would be the only thing the
+		// levels read got). Resolved here, before openCloud, so a document
+		// this launcher refuses costs no cloud call and leaves nothing.
+		if o.reviewLevelsPath == "-" && o.tf == "-" {
+			return userErr("--review-levels - and --task-file - both read stdin; pass one of them as a file")
+		}
+		if err = reviewLevelsFlag(cmd, o); err != nil {
 			return err
 		}
 		if o.totalTimeout != "" {
@@ -525,6 +548,19 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	if o.noCompression && compression {
 		spec.CompressionOff = true
 	}
+	// --review-levels writes the task's own block, on every launch shape
+	// below (a first run, each attempt of a batch, a review, a follow-up):
+	// the flag is this launcher's request for the run about to start, and a
+	// follow-up that gives it asks for its own levels rather than inheriting
+	// the run it continues — nothing else carries them, the chain being read
+	// for the title, the tier and the account alone. Written before
+	// createTask below, like --no-compression, so a repeated --run-id with a
+	// flag the stored task does not carry is refused as a different task
+	// rather than silently dropped. A --retry takes no such flag (taskFlags),
+	// so a stored task keeps the block it was launched with.
+	if o.reviewLevels != nil {
+		spec.ReviewLevels = o.reviewLevels
+	}
 	// The compression image gate's own condition, resolved here beside the
 	// write and used by both launch branches below. It is the field's as much
 	// as the configuration's, and the two halves catch different failures: a
@@ -625,6 +661,20 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// (baseBranchSkew). Here, and not with the gates below, because it
 		// decides what the task createTask writes.
 		baseBranchSkew(ctx, env, slug, spec, mode, warn)
+		// What this launch asks of its job image's runner about review
+		// levels, resolved once for the two branches below (a derived image
+		// and a checkout: clone workflow), the way compressionGate is: a
+		// launch that asks nothing is never gated, whatever its image is.
+		levelsRecipe, levelsRecipeUnknown := launchRecipeForLevels(ctx, spec)
+		// The launch is refused on the resolution's own refusal (L3.2): a run
+		// whose levels cannot be resolved — the same model at level 1 and 2, a
+		// level turned off under the owner's floor, an effort a provider route
+		// would drop — is refused here, before the task is written, rather
+		// than by the job it was launched into (G2, D721, D722).
+		levelsAsk, err := launchReviewLevelsAsk(ctx, env, spec, launchFileConfig(ctx, env, spec), levelsRecipe, levelsRecipeUnknown)
+		if err != nil {
+			return launchResult{}, err
+		}
 		// checkRecipeImage and checkImageSince judge a workflow's derived
 		// image by its build record, which a checkout: clone workflow never
 		// has (it runs the installation's base image directly, not a
@@ -717,6 +767,15 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 					return launchResult{}, err
 				}
 			}
+			// The review levels' gate, judged on the run this launch
+			// resolves rather than on a task field: a mode's own level 3, a
+			// level the run inserts (O7) and the owner's floor all reach a
+			// run with no field and no configuration key, and a runner older
+			// than reviewLevelsSince drops every one of them in silence
+			// (reviewLevelsAsk).
+			if err := checkCloneReviewLevelsImage(env.lc, spec, levelsAsk, warn); err != nil {
+				return launchResult{}, err
+			}
 		} else {
 			if needsRecipeImage(spec, agentRecipe) {
 				if err := checkRecipeImage(ctx, env, slug, spec, kind, warn); err != nil {
@@ -802,6 +861,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 					tierGateSubject(o, spec), "the tier", "", warn); err != nil {
 					return launchResult{}, err
 				}
+			}
+			// The review levels' gate, the same as the clone branch's above
+			// and for the same reason: see reviewLevelsAsk.
+			if err := checkReviewLevelsImage(ctx, env, slug, spec, kind, levelsAsk, warn); err != nil {
+				return launchResult{}, err
 			}
 			// The digest drift, last of this branch's image reads, and the
 			// only one that never refuses: a checkout: clone workflow has no
@@ -1075,6 +1139,47 @@ func titleFlag(cmd *cobra.Command, o *runOptions) error {
 	if o.title = safetext.Field(title); strings.TrimSpace(o.title) == "" {
 		return userErr("--title: %s", "is empty (or nothing but whitespace and invisible characters)")
 	}
+	return nil
+}
+
+// reviewLevelsFlag resolves fugaro run --review-levels into the block the
+// task stores, in o.reviewLevels, and nil when the flag is not given: the
+// document is read (the file, or stdin for -) and decoded by
+// config.ParseReviewLevelsYAML — strictly, and validated — so an unknown key,
+// an effort outside the closed set, a focus over its bound or `none: true`
+// beside another key is refused here, by the launcher, rather than by the
+// runner at bootstrap after the launch was paid for.
+//
+// The flag's absence is not a block, and leaves o.reviewLevels nil: the
+// launch writes no field and the run resolves its levels from its own
+// configuration and its mode, exactly as before the flag existed (L3.1's
+// resolver is then the only writer). Its presence with nothing readable in it
+// is refused, like an empty --title: a launch that meant to ask for levels
+// and asked for none would otherwise be indistinguishable from one that did
+// not use the flag.
+func reviewLevelsFlag(cmd *cobra.Command, o *runOptions) error {
+	if !cmd.Flags().Changed("review-levels") {
+		return nil
+	}
+	var data []byte
+	var err error
+	switch o.reviewLevelsPath {
+	case "":
+		return userErr("--review-levels: pass a file, or - for stdin")
+	case "-":
+		if data, err = io.ReadAll(cmd.InOrStdin()); err != nil {
+			return userErr("reading the review levels from stdin: %v", err)
+		}
+	default:
+		if data, err = os.ReadFile(o.reviewLevelsPath); err != nil {
+			return userErr("reading the review levels: %v", err)
+		}
+	}
+	levels, err := config.ParseReviewLevelsYAML(data)
+	if err != nil {
+		return userErr("--review-levels: %v", err)
+	}
+	o.reviewLevels = levels
 	return nil
 }
 

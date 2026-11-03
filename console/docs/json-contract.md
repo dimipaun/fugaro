@@ -769,17 +769,18 @@ exactly its own tags and nothing is nested under a `process` or `checks` key:
 | `comments_path` | string | **yes** | where the comments it was given are stored |
 | `route_by`, `model_by` | `map[string]float64` | **yes** | the run's spend by provider route and by model (a Claude call has no route) |
 | `stages` | `[]runstore.StageTiming` | **yes** | the run's per-stage record (governance T1.1–T1.3), in the record's own order and bounded at `diagnoseStages` = 128: each entry is `name`, `started_at`, `duration_s`, `calls`°, `agents`°, `model_usd`°, `model`° and `model_notional_usd`°. `calls` and `agents` are **pointers**, so a stage nobody counted has the key absent, which is not the same fact as a stage counted at zero. `model_usd` is what the stage's calls cost, `model_notional_usd` the notional part of it (D140). The stages are the run's whole model spend but for gateway spend that settled after its stage's wait ran out, which is in `model_by["unattributed"]` and in no stage: exactly, `sum(stages[].model_usd) + model_by["unattributed"] == row.cost.model_usd`. **That identity is why the bound is where it is**: it holds only for the whole list, so `diagnoseStages` sits above the loop's own maximum (87 stages under the config limits, plus the provision and render stages) and never truncates a run the loop can make — it guards against the record a hand can edit, not against the loop. Absent when the record has no stages, and when there is no record at all |
+| `reviews` | `[]runstore.ReviewSummary` | **yes** | the record's review rounds, in the record's own order and bounded at `diagnoseReviews` = 96: each entry is `round`, `tier`, `verdict`, `findings` and, when the round recorded one, `bounce`°, `head`°, **`model`°** and **`effort`°** (CLI 0.16.0). `tier` is `first`, `senior` or `adversarial`, and `verdict` is the reviewer's own word or `none` for a round that returned nothing parseable. `model` and `effort` are what **reviewed** the round — the stage's pinned model and the reasoning effort that reached the stage — and the pair with `head`, the commit the round read, tells a reader which model the record says reviewed which head: these are the record's own unsigned bytes, recorded and not verified, so they are a hint for a person and never an input to a decision. `model`, `effort` and `head` are **absent** in a round that recorded none, which is every review written before CLI 0.16.0, so a reader tests the key rather than the empty string. Every string in the list is redacted, `model` and `effort` included: they are the record's bytes, which a hand can edit. The bound sits above the loop's own maximum (77 rounds), so it guards against the record a hand can edit, never against the loop; a run that reached it prints the first `diagnoseReviews` rounds and then the line `… at most 96 review rounds are printed`, which says the list is cut and not how many rounds it left out. Absent when the record has no reviews, and when there is no record at all |
 | `reported_usd`, `charge_usd` | float64 | **yes** | what providers said the calls cost, beside what the table charged — **absent (0) when no provider reported one**, so the pair is read together |
 | `reported_warning` | string | **yes** | set when the two differ by more than `reportedGapPct` percent |
 | `pin_warnings` | `[]string` | **yes** | the model prices the run's cap counted on a guess |
 | `tolerated` | `*runstore.ToleratedFindings` | **yes** | the findings the run's resolved mode let through, in the reviewer's order (rigor T3.4): `findings` (one entry per finding — `title`, `label`, `mode`, `likelihood`, `impact`, `fix_cost`, `class`) and `total`, how many findings the mode really tolerated, never below the entries listed. The block is bounded at `runstore.MaxTolerated` = 100 when it is written and **again on read** — the record is an object a hand can edit — and every string in it is redacted, the enums included (they are the write path's vocabulary, which a hand-edited record need not respect). Absent — never an empty block — for a run that tolerated nothing |
 | `checkpoint` | `*runstore.Checkpoint` | **yes** | the report a governance stop left (governance T6.1, read here by T6.2; D329, G7): `trigger`, one of the governance halt reasons (`stage_budget`, `review_ratio`, `fanout`, `review_scope`, `expected_exceeded`), `why_over`, the runner's own words for the stop, `estimate_usd`, the model spend the record had reached (notional dollars included, like `cost_usd`), and the stopping agent's `done`, `next` and `hard_instructions`. The last three are **absent until the run's checkpoint stage answers** (T7.3), so a missing key is an answer nobody was asked for — never a claim that there was nothing to say. Each text field is clipped to `runstore.MaxCheckpointText` = 500 runes when it is written and **again on read**, and every string in it is redacted, `trigger` included (a hand-edited record need not respect either). Absent for a run that took no governance halt — a budget or credential halt carries none — and absent, rather than an empty block, for the `"checkpoint": {}` a hand can write |
 
-**`runs ls --json` deliberately does not carry `stages` or `tolerated`.** Both
-are the record's, and the list is one document for a whole window of runs: a
-per-stage and a per-finding payload on every row would multiply the list's cost
-to print and to read, for a screen that draws one run at a time. `diagnose RUN
---json` is where the console reads them.
+**`runs ls --json` deliberately does not carry `stages`, `reviews` or
+`tolerated`.** All three are the record's, and the list is one document for a
+whole window of runs: a per-stage, a per-round and a per-finding payload on
+every row would multiply the list's cost to print and to read, for a screen that
+draws one run at a time. `diagnose RUN --json` is where the console reads them.
 
 **Every string from the run is redacted** (`Diagnosis`'s own comment), and the
 console reads `row` and the keys above.
@@ -2120,16 +2121,19 @@ measured against `at`), `--json`, and the cloud flags `--project`, `--config`,
 `--gcp-project` and `--region`. `--all` with `--repo` is refused rather than
 resolved, the way §6.13's selection refuses it.
 
-### 6.17 `fugaro runs summary --json` (**CLI 0.15.0**)
+### 6.17 `fugaro runs summary --json` (**CLI 0.16.0**)
 
 **Command:** `internal/cli/runs_summary.go` `newRunsSummaryCmd` / `runRunsSummary`.
 **Document:** `summaryDoc`, with its `summaryRepo` rows and its `summaryTotals`,
 indented (`writeSummary`), all in `internal/cli/runs_summary.go` — cited by
 symbol, not by line, for §6.11's reason. This is the fourth command in this
-document the console **does not spawn yet**: it is the read the Project,
-Coordinator and Spend screens' totals are built on, and the section is here so
-the screens that follow read a shape off the code rather than assuming one from
-a design.
+document the console did not spawn when the section was written, and **the
+console spawns it now**: console 0.119.0 put it on the surface (`runs.summary`
+in `console/src/main/ipc.ts`), the console's half of B4, as the read the
+Project, Coordinator and Spend screens' totals are built on. Its argv is design
+§5.1 rule 6's `runs summary --json` row: at most one `--since=<window>` word,
+from the console's own closed set. The section stays here for §6.11's reason —
+the screens read a shape off the code rather than assuming one from a design.
 
 **Why it exists: a totals read that opens no run.** `runs ls` (§5) answers by
 reading the runs bucket — one run object per row, its task and its result — and
@@ -2223,15 +2227,171 @@ unavailable (the availability rule, §1) rather than an error loop. A field
 added later is a field an older console does not draw; a console that requires
 one must refuse the document rather than fill it in.
 
-**The console's row is a later task.** This section is the CLI's half of the
-read: the spawn row, the operation and the decoder are **not** in this
-document's scope, so nothing here authorises a spawn — §5.1's table and the
-allow-lists are where a row is admitted, and no row, operation or decoder is
-added by this section.
+**The console's row has landed.** This section is the CLI's half of the read,
+and the console's half is in the allow-lists' code rather than here: the spawn
+row (design §5.1 rule 6's), the operation (`runs.summary`) and the decoder
+(`decodeRunsSummary`, `console/src/shared/schema.ts`) were added by console
+0.119.0. Nothing here authorises a spawn on its own — §5.1's table and the
+allow-lists are where a row is admitted — and this document still describes the
+CLI's side of the contract.
 
 **Flags** (`newRunsSummaryCmd`): `--repo` (one repository, `owner/name`),
 `--since` (the window, default `7d`), `--json`, and the cloud flags
 `--project`, `--config`, `--gcp-project` and `--region`.
+
+### 6.18 `fugaro models ls --json` (**CLI 0.16.0**)
+
+**Command:** `internal/cli/models_ls.go` `newModelsLsCmd` / `runModelsLs`.
+**Document:** `modelsLsDoc`, with its `modelsCatalog`, its `modelsRoute`,
+`modelsModel` and `modelsRepo` rows, and the `priceCatalog` a catalog-priced
+row carries — all in `internal/cli/models_ls.go` except `priceCatalog`, which
+is `internal/cli/budget.go`'s and is the same shape `budget prices --json`
+prints on a row (D794). Cited by symbol, not by line, for §6.11's reason. This
+is the fifth command in this document the console did not spawn when its
+section was written, and **the console spawns it now**: console 0.119.0 put it
+on the surface (`models.list` in `console/src/main/ipc.ts`), the main-process
+half of the read-only models panel the owner ruled on 2026-11-02. Its argv is
+design §5.1 rule 6's `models ls --json` row, and it is that row's whole argv:
+the command takes **no argument at all** (`cobra.NoArgs`), so there is nothing
+on it a renderer fills. The section stays here for §6.11's reason — a screen
+reads a shape off the code rather than assuming one from a design.
+
+**Why it exists: what a project can run, read offline.** The command answers
+the project's own configuration, this binary's price table and the price
+catalog, and nothing else: **it reaches no bucket, no database and no host** —
+the sentence is the command's own (`newModelsLsCmd`'s `Long`), and it is the
+reason the panel can be drawn before any credential exists. What it reads is
+the four questions a user asks: which routes a call may go down, which models a
+run can name today and what each costs, which repositories each model may be
+sent to, and what each recorded repository pins. It is not `budget prices --json`
+(§6.4's sibling read, which prints the price table alone) and not `config list
+--json` (§6.8): it is the project's routes and allow-lists joined to the
+prices, which is what makes a route's fee or a repository's refusal visibly
+somebody's configuration rather than a number this binary chose.
+
+**A repository this machine has no checkout for is unknown, never guessed at**
+(D793). The `USAGE` rows are read out of each recorded repository's
+`fugaro.yaml` at the base branch it runs against, from the checkout this
+machine remembers for it; a repository with no remembered checkout, or one
+whose checkout does not hold that ref, carries a `state` that says so and no
+pins. The published policy's `base_branch` is **not** consulted — reading it is
+a cloud read, and this command reaches nothing — so a project whose default
+lives only there reads as `main` here.
+
+**The document is one object.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `version` | int | never | never | the document's version, `1` today (`modelsLsDocVersion`, pinned by `schemas/models-ls.schema.json`). A consumer that does not know a version refuses the document rather than reading it as the one it does |
+| `project` | string | **yes** | never | the selected project's name. `omitempty`, so no project config selected leaves it out — and the `routes` then hold the direct route alone |
+| `catalog` | object | **yes** | never | the built-in provider price catalog's provenance, taken from the first catalog-priced row (`catalogProvenanceOf`): one header for every row it prices. **Absent when no row is catalog-priced** — that is "no catalog-priced model here", not "no catalog" |
+| `routes` | array of route rows | never | never | the direct route first, then the owner's providers in name order. **Never empty**: the direct route is always a row |
+| `models` | array of model rows | never | never | every model a run can name today, in ID order: the price table's rows, the exact IDs a route claims, the `model_prices` keys, the project's `allowed_models` entries and every model a recorded repository pins. A model with no price row is a row here too, with the reason it has none |
+| `repositories` | array of repository rows | never | never | one row per repository the selected project records, in name order, `[]` when it records none. A repository this machine has no checkout for is a row with a `state`, never a missing row |
+
+**The catalog block is the built-in provider price catalog's own provenance:**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `source` | string | never | never | the catalog URL the prices came from. **It is untrusted text**, a URL a generated catalog names |
+| `checked_at` | string | never | never | the date the catalog was last checked, `YYYY-MM-DD` — a date, never a timestamp |
+| `age_days` | int | never | never | how many days ago that was, as the read computed it |
+| `stale` | bool | never | never | `true` when `age_days` is past the catalog's 30-day rule (design D10). Every row priced from this catalog carries the same four facts; this block states them once for all of them (`modelsCatalogOf`) |
+
+**A route row is the project's provider entry, or the direct route.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `name` | string | never | never | the provider entry's name, or the direct route's own (`config.RouteDirect`). It is the key a model row's `route` names, and the row's sort order |
+| `kind` | string | **yes** | never | the provider entry's `kind`; `anthropic` on the direct route |
+| `base_url` | string | **yes** | never | the entry's own base URL; the Anthropic API's own on the direct route. **It is untrusted text**, a URL somebody's config names: a screen draws it as text and never as a link |
+| `host` | string | **yes** | never | the host of `base_url` (`hostOf`), or the URL itself when it parses to no host, so a base URL that names none is shown as written rather than blanked. It is what a reader recognises the route by |
+| `models` | array of string | never | never | the exact model IDs the route claims, in the entry's order; the direct route's are the embedded table's keys, sorted. A claimed ID may be a prefix pattern (`claude-*`), which is the entry's own spelling and is drawn as text |
+| `route_fee_pct` | number | **yes** | never | what is added to every charge on the route, in percent (`float64`, `omitempty`). **Absent when the route charges none**, and a consumer reads that as `0`: a route that adds nothing charges nothing, which is a fact rather than an unknown — unlike a model's price below, where the same absence is an unknown. **A `null` is not this key's shape**: absence is the CLI's only spelling of "no fee", so a consumer refuses an explicit `null` rather than folding it into the same `0`, which would hide a shape change behind the one default this document has |
+| `allow_data_to` | array of string | never | never | the repositories whose code may be sent here, as written, or `["*"]` for a route open to every repository. `[]` when the route names none and is not open |
+| `open_to_every_repo` | bool | never | never | the entry's own switch. On the direct route it is `true`: no `allow_data_to` governs a call to Anthropic, whose credential the owner stores for the project rather than per repository |
+| `note` | string | **yes** | never | what the entry's own keys do not say: `require_zdr: ...` on a ZDR entry, or `routing.claude.via: ...` on the direct route when the project routes a Claude ID elsewhere. It is untrusted text |
+
+**A model row is one model a run can name.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | string | never | never | the model ID as a run names it (a `fugaro.yaml`'s pin, a `model_prices` key, a route's claim). It is the row's own key and the sort order |
+| `route` | string | never | never | the name of the route a run would send it down, or `""` when **no route serves it** — the empty string is a fact here, and a screen draws it as "no route" rather than as a missing field |
+| `source` | string | never | never | where the price comes from, one of `embedded` (this binary's Claude table), `catalog` (the built-in provider price catalog), `local` (the owner's `model_prices`) or `none` (**the model has no price row at all**). A consumer reads this before it reads a price |
+| `input_per_m` | number | **yes** | never | the input price per million tokens (`float64`), or the row's own `priceCatalog.tier_input_max_per_m` when a stale catalog is charged at the top of its tier. **Absent when the price is zero or unknown**: `omitempty`, and `source` is what tells the two apart — a screen that read an absent price as `0` would draw a model nothing prices as a free one |
+| `output_per_m` | number | **yes** | never | the output price per million tokens, under the same rule as `input_per_m` |
+| `catalog` | object | **yes** | never | a catalog-priced row's own provenance: the `priceCatalog` below. Absent on every other row |
+| `allowed_to` | array of string | never | never | the repositories this model may be used by, as the rules compute them, `["*"]` for every repository and **`[]` when none may**: a model no route serves, or one the project's `budget.allowed_models` leaves out. `[]` is a refusal to use, never a missing list |
+| `refused` | string | **yes** | never | why the model has no price, when it has none (`table.Refusal`, or the fallback sentence naming `model_prices`). It is the string a launch's own refusal is built on, and a screen draws it as text |
+| `note` | string | **yes** | never | the row's spread or its price's own qualification (`entry.CatalogRange()`). It is untrusted text |
+
+**A catalog-priced row's provenance is `budget prices --json`'s own nine
+keys** — the same `priceCatalog` shape, so a console that reads one read's
+provenance reads both:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `tier` | string | never | never | `zdr` or `all`: the tier the price was taken from |
+| `bound` | string | never | never | the end of that tier's range charged, `min` (the cheapest) or `max` (the dearest — whether `price_policy` asked for it or the catalog is stale) |
+| `endpoints` | int | never | never | how many endpoints the model is served by. The published schema bounds this at `1` and the catalog loader refuses a zero, so a zero should not arrive; a consumer reads it with a floor of zero all the same, because the figure is drawn as written and refusing it would take the whole read down over a number nothing is computed from |
+| `zdr_endpoints` | int | never | never | how many of them are ZDR-eligible (the `zdr` tier's own count) |
+| `source` | string | never | never | the catalog URL the price came from |
+| `checked_at` | string | never | never | the date the catalog was last checked, `YYYY-MM-DD` |
+| `stale` | bool | never | never | `true` when that date is older than the catalog's 30-day rule (design D10); a stale catalog is charged at the dearest end of the tier's range |
+| `tier_input_max_per_m` | number | never | never | the dearest input price per million tokens the tier prices: the top of the range `bound` was taken from, and so the most a call served from the dearest endpoint can be billed (design D6, P11) |
+| `tier_output_max_per_m` | number | never | never | the same for output |
+
+**A repository row is one recorded repository's pins.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `name` | string | never | never | the repository's `owner/name` as the project records it |
+| `state` | string | never | never | how the read went: `ok`, `unknown (no checkout on this machine)` when this machine remembers none, or the parser's or the policy's own reason when the checkout's `fugaro.yaml` could not be read at the base branch. **The pins are absent whenever it is not `ok`** — never filled from a guess |
+| `coder` | string | **yes** | never | `agent.models.coder`'s model, resolved (`Agent.ModelFor`) |
+| `reviewer` | string | **yes** | never | the senior review's model, resolved |
+| `background` | string | **yes** | never | the file's own `agent.models.background` |
+| `background_effective` | string | **yes** | never | the model Claude Code's background requests actually reach (`config.EffectiveBackground`). **Present only when it differs from `background`**, so a consumer draws `background_effective` when it has one and `background` otherwise |
+| `problems` | array of string | **yes** | never | what a launch would refuse this repository on, one line each (`config.CheckProviderPolicy`, the same check a run makes): a pin no route serves, a model the project's `allowed_models` leaves out. `omitempty`, so a repository with nothing wrong carries no key at all |
+
+**Version skew.** Every field is additive within `version: 1` (D784), and the
+document is under `schemas/models-ls.schema.json` with `additionalProperties`
+true at every level. A CLI older than this command has no such read at all, and
+the console shows the panel as unavailable (the availability rule, §1) rather
+than an error loop. A field added later is a field an older console does not
+draw; a console that requires one must refuse the document rather than fill it
+in. **A console must not read an absent `input_per_m` or `output_per_m` as
+zero**: that is the one skew in this document that draws a wrong figure instead
+of a missing one.
+
+**Nothing here is a spend.** Every figure in this document is a **price** — what
+a call would cost — and no key is money already spent. The document names no
+bucket, no budget database and no run, which is why no key here is a figure the
+caps are enforced against, and why a console shows it as somewhere to go rather
+than as money that moved.
+
+**Never on this surface: the writes.** The `models` command group's `add`, `rm`
+and `use` subcommands change the project's or the machine's own configuration,
+and `search` takes a positional `<text>` no console read needs. The console's
+allow-lists refuse all four by name — the three writes as commands and all four
+as words (`NEVER_REACHABLE`, `console/src/main/ipc.ts`) — so this section's
+document is the group's whole surface on the dashboard.
+
+**The console's row has landed.** This section is the CLI's half of the read,
+and the console's half is in the allow-lists' code rather than here: the spawn
+row (design §5.1 rule 6's `models ls --json`), the operation (`models.list`)
+and the decoder (`decodeModelsList`, `console/src/shared/schema.ts`) were added
+by console 0.119.0, with the CLI floor `MODELS_LIST_CLI_FLOOR` (`0.16.0`) in
+`console/src/shared/version.ts` — this read landed after v0.15.0, so a console
+that spawns it before that version gets no such command. Nothing here
+authorises a spawn on its own — §5.1's table and the allow-lists are where a
+row is admitted — and this document still describes the CLI's side of the
+contract.
+
+**Flags** (`newModelsLsCmd`): `--json`, and the cloud flags `--project`,
+`--config`, `--gcp-project` and `--region`. **It takes no argument of its own**
+(`cobra.NoArgs`): the console's argv is `models ls --json` plus the project
+flags and nothing else.
 
 ## 7. The CLI gaps, settled against the code
 

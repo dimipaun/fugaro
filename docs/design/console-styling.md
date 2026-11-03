@@ -1208,16 +1208,24 @@ line) → `section.coordinator-totals` (the fleet's strip) → `section.coordina
 list: the window's own line → the rows the pages drawn so far hold → the one control the
 section offers at that moment) → one `section.coordinator-repo` per
 repository (the head row: the name and which view the node is → the marker → the counter strip
-→ what a bound left out → the records → the collisions → the unreads) — or, for an
-installation that lists no repository, the console's own empty sentence instead of the panels.
-**The screen reads four command lines** (`fugaro coordinator status --from-store --all
---json`, `runs ls --json --since 24h`, `plan status --all --json` and `budget show --json`:
-one per independent document, and `report` is not read on this page at all). **Three of them
-are the tab's own first paint and go out together; the fourth is the jobs, and rule 5 of
-§6.2's opening keeps jobs out of a first paint** — the part they fill carries the console's
-one control that is not an item's (`Load the jobs waiting on you`), and `runs ls` goes out on
-that press. Otherwise the screen draws **one button per queue item** and nothing else: a
-control whose word is the console's own.
+→ what a bound left out → the records, each with the description block its own disclosure
+opens and the runs behind it → the collisions → the unreads) → `section.coordinator-transcript`
+(the pane, the frame's last region: its own heading, the console's sentence for what this page
+does not hold, and the host the entry fills — the line the declarations were read at, a
+refused read's own sentence, the declarations and the console's three questions). For an
+installation that lists no repository, the console's own empty sentence stands instead of the
+panels.
+**The screen reads six command lines** (`fugaro coordinator status --from-store --all
+--json`, `runs ls --json --since 24h`, `plan status --all --json`, `budget show --json`,
+`coordinator intents --all --json` and `coordinator show --json --repo … --pr …`: one per
+independent document, and `report` is not read on this page at all). **Four of them are the
+tab's own first paint and go out together** — the stored view, the plans, the budget and the
+declarations (K5's pane) — **the fifth is the jobs, and rule 5 of §6.2's opening keeps jobs out
+of a first paint** — the part they fill carries the console's one control that is not an
+item's (`Load the jobs waiting on you`), and `runs ls` goes out on that press — and **the
+sixth is a description's**, read from the row whose disclosure was pressed (K3) and never with
+the tab. Otherwise the screen draws **one button per queue item** and nothing else: a control
+whose word is the console's own.
 
 **The action queue and the fleet's totals are console 0.118.0's K1**, and they are the two
 sections the screen gained above the panels: what is waiting for a person — a pull request
@@ -1246,7 +1254,13 @@ it and `hidden` until then, so the expansion is a toggle and never a rendering. 
 says when the list on screen was read** (`as of HH:MM`, `section.ts`'s stamp) with the one
 control that reads the window again from the top: a page of a moving `--since 24h` window is a
 snapshot, and a refresh drops the pages and the cursor with it, because a cursor belongs to the
-window those rows came from. The paged read
+window those rows came from. **A first page the CLI refused is the one state with no time in
+that line**: the head draws the same `p.console-stamp` row with its one `Refresh` and no
+`as of` at all — no page was read to date it with, and the clock of a page that is not on
+screen is not this read's — and the CLI's own sentence stands in the list under it, so the
+section's one press is still there to ask again. A refusal of a **later** page keeps the
+stamp it had: the rows on screen are still that page's, and that is the clock they were read
+at. The paged read
 is gated on `RUNS_LIST_PAGE_CLI_FLOOR` (`0.16.0`, the first release carrying #1545): below it
 the section draws the console's own sentence naming the version it needs and spawns nothing,
 because in the 0.15 line `--after` is refused outright and `--limit` reads only the newest N —
@@ -1272,6 +1286,22 @@ of its own to a refusal. The block is gated on the
 record's number and the panel's repository and **not** on the row's destination: a
 description needs no provider, so an installation whose CLI predates C1's `provider` field
 still gets it.
+
+**The transcript pane is console 0.119.0's K5**, and it is the frame's last region:
+`coordinator intents --all --json` is one of the tab's own reads, started with the others and
+painted the moment it lands, and the pane draws what the store holds — one line per
+repository, one line per declaration, then the console's three questions answered from the
+stored view the body already read. **It holds no input control of any kind** (D827): the one
+control on it is the stamp's own `Refresh`, which reads the declarations again and nothing
+else, because the front door the questions are about is the terminal's to build. **A read that
+refused drops the pane's clock with the declarations it belonged to**: the CLI's own sentence
+is drawn under the same `p.console-stamp` row, with its one `Refresh` and no `as of` at all —
+a stamp still saying `as of 14:05` would date the refusal with the previous success's read,
+which has nothing to do with it. Every value the store wrote is drawn through the class its
+wire key declares (`putText`) — the declaration, the release and a service as labels, the
+branch as a branch, a path as the `path` class replaces it — so no declaration reaches the
+pane as markup, and the clock on the line is the writer's own and never an age this console
+derived.
 
 **The panel, the strip, the banner and the row are console redesign step 7.** The markup this
 step draws replaces the markup `screens.css`'s Coordinator block met, and that block is
@@ -1321,6 +1351,10 @@ only ever says what it was told.
 | `coordinator-blind-word` | `span` | the introducing sentence of that line |
 | `coordinator-blind-stale`, `coordinator-blind-unread` | the line's two cells | repositories the sweep has not reconciled since, and pull requests a sweep could not read — hook names only: the rule that lays the line out is written on `coordinator-blind`, on the cell `coordinator-count` and on the reading inside it |
 | `coordinator-total-repos`, `coordinator-total-inflight`, `coordinator-total-collisions`, `coordinator-total-plans`, `coordinator-total-counted`, `coordinator-total-cap` | the fleet strip's six cells | which figure each cell is — hook names only, like the two blind cells above |
+| `coordinator-window-slot` | `div` | the strip's **second** busy host: where `runs summary --json`'s mark goes (console 0.119.0), so the panel's two reads can be in flight at once without either taking the other's claim down |
+| `coordinator-window-runs`, `coordinator-window-succeeded`, `coordinator-window-failed`, `coordinator-window-halted`, `coordinator-window-cancelled`, `coordinator-window-infra`, `coordinator-window-other`, `coordinator-window-spent`, `coordinator-window-notional`, `coordinator-window-compute` | the fleet window's ten cells | which figure each cell is — hook names only, like the six above. The window's runs and their six states off `runs summary`, and its three money figures, which are three cells and never a sum |
+| `coordinator-window-unknown`, `coordinator-window-unknown-word`, `coordinator-window-unknown-day` | `p` and two `span`s | the days `days_unknown` names, under the window's figures: the console's own sentence, then one cell per day |
+| `coordinator-window-note`, `coordinator-window-floor-word`, `coordinator-window-floor-version` | `p` and two `span`s | the console's sentence where the window was not read at all: a CLI below the floor its command needs, or the reduced mode's withholding. `coordinator-jobs-note`'s shape, one panel higher |
 | `section.coordinator-repo` | the repository's panel | one per repository the config lists, on the frame the redesign gives a panel (§2.3's `section.live-fleet`, the same ground, hairline and radius) |
 | `coordinator-repo-head` | `div` | the panel's first element: the name and the source line on one line, which folds rather than shrinking either |
 | `h2.coordinator-repo-name` | `h2` | the repository's own name, read out of the local config, and the head row's first element |
@@ -1364,7 +1398,7 @@ only ever says what it was told.
 | `coordinator-unread-reason`, `coordinator-unread-retry` | `span`s | the reason a sweep gave, and when it may retry |
 | `coordinator-unread-carried` | `span` | the console's answer to whether the state shown is the last one a sweep did read |
 | `section.coordinator-jobs` | the job list's section | console 0.119.0's K4: the runs of the last day, drawn on the frame the other two sections take, and read only when the operator asks for them |
-| `coordinator-jobs-head` | `div` | the window's own line: the console's introducing word, the two figures the **first page's `totals`** carries, the slot the section's own busy mark is put in, and — once a page has landed — the `console-stamp` line saying when it was read, with the refresh control that reads the window again from the top |
+| `coordinator-jobs-head` | `div` | the window's own line: the console's introducing word, the two figures the **first page's `totals`** carries, the slot the section's own busy mark is put in, and — once a page has landed — the `console-stamp` line saying when it was read, with the refresh control that reads the window again from the top. A **first** page that refused draws that line with its one control and **no time in it**: no page was read to date it with |
 | `coordinator-jobs-window-word` | `span` | the introducing words, `the window holds` |
 | `coordinator-jobs-window-runs`, `coordinator-jobs-window-spent` | the head's two cells | which figure each cell is — hook names only, like the strip's cells above: how many runs the window holds and what it spent, each drawn through `numberCell` and so already carrying `coordinator-count`'s cell and §2.10's reading |
 | `coordinator-jobs-list` | `div` | the host the rows are drawn into: what the pages read so far hold, and nothing of its own |
@@ -1381,7 +1415,7 @@ only ever says what it was told.
 | `coordinator-jobs-note` | `p` | the note drawn **instead of** the list for a CLI older than `RUNS_LIST_PAGE_CLI_FLOOR`, where no control is drawn beside it at all |
 | `coordinator-jobs-floor-word`, `coordinator-jobs-floor-version` | `span`s in that note | the console's sentence naming the version the paged read needs, and the handshake's own version line drawn as text |
 | `section.coordinator-transcript` | the transcript pane's section | console 0.119.0's K5: what the fleet's orchestrators have declared, and the stored view's answers to three questions the console composes itself, drawn on the frame the other three sections take. It is **read only** and holds no input control of any kind (D827) |
-| `coordinator-transcript-host` | `div` | the host the entry fills: the stamp the declarations were read at, a refused read's own sentence, the declarations and the questions, in that order. It holds no state of its own — the section's mark is what says a read is still out |
+| `coordinator-transcript-host` | `div` | the host the entry fills: the stamp the declarations were read at, a refused read's own sentence, the declarations and the questions, in that order. It holds no state of its own — the section's mark is what says a read is still out. A refused read draws the stamp's row with its one control and no `as of`, for the K4 head's reason: the clock in hand is the previous read's |
 | `coordinator-transcript-word` | `p` | the pane's own heading, `transcript — read only` |
 | `coordinator-transcript-missing` | `p` | the console's sentence for what this page does not hold — no input is built, and the front door is the terminal's to build (D820) — naming where that decision is |
 | `coordinator-transcript-repo` | `p` | one repository's own line, above the declarations the store holds for it |

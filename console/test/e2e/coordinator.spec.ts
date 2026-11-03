@@ -79,6 +79,7 @@ import {
   COORDINATOR_TRANSCRIPT_MISSING_WORD,
   COORDINATOR_TRANSCRIPT_QUESTIONS,
   COORDINATOR_TRANSCRIPT_WORD,
+  COORDINATOR_WINDOW_FLOOR_WORD,
 } from '../../src/renderer/screens/coordinator'
 import { CLI_VERSION_BUILT_AGAINST } from '../../src/shared/version'
 import { inRangeCliStub } from '../support/cliStub'
@@ -226,7 +227,7 @@ var coordinator = load('/renderer/screens/coordinator.js');
 var decoded = schema.decodeCoordinatorStatus(${JSON.stringify(document)}, 'the committed coordinator document');
 if (!decoded.ok) return { error: 'the decoder refused the fixture: ' + decoded.skew.because };
 var factory = domFactory();
-var model = coordinator.buildCoordinatorModel({ view: decoded.value, runs: null, plans: null, caps: null, intents: null, checkout: true, capsHidden: false });
+var model = coordinator.buildCoordinatorModel({ view: decoded.value, runs: null, plans: null, caps: null, intents: null, summary: null, checkout: true, capsHidden: false });
 var tree = coordinator.renderCoordinator(factory, model, ${JSON.stringify(theme)});
 var previous = document.getElementById('coordinator-mount');
 if (previous) previous.remove();
@@ -690,6 +691,25 @@ test.describe('the Coordinator view in the dashboard', () => {
     const repos = await totals.locator('span.coordinator-total-repos .coordinator-count-value').textContent()
     expect(Number(repos), 'the stored view lists no repository').toBeGreaterThan(0)
     await expect(page.locator(`${THE_VIEW} section.coordinator-repo`)).toHaveCount(Number(repos))
+
+    // And the fleet's window inside that strip: this window's CLI is 0.13.0,
+    // below `RUNS_SUMMARY_CLI_FLOOR`, so the console's own sentence naming the
+    // version it needs is drawn and **nothing is spawned for it** -- no figures,
+    // no skeleton left behind, and no refusal, because a read that was never
+    // made has no sentence of its own. A `$0.00` or a run count of zero here
+    // would be a window nobody read.
+    await expect(totals.locator('p.coordinator-window-note')).toHaveText(
+      `${COORDINATOR_WINDOW_FLOOR_WORD}${CLI_VERSION_BUILT_AGAINST}`,
+    )
+    await expect(totals.locator('span.coordinator-window-runs')).toHaveCount(0)
+    await expect(totals.locator('span.coordinator-window-spent')).toHaveCount(0)
+    await expect(totals.locator('.unavailable-operation')).toHaveCount(0)
+    // **And the strip's second busy host is not there either.** A slot is a flex
+    // item of the strip, and the window's can never be filled on this visit: a
+    // console that kept it would hold a line open for a read it will not make.
+    // The K1 documents' own slot stays -- its read is out and then answered.
+    await expect(totals.locator('div.console-busy-slot')).toHaveCount(1)
+    await expect(totals.locator('div.console-busy-slot[aria-busy="true"]')).toHaveCount(0)
   })
 
   test('says which CLI the job list needs, and spawns no read for one older than that', async () => {
@@ -765,10 +785,10 @@ test.describe('the Coordinator view in the dashboard', () => {
     // K5, in the state this window's stub puts the pane in: the pane's own read
     // (`coordinator intents --all --json`) is a real spawn the CLI refuses
     // (exit 2, like every command this stub does not answer), so what the pane
-    // holds is the console's refusal naming its own command -- and, beside it,
-    // the three things it can draw without the store: its heading, the three
-    // questions the console composes itself, and the sentence about the front
-    // door that is not built (D820).
+    // holds is the console's refusal naming its own command, the one press that
+    // asks that read again -- and, beside it, the three things it can draw
+    // without the store: its heading, the three questions the console composes
+    // itself, and the sentence about the front door that is not built (D820).
     //
     // **The absence is the claim** (D827): the pane is a drawing and not a door,
     // and a real browser is what makes that checkable -- a field a person could
@@ -790,10 +810,13 @@ test.describe('the Coordinator view in the dashboard', () => {
 
     await expect(pane.locator('input, textarea, select')).toHaveCount(0)
     await expect(pane.locator('[contenteditable]')).toHaveCount(0)
-    // The pane draws no control at all in this state: the one it can draw is the
-    // stamp's own Refresh, and a stamp stands for declarations this window never
-    // read. A button that sent text would be a second one, whatever it read.
-    await expect(pane.locator('button')).toHaveCount(0)
+    // The pane's **one** control is the stamp's own Refresh, and the refusal is
+    // the state it is drawn without a time in (K5's follow-up): the read refused,
+    // so there are no declarations to date, and the clock in hand is a previous
+    // read's. A button that sent text would be a second one, whatever it read.
+    await expect(pane.locator('p.console-stamp button.console-stamp-refresh')).toHaveCount(1)
+    await expect(pane.locator('p.console-stamp span.console-stamp-at')).toHaveCount(0)
+    await expect(pane.locator('button')).toHaveCount(1)
     await expect(page.locator(`${THE_VIEW} a`)).toHaveCount(0)
   })
 

@@ -816,6 +816,18 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	if keepReviewFloor {
 		floor = old.ReviewFloor
 	}
+	// The verifier list is kept the same way, by the one rule localcfg states
+	// for both its writers (C3.9g3, D1075): the file's list when it writes one,
+	// the node's otherwise. The cost of the other reading is higher here than
+	// for the floor — the list is what the credentials service admits to its
+	// verify route, and the publish that dropped it would leave a service that
+	// refuses every verifier the owner named, from a machine whose config
+	// merely predates the key.
+	var publishedVerifiers []string
+	if old != nil {
+		publishedVerifiers = old.VerifierAccounts
+	}
+	verifierAccounts := lc.VerifierAccountsEffective(publishedVerifiers)
 	pol := &projectpolicy.Policy{
 		Version:           projectpolicy.Version,
 		Budget:            projectpolicy.Budget{Mode: lc.Budget.Mode, PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
@@ -828,6 +840,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		BitbucketToken:    token,
 		BitbucketAPIRoots: lc.BitbucketAPIRoots,
 		ReviewFloor:       floor,
+		VerifierAccounts:  verifierAccounts,
 	}
 	switch {
 	case !silent:

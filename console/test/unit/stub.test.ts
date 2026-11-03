@@ -38,12 +38,22 @@ describe('the stub’s command keys', () => {
       'report',
       'runs ls',
       'runs stats',
+      // Console 0.119.0's jobs-free totals read (`runs.summary` /
+      // `summaryRuns`, B4's console half): the one row here whose child reads
+      // neither a run object nor a listing -- the budget database's day
+      // counters and the spend history's daily documents are the whole read.
+      'runs summary',
       'plan status',
       'diagnose',
       'logs',
       'logs --url',
       'secrets ls',
       'accounts ls',
+      // Console 0.119.0's offline models read (`models.list` / `listModels`,
+      // the read-only models panel, the owner's ruling of 2026-11-02): the one
+      // key here whose command path is also a group the never table refuses,
+      // so `models ls` is the whole of what the stub may be asked for.
+      'models ls',
       'version',
       'doctor',
       'config list',

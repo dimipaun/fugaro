@@ -99,6 +99,17 @@ import {
   COORDINATOR_TOTAL_PLANS_WORD,
   COORDINATOR_TOTAL_REPOS_WORD,
   COORDINATOR_TRANSCRIPT_MISSING_WORD,
+  COORDINATOR_WINDOW_CANCELLED_WORD,
+  COORDINATOR_WINDOW_COMPUTE_WORD,
+  COORDINATOR_WINDOW_FAILED_WORD,
+  COORDINATOR_WINDOW_HALTED_WORD,
+  COORDINATOR_WINDOW_INFRA_WORD,
+  COORDINATOR_WINDOW_NOTIONAL_WORD,
+  COORDINATOR_WINDOW_OTHER_WORD,
+  COORDINATOR_WINDOW_RUNS_WORD,
+  COORDINATOR_WINDOW_SPENT_WORD,
+  COORDINATOR_WINDOW_SUCCEEDED_WORD,
+  COORDINATOR_WINDOW_UNKNOWN_WORD,
   COORDINATOR_TRANSCRIPT_WORD,
   COORDINATOR_UNREAD_WORD,
   PULL_PROVIDERS,
@@ -128,8 +139,18 @@ import type {
 import { BUSY_SLOT_CLASS } from '../../src/renderer/section'
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
 import { PATH_PLACEHOLDER, TOKEN_PLACEHOLDER, sanitizeText, type TextClass } from '../../src/shared/sanitize'
-import { decodeCoordinatorIntents, decodeCoordinatorStatus, decodePlanStatus } from '../../src/shared/schema'
-import type { CoordinatorIntentsView, CoordinatorStatusView, PlanStatusView } from '../../src/shared/schema'
+import {
+  decodeCoordinatorIntents,
+  decodeCoordinatorStatus,
+  decodePlanStatus,
+  decodeRunsSummary,
+} from '../../src/shared/schema'
+import type {
+  CoordinatorIntentsView,
+  CoordinatorStatusView,
+  PlanStatusView,
+  RunsSummaryView,
+} from '../../src/shared/schema'
 import type { JSONDoc } from '../../src/source/source'
 
 // ---------------------------------------------------------------------------
@@ -607,6 +628,10 @@ function queueInputs(inputs: Partial<CoordinatorInputs>): CoordinatorInputs {
     // state every case that is not about the pane is in: a document here would
     // draw intent lines under assertions that are about the queue or a record.
     intents: null,
+    // `null` is the same for the fleet's window (console 0.119.0): the strip's
+    // second read has not answered, and a window here would put eleven figures in
+    // front of every assertion about the strip's own six.
+    summary: null,
     ...inputs,
   }
 }
@@ -2035,6 +2060,159 @@ function drawsPane(inputs: Partial<CoordinatorInputs>): ScreenElement {
   return renderCoordinator(factory, buildCoordinatorModel(queueInputs(inputs)), 'dark')
 }
 
+/** anEmptyWindow is a `runs summary --json` document (console 0.119.0) whose
+ * every figure the case does not name is zero: the window a screen draws when
+ * the read answered and the week was quiet. `computeMicros` defaults to a priced
+ * window (every run's compute known), so a case that is not about the bound
+ * draws none. */
+function aWindow(
+  options: {
+    readonly runs?: number
+    readonly states?: Readonly<Record<string, number>>
+    readonly spentMicros?: number
+    readonly notionalMicros?: number
+    readonly computeMicros?: number | null
+    readonly computeRuns?: number
+    readonly daysUnknown?: readonly string[]
+  } = {},
+): JSONDoc {
+  const runs = options.runs ?? 0
+  return {
+    v: 1,
+    project: 'acme',
+    since: '2026-10-27',
+    until: '2026-11-02',
+    repositories: [],
+    totals: {
+      runs,
+      states: {
+        succeeded: 0,
+        failed: 0,
+        halted: 0,
+        cancelled: 0,
+        infra_error: 0,
+        other: 0,
+        ...options.states,
+      },
+      spent_micros: options.spentMicros ?? 0,
+      notional_micros: options.notionalMicros ?? 0,
+      compute_micros: options.computeMicros === undefined ? 0 : options.computeMicros,
+      compute_runs: options.computeRuns ?? runs,
+    },
+    days_unknown: options.daysUnknown ?? [],
+    notes: [],
+  }
+}
+
+/** windowOf is a document that must decode, or the failure is the decoder's own
+ * sentence rather than an assertion three lines later. */
+function windowOf(raw: unknown): RunsSummaryView {
+  const result = decodeRunsSummary(raw)
+  if (!result.ok) throw new Error(result.skew.because)
+  return result.value
+}
+
+/** drawsWindow draws the screen with the window's read answered, as the entry
+ * does when `runs summary` lands: the other reads are `queueInputs`' own. */
+function drawsWindow(inputs: Partial<CoordinatorInputs>): ScreenElement {
+  return renderCoordinator(factory, buildCoordinatorModel(queueInputs(inputs)), 'dark')
+}
+
+describe('the fleet’s window, off the jobs-free totals read (console 0.119.0)', () => {
+  it('draws the window’s runs and their six states, and the money as three figures it never sums', () => {
+    // The document counts the window and nothing else: the six states are the
+    // contract's own, zero included, and the three money figures are three
+    // quantities of the same document -- what the model money was, what a
+    // subscription's list price was, and what the runs' compute was. A strip
+    // that drew their sum would draw a figure no CLI ever wrote.
+    const node = drawsWindow({
+      summary: windowOf(
+        aWindow({
+          runs: 9,
+          states: { succeeded: 6, failed: 2, halted: 1 },
+          spentMicros: 4_500_000,
+          notionalMicros: 12_500_000,
+          computeMicros: 3_500_000,
+        }),
+      ),
+    })
+    const totals = one(node, 'coordinator-totals')
+    expect(figureOf(totals, 'coordinator-window-runs')).toEqual([COORDINATOR_WINDOW_RUNS_WORD, '9'])
+    expect(figureOf(totals, 'coordinator-window-succeeded')).toEqual([COORDINATOR_WINDOW_SUCCEEDED_WORD, '6'])
+    expect(figureOf(totals, 'coordinator-window-failed')).toEqual([COORDINATOR_WINDOW_FAILED_WORD, '2'])
+    expect(figureOf(totals, 'coordinator-window-halted')).toEqual([COORDINATOR_WINDOW_HALTED_WORD, '1'])
+    // A state the window never reached is drawn as the CLI's own zero: it
+    // counted the window and said so.
+    expect(figureOf(totals, 'coordinator-window-cancelled')).toEqual([COORDINATOR_WINDOW_CANCELLED_WORD, '0'])
+    expect(figureOf(totals, 'coordinator-window-infra')).toEqual([COORDINATOR_WINDOW_INFRA_WORD, '0'])
+    expect(figureOf(totals, 'coordinator-window-other')).toEqual([COORDINATOR_WINDOW_OTHER_WORD, '0'])
+    expect(figureOf(totals, 'coordinator-window-spent')).toEqual([COORDINATOR_WINDOW_SPENT_WORD, '$4.50'])
+    expect(figureOf(totals, 'coordinator-window-notional')).toEqual([
+      COORDINATOR_WINDOW_NOTIONAL_WORD,
+      '~$12.50',
+    ])
+    expect(figureOf(totals, 'coordinator-window-compute')).toEqual([COORDINATOR_WINDOW_COMPUTE_WORD, 'est. $3.50'])
+    // **Never summed.** The three figures are three cells, and no cell on the
+    // strip is the addition of any two of them: 4.50 + 12.50, 4.50 + 3.50 and
+    // 12.50 + 3.50 are all absent from the drawing.
+    const cells = all(totals, 'coordinator-count-value').map((cell) => cell.textContent)
+    expect(cells).not.toContain('$17.00')
+    expect(cells).not.toContain('~$17.00')
+    expect(cells).not.toContain('$8.00')
+    expect(cells).not.toContain('$16.00')
+  })
+
+  it('draws the CLI’s own compute as a lower bound, and n/a rather than $0 when it priced no run', () => {
+    // `compute_micros` is `null` when the window has runs and no run's compute
+    // is known -- the one figure of this document whose absence is a fact of its
+    // own. Drawn as `$0.00` it would say the week was free.
+    const unpriced = drawsWindow({ summary: windowOf(aWindow({ runs: 2, computeMicros: null })) })
+    const cell = one(one(unpriced, 'coordinator-totals'), 'coordinator-window-compute')
+    expect(textOf(cell, 'coordinator-count-value')).toBe(UNAVAILABLE_MARK)
+    expect(textOf(cell, 'coordinator-count-value')).not.toBe('$0.00')
+
+    // Priced in part: the CLI's figure covers fewer runs than the window
+    // counted, so it is a floor and says so.
+    const partial = drawsWindow({
+      summary: windowOf(aWindow({ runs: 9, computeMicros: 3_500_000, computeRuns: 4 })),
+    })
+    expect(figureOf(partial, 'coordinator-window-compute')).toEqual([
+      COORDINATOR_WINDOW_COMPUTE_WORD,
+      '≥ est. $3.50',
+    ])
+  })
+
+  it('names the days neither source answered for, rather than drawing the window as a smaller one', () => {
+    const node = drawsWindow({
+      summary: windowOf(aWindow({ runs: 4, daysUnknown: ['2026-10-26', '2026-10-28'] })),
+    })
+    const line = one(node, 'coordinator-window-unknown')
+    expect(textOf(line, 'coordinator-window-unknown-word')).toBe(COORDINATOR_WINDOW_UNKNOWN_WORD)
+    expect(all(line, 'coordinator-window-unknown-day').map((day) => day.textContent)).toEqual([
+      '2026-10-26',
+      '2026-10-28',
+    ])
+
+    // A window every source answered for draws no such line: the sentence is
+    // about a gap, and there is none.
+    expect(all(drawsWindow({ summary: windowOf(aWindow({ runs: 4 })) }), 'coordinator-window-unknown')).toEqual([])
+  })
+
+  it('draws no window at all while the strip’s own read has not answered', () => {
+    // `null` is "not read, or not answered", and a strip of zeroes is a claim
+    // about a week nobody read.
+    const node = drawsWindow({ summary: null })
+    expect(all(node, 'coordinator-window-runs')).toEqual([])
+    expect(all(node, 'coordinator-window-compute')).toEqual([])
+    // The strip's own figures are still drawn: the window is a second read of
+    // the same panel and never a gate on the first (`queueInputs` answers them).
+    expect(figureOf(one(node, 'coordinator-totals'), 'coordinator-total-repos')).toEqual([
+      COORDINATOR_TOTAL_REPOS_WORD,
+      '1',
+    ])
+  })
+})
+
 describe('the read-only transcript pane (K5)', () => {
   const DECLARED = anIntentsDocument([
     { repo: 'owner/repo-a', intents: [anIntent({ declaredBy: 'person-1', files: ['a/b.ts', 'c/d.ts'] })] },
@@ -2140,6 +2318,101 @@ describe('the read-only transcript pane (K5)', () => {
     })
     expect(walk(one(node, 'coordinator-transcript')).map((each) => each.tag.toLowerCase())).not.toContain('script')
     expect(one(node, 'coordinator-transcript-declaration').getAttribute('href')).toBeNull()
+  })
+
+  it('draws a store’s hostile declarations as inert text, with no key material in them', () => {
+    // The pane draws what the fleet's writers wrote, so it is the screen where a
+    // control character, a bidi override or a hyperlink escape would reach the
+    // drawing as itself if a document's string were written with `textContent`
+    // (`literal`) or parsed (`innerHTML`) instead of classified. Every field goes
+    // through `putText`'s own class, and this is the assertion that tells the two
+    // drawings apart: `holdsToPutText` compares each cell with what the class
+    // itself draws, which a cell drawn through `literal` cannot pass.
+    //
+    // The key block is **built here** rather than written out: the file holds no
+    // key-shaped literal, and the material is fresh on every run. It is one line,
+    // which is the shape a label can hold -- a block wrapped over its newlines
+    // is a block no rule sees whole, and that case is the description block's
+    // (`maskCredentialBlocks`), not this pane's: every cell here is one field of
+    // one record, and the class reads the whole value.
+    const begin = ['-----BEGIN', 'PRIVATE KEY-----'].join(' ')
+    const end = ['-----END', 'PRIVATE KEY-----'].join(' ')
+    const material = randomBytes(57).toString('base64')
+    const block = [begin, material.slice(0, 64), material.slice(64), end].join(' ')
+    const bidi = 'a‮b‬​c'
+    const csi = '\u001b[31mred\u001b[0m'
+    const hyperlink = '\u001b]8;;https://evil.test\u0007link\u001b]8;;\u0007'
+    const view = intentsOf(
+      anIntentsDocument([
+        {
+          repo: 'owner/repo-a',
+          intents: [
+            anIntent({
+              declaredBy: `${bidi} ${csi} ${hyperlink}`,
+              branch: `feat/${bidi}`,
+              release: `${csi}${block}`,
+              files: [`${bidi}/home/operator/notes.md`],
+              // A line break is the one thing a label may not carry: the class
+              // refuses rather than flattening it, because two rows wearing one
+              // cell is a field the CLI's own renderer does not write, and this
+              // cell is where that rule is read off the drawing.
+              services: [`${hyperlink}\n${bidi}`],
+            }),
+          ],
+        },
+      ]),
+    )
+    const record = view.repos[0]?.intents[0]
+    if (record === undefined) throw new Error('the fixture decoded to no declaration')
+    const node = drawsPane({ intents: view })
+    const pane = one(node, 'coordinator-transcript')
+    const line = one(pane, 'coordinator-transcript-intent')
+
+    // Every cell, drawn the way its class draws it -- the assertion a `literal`
+    // drawing fails, because `literal` writes the string the store holds.
+    holdsToPutText(one(pane, 'coordinator-transcript-repo'), 'owner/repo-a', 'repository', 'repos[].repo')
+    holdsToPutText(one(line, 'coordinator-transcript-declaration'), record.declaredBy, 'label', 'intents[].declared_by')
+    holdsToPutText(one(line, 'coordinator-transcript-at'), record.at, 'sentence', 'intents[].at')
+    holdsToPutText(one(line, 'coordinator-transcript-branch'), record.branch, 'branch', 'intents[].branch')
+    holdsToPutText(one(line, 'coordinator-transcript-release'), record.release, 'label', 'intents[].release')
+    holdsToPutText(one(line, 'coordinator-transcript-file'), record.files[0] ?? '', 'path', 'intents[].files')
+    holdsToPutText(one(line, 'coordinator-transcript-service'), record.services[0] ?? '', 'label', 'intents[].services')
+
+    // What is on screen is inert: no escape sequence, no bidi control, no
+    // zero-width character and no line break survived the classes, and neither
+    // the hyperlink's own address nor the block's own markers came through as
+    // text. The key material is gone whole, in every window of eight characters
+    // of it, in a text node and in an attribute alike.
+    // The cells are joined with a **space**: the scan below says the drawing
+    // holds no control character, a line break included, and a reader that put
+    // one between two cells would be finding its own.
+    const drawnText = walk(pane)
+      .map((each) => each.textContent ?? '')
+      .join(' ')
+    const drawnAttributes = walk(pane)
+      .flatMap((each) => [...each.attributes.values()])
+      .join(' ')
+    const CONTROLS = /[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩﻿]/
+    expect(CONTROLS.test(drawnText), 'a control character reached the drawing').toBe(false)
+    expect(drawnText).not.toContain('evil.test')
+    expect(drawnText).not.toContain('PRIVATE KEY')
+    expect(drawnText).toContain(TOKEN_PLACEHOLDER)
+    for (let from = 0; from + 8 <= material.length; from += 1) {
+      const window = material.slice(from, from + 8)
+      expect(drawnText.includes(window), 'the pane drew eight characters of the key material').toBe(false)
+      expect(
+        drawnAttributes.includes(window),
+        'an attribute the pane set carries eight characters of the key material',
+      ).toBe(false)
+    }
+
+    // And no element was built out of any of it: the pane's own tags are the
+    // screen's, and nothing carries a destination.
+    for (const element of walk(pane)) {
+      const tag = element.tag.toLowerCase()
+      expect(['a', 'script', 'img', 'iframe', 'style', 'link', 'object', 'embed'], `${tag} came from the store`).not.toContain(tag)
+      expect(element.getAttribute('href'), `${tag} carries a destination`).toBeNull()
+    }
   })
 
   it('builds no link and no destination out of anything the store wrote', () => {

@@ -550,6 +550,10 @@ export class FixtureSource implements FugaroSource {
     return this.#document('runs.stats', args)
   }
 
+  summaryRuns(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#document('runs.summary', args)
+  }
+
   planStatus(args: ValidatedArguments): Promise<Snapshot> {
     return this.#document('plan.status', args)
   }
@@ -580,6 +584,10 @@ export class FixtureSource implements FugaroSource {
 
   listAccounts(args: ValidatedArguments): Promise<Snapshot> {
     return this.#document('accounts.inventory', args)
+  }
+
+  listModels(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#document('models.list', args)
   }
 
   environmentReport(args: ValidatedArguments): Promise<Snapshot> {

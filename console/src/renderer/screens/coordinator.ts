@@ -55,11 +55,11 @@
 // count is drawn only over the items the console itself drew, and a read that
 // has not answered is absent rather than zero (D819).
 
-import { measured } from '../../shared/availability'
+import { estimated, measured, notional, unavailable } from '../../shared/availability'
 import type { Reading, Unit } from '../../shared/availability'
 import { maskCredentialBlocks, nameableText, sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
-import { BUSY_SLOT_CLASS } from '../section'
+import { BUSY_SLOT_CLASS, STAMP_CLASS, STAMP_REFRESH_CLASS, STAMP_REFRESH_LABEL } from '../section'
 import type { SkeletonBlock, SkeletonShape } from '../skeleton'
 import { decodeRunsList } from '../../shared/schema'
 import type {
@@ -70,8 +70,9 @@ import type {
   CoordinatorStatusView,
   Decoded,
   PlanStatusView,
+  RunsSummaryView,
 } from '../../shared/schema'
-import { capsAtCap } from './spend'
+import { MICROS_PER_USD, capsAtCap } from './spend'
 import type { SpendCaps } from './spend'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
@@ -306,6 +307,73 @@ export const COORDINATOR_TOTAL_COLLISIONS_WORD = 'file collisions'
 export const COORDINATOR_TOTAL_PLANS_WORD = 'plans'
 export const COORDINATOR_TOTAL_COUNTED_WORD = 'counted today'
 export const COORDINATOR_TOTAL_CAP_WORD = 'daily cap'
+
+/** COORDINATOR_WINDOW_WORDS are the fleet's window: what console 0.119.0's
+ * jobs-free read (`runs summary --json`, contract §6.17) counted for the window
+ * the page asked about, and what those runs spent.
+ *
+ * **The six state counts and the three money figures are drawn and never one
+ * from another.** `spent` and `notional` are two words because the document
+ * carries two quantities: `spent_micros` is the model money the caps count and
+ * `notional_micros` the part a subscription paid, which is nobody's bill -- a
+ * screen that drew their sum would draw a figure no CLI ever wrote.
+ * `compute` is the third: the CLI's own estimate of the compute the window's
+ * runs used, drawn as a **lower bound** whenever it priced fewer runs than the
+ * window counted.
+ *
+ * None of the words carries a unit: the readings do, and a count is never drawn
+ * in the cell a dollar is. */
+export const COORDINATOR_WINDOW_RUNS_WORD = 'runs in the window'
+export const COORDINATOR_WINDOW_SUCCEEDED_WORD = 'succeeded'
+export const COORDINATOR_WINDOW_FAILED_WORD = 'failed'
+export const COORDINATOR_WINDOW_HALTED_WORD = 'halted'
+export const COORDINATOR_WINDOW_CANCELLED_WORD = 'cancelled'
+export const COORDINATOR_WINDOW_INFRA_WORD = 'infra failures'
+export const COORDINATOR_WINDOW_OTHER_WORD = 'other'
+export const COORDINATOR_WINDOW_SPENT_WORD = 'spent'
+export const COORDINATOR_WINDOW_NOTIONAL_WORD = 'notional, not billed'
+export const COORDINATOR_WINDOW_COMPUTE_WORD = 'compute'
+
+/** COORDINATOR_WINDOW_UNKNOWN_WORD introduces the days `days_unknown` names:
+ * the days **neither source answered for**, whose runs and spend are in no
+ * figure above it. The days themselves follow, one per cell, because a window
+ * whose figures are missing some of its days and says nothing is the one reading
+ * this strip may not leave on screen -- a smaller number with no word for why.
+ * It is drawn for the window in hand whatever its total, zeroes included. */
+export const COORDINATOR_WINDOW_UNKNOWN_WORD =
+  'no source answered for these days, so their runs and their spend are in no figure above:'
+
+/** COORDINATOR_WINDOW_HIDDEN_WORD stands where the window would be when the
+ * surface withholds its read: `runs summary` carries `spent_micros` and
+ * `notional_micros`, so it is withheld with the other two spend reads in the
+ * reduced mode (`REDUCED_VIEW_OPERATIONS`, `src/main/ipc.ts`). The page makes no
+ * read it knows will be refused, and says what it did not read. */
+export const COORDINATOR_WINDOW_HIDDEN_WORD =
+  'the window’s runs and their spend are withheld for the installation this console is driving'
+
+/** COORDINATOR_WINDOW_FLOOR_WORD introduces the window's own floor sentence, and
+ * **its trailing space is the sentence's**: the version follows it in a span of
+ * its own and two inline spans concatenate with nothing between them.
+ *
+ * `runs summary` landed after v0.15.0, so a CLI below `RUNS_SUMMARY_CLI_FLOOR`
+ * has no such verb and answers `unknown command "summary"` -- a failure the
+ * operator can do nothing about and one this page would draw as a broken
+ * project. The floor is asked before the read goes out, and below it the strip
+ * spawns nothing and draws this. */
+export const COORDINATOR_WINDOW_FLOOR_WORD = 'the window’s totals need fugaro 0.16.0 and this CLI is '
+
+/** COORDINATOR_WINDOW_BUSY is what the window's own mark says while its read is
+ * out, and COORDINATOR_WINDOW_SLOT_CLASS is the element that mark goes on and
+ * into.
+ *
+ * The strip is **one section with two reads behind it**: K1's three documents
+ * and this one. Each read needs a host of its own, because `sectionRead.settle`
+ * takes the busy attributes off the element it was handed -- one element wearing
+ * both marks would have whichever read landed first take the other's claim down
+ * while its read was still out. The slot is that second host, and it is also
+ * where the mark is drawn, so nothing about the strip's own mark changes. */
+export const COORDINATOR_WINDOW_BUSY = 'Reading the window’s runs…'
+export const COORDINATOR_WINDOW_SLOT_CLASS = 'coordinator-window-slot'
 
 /** COORDINATOR_QUEUE_BUSY and COORDINATOR_TOTALS_BUSY are what the two sections'
  * own marks say while their reads are out: the queue's four are started
@@ -970,6 +1038,39 @@ export interface CoordinatorTotals {
 /** CoordinatorModel is what the screen draws. `repos` is the body's summary and
  * is `null` while the stored view has not answered -- the queue and the totals
  * are drawn from reads of their own either way. */
+/**
+ * CoordinatorWindowTotals is the fleet's window: what `runs summary --json`
+ * counted for the window the page asked about, off one document and no rows.
+ *
+ * It is **not** part of `CoordinatorTotals`, and it is not gated on the stored
+ * view. The two are two reads of two commands: the strip's head counts what the
+ * sweep's document lists, and a window is a fact about the project whatever that
+ * document says, so a strip that waited for the sweep to draw a week of runs
+ * would be waiting for a read it does not use.
+ *
+ * `null` in the model is "not read, or not answered", drawn as nothing at all
+ * rather than as a window of zeroes -- and the three money readings are three
+ * cells the strip never adds up: `spent` is the model money the caps count,
+ * `notional` the part a subscription paid, and `compute` the CLI's estimate,
+ * which is a lower bound when it priced fewer runs than the window counted and
+ * `n/a` when it priced none: "not estimated" is not "free".
+ */
+export interface CoordinatorWindowTotals {
+  readonly runs: Reading
+  readonly succeeded: Reading
+  readonly failed: Reading
+  readonly halted: Reading
+  readonly cancelled: Reading
+  readonly infraError: Reading
+  readonly other: Reading
+  readonly spent: Reading
+  readonly notional: Reading
+  readonly compute: Reading
+  /** the days neither source answered for, in the document's own order: their
+   * runs and their spend are in no figure above, so the strip names them */
+  readonly daysUnknown: readonly string[]
+}
+
 export interface CoordinatorModel {
   readonly source: string
   readonly queue: CoordinatorQueueParts
@@ -985,6 +1086,8 @@ export interface CoordinatorModel {
   readonly queueWhole: boolean
   readonly blind: CoordinatorBlindSpot | null
   readonly totals: CoordinatorTotals | null
+  /** the fleet's window off `runs summary --json` (console 0.119.0) */
+  readonly window: CoordinatorWindowTotals | null
   readonly repos: readonly CoordinatorRepoPanel[] | null
   /** the declared intents (K5), and `null` is the pane's own read not having
    * answered -- which is drawn as no intent line at all rather than as a fleet
@@ -1007,6 +1110,9 @@ export interface CoordinatorInputs {
   readonly checkout: boolean
   readonly capsHidden: boolean
   readonly intents: CoordinatorIntentsView | null
+  /** the jobs-free totals read (console 0.119.0): `runs summary --json`'s whole
+   * document, which is the fleet's window and nothing the queue draws */
+  readonly summary: RunsSummaryView | null
 }
 
 /** objectAt is a value that is a JSON object, or null. */
@@ -1583,8 +1689,54 @@ export function buildCoordinatorModel(inputs: CoordinatorInputs): CoordinatorMod
             counted: caps?.global?.counted ?? null,
             cap: caps?.global?.dailyCap ?? null,
           },
+    window: inputs.summary === null ? null : windowTotalsOf(inputs.summary),
     repos: document === null ? null : document.repos.map((repo) => repoPanel(repo)),
     intents: inputs.intents,
+  }
+}
+
+/** usdOf is one of the contract's `*_micros` figures as the dollars this screen
+ * draws, at `budget.Micros`' own scale (`MICROS_PER_USD`). Every money figure
+ * here goes through it, so the window's three cells and the Spend screen's
+ * figures are the same quantity in the same unit. */
+function usdOf(micros: number): number {
+  return micros / MICROS_PER_USD
+}
+
+/**
+ * windowTotalsOf reads the fleet's window out of a `runs summary --json`
+ * document.
+ *
+ * Every figure is the document's own `totals`, so nothing here is a sum over the
+ * rows this page happens to hold, and the six states are drawn from the six the
+ * contract always writes -- zero included, which is why a state the window never
+ * reached is drawn as `0` rather than left out: the CLI counted it and said so.
+ *
+ * **`compute` is the one figure that is a bound rather than a count.** The CLI
+ * prices the runs whose compute it knows, so when it priced fewer runs than the
+ * window counted, the figure it wrote is a floor on what the window used and is
+ * drawn as one; when it priced none, `compute_micros` is `null` and the cell
+ * says `n/a` rather than `$0` -- a free week and an unread one are two different
+ * facts.
+ */
+function windowTotalsOf(summary: RunsSummaryView): CoordinatorWindowTotals {
+  const figures = summary.totals
+  const states = figures.states
+  return {
+    runs: measured(figures.runs),
+    succeeded: measured(states.succeeded),
+    failed: measured(states.failed),
+    halted: measured(states.halted),
+    cancelled: measured(states.cancelled),
+    infraError: measured(states.infraError),
+    other: measured(states.other),
+    spent: measured(usdOf(figures.spentMicros)),
+    notional: notional(usdOf(figures.notionalMicros)),
+    compute:
+      figures.computeMicros === null
+        ? unavailable('no run in this window carried compute, so the CLI priced none of them')
+        : estimated(usdOf(figures.computeMicros), { lowerBound: figures.computeRuns < figures.runs }),
+    daysUnknown: summary.daysUnknown,
   }
 }
 
@@ -1948,6 +2100,59 @@ export function fillCoordinatorBlind(
 }
 
 /**
+ * fillCoordinatorWindow draws the fleet's window: the runs console 0.119.0's
+ * jobs-free read counted for the window the page asked about, their six states,
+ * and the three money figures the same document carries.
+ *
+ * **Nothing is drawn while `model.window` is `null`.** A read that has not
+ * answered, a read the CLI refused and a window the surface withheld are all
+ * "the console did not read this" -- and a strip of zeroes is a claim about a
+ * week nobody read.
+ *
+ * The days `days_unknown` names are drawn under the figures and **not folded
+ * into them**: the document's own figures exclude those days, so a window drawn
+ * as the smaller number with nothing said would be the one wrong reading here.
+ */
+export function fillCoordinatorWindow(
+  factory: ScreenFactory,
+  model: CoordinatorModel,
+  host: ScreenElement,
+): void {
+  const window = model.window
+  if (window === null) return
+  numberCell(host, factory, COORDINATOR_WINDOW_RUNS_WORD, window.runs, 'count', 'coordinator-window-runs')
+  numberCell(
+    host,
+    factory,
+    COORDINATOR_WINDOW_SUCCEEDED_WORD,
+    window.succeeded,
+    'count',
+    'coordinator-window-succeeded',
+  )
+  numberCell(host, factory, COORDINATOR_WINDOW_FAILED_WORD, window.failed, 'count', 'coordinator-window-failed')
+  numberCell(host, factory, COORDINATOR_WINDOW_HALTED_WORD, window.halted, 'count', 'coordinator-window-halted')
+  numberCell(
+    host,
+    factory,
+    COORDINATOR_WINDOW_CANCELLED_WORD,
+    window.cancelled,
+    'count',
+    'coordinator-window-cancelled',
+  )
+  numberCell(host, factory, COORDINATOR_WINDOW_INFRA_WORD, window.infraError, 'count', 'coordinator-window-infra')
+  numberCell(host, factory, COORDINATOR_WINDOW_OTHER_WORD, window.other, 'count', 'coordinator-window-other')
+  numberCell(host, factory, COORDINATOR_WINDOW_SPENT_WORD, window.spent, 'usd', 'coordinator-window-spent')
+  numberCell(host, factory, COORDINATOR_WINDOW_NOTIONAL_WORD, window.notional, 'usd', 'coordinator-window-notional')
+  numberCell(host, factory, COORDINATOR_WINDOW_COMPUTE_WORD, window.compute, 'usd', 'coordinator-window-compute')
+  if (window.daysUnknown.length === 0) return
+  const line = cell(host, factory, 'p', 'coordinator-window-unknown')
+  literal(cell(line, factory, 'span', 'coordinator-window-unknown-word'), COORDINATOR_WINDOW_UNKNOWN_WORD)
+  for (const day of window.daysUnknown) {
+    textCell(line, factory, 'span', day, 'label', 'days_unknown[]', 'coordinator-window-unknown-day')
+  }
+}
+
+/**
  * fillCoordinatorTotals draws the fleet's strip: what the four documents the
  * page read say about the fleet as a whole.
  *
@@ -2163,10 +2368,94 @@ export function coordinatorJobsFloorNote(
   factory: ScreenFactory,
   version: string,
 ): ScreenElement {
-  const note = make(factory, 'p', 'coordinator-jobs-note')
-  literal(cell(note, factory, 'span', 'coordinator-jobs-floor-word'), COORDINATOR_JOBS_FLOOR_WORD)
-  textCell(note, factory, 'span', version, 'label', 'cliVersion', 'coordinator-jobs-floor-version')
+  return floorNote(
+    factory,
+    make(factory, 'p', 'coordinator-jobs-note'),
+    'coordinator-jobs-floor-word',
+    'coordinator-jobs-floor-version',
+    COORDINATOR_JOBS_FLOOR_WORD,
+    version,
+  )
+}
+
+/** CoordinatorWindowNote is why the fleet's strip draws no window instead of a
+ * read's figures: the CLI in use is below the floor the command needs, or the
+ * reduced mode withholds it. Both are the console's own sentences about its own
+ * gap, and both stand where the window would. */
+export type CoordinatorWindowNote =
+  | { readonly kind: 'floor'; readonly version: string }
+  | { readonly kind: 'hidden' }
+
+/** coordinatorWindowNote draws that sentence, in `coordinatorJobsFloorNote`'s
+ * shape: the console's word, and -- for a CLI below the floor -- the version
+ * line main's handshake read, through `putText` in the class a version is. */
+export function coordinatorWindowNote(factory: ScreenFactory, note: CoordinatorWindowNote): ScreenElement {
+  const element = make(factory, 'p', 'coordinator-window-note')
+  if (note.kind === 'hidden') return literal(element, COORDINATOR_WINDOW_HIDDEN_WORD)
+  return floorNote(
+    factory,
+    element,
+    'coordinator-window-floor-word',
+    'coordinator-window-floor-version',
+    COORDINATOR_WINDOW_FLOOR_WORD,
+    note.version,
+  )
+}
+
+/** floorNote is the one shape both floor sentences are drawn in: the paragraph
+ * the caller made, the console's own word in a span, and the CLI's version line
+ * in a span after it. The version is main's, read by the handshake, and it goes
+ * through `putText` for the reason every document string does: a hostile version
+ * line is a version line drawn as text rather than an element or an attribute.
+ *
+ * The paragraph is the caller's, and it is made there rather than here, because
+ * the tag-and-class pair a note is drawn as belongs at its call site:
+ * `theme-selectors.test.ts` reads the renderer for those pairs and refuses a
+ * rule that qualifies a hook with a tag nothing draws, so a helper that spelled
+ * the tag itself would leave both rules unverifiable. */
+function floorNote(
+  factory: ScreenFactory,
+  note: ScreenElement,
+  wordClass: string,
+  versionClass: string,
+  sentence: string,
+  version: string,
+): ScreenElement {
+  literal(cell(note, factory, 'span', wordClass), sentence)
+  textCell(note, factory, 'span', version, 'label', 'cliVersion', versionClass)
   return note
+}
+
+/** DrawnRefreshLine is the line a read that **refused** is drawn with: the row
+ * the stamp is, and the one control that row holds. */
+export interface DrawnRefreshLine {
+  readonly root: ScreenElement
+  readonly refresh: ScreenElement
+}
+
+/**
+ * coordinatorRefreshLine draws the line a refused read is left with: the stamp's
+ * own row and its one control, and **no `as of` anywhere in it**.
+ *
+ * A refusal is not a dead end (K4's and K5's follow-ups). The stamp is drawn with
+ * what a read answered -- the window's figures, the declarations -- so a section
+ * whose **first** read was refused has nothing to draw it beside, and would hold
+ * the CLI's own sentence and no press at all. This is that press, on its own: the
+ * same read the section makes when the operator's first press is made again.
+ *
+ * **No time is claimed.** A stamp says when what is on screen was read; a read
+ * that refused read nothing, and the only clock in hand is the *previous* read's
+ * -- dating the CLI's sentence with it would date the sentence with a read that
+ * has nothing to do with it. So the row is the stamp's (`p.console-stamp`, one
+ * rule for both) with the control as its only child.
+ */
+export function coordinatorRefreshLine(factory: ScreenFactory): DrawnRefreshLine {
+  const root = make(factory, 'p', STAMP_CLASS)
+  const refresh = make(factory, 'button', STAMP_REFRESH_CLASS)
+  refresh.setAttribute('type', 'button')
+  literal(refresh, STAMP_REFRESH_LABEL)
+  root.append(refresh)
+  return { root, refresh }
 }
 
 /** DrawnCoordinatorJobs is the job list's own section: the section the entry
@@ -2516,6 +2805,10 @@ export interface DrawnCoordinatorFrame {
   readonly blindHost: ScreenElement
   readonly totals: ScreenElement
   readonly totalsSlot: ScreenElement
+  /** the strip's **second** busy host (console 0.119.0): where the window's read
+   * puts its own mark, so the sweep's three reads and the summary's one can be in
+   * flight at once without either claiming the other's section */
+  readonly windowSlot: ScreenElement
   /** the job list's section (K4): drawn empty in the frame, because nothing is
    * read for it until the operator presses its control, and filled by the entry
    * from then on. It is a section of the frame and not of the model for that
@@ -2567,6 +2860,10 @@ export function renderCoordinatorFrame(
   }
   const blindHost = cell(queue, factory, 'div', COORDINATOR_BLIND_HOST_CLASS)
   const totals = cell(root, factory, 'section', COORDINATOR_TOTALS_CLASS)
+  // The window's slot is drawn first because the window is the strip's first
+  // region: it is the fleet over a period, and the counts under it are the fleet
+  // as the sweep last read it.
+  const windowSlot = cell(totals, factory, 'div', BUSY_SLOT_CLASS, COORDINATOR_WINDOW_SLOT_CLASS)
   const totalsSlot = cell(totals, factory, 'div', BUSY_SLOT_CLASS)
   const jobsSection = cell(root, factory, 'section', COORDINATOR_JOBS_CLASS)
   const jobsHead = cell(jobsSection, factory, 'div', COORDINATOR_JOBS_HEAD_CLASS)
@@ -2605,6 +2902,7 @@ export function renderCoordinatorFrame(
     blindHost,
     totals,
     totalsSlot,
+    windowSlot,
     jobs,
     transcript: { section: transcriptSection, host: transcriptHost, slot: transcriptSlot },
   }
@@ -2870,6 +3168,7 @@ export function renderCoordinator(
     fillCoordinatorQueuePart(factory, model, source, frame.parts[source])
   }
   fillCoordinatorBlind(factory, model, frame.blindHost)
+  fillCoordinatorWindow(factory, model, frame.totals)
   fillCoordinatorTotals(factory, model, frame.totals)
   // The job list is drawn in the state a caller that holds every *other*
   // document is in: the jobs are the one read rule 5 keeps out of a first

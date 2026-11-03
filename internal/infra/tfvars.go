@@ -203,6 +203,22 @@ type CredentialsServiceSpec struct {
 	// emails here would be a second derivation that can drift from the
 	// accounts the deployer creates.
 	JobAccounts []CredentialsJob `json:"job_accounts"`
+	// VerifierAccounts are the identities that may ask the service whether a
+	// verdict's signature is its own (C3.9g1, D1068): the coordinator's
+	// account once it exists, and the owner's for a manual check. The module
+	// renders them as the ONE environment variable it sets only when this
+	// field is set — an installation that names no verifier starts the same
+	// service with the same seven names, and the process reads the eighth as
+	// an optional value whose absence is an empty list, which is a route that
+	// refuses every caller rather than a service that will not start.
+	//
+	// The value is the published policy node's list, not this machine's
+	// opinion of it: the owner writes it in the local config, `fugaro update`'s
+	// policy stage publishes it, and the same run's credentials stage reads it
+	// back and hands it here (localcfg's keep rule is what makes a config that
+	// states none keep the node's). Omitted when empty, so an installation
+	// that names no verifier renders exactly the seven names it always did.
+	VerifierAccounts []string `json:"verifier_accounts,omitempty"`
 	// URL is the service's OWN URL, the audience its callers' Google ID
 	// tokens are minted for. It is empty on the apply that CREATES the
 	// service: Cloud Run assigns the URL, nothing in the module may read the
@@ -286,7 +302,15 @@ var credsImageReleaseRE = regexp.MustCompile(`:([0-9]+\.[0-9]+\.[0-9]+)@sha256:`
 // reads that same database, and a service with no database in its environment
 // refuses to bind a port. Both halves are refused here by name rather than
 // written empty, which is what the revision would refuse by.
-func Credentials(lc *localcfg.Config, image string) (CredentialsServiceSpec, error) {
+//
+// publishedVerifiers is the verifier list the published policy node carries,
+// which the caller reads and this writer cannot: the list reaches the service
+// by two paths (the node, and the variable this function fills), and the rule
+// that joins them is localcfg's — the configuration's own list when it states
+// one, the node's otherwise — so a second operator's config, written before
+// the key existed, does not render the variable null and empty a route another
+// machine set up (C3.9g1, D1075).
+func Credentials(lc *localcfg.Config, image string, publishedVerifiers []string) (CredentialsServiceSpec, error) {
 	if !credsImageRE.MatchString(image) {
 		return CredentialsServiceSpec{}, userErr("the credentials service's image %q must be pinned by digest (ending in @sha256: and 64 lower-case hex digits): a tag is mutable, and this service reads every model credential the installation holds", image)
 	}
@@ -309,6 +333,9 @@ func Credentials(lc *localcfg.Config, image string) (CredentialsServiceSpec, err
 		FirebaseProject: b.FirebaseProject,
 		RTDBURL:         b.RTDBURL,
 		JobAccounts:     jobs,
+		// The one rule, applied here as the publisher applies it: an explicit
+		// empty list clears the route and is written as no entry at all.
+		VerifierAccounts: lc.VerifierAccountsEffective(publishedVerifiers),
 	}, nil
 }
 

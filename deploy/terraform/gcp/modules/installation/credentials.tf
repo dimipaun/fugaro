@@ -386,9 +386,12 @@ resource "google_cloud_run_v2_service" "credentials" {
       }
 
       # The service's whole configuration (C1.14's `fugaro credentials serve`
-      # reads exactly these seven names, and internal/infra/tf's
-      # credentialsServiceEnv is the allow-list that refuses an eighth at plan
-      # time). No credential is among them: it reads the one bundle secret as
+      # reads exactly these names, and internal/infra/tf's
+      # credentialsServiceEnv is the allow-list that refuses anything else at
+      # plan time). Seven of them are always set and the process REQUIRES
+      # them; the eighth, the verifier list below, is rendered only when the
+      # installation names a verifier and is read as an optional value. No
+      # credential is among them: it reads the one bundle secret as
       # its own account, by the name it derives from FUGARO_PROJECT (the
       # project-wide container of the logical name "creds-bundle",
       # internal/backend/gcp's ProjectSecretID — the same value
@@ -445,6 +448,24 @@ resource "google_cloud_run_v2_service" "credentials" {
       env {
         name  = "FUGARO_JOB_ACCOUNTS"
         value = jsonencode(var.credentials_service.job_accounts)
+      }
+      # The verifier list: the addresses that may ask the verify route whether
+      # a verdict's signature is this service's (C3.9g1, D1068). It is the one
+      # name this module renders CONDITIONALLY, and both halves of that matter:
+      # an installation that never names a verifier renders exactly the seven
+      # names above, so its plan is unchanged by this member, and an
+      # installation that does renders the eighth — while the process reads it
+      # as an optional value, so a service deployed without it starts with an
+      # EMPTY verifier list (a route that refuses every caller) rather than
+      # refusing to bind a port. That is the direction the design fixes: an
+      # empty list is a statement, and an installation that has not opted into
+      # a coordinator is not a broken deployment.
+      dynamic "env" {
+        for_each = var.credentials_service.verifier_accounts == null ? [] : [jsonencode(var.credentials_service.verifier_accounts)]
+        content {
+          name  = "FUGARO_VERIFIER_ACCOUNTS"
+          value = env.value
+        }
       }
     }
   }

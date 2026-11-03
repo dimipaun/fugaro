@@ -4021,9 +4021,24 @@ span.coordinator-blind-word {
 }
 
 /* The strip's own mark takes a line of its own, so the six figures it is
- * reading stay on one line above it. */
+ * reading stay on one line above it. It is also the window's slot, for the same
+ * reason and one of its own: the strip has two reads behind it (console 0.119.0)
+ * and each of their marks gets a line of its own rather than sitting in the
+ * middle of the figures the other read drew. */
 .coordinator-totals .console-busy-slot {
   flex-basis: 100%;
+}
+
+/* The two sentences the strip says in its own words: the days nothing answered
+ * for, and a CLI too old for the window's command. Neither is a figure, so
+ * neither may take a cell's shape -- they take a line of the strip's own, in the
+ * quiet tone the queue's and the job list's notes do. */
+p.coordinator-window-unknown,
+p.coordinator-window-note {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-xs);
 }
 
 /* ---- The job list (console 0.119.0, K4) ---------------------------------- */

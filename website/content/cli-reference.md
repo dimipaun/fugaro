@@ -87,7 +87,8 @@ Subcommands:
 
 Declare a named Claude account and the repositories its token may be used by
 
-Declare a named Claude OAuth account in this project's local config.
+Declare a named Claude OAuth account in this project, and converge the
+installation on it.
 
 It writes claude_accounts.<name>.allow_data_to — the repositories the account's
 token may be used by, and the field every other rule is built on — and adds the
@@ -99,8 +100,20 @@ every repository on it: an account that covers less is refused before the file
 is touched, naming the repositories it is missing, because widening the account
 silently is what that rule exists to prevent.
 
-The token itself is a second command's: this one declares the account, and the
-converge that stores the secret and deploys the jobs is not built yet.
+Then it converges, in one command and behind the one confirmation above: the
+token is stored project-wide as a new version of the account's own secret, the
+account's broken mark is cleared, and the publisher, the job set and this
+checkout's repository root are converged — the same stages fugaro update runs,
+invoked here rather than forked. It ends on the line that says what is left,
+which is a fugaro run and never an update.
+
+--claude runs Anthropic's own claude setup-token on your own terminal first,
+so the login is the one you would have run yourself: it gets your stdin, stdout
+and stderr, and fugaro reads none of what it prints. The token is then read at
+the hidden prompt below, exactly as it is without the flag — that prompt is the
+only source of the value, so a login you cancelled or that failed costs one
+paste rather than the command. A login that failed stores nothing and still
+leaves you the prompt.
 
 Run it at your own terminal: this file decides where a credential may be sent,
 so a coding agent's session is refused, --yes included.
@@ -111,6 +124,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--claude` | bool | `false` | no | run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt |
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one) |
 | `--repos` | string | "" | no | the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin) |
@@ -2323,8 +2337,48 @@ Flags:
 
 Subcommands:
 
+- `fugaro models add` -- Let this project run a model: claim it on a route and price it
 - `fugaro models ls` -- Show this project's routes, its models and what each repository runs
+- `fugaro models rm` -- Stop letting this project run a model: drop its claim, price and allow-list entry
 - `fugaro models search` -- Find a model in the built-in price catalog and the Claude table
+- `fugaro models use` -- Point one repository's own config at a model, in its working tree
+
+## `fugaro models add`
+
+Let this project run a model: claim it on a route and price it
+
+Add a model to this project's own config.
+
+The model ID is appended to a route's models — the exact ID, never a
+pattern — and a model the built-in price catalog does not price needs
+--price-in and --price-out (dollars per million tokens), which write a
+model_prices entry. When budget.allowed_models is set the ID is appended to
+it; when it is absent it stays absent.
+
+Only the keys it changes are rewritten: every comment and every other key of
+the file is kept.
+
+The change reaches a run through `fugaro update`, which publishes the policy
+node: a model_prices entry and a budget.allowed_models entry are what a run
+reads from there. A route's own claim is not — a run routes by the copy of
+the providers block in its job's environment — so a repository routes to the
+model once `fugaro update --repo .` has been run in its checkout.
+
+Usage: `fugaro models add <id>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--price-in` | float64 | `0` | no | input price, dollars per million tokens (required for a model the catalog does not price) |
+| `--price-out` | float64 | `0` | no | output price, dollars per million tokens (required for a model the catalog does not price) |
+| `--route` | string | "" | no | the route that claims the model (default: the route that claims it already, or the only one) |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro models ls`
 
@@ -2361,6 +2415,43 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro models rm`
+
+Stop letting this project run a model: drop its claim, price and allow-list entry
+
+Remove a model from this project's own config.
+
+The model's exact entry is dropped from the route's models, its model_prices
+entry and its budget.allowed_models entry. A pattern that claims the model
+is left, and the command says so: the model stays usable until the route's
+own list stops covering it.
+
+A repository that pins the model is not refused (D783). It is a warning:
+the repositories this machine can read that pin it are named, with the role
+each names it in, and so are the repositories it cannot read. The next run
+of each one fails at launch with no provider for the model, until the pin is
+changed with `fugaro models use` or the model is added back.
+
+Only the keys it changes are rewritten: every comment and every other key of
+the file is kept. `fugaro update` publishes the policy node, which carries the
+model_prices and budget.allowed_models halves of the removal to the runs that
+read it; the route's own claims are in the copy of the providers block each
+job holds, so a repository stops routing to the model when `fugaro update
+--repo .` is run in its checkout.
+
+Usage: `fugaro models rm <id>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro models search`
 
 Find a model in the built-in price catalog and the Claude table
@@ -2383,8 +2474,41 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for search |
+| `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro models use`
+
+Point one repository's own config at a model, in its working tree
+
+Prepare the change to a repository's own fugaro.yaml that makes one role run
+a model, in the checkout's working tree for the owner to review and commit.
+
+The switch is judged the way a launch judges it: a route of the project config
+must claim the model and its allow_data_to must name the repository, the model
+must be priced, budget.allowed_models must admit it, and the repository's own
+agent.auth and budget must support a provider model. A failure is a refusal
+with nothing written, and the message names the `fugaro models add` that would
+fix a missing claim or price.
+
+Only agent.models.<role> changes: every comment and every other byte of the
+file is kept. The command never commits, pushes or opens a pull request — the
+change reaches runs when the owner's own branch is merged to the base branch,
+which is what every run reads.
+
+Usage: `fugaro models use <repo> <coder|reviewer|background> <id>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for use |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
 
@@ -3298,6 +3422,7 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | repository as owner/name (default: this checkout's origin) |
 | `--retry` | string | "" | no | launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started |
+| `--review-levels` | string | "" | no | read the run's own review levels from this YAML file, or - for stdin: the block the task stores as review_levels (l1, l2, l3, each of model, effort, none and focus), decoded strictly, with no key on no level meaning the configuration decides it. Asking for levels needs a job image whose runner acts on them, so a launch on an older one is refused and names fugaro image refresh; without the flag the run resolves its levels from its configuration and its mode alone |
 | `--run-id` | string | "" | no | run ID to use; repeating one reports its launch instead of starting another |
 | `--task-file` | string | "" | no | read the task from this file, or - for stdin |
 | `--tier` | string | "" | no | the expectation tier to dispatch this run at: trivial, small, medium, large. It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all |
@@ -3833,11 +3958,13 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--all-repos` | bool | `false` | no | read every repository this machine remembers |
 | `--changed` | bool | `false` | no | show only the rows a layer decides |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--grep` | string | "" | no | show only the rows whose key or a rendered column matches this regexp |
 | `-h`, `--help` | bool | `false` | no | help for settings |
 | `--json` | bool | `false` | no | print the versioned document |
 | `--layer` | stringSlice | `[]` | no | read only these layers (default, project, profile, repo, flag, local, shared, policy, caps, env) |
 | `--offline` | bool | `false` | no | read the offline layers only |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--repo` | string | "" | no | read this repository's fugaro.yaml (owner/name) |
 | `--why` | bool | `false` | no | show the winning level for each key |
 
@@ -3863,8 +3990,10 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `-h`, `--help` | bool | `false` | no | help for get |
 | `--json` | bool | `false` | no | print the versioned document |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--repo` | string | "" | no | read this repository's fugaro.yaml (owner/name) |
 
 Subcommands:
@@ -3904,8 +4033,10 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--add` | string | "" | no | add an item to a string-list key |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--remove` | string | "" | no | remove an item from a string-list key |
 | `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name) |
 | `--yes` | bool | `false` | no | confirm the write without a prompt |
@@ -3936,8 +4067,10 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `-h`, `--help` | bool | `false` | no | help for unset |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name) |
 | `--yes` | bool | `false` | no | confirm the write without a prompt |
 

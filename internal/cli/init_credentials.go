@@ -430,7 +430,31 @@ func (s *credentialsStage) prepare(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	svc, err := infra.Credentials(e.lc, image)
+	// The verifier list is the one value this stage takes from the published
+	// node rather than from this machine's configuration (C3.9g2, D1075): a
+	// second operator's config states none, and the node is where the owner's
+	// list is. The read is fail-closed — publishedPolicyOf refuses a node this
+	// Fugaro cannot read, and the stage stops rather than writing a tfvars
+	// from a value it could not read. This stage runs BEFORE the policy stage
+	// (init_stages.go), so what it reads is the node the previous `fugaro
+	// update` published, which is exactly the case the keep rule is for.
+	lc, db, err := budgetDBFor(ctx, e.lc)
+	if err != nil {
+		return err
+	}
+	_, found, raw, err := readPolicyNode(ctx, db, lc)
+	if err != nil {
+		return err
+	}
+	published, err := publishedPolicyOf(raw, found)
+	if err != nil {
+		return err
+	}
+	var publishedVerifiers []string
+	if published != nil {
+		publishedVerifiers = published.VerifierAccounts
+	}
+	svc, err := infra.Credentials(e.lc, image, publishedVerifiers)
 	if err != nil {
 		return userErr("%v", err)
 	}

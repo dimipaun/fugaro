@@ -680,6 +680,8 @@ var localRows = []Row{
 
 	loc("review_floor", "none: no floor is added", "rigor floor", docRigor),
 
+	loc("verifier_accounts", "none: nobody may ask the credentials service to verify a signature", "secrets", docSetup),
+
 	loc("repos.*.provider", "none", "project", docSetup),
 	loc("repos.*.base_branch", "the project's base_branch", "project", docSetup),
 	loc("repos.*.workflows", "every workflow the repository defines", "project", docSetup),

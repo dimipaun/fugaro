@@ -476,6 +476,16 @@ export class CliSource implements FugaroSource {
     return this.#readDocument('runs.stats', args)
   }
 
+  /** summaryRuns reads `runs summary --json`: the one read whose child touches
+   * neither a run object nor the runs bucket, since the command counts the
+   * budget database's day nodes and the spend history's daily documents. Its
+   * window is the console's own closed set, so the only argv this method can
+   * build is `runs summary --json` with at most one `--since=<window>` word
+   * (`src/main/spawn.ts`). */
+  summaryRuns(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('runs.summary', args)
+  }
+
   /** planStatus reads `plan status --json`, which is the one read whose answer
    * depends on **where** the child runs: the CLI walks `docs/` from its working
    * directory (`internal/cli/plan_status.go`), and that directory is this
@@ -563,6 +573,17 @@ export class CliSource implements FugaroSource {
 
   listAccounts(args: ValidatedArguments): Promise<Snapshot> {
     return this.#readDocument('accounts.inventory', args)
+  }
+
+  /** listModels reads `models ls --json`: the project's routes, the models a run
+   * can name and each repository's pins (console 0.119.0, the owner's ruling of
+   * 2026-11-02; contract §6.18). The argv is the spawn row's own words -- the
+   * command, `--json` and the installation's `--project` -- because the
+   * operation takes no argument at all, and the read is offline: the CLI's own
+   * comment says it reaches no bucket, no database and no host, so this child
+   * mints nothing of the host's. */
+  listModels(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('models.list', args)
   }
 
   environmentReport(args: ValidatedArguments): Promise<Snapshot> {
@@ -993,6 +1014,7 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     runReport: (args) => read('spend.report', (source) => source.runReport(args)),
     listRuns: (args) => read('runs.list', (source) => source.listRuns(args)),
     statsRuns: (args) => read('runs.stats', (source) => source.statsRuns(args)),
+    summaryRuns: (args) => read('runs.summary', (source) => source.summaryRuns(args)),
     /**
      * planStatus is the surface's one read with a precondition and a cadence.
      *
@@ -1057,6 +1079,12 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     runLogLink: (args) => read('run.logLink', (source) => source.runLogLink(args)),
     listSecrets: (args) => read('secrets.inventory', (source) => source.listSecrets(args)),
     listAccounts: (args) => read('accounts.inventory', (source) => source.listAccounts(args)),
+    /** listModels has no precondition and no cadence, for coordinatorIntents's
+     * reason: the read is the installation's own project config and the price
+     * catalog it already has, with no bucket, no database and no host behind it,
+     * so there is no directory on this machine to refuse for and nothing to be
+     * gained by holding a floor between two calls. */
+    listModels: (args) => read('models.list', (source) => source.listModels(args)),
     environmentReport: (args) => read('environment.report', (source) => source.environmentReport(args)),
     forget: drop,
     close: drop,

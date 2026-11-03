@@ -108,6 +108,14 @@ func (c *Config) Shared() *Config {
 	// its own floor — and ParseShared refuses the key besides, because a
 	// shared config carrying it was not written by the converge.
 	s.ReviewFloor = nil
+	// VerifierAccounts is the owner's policy and travels the floor's way, into
+	// the policy node — and it is dropped here for a sharper reason than the
+	// floor's: it is the list the credentials service admits to its verify
+	// route, so a launcher who could write it into the runs bucket's shared
+	// file could admit its own address there. ParseShared refuses the key
+	// besides, because a shared config carrying it was not written by the
+	// converge.
+	s.VerifierAccounts = nil
 	s.Repos = withoutBaseBranches(c.Repos)
 	return &s
 }

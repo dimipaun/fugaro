@@ -52,7 +52,7 @@ import { describe, expect, it } from 'vitest'
 
 import { parseInstallationsDocument } from '../../src/main/installlist'
 import { decodeLaunchResult } from '../../src/main/launchrules'
-import { decodeCoordinatorStatus, decodePlanStatus } from '../../src/shared/schema'
+import { decodeCoordinatorStatus, decodePlanStatus, decodeRunsSummary, RUNS_SUMMARY_VERSION } from '../../src/shared/schema'
 
 /** STUB is the fixture this file runs, at the path the e2e helper copies from. */
 const STUB = join(__dirname, '..', 'fixtures', 'bin', 'fugaro')
@@ -212,6 +212,49 @@ describe('the e2e stub’s own answers', () => {
     expect(answered.stderr).toContain('takes no further arguments')
   })
 
+  it('answers `runs summary --json` for the window it was asked for, and the console reads it', () => {
+    // The Coordinator view's fleet strip (console 0.119.0): the console spawns
+    // `runs summary --json --since=7d --project P`, and this document is what the
+    // strip's ten figures are drawn from. It is seeded per window, so the case a
+    // spec is about -- a window that stayed unknown, a `compute_micros` that is
+    // `null` -- is the case its own document carries.
+    const directory = install()
+    writeFileSync(join(directory, 'project.txt'), 'e2e\n')
+    const seeded = `${JSON.stringify({
+      v: RUNS_SUMMARY_VERSION,
+      project: 'e2e',
+      since: '2026-10-27',
+      until: '2026-11-02',
+      repositories: [],
+      totals: {
+        runs: 6,
+        states: { succeeded: 3, failed: 2, halted: 0, cancelled: 0, infra_error: 0, other: 1 },
+        spent_micros: 1_500_000,
+        notional_micros: 1_150_000,
+        compute_micros: null,
+        compute_runs: 0,
+      },
+      days_unknown: ['2026-10-29'],
+      notes: [],
+    })}\n`
+    writeFileSync(join(directory, 'runs-summary-7d.json'), seeded)
+    const answered = run(directory, ['runs', 'summary', '--json', '--since=7d', '--project', 'e2e'])
+    expect(answered.status).toBe(0)
+    expect(answered.stdout).toBe(seeded)
+    const decoded = decodeRunsSummary(JSON.parse(answered.stdout))
+    expect(decoded.ok).toBe(true)
+    expect(decoded.ok && decoded.value.totals.computeMicros).toBeNull()
+    expect(decoded.ok && decoded.value.daysUnknown).toEqual(['2026-10-29'])
+    // The window is what names the document, so a window nothing was seeded for
+    // is refused by name rather than answered with the other window's figures --
+    // and a read with no window at all is one this stub cannot answer either.
+    const other = run(directory, ['runs', 'summary', '--json', '--since=1d', '--project', 'e2e'])
+    expect(other.status).toBe(2)
+    expect(other.stderr).toContain("no runs summary document is seeded for '1d'")
+    const windowless = run(directory, ['runs', 'summary', '--json', '--project', 'e2e'])
+    expect(windowless.status).toBe(2)
+    expect(windowless.stderr).toContain('was asked for no --since')
+  })
   it('answers a launch with the run id and repository it was handed, and the console reads it', () => {
     // The console's one write (design section 5.1 rule 11, V2.5.1a): a spec that
     // launches in a real window reads this answer back through the launcher's own

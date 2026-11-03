@@ -348,6 +348,62 @@ func TestUnpricedModelRefused(t *testing.T) {
 	}
 }
 
+// TestPinWarningsCoverALevelModel: a review level's own model is a model the
+// run charges (L3.1, agent.levels.lN.model), so the pins' warnings are its
+// too — the placeholder price an unverified row carries and the catalog row a
+// stale catalog forced to the dearest end — each under the key the owner wrote
+// and each naming the level, which is all a surface that shows a warning
+// without its path (diagnose, the runner's log line) has to go on.
+func TestPinWarningsCoverALevelModel(t *testing.T) {
+	a := pinnedAgent()
+	a.Levels = ReviewLevels{L3: &LevelSetting{Model: "deepseek/deepseek-v4-flash"}}
+	ws := PinWarnings(a, placeholderPrices())
+	if got := paths(ws); got != "agent.levels.l3.model" {
+		t.Fatalf("an unverified level model warned under %q: %v", got, ws)
+	}
+	if ws[0].Code != CodeUnverifiedPrice || !strings.Contains(ws[0].Message, "level l3") || !strings.Contains(ws[0].Message, "unverified") {
+		t.Errorf("the level model's warning: %+v", ws[0])
+	}
+	// A level with no model of its own, and a level whose model is one of the
+	// run's pins, are that pin: the run resolves every level that runs onto a
+	// model (the runner's setLevelModel), so a warning of their own would say
+	// the background pin's sentence again for the level.
+	b := pinnedAgent()
+	b.Levels = ReviewLevels{L1: &LevelSetting{Model: "claude-haiku-4-5"}, L3: &LevelSetting{Effort: "high"}}
+	if ws := PinWarnings(b, pricing.Embedded()); len(ws) != 0 {
+		t.Errorf("a level on a pin, and a level with no model of its own: %v", ws)
+	}
+	// The stale-catalog warning reaches a level model too.
+	b = pinnedAgent()
+	b.Levels = ReviewLevels{L2: &LevelSetting{Model: catModel}}
+	ws = PinWarnings(b, mustTable(t, providers(nil), nil, fixtureCatalog("2026-03-01")))
+	if got := paths(ws); got != "agent.levels.l2.model" {
+		t.Fatalf("a stale level model warned under %q: %v", got, ws)
+	}
+	if ws[0].Code != CodeCatalogPrice || !strings.Contains(ws[0].Message, "stale") || !strings.Contains(ws[0].Message, "level l2") {
+		t.Errorf("the stale level model's warning: %+v", ws[0])
+	}
+	// ...which is the same answer for a provider model the pins already carry:
+	// the level's copy is not a second pin.
+	c := providerAgent("deepseek/deepseek-v4-flash")
+	c.Levels = ReviewLevels{L3: &LevelSetting{Model: "deepseek/deepseek-v4-flash"}}
+	if got := paths(PinWarnings(c, placeholderPrices())); got != "agent.models.coder,agent.models.background" {
+		t.Errorf("a level model that is a pin warned under %q", got)
+	}
+	// Two levels that name one model of their own get one warning each, under
+	// their own key: a warning is about a place in the file, as the coder's and
+	// the background's two warnings for one model have always been.
+	d := pinnedAgent()
+	d.Levels = ReviewLevels{L1: &LevelSetting{Model: catModel}, L3: &LevelSetting{Model: catModel}}
+	ws = PinWarnings(d, mustTable(t, providers(nil), nil, fixtureCatalog("2026-10-14")))
+	if got := paths(ws); got != "agent.levels.l1.model,agent.levels.l3.model" {
+		t.Fatalf("two levels on one model warned under %q: %v", got, ws)
+	}
+	if !strings.Contains(ws[0].Message, "level l1") || !strings.Contains(ws[1].Message, "level l3") {
+		t.Errorf("the two warnings do not name their level: %v", ws)
+	}
+}
+
 func TestUnverifiedPriceWarns(t *testing.T) {
 	// The placeholder row a provider model used to get from the embedded
 	// table (the built-in catalog prices provider models now): built here so

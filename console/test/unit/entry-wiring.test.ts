@@ -92,6 +92,7 @@ import {
   SWITCHER_MENU_CLASS,
   SWITCHER_NAME_CLASS,
   SWITCHER_VERSION_CLASS,
+  COORDINATOR_SUMMARY_SINCE,
   GRAPH_BUSY,
   RUNS_SINCE,
   VIEW_PANEL_CLASS,
@@ -127,6 +128,7 @@ import {
   STAMP_AT_CLASS,
   STAMP_CLASS,
   STAMP_REFRESH_CLASS,
+  STAMP_REFRESH_LABEL,
 } from '../../src/renderer/section'
 import {
   COORDINATOR_SHAPE,
@@ -154,6 +156,11 @@ import {
   COORDINATOR_SOURCE_LINE,
   COORDINATOR_TOTALS_BUSY,
   COORDINATOR_TRANSCRIPT_BUSY,
+  COORDINATOR_WINDOW_BUSY,
+  COORDINATOR_WINDOW_FLOOR_WORD,
+  COORDINATOR_WINDOW_RUNS_WORD,
+  COORDINATOR_WINDOW_SLOT_CLASS,
+  COORDINATOR_WINDOW_SUCCEEDED_WORD,
   COORDINATOR_TRANSCRIPT_CLASS,
   COORDINATOR_TRANSCRIPT_WORD,
   COORDINATOR_JOBS_BUSY,
@@ -2323,6 +2330,17 @@ function queueBridge(
     calls.push({ name: 'coordinatorIntents', args })
     return intents === undefined ? { ok: true, data: { document: { repos: [] } } } : intents(args)
   }
+  // The strip's window (0.119.0) answers with a document for the same reason and
+  // one of its own: the read is a *second* section of a panel whose own cases
+  // assert on what the first one drew, and an empty window draws figures that
+  // belong to no read a case named.
+  const summary = answers['summaryRuns']
+  base.bridge['summaryRuns'] = (args: unknown): unknown => {
+    calls.push({ name: 'summaryRuns', args })
+    return summary === undefined
+      ? { ok: true, data: { document: AN_EMPTY_WINDOW } }
+      : summary(args)
+  }
   return base
 }
 
@@ -3284,6 +3302,9 @@ const REPORT_REFUSAL = 'the report read refused, in the CLI’s own words'
 const RUNS_REFUSAL = 'the run list refused, in the CLI’s own words'
 const COORDINATOR_REFUSAL = 'the coordinator read refused, in the CLI’s own words'
 const INTENTS_REFUSAL = 'the declared intents read refused, in the CLI’s own words'
+/** WINDOW_REFUSAL is a refused `runs summary --json`, in the CLI's own words: the
+ * sentence the strip draws beside the figures that are not its read's. */
+const WINDOW_REFUSAL = 'the window’s read refused, in the CLI’s own words'
 
 /** AN_INTENTS_DOCUMENT is one stored declaration in the `--all` shape the
  * pane's own read prints (`coordinator intents --all --json`, K5). The person
@@ -4842,6 +4863,56 @@ const QUEUE_PLAN: unknown = {
   repo: QUEUE_REPO,
 }
 
+/** aWindow is one `runs summary --json` document (console 0.119.0): the window
+ * the fleet strip reads, its runs counted by state and what they spent. The
+ * defaults are a window every source answered for whose compute the CLI priced
+ * in full, so a case that is about something else draws no unknown-day line and
+ * no lower bound. */
+function aWindow(
+  options: {
+    readonly runs?: number
+    readonly succeeded?: number
+    readonly failed?: number
+    readonly computeMicros?: number | null
+    readonly computeRuns?: number
+    readonly daysUnknown?: readonly string[]
+  } = {},
+): Readonly<Record<string, unknown>> {
+  const runs = options.runs ?? 4
+  return {
+    v: 1,
+    project: 'acme',
+    since: '2026-10-27',
+    until: '2026-11-02',
+    repositories: [],
+    totals: {
+      runs,
+      states: {
+        succeeded: options.succeeded ?? 0,
+        failed: options.failed ?? 0,
+        halted: 0,
+        cancelled: 0,
+        infra_error: 0,
+        other: 0,
+      },
+      spent_micros: 0,
+      notional_micros: 0,
+      compute_micros: options.computeMicros === undefined ? 0 : options.computeMicros,
+      compute_runs: options.computeRuns ?? runs,
+    },
+    days_unknown: options.daysUnknown ?? [],
+    notes: [],
+  }
+}
+
+/** AN_EMPTY_WINDOW is the window `queueBridge` answers with when a case says
+ * nothing about it: a read that succeeded and counted nothing. It is a document
+ * and not a refusal for the pane's own reason -- a case about the queue or the
+ * job list must not find a second refusal on the page it asserts about -- and it
+ * is empty rather than populated so the strip's own six figures stay the only
+ * ones a case has to know. */
+const AN_EMPTY_WINDOW = aWindow({ runs: 0 })
+
 /** jobsBridge is `queueBridge` with one thing a case about the job list's floor
  * needs and it cannot give: **the CLI version line the handshake answered with**.
  * The paged read is gated on `RUNS_LIST_PAGE_CLI_FLOOR`, so both sides of that
@@ -5102,6 +5173,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     // of 2026-10-31, drawn).
     expect(busyLabels(document)).toEqual([
       COORDINATOR_QUEUE_BUSY,
+      COORDINATOR_WINDOW_BUSY,
       COORDINATOR_TOTALS_BUSY,
       COORDINATOR_BUSY,
       COORDINATOR_TRANSCRIPT_BUSY,
@@ -5172,6 +5244,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     expect(stamped(document), 'the stale view was served without its stamp').not.toBeNull()
     expect(busyLabels(document)).toEqual([
       COORDINATOR_QUEUE_BUSY,
+      COORDINATOR_WINDOW_BUSY,
       COORDINATOR_TOTALS_BUSY,
       COORDINATOR_BUSY,
       COORDINATOR_TRANSCRIPT_BUSY,
@@ -5202,7 +5275,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     const document = await boot(bridge, new FakeDocument())
     const before = calls.length
     buttonFor(document, 'coordinator').click()
-    // **Nothing is awaited, and that is the claim**: the four calls went out in
+    // **Nothing is awaited, and that is the claim**: the five calls went out in
     // the click's own turn, so none of them is a consequence of another. A
     // screen that asked for the plan tasks after the stored view had answered
     // would show one call here, and the queue would be behind the slowest read
@@ -5210,16 +5283,21 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     // does not make until the operator asks. The pane's own read is the fourth
     // (K5): the declarations it draws first are a document of their own, and a
     // pane that waited for the stored view would be the all-or-nothing redraw
-    // the same rule forbids.
+    // the same rule forbids. The fifth is the fleet strip's window (0.119.0):
+    // `runs summary` is a command of its own -- its document is the runs counted
+    // by day, not the run objects `runs ls` lists -- so it is the strip's second
+    // read and never a consequence of the sweep's.
     expect(calls.slice(before).map((call) => call.name)).toEqual([
       'coordinatorStatus',
       'planStatus',
       'showBudget',
+      'summaryRuns',
       'coordinatorIntents',
     ])
     // While they are all out, each section says what it is reading.
     expect(busyLabels(document)).toEqual([
       COORDINATOR_QUEUE_BUSY,
+      COORDINATOR_WINDOW_BUSY,
       COORDINATOR_TOTALS_BUSY,
       COORDINATOR_BUSY,
       COORDINATOR_TRANSCRIPT_BUSY,
@@ -5321,6 +5399,146 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     expect(holdsText(panelOf(document), 'task-three')).toBe(true)
   })
 
+
+  it('reads the fleet’s window with the tab’s other first-paint reads, and never with `runs ls`', async () => {
+    // Console 0.119.0. The strip's window is a read of its own -- `runs summary
+    // --json` counts runs by day and lists no run object -- so it goes out in the
+    // click's own turn beside the three K1 documents, and **never** waits on or
+    // triggers `runs ls`: the jobs are rule 5's read and this section does not
+    // draw a figure from them (D819).
+    const window = holding()
+    const { bridge, calls } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      summaryRuns: () => window.reply(),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const before = calls.length
+    buttonFor(document, 'coordinator').click()
+    const made = calls.slice(before)
+    expect(made.map((call) => call.name)).toContain('summaryRuns')
+    expect(
+      made.filter((call) => call.name === 'listRuns'),
+      'the Coordinator made the job list’s read as part of its first paint',
+    ).toEqual([])
+    // The window is asked for the console's own window and nothing else: the
+    // surface admits two words, and this page opens on the week.
+    expect(made.find((call) => call.name === 'summaryRuns')?.args).toEqual({ since: COORDINATOR_SUMMARY_SINCE })
+    // The strip says both of its reads out: the window's mark is its own, beside
+    // the one the K1 documents wear.
+    expect(busyLabels(document)).toEqual([
+      COORDINATOR_QUEUE_BUSY,
+      COORDINATOR_WINDOW_BUSY,
+      COORDINATOR_TOTALS_BUSY,
+      COORDINATOR_BUSY,
+      COORDINATOR_TRANSCRIPT_BUSY,
+    ])
+    // A read that has not answered draws no window, and no zero in its place --
+    // and the host its mark goes on is in the strip, because this visit reads it.
+    expect(classed(panelOf(document), 'coordinator-window-runs')).toEqual([])
+    expect(classed(panelOf(document), COORDINATOR_WINDOW_SLOT_CLASS).length).toBe(1)
+
+    window.release({ ok: true, data: { document: aWindow({ runs: 9, succeeded: 6, failed: 2 }) } })
+    await flush()
+    expect(busyLabels(document)).toEqual([])
+    expect(figureOfIn(panelOf(document), 'coordinator-window-runs')).toEqual([COORDINATOR_WINDOW_RUNS_WORD, '9'])
+    expect(figureOfIn(panelOf(document), 'coordinator-window-succeeded')).toEqual([
+      COORDINATOR_WINDOW_SUCCEEDED_WORD,
+      '6',
+    ])
+    // The strip's own figures are still there: the window is a second region of
+    // the panel, drawn beside the sweep's counts and never instead of them.
+    expect(classed(panelOf(document), 'coordinator-total-repos').length).toBe(1)
+  })
+
+  it('asks no CLI below the window’s floor for it, and draws the sentence naming the version it needs', async () => {
+    // `runs summary` landed after v0.15.0, so a CLI below `RUNS_SUMMARY_CLI_FLOOR`
+    // has no such verb and answers `unknown command "summary"`. Asking anyway
+    // would draw that failure as the fleet's week, which is a broken project
+    // rather than a fact, so the floor is asked before anything goes out.
+    const { bridge, calls } = jobsBridge(
+      {
+        coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+        planStatus: () => planStatusReply(QUEUE_PLAN),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      },
+      '0.15.3',
+    )
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    expect(calls.filter((call) => call.name === 'summaryRuns')).toEqual([])
+    expect(textIn(panelOf(document), 'coordinator-window-floor-word')).toBe(COORDINATOR_WINDOW_FLOOR_WORD)
+    expect(textIn(panelOf(document), 'coordinator-window-floor-version')).toBe('0.15.3')
+    // The sentence is the whole of what the window says: no figures behind a
+    // read that was never made, and no mark left up for one either.
+    expect(classed(panelOf(document), 'coordinator-window-runs')).toEqual([])
+    expect(busyLabels(document)).not.toContain(COORDINATOR_WINDOW_BUSY)
+    // The host the window's mark would have gone on is not kept either: a slot
+    // is a flex item of the strip, and one no read on this visit can fill is a
+    // line held open for nothing.
+    expect(classed(panelOf(document), COORDINATOR_WINDOW_SLOT_CLASS)).toEqual([])
+    // ...and the strip's own six figures are untouched by it: two reads of one
+    // panel, and only one of them is below its floor.
+    expect(classed(panelOf(document), 'coordinator-total-repos').length).toBe(1)
+  })
+
+  it('names `runs.summary` when the window’s own read is refused, and keeps the strip’s figures', async () => {
+    const window = holding()
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      summaryRuns: () => window.reply(),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    window.release({ ok: false, reason: WINDOW_REFUSAL })
+    await flush()
+    // A refusal names its own command and nothing else -- `runs.summary`, the
+    // operation's id on this surface, beside the `runs.list` and `budget.show`
+    // the same screen draws.
+    expect(classed(panelOf(document), 'unavailable-operation').map((node) => node.textContent)).toContain(
+      'runs.summary',
+    )
+    expect(holdsText(panelOf(document), WINDOW_REFUSAL)).toBe(true)
+    expect(busyLabels(document)).toEqual([])
+    // The window is gone rather than stale, and the strip's own figures are not
+    // taken down for a read that is not theirs.
+    expect(classed(panelOf(document), 'coordinator-window-runs')).toEqual([])
+    expect(classed(panelOf(document), 'coordinator-total-repos').length).toBe(1)
+  })
+
+  it('treats a window read that fails to answer at all as a refusal, and takes its mark down', async () => {
+    // `readBridgeFrom` answers `null` for a read that failed to answer -- a
+    // member that threw, or a promise that rejected, which is what `invoke` does
+    // on a channel with nothing behind it -- so a rejection reaching the entry is
+    // a bridge built by something other than that function. Left uncaught it
+    // takes the visit's `summaryOut` with it: the strip would wear the window's
+    // mark for the rest of the visit with no read left to answer it, which is a
+    // section that never settles rather than one that refused.
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      summaryRuns: () => Promise.reject(new Error('the channel is gone')),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    // The read is drawn as the refusal a reply nobody could read gets: its own
+    // command named, and the mark down.
+    expect(classed(panelOf(document), 'unavailable-operation').map((node) => node.textContent)).toContain(
+      'runs.summary',
+    )
+    expect(busyLabels(document)).not.toContain(COORDINATOR_WINDOW_BUSY)
+    // ...and the strip's own figures are not taken down for a read that is not
+    // theirs.
+    expect(classed(panelOf(document), 'coordinator-total-repos').length).toBe(1)
+  })
+
   it('draws the pane’s declared intents when the pane’s own read lands, and says when it read them', async () => {
     // K5: the pane has a read of its own -- `coordinator intents --all --json`
     // -- so it draws nothing until that read answers, and what it draws then
@@ -5389,6 +5607,98 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     expect(classed(pane, 'unavailable-operation')[0]?.textContent).toBe('coordinator.intents')
     expect(holdsText(pane, INTENTS_REFUSAL)).toBe(true)
     expect(classed(panelOf(document), 'coordinator-detail').length).toBeGreaterThan(0)
+    expect(busyLabels(document)).toEqual([])
+  })
+
+  it('reads the declarations again from the pane’s own Refresh, and keeps them under the mark', async () => {
+    // `reReadIntents` is the pane's own press, and it is not the tab's Refresh:
+    // the questions under the declarations are the stored view's and are read by
+    // that view's own control, so this one reads `coordinator intents` and
+    // nothing else -- one read, of the same kind the tab made on entry.
+    const first = holding()
+    const again = holding()
+    const asked: unknown[] = []
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      coordinatorIntents: (args) => {
+        asked.push(args)
+        return asked.length === 1 ? first.reply() : again.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    first.release({ ok: true, data: { document: AN_INTENTS_DOCUMENT } })
+    await flush()
+    const pane = classed(panelOf(document), COORDINATOR_TRANSCRIPT_CLASS)[0]
+    if (pane === undefined) throw new Error('the Coordinator drew no transcript pane')
+    expect(classed(pane, 'coordinator-transcript-intent')).toHaveLength(1)
+
+    const refresh = classed(pane, STAMP_REFRESH_CLASS)[0]
+    if (refresh === undefined) throw new Error('the pane drew no refresh control')
+    refresh.click()
+    expect(asked, 'the pane’s own Refresh read something other than the declarations').toHaveLength(2)
+    // The press is answered where it happened: the mark goes up over the pane
+    // whose read it is, and the declarations the last answer drew stay under it
+    // rather than blanking.
+    expect(busyLabels(document)).toContain(COORDINATOR_TRANSCRIPT_BUSY)
+    expect(classed(pane, 'coordinator-transcript-intent')).toHaveLength(1)
+
+    again.release({ ok: true, data: { document: AN_INTENTS_DOCUMENT } })
+    await flush()
+    expect(classed(pane, 'coordinator-transcript-intent')).toHaveLength(1)
+    expect(textIn(pane, STAMP_AT_CLASS)).toMatch(/^as of \d\d:\d\d$/)
+    expect(busyLabels(document)).toEqual([])
+  })
+
+  it('drops the pane’s clock when its own read is refused, and keeps the one press', async () => {
+    // K5's follow-up, on the #1581 review. The declarations are dropped the
+    // moment a read is refused -- a refusal is the whole of what the pane has to
+    // say -- and the clock the stamp carried was the **previous** success's, so a
+    // pane that drew it beside the sentence would be dating the CLI's refusal
+    // with a read that has nothing to do with it. The time goes, and the pane's
+    // one press stays: without it the operator's doubt has nowhere to go.
+    const first = holding()
+    const refused = holding()
+    const asked: unknown[] = []
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      coordinatorIntents: (args) => {
+        asked.push(args)
+        return asked.length === 1 ? first.reply() : refused.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    first.release({ ok: true, data: { document: AN_INTENTS_DOCUMENT } })
+    await flush()
+    const pane = classed(panelOf(document), COORDINATOR_TRANSCRIPT_CLASS)[0]
+    if (pane === undefined) throw new Error('the Coordinator drew no transcript pane')
+    expect(textIn(pane, STAMP_AT_CLASS)).toMatch(/^as of \d\d:\d\d$/)
+
+    const refresh = classed(pane, STAMP_REFRESH_CLASS)[0]
+    if (refresh === undefined) throw new Error('the pane drew no refresh control')
+    refresh.click()
+    // While the read is out the declarations on screen are still the ones that
+    // read answered, and the clock beside them is still theirs.
+    expect(textIn(pane, STAMP_AT_CLASS)).toMatch(/^as of \d\d:\d\d$/)
+    refused.release({ ok: false, reason: INTENTS_REFUSAL })
+    await flush()
+
+    expect(classed(pane, 'unavailable-operation')[0]?.textContent).toBe('coordinator.intents')
+    expect(holdsText(pane, INTENTS_REFUSAL)).toBe(true)
+    expect(
+      classed(pane, STAMP_AT_CLASS),
+      'a refused read dated itself with the previous success’s clock',
+    ).toEqual([])
+    const left = classed(pane, STAMP_REFRESH_CLASS)[0]
+    if (left === undefined) throw new Error('the refused pane drew no press at all')
+    expect(left.textContent).toBe(STAMP_REFRESH_LABEL)
     expect(busyLabels(document)).toEqual([])
   })
 
@@ -5634,13 +5944,66 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     const refusals = classed(panelOf(document), 'unavailable-operation')
     expect(refusals.map((node) => node.textContent)).toContain('runs.list')
     expect(holdsText(panelOf(document), RUNS_REFUSAL)).toBe(true)
-    // No control beside it: a button that asks again for a read just refused
-    // offers the same failure.
+    // Neither paging control is offered again -- `Load jobs` asked for a first
+    // page and `Older 50` for a page under a window nothing landed -- and the
+    // press the section holds instead is the stamp's own line in the head, which
+    // is drawn with no `as of` beside it because no page was ever read (the case
+    // below).
     expect(classed(panelOf(document), 'coordinator-jobs-load')).toEqual([])
     expect(classed(panelOf(document), 'coordinator-jobs-older')).toEqual([])
     expect(busyLabels(document)).toEqual([])
     // The queue's own read is a different one and its parts are still drawn.
     expect(classed(panelOf(document), COORDINATOR_QUEUE_PART_CLASS).length).toBeGreaterThan(0)
+  })
+
+  it('reads the window again from the head’s own line when the first page was refused', async () => {
+    // K4's follow-up. A refused **first** page draws the sentence where the rows
+    // would be, and the head's stamp is drawn with the figures of a page that
+    // landed -- so with no page ever landed there is no head, and a section that
+    // stopped there would hold the CLI's sentence and **no press at all**: the
+    // operator's own doubt would have nowhere to go. The line drawn instead is
+    // the stamp's, with its one control and no time, because the console has read
+    // no page to put a clock on.
+    const asked: Record<string, unknown>[] = []
+    const retry = holding()
+    const { bridge } = jobsBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: (args) => {
+        const page = args as Record<string, unknown>
+        if (page['limit'] === undefined) return { ok: true, data: { document: { runs: [] } } }
+        asked.push(page)
+        return asked.length === 1 ? { ok: false, reason: RUNS_REFUSAL } : retry.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_LOAD_WORD).click()
+    await flush()
+
+    const jobsHead = classed(panelOf(document), COORDINATOR_JOBS_HEAD_CLASS)[0]
+    if (jobsHead === undefined) throw new Error('the job list drew no head')
+    expect(classed(jobsHead, STAMP_AT_CLASS), 'a refused first page claimed a time').toEqual([])
+    const refresh = classed(jobsHead, STAMP_REFRESH_CLASS)[0]
+    if (refresh === undefined) throw new Error('the refused list drew no press at all')
+    expect(refresh.textContent).toBe(STAMP_REFRESH_LABEL)
+
+    // The press is the first page's own read and not a second kind of it: no
+    // cursor, because no row was drawn to page from.
+    refresh.click()
+    expect(asked).toHaveLength(2)
+    expect(asked[1]).toEqual({ since: RUNS_SINCE, limit: COORDINATOR_JOBS_PAGE })
+    expect(busyLabels(document)).toContain(COORDINATOR_JOBS_BUSY)
+
+    retry.release({ ok: true, data: { document: lsPage(41, 12.5, [LS_ROW_A]) } })
+    await flush()
+    // The refusal went with the list the press dropped, the page's rows are
+    // drawn, and the head now carries the clock of the read that answered.
+    expect(classed(panelOf(document), 'unavailable-operation')).toEqual([])
+    expect(classed(panelOf(document), 'coordinator-job')).toHaveLength(1)
+    expect(textIn(jobsHead, STAMP_AT_CLASS)).toMatch(/^as of \d\d:\d\d$/)
   })
 
   it('draws the console’s own sentence, naming the version, for a CLI older than the paged read', async () => {

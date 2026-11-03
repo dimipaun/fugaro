@@ -252,6 +252,32 @@ type Policy struct {
 	// existed.
 	ReviewFloor map[rigor.Mode][]policy.Level `json:"review_floor,omitempty"`
 
+	// VerifierAccounts are the identities that may ask the credentials
+	// service's verify route whether a verdict's signature is that service's
+	// (C3.9g3, D1068, D1075): the coordinator's own account once it exists,
+	// and the owner's for a manual check. Each entry is a bare address — the
+	// `email` claim a Google ID token carries — and never one of the IAM
+	// member spellings (user:, serviceAccount:) the installation's launcher
+	// and operator lists are written with, which are bindings rather than
+	// claims about who may verify.
+	//
+	// It sits in this node for every member's reason — the owner writes it and
+	// the runner fails closed on it — plus the one bitbucket_api_roots has: the
+	// shared config in the runs bucket is writable by any launcher, and a
+	// launcher who could write this list could admit its own address to the
+	// verify route, so the list travels here and `sharedForbidden` refuses it
+	// there. `fugaro update`'s policy stage copies it out of the local
+	// configuration, and its credentials stage reads it back from this node as
+	// the service's own variable, which is why a config that states no list
+	// keeps this one rather than emptying the route (localcfg's keep rule).
+	//
+	// An absent member and a written empty one are the same list: the
+	// publisher writes nothing at all for a project that names no verifier, so
+	// the node of such a project is byte for byte what it was before this
+	// member existed — and no reader of it meets the key's skew (a CLI older
+	// than the key refuses a node that carries it).
+	VerifierAccounts []string `json:"verifier_accounts,omitempty"`
+
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
 	// know, sorted. Decode fills it in and never writes it back (json:"-"):
 	// the keys are tolerated so that a policy a newer Fugaro wrote does not
@@ -272,7 +298,7 @@ var knownTopLevelKeys = map[string]bool{
 	"profiles": true, "clone_urls": true, "accounts": true,
 	"credentials": true, "base_branch": true,
 	"bitbucket_token": true, "bitbucket_api_roots": true,
-	"review_floor": true,
+	"review_floor": true, "verifier_accounts": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -694,6 +720,17 @@ const MaxPolicyBytes = 64 << 10
 // Unknown JSON keys are ignored; version is not (see VersionError), and the
 // budget block is strict (see the package comment).
 func Decode(raw []byte) (*Policy, bool, error) {
+	return decodeWithKeys(raw, knownTopLevelKeys)
+}
+
+// decodeWithKeys is Decode under a named key set: the top-level keys the reader
+// being modelled knows. It is a parameter rather than the constant so that a
+// test can decode one node twice — once under this binary's keys and once under
+// the set a reader that predates a key carried — because no fixture can reach
+// the older reader's answer any other way: knownTopLevelKeys holds every key
+// this release writes, so a key spelled here is never one this reader does not
+// know.
+func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 	if IsNull(raw) {
 		return nil, false, nil
 	}
@@ -720,7 +757,7 @@ func Decode(raw []byte) (*Policy, bool, error) {
 
 	var p Policy
 	for k := range doc {
-		if !knownTopLevelKeys[k] {
+		if !keys[k] {
 			p.UnknownKeys = append(p.UnknownKeys, k)
 		}
 	}
@@ -902,6 +939,14 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		}
 		p.ReviewFloor = floor
 	}
+	if vraw, ok := doc["verifier_accounts"]; ok && !IsNull(vraw) {
+		if err := json.Unmarshal(vraw, &p.VerifierAccounts); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: verifier_accounts: %w", err)
+		}
+		if err := ValidVerifierAccounts(p.VerifierAccounts); err != nil {
+			return nil, true, err
+		}
+	}
 	if craw, ok := doc["clone_urls"]; ok && !IsNull(craw) {
 		if err := json.Unmarshal(craw, &p.CloneURLs); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: clone_urls: %w", err)
@@ -964,6 +1009,14 @@ func decodeReviewFloor(raw json.RawMessage) (map[rigor.Mode][]policy.Level, erro
 		return nil, fmt.Errorf("projectpolicy: %w", err)
 	}
 	return floor, nil
+}
+
+// ValidVerifierAccounts holds the node's verifier list to policy.ValidVerifierAccounts,
+// the one rule the local config's loader shares: it lives in internal/policy
+// because the loader cannot import this package without a cycle in the live
+// tests of internal/backend/gcp.
+func ValidVerifierAccounts(accounts []string) error {
+	return policy.ValidVerifierAccounts(accounts)
 }
 
 // validCloneURLs checks the clone_urls block, entry by entry: each key a

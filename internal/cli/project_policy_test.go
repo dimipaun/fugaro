@@ -3564,3 +3564,115 @@ func TestReviewFloorNotInShared(t *testing.T) {
 		}
 	}
 }
+
+// TestVerifierAccountsPublishedToPolicyNode: the verifier list is the
+// operator's configuration's, and the node is where the run and the update's
+// own credentials stage read it (C3.9g3, D1075). A project that states none
+// publishes no member at all, so its node is byte for byte what it was before
+// the key existed and no teammate of it meets the skew below.
+func TestVerifierAccountsPublishedToPolicyNode(t *testing.T) {
+	list := "verifier_accounts: [person-1@example.com, fugaro-coordinator@proj-1234.iam.gserviceaccount.com]\n"
+	f := newProjectFixture(t, list)
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"person-1@example.com", "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"}
+	if p := publishedPolicy(t, f); !slices.Equal(p.VerifierAccounts, want) {
+		t.Errorf("VerifierAccounts = %v, want %v", p.VerifierAccounts, want)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"verifier_accounts"`) {
+		t.Errorf("the node does not carry the list:\n%s", raw)
+	}
+
+	g := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if raw := nodeJSON(t, g, projectpolicy.PathShared()); strings.Contains(raw, "verifier_accounts") {
+		t.Errorf("a project that names no verifier published a member:\n%s", raw)
+	}
+	if p := publishedPolicy(t, g); len(p.VerifierAccounts) != 0 {
+		t.Errorf("VerifierAccounts = %v, want none", p.VerifierAccounts)
+	}
+}
+
+// TestVerifierAccountsIsKeptWhenTheConfigIsSilent is the rule's publish half
+// (C3.9g3, D1075): a second operator whose config predates the key does not
+// republish the node without it, which would empty a verify route another
+// machine set up. Deleting the key is therefore not how the list is cleared —
+// the test below is the spelling that does.
+func TestVerifierAccountsIsKeptWhenTheConfigIsSilent(t *testing.T) {
+	f := newProjectFixture(t, "verifier_accounts: [person-1@example.com]\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	rewriteProjectConfig(t, f, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if p := publishedPolicy(t, f); !slices.Equal(p.VerifierAccounts, []string{"person-1@example.com"}) {
+		t.Errorf("VerifierAccounts = %v, want the published list kept", p.VerifierAccounts)
+	}
+}
+
+func TestVerifierAccountsIsDroppedOnAnExplicitEmptyList(t *testing.T) {
+	f := newProjectFixture(t, "verifier_accounts: [person-1@example.com]\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	rewriteProjectConfig(t, f, "verifier_accounts: []\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if p := publishedPolicy(t, f); len(p.VerifierAccounts) != 0 {
+		t.Errorf("VerifierAccounts = %v, want none after a written empty list", p.VerifierAccounts)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); strings.Contains(raw, "verifier_accounts") {
+		t.Errorf("the node still carries the member:\n%s", raw)
+	}
+}
+
+// TestVerifierAccountsDriftNamesTheMember: the publish's own drift list (D854's
+// three-way state, `fugaro update`'s policy stage) names a member the config
+// states and the node does not carry, because that stage's job is to close
+// exactly that gap. A config that is silent about the list names nothing — it
+// keeps the node's, which is the rule above.
+func TestVerifierAccountsDriftNamesTheMember(t *testing.T) {
+	node := &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}}
+	lc := &localcfg.Config{
+		Budget:           &localcfg.Budget{Mode: "enforce", PerRunUSD: 5},
+		VerifierAccounts: []string{"person-1@example.com"},
+	}
+	var got []string
+	for _, d := range policyConfigDrift(lc, node) {
+		got = append(got, d.Member)
+	}
+	if want := []string{"verifier_accounts"}; !slices.Equal(got, want) {
+		t.Errorf("policyConfigDrift = %v, want %v", got, want)
+	}
+	lc.VerifierAccounts = nil
+	if got := policyConfigDrift(lc, node); len(got) != 0 {
+		t.Errorf("a config silent about the list drifts on %v, want nothing", got)
+	}
+}
+
+// TestSharedConfigRefusesTheVerifierList: the list is operator-only and the
+// published shared config is the file any launcher with objectAdmin on the runs
+// bucket can write — a launcher who could write this list could admit its own
+// address to the verify route (SEC). It is refused by name, before the file is
+// parsed, the way bitbucket_api_roots and review_floor are.
+func TestSharedConfigRefusesTheVerifierList(t *testing.T) {
+	if !slices.Contains(sharedForbidden, "verifier_accounts") {
+		t.Fatal("sharedForbidden does not name verifier_accounts, so a published list would be read")
+	}
+	data := validShared() + "verifier_accounts: [person-1@example.com]\n"
+	_, err := ParseShared([]byte(data), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying verifier_accounts: was accepted")
+	}
+	for _, want := range []string{"verifier_accounts", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+}

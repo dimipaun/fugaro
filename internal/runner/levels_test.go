@@ -545,3 +545,112 @@ func TestLevelsAdversarialEffortOnAClaudeStageOnly(t *testing.T) {
 		}
 	})
 }
+
+// TestLevelsRecordNoEffortWhenTheStageIsOnAProviderRoute: a level that names a
+// reasoning effort records it only when that effort reached the stage. A stage
+// on a provider route raises no thinking at all (G5, D725) — its pins carry the
+// route's variables, not the effort — so EffortVars answers nothing for it and
+// the round records the empty effort, the same statement the stage's own
+// environment makes, while the model it did run on is still the level's own.
+//
+// The route here is the *background* model's, which is what makes the case
+// reachable at all: a level whose own model a provider serves and which names an
+// effort is refused at bootstrap (config's D725 check), but a level on a Claude
+// model in a run whose background model the route serves is an ordinary
+// configuration, and its stage is on the route like any other (stagePins). This
+// is the whole reason reviewFacts asks EffortVars instead of printing the
+// level's effort back: without the route check the record would claim a
+// reasoning level the provider's calls never ran at.
+func TestLevelsRecordNoEffortWhenTheStageIsOnAProviderRoute(t *testing.T) {
+	const effort = "high"
+	cfg := gwConfig(t, "  first_line_review: on\n  recipe: levels\n  adversarial_rounds: 2\n"+
+		"  levels:\n    l2: {model: "+opus+"}\n    l3: {effort: "+effort+"}\n")
+	cfg = strings.Replace(cfg, "agent:\n", "rigor:\n  default: critical\nagent:\n", 1)
+	// The same configuration TestLevelsRecordTheReviewersModelAndEffort runs,
+	// but for one line: the background model is the provider's, so every stage
+	// of the run is on the route. That pair is the case — one line apart, the
+	// level's own effort is recorded or is not.
+	cfg = strings.Replace(cfg, "background: "+haiku, "background: "+deepseek, 1)
+	if !strings.Contains(cfg, "background: "+deepseek) {
+		t.Fatal("the fixture has no background model to put on the route")
+	}
+	// enforce, not observe: a provider's calls are real dollars, so the run
+	// refuses to make them with a cap that only watches (checkProviderModels).
+	g := newGWFiles(t, cfg, "enforce", "50", levelsFiles)
+	// The owner's provider claims deepseek/*, which is the background's model.
+	wireProviders(t, g, nil, "acme/app")
+	rec, err := g.run(t, implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	// Level 2 names a model of its own and no effort, so what it records about
+	// the route is the model it ran on and not an effort.
+	if senior := lastTier(t, rec, runstore.TierSenior); senior.Model != opus || senior.Effort != "" {
+		t.Errorf("the senior review recorded model %q, effort %q, want %q and none", senior.Model, senior.Effort, opus)
+	}
+	adv := lastTier(t, rec, runstore.TierAdversarial)
+	if adv.Model != sonnet {
+		t.Errorf("the adversarial review recorded model %q, want the reviewer slot's %q", adv.Model, sonnet)
+	}
+	if adv.Effort != "" {
+		t.Errorf("the adversarial review recorded effort %q, want none: the level named %q and the stage's route runs with thinking off", adv.Effort, effort)
+	}
+	// The line the pull request carries says the same: the model, no effort at
+	// all, and the head the round read.
+	body := onlyPR(t, g.provider).Body
+	want := "adversarial review: ship in round " + strconv.Itoa(adv.Round) + " (recorded: model " + sonnet + ", at " + adv.Head[:7] + ")"
+	if !strings.Contains(body, want) {
+		t.Errorf("the pull request does not say %q:\n%s", want, body)
+	}
+}
+
+// TestLevelsRecordTheReviewersModelAndEffort: each review round's summary keeps
+// what reviewed it — the model the stage was pinned to and the reasoning effort
+// that reached it (CLI 0.16.0) — beside the head it read, and the pull request's
+// review line prints the three. The two are read off the stage's own pins, so a
+// level with a model of its own records that one, a level that names no effort
+// records none, and the effort a level names on a Claude stage is the value the
+// stage's environment carries.
+func TestLevelsRecordTheReviewersModelAndEffort(t *testing.T) {
+	const effort = "high"
+	cfg := gwConfig(t, "  first_line_review: on\n  recipe: levels\n  adversarial_rounds: 2\n"+
+		"  levels:\n    l2: {model: "+opus+"}\n    l3: {effort: "+effort+"}\n")
+	cfg = strings.Replace(cfg, "agent:\n", "rigor:\n  default: critical\nagent:\n", 1)
+	g := newGWFiles(t, cfg, "observe", "50", levelsFiles)
+	rec, err := g.run(t, implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	first, senior, adv := lastTier(t, rec, runstore.TierFirst), lastTier(t, rec, runstore.TierSenior), lastTier(t, rec, runstore.TierAdversarial)
+	for _, tc := range []struct {
+		who    string
+		got    runstore.ReviewSummary
+		model  string
+		effort string
+	}{
+		// Level 1 runs the coder's model through the coder's slot, and names
+		// no effort of its own.
+		{"first-line", first, sonnet, ""},
+		// Level 2 names a model of its own and no effort.
+		{"senior", senior, opus, ""},
+		// Level 3 takes the reviewer's slot and the level's effort.
+		{"adversarial", adv, sonnet, effort},
+	} {
+		if tc.got.Model != tc.model || tc.got.Effort != tc.effort {
+			t.Errorf("the %s review recorded model %q, effort %q, want %q and %q", tc.who, tc.got.Model, tc.got.Effort, tc.model, tc.effort)
+		}
+		if tc.got.Head == "" {
+			t.Errorf("the %s review recorded no head, so this case cannot say which commit it read", tc.who)
+		}
+	}
+	if first.Head != senior.Head || senior.Head != adv.Head {
+		t.Fatalf("nothing moved the branch between the three rounds, yet they read %q, %q and %q", first.Head, senior.Head, adv.Head)
+	}
+	// The plan's last round is level 3's, so its facts are the ones the pull
+	// request's review line carries.
+	body := onlyPR(t, g.provider).Body
+	want := "adversarial review: ship in round " + strconv.Itoa(adv.Round) + " (recorded: model " + sonnet + ", effort " + effort + ", at " + adv.Head[:7] + ")"
+	if !strings.Contains(body, want) {
+		t.Errorf("the pull request does not say %q:\n%s", want, body)
+	}
+}

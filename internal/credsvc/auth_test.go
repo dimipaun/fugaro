@@ -1887,3 +1887,104 @@ func selfSignedPEM(t *testing.T, key *rsa.PrivateKey) []byte {
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
+
+// TestVerifierIsNotGatedByTheSharedJobRule: the verifier class is the ONE class
+// Global Constraint 6's shared-job gate does not touch (C3.9f, D1068), and the
+// two differences between its token check and a job's are stated rather than
+// implied: the folded address is matched against AuthConfig.VerifierAccounts,
+// and a verifier is not a job of this installation's job set at all — not a
+// per-repository one and not a shared project one.
+//
+// So an address that is a shared project job's service account IS admitted
+// here, and the same address is still refused by Verify: the gate refuses a run
+// that would be launched as an account the phase-3 rules do not yet cover, and
+// a verifier launches nothing. The second case is the same claim one list
+// further on: an address that is one of the installation's job accounts is
+// admitted as a verifier too, because the verify route reads its own list and
+// no job table.
+func TestVerifierIsNotGatedByTheSharedJobRule(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		email string
+	}{
+		{"a shared project job's account", testSharedSA},
+		{"a per-repository job's account", testJobSA},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixtureWith(t, func(cfg *AuthConfig) {
+				cfg.VerifierAccounts = []string{tc.email}
+			})
+			tok := f.jobToken(func(c map[string]any) { c["email"] = tc.email })
+			got, err := f.auth.VerifyVerifier(context.Background(), tok)
+			if err != nil {
+				t.Fatalf("VerifyVerifier refused a configured verifier: %v", err)
+			}
+			if got != tc.email {
+				t.Errorf("VerifyVerifier answered %q, want the configured spelling %q", got, tc.email)
+			}
+			// The run path is unmoved: the same account presenting the same
+			// token as a caller of a route the shared parse reaches is refused
+			// exactly as it was.
+			if _, err := f.verify(f.runToken(), tok, f.job); err != nil {
+				if tc.email == testSharedSA && !errors.Is(err, ErrUnverifiedJob) {
+					t.Errorf("the run path refused a shared job's account with %v, want ErrUnverifiedJob", err)
+				}
+				if tc.email == testJobSA {
+					t.Errorf("the run path refused the fixture's own job account: %v", err)
+				}
+			} else if tc.email == testSharedSA {
+				t.Error("the run path admitted a shared project job's account: the gate is narrowed and not lifted")
+			}
+		})
+	}
+
+	t.Run("the list is empty by default", func(t *testing.T) {
+		f := newFixture(t)
+		if _, err := f.auth.VerifyVerifier(context.Background(), f.jobToken()); !errors.Is(err, ErrUnverifiedJob) {
+			t.Errorf("an installation with no verifier admitted a caller: %v", err)
+		}
+	})
+
+	t.Run("an address the list does not hold is refused", func(t *testing.T) {
+		f := newFixtureWith(t, func(cfg *AuthConfig) { cfg.VerifierAccounts = []string{testVerifierSA} })
+		if _, err := f.auth.VerifyVerifier(context.Background(), f.jobToken()); !errors.Is(err, ErrUnverifiedJob) {
+			t.Errorf("VerifyVerifier admitted an address outside its list: %v", err)
+		}
+	})
+
+	t.Run("the address is matched by the same ASCII fold", func(t *testing.T) {
+		f := newFixtureWith(t, func(cfg *AuthConfig) { cfg.VerifierAccounts = []string{testVerifierSA} })
+		upper := strings.ToUpper(testVerifierSA)
+		tok := f.jobToken(func(c map[string]any) { c["email"] = upper })
+		got, err := f.auth.VerifyVerifier(context.Background(), tok)
+		if err != nil {
+			t.Fatalf("VerifyVerifier refused a verifier whose claim is the same address in another case: %v", err)
+		}
+		if got != testVerifierSA {
+			t.Errorf("VerifyVerifier answered %q, want the CONFIGURED spelling %q", got, testVerifierSA)
+		}
+	})
+
+	t.Run("an address that is not printable ASCII is a configuration error", func(t *testing.T) {
+		f := newFixture(t)
+		_, err := NewAuthenticator(AuthConfig{
+			Project:         testProject,
+			FirebaseProject: testFirebase,
+			Audience:        testAudience,
+			JobAccounts:     []string{testJobSA},
+			Keys:            f.keys,
+			JobKeys:         f.jobKeys,
+			Outcomes:        RTDBOutcomes{DB: f.db},
+			// U+212A KELVIN SIGN folds to 'k' under a Unicode fold, which is
+			// exactly what the ASCII-only rule is for: an address the issuer
+			// let a caller spell must not become one an operator configured.
+			VerifierAccounts: []string{"verifierK@aurora-dev.iam.gserviceaccount.com"},
+		})
+		if err == nil {
+			t.Fatal("NewAuthenticator accepted a verifier address that is not printable ASCII")
+		}
+		if !strings.Contains(err.Error(), "verifier") {
+			t.Errorf("the configuration error is %q, want it to be about the verifier list", err)
+		}
+	})
+}

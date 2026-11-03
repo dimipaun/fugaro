@@ -149,6 +149,21 @@ export const COORDINATOR_TOTALS_SHAPE: SkeletonShape = Object.freeze({
   blocks: Object.freeze<SkeletonBlock[]>(['row']),
 })
 
+/**
+ * COORDINATOR_WINDOW_SHAPE is the fleet strip's **second** section (console
+ * 0.119.0): the runs `runs summary --json` counted in the window and what they
+ * spent. The strip is one panel with two reads behind it, and the two are not
+ * one section for `COORDINATOR_QUEUE_SHAPE`'s reason -- the window's read is not
+ * one of `coordinator status`' three and does not wait on them, so a strip that
+ * held one mark for both would have the window's figures behind the sweep's
+ * 724 KB document. Its name is its own, so "which of the strip's two reads is
+ * still out" is answerable from a tree alone.
+ */
+export const COORDINATOR_WINDOW_SHAPE: SkeletonShape = Object.freeze({
+  section: 'window',
+  blocks: Object.freeze<SkeletonBlock[]>(['row']),
+})
+
 /** SkeletonTab is the five views of the navigation, which is the whole list of
  * tabs a skeleton can be drawn for -- the same five `reading.ts`'s
  * `READING_WORDS` names and `entry.ts`'s `VIEWS` offers. It is declared here and
@@ -176,7 +191,12 @@ export const SKELETON_SHAPES: Readonly<Record<SkeletonTab, readonly SkeletonShap
   ]),
   spend: Object.freeze([SPEND_CAPS_SHAPE, SPEND_REPORT_SHAPE]),
   projects: Object.freeze([PROJECTS_SHAPE]),
-  coordinator: Object.freeze([COORDINATOR_QUEUE_SHAPE, COORDINATOR_TOTALS_SHAPE, COORDINATOR_SHAPE]),
+  coordinator: Object.freeze([
+    COORDINATOR_QUEUE_SHAPE,
+    COORDINATOR_WINDOW_SHAPE,
+    COORDINATOR_TOTALS_SHAPE,
+    COORDINATOR_SHAPE,
+  ]),
 })
 
 /** block draws one block of a kind: a `div` carrying the block class and the

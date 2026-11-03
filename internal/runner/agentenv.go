@@ -125,6 +125,15 @@ func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 		// from the user and managed levels alone. A coding run's own stages
 		// — its in-loop review rounds included — keep the file they had.
 		write = agent.WriteReviewManagedSettings
+		if r.reviewJob() {
+			// The independent review job is the one review stage that runs
+			// the head's own code (the mutation check) and reads nothing of
+			// its own repository, so it is the one that loses the tools that
+			// would run or write anything (D891(a)). A coding run's own
+			// review rounds, and `fugaro run --pr N --recipe review-only`,
+			// are the repository's own run and keep them.
+			deny = append(deny, agent.ReviewJobDenyRules()...)
+		}
 		if gw == nil {
 			deny = nil
 		}

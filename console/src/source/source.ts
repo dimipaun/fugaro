@@ -193,6 +193,18 @@ export interface FugaroSource {
    */
   statsRuns(args: ValidatedArguments): Promise<Snapshot>
   /**
+   * summaryRuns is the jobs-free totals read (`runs summary --json`, console
+   * 0.119.0, B4's console half): the window's runs counted by repository and by
+   * state, and what they spent. It is the one read here whose document is
+   * answered **from the budget database's day counters and the spend history's
+   * daily documents alone** -- no run object is read and no bucket is listed --
+   * which is why a screen can paint its totals first and why the operation's
+   * schema admits only the console's own closed set of windows
+   * (`src/main/ipc.ts`). Its two money figures are separate facts and are never
+   * summed (`src/shared/schema.ts`'s `RunsSummaryFigures`).
+   */
+  summaryRuns(args: ValidatedArguments): Promise<Snapshot>
+  /**
    * planStatus is the plan graph joined to the runs working on it
    * (`plan status --json`, GV2.1). It is the one read whose *directory* is part
    * of the question: the CLI resolves `docs/` from the process's working
@@ -254,6 +266,23 @@ export interface FugaroSource {
   runLogLink(args: ValidatedArguments): Promise<TextSnapshot>
   listSecrets(args: ValidatedArguments): Promise<Snapshot>
   listAccounts(args: ValidatedArguments): Promise<Snapshot>
+  /**
+   * listModels is the Project tab's read-only models panel (`models ls --json`,
+   * console 0.119.0, the owner's ruling of 2026-11-02;
+   * `console/docs/json-contract.md` §6.18): the selected project's routes, the
+   * models a run can name today and each recorded repository's pins.
+   *
+   * It takes **no argument at all** -- the command is cobra's `NoArgs` and the
+   * operation declares no key -- so an implementation adds no word of its own to
+   * the argv, which is the spawn row's own words plus the installation's
+   * `--project`. Its child is **offline**: the CLI's own comment says the read
+   * reaches no bucket, no database and no host, so no credential of the host's is
+   * minted and nothing is spent. The prices its document carries are the price
+   * catalog's own per-million-token figures and not what this project spent,
+   * which is why the operation is not withheld in the reduced mode
+   * (`src/main/ipc.ts`).
+   */
+  listModels(args: ValidatedArguments): Promise<Snapshot>
   environmentReport(args: ValidatedArguments): Promise<Snapshot>
   /** close stops every feed and every child this source started. */
   close(): Promise<void>
@@ -417,6 +446,7 @@ export function handlersFor(
     'spend.report': (args) => source.runReport(args),
     'runs.list': (args) => source.listRuns(args),
     'runs.stats': (args) => source.statsRuns(args),
+    'runs.summary': (args) => source.summaryRuns(args),
     'plan.status': (args) => source.planStatus(args),
     'coordinator.status': (args) => source.coordinatorStatus(args),
     'coordinator.show': (args) => source.coordinatorShow(args),
@@ -426,6 +456,7 @@ export function handlersFor(
     'run.logLink': async (args) => (await source.runLogLink(args)).text,
     'secrets.inventory': (args) => source.listSecrets(args),
     'accounts.inventory': (args) => source.listAccounts(args),
+    'models.list': (args) => source.listModels(args),
     'environment.report': (args) => source.environmentReport(args),
     'link.openExternal': async (args) => {
       await deps.openExternal(args['url'])

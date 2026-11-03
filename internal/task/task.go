@@ -34,6 +34,12 @@ var BatchRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 // branch a follow-up may continue.
 var BranchRE = regexp.MustCompile(`^fugaro/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`)
 
+// mutateTestRE is the form of the test a mutation check names (Mutate.Test):
+// a Go test name, which is what `go test -run` is given. The runner quotes it
+// with regexp.QuoteMeta before it does, so this is a shape rule about the
+// ask rather than the only thing between a test name and that flag.
+var mutateTestRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 // ValidRunID reports whether id has a run ID's form, as Validate requires
 // of run_id: check it before id names any object.
 func ValidRunID(id string) bool { return runIDRE.MatchString(id) }
@@ -350,7 +356,80 @@ type Spec struct {
 	// a launch that would set it (reviewLevelsSince, L1.2) rather than let
 	// the run fail at bootstrap after the task was written.
 	ReviewLevels *config.ReviewLevels `json:"review_levels,omitempty"`
+	// Mutate is the mutation check the launch asked for (fugaro review
+	// --mutate <file:test>, docs/cloud-senior-review D885): the file in the
+	// reviewed head the reviewer would flip and the test that must kill it,
+	// run by the review job's own runner. At most one, and only for a review
+	// run of one pull request — the check runs repository code from the head
+	// in a subprocess of its own (D891(a)), which is a review job's business
+	// and no other stage's, and one worktree holds the whole review only when
+	// one pull request was resolved. Nil for every launch that asks nothing,
+	// which is every launch until the flag that writes it lands (CSR2).
+	//
+	// A runner before the release that reads this field refuses the whole
+	// spec (Parse decodes with DisallowUnknownFields). No launch writes the
+	// field yet: the command that would is CSR2's, and the launcher-side gate
+	// it needs — the `…Since` constant that refuses a job image whose runner
+	// predates the release, internal/cli/recipes_skew.go's shape — is CSR6's,
+	// so there is no such constant to name here yet and nothing today that
+	// could be gated. The gate lands with the flag, before any launch can
+	// write the field.
+	Mutate []Mutate `json:"mutate,omitempty"`
 }
+
+// Mutate is one mutation check a launch asked for: File is Go source in the
+// reviewed head, spelled relative and slash-separated, and Test is the name of
+// the test that must fail once the runner has flipped a boolean literal in it
+// (internal/runner's mutation check). Both are the launcher's text and are
+// shape-checked by Validate below: File is confined to the worktree, and Test
+// is a Go test name, since the runner hands it to `go test -run` as a pattern
+// it quotes rather than trusts.
+type Mutate struct {
+	File string `json:"file"`
+	Test string `json:"test"`
+}
+
+// mutateProblem is what is wrong with one mutation check's ask, "" when
+// nothing is: the file is Go source inside the worktree, spelled relative and
+// slash-separated, and the test is a Go test name. It is a shape rule and not
+// the confinement itself — the runner resolves the path against the worktree
+// root with an Lstat that refuses a symlink and never follows one out
+// (internal/runner's mutationFile) — but it is what refuses, at the boundary
+// the runner decodes at, a task.json that could never be a mutant at all.
+func mutateProblem(m Mutate) string {
+	file := strings.TrimSpace(m.File)
+	switch {
+	case file == "":
+		return "names no file to mutate"
+	case len(file) > MaxMutateBytes:
+		return fmt.Sprintf("file is longer than %d bytes", MaxMutateBytes)
+	case strings.HasPrefix(file, "/") || !strings.HasSuffix(file, ".go"):
+		return fmt.Sprintf("file %q must be Go source inside the worktree, spelled relative and slash-separated", file)
+	}
+	for _, seg := range strings.Split(file, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return fmt.Sprintf("file %q is not a path inside the worktree", file)
+		}
+	}
+	switch {
+	case m.Test == "":
+		return "names no test to run"
+	case len(m.Test) > MaxMutateBytes:
+		return fmt.Sprintf("test is longer than %d bytes", MaxMutateBytes)
+	case !mutateTestRE.MatchString(m.Test):
+		return fmt.Sprintf("test %q must be a Go test name, which is letters, digits and underscores starting with a letter or an underscore", m.Test)
+	}
+	return ""
+}
+
+// MaxMutateBytes bounds each half of a mutation check's ask (Mutate.File and
+// Mutate.Test): a path inside the reviewed worktree, and the name of a Go
+// test. The cap is the one MaxDeclaredPathBytes sets for a declared path, for
+// the same reason — a file the runner will refuse to open and a test name `go
+// test -run` will never match are both strings no launcher writes — and a
+// bound here is what keeps a hand-written task.json from carrying a megabyte
+// of either into a job that parses it.
+const MaxMutateBytes = 200
 
 // MaxDeclaredPaths bounds the paths one launch may declare (Spec.Paths,
 // fugaro run --path): every one of them is matched against every area rule
@@ -935,6 +1014,28 @@ func (s *Spec) Validate() error {
 	}
 	if !anyFollowUp && !anyReview && strings.TrimSpace(s.Task) == "" {
 		bad("task spec: task is required")
+	}
+	// The mutation check's own ask (Mutate, fugaro review --mutate): one
+	// mutant at most, and only for a review run of exactly one pull request.
+	// The check runs the head's own code in a subprocess of the runner's, so
+	// it is the review job's business and no other stage's (D885, D891(a));
+	// and one worktree holds the whole review only when one pull request was
+	// resolved. The runner refuses both again before it touches anything
+	// (internal/runner's runMutationCheck), so a hand-built task.json cannot
+	// reach the machinery by skipping this.
+	if len(s.Mutate) > 0 {
+		switch {
+		case !anyReview:
+			bad("task spec: mutate is a review run's check, and this launch reviews no pull request (review_prs)")
+		case len(s.Mutate) > 1:
+			bad("task spec: mutate asks for %d mutation checks, and one mutant is all a review runs", len(s.Mutate))
+		case len(s.ReviewPRs) != 1:
+			bad("task spec: mutate needs a review of one pull request, and this launch reviews %d", len(s.ReviewPRs))
+		default:
+			if p := mutateProblem(s.Mutate[0]); p != "" {
+				bad("task spec: mutate %s", p)
+			}
+		}
 	}
 	if s.Branch != "" && !BranchRE.MatchString(s.Branch) {
 		bad("task spec: branch %q must be fugaro/<run-id>", s.Branch)

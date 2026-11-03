@@ -172,6 +172,86 @@ func waitTerminal(t *testing.T, tty *ttyFixture, want string) {
 	}
 }
 
+// TestAccountsAddClaudeEscapesThePathInTheStartError: a child that cannot be
+// started is a refusal, and that refusal prints the resolved path twice — once
+// as this command's own copy and once inside the start error's text
+// ("fork/exec /path: permission denied"). The path comes from the machine, so
+// both copies are made safe for a terminal: a path carrying an escape sequence
+// reaches neither the terminal nor an error a script captures raw (spec §6(c)
+// reads in both directions, and §3.1 step 1 is the path this is about).
+func TestAccountsAddClaudeEscapesThePathInTheStartError(t *testing.T) {
+	tty := newTTY(t)
+	unsetClaudeLoginCredentials(t)
+	// A path that is absolute, so Find accepts it, and that cannot be run: the
+	// file does not exist. Its name carries the escape sequence a terminal would
+	// obey if the bytes reached it unescaped.
+	bin := filepath.Join(t.TempDir(), "claude\x1b[31m-not-runnable")
+	old := claudeLookPath
+	claudeLookPath = func(string) (string, error) { return bin, nil }
+	t.Cleanup(func() { claudeLookPath = old })
+
+	done := make(chan error, 1)
+	go func() { done <- runClaudeLogin(tty.tty, tty.tty, tty.tty) }()
+	err := waitLogin(t, done)
+	if err == nil {
+		t.Fatal("a claude that cannot be started is a refusal")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+	}
+	if strings.Contains(err.Error(), "\x1b") {
+		t.Errorf("the refusal carries the path's escape byte raw: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), `\u001b`) {
+		t.Errorf("the refusal does not carry the resolved path in its escaped form: %q", err.Error())
+	}
+}
+
+// TestAccountsAddClaudeRefusesADirectoryThatAppearsAfterTheConfirmation is the
+// window the confirmation opens: the path is resolved and checked before the
+// person is asked, and what they answer is answered for a login that will run,
+// so the same question is asked again on the far side of it, where the path is
+// only a name. Here it is a real program when it is resolved and a directory by
+// the time the login runs, and the refusal still comes before anything starts.
+func TestAccountsAddClaudeRefusesADirectoryThatAppearsAfterTheConfirmation(t *testing.T) {
+	tty := newTTY(t)
+	unsetClaudeLoginCredentials(t)
+	bin := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := claudeLookPath
+	claudeLookPath = func(string) (string, error) { return bin, nil }
+	t.Cleanup(func() { claudeLookPath = old })
+
+	resolved, err := claudeLoginReady(tty.tty, tty.tty)
+	if err != nil {
+		t.Fatalf("a claude that is there and runnable was refused: %v", err)
+	}
+	if resolved != bin {
+		t.Fatalf("the login resolved to %q, want %q: this is the path the confirmation names", resolved, bin)
+	}
+	if err := os.Remove(bin); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err = runClaudeLoginBinary(bin, tty.tty, &out, &out)
+	if err == nil {
+		t.Fatal("the login ran a path that is a directory by the time it runs")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), bin) {
+		t.Errorf("the refusal does not name the path it refused: %v", err)
+	}
+	assertSilentBeforeStopping(t, out.String())
+}
+
 // TestAccountsAddClaudeGivesTheLoginTheOwnerTerminal: act one hands the login
 // the owner's own terminal and nothing else. All three of the child's
 // descriptors are that terminal, so what it prints reaches it while it is
@@ -254,7 +334,9 @@ func TestAccountsAddClaudeRefusesAnExportedCredential(t *testing.T) {
 
 // TestAccountsAddClaudeRefusesWithoutATerminal: the login is interactive and
 // the paste that follows is hidden, so --claude without one is a named
-// refusal that names --token-stdin, and no child runs (spec §3.1 step 2).
+// refusal, and no child runs (spec §3.1 step 2). The way out it names is the
+// command without this flag, whose value read is already stdin when there is no
+// terminal — and never a `--token-stdin`, which is not a flag this command has.
 func TestAccountsAddClaudeRefusesWithoutATerminal(t *testing.T) {
 	unsetClaudeLoginCredentials(t)
 	fake := fakeClaude(t, t.TempDir())
@@ -266,8 +348,11 @@ func TestAccountsAddClaudeRefusesWithoutATerminal(t *testing.T) {
 	if err == nil {
 		t.Fatal("the login ran without a terminal")
 	}
-	if !strings.Contains(err.Error(), "--token-stdin") {
-		t.Errorf("the refusal does not name --token-stdin: %v", err)
+	if !strings.Contains(err.Error(), "without --claude") || !strings.Contains(err.Error(), "pipe the token on stdin") {
+		t.Errorf("the refusal does not name the way out — the same command without --claude, reading the token from stdin: %v", err)
+	}
+	if strings.Contains(err.Error(), "--token-stdin") {
+		t.Errorf("the refusal names --token-stdin, which this command does not have: %v", err)
 	}
 	if _, statErr := os.Stat(fake.marker); statErr == nil {
 		t.Error("a child ran")

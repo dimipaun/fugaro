@@ -85,6 +85,7 @@ import {
   PRIVATE_DIR_NAME,
   privateWorkingDirectory,
   RUNS_LIST_EQUALS_FLAGS,
+  RUNS_SUMMARY_EQUALS_FLAGS,
   shellQuoteWord,
   probeVersion,
   resolveBinary,
@@ -142,14 +143,16 @@ const PROJECT = 'fugaro'
 const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
 
 /**
- * COMMANDS_TAKING_PROJECT is the plan's own list, hard-coded: the thirteen
+ * COMMANDS_TAKING_PROJECT is the plan's own list, hard-coded: the seventeen
  * operations `addCloudFlags` gives `--project` to (`internal/cli/cloud.go:51`,
  * called from each of those constructors), including the two log operations
  * that share the `logs` command -- console L5b's `runs.stats` is the eleventh,
  * plan GV2.1's `plan.status` the twelfth, Bitbucket credentials T1.2's
  * `coordinator.status` the thirteenth, the console's one write, V2.5.1a's
  * `run.launch`, the fourteenth, coordinator v2 C3's `coordinator.show` the
- * fifteenth, and coordinator v2 C4's `coordinator.intents` the sixteenth. The
+ * fifteenth, coordinator v2 C4's `coordinator.intents` the sixteenth, and
+ * console 0.119.0's jobs-free totals read, `runs.summary`, the seventeenth, and
+ * console 0.119.0's read-only models panel, `models.list`, the eighteenth. The
  * complement -- the commands
  * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
@@ -163,12 +166,14 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'spend.report',
   'runs.list',
   'runs.stats',
+  'runs.summary',
   'plan.status',
   'run.diagnose',
   'run.logs',
   'run.logLink',
   'secrets.inventory',
   'accounts.inventory',
+  'models.list',
   'environment.report',
   'coordinator.status',
   'coordinator.show',
@@ -462,7 +467,7 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: eighteen argvs, seventeen commands, sixteen of them with --project', () => {
+  it('fixes the design allow-list exactly: twenty argvs, nineteen commands, eighteen of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
@@ -475,7 +480,8 @@ describe('the spawn table and the argv it builds', () => {
     // number) are filled by the caller and so are not words of this list -- and
     // coordinator v2 C4's declared intents the eighteenth, whose `--all` and
     // `--json` are the row's own two words, exactly as `coordinator status`'s
-    // are. The Go side pins
+    // are, and console 0.119.0's models read the nineteenth, whose whole argv is
+    // its own three words -- the group's one reachable word. The Go side pins
     // the document's list (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
     // console's; the two are held in step by hand on purpose.
@@ -485,12 +491,14 @@ describe('the spawn table and the argv it builds', () => {
       'report --json',
       'runs ls --json',
       'runs stats --json',
+      'runs summary --json',
       'plan status --json',
       'diagnose --json',
       'logs --json',
       'logs --url',
       'secrets ls --json',
       'accounts ls --json',
+      'models ls --json',
       'version',
       'doctor --json',
       'config list --json',
@@ -500,7 +508,7 @@ describe('the spawn table and the argv it builds', () => {
       'run --task-file - --json',
     ])
     // The commands that take the flag (addCloudFlags, internal/cli/cloud.go:51)
-    // are sixteen rows plus one: `logs` has two rows, `--json` and `--url`, and
+    // are eighteen rows plus one: `logs` has two rows, `--json` and `--url`, and
     // neither of them may be the one that forgets --project.
     // A word is a flag or a separator if it begins with `-`, which is what
     // keeps the launch's literal `-` -- the argv word that means "read the task
@@ -515,11 +523,13 @@ describe('the spawn table and the argv it builds', () => {
         'report',
         'runs ls',
         'runs stats',
+        'runs summary',
         'plan status',
         'diagnose',
         'logs',
         'secrets ls',
         'accounts ls',
+        'models ls',
         'doctor',
         'coordinator status',
         'coordinator show',
@@ -527,7 +537,7 @@ describe('the spawn table and the argv it builds', () => {
         'run',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(16)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(18)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -913,6 +923,106 @@ describe('the spawn table and the argv it builds', () => {
     // ...and the row declares exactly these two `=`-form flags, so the table
     // and the argv check cannot drift apart.
     expect(RUNS_LIST_EQUALS_FLAGS).toStrictEqual(['--limit=', '--after='])
+  })
+
+  it('spawns `runs summary` with exactly these words, and at most one `=`-form window', () => {
+    // The jobs-free totals read (console 0.119.0, B4's console half). Two
+    // argvs, written out: the command and its one fixed flag, and the same with
+    // the window inside the flag's own word. The window is the console's closed
+    // set (`SUMMARY_SINCE_WINDOWS`) and not `parseSince`'s grammar, so what is
+    // refused below is refused *before* a child exists.
+    expect([...argvFor('runs.summary', {}, safeContext({ project: 'chosen' }))]).toEqual([
+      'runs',
+      'summary',
+      '--json',
+      '--project',
+      'chosen',
+    ])
+    const argv = argvFor('runs.summary', { since: '1d' }, safeContext({ project: 'chosen' }))
+    expect([...argv]).toEqual(['runs', 'summary', '--json', '--since=1d', '--project', 'chosen'])
+    // One word, and the value inside it: neither the flag nor the window is a
+    // word of its own, so neither can be read as anything else.
+    for (const word of ['--since', '1d']) {
+      expect(argv, word).not.toContain(word)
+    }
+    expect(RUNS_SUMMARY_EQUALS_FLAGS).toStrictEqual(['--since='])
+  })
+
+  it('refuses a summary window outside the console’s own set', () => {
+    // Every value here is a form the CLI itself takes for `runs summary
+    // --since` (`parseSince`) and this surface still refuses: the set is the
+    // screens' two windows, and the whole history is the read the command
+    // exists to make unnecessary. **Both guards refuse it**: the validator
+    // (`ipc.ts`'s `summarySince`) is the renderer's gate, and the argv builder
+    // re-checks the membership for the `limit` case's reason -- a bound asked
+    // in one place is a bound the next caller can miss, and the window this one
+    // admits by accident is the whole history.
+    for (const since of ['0', '30d', '2d', '36h', '12w', '2026-10-16', '7D', ' 7d', '7d ', '']) {
+      expect(validateArguments('runs.summary', { since }).ok, JSON.stringify(since)).toBe(false)
+      expect(
+        () => argvFor('runs.summary', { since }, safeContext()),
+        JSON.stringify(since),
+      ).toThrow(/not a window this console will pass/)
+    }
+    for (const since of ['7d', '1d']) {
+      expect(validateArguments('runs.summary', { since }).ok, since).toBe(true)
+      expect(argvFor('runs.summary', { since }, safeContext()), since).toContain(`--since=${since}`)
+    }
+    // What the spawn alphabet refuses on top of that is a word an argv could
+    // not carry at all -- the builder's other half.
+    for (const since of ['a b', '$(id)', 'a;b', 'a\u0000b']) {
+      expect(() => argvFor('runs.summary', { since }, safeContext()), JSON.stringify(since)).toThrow()
+    }
+    // And a word that is not a window at all cannot reach the argv builder by
+    // another key: the row declares `since` and nothing else.
+    for (const key of ['repo', 'all', 'until', 'dir', 'project']) {
+      expect(() => argvFor('runs.summary', { [key]: 'x' }, safeContext()), key).toThrow(/does not declare/)
+    }
+  })
+
+  it('spawns `models ls` with exactly these words and no argument a renderer can fill', () => {
+    // The read-only models panel's read (console 0.119.0, the owner's ruling of
+    // 2026-11-02). One argv, written out: the command, its one fixed flag and
+    // the installation's own `--project`. The command is cobra's `NoArgs`, so
+    // there is no second form of this argv -- and the `does not declare` loop
+    // below is the half that says so.
+    expect([...argvFor('models.list', {}, safeContext({ project: 'chosen' }))]).toEqual([
+      'models',
+      'ls',
+      '--json',
+      '--project',
+      'chosen',
+    ])
+    // **The group's other four words are not on this table at all**, which is
+    // the spawn half of the never table's fence: `search` takes a positional
+    // `<text>`, and `add`, `rm` and `use` write the project's or a repository's
+    // own configuration.
+    expect(SPAWN_COMMANDS.filter((row) => row.words[0] === 'models').map((row) => row.operation)).toEqual([
+      'models.list',
+    ])
+    for (const key of ['repo', 'model', 'route', 'text', 'all', 'since', 'dir', 'project']) {
+      expect(() => argvFor('models.list', { [key]: 'x' }, safeContext()), key).toThrow(/does not declare/)
+    }
+  })
+
+  it('takes the `=` form on the summary row, and never an empty one', () => {
+    expect(() => assertArgvFlags('runs.summary', ['runs', 'summary', '--json', '--since=7d'])).not.toThrow()
+    expect(() => assertArgvFlags('runs.summary', ['runs', 'summary', '--json', '--since='])).toThrow()
+    // A bare `--since` is a word of the *runs list's* own argv (`--since` is on
+    // `SPAWN_FLAGS`, where the list and the stats read emit it as its own word
+    // with the value beside it), so this check admits it for every row. It is
+    // not a word the summary row can produce: the row's declared flag is the
+    // `=` form, so the builder emits `--since=<window>` or nothing at all.
+    expect(() => assertArgvFlags('runs.summary', ['runs', 'summary', '--json', '--since'])).not.toThrow()
+    expect(argvFor('runs.summary', { since: '7d' }, safeContext())).toContain('--since=7d')
+    expect(argvFor('runs.summary', {}, safeContext())).not.toContain('--since')
+    // The prefix is this row's own: no other row may borrow it, and the
+    // summary may not borrow the launch's two or the runs list's two.
+    for (const row of ['live.watch', 'runs.list', 'run.diagnose', 'spend.report']) {
+      expect(() => assertArgvFlags(row, [row, '--since=7d']), row).toThrow()
+    }
+    expect(() => assertArgvFlags('runs.summary', ['runs', 'summary', '--json', '--limit=25'])).toThrow()
+    expect(() => assertArgvFlags('runs.summary', ['runs', 'summary', '--json', '--title=x'])).toThrow()
   })
 
   it('keeps `--watch` and every other runs ls flag off the runs list row', () => {

@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/settings"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -704,6 +705,11 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		Execution: "projects/p/locations/r/jobs/j/executions/e",
 		Status:    runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
 		Reason: "tests failing on the final commit", Branch: "fugaro/add-a-feature", BaseBranch: "main", HeadSHA: "abcdef1234567",
+		// D876's additive per-stage accounts (docs/accounts-add spec §11.5):
+		// the account that served each stage, beside the scalar oauth_account
+		// that names the account the run used last.
+		OAuthAccount:  "team-a",
+		StageAccounts: map[string]string{"implement": "team-b", "review": "team-a"},
 		// The commit the run was cut from, which its guards compare against
 		// (design v1.md §4.6).
 		StartSHA: strings.Repeat("c", 40),
@@ -790,6 +796,36 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	}
 	if err := sch.Validate(bad); err == nil {
 		t.Fatal(`schema accepts "status": "done"`)
+	}
+	// stage_accounts is closed in both of the directions its own key and its
+	// own value have (D876): the key is the stage vocabulary the record's
+	// stage list uses, so a stage no reader can place is refused, and the value
+	// is bounded like the account name beside it, so a name the record never
+	// holds is refused too.
+	for _, tc := range []struct{ name, old, new string }{
+		{"a key outside the stage vocabulary", `"implement":"team-b"`, `"deploy":"team-b"`},
+		{"a value longer than the bound", `"review":"team-a"`, `"review":"` + strings.Repeat("a", 65) + `"`},
+		{"a value that is not text", `"implement":"team-b"`, `"implement":5`},
+	} {
+		if !bytes.Contains(data, []byte(tc.old)) {
+			t.Fatalf("fixture lacks the literal this test replaces (%s): %s", tc.name, data)
+		}
+		bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(tc.old), []byte(tc.new), 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(bad); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.new)
+		}
+	}
+	// The bound's other side, so the refusal above is the bound and not a rule
+	// that refuses any long name: 64 runes are what the field holds.
+	atBound, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(`"review":"team-a"`), []byte(`"review":"`+strings.Repeat("a", 64)+`"`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(atBound); err != nil {
+		t.Errorf("schema rejects a stage account name of 64 runes: %v", err)
 	}
 	// The cost object is closed, so a compute_source that is not a string
 	// (what a hand-edited result.json could carry) is rejected rather than
@@ -985,20 +1021,25 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 
 // TestTierAdversarialInSchema: the review entry's tier enum is the vocabulary
 // internal/runstore writes — level 3's adversarial review included
-// (docs/review-levels-ab-jobmax L4.1, D727) — and the entry carries the head
-// the review read, bounded like the schema's other commit fields. A tier
-// added to runstore and not here is a record the runner legally wrote and its
-// own published schema refuses.
+// (docs/review-levels-ab-jobmax L4.1, D727) and the independent cloud review
+// job's own display-only tier (docs/cloud-senior-review O4, D884) — and the
+// entry carries the head the review read, bounded like the schema's other
+// commit fields. A tier added to runstore and not here is a record the runner
+// legally wrote and its own published schema refuses.
 func TestTierAdversarialInSchema(t *testing.T) {
 	sch := compile(t, "result.schema.json")
 	head := strings.Repeat("a", 40)
+	// The reviewer's model, in the shape the runner pins one: an ID a provider
+	// or Anthropic serves, never a name a person reads (CLI 0.16.0).
+	reviewModel := "claude-opus-5-5"
 	rec := runstore.Record{
 		Version: 1, RunID: "20261030-120000-abcd", Status: runstore.StatusSucceeded,
 		Stage: "review",
 		Reviews: []runstore.ReviewSummary{
 			{Round: 3, Tier: runstore.TierFirst, Verdict: "ship", Bounce: 1},
-			{Round: 3, Tier: runstore.TierSenior, Verdict: "ship", Head: head},
+			{Round: 3, Tier: runstore.TierSenior, Verdict: "ship", Head: head, Model: reviewModel, Effort: "high"},
 			{Round: 3, Tier: runstore.TierAdversarial, Verdict: "ship", Head: head},
+			{Round: 1, Tier: runstore.TierIndependent, Verdict: "changes", Head: head},
 		},
 	}
 	data, err := json.Marshal(rec)
@@ -1010,7 +1051,7 @@ func TestTierAdversarialInSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := sch.Validate(inst); err != nil {
-		t.Fatalf("schema rejects a record naming the adversarial tier and its head: %v\n%s", err, data)
+		t.Fatalf("schema rejects a record naming the adversarial or independent tier and its head: %v\n%s", err, data)
 	}
 
 	raw, err := os.ReadFile("result.schema.json")
@@ -1037,7 +1078,7 @@ func TestTierAdversarialInSchema(t *testing.T) {
 	if err := json.Unmarshal(reviews.Items.Properties["tier"], &tier); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{runstore.TierFirst, runstore.TierSenior, runstore.TierAdversarial}
+	want := []string{runstore.TierFirst, runstore.TierSenior, runstore.TierAdversarial, runstore.TierIndependent}
 	if !slices.Equal(tier.Enum, want) {
 		t.Errorf("result.schema.json reviews tier enum %v != runstore's tiers %v", tier.Enum, want)
 	}
@@ -1051,11 +1092,37 @@ func TestTierAdversarialInSchema(t *testing.T) {
 	if headField.Type != "string" || headField.MinLength != 1 {
 		t.Errorf("result.schema.json reviews head = %+v, want a string bounded at minLength 1 like the schema's other commit fields", headField)
 	}
+	// The reviewer's own two fields (CLI 0.16.0) are strings bounded like the
+	// head beside them: an empty one would be a review that named no model or
+	// no effort, which is the absent field, not an empty string.
+	for _, name := range []string{"model", "effort"} {
+		var field struct {
+			Type      string `json:"type"`
+			MinLength int    `json:"minLength"`
+		}
+		if err := json.Unmarshal(reviews.Items.Properties[name], &field); err != nil {
+			t.Fatalf("result.schema.json reviews %s: %v", name, err)
+		}
+		if field.Type != "string" || field.MinLength != 1 {
+			t.Errorf("result.schema.json reviews %s = %+v, want a string bounded at minLength 1 like the head beside it", name, field)
+		}
+	}
+	modelLit := []byte(`"model":"` + reviewModel + `"`)
+	if !bytes.Contains(data, modelLit) {
+		t.Fatalf("fixture lacks the literal this test replaces: %s", data)
+	}
+	bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, modelLit, []byte(`"model":""`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(bad); err == nil {
+		t.Error("schema accepts an empty review model")
+	}
 	lit := []byte(`"head":"` + head + `"`)
 	if !bytes.Contains(data, lit) {
 		t.Fatalf("fixture lacks the literal this test replaces: %s", data)
 	}
-	bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, lit, []byte(`"head":""`), 1)))
+	bad, err = jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, lit, []byte(`"head":""`), 1)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4469,6 +4536,103 @@ func TestModelsLsSchema(t *testing.T) {
 	}
 }
 
+// TestModelsSearchSchema holds schemas/models-search.schema.json to the
+// document `fugaro models search <text> --json` prints and to the Go constants
+// that document's closed vocabulary is written as. The hits are dynamic — one
+// per row of the built-in catalog, the embedded Claude table and the owner's
+// model_prices — so the schema cannot pin them by name; what it can pin, and
+// what this test checks, is that the schema loads (a broken $ref between $defs
+// is exactly where a hand edit breaks), that v is modelsSearchDocVersion, and
+// that the SOURCE column's three words are the constants the command writes
+// them from. A fourth source, or a renamed one, is red here rather than in a
+// consumer that branches on the column: `none` is deliberately not one of
+// them, because a model with no price is a miss and never a hit.
+//
+// The document itself is validated against this schema by
+// TestModelsSearchJSONMatchesSchema in internal/cli, which is where the command
+// that writes it lives.
+func TestModelsSearchSchema(t *testing.T) {
+	raw, err := os.ReadFile("models-search.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	compile(t, "models-search.schema.json")
+
+	consts := goConstValues(t, "../internal/cli/models_search.go")
+	v := nodeOf(t, doc, "properties", "v")
+	if v["const"] != float64(1) {
+		t.Errorf("v: const = %v, and the document's first version is 1 (D784)", v["const"])
+	}
+	// The $comment is the pointer from the contract to the code: it must name
+	// a constant this file's own parse found, or it points at nothing.
+	if got, _ := v["$comment"].(string); !strings.Contains(got, "modelsSearchDocVersion") || consts["modelsSearchDocVersion"] != "1" {
+		t.Errorf("v: $comment = %q, and modelsSearchDocVersion in internal/cli/models_search.go is %q", got, consts["modelsSearchDocVersion"])
+	}
+	// The sources the command writes its rows from are declared beside the
+	// `models ls` document's own, which is the one place that vocabulary
+	// lives.
+	sourceConsts := goConstValues(t, "../internal/cli/models_ls.go")
+	want := make([]string, 0, 3)
+	for _, name := range []string{"modelsSourceEmbedded", "modelsSourceCatalog", "modelsSourceLocal"} {
+		if sourceConsts[name] == "" {
+			t.Errorf("internal/cli/models_ls.go declares no %s", name)
+			continue
+		}
+		want = append(want, sourceConsts[name])
+	}
+	if got := stringsOf(t, doc, "$defs", "hit", "properties", "source", "enum"); !slices.Equal(got, want) {
+		t.Errorf("$defs.hit.source: the enum is %v, and the command writes %v", got, want)
+	}
+	// Every top-level member the document always carries is required, so a
+	// consumer may read one without a nil check: models is written on every
+	// run, empty on a miss included.
+	req := stringsOf(t, doc, "required")
+	for _, key := range []string{"v", "query", "models"} {
+		if !slices.Contains(req, key) {
+			t.Errorf("required is %v, and the document always carries %q", req, key)
+		}
+	}
+	// A price is a range and both ends are always there: a consumer adds up a
+	// hit without a nil check per end.
+	price := stringsOf(t, doc, "$defs", "price", "required")
+	for _, key := range []string{"min", "max"} {
+		if !slices.Contains(price, key) {
+			t.Errorf("$defs.price: required is %v, and a range always carries %q", price, key)
+		}
+	}
+	// Every hit names the row it is and the route a run would send it down;
+	// route is empty for a model no route serves, so it is required rather
+	// than absent.
+	hitReq := stringsOf(t, doc, "$defs", "hit", "required")
+	for _, key := range []string{"id", "source", "route"} {
+		if !slices.Contains(hitReq, key) {
+			t.Errorf("$defs.hit: required is %v, and a hit always carries %q", hitReq, key)
+		}
+	}
+	// The two endpoint counts are the catalog's own, so they are optional here
+	// and 0 is a figure: a model whose endpoints are none of them ZDR-eligible
+	// carries a real 0, and a consumer must be able to tell that from a row the
+	// catalog does not price, which carries neither member.
+	zdr := nodeOf(t, doc, "$defs", "hit", "properties", "zdr_endpoints")
+	if zdr["minimum"] != float64(0) {
+		t.Errorf("$defs.hit.zdr_endpoints: minimum = %v, and 0 ZDR endpoints is a count a model may carry", zdr["minimum"])
+	}
+	for _, key := range []string{"endpoints", "zdr_endpoints"} {
+		if slices.Contains(hitReq, key) {
+			t.Errorf("$defs.hit: required is %v, and %q is a catalog row's own member", hitReq, key)
+		}
+	}
+	// The count is the column the read prints it in: a consumer told to look at
+	// another one would read the wrong figure off the table.
+	if got, _ := zdr["description"].(string); !strings.Contains(got, "ENDPOINTS") || strings.Contains(got, "TIER") {
+		t.Errorf("$defs.hit.zdr_endpoints: the description is %q, and the count is the read's ENDPOINTS column", got)
+	}
+}
+
 // TestSummarySchema pins schemas/summary.schema.json against the command that
 // writes the document: the version constant its $comment names, the state keys
 // a consumer reads a count by, and the members that are always carried.
@@ -4603,4 +4767,210 @@ func stringsOf(t *testing.T, node map[string]any, path ...string) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// TestReviewArtifactSchemaMatchesStruct: schemas/review.schema.json is the
+// published contract for the independent review job's artifact
+// (docs/cloud-senior-review spec §2, D884), and the reviewer's own call
+// carries runner.ReviewArtifactSchema for the seven fields it writes. The two
+// are one shape in two places, and this holds them together: a rule in the
+// document and not in the call is a reviewer answering to a shape its own
+// reader refuses, and the other way round is a field the runner can write into
+// a document its published schema rejects.
+//
+// The document's own fields are pinned against the Go struct too: every key
+// the struct marshals must be required, since an optional one is a field a
+// reader may assume is there and find missing.
+func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
+	sch := compile(t, "review.schema.json")
+	artifact := runner.ReviewArtifact{
+		SchemaVersion: runner.ReviewArtifactVersion,
+		ReviewRun:     "20261102-093000-abcd",
+		CreatedAt:     time.Date(2026, 11, 2, 9, 30, 0, 0, time.UTC),
+		Repository:    "owner/repo-a",
+		PR:            1470,
+		HeadSHA:       strings.Repeat("a", 40),
+		Base:          "main",
+		Reviewer:      runner.ReviewReviewer{Account: "person-1", Model: "claude-opus-5-5", Effort: "high"},
+		Verdict:       "fix first",
+		Overview:      "the change does what the task asked",
+		Strengths:     []string{"the new reader is strict"},
+		Issues: []runner.ReviewIssue{{
+			Severity: "major", Class: "correctness", File: "internal/runner/reviewartifact.go",
+			Line: 1, Summary: "the writer trusts the answer", Fix: "refuse it here",
+			Evidence:   "the reader of a truncated answer",
+			Likelihood: 3, Impact: 4, FixCost: 2,
+		}},
+		Security:       "nothing new on the surface",
+		Performance:    "one extra read per review",
+		TestCoverage:   "the sign path is covered by a fake service",
+		MutationChecks: []runner.ReviewMutationCheck{{File: "internal/runner/x.go", Test: "TestX", Applied: "the mutant", Observed: "fail", Reverted: true}},
+	}
+	data, err := json.Marshal(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("review.schema.json rejects the artifact the runner writes: %v\n%s", err, data)
+	}
+
+	raw, err := os.ReadFile("review.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if ap, ok := doc["additionalProperties"].(bool); !ok || ap {
+		t.Error("review.schema.json does not carry additionalProperties: false: a field an older reader does not know would pass as one it does")
+	}
+	var written map[string]any
+	if err := json.Unmarshal(data, &written); err != nil {
+		t.Fatal(err)
+	}
+	want := slices.Sorted(maps.Keys(written))
+	// Every key the struct marshals is declared, and all of them are required
+	// but the one a run can honestly have nothing to say about: the reviewer's
+	// effort is absent when the run's level named none (the model's own
+	// default), which is the meaning absence already has wherever a Fugaro
+	// setting spells one.
+	optional := []string{"effort"}
+	props := nodeOf(t, doc, "properties")
+	if got := slices.Sorted(maps.Keys(props)); !slices.Equal(got, want) {
+		t.Errorf("review.schema.json declares %v, want %v (every key runner.ReviewArtifact marshals)", got, want)
+	}
+	required := stringsOf(t, doc, "required")
+	rest := slices.DeleteFunc(slices.Clone(want), func(k string) bool { return slices.Contains(optional, k) })
+	if got := slices.Sorted(slices.Values(required)); !slices.Equal(got, rest) {
+		t.Errorf("review.schema.json requires %v, want %v (every key runner.ReviewArtifact marshals, bar %v, which a review with no effort set leaves out)", got, rest, optional)
+	}
+
+	// The reviewer's half, rule for rule. Descriptions are dropped first: the
+	// document explains its fields to a human, the call's schema is wire only,
+	// and prose is not a rule.
+	var ask map[string]any
+	if err := json.Unmarshal([]byte(runner.ReviewArtifactSchema), &ask); err != nil {
+		t.Fatalf("runner.ReviewArtifactSchema is not JSON: %v", err)
+	}
+	if got := slices.Sorted(maps.Keys(ask)); !slices.Equal(got, []string{"additionalProperties", "properties", "required", "type"}) {
+		t.Fatalf("runner.ReviewArtifactSchema carries %v: this test compares its required list, its properties and additionalProperties, and would read any other rule as agreement", got)
+	}
+	asked := stringsOf(t, ask, "required")
+	askProps := nodeOf(t, ask, "properties")
+	if got, gotOK := ask["additionalProperties"].(bool); !gotOK || got {
+		t.Errorf("runner.ReviewArtifactSchema's additionalProperties = %v, want false like the document's", ask["additionalProperties"])
+	}
+	for _, key := range asked {
+		got, ok := props[key]
+		if !ok {
+			t.Errorf("review.schema.json has no %q property: the reviewer is asked for a field the artifact's own schema refuses", key)
+			continue
+		}
+		a, err := json.Marshal(stripDescriptions(askProps[key]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := json.Marshal(stripDescriptions(got))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(a, b) {
+			t.Errorf("review.schema.json's %q is\n%s\nrunner.ReviewArtifactSchema's is\n%s", key, b, a)
+		}
+	}
+	for _, key := range slices.Sorted(maps.Keys(askProps)) {
+		if !slices.Contains(asked, key) {
+			t.Errorf("runner.ReviewArtifactSchema carries %q outside its required list", key)
+		}
+	}
+
+	// What the document adds over the call, as a reader feels it: an unknown
+	// field and a timestamp in an offset the coordinator would have to
+	// normalise are both refusals.
+	// The reviewer's effort is the one field a run can leave out, and leaving
+	// it out is not a refusal: its absence is the model's own default. An
+	// empty string is a claim nobody made, so the schema refuses it rather
+	// than reading the two as one.
+	if !bytes.Contains(data, []byte(`"effort":"high"`)) {
+		t.Fatalf("fixture lacks the literal this test replaces: %s", data)
+	}
+	unset, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data,
+		[]byte(`"effort":"high",`), []byte(``), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(unset); err != nil {
+		t.Errorf("review.schema.json refuses an artifact whose reviewer carries no effort, which is what a run whose level named none writes: %v", err)
+	}
+	// head_sha names the commit the review read, so the document holds it to
+	// Git's object names -- lowercase hex, forty characters or sixty-four --
+	// rather than to a non-empty string: a branch name, a tag, an abbreviated
+	// commit or one that differs only in case is a different object than the one
+	// the review claims to have read.
+	head := strings.Repeat("a", 40)
+	if !bytes.Contains(data, []byte(`"head_sha":"`+head+`"`)) {
+		t.Fatalf("fixture lacks the head this test replaces: %s", data)
+	}
+	widened, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data,
+		[]byte(`"head_sha":"`+head+`"`), []byte(`"head_sha":"`+strings.Repeat("a", 64)+`"`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(widened); err != nil {
+		t.Errorf("review.schema.json refuses a sixty-four character commit, which is a SHA-256 repository's object name: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		from string
+		to   string
+	}{
+		{"an unknown field", `"base":"main"`, `"base":"main","extra":1`},
+		{"a local timestamp", `"created_at":"2026-11-02T09:30:00Z"`, `"created_at":"2026-11-02T10:30:00+01:00"`},
+		{"an empty effort", `"effort":"high"`, `"effort":""`},
+		{"a short head", `"head_sha":"` + head + `"`, `"head_sha":"` + strings.Repeat("a", 39) + `"`},
+		{"an upper-case head", `"head_sha":"` + head + `"`, `"head_sha":"` + strings.ToUpper(head) + `"`},
+		{"a head that is not hex", `"head_sha":"` + head + `"`, `"head_sha":"` + strings.Repeat("g", 40) + `"`},
+		{"a branch name where a commit belongs", `"head_sha":"` + head + `"`, `"head_sha":"refs/heads/main"`},
+		{"a hostile review_run", `"review_run":"20261102-093000-abcd"`, `"review_run":"../../etc/passwd"`},
+	} {
+		if !bytes.Contains(data, []byte(tc.from)) {
+			t.Fatalf("%s: fixture lacks the literal this test replaces: %s", tc.name, data)
+		}
+		bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(tc.from), []byte(tc.to), 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(bad); err == nil {
+			t.Errorf("review.schema.json accepts %s", tc.name)
+		}
+	}
+}
+
+// stripDescriptions is a schema subtree with every "description" removed: the
+// wire schema the reviewer's call carries explains nothing, and comparing the
+// two documents is comparing their rules.
+func stripDescriptions(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, e := range x {
+			if k == "description" {
+				continue
+			}
+			out[k] = stripDescriptions(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = stripDescriptions(e)
+		}
+		return out
+	}
+	return v
 }

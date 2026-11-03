@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -97,6 +98,12 @@ func findSub(t *testing.T, cmd *cobra.Command, name string) *cobra.Command {
 // command refuses by name before anything else -- the same refusal the history
 // job makes for the same variables, and one that never quotes the value it
 // found (or did not find).
+//
+// It walks the seven REQUIRED names and not the eighth: the module renders
+// FUGARO_VERIFIER_ACCOUNTS only on an installation that named a verifier, so
+// requiring it here would refuse exactly the deployments this list exists to
+// keep working (TestCredentialsServeStartsWithoutTheVerifierList is the other
+// half of that).
 func TestCredentialsServeRefusesWithoutItsEnvironment(t *testing.T) {
 	for _, k := range credentialsServiceEnvNames {
 		t.Run(k, func(t *testing.T) {
@@ -132,6 +139,91 @@ var credentialsServeEnv = map[string]string{
 	envFirebaseFP:            "aurora-fp",
 	envCredentialsServiceURL: "https://fugaro-credentials-abcde-uc.a.run.app",
 	envJobAccounts:           `[{"provider":"github","repo":"acme/webapp","workflow":"api"}]`,
+	envVerifierAccounts:      `["person-1@example.com"]`,
+}
+
+// TestCredentialsServeStartsWithoutTheVerifierList is what the eighth name's
+// being OPTIONAL rests on (C3.9g2, D1068). credentials.tf renders
+// FUGARO_VERIFIER_ACCOUNTS only on an installation that named a verifier, so
+// an installation that never did must start the same service it always did:
+// the seven names, an empty verifier list, and a verify route that refuses
+// every caller -- rather than a process that will not bind a port, which is
+// what an eighth name inside credentialsServiceEnvNames would have bought.
+//
+// Both halves of that are here, and both are the CLI's to hold: the
+// configuration builds with the name absent, and the route is reached on the
+// host this deployment is served by, where a caller the service cannot verify
+// gets the route's own typed refusal. Which of the class's refusals a caller
+// with a VERIFIED but unlisted identity gets is internal/credsvc's own test,
+// because producing such a caller takes Google's key set.
+func TestCredentialsServeStartsWithoutTheVerifierList(t *testing.T) {
+	for _, n := range credentialsServiceEnvNames {
+		t.Setenv(n, credentialsServeEnv[n])
+	}
+	fakeCredentialsService(t)
+
+	cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err != nil {
+		t.Fatalf("credentialsServiceConfig with no %s: %v (the module renders that entry only on an installation that names a verifier, so an installation that never did must start the same service it always did)", envVerifierAccounts, err)
+	}
+	srv, err := credsvc.NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer with an empty verifier list: %v", err)
+	}
+	addr, _ := serveForTest(t, srv)
+	resp, err := http.Post(addr+credsvc.VerifyPath, "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("the verify route did not answer: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading the verify refusal: %v", err)
+	}
+	if resp.StatusCode != credsvc.StatusUnverified || !strings.Contains(string(body), credsvc.ErrorUnverifiedJobIdentity) {
+		t.Fatalf("verify answered %d %s, want %d and the route's typed refusal (%s)", resp.StatusCode, body, credsvc.StatusUnverified, credsvc.ErrorUnverifiedJobIdentity)
+	}
+}
+
+// TestCredentialsServiceVerifierListReachesTheAuthenticator is the one test
+// that can tell the list the environment carries from no list at all, which a
+// surviving mutant showed was not covered: the configuration can build, and the
+// service can start, with the verifier list quietly dropped on the way to
+// AuthConfig -- the empty list and the installation that named nobody look
+// identical from the outside, and only the route's answer would differ
+// (C3.9g2, D1068).
+//
+// The entry below is one credsvc's own fold refuses: a verifier account is a
+// printable-ASCII email address, because it is matched against a Google ID
+// token's email claim. So the refusal is reachable ONLY if the entry arrived at
+// NewAuthenticator -- a service built with the list dropped starts, and one
+// built with the list refuses -- which is what makes this a test of the wiring
+// and not of the refusal.
+//
+// The second half is the same no-echo rule the other refusals are held to: this
+// process's log is a line an operator reads, so the refusal names no account.
+//
+// Mutation (verified, run and restored): VerifierAccounts: verifiers[:0] in
+// credentialsServiceConfig -- this test fails, the service starting with no
+// verifier at all instead of refusing the entry it cannot fold.
+func TestCredentialsServiceVerifierListReachesTheAuthenticator(t *testing.T) {
+	const entry = "pérson-1@example.com"
+	for _, n := range credentialsServiceEnvNames {
+		t.Setenv(n, credentialsServeEnv[n])
+	}
+	t.Setenv(envVerifierAccounts, `["`+entry+`"]`)
+	fakeCredentialsService(t)
+
+	_, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: an entry the verifier cannot fold must refuse the process rather than be dropped on the way to it", err)
+	}
+	if !strings.Contains(err.Error(), "cannot verify its callers") {
+		t.Fatalf("err = %v, want the refusal that says the service cannot verify its callers, which is reachable only if %s reached the authenticator", err, envVerifierAccounts)
+	}
+	if strings.Contains(err.Error(), entry) {
+		t.Errorf("err = %v, which carries the verifier entry itself: the refusal names the variable and never an account", err)
+	}
 }
 
 // TestCredentialsServiceConfigBuildsFromAFullEnvironment is the headline: the
@@ -311,6 +403,16 @@ func TestCredentialsServiceConfigRefusesAMalformedVariable(t *testing.T) {
 			set:   map[string]string{envJobAccounts: `[{"provider":"github","repo":"acme","workflow":"api"}]`},
 			names: []string{envJobAccounts},
 		},
+		{
+			name:  "the verifier list is not a list",
+			set:   map[string]string{envVerifierAccounts: "person-1@example.com"},
+			names: []string{envVerifierAccounts},
+		},
+		{
+			name:  "the verifier list carries something that is not an address",
+			set:   map[string]string{envVerifierAccounts: `[{"email":"person-1@example.com"}]`},
+			names: []string{envVerifierAccounts},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, n := range credentialsServiceEnvNames {
@@ -352,6 +454,7 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 		envFirebaseFP:            secret(envFirebaseFP),
 		envCredentialsServiceURL: "https://" + secret(envCredentialsServiceURL) + ".run.app",
 		envJobAccounts:           `[{"provider":"github","repo":"` + secret("repo") + `","workflow":"api"}]`,
+		envVerifierAccounts:      `["` + secret("verifier") + `@example.com"]`,
 	}
 	for _, tc := range []struct {
 		name string
@@ -366,6 +469,7 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 		{"the audience is malformed", map[string]string{envCredentialsServiceURL: "s3cr3t-url"}},
 		{"the job accounts are malformed", map[string]string{envJobAccounts: "s3cr3t-jobs"}},
 		{"a job cannot be derived", map[string]string{envJobAccounts: `[{"provider":"github","repo":"s3cr3t-nope","workflow":"api"}]`}},
+		{"the verifier list is malformed", map[string]string{envVerifierAccounts: "s3cr3t-verifiers"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for n, v := range values {
@@ -390,14 +494,20 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 	}
 }
 
-// TestCredentialsServiceEnvIsTheDeploymentsOwn: the seven names this command
-// reads are the seven credentials.tf sets on the service's container, and
-// neither side may move without the other. The direction that matters is the
-// module setting a name this command does not read: an operator reading
+// TestCredentialsServiceEnvIsTheDeploymentsOwn: the names this command reads
+// are the names credentials.tf sets on the service's container, and neither
+// side may move without the other. The direction that matters is the module
+// setting a name this command does not read: an operator reading
 // credentials.tf would believe the fact was in effect while the service
 // refused to start without it (or, worse, served with a value it never read).
 // The other direction is a name this command reads that nothing sets, which is
 // a fact the service silently does not have.
+//
+// The list is the seven REQUIRED names plus the one optional name, which is
+// the whole of what the module renders: the optional one belongs here because
+// a name the module sets and this command does not read is the same mistake
+// whether the command requires it or reads it outside the loop. Which of the
+// two each name is is pinned by the two tests above, not by this comparison.
 //
 // internal/infra/tf's credentialsServiceEnv is the third side of this, and it
 // is held to the module by that package's own test (the cover's allow-list
@@ -409,7 +519,7 @@ func TestCredentialsServiceEnvIsTheDeploymentsOwn(t *testing.T) {
 	for _, m := range regexp.MustCompile(`name\s*=\s*"(FUGARO_[A-Z0-9_]+)"`).FindAllStringSubmatch(tf, -1) {
 		inModule[m[1]] = true
 	}
-	for _, n := range credentialsServiceEnvNames {
+	for _, n := range append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts) {
 		if !inModule[n] {
 			t.Errorf("this command reads %s, which credentials.tf does not set on the service: the service would refuse to start on a deployment that is right", n)
 		}
