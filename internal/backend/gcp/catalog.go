@@ -312,6 +312,20 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 	return b, nil
 }
 
+// SubmitCatalog starts the build of s and returns it as queued: the catalog
+// path's submit, whose request CatalogBuildRequest builds rather than
+// BuildRequest's (PIC4). Everything after the request — the POST, the
+// operation it answers with and the queued BuildResult — is Submit's own
+// call (create), so the two paths cannot drift apart in what they send or in
+// how they report it.
+func (b *Builder) SubmitCatalog(ctx context.Context, s CatalogBuildSpec) (BuildResult, error) {
+	req, err := CatalogBuildRequest(b.project, s)
+	if err != nil {
+		return BuildResult{}, err
+	}
+	return b.create(ctx, s.Image, req)
+}
+
 // catalogPinStep is the step that stands in for a derived build's render:
 // a catalog build renders nothing, so this one pins the copy it read and
 // writes what the later steps read from render otherwise.
