@@ -53,6 +53,14 @@ type SelftestSpec struct {
 	// Tools runs the presence checks of images/base/tools.tsv: "critical"
 	// (a derived image's smoke), "all" (the base's CI smoke) or "" (none).
 	Tools string `json:"tools,omitempty"`
+	// Contract asserts the runtime contract on whatever base the image was
+	// built FROM (D1151, the spec's §Runtime contract): the critical rows of
+	// images/base/tools.tsv — which carry the agent binary, git and the rest
+	// of the contract list — as one check, plus a shell. Nothing reads the
+	// FROM line: a catalog image may be built from any base, so the check
+	// has to ask what the image can do, not what it was built on. It is the
+	// wider of the two and stands in for Tools: "critical".
+	Contract bool `json:"contract,omitempty"`
 	// ToolsOnly runs the presence checks alone (Tools, default "all"), for
 	// the base image itself, which has no checkout. CheckMiseCache is
 	// honoured with them; every other field is ignored.
@@ -72,8 +80,9 @@ type SelftestSpec struct {
 
 // SpecForCloud is the selftest the Cloud Build smoke step runs in the
 // candidate image, as `fugaro image render --cloud-outputs` writes it: the
-// structural checks, init and hardening, and the baked checkout at commit
-// with origin, but never the workflow's build. With dockerfile: the
+// runtime contract on any base, the structural checks, init and hardening,
+// and the baked checkout at commit with origin, but never the workflow's
+// build. With dockerfile: the
 // repository controls the whole image, its fugaro included, so the smoke
 // runs repository code: it gets no secrets and no network, and nothing in
 // it may need them.
@@ -82,7 +91,8 @@ func SpecForCloud(cfg *config.Config, workflow, commit, origin string) (Selftest
 		return SelftestSpec{}, fmt.Errorf("fugaro.yaml has no workflow %q", workflow)
 	}
 	return SelftestSpec{Base: config.BaseKind, RepoDir: "/work/repo", Commit: commit, Origin: origin,
-		CheckInit: true, CheckHardening: true, SkipVerify: true, Tools: "critical", Mise: true, CheckMiseCache: true}, nil
+		CheckInit: true, CheckHardening: true, SkipVerify: true, Tools: "critical", Contract: true,
+		Mise: true, CheckMiseCache: true}, nil
 }
 
 // Check is one smoke-test result.
@@ -155,6 +165,10 @@ var expectedSetgidBinaries = map[string]bool{
 // one. It follows expectedSetuidBinaries' semantics.
 var expectedFileCaps = map[string]bool{}
 
+// geteuid is os.Geteuid, as a var so a test can exercise the root gate: the
+// tests skip as root, and a non-root process cannot become one.
+var geteuid = os.Geteuid
+
 // Selftest runs the derived-image smoke checks in the current environment,
 // which is the image itself. The verify build's output goes to log.
 func Selftest(ctx context.Context, spec SelftestSpec, log io.Writer) Report {
@@ -163,7 +177,7 @@ func Selftest(ctx context.Context, spec SelftestSpec, log io.Writer) Report {
 		r.Checks = append(r.Checks, Check{Name: name, OK: ok, Detail: fmt.Sprintf(format, args...)})
 	}
 
-	uid := os.Geteuid()
+	uid := geteuid()
 	if spec.ToolsOnly {
 		checkTools(ctx, cmp.Or(spec.Tools, "all"), add)
 		if spec.CheckMiseCache {
@@ -211,7 +225,12 @@ func Selftest(ctx context.Context, spec SelftestSpec, log io.Writer) Report {
 	} else {
 		add("claude", true, "%s", out)
 	}
-	if spec.Tools != "" {
+	if spec.Contract {
+		checkContract(ctx, add)
+	}
+	// The contract check is the critical tier's rows plus a shell, so asking
+	// for both would report the same rows twice: it stands for both.
+	if spec.Tools != "" && !(spec.Contract && spec.Tools == "critical") {
 		checkTools(ctx, spec.Tools, add)
 	}
 	checkoutOK := checkCheckout(ctx, spec, add)
@@ -235,6 +254,50 @@ func Selftest(ctx context.Context, spec SelftestSpec, log io.Writer) Report {
 		r.Passed = r.Passed && c.OK
 	}
 	return r
+}
+
+// contractShell is the shell the runtime contract requires: the runner and
+// `fugaro verify build` run every workflow command through `sh -c`, so a
+// base has to carry that one (images/base/tools.tsv lists bash as kit
+// instead, and the base image's own CI smoke covers it).
+const contractShell = "sh"
+
+// checkContract reports the "contract" check: the runtime contract of the
+// spec's §Runtime contract, asserted on whatever base the image was built
+// FROM (D1151). The list is images/base/tools.tsv's critical rows, read
+// through checkTools rather than restated — the built table is the contract
+// list — plus a shell, as one check that names everything missing. The FROM
+// line is never read: the spec says Fugaro does not check it, and a catalog
+// image may come from any base, so what is judged is what the image can do.
+// The structural and hardening checks the same smoke runs (not root, no
+// passwordless sudo, tini as PID 1, the setuid and capability scan) are the
+// rest of the contract and are untouched by this check.
+func checkContract(ctx context.Context, add func(string, bool, string, ...any)) {
+	var rows Report
+	checkTools(ctx, "critical", func(name string, ok bool, format string, args ...any) {
+		rows.Checks = append(rows.Checks, Check{Name: name, OK: ok, Detail: fmt.Sprintf(format, args...)})
+	})
+	var missing []string
+	for _, c := range rows.Checks {
+		// Every detail checkTools writes names what is wrong, the tool
+		// included, and a table it could not parse names the table.
+		if !c.OK {
+			missing = append(missing, c.Detail)
+		}
+	}
+	switch path, err := exec.LookPath(contractShell); {
+	case err != nil:
+		missing = append(missing, contractShell+" is not on PATH")
+	default:
+		if fi, err := os.Stat(path); err != nil || fi.Mode()&0o111 == 0 {
+			missing = append(missing, contractShell+" is not executable")
+		}
+	}
+	if len(missing) > 0 {
+		add("contract", false, "the image does not meet the runtime contract: %s", strings.Join(missing, "; "))
+		return
+	}
+	add("contract", true, "%d critical tools and %s are present", len(rows.Checks), contractShell)
 }
 
 // checkCheckout checks the baked checkout and the baked-checkout contract.

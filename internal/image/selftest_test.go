@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -517,7 +518,8 @@ workflows:
 		t.Fatal(err)
 	}
 	want := SelftestSpec{Base: config.BaseKind, RepoDir: "/work/repo", Commit: "abc123", Origin: "https://github.com/acme/webapp.git",
-		CheckInit: true, CheckHardening: true, SkipVerify: true, Tools: "critical", Mise: true, CheckMiseCache: true}
+		CheckInit: true, CheckHardening: true, SkipVerify: true, Tools: "critical", Contract: true,
+		Mise: true, CheckMiseCache: true}
 	if !reflect.DeepEqual(spec, want) {
 		t.Fatalf("SpecForCloud = %+v\nwant %+v", spec, want)
 	}
@@ -959,5 +961,256 @@ func TestSpecForCloudOnTheBase(t *testing.T) {
 	base, _ := SpecForCloud(cfg, "app", "c0ffee", "https://github.com/acme/app.git")
 	if base.Tools != "critical" || !base.Mise || base.Base != config.BaseKind {
 		t.Errorf("base: %+v", base)
+	}
+}
+
+// The runtime contract on any base (PIC7, D1151, the spec's §Runtime
+// contract: "an image can be built from any base, as long as it meets the
+// Fugaro runtime contract… Fugaro does not check the FROM line"). The tests
+// below run in a PATH holding nothing but what they link into it, so a
+// missing tool is a missing file, and they read a tools table this machine
+// can satisfy, because the real table's gh, tini and finalize-checkout rows
+// name tools no test machine carries.
+
+// contractProbe is a critical row no line of the code names: the contract
+// check must take its list from the tools table, so a row the table calls
+// critical is enforced and one it calls kit is not.
+const contractProbe = "fugaro-contract-probe"
+
+// contractTable swaps the tools table for one this machine can satisfy,
+// with contractProbe at tier.
+func contractTable(t *testing.T, tier string) {
+	t.Helper()
+	old := baseTools
+	baseTools = "git\tgit --version\tall\tcritical\nclaude\tclaude --version\tall\tcritical\n" +
+		contractProbe + "\t-\tall\t" + tier + "\n"
+	t.Cleanup(func() { baseTools = old })
+}
+
+// contractEnv is the PATH and HOME the contract tests run in: nothing but
+// what it links into a fresh directory — the real git and sh, so the
+// checkout checks still run and a shell is there, and fakes for claude,
+// mise, sudo (exiting sudoExit) and the real fugaro. It returns the
+// directory, so a test takes a tool away by removing its link.
+func contractEnv(t *testing.T, sudoExit int) string {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("the user check fails when the tests run as root")
+	}
+	bin := t.TempDir()
+	for _, name := range []string{"git", "sh"} {
+		p, err := exec.LookPath(name)
+		if err != nil {
+			t.Skipf("no %s on this machine", name)
+		}
+		if err := os.Symlink(p, filepath.Join(bin, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	testutil.WriteFiles(t, bin, map[string]string{
+		"claude": "#!/bin/sh\necho '2.1.283 (Claude Code)'\n",
+		"mise":   "#!/bin/sh\nprintf '{}\\n'\n",
+		"sudo":   fmt.Sprintf("#!/bin/sh\nexit %d\n", sudoExit),
+	})
+	fugaro := testutil.BuildFugaro(t)
+	if err := os.Symlink(fugaro, filepath.Join(bin, "fugaro")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("HOME", t.TempDir())
+	return bin
+}
+
+// dropTool makes a tool the contract tests linked missing.
+func dropTool(t *testing.T, bin, name string) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(bin, name)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// contractSpec is a spec asking for the contract check on a base that is not
+// Fugaro's: an image may be built from any base that meets the contract, so
+// nothing about the check may depend on Base. The workflow's build is left
+// out, and no tools tier is asked for beside the contract's own list.
+func contractSpec(t *testing.T) SelftestSpec {
+	t.Helper()
+	spec := selftestFixture(t)
+	spec.Contract, spec.Base, spec.SkipVerify = true, "ghcr.io/example/any-base:1.2", true
+	return spec
+}
+
+// TestContractCheckPassesOnANonFugaroBaseThatMeetsTheContract: the point of
+// the task. The check judges the image, not the base it was built on, so an
+// image whose base is not Fugaro's passes when the contract's list and a
+// shell are there.
+func TestContractCheckPassesOnANonFugaroBaseThatMeetsTheContract(t *testing.T) {
+	contractTable(t, "kit")
+	spec := contractSpec(t)
+	contractEnv(t, 1)
+	spec.Tools = "critical"
+	var log bytes.Buffer
+	r := Selftest(context.Background(), spec, &log)
+	if !r.Passed {
+		t.Fatalf("report %+v\nlog:\n%s", r, log.String())
+	}
+	c, ok := checkNamed(r, "contract")
+	if !ok || !c.OK {
+		t.Fatalf("no passing contract check: %+v", r)
+	}
+	// The contract check is the critical tier's: asking for both must not
+	// report the same rows twice.
+	if _, ok := checkNamed(r, "tool:git"); ok {
+		t.Errorf("the critical rows are checked twice: %+v", r)
+	}
+}
+
+// TestContractCheckFailsWhenGitIsMissing: git is one of the tools the
+// spec's contract requires, so an image without it is refused.
+func TestContractCheckFailsWhenGitIsMissing(t *testing.T) {
+	contractTable(t, "kit")
+	spec := contractSpec(t)
+	bin := contractEnv(t, 1)
+	dropTool(t, bin, "git")
+	r := Selftest(context.Background(), spec, &bytes.Buffer{})
+	if r.Passed {
+		t.Fatalf("the image passed without git: %+v", r)
+	}
+	c, ok := checkNamed(r, "contract")
+	if !ok || c.OK {
+		t.Fatalf("contract = %+v, want a failure", c)
+	}
+	if !strings.Contains(c.Detail, "git") {
+		t.Errorf("the contract check's detail does not name git: %q", c.Detail)
+	}
+}
+
+// TestContractCheckFailsWhenTheAgentBinaryIsMissing: the agent binary is
+// what the image is for, so an image without it is refused even though
+// everything else the contract asks for is there.
+func TestContractCheckFailsWhenTheAgentBinaryIsMissing(t *testing.T) {
+	contractTable(t, "kit")
+	spec := contractSpec(t)
+	bin := contractEnv(t, 1)
+	dropTool(t, bin, "claude")
+	r := Selftest(context.Background(), spec, &bytes.Buffer{})
+	if r.Passed {
+		t.Fatalf("the image passed without the agent binary: %+v", r)
+	}
+	c, ok := checkNamed(r, "contract")
+	if !ok || c.OK {
+		t.Fatalf("contract = %+v, want a failure", c)
+	}
+	if !strings.Contains(c.Detail, "claude") {
+		t.Errorf("the contract check's detail does not name the agent binary: %q", c.Detail)
+	}
+	if own, ok := checkNamed(r, "claude"); !ok || own.OK {
+		t.Errorf("claude = %+v, want the missing agent binary reported there too", own)
+	}
+}
+
+// TestContractCheckDoesNotInspectTheFromLine: the spec says Fugaro does not
+// check the FROM line, so the check's answer is the same for Fugaro's own
+// base and for any other — on an image that meets the contract and on one
+// that does not.
+func TestContractCheckDoesNotInspectTheFromLine(t *testing.T) {
+	bases := []string{config.BaseKind, "ghcr.io/example/any-base:1.2", "mirror.example.invalid:5000/team/oddball:1"}
+	cases := []struct{ name, missing string }{
+		{"an image that meets the contract", ""},
+		{"an image missing git", "git"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			contractTable(t, "kit")
+			spec := contractSpec(t)
+			bin := contractEnv(t, 1)
+			if tc.missing != "" {
+				dropTool(t, bin, tc.missing)
+			}
+			var first Report
+			for i, base := range bases {
+				s := spec
+				s.Base = base
+				r := Selftest(context.Background(), s, &bytes.Buffer{})
+				if i == 0 {
+					first = r
+					continue
+				}
+				if !reflect.DeepEqual(r, first) {
+					t.Errorf("the base %q changed the report:\n got %+v\nwant %+v", base, r, first)
+				}
+			}
+			if _, ok := checkNamed(first, "contract"); !ok {
+				t.Fatalf("no contract check: %+v", first)
+			}
+		})
+	}
+}
+
+// TestContractCheckStillFailsOnARootImage: the widening adds checks, it
+// never drops one. The contract check on any base is still refused when the
+// image runs as root.
+func TestContractCheckStillFailsOnARootImage(t *testing.T) {
+	contractTable(t, "kit")
+	spec := contractSpec(t)
+	contractEnv(t, 1)
+	// The user check is the one hardening gate a test machine cannot arrange
+	// for real: these tests skip as root, and a non-root process cannot
+	// become one, so the check is made to see uid 0.
+	old := geteuid
+	geteuid = func() int { return 0 }
+	t.Cleanup(func() { geteuid = old })
+	r := Selftest(context.Background(), spec, &bytes.Buffer{})
+	if r.Passed {
+		t.Fatalf("the image passed as root: %+v", r)
+	}
+	if c, ok := checkNamed(r, "user"); !ok || c.OK {
+		t.Fatalf("user = %+v, want it to fail (and only it)", c)
+	}
+	if _, ok := checkNamed(r, "contract"); !ok {
+		t.Errorf("the contract check did not run: %+v", r)
+	}
+}
+
+// TestContractCheckStillFailsOnPasswordlessSudo: the same for the sudo
+// gate, which the image's build must remove.
+func TestContractCheckStillFailsOnPasswordlessSudo(t *testing.T) {
+	contractTable(t, "kit")
+	spec := contractSpec(t)
+	contractEnv(t, 0)
+	r := Selftest(context.Background(), spec, &bytes.Buffer{})
+	if r.Passed {
+		t.Fatalf("the image passed with passwordless sudo: %+v", r)
+	}
+	if c, ok := checkNamed(r, "no-sudo"); !ok || c.OK {
+		t.Fatalf("no-sudo = %+v, want it to fail", c)
+	}
+	if _, ok := checkNamed(r, "contract"); !ok {
+		t.Errorf("the contract check did not run: %+v", r)
+	}
+}
+
+// TestContractListIsReadNotDuplicated: the check's list is the tools
+// table's critical rows, not a list written into the code (D1151: there is
+// no separate contract list to publish). A row the code never names is
+// enforced when the table calls it critical, and nothing is asked of it when
+// the table calls it kit.
+func TestContractListIsReadNotDuplicated(t *testing.T) {
+	spec := contractSpec(t)
+	contractEnv(t, 1)
+	old := baseTools
+	t.Cleanup(func() { baseTools = old })
+
+	baseTools = "git\tgit --version\tall\tcritical\n" + contractProbe + "\t-\tall\tcritical\n"
+	r := Selftest(context.Background(), spec, &bytes.Buffer{})
+	c, ok := checkNamed(r, "contract")
+	if !ok || c.OK || !strings.Contains(c.Detail, contractProbe) {
+		t.Fatalf("contract = %+v, want a failure naming %s", c, contractProbe)
+	}
+
+	baseTools = "git\tgit --version\tall\tcritical\n" + contractProbe + "\t-\tall\tkit\n"
+	r = Selftest(context.Background(), spec, &bytes.Buffer{})
+	if c, ok := checkNamed(r, "contract"); !ok || !c.OK {
+		t.Fatalf("contract = %+v, want a pass: a kit row is not the contract", c)
 	}
 }
