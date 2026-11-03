@@ -583,8 +583,8 @@ describe('the committed synthetic fixture', () => {
       // drawn). It is JSON and not `.ndjson`, so the sweep above never reads it,
       // and the e2e stub answers that read with it
       // (`test/fixtures/bin/fugaro`), which is where `test/unit/cli-stub.test.ts`
-      // holds it to the console's decoder. Its `.license` sibling sits with the
-      // other `.json` ones above.
+      // holds it to the console's decoder. Its `.license` sibling is listed
+      // beside it, with the other `.json` ones.
       'settings.json',
       'settings.json.license',
       ...FIXTURE_CASES.map((name) => `${name}.ndjson`),
