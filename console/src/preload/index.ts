@@ -208,9 +208,11 @@ export const BRIDGE_VERSION = 1
  * of this command on `src/main/ipc.ts`'s never table, so this is the group's
  * only reachable argv and no models write is on this surface.
  *
- * **Console 0.119.0 added the thirtieth** (`settings.read` / `readSettings`, the
- * Project tab's settings section -- `fugaro settings --json`, the settings-edit
- * plan's C1) and left the other twenty-nine exactly where they were. It sits
+ * **The settings-edit plan's C1 added the thirtieth** (`settings.read` /
+ * `readSettings`, the Project tab's settings section -- `fugaro settings
+ * --json`) and left the other twenty-nine exactly where they were. It is **not
+ * in 0.119.0**, which shipped without it: it lands in the next console version
+ * (0.120.0). It sits
  * directly under `models.list`, the other read the Project tab draws from.
  * **No screen calls it yet**: the section is a later task, and this row is the
  * main process's half of it. Its method takes **no argument at all** -- the
@@ -250,7 +252,8 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // word (`src/main/ipc.ts`'s never table refuses `search`, `add`, `rm` and
   // `use` on this command).
   ['models.list', 'listModels'],
-  // The settings read (console 0.119.0, the settings-edit plan's C1):
+  // The settings read (the settings-edit plan's C1, in the console version after
+  // 0.119.0 -- that release shipped without it):
   // `fugaro settings --json`, the project's settings with the writability facts
   // the Project tab's settings section draws its pencils from. One row, no
   // argument, and the group's read alone -- `settings set` and `settings unset`
