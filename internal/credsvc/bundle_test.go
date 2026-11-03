@@ -3,6 +3,8 @@ package credsvc
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -288,6 +290,264 @@ func TestBundleBitbucketTokenStrict(t *testing.T) {
 			got, err := ParseBundle([]byte(tc.doc))
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("ParseBundle(%q) = %v, %v; want %v", tc.doc, got, err, tc.want)
+			}
+		})
+	}
+}
+
+// readConsumerEntry is the read consumer's document key, spelled as the
+// operator types it (`fugaro creds set bitbucket-read-consumer`) and as the
+// release notes speak it. It is a literal on purpose: the tests below hold the
+// constant to it, so a rename of either cannot quietly move the credential's
+// home in the bundle.
+const readConsumerEntry = "bitbucket-read-consumer"
+
+// readConsumerDoc is a document holding the read consumer: the OAuth consumer
+// the credentials service exchanges for a read-scoped token (F21, D361). Its
+// three fields are fixture values, built at run time (Convention 2).
+func readConsumerDoc(t *testing.T) []byte {
+	t.Helper()
+	return []byte(readConsumerEntry + ":\n" +
+		"  key: " + fakeCred(t, "consumer-key") + "\n" +
+		"  secret: " + fakeCred(t, "consumer-secret") + "\n" +
+		"  workspace: " + fakeCred(t, "workspace") + "\n")
+}
+
+// TestBundleBitbucketReadConsumer: the read consumer is a credential of the
+// bundle, holding the consumer's key, its secret and the workspace the service
+// mints for (F21, BB2). It is the first entry whose value is not one string —
+// it is a mapping of three fields — so the loader reads it as one, and the
+// accessor is the only thing that hands its fields out.
+//
+// It is also where the entry's two exclusions are pinned: it is in NEITHER
+// Credentials (what the cascade is offered) nor Lookup (which answers model
+// credentials), so the consumer can never become a candidate of a model call.
+func TestBundleBitbucketReadConsumer(t *testing.T) {
+	if BitbucketReadConsumerSecret != readConsumerEntry {
+		t.Fatalf("BitbucketReadConsumerSecret = %q, want %q", BitbucketReadConsumerSecret, readConsumerEntry)
+	}
+	doc := readConsumerDoc(t)
+	b, err := ParseBundle(doc)
+	if err != nil {
+		t.Fatalf("ParseBundle(%q) = %v; the read consumer is a credential the service holds", doc, err)
+	}
+	key, secret, workspace, ok := b.BitbucketReadConsumer()
+	if !ok {
+		t.Fatal("BitbucketReadConsumer found nothing, and the document holds one")
+	}
+	if want := fakeCred(t, "consumer-key"); key != want {
+		t.Errorf("the consumer's key = %q, want the field the document holds", key)
+	}
+	if want := fakeCred(t, "consumer-secret"); secret != want {
+		t.Errorf("the consumer's secret = %q, want the field the document holds", secret)
+	}
+	if want := fakeCred(t, "workspace"); workspace != want {
+		t.Errorf("the consumer's workspace = %q, want the field the document holds", workspace)
+	}
+	if b.Len() != 1 {
+		t.Errorf("the document holds %d entries, want 1", b.Len())
+	}
+	e, ok := b.Lookup(readConsumerEntry)
+	if ok {
+		t.Errorf("Lookup answered the read consumer as a model credential: %+v", e)
+	}
+	if got := b.Credentials(); len(got) != 0 {
+		t.Errorf("Credentials() = %v, want nothing: the read consumer is no model credential", got)
+	}
+	// Beside a model credential, the entry changes nothing the cascade is
+	// offered: the model credential alone is a candidate.
+	both := append(readConsumerDoc(t), []byte(config.ClaudeOAuthToken+": "+fakeCred(t, "default")+"\n")...)
+	bb, err := ParseBundle(both)
+	if err != nil {
+		t.Fatalf("ParseBundle with the consumer beside an account = %v", err)
+	}
+	if got := bb.Credentials(); len(got) != 1 || got[0] != (creds.Credential{Name: config.DefaultClaudeAccount, Tier: creds.TierA}) {
+		t.Errorf("Credentials() = %v, want the model credential alone", got)
+	}
+	if _, _, _, ok := bb.BitbucketReadConsumer(); !ok {
+		t.Error("the read consumer is not reachable beside a model credential")
+	}
+}
+
+// TestScrubRemovesTheReadConsumerKeyAndSecret: the read consumer is the one
+// credential of the bundle whose material is more than the entry's value. The
+// secret is the value (so every path that walks entries already covers it) and
+// the OAuth client key sits beside it, in the same entry and in no value at
+// all — so a scrub that walks values alone leaves the key readable in an audit
+// line, a log line or an error, and the key is credential material: it is what
+// the read mint names itself to Bitbucket with.
+//
+// The workspace is the control. It is a name and not a credential (the read
+// mint refuses a repository of another workspace BY NAME, G11), so it stays
+// readable: a scrub that redacted it would be redacting the words of ordinary
+// prose.
+//
+// Mutation (run, restore): drop the key from what the scrub walks, and the
+// line below comes back carrying it.
+func TestScrubRemovesTheReadConsumerKeyAndSecret(t *testing.T) {
+	key, secret, workspace := fakeCred(t, "consumer-key"), fakeCred(t, "consumer-secret"), fakeCred(t, "consumer-workspace")
+	doc := []byte(readConsumerEntry + ":\n  key: " + key + "\n  secret: " + secret + "\n  workspace: " + workspace + "\n")
+	l := &BundleLoader{Source: &scriptedSource{docs: [][]byte{doc}}}
+	if _, err := l.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := l.Scrub("credential=" + key + " secret=" + secret + " workspace=" + workspace)
+	for _, v := range []string{key, secret} {
+		if strings.Contains(got, v) {
+			t.Errorf("the scrub left the consumer's material in %q", got)
+		}
+	}
+	if !strings.Contains(got, workspace) {
+		t.Errorf("the scrub redacted the workspace, which is a name: %q", got)
+	}
+}
+
+// TestBundleSecretsCoverBothHalvesOfTheConsumer: Bundle.Secrets is the one list
+// of strings the redaction paths walk, and these are the three properties worth
+// having it for. Both halves of the read consumer's material are in it — its
+// secret through its entry's value, its key through the field beside it — the
+// workspace is not (it is a name, and a scrub that redacted it would be
+// redacting the words of prose), and no element is empty.
+//
+// The last one is not tidiness: a scrub given an empty form replaces BETWEEN
+// EVERY RUNE of the line it was handed. Two refusals at parse time already make
+// it unreachable — the value branch refuses an empty entry, readConsumerValue
+// refuses an entry whose key or secret is empty — and this pins it so that a
+// later widening of either is a red test and not a redaction that eats a line.
+func TestBundleSecretsCoverBothHalvesOfTheConsumer(t *testing.T) {
+	b, err := ParseBundle(append(bundleDoc(t), readConsumerDoc(t)...))
+	if err != nil {
+		t.Fatalf("ParseBundle: %v", err)
+	}
+	secrets := b.Secrets()
+	// One per credential, plus the consumer's key, which is no entry's value.
+	if len(secrets) != b.Len()+1 {
+		t.Errorf("Secrets answered %d strings for %d credentials, want one each and the consumer's key too", len(secrets), b.Len())
+	}
+	for i, v := range secrets {
+		if v == "" {
+			t.Errorf("Secrets' element %d is empty: a scrub given one would redact between every rune of the line", i)
+		}
+	}
+	found := make(map[string]bool, len(secrets))
+	for _, v := range secrets {
+		found[v] = true
+	}
+	key, secret, workspace, ok := b.BitbucketReadConsumer()
+	if !ok {
+		t.Fatal("the document holds no read consumer")
+	}
+	if !found[key] || !found[secret] {
+		t.Errorf("both halves of the consumer's material are in Secrets, and the key is %v in it and the secret %v", found[key], found[secret])
+	}
+	if found[workspace] {
+		t.Error("the workspace is in Secrets: it is a name, so a scrub that covered it would be redacting prose")
+	}
+}
+
+// TestBundleRefusesRunConsumerUntilS3: the second consumer (F21) is PARKED
+// with S3, and the parked kind is not a credential of the bundle: the loader
+// refuses a document that holds it, whole, as a key it does not know. It is
+// the property the release notes lean on — a `bitbucket-run-consumer` entry
+// written by hand halts every model call and every GitHub mint, which is why
+// nobody may write one — and it is pinned rather than left to the day the run
+// kind lands.
+func TestBundleRefusesRunConsumerUntilS3(t *testing.T) {
+	doc := []byte("bitbucket-run-consumer:\n" +
+		"  key: " + fakeCred(t, "run-key") + "\n" +
+		"  secret: " + fakeCred(t, "run-secret") + "\n" +
+		"  workspace: " + fakeCred(t, "run-workspace") + "\n" +
+		"  repositories: [" + fakeCred(t, "repo") + "]\n")
+	if b, err := ParseBundle(doc); !errors.Is(err, ErrBundleUnknownKey) {
+		t.Fatalf("ParseBundle of the parked run consumer = %v, %v; want ErrBundleUnknownKey", b, err)
+	}
+	// The control: the read kind beside it is a credential, so the refusal is
+	// about the run kind and not about the shape.
+	if _, err := ParseBundle(readConsumerDoc(t)); err != nil {
+		t.Fatalf("the read consumer is refused: %v", err)
+	}
+}
+
+// TestBundleRefusesConsumerWithoutWorkspace: the read consumer's value is
+// closed. Each of its three fields is required, only those three may appear,
+// and each has to be a non-empty string: the workspace is what the read mint
+// refuses a repository of another workspace against (G11), so an entry that
+// holds none is a credential the service cannot use and must not load as one.
+//
+// The first row is the red step: before the kind existed the document was
+// refused whole (ErrBundleUnknownKey, "a key that is not a credential name"),
+// which is a refusal of the wrong thing — the KEY is a credential of the
+// bundle and the FIELD is what is wrong with it.
+func TestBundleRefusesConsumerWithoutWorkspace(t *testing.T) {
+	key, secret, workspace := fakeCred(t, "key"), fakeCred(t, "secret"), fakeCred(t, "workspace")
+	for _, tc := range []struct {
+		name string
+		doc  string
+		want error
+	}{
+		{
+			name: "no workspace",
+			doc:  readConsumerEntry + ":\n  key: " + key + "\n  secret: " + secret + "\n",
+			want: ErrBundleBadValue,
+		},
+		{
+			name: "no secret",
+			doc:  readConsumerEntry + ":\n  key: " + key + "\n  workspace: " + workspace + "\n",
+			want: ErrBundleBadValue,
+		},
+		{
+			name: "an empty field",
+			doc:  readConsumerEntry + ":\n  key: " + key + "\n  secret: \"\"\n  workspace: " + workspace + "\n",
+			want: ErrBundleBadValue,
+		},
+		{
+			name: "a field that is not a string",
+			doc:  readConsumerEntry + ":\n  key: " + key + "\n  secret: " + secret + "\n  workspace: 1234\n",
+			want: ErrBundleBadValue,
+		},
+		{
+			name: "a field over the per-credential bound",
+			doc:  readConsumerEntry + ":\n  key: " + key + "\n  secret: " + secret + "\n  workspace: " + strings.Repeat("x", MaxBundleValueBytes+1) + "\n",
+			want: ErrBundleBadValue,
+		},
+		{
+			name: "a value that is not a mapping",
+			doc:  readConsumerEntry + ": " + secret + "\n",
+			want: ErrBundleBadValue,
+		},
+		{
+			name: "an empty mapping",
+			doc:  readConsumerEntry + ": {}\n",
+			want: ErrBundleBadValue,
+		},
+		{
+			name: "a field the entry does not define",
+			doc:  readConsumerEntry + ":\n  key: " + key + "\n  secret: " + secret + "\n  workspace: " + workspace + "\n  repositories: [" + workspace + "]\n",
+			want: ErrBundleUnknownField,
+		},
+		{
+			name: "a misspelt field",
+			doc:  readConsumerEntry + ":\n  key: " + key + "\n  secret: " + secret + "\n  workspaces: " + workspace + "\n",
+			want: ErrBundleUnknownField,
+		},
+		{
+			name: "the entry twice",
+			doc:  string(readConsumerDoc(t)) + readConsumerEntry + ":\n  key: " + key + "\n  secret: " + secret + "\n  workspace: " + workspace + "\n",
+			want: ErrBundleUnknownKey,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseBundle([]byte(tc.doc))
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("ParseBundle(%q) = %v, %v; want %v", tc.doc, got, err, tc.want)
+			}
+			// A refusal names the ENTRY and never a field's content: the field
+			// a person misspells is a name, and the one they paste a secret
+			// into is not.
+			for _, v := range []string{key, secret, workspace} {
+				if strings.Contains(err.Error(), v) {
+					t.Errorf("the refusal carries a value: %v", err)
+				}
 			}
 		})
 	}
@@ -698,11 +958,72 @@ func TestBundleSchemaMatchesTheLoader(t *testing.T) {
 		{"a key that is nearly the app key", "github-app-keys: " + fakeCred(t, "x") + "\n"},
 		{"the upstream git credential", config.BitbucketSecret + ": " + fakeCred(t, "x") + "\n"},
 		{"a key that is nearly the git credential", "bitbucket-tokens: " + fakeCred(t, "x") + "\n"},
+		// The read consumer (F21) is the one credential of the document whose
+		// value is not a string, so it is the one key the schema names under
+		// `properties` — which is what exempts it from `additionalProperties`
+		// while every other key stays a string. The rows below are the shape
+		// both sides have to agree on, and the parked run consumer's is the
+		// pair of refusals S3 will have to unpark together.
+		{"the read consumer", string(readConsumerDoc(t))},
+		{"the parked run consumer", "bitbucket-run-consumer:\n  key: " + fakeCred(t, "x") + "\n  secret: " + fakeCred(t, "y") + "\n  workspace: " + fakeCred(t, "z") + "\n"},
+		{"a read consumer whose value is a string", readConsumerEntry + ": " + fakeCred(t, "x") + "\n"},
+		{"a read consumer missing its workspace", readConsumerEntry + ":\n  key: " + fakeCred(t, "x") + "\n  secret: " + fakeCred(t, "y") + "\n"},
+		{"a read consumer with a field it does not define", readConsumerEntry + ":\n  key: " + fakeCred(t, "x") + "\n  secret: " + fakeCred(t, "y") + "\n  workspace: " + fakeCred(t, "z") + "\n  repositories: [r]\n"},
+		{"a read consumer with an empty field", readConsumerEntry + ":\n  key: " + fakeCred(t, "x") + "\n  secret: \"\"\n  workspace: " + fakeCred(t, "z") + "\n"},
+		{"a read consumer with a field that is not a string", readConsumerEntry + ":\n  key: " + fakeCred(t, "x") + "\n  secret: " + fakeCred(t, "y") + "\n  workspace: 1234\n"},
 		// The account family's one reserved spelling: it resolves to the git
 		// credential's own key, so the loader refuses it, and the schema has
 		// to refuse it too even though the pattern alone admits it.
 		{"an account named like the git credential", config.ClaudeAccountSecret(config.BitbucketSecret) + ": " + fakeCred(t, "x") + "\n"},
 		{"an account that merely starts like it", config.ClaudeAccountSecret(config.BitbucketSecret+"-x") + ": " + fakeCred(t, "x") + "\n"},
+		// The review-signing family (D1069): one entry per account plus the
+		// rotation's previous one, all of them legal keys of the document and
+		// none of them a model credential. The pattern is the widened half of
+		// the agreement, so a spelling the loader reads and the schema does not
+		// (or the reverse) is the drift this row set exists to catch.
+		{"a review-signing entry", config.ReviewSigningKeySecret("alice") + ": " + reviewKey(t, "current") + "\n"},
+		{"the rotation's previous review-signing entry", config.ReviewSigningKeyPreviousSecret("alice") + ": " + reviewKey(t, "previous") + "\n"},
+		{"the default account's review-signing entry", config.ReviewSigningKeySecret(config.DefaultClaudeAccount) + ": " + reviewKey(t, "default") + "\n"},
+		{"both review-signing entries beside the model credential they belong to", string(reviewSigningDoc(t))},
+		// The key's own shape is the ACCESSOR's refusal and not the document's
+		// (Bundle.ReviewSigningKey): the schema bounds a value the way it bounds
+		// every other, so a document holding a bad key is a document both sides
+		// load, and the read that needs the key is the one that refuses.
+		{"a review-signing entry whose value is not a key", config.ReviewSigningKeySecret("alice") + ": " + fakeCred(t, "x") + "\n"},
+		// A review-signing name whose account part is not a name an account may
+		// have: the loader refuses the document whole and the pattern has to
+		// refuse it too.
+		{"a review-signing entry whose account is outside the rule", "claude-oauth-token-9alice" + config.ReviewSigningKeySuffix + ": " + fakeCred(t, "x") + "\n"},
+		// The separator is a DOUBLED dash, so the single-dash spelling is an
+		// ordinary account's name — "alice-review-signing" matches
+		// ClaudeAccountNameRE — and both sides read it as the model credential
+		// it is. This row is what pins the one separator the family chose.
+		{"an account named nearly like a review-signing entry", config.ClaudeAccountSecret("alice-review-signing") + ": " + fakeCred(t, "x") + "\n"},
+		// The whole-name bound at its edge and one byte past it: the longest
+		// legal review-signing name is the prefix, MaxClaudeAccountNameLen and
+		// both suffixes (75), so 76 is over — and the OVER-bound account here is
+		// the dash-heavy spelling the account regex alone admits, which is why
+		// the account half needs its own length rule on both sides.
+		{"a review-signing name at the length bound", config.ReviewSigningKeyPreviousSecret(strings.Repeat("a", config.MaxClaudeAccountNameLen)) + ": " + fakeCred(t, "x") + "\n"},
+		{"a review-signing name one byte over the length bound", config.ReviewSigningKeyPreviousSecret(strings.Repeat("a", config.MaxClaudeAccountNameLen+1)) + ": " + fakeCred(t, "x") + "\n"},
+		{"a dash-heavy review-signing account over the account length bound", config.ReviewSigningKeySecret("a"+strings.Repeat("-a", 30)) + ": " + fakeCred(t, "x") + "\n"},
+		// The account family's own bound, read as a whole-name length: 41
+		// characters of dash-heavy account are a 60-byte key that the account
+		// regex admits and MaxClaudeAccountNameLen refuses, so a schema whose
+		// single bound covered the review-signing family too would accept it.
+		{"a dash-heavy account name the regex admits and the account length rule refuses", "claude-oauth-token-a" + strings.Repeat("-a", 20) + ": " + fakeCred(t, "x") + "\n"},
+		// The same, inside the family that made the bound a single number: a
+		// 33-character account is a 68-byte review-signing key, which the
+		// account length rule refuses and no bound of 75 can.
+		{"a review-signing name whose account is over the account length bound", config.ReviewSigningKeySecret("a"+strings.Repeat("-a", 16)) + ": " + fakeCred(t, "x") + "\n"},
+		// The one reserved ACCOUNT name is legal as a review-signing entry's
+		// account part, and both sides read it that way: the reservation exists
+		// because that account's derived SECRET would be the git entry's own
+		// key, and the review-signing name is a different name — the service can
+		// never ask for its key, no account of it can be configured, and
+		// refusing it here would refuse a whole document over an entry no
+		// caller reads.
+		{"a review-signing entry for the reserved account name", config.ReviewSigningKeySecret(config.BitbucketSecret) + ": " + fakeCred(t, "x") + "\n"},
 		{"the exact count bound", many.String()},
 		{"an unknown key", "antropic-api-key: " + fakeCred(t, "x") + "\n"},
 		{"an account name outside the rule", "claude-oauth-token-9alice: " + fakeCred(t, "x") + "\n"},
@@ -873,6 +1194,13 @@ func TestBundleCredentialKeyHoldsTheAccountNameRuleInBothHalves(t *testing.T) {
 		// credential — a kind of its own, no tier.
 		{name: "the upstream git token", key: config.BitbucketSecret, wantName: config.BitbucketSecret, wantKind: KindGit, wantTier: "", wantOK: true},
 		{name: "a git token that is not the git token", key: "bitbucket-tokens", wantOK: false},
+		// The Bitbucket read consumer (F21): the third key that is not a model
+		// credential — a kind of its own, no tier, and the one entry of the
+		// document whose value is a mapping rather than a string. The run
+		// consumer beside it is parked with S3, so it is no key at all.
+		{name: "the read consumer", key: BitbucketReadConsumerSecret, wantName: BitbucketReadConsumerSecret, wantKind: KindBitbucketReadConsumer, wantTier: "", wantOK: true},
+		{name: "a consumer that is not the read consumer", key: "bitbucket-read-consumers", wantOK: false},
+		{name: "the parked run consumer", key: "bitbucket-run-consumer", wantOK: false},
 		// The one account name the family may not take: it resolves to the
 		// git entry's own key, so the name would mean two credentials.
 		{name: "an account named like the git token", key: config.ClaudeAccountSecret(config.BitbucketSecret), wantOK: false},
@@ -987,3 +1315,261 @@ func TestReservedAccountNamesAgreeWithTheBundle(t *testing.T) {
 // the rule must use one sentence, and a test that repeated it could not tell
 // that they stopped.
 func reservedAccountMessage() string { return config.ValidClaudeAccountRef(config.BitbucketSecret) }
+
+// reviewKey is a review-signing key's value, built at run time: the entry holds
+// a 32-byte key rendered as lowercase hex (D1071), and a test derives one from
+// its own name so no file carries a key-shaped literal (Convention 2). Each
+// seed gives a different key, which is what lets a test tell the current entry
+// from the rotation's previous one.
+func reviewKey(t *testing.T, what string) string {
+	t.Helper()
+	sum := sha256.Sum256([]byte("fugaro-test-review-signing-key-" + t.Name() + "-" + what))
+	return hex.EncodeToString(sum[:])
+}
+
+// reviewSigningDoc is a document holding one account's model credential and
+// both of its review-signing entries: the current key and the rotation
+// window's previous one (D1069). It is its own document rather than an
+// addition to bundleDoc because the family's tests read the two entries side
+// by side and the canonical fixture's counts are asserted by other tests.
+func reviewSigningDoc(t *testing.T) []byte {
+	t.Helper()
+	return []byte("claude-oauth-token-alice: " + fakeCred(t, "alice") + "\n" +
+		config.ReviewSigningKeySecret("alice") + ": " + reviewKey(t, "current") + "\n" +
+		config.ReviewSigningKeyPreviousSecret("alice") + ": " + reviewKey(t, "previous") + "\n")
+}
+
+// TestReviewSigningEntryIsALegalBundleKeyAndIsNoModelCredential: the
+// per-account review-signing key lives in the bundle, one entry per account
+// plus the rotation window's previous one (D1069), because Q6 pins the
+// service's Secret Manager reach to one container and one grant (F8). It is a
+// legal key of the document — the loader refuses a document whole when it
+// holds a key outside its closed set, so before this change the entry was not
+// a key at all — and it is NOT a model credential: Credentials, which is the
+// whole of what the cascade may see, never offers it, and Lookup, which
+// answers model credentials by the name the cascade speaks, does not answer
+// it either.
+func TestReviewSigningEntryIsALegalBundleKeyAndIsNoModelCredential(t *testing.T) {
+	b, err := ParseBundle(reviewSigningDoc(t))
+	if err != nil {
+		t.Fatalf("ParseBundle refused a document holding the review-signing entries: %v", err)
+	}
+	current, previousValue := reviewKey(t, "current"), reviewKey(t, "previous")
+	for _, tc := range []struct {
+		name     string
+		previous bool
+		want     string
+		wantKey  string
+	}{
+		{name: "the current entry", want: config.ReviewSigningKeySecret("alice"), wantKey: current},
+		{name: "the rotation's previous entry", previous: true, want: config.ReviewSigningKeyPreviousSecret("alice"), wantKey: previousValue},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gotName, key, err := b.ReviewSigningKey("alice", tc.previous)
+			if err != nil {
+				t.Fatalf("ReviewSigningKey(alice, %v) = %v, want the entry at %q", tc.previous, err, tc.want)
+			}
+			if gotName != tc.want {
+				t.Errorf("ReviewSigningKey(alice, %v) name = %q, want %q", tc.previous, gotName, tc.want)
+			}
+			if hex.EncodeToString(key) != tc.wantKey {
+				t.Errorf("ReviewSigningKey(alice, %v) answered another key's bytes", tc.previous)
+			}
+			if len(key) != ReviewSigningKeyBytes {
+				t.Errorf("ReviewSigningKey(alice, %v) answered a %d-byte key, want %d", tc.previous, len(key), ReviewSigningKeyBytes)
+			}
+		})
+	}
+	// The family is keyed to the account, so another account has no entry: the
+	// read is one account's and is answered for that account alone.
+	if _, _, err := b.ReviewSigningKey("bob", false); err == nil {
+		t.Error("ReviewSigningKey(bob, false) answered an entry alice's document does not hold for bob")
+	}
+	// And one document key is one entry: the guard is per key, so a doubled
+	// review-signing name is refused whole rather than collapsed to whichever
+	// of the two values the walk read last — the reading a hand-edited bundle
+	// would otherwise get, and the reason the guard keys on the KEY here rather
+	// than on the account: an account's two entries share the account and are
+	// both legal, which the document above is.
+	dup := []byte(config.ReviewSigningKeySecret("alice") + ": " + reviewKey(t, "twice") + "\n" +
+		config.ReviewSigningKeySecret("alice") + ": " + reviewKey(t, "again") + "\n")
+	if dupBundle, err := ParseBundle(dup); !errors.Is(err, ErrBundleUnknownKey) || dupBundle != nil {
+		t.Errorf("ParseBundle with one review-signing key twice = (%v, %v), want ErrBundleUnknownKey and no bundle", dupBundle, err)
+	}
+	// Not a cascade credential: the model path is offered the account's token
+	// and nothing else, and the entry's kind is what says so.
+	if got := b.Credentials(); len(got) != 1 || got[0] != (creds.Credential{Name: "alice", Tier: creds.TierA}) {
+		t.Errorf("Credentials() = %v, want the account's tier A token alone", got)
+	}
+	for _, name := range []string{config.ReviewSigningKeySecret("alice"), config.ReviewSigningKeyPreviousSecret("alice")} {
+		if _, ok := b.Lookup(name); ok {
+			t.Errorf("Lookup(%q) answered, and it answers model credentials by the name the cascade speaks", name)
+		}
+	}
+	// And the document's own account still resolves: the new family shadows no
+	// model credential.
+	if e, ok := b.Lookup("alice"); !ok || e.Kind != KindModel || e.Key != "claude-oauth-token-alice" {
+		t.Errorf("Lookup(alice) = (%+v, %v), want the model entry the document holds", e, ok)
+	}
+}
+
+// TestReviewSigningKeyIsRefusedAValueThatIsNotAUsableKey: an entry whose value
+// is not the key it claims to be is refused — not hex, or not a 32-byte key in
+// hex — and the refusal is the class and never the value (no refusal in this
+// file may carry one).
+//
+// It is the READ that refuses it and not the loader, on purpose: the document
+// holds an ordinary string, so refusing the document whole over one bad key
+// would take the model credentials, the App key and the git token down with it,
+// while the accessor is the only path to a key and answers nothing for a value
+// it cannot use.
+func TestReviewSigningKeyIsRefusedAValueThatIsNotAUsableKey(t *testing.T) {
+	for _, tc := range []struct{ name, value string }{
+		{"not hex at all", fakeCred(t, "notakey")},
+		{"hex one byte short of a key", reviewKey(t, "short")[:2*ReviewSigningKeyBytes-2]},
+		{"hex one byte over a key", reviewKey(t, "long") + "5a"},
+		{"an odd number of hex digits", reviewKey(t, "odd")[:2*ReviewSigningKeyBytes-1]},
+		{"a rune that is not a hex digit", strings.Repeat("z", 2*ReviewSigningKeyBytes)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := ParseBundle([]byte(config.ClaudeAccountSecret("alice") + ": " + fakeCred(t, "token") + "\n" +
+				config.ReviewSigningKeySecret("alice") + ": " + tc.value + "\n"))
+			if err != nil {
+				t.Fatalf("the loader refused the whole document rather than the read: %v", err)
+			}
+			name, key, err := b.ReviewSigningKey("alice", false)
+			if !errors.Is(err, ErrReviewSigningKeyUnusable) {
+				t.Fatalf("ReviewSigningKey(alice, false) = (%q, %d bytes, %v), want ErrReviewSigningKeyUnusable", name, len(key), err)
+			}
+			if name != "" || len(key) != 0 {
+				t.Errorf("an unusable read answered (%q, %d bytes): a refusal is nothing, never a zero key", name, len(key))
+			}
+			if strings.Contains(err.Error(), tc.value) {
+				t.Errorf("the refusal carries the entry's value: %v", err)
+			}
+			// The model read is untouched by it, which is the whole reason the
+			// refusal is the read's: one account's bad key entry costs that
+			// account's signing and no other credential read.
+			if e, ok := b.Lookup("alice"); !ok || e.Kind != KindModel || e.Key != "claude-oauth-token-alice" {
+				t.Errorf("Lookup(alice) = (%+v, %v), want the account's model entry", e, ok)
+			}
+		})
+	}
+	// A value of exactly the right shape is answered, so what is refused above
+	// is the shape of the value and not the read.
+	b, err := ParseBundle([]byte(config.ReviewSigningKeySecret("alice") + ": " + reviewKey(t, "legal") + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, key, err := b.ReviewSigningKey("alice", false); err != nil || len(key) != ReviewSigningKeyBytes {
+		t.Errorf("ReviewSigningKey(alice, false) = (%d bytes, %v), want the %d-byte key", len(key), err, ReviewSigningKeyBytes)
+	}
+}
+
+// TestReviewSigningKeyIsNotOfferedToTheCascade: the entry's kind is not
+// KindModel, and that is the whole of what keeps it out of the cascade — the
+// model path is Credentials and nothing else, so a document holding NOTHING but
+// review-signing entries offers the cascade nothing rather than offering it a
+// key, and no entry of the family has a tier.
+func TestReviewSigningKeyIsNotOfferedToTheCascade(t *testing.T) {
+	doc := []byte(config.ReviewSigningKeySecret("alice") + ": " + reviewKey(t, "current") + "\n" +
+		config.ReviewSigningKeyPreviousSecret("alice") + ": " + reviewKey(t, "previous") + "\n" +
+		config.ReviewSigningKeySecret(config.DefaultClaudeAccount) + ": " + reviewKey(t, "default") + "\n")
+	b, err := ParseBundle(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Credentials(); len(got) != 0 {
+		t.Errorf("Credentials() = %v, want nothing: a review-signing key is no model credential", got)
+	}
+	for _, e := range b.Entries() {
+		if e.Kind != KindReviewSigning {
+			t.Errorf("entry %q has kind %q, want %q", e.Key, e.Kind, KindReviewSigning)
+		}
+		if e.Tier != "" {
+			t.Errorf("entry %q has tier %q: a review-signing key is no cascade tier", e.Key, e.Tier)
+		}
+		// Lookup answers model credentials by the name the cascade speaks, and
+		// a review-signing name is not one — the token's own name is the
+		// account's, never the key's document key.
+		if _, ok := b.Lookup(e.Key); ok {
+			t.Errorf("Lookup(%q) answered, and it answers model credentials only", e.Key)
+		}
+	}
+	// The default account's entry is the unsuffixed secret plus the family's
+	// suffix, and it is read back for the default account.
+	name, key, err := b.ReviewSigningKey(config.DefaultClaudeAccount, false)
+	if err != nil {
+		t.Fatalf("ReviewSigningKey(default, false) = %v, want the default account's entry", err)
+	}
+	if want := config.ClaudeOAuthToken + config.ReviewSigningKeySuffix; name != want {
+		t.Errorf("ReviewSigningKey(default, false) name = %q, want %q", name, want)
+	}
+	if len(key) != ReviewSigningKeyBytes {
+		t.Errorf("ReviewSigningKey(default, false) answered %d bytes, want %d", len(key), ReviewSigningKeyBytes)
+	}
+}
+
+// TestReviewSigningKeyReadIsFailClosed: every way the read can fail is a typed
+// refusal — never a zero key, never a name a caller could sign under — which is
+// what §6.4 of the review design requires: a service that cannot read its key
+// refuses to sign rather than signing under something else, so two
+// installations' verdicts can never become interchangeable.
+func TestReviewSigningKeyReadIsFailClosed(t *testing.T) {
+	// A document that holds other credentials and one account's current key but
+	// no rotation's previous entry yet: the read names what is missing and
+	// answers nothing.
+	b, err := ParseBundle([]byte(config.ClaudeOAuthToken + ": " + fakeCred(t, "token") + "\n" +
+		config.ReviewSigningKeySecret("alice") + ": " + reviewKey(t, "alice") + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name     string
+		account  string
+		previous bool
+	}{
+		{"an account the document holds no key for", "bob", false},
+		{"the rotation's previous entry before the rotation", "alice", true},
+		{"the default account, whose key is not in this document", config.DefaultClaudeAccount, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			name, key, err := b.ReviewSigningKey(tc.account, tc.previous)
+			if !errors.Is(err, ErrReviewSigningKeyAbsent) {
+				t.Fatalf("ReviewSigningKey(%q, %v) = (%q, %d bytes, %v), want ErrReviewSigningKeyAbsent", tc.account, tc.previous, name, len(key), err)
+			}
+			if name != "" || len(key) != 0 {
+				t.Errorf("an absent read answered (%q, %d bytes): a refusal is nothing, never a zero key", name, len(key))
+			}
+		})
+	}
+	// An empty document is no document: the loader refuses it, so there is no
+	// bundle to read a key from, and the read on the zero bundle is the same
+	// absent refusal rather than a panic.
+	for _, raw := range [][]byte{nil, []byte(""), []byte("{}\n")} {
+		if b, err := ParseBundle(raw); err == nil || b != nil {
+			t.Fatalf("ParseBundle(%q) = (%v, %v), want a refusal and no bundle", raw, b, err)
+		}
+	}
+	var none *Bundle
+	if name, key, err := none.ReviewSigningKey("alice", false); !errors.Is(err, ErrReviewSigningKeyAbsent) || name != "" || len(key) != 0 {
+		t.Errorf("a read on no bundle = (%q, %d bytes, %v), want the absent refusal", name, len(key), err)
+	}
+	// A document that does not parse is nothing to read either: the loader
+	// refuses it whole and answers no bundle.
+	unparseable, err := ParseBundle([]byte(config.ReviewSigningKeySecret("alice") + ": [unclosed\n"))
+	if err == nil || unparseable != nil {
+		t.Fatalf("ParseBundle of an unparseable document = (%v, %v), want a refusal and no bundle", unparseable, err)
+	}
+	if name, key, err := unparseable.ReviewSigningKey("alice", false); !errors.Is(err, ErrReviewSigningKeyAbsent) || name != "" || len(key) != 0 {
+		t.Errorf("a read on a bundle that was refused = (%q, %d bytes, %v), want the absent refusal", name, len(key), err)
+	}
+	// And the closed set is the other half of failing closed: a name shaped
+	// like the family whose account part is not a name an account may have is
+	// not a key at all, so a clerk's typo in an entry NAME stops the service
+	// whole rather than quietly reading no key at request time.
+	typo := []byte(config.ClaudeOAuthTokenPrefix + "9alice" + config.ReviewSigningKeySuffix + ": " + reviewKey(t, "typo") + "\n")
+	if _, err := ParseBundle(typo); !errors.Is(err, ErrBundleUnknownKey) {
+		t.Errorf("ParseBundle with a review-signing name outside the account rule = %v, want ErrBundleUnknownKey", err)
+	}
+}

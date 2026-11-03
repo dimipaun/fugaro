@@ -102,7 +102,11 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 		warn = io.Discard
 	}
 	now := time.Now()
-	rows, err := loadRows(ctx, env, lsFilter{slugs: []string{slug}, since: now.Add(-followUpLookback), pr: pr, warn: warn}, now)
+	// noCache: whether this pull request allows a follow-up is a launch, and
+	// a cached object is what a listing saw rather than what the bucket
+	// holds. The window is one pull request's runs, so reading them from the
+	// bucket costs little and decides on the bucket.
+	rows, err := loadRows(ctx, env, lsFilter{slugs: []string{slug}, since: now.Add(-followUpLookback), pr: pr, warn: warn, noCache: true}, now)
 	if err != nil {
 		return nil, err
 	}

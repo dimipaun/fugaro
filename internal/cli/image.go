@@ -31,7 +31,8 @@ import (
 func newImageCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "image", Short: "Build and inspect a workflow's derived container image"}
 	cmd.AddCommand(newImageBuildCmd(), newImageRenderCmd(), newImageSelftestCmd(), newImageGitCredentialCmd(),
-		newImageGateCmd(), newImageRecordCmd(), newImageCheckCmd(), newImageStatusCmd(), newImageRefreshCmd())
+		newImageGateCmd(), newImageRecordCmd(), newImageCheckCmd(), newImageStatusCmd(), newImageRefreshCmd(),
+		newImageLsCmd(), newImageAddCmd(), newImageRmCmd(), newImagePromoteCmd())
 	return cmd
 }
 
@@ -74,23 +75,39 @@ type imageBuildOptions struct {
 func newImageBuildCmd() *cobra.Command {
 	var o imageBuildOptions
 	cmd := &cobra.Command{
-		Use:   "build",
-		Short: "Build the derived image with Cloud Build; --local builds it with local Docker and smoke-tests it",
-		Long: "Build the workflow's derived image.\n\n" +
-			"Without --local, Cloud Build builds it from the repository's base branch\n" +
-			"as the repository's build account (cloning with its bitbucket-token, or\n" +
-			"a read-only token its GitHub App mints) and pushes it to the repository's\n" +
-			"own registry, which fugaro update --repo creates. It pushes a candidate,\n" +
-			"smoke-tests it without network, and only then points latest at it and\n" +
-			"records what it was built from, unless a newer build is already\n" +
-			"recorded. Run it from the repository's checkout: the checkout's\n" +
-			"fugaro.yaml and origin say what to build.\n\n" +
+		Use:   "build [name]",
+		Short: "Build a catalog entry's image with Cloud Build, or the workflow's derived image; --local builds the derived one with local Docker",
+		Long: "Build an image with Cloud Build.\n\n" +
+			"With an image catalog published (fugaro image ls lists its entries), it\n" +
+			"builds the catalog entry you name, or every entry whose source is a\n" +
+			"Dockerfile: the entry's Dockerfile is copied into the project's bucket,\n" +
+			"the build reads that one object, mounts the workflow's secrets as file\n" +
+			"secrets, smoke-tests the candidate without network and promotes it into\n" +
+			"the installation's shared registry with a content tag naming the\n" +
+			"definition it built. Run it from the checkout of the entry's own\n" +
+			"repository: the build account, the provider credential and the secrets\n" +
+			"are that repository's.\n\n" +
+			"Without a catalog — or with --workflow, which selects the per-workflow\n" +
+			"case — Cloud Build builds the workflow's derived image from the\n" +
+			"repository's base branch as the repository's build account (cloning with\n" +
+			"its bitbucket-token, or a read-only token its GitHub App mints) and\n" +
+			"pushes it to the repository's own registry, which fugaro update --repo\n" +
+			"creates. It pushes a candidate, smoke-tests it without network, and only\n" +
+			"then points latest at it and records what it was built from, unless a\n" +
+			"newer build is already recorded. Run it from the repository's checkout:\n" +
+			"the checkout's fugaro.yaml and origin say what to build.\n\n" +
 			"A Cloud Build is billable, so it asks for the project's name typed at a real\n" +
 			"terminal: --json, a pipe and a coding agent's session never confirm it (it\n" +
 			"prints the one line to run in your own terminal window and exits 1).\n" +
 			"--local builds with your own Docker and costs nothing in the cloud.",
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error { return runImageBuild(cmd, o) },
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := ""
+			if len(args) > 0 {
+				name = args[0]
+			}
+			return runImageBuild(cmd, name, o)
+		},
 	}
 	f := cmd.Flags()
 	f.BoolVar(&o.local, "local", false, "build with the local Docker daemon from the checkout you are in")
@@ -106,11 +123,28 @@ func newImageBuildCmd() *cobra.Command {
 	return cmd
 }
 
-func runImageBuild(cmd *cobra.Command, o imageBuildOptions) error {
-	ctx := cmd.Context()
-	if !o.local {
+func runImageBuild(cmd *cobra.Command, name string, o imageBuildOptions) error {
+	if o.local {
+		if name != "" {
+			return &ExitError{Code: ExitUserError, Err: errors.New("a catalog entry is built by Cloud Build; --local builds the derived image of the workflow you are in")}
+		}
+		return runImageBuildLocal(cmd, o)
+	}
+	// --workflow selects the per-workflow case, which a catalog entry's name
+	// is not: one command names one image (D1144).
+	if o.workflow != "" {
+		if name != "" {
+			return &ExitError{Code: ExitUserError, Err: errors.New("--workflow names a workflow's derived image and a positional name names a catalog entry: give one of them, not both")}
+		}
 		return runImageBuildCloud(cmd, o)
 	}
+	return runImageBuildCatalogOrDerived(cmd, name, o)
+}
+
+// runImageBuildLocal builds the derived image of the workflow the checkout
+// declares with the local Docker daemon.
+func runImageBuildLocal(cmd *cobra.Command, o imageBuildOptions) error {
+	ctx := cmd.Context()
 	if o.repo != "" {
 		return &ExitError{Code: ExitUserError, Err: errors.New("--repo applies to Cloud Build; --local builds the checkout you are in")}
 	}
@@ -362,7 +396,15 @@ func buildNotConfirmable(conds initflow.Conditions, repo, workflow string) error
 	if workflow != "" {
 		cmd += " --workflow " + quoteWord(workflow)
 	}
-	return userErr("a Cloud Build is billable, so its confirmation (the project's name) is typed at a real terminal: --json, a pipe and a coding agent never give it; run %s in your own terminal window", cmd)
+	return userErr("%s", buildNotConfirmableRoute(cmd))
+}
+
+// buildNotConfirmableRoute is the sentence buildNotConfirmable and the
+// catalog arm's refusal both end with, over the command each of them says to
+// run (cmd, without the leading words): stated once, so the two ways into
+// `fugaro image build` cannot refuse with two different sentences.
+func buildNotConfirmableRoute(cmd string) string {
+	return fmt.Sprintf("a Cloud Build is billable, so its confirmation (the project's name) is typed at a real terminal: --json, a pipe and a coding agent never give it; run %s in your own terminal window", cmd)
 }
 
 // confirmBuild shows the ⚠ CONFIRM banner on stderr and reads the project's
@@ -460,8 +502,13 @@ func printImageResult(w io.Writer, res *image.LocalResult, asJSON bool) error {
 	return nil
 }
 
+// imageKeyFlag is the dependency-set key flag the image build passes to render,
+// named once so the flag the build template sets and the refusal that names it
+// cannot drift apart.
+const imageKeyFlag = "key"
+
 func newImageRenderCmd() *cobra.Command {
-	var workflow, cloudOutputs, layerBucket, layerSlug, layerSHA string
+	var workflow, cloudOutputs, layerBucket, layerSlug, layerSHA, key string
 	cmd := &cobra.Command{
 		Use:   "render",
 		Short: "Print the Dockerfile that builds the workflow's derived image",
@@ -497,7 +544,7 @@ func newImageRenderCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: workflow %s uses the repository Dockerfile %s\n", name, repoFile)
 			}
 			if cloudOutputs != "" {
-				if err := writeCloudOutputs(cmd.Context(), root, lc, rf, name, cloudOutputs); err != nil {
+				if err := writeCloudOutputs(cmd.Context(), root, lc, rf, name, cloudOutputs, key); err != nil {
 					return err
 				}
 			}
@@ -511,17 +558,44 @@ func newImageRenderCmd() *cobra.Command {
 	cmd.Flags().StringVar(&layerBucket, "layer-bucket", "", "the runs bucket holding the repository's copy of the project layer (used by the image build)")
 	cmd.Flags().StringVar(&layerSlug, "layer-slug", "", "the repository's storage slug (used by the image build)")
 	cmd.Flags().StringVar(&layerSHA, "layer-sha256", "", "the project layer's sha256 the build was submitted with (used by the image build)")
-	for _, n := range []string{"layer-bucket", "layer-slug", "layer-sha256"} {
+	cmd.Flags().StringVar(&key, imageKeyFlag, "", "the normalised dependency-set key the operator's machine computed, which the record writes as it was given it (used by the image build)")
+	for _, n := range []string{"layer-bucket", "layer-slug", "layer-sha256", imageKeyFlag} {
 		_ = cmd.Flags().MarkHidden(n)
 	}
 	return cmd
+}
+
+// isDependencyKey reports whether key has the shape imagecheck.Key returns: the
+// lower-case hex SHA-256 of the canonical dependency set (design
+// docs/forge-authorship-images/shared-images.md §2.4).
+func isDependencyKey(key string) bool {
+	if len(key) != 64 {
+		return false
+	}
+	for _, r := range key {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // writeCloudOutputs writes, into dir, what the Cloud Build steps after
 // render read: selftest.json (the smoke's spec, image.SpecForCloud),
 // record.json (the build record's source side, which record completes),
 // and source-commit and built-at (the image's labels).
-func writeCloudOutputs(ctx context.Context, root string, lc *localcfg.Config, rf resolvedFile, name, dir string) error {
+//
+// key is the normalised dependency-set key the operator's machine computed
+// for this repository, which the build was submitted with; it is written into
+// the record as it was given (D622) and never worked out here. The empty
+// value is a build that was handed no key. A value that is not a key at all is
+// refused rather than recorded: the record is what every later launch reads to
+// choose the repository's image, and one carrying something that is not the
+// operator's key would name an image no build made.
+func writeCloudOutputs(ctx context.Context, root string, lc *localcfg.Config, rf resolvedFile, name, dir, key string) error {
+	if key != "" && !isDependencyKey(key) {
+		return &ExitError{Code: ExitUserError, Err: fmt.Errorf("--%s %q is not a 64-character lower-case hex dependency-set key", imageKeyFlag, key)}
+	}
 	cfg := rf.Cfg
 	git := func(args ...string) (string, error) {
 		c := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
@@ -597,7 +671,18 @@ func writeCloudOutputs(ctx context.Context, root string, lc *localcfg.Config, rf
 		// This binary's runner reads the sealed budget token; render runs
 		// the base image's own fugaro, so this is the base's statement
 		// (imagecheck.Record.SealedBudgetToken, what the seal gate trusts).
+		// A shared image is built by this same build, whose render step is the
+		// same base image's binary (design §2.6, §11), so the field is that
+		// binary's statement there too and not the shared repository's.
 		SealedBudgetToken: true,
+		// The key is the operator's machine's, computed before the build was
+		// submitted and handed to it as an input, and the record writes it as
+		// it was given it (D622): the build never computes one of its own, so
+		// a build that cloned something else still keys its image to the set
+		// the refresh decided on. A build handed no key writes no key, and a
+		// refresh cannot place a repository on a shared image by a key it does
+		// not have.
+		Key: key,
 	}
 	specJSON, err := json.Marshal(spec)
 	if err != nil {

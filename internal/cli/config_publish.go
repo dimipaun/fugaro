@@ -7,6 +7,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
 func newConfigPublishCmd() *cobra.Command {
@@ -28,46 +30,70 @@ func newConfigPublishCmd() *cobra.Command {
 		executable bool
 	)
 	cmd := &cobra.Command{
-		Use:   "publish FILE",
+		Use:   "publish [FILE]",
 		Short: "Publish the project layer: defaults and profiles for every repository of the project (fugaro/project-layer.yaml in the runs bucket)",
-		Args:  cobra.ExactArgs(1),
+		Long: "Publish the project layer. FILE defaults to this project's one local layer file " +
+			"(<config home>/fugaro/projects/<project>.layer.yaml), which is the file the owner " +
+			"edits and the file fugaro update publishes: the argument is only for publishing a " +
+			"layer kept somewhere else.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			if m := agentMarker(os.Getenv); m != "" {
 				return userErr("nothing was published: fugaro config publish writes to the cloud and changes what every repository of the project runs: %s", initflow.AgentRefusal(m))
 			}
-			data, err := readLayerFile(args[0])
-			if err != nil {
-				return userErr("nothing was published: %v", err)
+			var data []byte
+			if len(args) == 1 {
+				var err error
+				if data, err = readLayerFile(args[0]); err != nil {
+					return userErr("nothing was published: %v", err)
+				}
 			}
 			env, err := openCloud(ctx, o)
 			if err != nil {
 				return err
 			}
 			defer env.Close()
+			// The defaulted path is derived from the selected project, which
+			// openCloud is what resolves: the file is named after the project
+			// and lives beside its config (D830).
+			file, perr := localcfg.LayerFile(os.Getenv, env.lc.Name)
+			if perr != nil {
+				return userErr("nothing was published: %v", perr)
+			}
+			if len(args) == 1 {
+				file = args[0]
+			} else if data, err = readLayerFile(file); errors.Is(err, os.ErrNotExist) {
+				// The defaulted path has no flag to correct: the remedy for a
+				// missing local layer file is the command that seeds one. The
+				// read is readLayerFile's rather than a stat of its own, so a
+				// symlink that points nowhere meets the refusal the update stage
+				// gives that same file (a symlink is not a layer file this CLI
+				// reads) instead of this "nothing is there" sentence, which would
+				// send the owner to a command that refuses it too.
+				return userErr("nothing was published: there is no local layer file at %s: run fugaro update, which seeds it from the published project layer (or pass FILE to publish a layer kept somewhere else)", file)
+			} else if err != nil {
+				return userErr("nothing was published: %v", err)
+			}
+			// The generation is recorded only when the bytes published ARE the
+			// local layer file's: a FILE kept somewhere else is not what this
+			// machine will read back, and a record that claimed it was would
+			// hide the difference D854's refusal exists to find.
+			rec := layerRecord{}
+			if local, lerr := localcfg.LayerFile(os.Getenv, env.lc.Name); lerr == nil && filepath.Clean(local) == filepath.Clean(file) {
+				rec = layerRecord{path: policyConfigPath(env.lc), lc: env.lc}
+			}
 			if note := projectRecipesNote(env.lc); note != "" {
 				return userErr("nothing was published: %s", strings.Replace(note, "project recipes need", "the project layer needs", 1))
 			}
 			if fakeEndpointsOnGS(env.lc, env.lc.BucketURL()) {
 				return userErr("nothing was published: the project's storage endpoint is a fake")
 			}
-			l, ps := config.ParseProjectLayer(data, config.LayerAnchor{Project: env.lc.Name, GCPProject: env.lc.GCPProject})
+			l, ps := projectLayerProblems(data, env.lc)
 			if len(ps) > 0 {
-				return userErr("nothing was published: %s is invalid: %s", args[0], pluginwire.Printable(layerProblemsText(ps)))
+				return userErr("nothing was published: %s is invalid: %s", file, pluginwire.Printable(layerProblemsText(ps)))
 			}
-			// The claims are judged against the installation config, the
-			// whole route table — this is the one moment they can be: a run
-			// routes by its own repository's FUGARO_MODEL_PROVIDERS, so it
-			// cannot tell a provider this installation does not define from
-			// one this repository may not send code to (config.ClaimsOnRoutes
-			// drops both, deliberately). Publishing a claim nothing defines,
-			// or one colliding with another route's pattern (which would
-			// leave the gateway refusing to start), is refused here, before
-			// it reaches every repository of the project.
-			if _, cps := config.ApplyClaudeClaims(env.lc.Providers, l.ClaudeModels); len(cps) > 0 {
-				return userErr("nothing was published: %s is invalid: %s", args[0], pluginwire.Printable(layerProblemsText(cps)))
-			}
-			gen, err := publishLayer(ctx, cmd.ErrOrStderr(), env.bucket, l, executable)
+			gen, err := publishLayer(ctx, cmd.ErrOrStderr(), env.bucket, l, executable, nil, rec)
 			if err != nil {
 				return err
 			}
@@ -87,17 +113,71 @@ func newConfigPublishCmd() *cobra.Command {
 	return cmd
 }
 
+// projectLayerProblems parses a layer's bytes and judges its model claims
+// against the installation config, the whole route table — this is the one
+// moment they can be judged: a run routes by its own repository's
+// FUGARO_MODEL_PROVIDERS, so it cannot tell a provider this installation does
+// not define from one this repository may not send code to
+// (config.ClaimsOnRoutes drops both, deliberately). Publishing a claim nothing
+// defines, or one colliding with another route's pattern (which would leave the
+// gateway refusing to start), is refused before it reaches every repository of
+// the project.
+//
+// The door that publishes a FILE and the update stage that publishes the one
+// local layer file both answer "is this layer publishable" from here: a file
+// refused by one and accepted by the other would be published by whichever the
+// owner happened to run.
+func projectLayerProblems(data []byte, lc *localcfg.Config) (*config.ProjectLayer, []config.Problem) {
+	l, ps := config.ParseProjectLayer(data, config.LayerAnchor{Project: lc.Name, GCPProject: lc.GCPProject})
+	if len(ps) > 0 {
+		return l, ps
+	}
+	_, cps := config.ApplyClaudeClaims(lc.Providers, l.ClaudeModels)
+	return l, cps
+}
+
 // layerPublishRace is a test seam between publish's read of the existing
 // object and its conditional write.
 var layerPublishRace = func(ctx context.Context, b *blobx.Bucket) {}
+
+// layerAt is config.LayerKey as a caller already read it: the bytes, and the
+// generation a write is conditional on. The update stage reads the object
+// once, at its seed, and publishes against THAT read, so a publisher that
+// landed in between is refused rather than overwritten; a door with no read of
+// its own passes nil and publishLayer reads it.
+type layerAt struct {
+	old    []byte // nil, with exists false: the object is absent
+	gen    int64
+	exists bool
+}
+
+// layerRecord is where the generation a write landed at is recorded: the local
+// project config's layer_generation (D854), in the file it was built from. An
+// empty path is a run with no such file, and there is nothing to record in.
+type layerRecord struct {
+	path string
+	lc   *localcfg.Config
+}
 
 // publishLayer writes l to config.LayerKey, showing on w what it replaces
 // and every executable change, and only if the object is still the one it
 // read (or still absent): a concurrent publisher is refused, never
 // overwritten. An executable change needs executable (decision L7). It
-// returns the new generation.
-func publishLayer(ctx context.Context, w io.Writer, b *blobx.Bucket, l *config.ProjectLayer, executable bool) (int64, error) {
+// returns the new generation, and records it (rec) when the write landed
+// against an object this machine's own layer file corresponds to.
+//
+// at, when it is not nil, is the object as the caller read it: the write is
+// then conditional on THAT read rather than on one taken here, which is what
+// makes the update stage's within-run guard — a publish that landed between
+// its seed and its write — a refusal instead of a silent overwrite.
+func publishLayer(ctx context.Context, w io.Writer, b *blobx.Bucket, l *config.ProjectLayer, executable bool, at *layerAt, rec layerRecord) (int64, error) {
 	old, gen, rerr := b.ReadMaxStrict(ctx, config.LayerKey, config.LayerMaxBytes)
+	if at != nil {
+		old, gen, rerr = at.old, at.gen, nil
+		if !at.exists {
+			rerr = blobx.ErrNotExist
+		}
+	}
 	var prev *config.ProjectLayer
 	switch {
 	case rerr == nil:
@@ -154,7 +234,51 @@ func publishLayer(ctx context.Context, w io.Writer, b *blobx.Bucket, l *config.P
 	case err != nil:
 		return 0, remote(fmt.Errorf("nothing was published: writing %s: %w", config.LayerKey, err))
 	}
+	if rec.lc != nil {
+		if err := layerGenerationRecord(w, rec.path, rec.lc, gen); err != nil {
+			// The write landed, so this is the run's outcome and not a publish
+			// that failed: a sentence that read as one would hide the object
+			// this run moved.
+			return gen, err
+		}
+	}
 	return gen, nil
+}
+
+// layerGenerationRecord writes the generation the local layer file's bytes are
+// now written from (D854), leaving every other byte of the project config as
+// it is (yamledit: it is a file a person edits by hand, and marshalling the
+// struct would drop their comments and their order). The file it replaces is
+// backed up first and the write is atomic, the same triple the local config's
+// own writer and the policy record take. It is a no-op for a run with no local
+// config file to record in.
+func layerGenerationRecord(w io.Writer, path string, lc *localcfg.Config, gen int64) error {
+	if path == "" {
+		return nil
+	}
+	old, err := os.ReadFile(path)
+	if err != nil {
+		return userErr("recording the published project layer's generation in %s: %v", path, err)
+	}
+	value := strconv.FormatInt(gen, 10)
+	out, err := yamledit.SetScalar(old, []string{"layer_generation"}, value)
+	if err != nil {
+		return userErr("recording the published project layer's generation in %s: %v", path, err)
+	}
+	if !yamledit.Changed(old, out) {
+		lc.LayerGeneration = value
+		return nil
+	}
+	backup, err := backupFile(path, old, time.Now())
+	if err != nil {
+		return userErr("backing up %s before recording the published project layer's generation: %v", path, err)
+	}
+	if err := writeFileAtomic(path, out); err != nil {
+		return userErr("recording the published project layer's generation in %s: %v", path, err)
+	}
+	fmt.Fprintf(w, "recorded the published project layer's generation in %s (backup at %s)\n", path, backup)
+	lc.LayerGeneration = value
+	return nil
 }
 
 // diffMaxCells caps lineDiff's longest-common-subsequence table (len(a's

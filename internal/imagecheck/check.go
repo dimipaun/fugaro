@@ -195,6 +195,109 @@ func Decide(_ context.Context, in Inputs) Decision {
 	return d
 }
 
+// ReasonCatalogDefinition is the catalog trigger: the definition a catalog
+// image was built from is not the one in the runs bucket now. A catalog
+// entry belongs to no repository — there are no commits of its own to watch
+// — so the copied definition's sha256 is what says the image is stale, and
+// this trigger, with the max-age one, is what lets an entry be rebuilt when
+// nothing else about it moved (F4).
+const ReasonCatalogDefinition = "catalog-definition"
+
+// CatalogRecordState is one catalog entry's build record, as
+// internal/backend/gcp's record step writes it to
+// CatalogRecordKey(slug, entry) and this check reads it: which copy the
+// build read (the sha256 of the bytes it built, the object's generation and
+// the commit PIC3's copy took it from), the base it was built FROM and the
+// image it produced. Its field names are the record's JSON keys, and the
+// ones whose meaning matches a workflow Record's are spelled the same.
+type CatalogRecordState struct {
+	Version              int       `json:"version"`
+	Entry                string    `json:"entry"`
+	SourceCommit         string    `json:"source_commit"`
+	DefinitionGeneration int64     `json:"definition_generation"`
+	DefinitionSHA256     string    `json:"definition_sha256"`
+	BaseRef              string    `json:"base_ref"`
+	BaseDigest           string    `json:"base_digest"`
+	Image                string    `json:"image"`
+	ContentTag           string    `json:"content_tag"`
+	ImageDigest          string    `json:"image_digest"`
+	BuildID              string    `json:"build_id"`
+	BuiltAt              time.Time `json:"built_at"`
+}
+
+// CatalogInputs are what one entry's decision is made from.
+type CatalogInputs struct {
+	// Entry is the entry's name and Record its last build, nil when there
+	// is none.
+	Entry  string
+	Record *CatalogRecordState
+	// DefinitionSHA256 is the sha256 of the definition in the runs bucket
+	// now: config.CatalogDockerfileKey's object, as the caller read it.
+	DefinitionSHA256 string
+	// BaseRef is the base the entry would be built FROM and BaseDigest its
+	// current digest ("" when it couldn't be read).
+	BaseRef, BaseDigest string
+	// MaxAge is the entry's rebuild.max_age; 0 is off.
+	MaxAge time.Duration
+	Now    time.Time
+	Force  bool
+}
+
+// CatalogDecision is one entry's decision: Decision's shape under the
+// entry's name, since an entry has no workflow.
+type CatalogDecision struct {
+	Entry    string   `json:"entry"`
+	Decision string   `json:"decision"`
+	Reasons  []string `json:"reasons"`
+}
+
+// DecideCatalog evaluates one catalog entry's triggers, in the order the
+// workflow check evaluates them: force, the definition the last build read,
+// the base, then the image's age. Every trigger that fires is recorded, and
+// the reasons keep that order, so a night when both the definition and the
+// base moved records catalog-definition before base. It makes no calls: the
+// caller reads everything first.
+//
+// An entry is not backed off: a back-off compares the inputs of a build
+// that just failed, and an entry has no per-entry check state to hold them.
+// Its definition and max-age triggers are what a nightly rebuild runs on,
+// and a definition that does not change is not rebuilt twice.
+func DecideCatalog(in CatalogInputs) CatalogDecision {
+	d := CatalogDecision{Entry: in.Entry, Decision: Skip}
+	var fired, notes []string
+	if in.Force {
+		fired = append(fired, ReasonForce)
+	}
+	rec := in.Record
+	if rec == nil {
+		// Nothing to compare with and nothing to age: the image has to be
+		// built (or, on a forced run, rebuilt) before there is anything to
+		// decide about.
+		d.Decision = Rebuild
+		d.Reasons = append(fired, ReasonNoRecord)
+		return d
+	}
+	if in.DefinitionSHA256 != rec.DefinitionSHA256 {
+		fired = append(fired, ReasonCatalogDefinition)
+	}
+	switch {
+	case in.BaseRef != rec.BaseRef:
+		fired = append(fired, ReasonBase)
+	case in.BaseDigest == "":
+		notes = append(notes, ReasonBaseUnknown)
+	case in.BaseDigest != rec.BaseDigest:
+		fired = append(fired, ReasonBase)
+	}
+	if age := in.MaxAge; age > 0 && in.Now.Sub(rec.BuiltAt) > age {
+		fired = append(fired, ReasonMaxAge)
+	}
+	d.Reasons = append(fired, notes...)
+	if len(fired) > 0 {
+		d.Decision = Rebuild
+	}
+	return d
+}
+
 // CheckVersion is the CheckState schema version this package writes.
 const CheckVersion = 1
 

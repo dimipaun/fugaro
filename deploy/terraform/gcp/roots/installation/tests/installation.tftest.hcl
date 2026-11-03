@@ -230,7 +230,7 @@ run "shared_registry" {
       [for m in google_artifact_registry_repository_iam_member.base_writer : m.member != "allUsers" && m.member != "allAuthenticatedUsers"],
       [for m in google_artifact_registry_repository_iam_member.ghcr_reader : m.member != "allUsers" && m.member != "allAuthenticatedUsers"],
     ))
-    error_message = "no member this module grants on a registry may be public. It grants none on the shared registry at all: that registry's writer is each repository's build account and its readers are each repository's job accounts, granted by that repository's own root (modules/repo/registry.tf), which TestSharedRegistryRepoIDMatchesTheModule pins over this module's text."
+    error_message = "no member this module grants on a registry may be public. It grants none on the shared registry at all: that registry's writer and tag mover are each repository's build account and its readers are each repository's job accounts, granted by that repository's own root (modules/repo/registry.tf), which TestSharedRegistryRepoIDMatchesTheModule pins over this module's text."
   }
 }
 
@@ -1207,6 +1207,12 @@ run "coordinator_job" {
     condition     = one(one(google_cloud_run_v2_job.coordinator[0].template).template).timeout == "600s"
     error_message = "the sweep's own deadline is 600s, above the 8 minutes internal/cli stops a tick at"
   }
+  # The App ID counts among the six plain entries because this fixture's
+  # repositories include a GitHub one: the module emits it from a conditional
+  # block (F24), and a conditional block resolves to the same plain entry as
+  # any other, so what is counted here is the plan's list and not the module's
+  # blocks. Where every repository is Bitbucket the entry is absent and this
+  # run's own tfvars would have to say so.
   assert {
     condition = (toset([for e in one(one(one(google_cloud_run_v2_job.coordinator[0].template).template).containers).env : e.name if length(coalesce(e.value_source, [])) == 0]) == toset([
       "FUGARO_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL", "FUGARO_RUNS_BUCKET",
@@ -1250,6 +1256,133 @@ run "coordinator_job" {
   assert {
     condition     = output.coordinator_job == "fugarocoord"
     error_message = "the coordinator job's name is an output"
+  }
+  # The run's variable is the coordinator's own (BB5), and this run has no
+  # credentials service: the sweep's Bitbucket path has no root to mint at and
+  # no service to be admitted by, so the entry is absent and a Bitbucket
+  # repository stays StaleUnsupported rather than the sweep guessing one. The
+  # six-name set above is exact, so an extra entry fails there too; this is the
+  # named half of the same fact.
+  assert {
+    condition     = length([for e in one(one(one(google_cloud_run_v2_job.coordinator[0].template).template).containers).env : e if e.name == "FUGARO_COORDINATOR_CREDENTIALS_SERVICE_URL"]) == 0
+    error_message = "without the credentials service the coordinator job carries no service URL: FUGARO_COORDINATOR_CREDENTIALS_SERVICE_URL is not FUGARO_CREDENTIALS_SERVICE_URL, and the sweep reads only the first"
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.credentials_coordinator) == 0
+    error_message = "with no credentials service there is no invoker grant to make: the coordinator's read mint arrives with the service it calls"
+  }
+}
+
+# The read mint's second class (BB5, G4), read off a plan: the coordinator's
+# own account may call the credentials service — roles/run.invoker on that one
+# service, and the service's own environment naming the same address — and the
+# sweep is handed the coordinator's variable, which names that service's URL
+# and never the run path's own.
+#
+# The installation here is Bitbucket's alone and has no GitHub App (F24): the
+# sweep's GitHub path is what mints a token from the App key, so an
+# installation whose repositories are all Bitbucket deploys the same job
+# without the App ID, without the key's mount and without the grant that reads
+# it. That is the state every installation migrated from GitHub to Bitbucket
+# passes through, and it must plan rather than be refused for a credential
+# nothing reads.
+run "coordinator_sweep_reads_bitbucket_through_the_service" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  override_resource {
+    target          = google_service_account.coordinator[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-coordinator@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-coordinator@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+  override_resource {
+    target          = google_service_account.scheduler
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+  override_resource {
+    target          = google_project_iam_custom_role.job_runner
+    override_during = plan
+    values = {
+      name = "projects/proj-1234/roles/fugaroJobRunner"
+    }
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+    }
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "bitbucket"
+        repo     = "owner/repo-a"
+        workflow = "web"
+      }]
+      verifier_accounts = ["person-1@example.com"]
+      url               = "https://fugaro-credentials-123456789012.us-east5.run.app"
+    }
+    coordinator = {
+      account_id       = "fugaro-coordinator"
+      job              = "fugarocoord"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-coordinator-sweep"
+      scheduler_region = "us-east1"
+      deploy_job       = true
+      firebase_project = "fp-1234"
+      rtdb_url         = "https://fp-1234-default-rtdb.firebaseio.com"
+      repos            = [{ provider = "bitbucket", repo = "owner/repo-a" }]
+    }
+  }
+
+  assert {
+    condition = (toset([for e in one(one(one(google_cloud_run_v2_job.coordinator[0].template).template).containers).env : e.name]) == toset([
+      "FUGARO_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL", "FUGARO_RUNS_BUCKET",
+      "FUGARO_COORDINATOR_REPOS", "FUGARO_COORDINATOR_CREDENTIALS_SERVICE_URL",
+    ]))
+    error_message = "a Bitbucket-only sweep's whole configuration is those six environment variables: the credentials service's URL takes the App ID's place, and no entry is taken from a source, because there is no App key to mount"
+  }
+  assert {
+    condition = (one([for e in one(one(one(google_cloud_run_v2_job.coordinator[0].template).template).containers).env : e.value if e.name == "FUGARO_COORDINATOR_CREDENTIALS_SERVICE_URL"]) == "https://fugaro-credentials-123456789012.us-east5.run.app" &&
+    length([for e in one(one(one(google_cloud_run_v2_job.coordinator[0].template).template).containers).env : e if e.name == "FUGARO_CREDENTIALS_SERVICE_URL"]) == 0)
+    error_message = "the sweep is handed the service's URL under the coordinator's own name (F23): FUGARO_CREDENTIALS_SERVICE_URL is the run path's variable, and a sweep that read it would let a run's environment move the root its token is minted at"
+  }
+  assert {
+    condition = (length(google_secret_manager_secret_iam_member.coordinator_app_key) == 0 &&
+    length([for e in one(one(one(google_cloud_run_v2_job.coordinator[0].template).template).containers).env : e if e.name == "FUGARO_GITHUB_APP_ID" || length(coalesce(e.value_source, [])) > 0]) == 0)
+    error_message = "F24: with no GitHub repository the job carries no App ID, no key mount and no grant to read the key — the sweep mints its read tokens at the credentials service instead"
+  }
+  assert {
+    condition = (length(google_cloud_run_v2_service_iam_member.credentials_coordinator) == 1 &&
+      google_cloud_run_v2_service_iam_member.credentials_coordinator[0].role == "roles/run.invoker" &&
+      google_cloud_run_v2_service_iam_member.credentials_coordinator[0].name == "fugaro-credentials" &&
+    google_cloud_run_v2_service_iam_member.credentials_coordinator[0].member == "serviceAccount:fugaro-coordinator@proj-1234.iam.gserviceaccount.com")
+    error_message = "the coordinator's account may invoke this one service and no other grant is added: without it the front end refuses the sweep before the container runs, and every Bitbucket repository stays StaleUnsupported"
+  }
+  assert {
+    condition     = one([for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.value if e.name == "FUGARO_COORDINATOR_ACCOUNT"]) == "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"
+    error_message = "the service admits the account the job runs as, under the coordinator's own environment name: the identity that may knock (the invoker grant above) and the identity that may be served are one address"
   }
 }
 
@@ -2300,7 +2433,9 @@ run "credentials_service_off_by_default" {
 #     module's IAM resources. (Independent review n1: this comment used to
 #     claim the run guarded that too, which it does not.)
 #   * The service requires IAM: nothing in this module grants invoker to
-#     anyone, and the container reads no credential from its environment.
+#     allUsers or allAuthenticatedUsers, and the grants it does make are the
+#     front door's (iam.tf: the operators, BB4) and the container reads no
+#     credential from its environment.
 run "credentials_service_on" {
   command = plan
 
@@ -2318,7 +2453,7 @@ run "credentials_service_on" {
     credentials_service = {
       account_id       = "fugaro-credentials"
       service          = "fugaro-credentials"
-      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
       bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
       firebase_project = "aurora-fp"
       rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
@@ -2327,7 +2462,8 @@ run "credentials_service_on" {
         repo     = "acme/webapp"
         workflow = "web"
       }]
-      url = "https://fugaro-credentials-123456789012.us-east5.run.app"
+      verifier_accounts = ["person-1@example.com", "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"]
+      url               = "https://fugaro-credentials-123456789012.us-east5.run.app"
     }
   }
 
@@ -2433,17 +2569,45 @@ run "credentials_service_on" {
   }
   assert {
     condition = (google_cloud_run_v2_service.credentials[0].template[0].service_account == google_service_account.credentials[0].email &&
-      google_cloud_run_v2_service.credentials[0].template[0].containers[0].image == "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3" &&
+      google_cloud_run_v2_service.credentials[0].template[0].containers[0].image == "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3" &&
     google_cloud_run_v2_service.credentials[0].template[0].timeout == "3600s")
     error_message = "the service runs as its own account, on the image the variable carries, with the longest timeout Cloud Run allows for a streaming proxy"
   }
-  # The environment is the seven names C1.14's `fugaro credentials serve`
-  # reads and internal/infra/tf's credentialsServiceEnv allows, and it is held
-  # as an exact map: an eighth entry, a missing one, a name the process does
-  # not read, or a value that is not the installation's own fails here. What
-  # the service does with a value (a database URL that is not the Firebase
-  # project's, an audience that is not a URL, a job table that binds nothing)
-  # is refused by the process itself, by name, and is C1.14's tests.
+  # This run's image is 0.15.0, the first release whose process serves HTTP/2
+  # cleartext (internal/cli/credentials_serve.go), so the container's port is
+  # NAMED h2c — the name is the whole of what makes Cloud Run speak HTTP/2 to
+  # the process instead of HTTP/1.1, which is the hop the plan's B1.0 is for:
+  # it is conditional on the owner's Check 190 failing a large push, and an
+  # unnamed port is the HTTP/1 path whose body limit that check exercises.
+  # Nothing here is a measurement of it — the checklist still records Check 190
+  # as not run, and the run further down is the image the gate keeps unnamed.
+  # The number is the port the process itself falls back to when the platform's
+  # PORT is unset (servePort) and Cloud Run's own default, so the name and the
+  # listener cannot point at different ports. The release this run pins and the
+  # one the run below pins are the pair the module's own threshold is written
+  # from (credentials.tf's credentials_image_serves_h2c): a release that moves
+  # the first h2c-serving version moves this image, that one and the threshold
+  # together.
+  assert {
+    condition = (length(google_cloud_run_v2_service.credentials[0].template[0].containers[0].ports) == 1 &&
+      google_cloud_run_v2_service.credentials[0].template[0].containers[0].ports[0].name == "h2c" &&
+    google_cloud_run_v2_service.credentials[0].template[0].containers[0].ports[0].container_port == 8080)
+    error_message = "an image whose release serves h2c must have its container port named h2c and numbered 8080: the name is what makes the front end speak HTTP/2 to this process"
+  }
+  # The environment is the names C1.14's `fugaro credentials serve` reads and
+  # internal/infra/tf's credentialsServiceEnv allows, and it is held as an
+  # exact map: an extra entry, a missing one, a name the process does not
+  # read, or a value that is not the installation's own fails here. This run
+  # names a verifier, so it carries the ninth name; the run below, which names
+  # none, is where the other eight are held. Two of the nine are rendered only
+  # from what this file's own variables name: the verifier list (C3.9g1) and,
+  # since BB4, the read mint's admitted people — the operators among the
+  # installation's user: members, as the bare addresses a Google ID token's
+  # email claim carries, which is what the service verifies them by. What the
+  # service does with a value (a database URL that is not the Firebase
+  # project's, an audience that is not a URL, a job table that binds nothing,
+  # a verifier list or a person list that is not a list of addresses) is
+  # refused by the process itself, by name, and is C1.14's tests.
   assert {
     condition = tomap({
       for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.name => e.value
@@ -2455,8 +2619,19 @@ run "credentials_service_on" {
       FUGARO_FIREBASE_PROJECT        = "aurora-fp"
       FUGARO_CREDENTIALS_SERVICE_URL = "https://fugaro-credentials-123456789012.us-east5.run.app"
       FUGARO_JOB_ACCOUNTS            = "[{\"provider\":\"github\",\"repo\":\"acme/webapp\",\"workflow\":\"web\"}]"
+      FUGARO_VERIFIER_ACCOUNTS       = "[\"person-1@example.com\",\"fugaro-coordinator@proj-1234.iam.gserviceaccount.com\"]"
+      FUGARO_PERSON_ACCOUNTS         = "[\"operator@example.com\"]"
     })
-    error_message = "the container's environment is the seven names the service reads and nothing else: no secret ID, no credential value, and no eighth entry"
+    error_message = "the container's environment is the names the service reads and nothing else: no secret ID, no credential value, and no entry beyond the ones the module sets for this run"
+  }
+  # This run records no coordinator, so the read mint's coordinator class is not
+  # rendered at all: the process reads the absence as an empty class and admits
+  # no coordinator, which is the fail-closed direction (BB5). The exact map
+  # above already fails on an extra entry; this is the named half of the same
+  # fact, and the run below is the coordinator's own.
+  assert {
+    condition     = length([for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e if e.name == "FUGARO_COORDINATOR_ACCOUNT"]) == 0
+    error_message = "an installation that runs no coordinator names none on its service: the entry arrives with the coordinator's own account (BB5)"
   }
   # The service's own URL is the audience its callers' ID tokens are minted
   # for, and it is the one entry the module cannot fill on the apply that
@@ -2566,8 +2741,57 @@ run "credentials_service_first_apply_has_no_audience_yet" {
     error_message = "the placeholder must not look like a Cloud Run URL: a run.app-shaped audience would be a guess at another service's name"
   }
   assert {
-    condition     = length(google_cloud_run_v2_service.credentials[0].template[0].containers[0].env) == 7
-    error_message = "the unset case sets the same seven names, the audience among them: a name the module drops is a service the process refuses by a different message"
+    condition     = length(google_cloud_run_v2_service.credentials[0].template[0].containers[0].env) == 8
+    error_message = "the unset case sets the same eight names, the audience among them: a name the module drops is a service the process refuses by a different message"
+  }
+}
+
+# The port's name follows the image, and this is the other direction of that
+# pairing (B1.0): a front end told h2c in front of a process that answers
+# HTTP/1.1 only serves nothing at all, so an image that is not one of the
+# releases whose server speaks h2c gets no port at all — Cloud Run's own
+# HTTP/1.1, which is what the service answers on today.
+#
+# It is not a hypothetical image. The release's own image is not the only one
+# this root can be planned with: an installation whose owner is still on an
+# older CLI carries that release's reference forward
+# (infra.CarriedCredentialsService), and an operator's own tfvars may name any
+# digest they like — 0.14.0's process, before this release re-pinned anything,
+# is that shape with no name in front of it. (This release's own update
+# re-resolves and re-pins the image for an installation that opted in — the
+# credentials stage when the service is switched on, init_stages.go's
+# pinCredentialsImage on an ordinary run — so the plan it makes pairs the newer
+# image with the name in the run above; this one is the other direction, and it
+# is the one that must keep working for a plan whose image is older.) An image
+# reference the module cannot read a release out of (a hand-written digest, a
+# version that is not three numbers) reads the same way, and so does the
+# tagless image of the first-apply run above.
+run "credentials_service_port_follows_the_image" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:0.14.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+    }
+  }
+
+  assert {
+    condition     = length(google_cloud_run_v2_service.credentials[0].template[0].containers[0].ports) == 0
+    error_message = "an image whose release does not serve h2c must have no named port: Cloud Run reads the name as the protocol to speak, and h2c in front of an HTTP/1.1 process fails every call the installation makes"
   }
 }
 

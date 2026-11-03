@@ -169,6 +169,19 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `agent.max_run_tokens` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |
 | `agent.first_line_review` | project, repo |  |
 | `agent.first_line_rounds` | project, repo |  |
+| `agent.levels.l1.model` | project, repo |  |
+| `agent.levels.l1.effort` | project, repo |  |
+| `agent.levels.l1.none` | project, repo |  |
+| `agent.levels.l1.focus` | project, repo |  |
+| `agent.levels.l2.model` | project, repo |  |
+| `agent.levels.l2.effort` | project, repo |  |
+| `agent.levels.l2.none` | project, repo |  |
+| `agent.levels.l2.focus` | project, repo |  |
+| `agent.levels.l3.model` | project, repo |  |
+| `agent.levels.l3.effort` | project, repo |  |
+| `agent.levels.l3.none` | project, repo |  |
+| `agent.levels.l3.focus` | project, repo |  |
+| `agent.adversarial_rounds` | project, repo |  |
 | `agent.recipe` | project, repo, override |  |
 | `agent.oauth_token` | repo, override | it names a credential identity that only the repository's own, PR-reviewed fugaro.yaml may choose among names the local config (never the project layer) allow-lists. On a project job the account is the profile's — an axis of the job's own name, one job per (profile, provider, account) — and the job's container holds that account's token, so an OAuth run is admitted only when the profile lists the account the run's own credential selects and the repository is on that account's `accounts.<n>.allow_repos`; it then runs on that account's job. Anything else is refused before the claim, the budget token and any Cloud Run call: a run selecting an account the profile serves no job for, and a run on a profile that serves no such account at all (`internal/cli`'s `projectJobAccountFor`, `checkProjectJobAccount` and `checkProjectJobAccountCovers`), with the runner re-deciding the same question at run start (`internal/runner`'s `checkProjectJobAccount`). A profile serves an account by listing it in its own `claude_accounts` in the project's local config, and the `default` account rides the profile's no-account job — so a profile that lists no account mounts no token, and an OAuth run on its shared job is refused at launch rather than started with no credential. A **non-OAuth** run never targets an account job, and a repository that keeps a per-repository job of its own (a baked workflow, or an installation that has published no profiles) is not affected |
 | `agent.compression` | repo, override | it changes what the model sees on every call; the project layer and a profile are the same launcher-writable bucket object agent.oauth_token already distrusts for the identical reason |

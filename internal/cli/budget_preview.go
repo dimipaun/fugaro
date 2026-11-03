@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -133,19 +134,123 @@ func newBudgetPreviewCmd() *cobra.Command {
 
 // previewKnobs are a run's numbers that come from the repository: its two
 // round knobs and Claude Code's per-stage cap. maxStageUSD is 0 (unknown)
-// when there was no checkout to read one from, and from is "checkout" then.
+// when there was no checkout to read one from, and from is "defaults" then.
+//
+// The rounds are the knobs where the repository set them and the rigor mode's
+// own row where it set neither (rigor.DefaultRounds, the owner's ruling of
+// 2026-10-31): an unset knob is no longer filled in with one flat default at
+// config load, because the default depends on the mode. mode is what supplied
+// them, and the printed figures name it.
 type previewKnobs struct {
 	first, rounds int
 	maxStageUSD   float64
 	from          string
+	mode          rigor.Mode
 }
 
-func previewKnobsOf(cfg *config.Config) previewKnobs {
-	if cfg == nil {
-		return previewKnobs{first: config.DefaultFirstLineRounds, rounds: config.DefaultReviewRounds, from: "defaults"}
+// previewKnobsOf reads a checkout's numbers, if there is a checkout at all.
+// The mode is the one the repository resolves with nothing narrower — the
+// repository's own rigor default, else the project layer's, else rigor.Default
+// (pro) — which is what rigor.Resolve answers for a run that declares no path.
+// It is the same resolution internal/runner's plan uses, so the preview and
+// the run agree on the number; what the preview cannot know is an area rule
+// (the paths a run turns out to touch) or a task's own override, so a run of a
+// repository whose areas are stricter spends more than this said.
+//
+// project is the project layer's half of that resolution, which the caller
+// reads itself (previewProjectRigor) when there is no checkout to read the
+// repository's file from: with no cfg at all the layer is the only layer there
+// is, and leaving it out resolved every such preview at rigor.Default (pro)
+// whatever the project had published.
+func previewKnobsOf(cfg *config.Config, project rigor.Config) previewKnobs {
+	k := previewKnobs{from: "defaults", mode: rigor.Resolve(project, rigor.Request{}).Mode}
+	if cfg != nil {
+		k = previewKnobs{from: "checkout", mode: rigor.Resolve(cfg.RigorConfig(), rigor.Request{}).Mode,
+			first: cfg.Agent.FirstLineRounds, rounds: cfg.Agent.ReviewRounds, maxStageUSD: cfg.Agent.MaxBudgetUSD}
 	}
-	return previewKnobs{first: cfg.Agent.FirstLineRounds, rounds: cfg.Agent.ReviewRounds,
-		maxStageUSD: cfg.Agent.MaxBudgetUSD, from: "checkout"}
+	defaults := rigor.DefaultRounds(k.mode)
+	if k.first == 0 {
+		k.first = defaults.Inner
+	}
+	if k.rounds == 0 {
+		k.rounds = defaults.Senior
+	}
+	return k
+}
+
+// previewProjectLayer is the project layer a preview with no checkout resolves
+// over, nil when there is none to read: cfg is nil there, so the pair of
+// layers a run would resolve stops at the project layer. It is the layer
+// embedProjectLayer embeds for a launch from outside a checkout (decision
+// L8): the installation's own project and GCP project are the anchor, since
+// the file that would anchor it (a checkout's fugaro.yaml) is not here, and
+// the layer the bucket holds under that anchor is the one every such launch
+// carries.
+//
+// Lenient, like every read that is not a launch, and a read that fails leaves
+// nothing rather than failing an estimate that worked before: the preview
+// prints the mode it used, and its own note already says the numbers are the
+// mode's defaults. A layer that is there but invalid parses under neither mode
+// (findLayer), so this reports none rather than a wrong one.
+func previewProjectLayer(ctx context.Context, lc *localcfg.Config) *config.Config {
+	if lc == nil || lc.Name == "" || lc.GCPProject == "" {
+		return nil
+	}
+	anchor := []byte(fmt.Sprintf("version: 1\nproject: %s\ngcp_project: %s\n", lc.Name, lc.GCPProject))
+	fl, err := findLayer(ctx, getenvOS, anchor, lc, layerOptions{Lenient: true}, time.Now())
+	if err != nil || fl.Layer == nil {
+		return nil
+	}
+	return &config.Config{Layer: fl.Layer}
+}
+
+// previewProjectRigor is previewProjectLayer's rigor half, for the mode the
+// preview prints.
+func previewProjectRigor(ctx context.Context, lc *localcfg.Config) rigor.Config {
+	c := previewProjectLayer(ctx, lc)
+	if c == nil {
+		return rigor.Config{}
+	}
+	return c.ProjectRigor()
+}
+
+// previewLevel3Rounds is the number the adversarial step takes where no step
+// of its own sets one, read the way the run reads it (planOf's setRounds):
+// agent.adversarial_rounds where a layer set it, else the mode's own row
+// (rigor.AdversarialDefault) — and 0 when the levels this run resolves leave
+// level 3 off, since then the step does not run at all.
+//
+// A preview that counted the mode's row unconditionally would price a level-3
+// round at every mode, and only some rows turn the level on: a Pro run of the
+// catalog default, which carries the step, runs two levels and would be quoted
+// three. A preview that read the row in place of the knob would go the other
+// way and quote a run less than it starts, which is the unsafe direction for a
+// spend estimate; the knob wins over the row wherever it is set, up or down.
+// The levels are resolved the way the run resolves them
+// (config.ResolveLevels, L3.1) over the two layers a preview reads — the
+// mode's own row, and the configuration the preview's figures come from (the
+// checkout's file, which already carries the project layer it resolved over).
+// Two layers a preview has no answer for are the task's review_levels and the
+// owner's floor, which lives in the published policy node: a task is what a
+// preview does not have, and the node is read through the operator's
+// credentials at a launch. A floor is a requirement and not a veto, so a mode
+// whose row leaves level 3 off can still run it — the figure here is the
+// mode's own answer, and the note printed beside it says the numbers are the
+// mode's defaults.
+func previewLevel3Rounds(cfg *config.Config, root string, rcp *recipe.Recipe, mode rigor.Mode) int {
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
+	levels, _, err := config.ResolveLevels(config.LevelInputs{
+		Config: cfg, Mode: mode, Recipe: rcp, CatalogDefault: catalogDefaultRecipe(root, rcp),
+	})
+	if err == nil && !levels.L3.On {
+		return 0
+	}
+	if cfg.Agent.AdversarialRounds > 0 {
+		return cfg.Agent.AdversarialRounds
+	}
+	return rigor.AdversarialDefault(mode)
 }
 
 // previewCompute is one workflow's compute ceiling: what a run of it can bill
@@ -296,6 +401,11 @@ type previewDoc struct {
 		FirstLineRounds int `json:"first_line_rounds"`
 		ReviewRounds    int `json:"review_rounds"`
 	} `json:"knobs"`
+	// RigorMode is the mode whose row supplied either round the checkout left
+	// unset. It is not on the wire: knobs_from and knobs are the contract the
+	// console already reads, and a field it does not know is a field a strict
+	// reader refuses. The text output names it instead.
+	RigorMode rigor.Mode `json:"-"`
 	// PerStageCapUSD is agent.max_budget_usd; null when no checkout here
 	// named one.
 	PerStageCapUSD *float64 `json:"per_stage_cap_usd"`
@@ -394,12 +504,22 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 		return err
 	}
 
-	knobs := previewKnobsOf(cfg)
-	stages := recipe.StageBound(rr.Recipe, knobs.first, knobs.rounds)
+	// A checkout's config already carries the project layer it resolved over
+	// (config.Resolve), so the layer is read here only when there is no such
+	// config: without one, nothing else on this path knows the project's rigor
+	// default, and the mode would silently be pro's.
+	var project rigor.Config
+	if cfg == nil {
+		project = previewProjectRigor(ctx, lc)
+	}
+	knobs := previewKnobsOf(cfg, project)
+	level3 := previewLevel3Rounds(cfg, root, rr.Recipe, knobs.mode)
+	stages := recipe.StageBound(rr.Recipe, knobs.first, knobs.rounds, level3)
 	doc := &previewDoc{Project: lc.Name, GCPProject: lc.GCPProject, Repo: repo, Slug: slug,
 		Recipe: rr.Name, Source: string(rr.Source), Runs: o.runs, Stages: stages,
 		KnobsFrom: knobs.from, PerRunCapSource: []string{}, Notes: []string{}}
 	doc.Knobs.FirstLineRounds, doc.Knobs.ReviewRounds = knobs.first, knobs.rounds
+	doc.RigorMode = knobs.mode
 	// resolveRecipe's note says where the stages come from when the recipe
 	// was not simply found: a stale cached project recipe standing in for an
 	// unreachable bucket, or the project layer skipped. run prints it for the
@@ -416,7 +536,7 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 		v := knobs.maxStageUSD
 		doc.PerStageCapUSD = &v
 	} else {
-		doc.Notes = append(doc.Notes, fmt.Sprintf("no checkout of %s here: agent.max_budget_usd is unknown and the recipe's rounds are the defaults (agent.first_line_rounds %d, agent.review_rounds %d)", repo, knobs.first, knobs.rounds))
+		doc.Notes = append(doc.Notes, fmt.Sprintf("no checkout of %s here: agent.max_budget_usd is unknown and the recipe's rounds are mode %s's defaults (agent.first_line_rounds %d, agent.review_rounds %d)", repo, knobs.mode, knobs.first, knobs.rounds))
 	}
 
 	// Today's caps and counters, read as budget show reads them.
@@ -470,7 +590,7 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 	doc.Bounded, doc.PerRunUSD, doc.CeilingUSD = ceiling != nil, used, ceiling
 	doc.Verdict = previewVerdict(ceiling, repoHR, globalHR)
 
-	previewAddTypical(ctx, doc, env, lc, cfg, rr.Recipe, repo, slug)
+	previewAddTypical(ctx, doc, env, lc, cfg, knobs, level3, rr.Recipe, repo, slug)
 
 	if o.json {
 		return writeJSON(cmd.OutOrStdout(), doc)
@@ -486,7 +606,7 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 // or a project layer that is not read), open it here, and read no further
 // than a note if that fails: a Viewer without the bucket's read still gets
 // the ceiling.
-func previewAddTypical(ctx context.Context, doc *previewDoc, env *cloudEnv, lc *localcfg.Config, cfg *config.Config, rp *recipe.Recipe, repo, slug string) {
+func previewAddTypical(ctx context.Context, doc *previewDoc, env *cloudEnv, lc *localcfg.Config, cfg *config.Config, knobs previewKnobs, level3 int, rp *recipe.Recipe, repo, slug string) {
 	bucket := env.bucket
 	if bucket == nil {
 		opened, err := openCloudFor(ctx, lc)
@@ -518,7 +638,7 @@ func previewAddTypical(ctx context.Context, doc *previewDoc, env *cloudEnv, lc *
 		doc.Notes = append(doc.Notes, fmt.Sprintf("%d of the %d runs of %s in the last 30 days recorded no cost for any stage (a result.json from before the runner kept one, or stages that all cost nothing); they are not counted",
 			h.unpriced, total, repo))
 	}
-	usd, stages, missing, model := h.typical(rp, cfg)
+	usd, stages, missing, model := h.typical(rp, cfg, knobs, level3)
 	if missing != "" {
 		on := ""
 		if model != "" {
@@ -643,7 +763,9 @@ func readPreviewHistory(ctx context.Context, b *blobx.Bucket, slug string, now t
 // that kind's recorded stages on the model the checkout pins for it, with
 // the recipe's roles mapping applied as the runner applies it. A stages of 0
 // means there is no figure to print; missing names the kind whose stages the
-// window recorded no cost for on that model, and is "" otherwise.
+// window recorded no cost for on that model, and is "" otherwise. knobs is
+// the caller's, the same ones the ceiling's stage bound uses, so the two
+// figures on one line are counted the same way.
 //
 // Only the pinned model's own stages are averaged: a kind the window holds no
 // cost for on that model has no figure rather than another model's mean,
@@ -651,9 +773,8 @@ func readPreviewHistory(ctx context.Context, b *blobx.Bucket, slug string, now t
 // (the help's promise, and the rule a missing kind already follows). The
 // design's "with fewer than 5 runs, the line is omitted" and a recipe that
 // runs no agent stage at all are silent: there is nothing to explain.
-func (h previewHistory) typical(rp *recipe.Recipe, cfg *config.Config) (usd float64, stages int, missing, model string) {
-	knobs := previewKnobsOf(cfg) // the same knobs the ceiling's stage bound uses
-	counts := previewTypicalCounts(rp, knobs.first, knobs.rounds)
+func (h previewHistory) typical(rp *recipe.Recipe, cfg *config.Config, knobs previewKnobs, level3 int) (usd float64, stages int, missing, model string) {
+	counts := previewTypicalCounts(rp, knobs.first, knobs.rounds, level3)
 	for _, n := range counts {
 		stages += n
 	}
@@ -715,39 +836,59 @@ var previewStageKinds = [...]string{"implement", "review_first", "fix", "review"
 // one round of each loop — the design's typical run, and the count the
 // history mean is multiplied by. It mirrors the runner's loop: an implement,
 // then a first line of review_first and its fix, then a senior review, its
-// fix, and, with bounce, one more cheap pair. A mode: review recipe runs the
-// senior review alone, and a digest recipe has no implement stage at all:
+// fix, and, with bounce, one more cheap pair; an adversarial step adds level
+// 3's round and its fix, and, with bounce, one more cheap pair of its own (one
+// round here too, however many its own cap allows). A mode:
+// review recipe runs the senior review alone, and a digest recipe has no
+// implement stage at all:
 // its first step is the runner's own work, which writes the run reports with
 // no model call (run-digest).
 //
-// first and rounds are the checkout's first_line_rounds and review_rounds (a
-// step's own max_rounds overriding its knob, as recipe.StageBound takes
-// them), each read as at most one round: a loop the knobs leave at 0 never
-// runs, so its stages are not counted -- the sum here is StageBound(rp, f, n)
-// for the same f and n, which the tests pin for every catalog recipe.
-func previewTypicalCounts(rp *recipe.Recipe, first, rounds int) map[string]int {
+// first, rounds and level3 are the rounds of the three levels (a step's own
+// max_rounds overriding its knob or its default, as recipe.StageBound takes
+// them), each read as at most one round: a loop the number leaves at 0 never
+// runs, so its stages are not counted -- the sum here is StageBound(rp, f, n,
+// n3) for the same f, n and n3, which the tests pin for every catalog recipe.
+// level3 is agent.adversarial_rounds where a layer set it, else the mode's own
+// row, where the run's resolved levels run level 3, and 0 where they leave it
+// off (previewLevel3Rounds), so a mode that does not run the level is not
+// quoted one.
+func previewTypicalCounts(rp *recipe.Recipe, first, rounds, level3 int) map[string]int {
 	if rp.Mode == recipe.ModeReview {
 		return map[string]int{"review": 1}
 	}
 	f, n, bounce := 0, 0, false
+	adv, advBounce := 0, false
 	for _, s := range rp.Steps {
 		switch s.Kind {
 		case recipe.StepFirstLine:
 			f = roundCount(first, s.MaxRounds)
 		case recipe.StepReview:
 			n, bounce = roundCount(rounds, s.MaxRounds), s.Bounce
+		case recipe.StepAdversarial:
+			// level3 is the number this step resolves to --
+			// agent.adversarial_rounds where a layer set it, else the mode's
+			// row (previewLevel3Rounds) -- and the step's own max_rounds wins
+			// over it, which is the order the runner's planOf reads them in.
+			adv, advBounce = roundCount(level3, s.MaxRounds), s.Bounce
 		}
 	}
 	cheap := 0
 	if bounce && f > 0 && n > 0 {
 		cheap = f // the senior review sent it back to the cheap loop once
 	}
-	// The fix after the first line and the fix after the senior review are one
-	// kind in result.json ("fix"), so they share one mean and one count here.
+	// Level 3 bounces to the same cheap loop, under the same rule.
+	advCheap := 0
+	if advBounce && f > 0 && adv > 0 {
+		advCheap = f
+	}
+	// The fix after the first line and the fix after each review are one kind
+	// in result.json ("fix"), so they share one mean and one count here, and
+	// every review is the "review" kind however deep the level.
 	counts := map[string]int{
-		"review_first": f + cheap,     // the first line, and its bounce-back
-		"review":       n,             // one senior round
-		"fix":          f + n + cheap, // each review's demands answered
+		"review_first": f + cheap + advCheap,           // the first line, and its bounce-backs
+		"review":       n + adv,                        // the senior round and level 3's
+		"fix":          f + n + adv + cheap + advCheap, // each review's demands answered
 	}
 	if !recipe.UsesDigest(rp) {
 		counts["implement"] = 1 // the first_line step's first stage
@@ -808,8 +949,8 @@ func printPreview(cmd *cobra.Command, d *previewDoc) {
 	for _, n := range d.Notes {
 		fmt.Fprintf(cmd.ErrOrStderr(), "note: %s\n", oneLine(n))
 	}
-	fmt.Fprintf(w, "recipe %s (%s): at most %d stages (agent.first_line_rounds %d, agent.review_rounds %d)\n",
-		oneLine(d.Recipe), d.Source, d.Stages, d.Knobs.FirstLineRounds, d.Knobs.ReviewRounds)
+	fmt.Fprintf(w, "recipe %s (%s): at most %d stages (mode %s, agent.first_line_rounds %d, agent.review_rounds %d)\n",
+		oneLine(d.Recipe), d.Source, d.Stages, d.RigorMode, d.Knobs.FirstLineRounds, d.Knobs.ReviewRounds)
 	if !d.Bounded {
 		fmt.Fprintln(w, "rough worst case: unbounded: set budget.per_run_usd (or agent.max_budget_usd in the repository's fugaro.yaml)")
 	} else {

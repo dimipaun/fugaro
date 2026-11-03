@@ -298,3 +298,106 @@ func TestCheckStateRoundTrip(t *testing.T) {
 		t.Errorf("CheckKey = %s", CheckKey("s", "w"))
 	}
 }
+
+// catalogInputs is one catalog entry's state as the daily check reads it
+// (PIC4): the copy tonight, the record of the last build of it, and the
+// base the entry would be built from.
+func catalogInputs(now time.Time) CatalogInputs {
+	return CatalogInputs{
+		Entry:            "agent",
+		DefinitionSHA256: strings.Repeat("a", 64),
+		Record: &CatalogRecordState{
+			DefinitionSHA256: strings.Repeat("a", 64),
+			SourceCommit:     "c1",
+			BaseRef:          "base:1", BaseDigest: digestA,
+			BuiltAt: now.Add(-2 * time.Hour),
+		},
+		BaseRef: "base:1", BaseDigest: digestA,
+		MaxAge: 24 * time.Hour,
+		Now:    now,
+	}
+}
+
+// TestCheckTriggersOnACatalogDefinitionChange: the daily check's one new
+// trigger. A catalog entry whose copied definition is not the one its last
+// build read is rebuilt; a copy that did not change is not, and an entry
+// with no record is built. The trigger is what makes a rebuild of an entry
+// possible at all when neither its definition nor its base has moved (F4),
+// since an entry has no commits of its own to watch. How often such a
+// rebuild runs is the schedule's business (PIC7), not this decision's.
+func TestCheckTriggersOnACatalogDefinitionChange(t *testing.T) {
+	now := time.Date(2026, 11, 3, 5, 30, 0, 0, time.UTC)
+	cases := []struct {
+		name     string
+		mod      func(*CatalogInputs)
+		decision string
+		reasons  []string
+	}{
+		{"the copy did not change", func(*CatalogInputs) {}, Skip, nil},
+		{"the definition changed", func(in *CatalogInputs) {
+			in.DefinitionSHA256 = strings.Repeat("b", 64)
+		}, Rebuild, []string{ReasonCatalogDefinition}},
+		{"no record", func(in *CatalogInputs) { in.Record = nil }, Rebuild, []string{ReasonNoRecord}},
+		{"force", func(in *CatalogInputs) { in.Force = true }, Rebuild, []string{ReasonForce}},
+		{"force, with nothing changed", func(in *CatalogInputs) {
+			in.Force = true
+			in.MaxAge = 0
+		}, Rebuild, []string{ReasonForce}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := catalogInputs(now)
+			tc.mod(&in)
+			got := DecideCatalog(in)
+			if got.Entry != "agent" || got.Decision != tc.decision || !slices.Equal(got.Reasons, tc.reasons) {
+				t.Fatalf("decided %s %v, want %s %v", got.Decision, got.Reasons, tc.decision, tc.reasons)
+			}
+		})
+	}
+}
+
+// TestCheckRebuildsACatalogImageOnABaseChange: an entry reuses the base and
+// max-age triggers per entry. A base the entry would now be built from is a
+// rebuild even when its definition did not move (that is the security
+// rebuild: the base moved, so every image built on it is stale), an
+// unreadable base digest is a note and never a rebuild, and an image older
+// than the entry's max-age is rebuilt.
+func TestCheckRebuildsACatalogImageOnABaseChange(t *testing.T) {
+	now := time.Date(2026, 11, 3, 5, 30, 0, 0, time.UTC)
+	in := catalogInputs(now)
+	in.BaseDigest = digestB
+	if got := DecideCatalog(in); got.Decision != Rebuild || !slices.Equal(got.Reasons, []string{ReasonBase}) {
+		t.Fatalf("a moved base: %s %v", got.Decision, got.Reasons)
+	}
+	in = catalogInputs(now)
+	in.BaseRef = "base:2"
+	if got := DecideCatalog(in); got.Decision != Rebuild || !slices.Equal(got.Reasons, []string{ReasonBase}) {
+		t.Fatalf("a changed base ref: %s %v", got.Decision, got.Reasons)
+	}
+	in = catalogInputs(now)
+	in.BaseDigest = ""
+	if got := DecideCatalog(in); got.Decision != Skip || !slices.Equal(got.Reasons, []string{ReasonBaseUnknown}) {
+		t.Fatalf("an unknown base digest: %s %v", got.Decision, got.Reasons)
+	}
+	in = catalogInputs(now)
+	in.Record.BuiltAt = now.Add(-25 * time.Hour)
+	if got := DecideCatalog(in); got.Decision != Rebuild || !slices.Equal(got.Reasons, []string{ReasonMaxAge}) {
+		t.Fatalf("an image past its max-age: %s %v", got.Decision, got.Reasons)
+	}
+	// Two triggers at once are recorded in the order they are evaluated.
+	in = catalogInputs(now)
+	in.DefinitionSHA256 = strings.Repeat("b", 64)
+	in.Record.BuiltAt = now.Add(-25 * time.Hour)
+	if got := DecideCatalog(in); got.Decision != Rebuild || !slices.Equal(got.Reasons, []string{ReasonCatalogDefinition, ReasonMaxAge}) {
+		t.Fatalf("a changed definition and an old image: %s %v", got.Decision, got.Reasons)
+	}
+	// The definition is evaluated before the base, so a night when both moved
+	// records both in that order: the base switch runs after the definition
+	// comparison and appends to what it recorded, never ahead of it.
+	in = catalogInputs(now)
+	in.DefinitionSHA256 = strings.Repeat("b", 64)
+	in.BaseDigest = digestB
+	if got := DecideCatalog(in); got.Decision != Rebuild || !slices.Equal(got.Reasons, []string{ReasonCatalogDefinition, ReasonBase}) {
+		t.Fatalf("a changed definition and a moved base: %s %v", got.Decision, got.Reasons)
+	}
+}

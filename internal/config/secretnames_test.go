@@ -57,6 +57,92 @@ func TestClaudeAccountSecretIsTheReservedName(t *testing.T) {
 	}
 }
 
+// TestReviewSigningKeyNamesAreTheAccountsPlusTheRotationWindow: the
+// per-account review-signing key is a name of the account family's own with a
+// suffix, so one entry per account and no second namespace (D1069): the key
+// lives in the one bundle document the account's token lives in, because Q6
+// pins the service's Secret Manager reach to one container and one grant.
+//
+// Both directions are pinned, because the two halves are what the loader and
+// the config path have to agree about: ReviewSigningKeySecret builds the name
+// and ReviewSigningKeyAccount reads it back with the account and whether it is
+// the rotation's previous entry, and a name that is not one of the family's is
+// nobody's — a suffix outside the account-name rule is refused exactly the way
+// CredentialKey refuses it in the account family, so a key the config path
+// cannot produce is a credential that cannot be written either.
+func TestReviewSigningKeyNamesAreTheAccountsPlusTheRotationWindow(t *testing.T) {
+	for _, account := range []string{"", DefaultClaudeAccount, "alice", "review-signing", "a" + strings.Repeat("-a", 15)} {
+		current := ClaudeAccountSecret(account) + ReviewSigningKeySuffix
+		if got := ReviewSigningKeySecret(account); got != current {
+			t.Errorf("ReviewSigningKeySecret(%q) = %q, want the account's secret plus %q", account, got, ReviewSigningKeySuffix)
+		}
+		if got := ReviewSigningKeyPreviousSecret(account); got != current+ReviewSigningKeyPreviousSuffix {
+			t.Errorf("ReviewSigningKeyPreviousSecret(%q) = %q, want %q", account, got, current+ReviewSigningKeyPreviousSuffix)
+		}
+		want := account
+		if want == "" {
+			want = DefaultClaudeAccount
+		}
+		for _, tc := range []struct {
+			name     string
+			previous bool
+		}{
+			{name: current},
+			{name: current + ReviewSigningKeyPreviousSuffix, previous: true},
+		} {
+			gotAccount, previous, ok := ReviewSigningKeyAccount(tc.name)
+			if !ok || gotAccount != want || previous != tc.previous {
+				t.Errorf("ReviewSigningKeyAccount(%q) = (%q, %v, %v), want (%q, %v, true)", tc.name, gotAccount, previous, ok, want, tc.previous)
+			}
+			// The two functions are one round trip: the name a writer is
+			// given is the name the reader resolves, for the same account.
+			if tc.previous {
+				if got := ReviewSigningKeyPreviousSecret(gotAccount); got != tc.name {
+					t.Errorf("ReviewSigningKeyPreviousSecret(%q) = %q, want the name read back, %q", gotAccount, got, tc.name)
+				}
+			} else if got := ReviewSigningKeySecret(gotAccount); got != tc.name {
+				t.Errorf("ReviewSigningKeySecret(%q) = %q, want the name read back, %q", gotAccount, got, tc.name)
+			}
+		}
+	}
+	// Not the family: an account's own secret is a model credential's name,
+	// other credentials' names are other credentials', and a name that merely
+	// looks like the family's is nobody's. The over-long account, the account
+	// outside the name rule and the doubled suffix are the three the account
+	// family's own reader refuses too.
+	for _, name := range []string{
+		"",
+		ClaudeOAuthToken,
+		ClaudeAccountSecret("alice"),
+		BitbucketSecret,
+		ClaudeOAuthToken + "review-signing",
+		ClaudeAccountSecret("alice") + "-review-signing",
+		ClaudeAccountSecret("alice") + ReviewSigningKeySuffix + "s",
+		ClaudeAccountSecret("alice") + ReviewSigningKeySuffix + ReviewSigningKeySuffix,
+		ClaudeAccountSecret("9alice") + ReviewSigningKeySuffix,
+		ClaudeAccountSecret(strings.Repeat("a", MaxClaudeAccountNameLen+1)) + ReviewSigningKeySuffix,
+		ClaudeOAuthTokenPrefix + strings.Repeat("-a", 30) + ReviewSigningKeySuffix,
+		ReviewSigningKeySuffix,
+		ReviewSigningKeyPreviousSuffix,
+	} {
+		if account, previous, ok := ReviewSigningKeyAccount(name); ok {
+			t.Errorf("ReviewSigningKeyAccount(%q) = (%q, %v, true), and it is not a review-signing name", name, account, previous)
+		}
+	}
+	// And the separator is why no account name has to be reserved for this
+	// family: a doubled dash is not a name an account may have, so an account's
+	// own secret can never be spelled like a review-signing entry's — the two
+	// families cannot collide and no name can mean two credentials.
+	if ClaudeAccountNameRE.MatchString("a--b") {
+		t.Fatalf("the account-name rule admits a doubled dash, so the families' separator is not a separator")
+	}
+	for _, account := range []string{"default", "alice", "a-b", "a" + strings.Repeat("-a", 30)} {
+		if strings.Contains(ClaudeAccountSecret(account), ReviewSigningKeySuffix) {
+			t.Errorf("the account %q's own secret %q is spelled like a review-signing entry", account, ClaudeAccountSecret(account))
+		}
+	}
+}
+
 // TestProviderSecretConventionIsTheEntryName is the convention the owner
 // ruled for on 2026-10-18: a provider's key is named after its entry in the
 // local config, which is how docs/multi-model.md §2 spells its examples.

@@ -1,0 +1,1257 @@
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"text/tabwriter"
+	"time"
+
+	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
+
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/settings"
+	"github.com/dimipaun/fugaro/internal/yamledit"
+)
+
+// The layers a write lands in (D845). `default` is never a target — it is a
+// level WINS can name, not a store — and neither is `shared`, which stands in
+// for a key this machine's own file lacks rather than being a file of its own.
+const (
+	settingsLayerLocal   = "local"
+	settingsLayerProject = "project"
+	settingsLayerRepo    = "repo"
+)
+
+// settingsWriteLayers is the closed vocabulary --layer accepts on a write, in
+// the order a refusal prints it.
+var settingsWriteLayers = []string{settingsLayerLocal, settingsLayerProject, settingsLayerRepo}
+
+// settingsFamilyCommands maps a registry Owner to the command family that
+// writes its keys (D853). A key whose Owner is in here is refused by the
+// generic path and pointed at that family: two paths writing one key is how
+// the cross-key checks the families exist for get lost.
+var settingsFamilyCommands = map[string]string{
+	"models":      "fugaro models",
+	"rigor":       "fugaro rigor set",
+	"rigor floor": "fugaro rigor floor",
+	"accounts":    "fugaro accounts",
+	"secrets":     "fugaro secrets",
+	"project":     "fugaro project",
+}
+
+// settingsGenericKeys is the allowlist of spec §4.4: the exact keys `settings
+// set` writes, and the whole of them. It is an allowlist and not a list of the
+// families to refuse because the registry grows: a key a later task adds is
+// refused here until someone decides, deliberately, that the generic path owns
+// it, where a denylist would hand every new row to `settings set` by omission.
+//
+// The names are spec §4.4's. The project layer's own block is spelled with the
+// `layer.` prefix (SD14), so §4.4's `default_profile` is `layer.default_profile`
+// in the registry and its `defaults.git.*` is `layer.defaults.git.*`; the
+// registry's spelling is the one listed, because a name the registry does not
+// hold is refused before this list is reached. §4.4's list is the whole of it,
+// and it names four budget keys: `budget.mode` and `budget.per_day_usd` are the
+// registry's too — the audit (docs/settings-commands/audit.md:81) lists them as
+// user settings, and `fugaro setup` and the local config write them — but the
+// spec does not hand them to the generic path, so they are refused here like
+// any other key outside the list rather than widened in by this list.
+var settingsGenericKeys = map[string]bool{
+	"budget.per_run_usd":       true,
+	"budget.max_run_tokens":    true,
+	"budget.allowed_models":    true,
+	"budget.unreachable_grace": true,
+	"base_branch":              true,
+	"max_parallel":             true,
+	"update_check":             true,
+	"commit_name":              true,
+	"commit_email":             true,
+	"layer.default_profile":    true,
+	// D873's account choice (spec §11.1). They are here by name because they
+	// are not §4.4's list: §4.4 predates them, and a registry row no list
+	// carries is a key nobody can write.
+	"default_claude_account":  true,
+	"claude_account_auto":     true,
+	"stages.*.claude_account": true,
+}
+
+// settingsGenericPrefixes are the blocks spec §4.4 hands to the generic path
+// whole. A prefix covers the block's scalars and string lists: no entry here
+// carries a varying segment, and settingsWriteLookup reaches a wildcard
+// registry row only for a spelling settingsGenericKeys names, so a prefix is
+// never the reason a map entry resolves.
+// `credentials.` and `clone_urls.` are §4.4's own names for the blocks §5.6's
+// family adds: they are listed now so the generic path does not refuse a name
+// the spec hands it once that family lands.
+var settingsGenericPrefixes = []string{
+	"agent.", "git.", "followup.", "governance.", "watch.",
+	"layer.defaults.", "layer.governance.",
+	"credentials.", "clone_urls.",
+}
+
+// settingsGenericKey reports whether spec §4.4 gives the generic path the key.
+func settingsGenericKey(key string) bool {
+	if settingsGenericKeys[key] {
+		return true
+	}
+	for _, p := range settingsGenericPrefixes {
+		if strings.HasPrefix(key, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// settingsWriteOptions are the flags `set` and `unset` share.
+type settingsWriteOptions struct {
+	project string
+	config  string
+	layer   string
+	repo    string
+	yes     bool
+	add     string
+	remove  string
+	dryRun  bool
+	jsonOut bool
+}
+
+// settingsDocKind names the document a write lands in: the local project
+// config, the local project layer file, or a repository's fugaro.yaml.
+type settingsDocKind int
+
+const (
+	settingsDocLocal settingsDocKind = iota
+	settingsDocLayer
+	settingsDocRepo
+)
+
+// settingsTarget is where one write lands: the file, the path inside it, and
+// what it takes to read the edited bytes back strictly.
+type settingsTarget struct {
+	layer   string
+	kind    settingsDocKind
+	path    string
+	keyPath []string
+	anchor  config.LayerAnchor
+	// project is the selected project's name: a repository's fugaro.yaml is
+	// refused when it is anchored to another one.
+	project string
+}
+
+// newSettingsGetCmd is `fugaro settings get KEY`: the read narrowed to one key.
+// It is the same resolver as `settings`, so a key set nowhere prints its
+// default row and exits 0 (D852), and an unknown key exits non-zero with the
+// nearest registry names.
+func newSettingsGetCmd() *cobra.Command {
+	var o settingsOptions
+	cmd := &cobra.Command{
+		Use:   "get KEY",
+		Short: "Show one setting, what decides it, and its default",
+		Long: `Show one row of the settings read, for one key.
+
+A key set at no layer prints its default row and exits 0: a state that is
+already the answer is not a failure. An unknown key exits non-zero with the
+nearest registry names.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runSettings(cmd, args, o)
+		},
+	}
+	f := cmd.Flags()
+	settingsAimFlags(cmd, &o.project, &o.config)
+	f.StringVar(&o.repo, "repo", "", "read this repository's fugaro.yaml (owner/name)")
+	f.BoolVar(&o.jsonOut, "json", false, "print the versioned document")
+	return cmd
+}
+
+// newSettingsSetCmd is `fugaro settings set`: the generic write path.
+func newSettingsSetCmd() *cobra.Command {
+	var o settingsWriteOptions
+	cmd := &cobra.Command{
+		Use:   "set KEY VALUE",
+		Short: "Write one setting into one of the three documents",
+		Long: `Write one setting into the local project config, the local project layer
+file, or a repository's fugaro.yaml.
+
+The layers are ` + "`local`" + ` (the local project config), ` + "`project`" + ` (the local
+project layer file) and ` + "`repo`" + ` (a checkout's fugaro.yaml); ` + "`default`" + ` is never
+a target. With no --layer the narrowest layer the key may be set in is the
+target. --layer repo without --repo uses the current directory's checkout and
+refuses when the directory is not one.
+
+A string-list key takes --add V or --remove V instead of a value. A list
+emptied by --remove is refused: an absent key and an empty list mean different
+things to the loader, so use unset to remove the key.
+
+Loosening a ceiling key (budget.*, governance.*, the agent caps
+agent.max_budget_usd and agent.max_run_tokens with the layer's own spellings),
+adding a name to a followup.* list or turning one of those keys on, is
+confirmed by the project's name typed at a terminal, or by --yes. Writing
+outside a repository is refused in a coding agent's session, --yes included,
+and so is the typed form at any layer: --yes never lifts that fence.
+
+--dry-run says what the edit would do — the key, the layer, the file, the old
+and the new value, and whether it raises a limit — and writes nothing: no
+confirmation, no backup, no change to any file. It is answered with no
+terminal, and with --json it prints the versioned document
+schemas/settings-write.schema.json describes, which is what a caller that draws
+an edit reads. --dry-run takes neither --yes (the two answer different
+questions) nor a bare --json.
+
+Every write ends with one line: next: fugaro update.`,
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runSettingsSet(cmd, args, o)
+		},
+	}
+	f := cmd.Flags()
+	settingsAimFlags(cmd, &o.project, &o.config)
+	f.StringVar(&o.layer, "layer", "", "the layer to write ("+strings.Join(settingsWriteLayers, ", ")+")")
+	f.StringVar(&o.repo, "repo", "", "the repository whose fugaro.yaml to edit (owner/name)")
+	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
+	f.StringVar(&o.add, "add", "", "add an item to a string-list key")
+	f.StringVar(&o.remove, "remove", "", "remove an item from a string-list key")
+	f.BoolVar(&o.dryRun, "dry-run", false, "print what the edit would do and write nothing")
+	f.BoolVar(&o.jsonOut, "json", false, "print the dry run's document (with --dry-run)")
+	return cmd
+}
+
+// newSettingsUnsetCmd is `fugaro settings unset`: it removes the key from one
+// layer so the layer below decides again, and never writes a default in its
+// place.
+func newSettingsUnsetCmd() *cobra.Command {
+	var o settingsWriteOptions
+	cmd := &cobra.Command{
+		Use:   "unset KEY",
+		Short: "Remove one setting from one of the three documents",
+		Long: `Remove a key from one layer so the layer below decides again.
+
+It never writes a default in the key's place: a written default is
+indistinguishable from a deliberate pin and silently wrong the day the built-in
+changes. Nothing to remove is a no-op with a sentence and exit 0, so an
+idempotent script does not fail.
+
+Removing a ceiling key is confirmed by the project's name typed at a terminal,
+or by --yes outside a coding agent's session.
+
+--dry-run says what the removal would do — the key, the layer, the file, the
+value it takes away, and whether it raises a limit — and writes nothing: no
+confirmation, no backup, no change to any file. It is answered with no
+terminal, and with --json it prints the versioned document
+schemas/settings-write.schema.json describes. --dry-run takes neither --yes
+(the two answer different questions) nor a bare --json.
+
+Every write ends with one line: next: fugaro update.`,
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runSettingsUnset(cmd, args, o)
+		},
+	}
+	f := cmd.Flags()
+	settingsAimFlags(cmd, &o.project, &o.config)
+	f.StringVar(&o.layer, "layer", "", "the layer to write ("+strings.Join(settingsWriteLayers, ", ")+")")
+	f.StringVar(&o.repo, "repo", "", "the repository whose fugaro.yaml to edit (owner/name)")
+	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
+	f.BoolVar(&o.dryRun, "dry-run", false, "print what the edit would do and write nothing")
+	f.BoolVar(&o.jsonOut, "json", false, "print the dry run's document (with --dry-run)")
+	return cmd
+}
+
+// settingsWriteRow finds the row a write names and refuses what the generic
+// path never writes: a key marked Sensitive, whose value the diff would print;
+// a key a dedicated family owns (D853); a key with a varying segment, which is
+// a map entry and has no generic form; and every key spec §4.4 does not hand
+// the generic path.
+//
+// The map-entry refusal comes before the allowlist on purpose: §4.2 step 1
+// says a map-valued key has no generic form *always*, so `workflows.*.commands.
+// test` is refused as a map entry and not as a key nobody listed.
+func settingsWriteRow(key string) (settings.Row, error) {
+	return settingsWriteRowHinted(key, false)
+}
+
+// settingsWriteListRow is settingsWriteRow for an --add or a --remove: the same
+// row and the same refusals, and a hint narrowed to the keys that take a list,
+// because a scalar answered `--add` with itself is a name the person has to
+// come back from.
+func settingsWriteListRow(key string) (settings.Row, error) {
+	return settingsWriteRowHinted(key, true)
+}
+
+// settingsWriteRowHinted is settingsWriteRow with list saying whether the write
+// is an --add or a --remove. list reaches no refusal but the unknown-key one:
+// which rows this path writes is the same question either way.
+func settingsWriteRowHinted(key string, list bool) (settings.Row, error) {
+	row, registry, ok := settingsWriteLookup(key)
+	if !ok {
+		return settings.Row{}, userErr("%s: no setting has that name; the nearest are %s",
+			key, strings.Join(nearestSettings(key, settingsWriteHintRows(list)), ", "))
+	}
+	if row.Sensitive {
+		return settings.Row{}, userErr("%s is a sensitive setting, and the generic path never writes one: its value would be printed in the diff this command shows (spec §2.3)", key)
+	}
+	if family, ok := settingsFamilyCommands[row.Owner]; ok {
+		return settings.Row{}, userErr("%s is written by %s, not by the generic path: settings set writes no route, price, rigor mode, floor, account, job profile, credential or clone URL", key, family)
+	}
+	if strings.Contains(key, "*") {
+		return settings.Row{}, userErr("%s varies with a name this command does not take: a key with a * is a map entry, and a map has no generic form", key)
+	}
+	if !settingsGenericKey(registry) {
+		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, credentials.*, clone_urls.* and the layer's defaults.*) and the account choice (default_claude_account, claude_account_auto, stages.<stage>.claude_account), and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
+	}
+	return row, nil
+}
+
+// settingsWriteLookup is the row a write names, with the registry's own
+// spelling of that key beside it. The two differ for a key whose registry
+// spelling carries a varying segment: `stages.*.claude_account` is the row, and
+// `stages.review.claude_account` is the key a person writes. The row keeps the
+// key as written, because that is the path the edit lands on, and the registry
+// spelling is what the allowlist and the row's own sentences name.
+//
+// Only a wildcard row settingsGenericKeys carries by name is matched, which is
+// how `stages.*.claude_account` is reachable at all. The registry's other
+// wildcard rows — the project layer's `workflows.*.*`, the project family's
+// `repos.*.*`, the models family's `providers.*.*` and the accounts family's
+// `claude_accounts.*.allow_data_to` — are other paths' keys: matching one would
+// hand back a row this command does not write, and the refusal a person gets
+// should be the one about the name, not a row that was never theirs.
+func settingsWriteLookup(key string) (settings.Row, string, bool) {
+	if row, found := settings.Lookup(key); found {
+		return row, key, true
+	}
+	for _, r := range settings.Rows() {
+		if !settingsGenericKeys[r.Key] {
+			continue
+		}
+		if !settingsPatternMatch(r.Key, key) {
+			continue
+		}
+		registry := r.Key
+		r.Key = key
+		return r, registry, true
+	}
+	return settings.Row{}, "", false
+}
+
+// settingsPatternMatch reports whether key is a spelling of the registry key
+// pattern: the same number of dotted segments, equal where the pattern names
+// one, and non-empty where it writes *. It answers the spelling and nothing
+// else: which patterns may be matched at all is settingsWriteLookup's, and
+// that is where the generic allowlist is asked.
+func settingsPatternMatch(pattern, key string) bool {
+	p, k := strings.Split(pattern, "."), strings.Split(key, ".")
+	if len(p) != len(k) {
+		return false
+	}
+	for i := range p {
+		switch {
+		case p[i] == "*":
+			if k[i] == "" {
+				return false
+			}
+		case p[i] != k[i]:
+			return false
+		}
+	}
+	return true
+}
+
+// settingsHintRow reports whether a write's hint may name row: the rows
+// settingsWriteRow accepts, and the whole of them. The read's own hint names
+// every registry row, which is right there — a read covers the whole registry —
+// but a write covers the rows this command writes, and a hint drawn from
+// anything wider sends a person from one refusal to the next. Spec §4.4 puts it
+// as "never with a registry row this path refuses", and the allowlist is not
+// the whole of that set: it carries blocks whole, so `agent.model` reaches a
+// hint through the `agent.` prefix while the models family owns the row and
+// `settings set` refuses it. A Sensitive row is refused here for a reason of
+// its own — the diff a write shows would print its value — and a key with a
+// varying segment is a map entry with no generic form.
+//
+// The refusals are settingsWriteRow's own, asked in its own order, so the two
+// cannot disagree about what this path writes.
+func settingsHintRow(row settings.Row) bool {
+	if row.Sensitive {
+		return false
+	}
+	if _, family := settingsFamilyCommands[row.Owner]; family {
+		return false
+	}
+	if strings.Contains(row.Key, "*") {
+		return false
+	}
+	return settingsGenericKey(row.Key)
+}
+
+// settingsHintListKeys are the string-list keys of the accept set: the rows
+// `--add` and `--remove` edit, and so the only rows a hint drawn for those two
+// flags may name. The registry carries no key type, so the list stands beside
+// the refusal that needs it, and TestSettingsAddHintListKeysAreTheKeysThatTakeAList
+// probes every row the write path accepts and holds this table to the
+// documents' own loaders: a list key added later fails there, where a stale
+// table would leave the hint naming keys --add cannot edit.
+var settingsHintListKeys = map[string]bool{
+	"budget.allowed_models":        true, // config.Budget.AllowedModels
+	"followup.trusted":             true, // config.Followup.Trusted
+	"git.pr.labels":                true, // config.PRSettings.Labels
+	"git.pr.reviewers":             true, // config.PRSettings.Reviewers
+	"layer.defaults.git.pr.labels": true, // config.LayerPR.Labels
+}
+
+// settingsWriteHintRows are the registry rows a write's unknown-key refusal may
+// name as its nearest: the accept set, narrowed to the list keys when list says
+// the write is an --add or a --remove.
+func settingsWriteHintRows(list bool) []settings.Row {
+	rows := settings.Rows()
+	out := make([]settings.Row, 0, len(rows))
+	for _, row := range rows {
+		if !settingsHintRow(row) {
+			continue
+		}
+		if list && !settingsHintListKeys[row.Key] {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// settingsDefaultLayer is the target of a write that names no --layer: the
+// narrowest layer the key may be set in, so an edit lands as close to the
+// repository as the key allows and the narrowest layer is the one that decides.
+func settingsDefaultLayer(row settings.Row) string {
+	for _, l := range []string{settingsLayerRepo, settingsLayerProject, settingsLayerLocal} {
+		if slices.Contains(row.Layers, l) {
+			return l
+		}
+	}
+	return ""
+}
+
+// settingsSelection selects this machine's project, the way the read does.
+func settingsSelection() (localcfg.Selection, *localcfg.Config, error) {
+	return settingsAimedSelection(settingsWriteOptions{})
+}
+
+// settingsAimedSelection is settingsSelection for the commands that can aim the
+// selection themselves: --config and --project are localcfg.Select's steps 1 and
+// 2, so a write aimed at an installation lands in that installation's file
+// rather than in whichever one the machine's environment would have picked. The
+// families that call settingsSelection (models, accounts) take neither flag and
+// resolve exactly as before.
+func settingsAimedSelection(o settingsWriteOptions) (localcfg.Selection, *localcfg.Config, error) {
+	in := localcfg.SelectInput{
+		Config:     o.config,
+		Project:    o.project,
+		EnvProject: os.Getenv("FUGARO_PROJECT"),
+		EnvConfig:  os.Getenv("FUGARO_CONFIG"),
+		Getenv:     os.Getenv,
+	}
+	sel, lc, err := localcfg.Select(in)
+	if err != nil {
+		return sel, nil, userErr("%w", err)
+	}
+	if lc == nil || lc.Name == "" {
+		return sel, lc, userErr("no project is selected: set $FUGARO_PROJECT or $FUGARO_CONFIG, or run fugaro setup")
+	}
+	return sel, lc, nil
+}
+
+// settingsResolveTarget turns a key and a layer into the file to edit.
+func settingsResolveTarget(ctx context.Context, row settings.Row, o settingsWriteOptions, lc *localcfg.Config, sel localcfg.Selection) (settingsTarget, error) {
+	layer := o.layer
+	if layer == "" {
+		layer = settingsDefaultLayer(row)
+	}
+	if !slices.Contains(settingsWriteLayers, layer) {
+		return settingsTarget{}, userErr("--layer %s: a write lands in one of %s (default is never a target)", layer, strings.Join(settingsWriteLayers, ", "))
+	}
+	if !slices.Contains(row.Layers, layer) {
+		return settingsTarget{}, userErr("%s may not be set at --layer %s: it may be set in %s", row.Key, layer, strings.Join(row.Layers, ", "))
+	}
+	switch layer {
+	case settingsLayerLocal:
+		if o.repo != "" {
+			return settingsTarget{}, userErr("--repo names a repository, so it goes with --layer repo")
+		}
+		return settingsTarget{layer: layer, kind: settingsDocLocal, path: sel.Path, keyPath: strings.Split(row.Key, "."), project: lc.Name}, nil
+	case settingsLayerProject:
+		if o.repo != "" {
+			return settingsTarget{}, userErr("--repo names a repository, so it goes with --layer repo")
+		}
+		path, err := localcfg.LayerFile(os.Getenv, lc.Name)
+		if err != nil {
+			return settingsTarget{}, userErr("%v", err)
+		}
+		if _, err := os.Stat(path); err != nil {
+			return settingsTarget{}, userErr("no local project layer file at %s: fugaro update seeds it from the published layer; nothing was written", path)
+		}
+		return settingsTarget{
+			layer:   layer,
+			kind:    settingsDocLayer,
+			path:    path,
+			keyPath: strings.Split(strings.TrimPrefix(row.Key, "layer."), "."),
+			anchor:  config.LayerAnchor{Project: lc.Name, GCPProject: lc.GCPProject},
+			project: lc.Name,
+		}, nil
+	default:
+		path, err := settingsRepoFile(ctx, o.repo, lc.Name)
+		if err != nil {
+			return settingsTarget{}, err
+		}
+		return settingsTarget{layer: layer, kind: settingsDocRepo, path: path, keyPath: strings.Split(row.Key, "."), project: lc.Name}, nil
+	}
+}
+
+// settingsRepoFile is the fugaro.yaml a `--layer repo` write lands in: the
+// current directory's checkout when no --repo names one, else the checkout this
+// machine remembers for that repository.
+func settingsRepoFile(ctx context.Context, repo, project string) (string, error) {
+	if repo == "" {
+		root, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel")
+		if err != nil {
+			return "", userErr("--layer repo without --repo uses the checkout in the current directory, and this directory is not one: pass --repo owner/name, or run it from a checkout")
+		}
+		return filepath.Join(root, "fugaro.yaml"), nil
+	}
+	if !settingsRepoRE.MatchString(repo) {
+		return "", userErr("--repo %s: a repository is owner/name", repo)
+	}
+	checkouts, err := localcfg.LoadCheckouts(os.Getenv)
+	if err != nil {
+		return "", userErr("reading this machine's remembered checkouts: %v", err)
+	}
+	for _, c := range checkouts.ProjectCheckouts(project) {
+		if c.Repo != repo || len(c.Paths) == 0 {
+			continue
+		}
+		return filepath.Join(c.Paths[len(c.Paths)-1].Path, "fugaro.yaml"), nil
+	}
+	return "", userErr("no checkout of %s is remembered on this machine: clone it, or run this from its checkout", repo)
+}
+
+// settingsReadDocument reads the file a write would edit, refusing an absent
+// one with a message that names what to do rather than creating it: a
+// fugaro.yaml or a layer file written from nothing would lack the anchors its
+// own loader requires.
+//
+// It reads a checkout's files through config.ReadRegular, the one reader of
+// them (readFugaroYAML and readLayerFile use it too), so a symlink, a FIFO or
+// an oversized file is refused rather than written through; the local project
+// config stays on os.ReadFile, which is how every other reader of it in this
+// package reads the person's own file, symlinked dotfile and all. A
+// repository's fugaro.yaml is additionally held to the selected project:
+// `--layer repo` writes the selected project's own repository, and a checkout
+// of another project's repository is a file this command has no business
+// editing.
+func settingsReadDocument(t settingsTarget) ([]byte, error) {
+	var data []byte
+	var err error
+	if t.kind == settingsDocLocal {
+		data, err = os.ReadFile(t.path)
+	} else {
+		data, err = config.ReadRegular(t.path, config.LayerMaxBytes)
+	}
+	if err != nil {
+		return nil, userErr("reading %s: %v", t.path, err)
+	}
+	if t.kind == settingsDocRepo {
+		cfg, ps := config.Parse(data)
+		if len(ps) > 0 {
+			return nil, userErr("%s: %s", t.path, ps[0].String())
+		}
+		if cfg.Project != t.project {
+			return nil, userErr("%s is anchored to project %s, and %s is the selected project: --layer repo writes the selected project's own repository, so nothing was written",
+				t.path, cfg.Project, t.project)
+		}
+	}
+	return data, nil
+}
+
+// settingsReparse holds the edited bytes against the document's own strict
+// loader: a value the loader refuses is refused here, with the loader's message
+// (spec §4.2 step 3).
+func settingsReparse(t settingsTarget, data []byte) error {
+	switch t.kind {
+	case settingsDocLocal:
+		if _, err := localcfg.Parse(data); err != nil {
+			return userErr("%s would not read back after the edit: %v", t.path, err)
+		}
+	case settingsDocLayer:
+		if _, ps := config.ParseProjectLayer(data, t.anchor); len(ps) > 0 {
+			return userErr("%s would not read back after the edit: %s", t.path, ps[0].String())
+		}
+	case settingsDocRepo:
+		if _, ps := config.Parse(data); len(ps) > 0 {
+			return userErr("%s would not read back after the edit: %s", t.path, ps[0].String())
+		}
+	}
+	return nil
+}
+
+// settingsValueIn is the value a document currently holds at path, "" when it
+// holds none: what the widening check compares a new value against.
+func settingsValueIn(data []byte, path []string) string {
+	var tree map[string]any
+	if yaml.Unmarshal(data, &tree) != nil {
+		return ""
+	}
+	var cur any = tree
+	for _, p := range path {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return ""
+		}
+		cur, ok = m[p]
+		if !ok {
+			return ""
+		}
+	}
+	switch v := cur.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case bool:
+		return strconv.FormatBool(v)
+	case int:
+		return strconv.Itoa(v)
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case []any:
+		// A sequence is the model list, and it is rendered the one way the
+		// widening check reads a list — comma-separated members, which is what
+		// settingsListSubset splits on. fmt.Sprint's "[a b]" is a form no
+		// parser here reads: a comparison against it would call every member
+		// absent and so call every write a widening.
+		items := make([]string, 0, len(v))
+		for _, item := range v {
+			items = append(items, fmt.Sprint(item))
+		}
+		return strings.Join(items, ",")
+	default:
+		return fmt.Sprint(v)
+	}
+}
+
+// settingsListGoneOrEmpty reports whether the node at path is now a sequence
+// with no items, or is gone: the two shapes the loader tells from a written
+// list, and the two an edit that removes the last item can leave behind. The
+// caller checks it only when the edit changed the document, so a key that was
+// never there and stayed away is not mistaken for an emptied list.
+func settingsListGoneOrEmpty(data []byte, path []string) bool {
+	var tree map[string]any
+	if yaml.Unmarshal(data, &tree) != nil {
+		return false
+	}
+	var cur any = tree
+	for _, p := range path {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return false
+		}
+		cur, ok = m[p]
+		if !ok {
+			return true
+		}
+	}
+	if cur == nil {
+		// The key stands with nothing after it, which is what the signature
+		// writes for a sequence it emptied.
+		return true
+	}
+	s, ok := cur.([]any)
+	return ok && len(s) == 0
+}
+
+// settingsCeilingAgentKeys are the agent block's own caps. D846's prefix test
+// reaches budget.* and governance.*, and these two are ceilings of the same
+// kind under a third name: agent.max_budget_usd is one stage's spend cap and
+// agent.max_run_tokens a whole run's token cap, so raising either crosses the
+// boundary the typed name guards exactly as raising budget.per_run_usd does.
+var settingsCeilingAgentKeys = []string{"agent.max_budget_usd", "agent.max_run_tokens"}
+
+// settingsCeilingKey is the test D846 names: budget.* and governance.* are the
+// keys whose loosening crosses the boundary the typed name guards, and the
+// agent block's caps are the same boundary under their own names.
+//
+// The project layer's own block is the same setting under the `layer.` prefix
+// (SD14), so `layer.governance.review_ratio` is typed exactly as
+// `governance.review_ratio` is, and the layer's `defaults.` block is that
+// setting one word deeper: `layer.defaults.agent.max_budget_usd` is the cap
+// every repository the layer templates runs with. All of them are the same
+// fact — the file it would edit decides the ceiling of every run the project's
+// branches start — which is what D846 guards.
+func settingsCeilingKey(key string) bool {
+	key = strings.TrimPrefix(key, "layer.")
+	if strings.HasPrefix(key, "budget.") || strings.HasPrefix(key, "governance.") {
+		return true
+	}
+	return slices.Contains(settingsCeilingAgentKeys, strings.TrimPrefix(key, "defaults."))
+}
+
+// settingsTrue is the value a followup key is turned on with: a YAML boolean
+// in any of the spellings the config decoder reads as true (`true`, `True`,
+// `TRUE`, `yes`, `on`, and the rest), not the one string the command line
+// happens to use. It is the decoder's own answer rather than a second table,
+// so a spelling the loader reads as true is one this check reads as true.
+func settingsTrue(value string) bool {
+	var b bool
+	return yaml.Unmarshal([]byte(value), &b) == nil && b
+}
+
+// settingsModeRank orders budget.mode's values loosest first, so a write that
+// lowers the rank is a loosening (policy.Merge's order: enforce > observe > off).
+// `settings set` never writes budget.mode — the allowlist refuses it — but this
+// comparison has a second caller, the publish door: policyCeilingMembers names
+// budget.mode and policyLoosening hands each member to settingsLoosens, so a
+// node republished at a weaker mode is a loosening there and one republished at
+// a stronger mode is not.
+func settingsModeRank(mode string) int {
+	switch mode {
+	case "enforce":
+		return 2
+	case "observe":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// settingsCeilingBase is the value a ceiling write is compared against (D846):
+// the tighter of what the file holds and what a run gets today, which the
+// read's own resolver answers — the shared or published node, the project
+// layer's defaults and the local file, whichever decides.
+//
+// The file's raw value alone is not enough. A first write of a ceiling a layer
+// below already set tighter raises what a run gets, and a comparison against
+// the raw value would read it as a first write and skip the typed name the
+// widening asks for. The effective value alone is not enough either, for the
+// mirror reason: a file already tighter than the layer below is loosened by a
+// write that does not move what a run gets today, and that file is what a
+// later layer inherits. A run gets the tighter of the two, so the tighter of
+// the two is what a loosening is measured against. budget.go's clear compares
+// the effective caps the same way, for the same reason.
+func settingsCeilingBase(ctx context.Context, row settings.Row, raw string) string {
+	effective := settingsEffectiveCeiling(ctx, row)
+	if effective == "" {
+		// No layer resolves a value, so what a run gets is the key's own
+		// built-in default: a number for the agent block's spend cap, and
+		// nothing to compare against for every other ceiling key.
+		effective = settingsCeilingBuiltIn(row.Key)
+	}
+	switch {
+	case raw == "":
+		// The file holds no ceiling of its own: the layer below is the whole
+		// of what a run gets.
+		return effective
+	case effective == "":
+		return raw
+	case settingsLoosens(row.Key, effective, raw):
+		// raw is the looser of the two, so the effective value is the one a
+		// run gets.
+		return effective
+	default:
+		return raw
+	}
+}
+
+// settingsCeilingBuiltIn is what a run gets for an agent cap no layer resolves a
+// value for. `agent.max_budget_usd`'s default is a number and not a state: a
+// repository that writes no budget of its own starts under
+// config.DefaultMaxBudgetUSD, which applyDefaults applies and the registry's row
+// for the key reads. A base of "" read a write over that default as a first
+// write and skipped the typed name a raise asks for, so an agent session could
+// name its own spend cap far above the one it started under, from a file it may
+// edit anyway (F2).
+//
+// Every other ceiling key answers "" there, and that is not the same blind spot.
+// `agent.max_run_tokens`'s unset means the deployed ceiling, which this binary
+// holds nowhere as a value, so there is no number to compare against; a
+// `budget.*` or `governance.*` key no layer sets has no cap to raise, and the
+// two writes that take a cap away — 0 and `unset` — are typed on their own. The
+// project layer spells the same agent cap one block deeper (SD14), which is the
+// `defaults.` prefix and the same number.
+func settingsCeilingBuiltIn(key string) string {
+	key = strings.TrimPrefix(key, "layer.")
+	if strings.TrimPrefix(key, "defaults.") == "agent.max_budget_usd" {
+		return strconv.Itoa(config.DefaultMaxBudgetUSD)
+	}
+	return ""
+}
+
+// settingsEffectiveCeiling is the value a run gets for row from the read's own
+// resolver, "" when no layer resolves one. The read is the offline one, so a
+// command that edits a file never waits on a bucket or a database for it.
+//
+// That read is enough for the decision it feeds. The merge only tightens
+// (internal/policy), so a layer it does not read can hold a value tighter than
+// the one answered here and never a looser one: what it returns is at or above
+// the ceiling a run really gets. The layers that would matter are read anyway —
+// the cached copy of the published project layer is readLayerCache's, and a
+// repository's fugaro.yaml tightens only that repository's own runs, so another
+// repository's file never decides the file being edited. The direction of the
+// residual blindness is the safe one: the caller builds its base from the
+// tighter of this value and the file's own, so the base is never looser than
+// the file, and a write that raises the file's ceiling is typed whatever this
+// read could not see.
+func settingsEffectiveCeiling(ctx context.Context, row settings.Row) string {
+	r, err := readSettings(ctx, settingsOptions{offline: true}, time.Now())
+	if err != nil {
+		return ""
+	}
+	if s := r.projectRow(row); s.Wins != settings.LayerDefault {
+		return s.Value
+	}
+	return ""
+}
+
+// settingsLoosens reports whether newValue is looser than oldValue for a
+// ceiling key: a larger cap, a cap removed, a weaker mode, or a wider model
+// list. A key no layer sets has nothing to loosen, so a first write of a cap
+// is never the typed form — a first write of 0 is, because 0 is not a cap.
+func settingsLoosens(key, oldValue, newValue string) bool {
+	if key == "budget.mode" {
+		if oldValue == "" {
+			return false
+		}
+		return settingsModeRank(newValue) < settingsModeRank(oldValue)
+	}
+	if key == "budget.allowed_models" {
+		if oldValue == "" {
+			return false
+		}
+		return !settingsListSubset(newValue, oldValue)
+	}
+	oldN, oldErr := strconv.ParseFloat(oldValue, 64)
+	newN, newErr := strconv.ParseFloat(newValue, 64)
+	// 0 is the value that sets no cap at all (`config.Budget`: "0 sets none";
+	// the governance block's own rule is "0 and null mean unset"), so it is the
+	// loosest a ceiling can be written: it hands the cap back to whatever layer
+	// is above the file, which is exactly what `unset` does, and `unset` is
+	// typed. It is a loosening whatever it replaces, including a value the file
+	// does not hold: no cap is looser than any cap.
+	if newErr == nil && newN == 0 {
+		return true
+	}
+	// The mirror of that, and the reason this test is not simply "the number
+	// rose": over a 0, any cap is tighter, so raising 0 to 3 is not a
+	// loosening. Without this, a file already holding 0 would have every later
+	// write read as a loosening — including the ones that put a cap back.
+	if oldErr == nil && oldN == 0 {
+		return false
+	}
+	if oldValue == "" {
+		return false
+	}
+	if oldErr == nil && newErr == nil {
+		return newN > oldN
+	}
+	// A value that is not a number and not the model list is a form this
+	// Fugaro does not know how to compare, so it is treated as a loosening:
+	// the typed name on an edit nobody can prove tightens is the safe half of
+	// D846's asymmetry.
+	return true
+}
+
+// settingsListSubset reports whether every member of a appears in b.
+func settingsListSubset(a, b string) bool {
+	in := map[string]bool{}
+	for _, item := range strings.Split(b, ",") {
+		in[strings.TrimSpace(item)] = true
+	}
+	for _, item := range strings.Split(a, ",") {
+		if item = strings.TrimSpace(item); item != "" && !in[item] {
+			return false
+		}
+	}
+	return true
+}
+
+// settingsTypedWrite reports whether this write is one D846 reserves for the
+// project's own hand, and the sentence saying why. mode is the edit being made:
+// set, unset, add or remove. `remove` takes one member out of a list, which
+// narrows it, so it is never the typed form and has no case below; `unset`
+// always is, for a ceiling, because it hands the decision to a looser layer.
+func settingsTypedWrite(row settings.Row, oldValue, newValue, mode string) (bool, string) {
+	key := row.Key
+	ceilingWhy := "this raises a limit: the file it would edit decides the ceiling of every run this branch starts, so the project's own name is what confirms it, or --yes outside a coding agent's session"
+	followupWhy := "this turns a followup key on: a run then acts on comments from people it did not act on before, so the project's own name is what confirms it, or --yes outside a coding agent's session"
+	followupAddWhy := "this widens who is trusted: a run then acts on comments from an account it did not act on before, so the project's own name is what confirms it, or --yes outside a coding agent's session"
+	if settingsCeilingKey(key) {
+		switch mode {
+		case "unset":
+			return true, "removing a ceiling hands the decision back to a looser layer, so the project's own name is what confirms it, or --yes outside a coding agent's session"
+		case "add":
+			return true, ceilingWhy
+		case "set":
+			if settingsLoosens(key, oldValue, newValue) {
+				return true, ceilingWhy
+			}
+		}
+	}
+	if strings.HasPrefix(key, "followup.") {
+		switch mode {
+		case "set":
+			if settingsTrue(newValue) {
+				return true, followupWhy
+			}
+		case "add":
+			// A name added to a followup list widens who can steer a run that
+			// holds the repository's credentials, which is the same widening as
+			// turning one of these keys on: `--add` is the typed direction on
+			// this block and `--remove` the tightening one, which has no case
+			// here for the reason a ceiling's own remove has none. It carries
+			// its own sentence all the same: the person reading the prompt is
+			// adding an account to a list, and a sentence about a key being
+			// turned on names neither the list nor the account.
+			return true, followupAddWhy
+		}
+	}
+	// A row's own sensitive direction: turning the key on is the act D846
+	// reserves, and the row carries the sentence saying why.
+	if row.TypedWhy != "" && mode == "set" && settingsTrue(newValue) {
+		return true, row.TypedWhy
+	}
+	return false, ""
+}
+
+// settingsWriteCommand is the command a refusal in a coding agent's session
+// prints: the same edit, spelled for a person's own terminal.
+func settingsWriteCommand(op, key, value string, o settingsWriteOptions, layer string) string {
+	parts := []string{"fugaro", "settings", op, quoteWord(key)}
+	switch op {
+	case "set":
+		switch {
+		case o.add != "":
+			parts = append(parts, "--add", quoteWord(o.add))
+		case o.remove != "":
+			parts = append(parts, "--remove", quoteWord(o.remove))
+		default:
+			parts = append(parts, quoteWord(value))
+		}
+	}
+	parts = append(parts, "--layer", layer)
+	if o.repo != "" {
+		parts = append(parts, "--repo", quoteWord(o.repo))
+	}
+	// The aim travels with the command: a person who runs it at their own
+	// terminal has the same environment as the session that was refused, so
+	// dropping these two would let the edit land in whichever installation
+	// that environment selects rather than the one it was aimed at.
+	if o.project != "" {
+		parts = append(parts, "--project", quoteWord(o.project))
+	}
+	if o.config != "" {
+		parts = append(parts, "--config", quoteWord(o.config))
+	}
+	return strings.Join(parts, " ")
+}
+
+// runSettingsSet is `settings set`: find the row, find the layer, check the
+// value, then the shared write path (spec §4.2).
+func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) error {
+	if err := settingsDryRunFlags(o); err != nil {
+		return err
+	}
+	if o.add != "" && o.remove != "" {
+		return userErr("--add and --remove are two different edits: name one")
+	}
+	list := o.add != "" || o.remove != ""
+	var key, value string
+	switch {
+	case list && len(args) != 1:
+		return userErr("settings set KEY --add V or --remove V takes one key")
+	case !list && len(args) != 2:
+		return userErr("settings set takes a key and a value")
+	default:
+		key = args[0]
+		if !list {
+			value = args[1]
+		}
+	}
+	lookup := settingsWriteRow
+	if list {
+		lookup = settingsWriteListRow
+	}
+	row, err := lookup(key)
+	if err != nil {
+		return err
+	}
+	sel, lc, err := settingsAimedSelection(o)
+	if err != nil {
+		return err
+	}
+	target, err := settingsResolveTarget(cmd.Context(), row, o, lc, sel)
+	if err != nil {
+		return err
+	}
+	old, err := settingsReadDocument(target)
+	if err != nil {
+		return err
+	}
+	mode := "set"
+	var newData []byte
+	switch {
+	case o.add != "":
+		mode = "add"
+		newData, err = yamledit.AddListItem(old, target.keyPath, o.add)
+	case o.remove != "":
+		mode = "remove"
+		newData, err = yamledit.RemoveListItem(old, target.keyPath, o.remove)
+	default:
+		newData, err = yamledit.SetScalar(old, target.keyPath, value)
+	}
+	if err != nil {
+		return userErr("%s: %v", key, err)
+	}
+	changed := yamledit.Changed(old, newData)
+	if !changed && !o.dryRun {
+		// Nothing to write and nothing to hold against the loader: a
+		// document this Fugaro cannot read back is not this edit's doing,
+		// and a no-op that refused on it would report the file's own state
+		// as the fault of a command that was asked for no change at all.
+		// The dry run is the exception: it answers with a document whatever
+		// the edit turns out to be, and `changed` is one of its members.
+		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s already reads what was asked for\n", target.path, key)
+		return nil
+	}
+	if changed && mode == "remove" && settingsListGoneOrEmpty(newData, target.keyPath) {
+		return userErr("removing %s would leave %s an empty list, and an absent key and an empty list mean different things: remove the key with `fugaro settings unset %s --layer %s` instead", quoteWord(o.remove), key, key, target.layer)
+	}
+	if err := settingsReparse(target, newData); err != nil {
+		return err
+	}
+	oldValue := settingsValueIn(old, target.keyPath)
+	// The widening check compares against the tighter of the file's own value
+	// and what a run gets today; the document's `old` is the file's own value,
+	// which is what a window shows the operator as the value being changed.
+	base := oldValue
+	if settingsCeilingKey(key) {
+		base = settingsCeilingBase(cmd.Context(), row, oldValue)
+	}
+	typed, why := settingsTypedWrite(row, base, value, mode)
+	if !changed {
+		// An edit that writes nothing asks for nothing: the real write prints
+		// "already reads what was asked for" and demands no typed name, so the
+		// dry run must not classify it as a widening either.
+		typed, why = false, ""
+	}
+	edit := settingsEdit{
+		Path:     target.path,
+		Old:      old,
+		New:      newData,
+		What:     fmt.Sprintf("write %s in %s", key, target.path),
+		Typed:    typed,
+		TypedWhy: why,
+		Kind:     target.kind,
+		Command:  settingsWriteCommand("set", key, value, o, target.layer),
+		Yes:      o.yes,
+	}
+	if o.dryRun {
+		edit.DryRun = &settingsDryRun{key: key, layer: target.layer, oldValue: oldValue, newValue: settingsValueIn(newData, target.keyPath), jsonOut: o.jsonOut}
+	}
+	if err := applySettingsEdit(cmd, lc, edit); err != nil {
+		return err
+	}
+	if o.dryRun {
+		return nil
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
+	return nil
+}
+
+// runSettingsUnset is `settings unset`: remove the key from one layer so the
+// layer below decides again, never writing a default in its place (spec §4.3).
+func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions) error {
+	if err := settingsDryRunFlags(o); err != nil {
+		return err
+	}
+	if len(args) != 1 {
+		return userErr("settings unset takes one key")
+	}
+	key := args[0]
+	row, err := settingsWriteRow(key)
+	if err != nil {
+		return err
+	}
+	sel, lc, err := settingsAimedSelection(o)
+	if err != nil {
+		return err
+	}
+	target, err := settingsResolveTarget(cmd.Context(), row, o, lc, sel)
+	if err != nil {
+		return err
+	}
+	old, err := settingsReadDocument(target)
+	if err != nil {
+		return err
+	}
+	newData, err := yamledit.RemoveKey(old, target.keyPath)
+	if err != nil {
+		return userErr("%s: %v", key, err)
+	}
+	if !yamledit.Changed(old, newData) && !o.dryRun {
+		// The same order as the set path: a key that is not there is not a
+		// write, so a document that does not read back is reported when a
+		// write is actually asked for, not when nothing would change. The dry
+		// run is the exception: it answers with a document whatever the edit
+		// turns out to be, and `changed` is one of its members.
+		fmt.Fprintf(cmd.OutOrStdout(), "nothing to unset: %s is not set in %s\n", key, target.path)
+		return nil
+	}
+	if err := settingsReparse(target, newData); err != nil {
+		return err
+	}
+	oldValue := settingsValueIn(old, target.keyPath)
+	typed, why := settingsTypedWrite(row, oldValue, "", "unset")
+	if !yamledit.Changed(old, newData) {
+		typed, why = false, ""
+	}
+	edit := settingsEdit{
+		Path:     target.path,
+		Old:      old,
+		New:      newData,
+		What:     fmt.Sprintf("remove %s from %s", key, target.path),
+		Typed:    typed,
+		TypedWhy: why,
+		Kind:     target.kind,
+		Command:  settingsWriteCommand("unset", key, "", o, target.layer),
+		Yes:      o.yes,
+	}
+	if o.dryRun {
+		edit.DryRun = &settingsDryRun{key: key, layer: target.layer, oldValue: oldValue, newValue: settingsValueIn(newData, target.keyPath), jsonOut: o.jsonOut}
+	}
+	if err := applySettingsEdit(cmd, lc, edit); err != nil {
+		return err
+	}
+	if o.dryRun {
+		return nil
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
+	return nil
+}
+
+// settingsDryRunFlags refuses the flag combinations a dry run does not take.
+// --dry-run and --yes answer different questions — one says what the edit would
+// do, the other answers a write that is about to happen — so the pair is
+// refused rather than resolved (D1106); --json is the dry run's own shape, and
+// a caller that asked for a document must not silently get a table instead.
+func settingsDryRunFlags(o settingsWriteOptions) error {
+	if o.dryRun {
+		if o.yes {
+			return userErr("--dry-run and --yes answer different questions: a dry run says what the edit would do and writes nothing, --yes answers a write; name one")
+		}
+		return nil
+	}
+	if o.jsonOut {
+		return userErr("--json is the dry run's document: pass --dry-run with it, or read the settings with `fugaro settings --json`")
+	}
+	return nil
+}
+
+// settingsDryRun is the classification a dry run answers with: the facts the
+// write path has and the shape they are printed in. The classification itself
+// is the edit's — Widening and Why are the values of the same settingsTypedWrite
+// call that decides whether the typed name is demanded, so a key added to
+// settingsCeilingKey or a list rule changed in settingsListSubset moves this
+// document with no edit here (D1106) — and this type carries only what that
+// call does not.
+type settingsDryRun struct {
+	key, layer         string
+	oldValue, newValue string
+	jsonOut            bool
+}
+
+// document is the dry run's document for the edit it describes. changed is the
+// write path's own comparison of the two byte strings — the same comparison
+// that decides whether a write would happen at all — and the caller does not
+// pass it, so a document cannot claim a change the write path did not see.
+func (d settingsDryRun) document(e settingsEdit, changed bool) settingsWriteDoc {
+	return settingsWriteDoc{
+		Version:  settingsWriteDocVersion,
+		Key:      safetext.Field(d.key),
+		Layer:    safetext.Field(d.layer),
+		Path:     safetext.Field(e.Path),
+		Changed:  changed,
+		Widening: e.Typed,
+		Why:      safetext.Field(e.TypedWhy),
+		Old:      safetext.Field(d.oldValue),
+		New:      safetext.Field(d.newValue),
+	}
+}
+
+// settingsWriteDocVersion is the dry run's document version (D848: members are
+// only ever added within a version, and removing or retyping one bumps this
+// number). schemas/settings-write.schema.json is the contract.
+const settingsWriteDocVersion = 1
+
+// settingsWriteDoc is what a dry run prints: what one edit would do, and the
+// write path's own classification of it. It is the document a consumer draws a
+// confirmation window from (D1106), so every member is one this CLI produced —
+// the consumer computes nothing — and every string is printed through
+// safetext.Field, because a key, a path and a value are as much the file's and
+// the command line's as they are this program's.
+//
+// Refusal is empty in every document this CLI prints. A refusal is this
+// program's own sentence with a non-zero exit and no document at all, which is
+// what a consumer branches on (D1106, D1112), so nothing ever sets this member:
+// it is written out because the shape is the contract, and a consumer reads it
+// by name.
+type settingsWriteDoc struct {
+	Version  int    `json:"version"`
+	Key      string `json:"key"`
+	Layer    string `json:"layer"`
+	Path     string `json:"path"`
+	Changed  bool   `json:"changed"`
+	Widening bool   `json:"widening"`
+	Why      string `json:"why"`
+	Old      string `json:"old"`
+	New      string `json:"new"`
+	Refusal  string `json:"refusal"`
+}
+
+// writeSettingsWriteDoc prints the dry run's document: the versioned JSON
+// document with --json, and the same facts as a table without it.
+func writeSettingsWriteDoc(w io.Writer, doc settingsWriteDoc, jsonOut bool) error {
+	if jsonOut {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(doc)
+	}
+	return writeSettingsWriteTable(w, doc)
+}
+
+// writeSettingsWriteTable prints the document as the settings commands' own
+// table shape, one row per member and in the document's own order: the two
+// shapes carry the same facts or the table is a second contract, and a second
+// contract is the one that drifts.
+func writeSettingsWriteTable(w io.Writer, doc settingsWriteDoc) error {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "FIELD\tVALUE")
+	for _, row := range [][2]string{
+		{"version", strconv.Itoa(doc.Version)},
+		{"key", doc.Key},
+		{"layer", doc.Layer},
+		{"path", doc.Path},
+		{"changed", strconv.FormatBool(doc.Changed)},
+		{"widening", strconv.FormatBool(doc.Widening)},
+		{"why", doc.Why},
+		{"old", doc.Old},
+		{"new", doc.New},
+		{"refusal", doc.Refusal},
+	} {
+		fmt.Fprintf(tw, "%s\t%s\n", row[0], row[1])
+	}
+	return tw.Flush()
+}

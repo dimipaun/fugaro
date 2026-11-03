@@ -55,11 +55,41 @@ var deniedBinaryReads = []string{
 	"Read(**/*.heic)", "Read(**/*.tiff)",
 }
 
+// deniedReviewTools are denied in the managed settings of the independent
+// review JOB, for the whole of its stage (D891(a), F24). That job runs a
+// mutant of the reviewed head's own code (internal/runner's mutation check),
+// and the one thing that must not be reachable from inside the reviewer is a
+// way to run anything: Bash is the shell every other tool can be spelled in,
+// Edit, Write and NotebookEdit are the file writes that would let the reviewer
+// edit the head it is judging rather than report on it, and Read(/proc/**) is
+// the runner's own process — its environment, its command lines, its file
+// descriptors — which a reviewed pull request's text must never be able to
+// ask the reviewer to fetch. The job's own runner applies, runs and reverts
+// the mutant with a subprocess of its own (D891(a)), so nothing here is
+// needed to do the review's work.
+//
+// Every other review stage — a coding run's own rounds, and `fugaro run --pr N
+// --recipe review-only` — is a stage of the repository's own run and keeps its
+// tools: the review job is the one whose stage is fenced against the head it
+// reads (ReviewSettingSources, the review home), and taking a coder's shell
+// away for a round that reports on a change in its own worktree would end the
+// run's work rather than protect anything. What separates the two is the
+// caller's (the runner's run.reviewJob), not the stage's name, which is why
+// ReviewJobDenyRules is a function of its own rather than a parameter of the
+// stage's list.
+//
+// The posture that makes these rules a control rather than a sentence is
+// CSR4a's (ReviewSettingSources, the managed file, the review home): a project
+// or user settings file cannot put back what this denies.
+var deniedReviewTools = []string{"Bash", "Edit", "Write", "NotebookEdit", "Read(/proc/**)"}
+
 // DenyRules is the permissions deny list a stage's managed settings carry:
 // the web tools when denyWeb, and the review stage's binary reads when
 // review. The two are independent, and how a stage is recognised as a review
 // stage is the caller's business (the runner's config.IsReviewStage): this
-// package knows what a stage may not do, not what a stage is.
+// package knows what a stage may not do, not what a stage is. deniedReviewTools
+// is not here: it is the review job's, and ReviewJobDenyRules is what carries
+// it to the one caller that has that job.
 func DenyRules(denyWeb, review bool) []string {
 	var deny []string
 	if denyWeb {
@@ -71,11 +101,80 @@ func DenyRules(denyWeb, review bool) []string {
 	return deny
 }
 
+// ReviewJobDenyRules are the rules the independent review job's managed
+// settings add to a review stage's list (deniedReviewTools, D891(a)). A copy
+// rather than the list itself, so that a caller appending to what it gets back
+// cannot change what the next one is denied.
+func ReviewJobDenyRules() []string {
+	return slices.Clone(deniedReviewTools)
+}
+
+// ReviewSettingSources are the setting sources a review-mode stage is
+// launched with (--setting-sources, agent.Request.SettingSources): the user
+// level alone. The project and local levels are the reviewed pull request's
+// own checkout, which is exactly what the reviewer must not be configured by,
+// and the user level is empty because the stage runs with a home of its own
+// (ReviewHome). Setting-source selection exists only as this flag and as the
+// SDK option — it is not a settings key at all — so a managed file can
+// neither state it nor take it away.
+var ReviewSettingSources = []string{"user"}
+
 type managedSettings struct {
 	Env         map[string]string `json:"env"`
 	Permissions *struct {
 		Deny []string `json:"deny"`
 	} `json:"permissions,omitempty"`
+	// The review stage's posture, below, and absent from every other
+	// stage's file: pointers, so a stage that sets none of them writes no
+	// such key and "false" is a value rather than an omission.
+	DisableAllHooks            *bool     `json:"disableAllHooks,omitempty"`
+	AllowManagedHooksOnly      *bool     `json:"allowManagedHooksOnly,omitempty"`
+	AllowManagedMcpServersOnly *bool     `json:"allowManagedMcpServersOnly,omitempty"`
+	AllowedMcpServers          *[]string `json:"allowedMcpServers,omitempty"`
+}
+
+// reviewPosture turns on the review stage's posture (D894(a)). The review
+// stage's working directory is the pull request's head, so a hook, an MCP
+// server or a settings file that reaches that checkout must not run: a hook
+// is a shell command Claude Code itself starts, with the job's environment
+// and its ordinary egress, which no deny rule on the agent's own tools
+// reaches. The strip (the runner's stripClaudeConfig) is one deletion from
+// one code path, so the launch is the boundary as well: hooks from the
+// managed file alone (and that file declares none, so none run at all), and
+// no MCP server from anywhere but the managed file — of which there are none,
+// since allowedMcpServers is empty.
+//
+// Two keys this posture used to carry are gone because neither of them did
+// anything. settingSources is not a settings key at all — setting-source
+// selection is the --setting-sources flag (ReviewSettingSources), which the
+// review-mode stage passes — and enableAllProjectMcpServers: false blocks
+// nothing: under `claude -p` a project-scoped MCP server loads without
+// asking. The MCP keys here and --strict-mcp-config (the same stage's argv)
+// are what actually refuse one.
+func (s *managedSettings) reviewPosture() {
+	yes, none := true, []string{}
+	s.DisableAllHooks, s.AllowManagedHooksOnly = &yes, &yes
+	s.AllowManagedMcpServersOnly = &yes
+	s.AllowedMcpServers = &none
+}
+
+// ReviewHomeName is the directory, under the run's state directory, that a
+// review stage's session uses as HOME.
+const ReviewHomeName = "review-home"
+
+// ReviewHome returns the directory a review stage's session runs with as
+// HOME, creating it 0700 under stateDir (D894(a)). The image's own home is
+// the user level of Claude Code's settings, so a settings file baked into
+// the image would contribute a rule to a session that reads a pull request
+// it must not trust; a fresh, empty directory is what leaves that level with
+// nothing in it — and ReviewSettingSources names that same level, so the
+// session reads the empty one.
+func ReviewHome(stateDir string) (string, error) {
+	home := filepath.Join(stateDir, ReviewHomeName)
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return "", fmt.Errorf("creating the review stage's home: %w", err)
+	}
+	return home, nil
 }
 
 // WriteManagedSettings replaces path with {"env": env} and, when deny is not
@@ -84,6 +183,20 @@ type managedSettings struct {
 // a file that isn't regular at path. deny is DenyRules' answer for the stage
 // about to run.
 func WriteManagedSettings(path string, env map[string]string, deny []string) error {
+	return writeManagedSettings(path, env, deny, false)
+}
+
+// WriteReviewManagedSettings is WriteManagedSettings for the review stage a
+// review-mode run launches: the same file with the review posture added
+// (D894(a)). It is a function of its own rather than a flag on
+// WriteManagedSettings so that every other caller keeps writing exactly the
+// file it wrote before, which is the promise D894(a) makes the coding run's
+// own review rounds.
+func WriteReviewManagedSettings(path string, env map[string]string, deny []string) error {
+	return writeManagedSettings(path, env, deny, true)
+}
+
+func writeManagedSettings(path string, env map[string]string, deny []string, review bool) error {
 	if fi, err := os.Lstat(path); err == nil {
 		if !fi.Mode().IsRegular() {
 			return fmt.Errorf("%s is not a regular file (%s); refusing to replace it", path, fi.Mode().Type())
@@ -94,6 +207,9 @@ func WriteManagedSettings(path string, env map[string]string, deny []string) err
 	s := managedSettings{Env: env}
 	if s.Env == nil {
 		s.Env = map[string]string{}
+	}
+	if review {
+		s.reviewPosture()
 	}
 	if len(deny) > 0 {
 		s.Permissions = &struct {

@@ -396,7 +396,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// readers to switch commands for nothing
 	// (TestNoDoorsFlagHelpNamesTheOtherDoor).
 	covers := "a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it)"
-	never := "creating a project, linking a billing account, the Firestore database's location, or a secret value"
+	never := "creating a project, linking a billing account, the Firestore database's location, a secret value, or a policy publish that would loosen the published node"
 	if d.takes("forget") {
 		// update is also the door that runs the checkout's own steps, whose
 		// cloud half is the image refresh: every one of its billable builds —
@@ -409,7 +409,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 		// this door's never list; the two that cannot arise here at all are
 		// still true of --yes wherever they can (they are the other door's
 		// flags, refused by name here).
-		never = "creating a project, linking a billing account, or a secret value"
+		never = "creating a project, linking a billing account, a secret value, or a policy publish that would loosen the published node"
 	}
 	// The agent clause is about what leaves this machine, and about how far
 	// such a session actually gets: the writes on this machine's own files are
@@ -1549,6 +1549,25 @@ func initErr(err error) error {
 func (r *initRun) warn(msg string) {
 	r.res.Warnings = append(r.res.Warnings, msg)
 	fmt.Fprintln(r.w, "warning: "+msg)
+}
+
+// printWorkflowWarnings prints what the workflows' deploy-time specs carry
+// for a person: D1146's pin warning, which only the job's own spec can
+// compute — a repository pinning a catalog entry its needs have outgrown is
+// told in the run that moves the job, which is this one. The spec's text is
+// printed as it is, and once: every account a workflow may choose among gets
+// its own WorkflowSpec, and the same warning in each.
+func printWorkflowWarnings(r *initRun, spec infra.RepoSpec) {
+	printed := map[string]bool{}
+	for _, key := range slices.Sorted(maps.Keys(spec.Workflows)) {
+		for _, w := range spec.Workflows[key].Warnings {
+			if printed[w] {
+				continue
+			}
+			printed[w] = true
+			r.warn(w)
+		}
+	}
 }
 
 // canConfirmTyped is initflow.CanConfirm, the one rule of who may give a
@@ -3263,6 +3282,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}
+	printWorkflowWarnings(r, spec)
 	if err := t.Init(ctx, backend); err != nil {
 		return remote(err)
 	}

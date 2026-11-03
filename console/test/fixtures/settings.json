@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "project": "example-project",
+  "generated_at": "2026-11-03T09:00:00Z",
+  "sources": [
+    { "layer": "repo", "read_at": "2026-11-03T09:00:00Z", "duration_ms": 3, "status": "read" },
+    { "layer": "project", "read_at": "2026-11-03T09:00:00Z", "duration_ms": 2, "status": "read" },
+    { "layer": "local", "read_at": "2026-11-03T09:00:00Z", "duration_ms": 1, "status": "read" }
+  ],
+  "settings": [
+    {
+      "key": "agent.review_rounds",
+      "scope": "repo",
+      "value": "2",
+      "wins": "project",
+      "default": { "unset": "the run's rigor mode decides (rigor.DefaultRounds)" },
+      "state": "set (project)",
+      "writable": true,
+      "owner": "settings set",
+      "target_layer": "project"
+    },
+    {
+      "key": "claude_account_auto",
+      "scope": "",
+      "value": "false",
+      "wins": "local",
+      "default": { "unset": "false: nothing chooses an account for the owner" },
+      "state": "set (local)",
+      "writable": true,
+      "owner": "settings set",
+      "target_layer": "local"
+    },
+    {
+      "key": "mailbox.keychain_item",
+      "scope": "",
+      "value": "Fugaro Mailbox",
+      "wins": "default",
+      "default": { "unset": "the keychain item the subscription design names" },
+      "state": "default",
+      "writable": false,
+      "owner": "secrets",
+      "target_layer": ""
+    },
+    {
+      "key": "budget.firebase_api_key",
+      "scope": "project",
+      "wins": "project",
+      "default": { "unset": "none" },
+      "state": "set (project)",
+      "sensitive": true,
+      "writable": false,
+      "owner": "budget",
+      "target_layer": ""
+    }
+  ]
+}

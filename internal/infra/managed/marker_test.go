@@ -1692,11 +1692,34 @@ var runAccountGrants = setOf(
 	// resolves, spelled as members here so the key pins them.
 	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.writer" | repository=var.installation.shared_registry | google_service_account.build.member | for_each= | perms=`,
 	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.reader" | repository=var.installation.shared_registry | each.value | for_each={ for name, w in module.workflow : name => "serviceAccount:${w.service_account}" } | perms=`,
+	// Reviewed for PIC4b: the build account's tag mover on that same shared
+	// registry, beside the writer above — moving an existing tag is
+	// gcloud artifacts docker tags add, which deletes the old tag first, and
+	// writer lacks artifactregistry.tags.delete, so a shared image's promote
+	// and a catalog build's promote and content tag need it. The role is the
+	// installation's own fugaroTagMover, whose whole permission list is
+	// artifactregistry.tags.delete: no version or package delete, no storage
+	// permission, and nothing that grants a role, acts as or mints tokens for
+	// another account. The target is that registry repository — never the
+	// runs bucket, whose root this test exists for, and never the project —
+	// and it is the same account, role and target shape as the row on the
+	// repository's own registry above.
+	`google_artifact_registry_repository_iam_member | var.installation.role_ids.tag_mover | repository=var.installation.shared_registry | google_service_account.build.member | for_each= | perms=artifactregistry.tags.delete`,
 	`google_project_iam_member | "roles/logging.logWriter" | project=var.project | google_service_account.build.member | for_each={ log_writer = "roles/logging.logWriter" build_submitter = var.installation.role_ids.build_submitter } | perms=`,
 	`google_project_iam_member | var.installation.role_ids.build_submitter | project=var.project | google_service_account.build.member | for_each={ log_writer = "roles/logging.logWriter" build_submitter = var.installation.role_ids.build_submitter } | perms=cloudbuild.builds.create,cloudbuild.builds.get`,
 	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=local.secrets[each.value] | google_service_account.build.member | for_each=toset(var.repo.build_secrets) | perms=`,
 	`google_service_account_iam_member | "roles/iam.serviceAccountUser" | service_account_id=google_service_account.build.name | google_service_account.build.member | for_each= | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=var.installation.runs_bucket | google_service_account.build.member | for_each= | perms=`,
+	// Reviewed for PIC4, the project image catalog: the same account's
+	// read-only grant on the catalog's copied definitions, builds/catalog/
+	// of the runs bucket (gcp.CatalogReadCondition), which the repository
+	// module computes from the bucket's own name because the copies belong
+	// to no repository. objectViewer carries no create, no delete and no
+	// update, so a build reads the definition the operator copied and cannot
+	// write one — which is the property that keeps one repository's build
+	// from choosing the definition every other repository's jobs run — and
+	// the condition names a prefix under objects/, never the bucket's root.
+	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=var.installation.runs_bucket | google_service_account.build.member | for_each= | perms=`,
 
 	// The history account's: the Firebase databases, its run listing, and a
 	// read of the runs bucket.
@@ -1720,14 +1743,23 @@ var runAccountGrants = setOf(
 	// own rules, which it bypasses: the writer's code is what keeps it to the
 	// coordinator's subtree, and this test cannot bound it.
 	`google_project_iam_member | "roles/firebasedatabase.admin" | project=var.project | "serviceAccount:${var.coordinator_account}" | for_each= | perms=`,
-	// The same account's two reads (coordinator plan P5, the job P5 deploys):
-	// the runs bucket, which the view is computed from — objectViewer, the
-	// history account's own read, so no create, delete or update and no way to
-	// replace the marker or the delete list at the bucket's root — and the
-	// GitHub App's key, the reader credential P2 defines, on the one secret
-	// container the job mounts and at the secret level, never project-wide.
+	// The same account's three reads (coordinator plan P5, the job P5 deploys,
+	// and BB5's third): the runs bucket, which the view is computed from —
+	// objectViewer, the history account's own read, so no create, delete or
+	// update and no way to replace the marker or the delete list at the
+	// bucket's root — the GitHub App's key, the reader credential P2 defines,
+	// on the one secret container the job mounts and at the secret level,
+	// never project-wide, and the credentials service's read mint (BB5), which
+	// is the front door to a read-scoped Bitbucket token and where the sweep is
+	// the second caller class after the installation's people. Reviewed as the
+	// people's grant above is: the role reaches Cloud Run services and nothing
+	// else, and the service's own admission refuses every caller that is not
+	// one of those people or this one account. It is pinned whole because the
+	// member is the module's own created account, which this test reads as an
+	// expression and never as a set to resolve.
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.coordinator[0].member | for_each= | perms=`,
 	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.project_secrets[var.coordinator.app_key_secret] | google_service_account.coordinator[0].member | for_each= | perms=`,
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | google_service_account.coordinator[0].member | for_each= | perms=`,
 
 	// The scheduler account's: starting the history and check jobs, and the
 	// coordinator's sweep (coordinator plan P5, the same custom role and the
@@ -1765,6 +1797,19 @@ var runAccountGrants = setOf(
 	`google_logging_log_view_iam_member | "roles/logging.viewAccessor" | name=google_logging_log_view.runs[0].name | each.value | for_each=var.log_isolation ? toset(concat(var.launchers, var.operators)) : toset([]) | perms=`,
 	`google_secret_manager_secret_iam_member | each.value.role | secret_id=google_secret_manager_secret.project[each.value.secret].secret_id | each.value.member | for_each=merge( { for k, v in local.operator_project_secrets : "${k} secretVersionAdder" => merge(v, { role = "roles/secretmanager.secretVersionAdder" }) }, { for k, v in local.operator_project_secrets : "${k} viewer" => merge(v, { role = "roles/secretmanager.viewer" }) }, ) [local.operator_project_secrets={ for p in setproduct(keys(var.project_secrets), var.operators) : "${p[0]} ${p[1]}" => { secret = p[0], member = p[1] } }] | perms=?`,
 	`google_secret_manager_secret_iam_member | each.value.role | secret_id=google_secret_manager_secret.this[each.value.secret].secret_id | each.value.member | for_each=merge( { for k, v in local.operator_secrets : "${k} secretVersionAdder" => merge(v, { role = "roles/secretmanager.secretVersionAdder" }) }, { for k, v in local.operator_secrets : "${k} viewer" => merge(v, { role = "roles/secretmanager.viewer" }) }, ) [local.operator_secrets={ for p in setproduct(keys(var.repo.secrets), var.installation.operators) : "${p[0]} ${p[1]}" => { secret = p[0], member = p[1] } }] | perms=?`,
+
+	// The read mint's own front door (BB4): the operators, over the user:
+	// members among them, holding roles/run.invoker on the credentials service
+	// so a person can call it at all. Its for_each is a conditional over a
+	// people set the module filters to those members, which this test cannot
+	// resolve to a set of people, so it is pinned whole like the three above.
+	// Reviewed as a grant to one of the operators rather than to a run's
+	// credential — each.value is a member the module already grants the runs
+	// bucket to — and the role reaches run services alone: invoking this one
+	// hands the caller a short-lived, read-scoped Bitbucket token for one
+	// repository, and G4's admission inside the service refuses every caller
+	// that is not one of these people.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | each.value | for_each=local.credentials_service_on ? toset(local.credentials_read_members) : toset([]) [local.credentials_read_members=[for m in var.operators : m if startswith(m, "user:")]] [local.credentials_service_on=var.credentials_service != null] | perms=`,
 )
 
 // setOf is a set of strings.

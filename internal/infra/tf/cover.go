@@ -208,12 +208,28 @@ var grantRules = map[string]map[string]who{
 		customKey + "fugaroJobRunner": toPeople | toAccounts,
 		"roles/run.invoker":           toAccounts,
 	},
-	// The credentials service (C1.18): each job account may invoke it, and
-	// nothing else may. No person is ever granted this role, and the grant is
-	// unconditional — the service's own ID-token check (Q6) is what decides
-	// who is served, not an IAM condition.
+	// The credentials service (C1.18): each job account may invoke it, and —
+	// since BB4 — the installation's operators, whose person caller class the
+	// read mint serves, and — since BB5 — the installation's own coordinator
+	// account, whose coordinator class the same mint serves for the scheduled
+	// sweep. So this is the one row where a person's invoker grant is the point
+	// rather than a mistake, and the row naming toPeople is what makes it a
+	// grant the review screen has to list: the person is on that screen by
+	// name, and a member kind this row did not accept would be refused
+	// outright. Every other kind is still out — the service's own ID-token
+	// check (Q6) is what decides who is served, not an IAM condition, and the
+	// grant stays unconditional.
+	//
+	// toCoordinator is BB5's deliberate widening and it is the only kind on
+	// this row that is neither a job account nor a listed person: it is the
+	// account THIS installation creates (google_service_account.coordinator,
+	// whose email the module also hands the service as
+	// FUGARO_COORDINATOR_ACCOUNT), so it is Fugaro's own and not a stranger's,
+	// and the role is the front end's invoker bit on the one service the sweep
+	// reads Bitbucket through. Nothing wider comes with it: no actAs, no
+	// project role, and no second resource type.
 	"google_cloud_run_v2_service_iam_member": {
-		"roles/run.invoker": toAccounts,
+		"roles/run.invoker": toAccounts | toPeople | toCoordinator,
 	},
 	"google_logging_log_view_iam_member": {
 		"roles/logging.viewAccessor": toPeople,
@@ -782,17 +798,25 @@ var knownCommands = [][2][]string{
 // service's container sets (installation/credentials.tf): the project it
 // serves, the project it reads the bundle in, the region, the database and
 // Firebase project it reads runs from, its own URL (the audience its callers'
-// ID tokens are minted for) and the installation's per-repository jobs as a
-// JSON array of {provider, repo, workflow} triples — no secret ID and no
-// secret value, because the loader derives the container from the project
-// name and reads it as the service's own account, and the job accounts are
-// derived from the triples rather than carried. The case below is an
-// allowlist of these, so an environment that hands this process anything else
-// is not covered; TestAllowedTypesCoverTheModules keeps the two lists in step.
+// ID tokens are minted for), the installation's per-repository jobs as a
+// JSON array of {provider, repo, workflow} triples, and — only on an
+// installation that names a verifier — the addresses that may ask the verify
+// route, — only on one that names an operator — the addresses the read
+// mint admits (BB4), and — only on one whose coordinator is on — the
+// coordinator's own account, which is the read mint's second class (BB5). No
+// secret ID and no secret value, because the loader
+// derives the
+// container from the project name and reads it as the service's own account,
+// and the job accounts are derived from the triples rather than carried. The
+// case below is an allowlist of these, so an environment that hands this
+// process anything else is not covered; TestAllowedTypesCoverTheModules keeps
+// the two lists in step.
 var credentialsServiceEnv = []string{
 	"FUGARO_PROJECT", "FUGARO_GCP_PROJECT", "FUGARO_REGION",
 	"FUGARO_RTDB_URL", "FUGARO_FIREBASE_PROJECT",
 	"FUGARO_CREDENTIALS_SERVICE_URL", "FUGARO_JOB_ACCOUNTS",
+	"FUGARO_VERIFIER_ACCOUNTS", "FUGARO_PERSON_ACCOUNTS",
+	"FUGARO_COORDINATOR_ACCOUNT",
 }
 
 // APITargets are the two services the Firebase web key may call, sorted;
@@ -1529,7 +1553,10 @@ var tokenClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/b
 // its own budget token objects, budget-token-channel.md §7.2) — and then only
 // for a Fugaro job account of this run that the grant's own module holds or
 // creates, under the condition title built from that account
-// (jobAccountGrant) — or, in the
+// (jobAccountGrant) — or exactly one whole-builds/catalog/ clause
+// (gcp.CatalogReadCondition, a build account's read of the copied catalog
+// definitions, PIC4), under the same account rule and that condition's own
+// title (catalogReadGrant) — or, in the
 // project module and for an account that module creates, exactly one
 // whole-tokens/ clause (gcp.ProjectTokenBucketCondition, the shared job's
 // read of every repository's sealed token, plan task 3.2 step 2); a person's
@@ -1579,12 +1606,22 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 		m := tokenClause.FindStringSubmatch(expr)
 		if m == nil || !slices.Contains(c.Buckets, m[1]) || (bucket != "" && bucket != m[1]) {
 			// Not a per-repository job's tokens/<slug>/: it may still be a
-			// project job's, which is the project module's own widening and
-			// is accepted only for an account that module creates.
+			// project job's, or a build account's read of the copied catalog
+			// definitions, each of which is a widening of its own and is
+			// accepted only for the accounts its own builder's title names.
 			if c.projectJobTokenCondition(rc, createdSAIDs, heldSAIDs, title, expr) {
 				return ""
 			}
-			return "grants objectViewer on the bucket to an account under a condition that is not one repository's tokens/ condition of this run's bucket, nor a project job's whole-tokens/ one"
+			if c.catalogReadGrant(rc, createdSAIDs, heldSAIDs, title, expr) {
+				return ""
+			}
+			// The title says which grant this claims to be: when it is the
+			// catalog builder's spelling, the refusal names that grant rather
+			// than the tokens/ ones the expression alone would suggest.
+			if strings.HasPrefix(title, gcp.CatalogReadConditionTitlePrefix) {
+				return "grants objectViewer on the bucket under a build account's builds/catalog/ condition to a member that is not the build account its title names, which the modules never do"
+			}
+			return "grants objectViewer on the bucket to an account under a condition that is not one repository's tokens/ condition of this run's bucket, a project job's whole-tokens/ one, nor a build account's builds/catalog/ one"
 		}
 		// A per-repository job's read of its own repository's tokens/
 		// (gcp.TokenBucketCondition): the expression alone is not that grant.
@@ -1693,6 +1730,33 @@ func (c Cover) projectJobTokenCondition(rc ResourceChange, createdSAIDs, heldSAI
 			continue
 		}
 		if expr == gcp.ProjectTokenBucketCondition(b) {
+			return true
+		}
+	}
+	return false
+}
+
+// catalogReadGrant reports whether a bucket grant is a repository's build
+// account reading the copied catalog definitions (gcp.CatalogReadCondition,
+// PIC4): objectViewer, which the branch this is called from has already
+// established, on exactly builds/catalog/ of one of this run's buckets, with
+// the condition title built from the account the grant's own module holds or
+// creates (gcp.CatalogReadConditionTitle) — the account rule the tokens/
+// grants pass (jobAccountGrant).
+//
+// The clause has no slug, so the expression is one builder's bytes for the
+// whole string: the grant the repository module writes is accepted, and any
+// other clause under objects/ — or the same clause on no run bucket — is not.
+func (c Cover) catalogReadGrant(rc ResourceChange, createdSAIDs, heldSAIDs map[string]bool, title, expr string) bool {
+	if _, ok := c.jobAccountGrant(rc, createdSAIDs, heldSAIDs, title, gcp.CatalogReadConditionTitlePrefix); !ok {
+		return false
+	}
+	bucket := str(rc.Change.After["bucket"])
+	for _, b := range c.Buckets {
+		if !gcp.ValidBucketName(b) || (bucket != "" && bucket != b) {
+			continue
+		}
+		if expr == gcp.CatalogReadCondition(b) {
 			return true
 		}
 	}

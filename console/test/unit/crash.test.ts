@@ -77,15 +77,6 @@ import {
   type ScrubbedFrame,
 } from '../../src/main/crash'
 
-/** DSN_PLACEHOLDER is a DSN's shape -- scheme, public key, host, project id --
- * assembled from fragments at run time, for the reason `fakeSecrets` exists: a
- * DSN-shaped literal in this repository is a defect even when it is invented. The
- * host is `example.invalid`, the name reserved for exactly this, so nothing here
- * resolves anywhere and no reporting host is named by this file. */
-function dsnPlaceholder(): string {
-  return inert('https', '://', 'a'.repeat(32), '@', 'example', '.invalid', '/', '1')
-}
-
 /** APP_ROOT is the directory the console's own code is loaded from, as a
  * developer's checkout has it. It is a placeholder path rather than a real one:
  * the tests below are about which part of a path survives, and a path under a
@@ -115,10 +106,33 @@ function tokenPlaceholder(): string {
   return inert('gh', 'p_', 'a'.repeat(36))
 }
 
+/** DEBUG_ID is the shape `sentry-cli sourcemaps inject` writes into a file and
+ * its map: a version-5 UUID. It is invented rather than a real build's, because
+ * the test is about the shape and nothing else. */
+const DEBUG_ID = '0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9'
+
+/** MAX_DEBUG_IMAGES is how many images the module keeps, spelled here rather
+ * than imported: the number is the claim, and a test that read it from the
+ * source would follow the source wherever it went. It is above the SDK's own
+ * frame limit -- 50 -- because a caller may raise that, and it is a bound all
+ * the same, because the list arrives from a library. */
+const MAX_DEBUG_IMAGES = 64
+
 /** PROSE_A is a name-shaped string that is really a sentence: an exception's
  * `type` and a frame's `function` are strings a library filled in, and a library
  * can be handed a task title. */
 const PROSE_A = 'acme secret task text'
+
+/** The characters the scrubber refuses by category, built rather than written
+ * down: a control character and half a code point in this file would be the
+ * thing its own rule is about, and `\u009b` as a literal is the same defect a
+ * DSN-shaped literal is for `fakeSecrets` -- a reader, a scanner and a lexical
+ * highlighter cannot tell one that is inert from one that is not. */
+const C1_CSI = String.fromCharCode(0x9b)
+const NEL = String.fromCharCode(0x85)
+const LINE_SEPARATOR = String.fromCharCode(0x2028)
+const LONE_HIGH = String.fromCharCode(0xd800)
+const LONE_LOW = String.fromCharCode(0xdc00)
 
 /** poisonType is an exception type that is a path and a credential rather than a
  * name -- what a library that was handed a message puts in `type`. */
@@ -134,14 +148,13 @@ function poisonType(): string {
 type HostileEvent = CrashEvent & Record<string, unknown>
 
 /** startupStub stands in for the console that starts reporting at launch: it
- * asks the gate once, at startup, holding the DSN the build was given, and would
- * initialise the client if the answer were `enabled`. The switch has not been
- * read at that moment -- which is the plan's red step, and why the field is not
- * in the call at all: `undefined` is the absence of an answer, while `null` is an
- * answer that is not `true`. So what the stub gets back is `off`, and nothing is
- * ever sent. */
-function startupStub(dsn: string | null): { readonly started: boolean } {
-  return { started: crashReportingDecision({ dsn }).enabled }
+ * asks the gate once, at startup, and would initialise the client if the answer
+ * were `enabled`. The switch has not been read at that moment -- which is the
+ * plan's red step, and why the field is not in the call at all: `undefined` is
+ * the absence of an answer, while `null` is an answer that is not `true`. So
+ * what the stub gets back is `off`, and nothing is ever sent. */
+function startupStub(): { readonly started: boolean } {
+  return { started: crashReportingDecision({}).enabled }
 }
 
 /** scrubbedFrame is one frame through the whole scrubber, which is the only
@@ -238,73 +251,55 @@ function changingOnSecondRead(
 
 describe('crash', () => {
   it('nothing is enabled before the switch is read', () => {
-    expect(startupStub(dsnPlaceholder())).toEqual({ started: false })
-    expect(startupStub(null)).toEqual({ started: false })
+    expect(startupStub()).toEqual({ started: false })
     // The unread switch is the field's absence, and it reports itself as unread
     // rather than as an operator who said no: D734's third state is worth a word
     // of its own precisely so that a log line can tell the two apart.
-    expect(crashReportingDecision({ dsn: dsnPlaceholder(), optedIn: undefined })).toEqual({
+    expect(crashReportingDecision({ optedIn: undefined })).toEqual({
       enabled: false,
       reason: 'opt-in-not-read',
     })
-    expect(crashReportingDecision({ dsn: dsnPlaceholder() })).toEqual({
+    expect(crashReportingDecision({})).toEqual({
       enabled: false,
       reason: 'opt-in-not-read',
     })
   })
 
   it('nothing is enabled with the switch off', () => {
-    expect(crashReportingDecision({ dsn: dsnPlaceholder(), optedIn: false })).toEqual({
+    expect(crashReportingDecision({ optedIn: false })).toEqual({
       enabled: false,
       reason: 'opt-in-off',
     })
   })
 
-  it('only `true` opens the gate, whatever a document spells the switch with', () => {
-    // The value comes from a settings node this console did not write, and a
-    // truthy value is not consent: `"true"` is a string, `1` is a number, `{}` is
-    // an object, and none of them is the operator saying yes. `null` is an answer
-    // that is not permission -- an installation that stores the node and leaves it
-    // empty -- while `undefined` is no answer at all, which the case above reports
-    // as unread.
-    const dsn = dsnPlaceholder()
+  it('only `true` opens the gate, whatever a stored switch spells it with', () => {
+    // The value comes back from storage rather than from this console's own
+    // memory, and a truthy value is not consent: `"true"` is a string, `1` is a
+    // number, `{}` is an object, and none of them is the operator saying yes.
+    // `null` is an answer that is not permission -- a stored switch that is
+    // present and empty -- while `undefined` is no answer at all, which the case
+    // above reports as unread.
     for (const optedIn of ['true', 'false', 'yes', 1, 0, {}, []]) {
-      expect(crashReportingDecision({ dsn, optedIn }), JSON.stringify(optedIn)).toEqual({
+      expect(crashReportingDecision({ optedIn }), JSON.stringify(optedIn)).toEqual({
         enabled: false,
         reason: 'opt-in-off',
       })
     }
-    expect(crashReportingDecision({ dsn, optedIn: null })).toEqual({ enabled: false, reason: 'opt-in-off' })
-    expect(crashReportingDecision({ dsn, optedIn: true })).toEqual({ enabled: true, reason: 'enabled' })
-    // ...and no DSN in the build is still the last word, so a document cannot
-    // smuggle its way past the two lines above either.
-    expect(crashReportingDecision({ dsn: undefined, optedIn: 'true' })).toEqual({
-      enabled: false,
-      reason: 'opt-in-off',
-    })
+    expect(crashReportingDecision({ optedIn: null })).toEqual({ enabled: false, reason: 'opt-in-off' })
+    expect(crashReportingDecision({ optedIn: true })).toEqual({ enabled: true, reason: 'enabled' })
   })
 
-  it('nothing is enabled without a DSN that is one, whatever the switch says', () => {
-    // The dormant build the owner ruled for: the switch may be on and the DSN
-    // missing, empty or whitespace, and the answer is still off -- so a release
-    // that was built without the value sends nothing rather than failing.
-    for (const dsn of [undefined, null, '', '   ', '\t\n']) {
-      expect(crashReportingDecision({ dsn, optedIn: true })).toEqual({
-        enabled: false,
-        reason: 'no-dsn',
-      })
-    }
-    // The reason is a word for a log line and never the value, which is a URL
-    // with a key in it.
-    const decision = crashReportingDecision({ dsn: dsnPlaceholder(), optedIn: true })
-    expect(JSON.stringify(decision)).not.toContain(dsnPlaceholder())
-  })
-
-  it('enabled only when the switch is read, is on, and the build carries a DSN', () => {
-    expect(crashReportingDecision({ dsn: dsnPlaceholder(), optedIn: true })).toEqual({
-      enabled: true,
-      reason: 'enabled',
-    })
+  it('the switch is the whole gate, and the DSN is not part of it', () => {
+    // The owner's ruling of 2026-10-31 in one assertion. The gate used to have a
+    // fourth answer -- `'no-dsn'`, for a yes whose build had been given no DSN --
+    // and the ruling removed the input that could produce it: the DSN is a
+    // constant of every build (`./crash-dsn`), so there is no missing value for
+    // a release to be built without and no reason for a log line to name.
+    expect(crashReportingDecision({ optedIn: true })).toEqual({ enabled: true, reason: 'enabled' })
+    const source = readFileSync(fileURLToPath(new URL('../../src/main/crash.ts', import.meta.url)), 'utf8')
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    expect(code).not.toContain('no-dsn')
+    expect(code, 'the gate reads no DSN: it is not an input of this module').not.toMatch(/\bdsn\b/i)
   })
 
   it('holds no environment read, no file, no network call and no endpoint', () => {
@@ -677,6 +672,61 @@ describe('crash', () => {
     }
   })
 
+  it('a path that carries a C1 control or a lone surrogate is refused too', () => {
+    // The C1 block is the half of `\p{Cc}` ASCII does not spell: U+009B is a
+    // control-sequence introducer a terminal acts on and a JSON encoder escapes,
+    // so a path holding one says something to one reader that it does not say to
+    // another -- which is the newline case with the newline in a code page. It
+    // is checked as U+009B and not as `\x85` alone, because `\x85` was the one
+    // C1 character this module already refused and the rule is the family rather
+    // than the character.
+    expect(scrubbedFrame(`${APP_ROOT}/dist/main/x${C1_CSI}.js`).filename).toBe('<external>')
+    expect(scrubbedFrame(`${APP_ROOT}/dist/main/x${NEL}home/person-1/x.js`).filename).toBe('<external>')
+    expect(scrubbedFrame(`${APP_ROOT}/dist/main/x${LINE_SEPARATOR}.js`).filename).toBe('<external>')
+    // A lone surrogate is half a code point: it has no UTF-8 encoding at all, so
+    // every reader that has to write one -- a JSON encoder, a terminal, the
+    // processor -- substitutes a replacement character and two readers disagree
+    // about what the path says without either of them being wrong.
+    for (const [name, half] of [
+      ['a lone high surrogate', LONE_HIGH],
+      ['a lone low surrogate', LONE_LOW],
+    ] as const) {
+      const kept = scrubbedFrame(`${APP_ROOT}/dist/main/x${half}.js`).filename
+      expect(kept, name).toBe('<external>')
+    }
+    // And the same two in a frame's `function`, which is the fixed word rather
+    // than a path: a name is a name, and half of a code point is not one.
+    for (const [name, half] of [
+      ['a lone high surrogate', LONE_HIGH],
+      ['a lone low surrogate', LONE_LOW],
+    ] as const) {
+      const scrubbed = scrubCrashEvent(
+        {
+          exception: {
+            values: [
+              { type: `Err${half}or`, stacktrace: { frames: [{ abs_path: `${APP_ROOT}/x.js`, function: `f${half}` }] } },
+            ],
+          },
+        },
+        APP_ROOT,
+      )
+      const value = scrubbed.exception?.values?.[0]
+      expect(value?.type, name).toBe('<unknown>')
+      expect(value?.stacktrace?.frames?.[0]?.function, name).toBe('<anonymous>')
+    }
+  })
+
+  it('a path that is not ASCII but is an ordinary name survives', () => {
+    // The refusal above is about characters no two readers agree on, not about
+    // letters outside ASCII: a directory whose name is really a name keeps it,
+    // and a rule that answered `<external>` to every non-ASCII path would be a
+    // rule that quietly stopped placing the frames of anyone who names things in
+    // their own language.
+    expect(scrubbedFrame(`${APP_ROOT}/dist/main/módulo.js`).filename).toBe('dist/main/módulo.js')
+    expect(scrubbedFrame(`${APP_ROOT}/源码/入口.js`).filename).toBe('源码/入口.js')
+    expect(scrubbedFrame(`${APP_ROOT}/dist/main/x-😀.js`).filename).toBe('dist/main/x-😀.js')
+  })
+
   it.each([
     // A relative path is a file next to something this module never learned:
     // the part that would say *where* is exactly the part that is missing, so
@@ -873,11 +923,159 @@ describe('crash', () => {
     expect(scrubCrashEvent({ release: 'a'.repeat(64) }, APP_ROOT)).toEqual({ release: 'a'.repeat(64) })
   })
 
+  it('the debug images are kept, cut to an id and a file inside the app', () => {
+    // The one field a symbolicator reads: the id of the build a frame came from,
+    // and the file it was in. The reporter writes one image per file its frames
+    // come from (`@sentry/core`'s `applyDebugMeta`), with `code_file` as the
+    // frame's own path -- so it arrives absolute, and it is cut at the app root
+    // exactly as a frame is.
+    expect(
+      scrubCrashEvent(
+        { debug_meta: { images: [{ type: 'sourcemap', code_file: `${APP_ROOT}/dist/main/index.js`, debug_id: DEBUG_ID }] } },
+        APP_ROOT,
+      ),
+    ).toEqual({
+      debug_meta: { images: [{ type: 'sourcemap', code_file: 'dist/main/index.js', debug_id: DEBUG_ID }] },
+    })
+  })
+
+  it('the debug image keeps its three fields and drops every other one', () => {
+    // The SDK's own type carries more than symbolication needs (a `wasm` image
+    // has a `code_id` and a `debug_file`, a `macho` one an `image_addr`), and a
+    // library's object carries whatever a later version adds -- so the image is
+    // rebuilt from the three fields the lookup is made of, the same way a frame
+    // is rebuilt from four. `debug_file` is the field to watch: it is a path, and
+    // a path is the thing this module exists to keep off the wire.
+    expect(
+      scrubCrashEvent(
+        {
+          debug_meta: {
+            images: [
+              {
+                type: 'sourcemap',
+                code_file: `${PACKAGED_ROOT}/Fugaro Console.app/Contents/Resources/app.asar/dist/main/picker.js`,
+                debug_id: DEBUG_ID,
+                code_id: 'A1B2C3',
+                debug_file: `${HOME_PATH}/dev/acme-secret-repo/dist/main/picker.js`,
+                image_addr: '0x100000000',
+                image_size: 4096,
+                arch: 'arm64',
+              },
+            ],
+            extra: { note: 'anything else on debug_meta is dropped with it' },
+          },
+        },
+        APP_ROOT,
+      ),
+    ).toEqual({
+      debug_meta: { images: [{ type: 'sourcemap', code_file: 'dist/main/picker.js', debug_id: DEBUG_ID }] },
+    })
+  })
+
+  it('a debug image that fails a shape is dropped, and the ones that do not are kept', () => {
+    const image = (over: Record<string, unknown>): Record<string, unknown> => ({
+      type: 'sourcemap',
+      code_file: `${APP_ROOT}/dist/main/index.js`,
+      debug_id: DEBUG_ID,
+      ...over,
+    })
+    const scrubbed = scrubCrashEvent(
+      {
+        debug_meta: {
+          images: [
+            image({}),
+            // A path that names a home directory, a relative one, a URL this
+            // module cannot place, and one that walks back out of the app: none
+            // of them is a file inside the app, so none of them is kept.
+            image({ code_file: `${HOME_PATH}/dev/acme-secret-repo/dist/main/index.js` }),
+            image({ code_file: 'dist/main/index.js' }),
+            image({ code_file: 'https://example.invalid/index.js' }),
+            image({ code_file: `${APP_ROOT}/../../Users/person-1/index.js` }),
+            // A debug id that is not one: the injector writes a UUID, so
+            // anything else -- a sentence, a credential that reached the field,
+            // an id in another case -- is a value from somewhere else.
+            image({ debug_id: 'not-a-uuid' }),
+            image({ debug_id: DEBUG_ID.toUpperCase() }),
+            image({ debug_id: `${inert('gh', 'p_', 'a'.repeat(36))}` }),
+            image({ debug_id: undefined }),
+            // And a type that is not one of the six an image type may be.
+            image({ type: 'Source Map' }),
+            image({ type: 7 }),
+            // A value that is not an image at all.
+            null,
+            'dist/main/index.js',
+            { ...image({}), code_file: undefined },
+          ],
+        },
+      },
+      APP_ROOT,
+    )
+    // One image survives -- the well-formed one this list starts with -- and the
+    // thirteen after it are dropped, each for its own reason.
+    expect(scrubbed).toEqual({
+      debug_meta: { images: [{ type: 'sourcemap', code_file: 'dist/main/index.js', debug_id: DEBUG_ID }] },
+    })
+    expect(JSON.stringify(scrubbed)).not.toContain(HOME_PATH)
+    expect(JSON.stringify(scrubbed)).not.toContain('person-1')
+  })
+
+  it('the image type is one of the six the service has, and a word it does not know is dropped', () => {
+    // **The type is an exact list, not a shape.** A shape (`[a-z][a-z0-9_]{0,15}`)
+    // admits every lowercase word a library, a frame file or a sentence could put
+    // in the field, and the report would carry it: `dimi` is well formed and means
+    // nothing, and a symbolicator given a type it does not know has an image it
+    // cannot use -- while an operator reading the report sees a word that looks
+    // like a fact about their build. The six are the ones the service and the SDK
+    // agree on, and anything else is refused the way a malformed one is.
+    const image = (type: unknown): Record<string, unknown> => ({
+      type,
+      code_file: `${APP_ROOT}/dist/main/index.js`,
+      debug_id: DEBUG_ID,
+    })
+    const kept = ['sourcemap', 'macho', 'elf', 'pe', 'wasm', 'proguard']
+    const scrubbed = scrubCrashEvent({ debug_meta: { images: kept.map(image) } }, APP_ROOT)
+    expect(scrubbed.debug_meta?.images.map((one) => one.type)).toEqual(kept)
+    for (const type of ['dimi', 'sourcemaps', 'Sourcemap', 'sourcemap ', 'map', 'app', 'a', 'x86_64']) {
+      expect(
+        scrubCrashEvent({ debug_meta: { images: [image(type)] } }, APP_ROOT),
+        `${JSON.stringify(type)} is not a type the service has, so the image is not sent`,
+      ).toEqual({})
+      // And it is dropped from a list rather than taking the list with it: the
+      // images around it are still looked up.
+      expect(
+        scrubCrashEvent({ debug_meta: { images: [image(type), image('sourcemap')] } }, APP_ROOT),
+      ).toEqual({ debug_meta: { images: [{ type: 'sourcemap', code_file: 'dist/main/index.js', debug_id: DEBUG_ID }] } })
+    }
+  })
+
+  it('an oversized image list is cut, and a list with nothing usable in it is no field at all', () => {
+    // A library's list is not bounded by anything this module controls, and the
+    // processor reads what is sent -- so the list is cut at the most images a
+    // real event can carry: the SDK's stack parser keeps 50 frames by default
+    // and `applyDebugMeta` writes one image per distinct frame file, so a stack
+    // that is not truncated cannot name more than that.
+    const wellFormed = Array.from({ length: 200 }, () => ({
+      type: 'sourcemap',
+      code_file: `${APP_ROOT}/dist/main/index.js`,
+      debug_id: DEBUG_ID,
+    }))
+    const cut = scrubCrashEvent({ debug_meta: { images: wellFormed } }, APP_ROOT)
+    expect(cut.debug_meta?.images).toHaveLength(MAX_DEBUG_IMAGES)
+    // Nothing usable: the field is absent rather than an empty list, because an
+    // empty list is a claim about the build that no image supports.
+    expect(scrubCrashEvent({ debug_meta: { images: [{ code_file: `${HOME_PATH}/app` }] } }, APP_ROOT)).toEqual({})
+    expect(scrubCrashEvent({ debug_meta: { images: [] } }, APP_ROOT)).toEqual({})
+    expect(scrubCrashEvent({ debug_meta: { images: 'dist/main' } }, APP_ROOT)).toEqual({})
+    expect(scrubCrashEvent({ debug_meta: { images: null } }, APP_ROOT)).toEqual({})
+    expect(scrubCrashEvent({ debug_meta: 7 }, APP_ROOT)).toEqual({})
+  })
+
   it.each([
     ['the exception', proxyThrowingOn('exception')],
     ['the values', throwingValues()],
     ['a frame field', throwingFrameField()],
     ['an event field', proxyThrowingOn('event_id')],
+    ['the debug meta', proxyThrowingOn('debug_meta')],
   ] as [string, CrashEvent][])(
     'an event whose getter throws on %s comes back empty rather than throwing',
     (_position, event) => {
@@ -911,11 +1109,50 @@ describe('crash', () => {
       ['platform', 'node', { platform: 'node' }],
       ['level', 'error', { level: 'error' }],
       ['release', 'console-0.116.0', { release: 'console-0.116.0' }],
+      [
+        'debug_meta',
+        { images: [{ type: 'sourcemap', code_file: `${APP_ROOT}/dist/main/index.js`, debug_id: DEBUG_ID }] },
+        { debug_meta: { images: [{ type: 'sourcemap', code_file: 'dist/main/index.js', debug_id: DEBUG_ID }] } },
+      ],
     ]
     for (const [property, first, expected] of cases) {
       const scrubbed = scrubbedEvent(property, first)
       expect(scrubbed, property).toEqual(expected)
       expect(JSON.stringify(scrubbed), property).not.toContain(token)
+    }
+  })
+
+  it('every debug image field is read once too, at both levels below the event', () => {
+    // The same rule inside `debug_meta`: the `images` list and each image's own
+    // three fields. A list read twice is a list whose check and whose copy are
+    // different values, and an image's `code_file` read twice is a path checked
+    // as one the app root cuts and sent as whatever the second read answered.
+    const token = tokenPlaceholder()
+    const image = { type: 'sourcemap', code_file: `${APP_ROOT}/dist/main/index.js`, debug_id: DEBUG_ID }
+    const expected = {
+      debug_meta: { images: [{ type: 'sourcemap', code_file: 'dist/main/index.js', debug_id: DEBUG_ID }] },
+    }
+    const scrubbed = [
+      scrubCrashEvent(
+        { debug_meta: changingOnSecondRead('images', [image], token) } as unknown as CrashEvent,
+        APP_ROOT,
+      ),
+      scrubCrashEvent(
+        { debug_meta: { images: [changingOnSecondRead('code_file', image.code_file, token, { ...image })] } } as unknown as CrashEvent,
+        APP_ROOT,
+      ),
+      scrubCrashEvent(
+        { debug_meta: { images: [changingOnSecondRead('debug_id', image.debug_id, token, { ...image })] } } as unknown as CrashEvent,
+        APP_ROOT,
+      ),
+      scrubCrashEvent(
+        { debug_meta: { images: [changingOnSecondRead('type', image.type, token, { ...image })] } } as unknown as CrashEvent,
+        APP_ROOT,
+      ),
+    ]
+    for (const one of scrubbed) {
+      expect(one).toEqual(expected)
+      expect(JSON.stringify(one)).not.toContain(token)
     }
   })
 
@@ -1042,17 +1279,25 @@ describe('crash', () => {
     ).toEqual({ exception: { values: [{ type: 'Error', stacktrace: { frames: [] } }] } })
   })
 
-  it('no minidump, no session and no client report', () => {
+  it('no minidump, no session, no client report and no loader hook', () => {
     // Each option is pinned by name, because the wiring's whole safety is that
-    // the SDK is told these things rather than trusted to default to them.
+    // the SDK is told these things rather than trusted to default to them. The
+    // names are the pinned SDK's own (@sentry/core 11.7.0, @sentry/node 11.7.0):
+    // `sendDefaultPii` is `dataCollection.userInfo` there, `autoSessionTracking`
+    // no longer exists at all -- a session now arrives only through the
+    // `mainProcessSessionIntegration` that `defaultIntegrations: false` keeps
+    // out, which is why the key is gone rather than renamed -- and
+    // `enableRuntimeChannelInjection` is the newer one, added because the
+    // client's constructor installs a `Module.registerHooks` loader hook unless
+    // it is told not to (see the test below for the name's own check).
     expect(CRASH_CLIENT_OPTIONS).toEqual({
-      sendDefaultPii: false,
-      autoSessionTracking: false,
+      dataCollection: { userInfo: false },
       sendClientReports: false,
       attachStacktrace: false,
       maxBreadcrumbs: 0,
       includeLocalVariables: false,
       defaultIntegrations: false,
+      enableRuntimeChannelInjection: false,
     })
     expect(Object.isFrozen(CRASH_CLIENT_OPTIONS)).toBe(true)
   })

@@ -125,6 +125,10 @@ func TestBuildRequest(t *testing.T) {
 		func(s *BuildSpec) { s.ServiceAccount = "" },
 		func(s *BuildSpec) { s.Image = "" },
 		func(s *BuildSpec) { s.Base = "" },
+		// The base is substituted into the build and written into the image's
+		// labels, so it is a reference and nothing else.
+		func(s *BuildSpec) { s.Base = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc\n" },
+		func(s *BuildSpec) { s.Base = `us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-"abc` },
 		// The record goes to the runs bucket on GCS, and nowhere else.
 		func(s *BuildSpec) { s.Bucket = "" },
 		func(s *BuildSpec) { s.Bucket = "file:///tmp/runs" },
@@ -541,5 +545,80 @@ func TestBuildRequestCarriesTheLayerSHA(t *testing.T) {
 	spec.ProjectLayerSHA256 = "short"
 	if _, err := BuildRequest("proj-1234", spec); !errors.Is(err, ErrBadBuildSpec) {
 		t.Fatalf("a bad sum: %v", err)
+	}
+}
+
+// TestCatalogDockerfileStep: the step a catalog build reads its copied
+// Dockerfile with (PIC3's copy, PIC4's first step). The key is derived from
+// the entry's name here and never taken from the caller, so a request cannot
+// point the step at another object in the runs bucket, and the script follows
+// the build's own rule for the values it reads (images/derived/cloudbuild.yaml:
+// values arrive through env: and are read as quoted "$$VAR", never as a
+// ${…} the request would substitute textually).
+func TestCatalogDockerfileStep(t *testing.T) {
+	key, err := config.CatalogDockerfileKey("agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := CatalogDockerfileStep("gs://fugaro-runs-proj-1234", "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Id != catalogDockerfileStepID || st.Entrypoint != "bash" || st.Name == "" {
+		t.Fatalf("step = %+v", st)
+	}
+	if want := []string{"BUCKET=gs://fugaro-runs-proj-1234", "KEY=" + key}; !slices.Equal(st.Env, want) {
+		t.Fatalf("env = %v, want %v", st.Env, want)
+	}
+	// Reading the copy needs no secret and no shared volume: the step is the
+	// build account reading its own bucket, and one that mounted either would
+	// be a wider read path than the copy needs.
+	if len(st.SecretEnv) != 0 || len(st.Volumes) != 0 {
+		t.Fatalf("secretEnv = %v, volumes = %v", st.SecretEnv, st.Volumes)
+	}
+	if len(st.Args) != 2 || st.Args[0] != "-c" {
+		t.Fatalf("args = %v", st.Args)
+	}
+	script := st.Args[1]
+	if strings.Contains(script, "${") {
+		t.Fatalf("the script holds a substitution the request would rewrite: %q", script)
+	}
+	for _, read := range []string{`"$$BUCKET"`, `"$$BUCKET/$$KEY"`} {
+		if !strings.Contains(script, read) {
+			t.Fatalf("the script does not read %s: %q", read, script)
+		}
+	}
+	if !strings.Contains(script, "/workspace/context/Dockerfile") {
+		t.Fatalf("the script does not write the Dockerfile into the context: %q", script)
+	}
+	// The context is readable by the later steps, which run as other users,
+	// and writable only by this one (it writes the Dockerfile as itself).
+	if !strings.Contains(script, "install -d -m 0755 /workspace/context") || strings.Contains(script, "0777") {
+		t.Fatalf("the context directory's mode: %q", script)
+	}
+	for _, bucket := range []string{"", "fugaro-runs-proj-1234", "gs://", "gs://runs/prefix", "gs://runs-proj-1234/"} {
+		if _, err := CatalogDockerfileStep(bucket, "agent"); err == nil {
+			t.Errorf("the bucket %q was accepted", bucket)
+		}
+	}
+	for _, name := range []string{"", "Agent", "a/b", "..", "agent/../agent", "agent\n", "-agent", strings.Repeat("a", 41)} {
+		if _, err := CatalogDockerfileStep("gs://fugaro-runs-proj-1234", name); err == nil {
+			t.Errorf("the name %q was accepted", name)
+		}
+	}
+	// The refusal names the entry it is about — an operator copying a
+	// definition has no entry index to look one up — and the name it prints
+	// is escaped, so a name carrying a control character cannot land raw in
+	// the log the refusal is written to.
+	_, err = CatalogDockerfileStep("gs://fugaro-runs-proj-1234", "Agent")
+	if err == nil || !strings.Contains(err.Error(), "Agent") {
+		t.Fatalf("the refusal does not name the entry: %v", err)
+	}
+	_, err = CatalogDockerfileStep("gs://fugaro-runs-proj-1234", "agent\nname")
+	if err == nil || !strings.Contains(err.Error(), `agent\u000aname`) {
+		t.Fatalf("the refusal does not name the entry: %v", err)
+	}
+	if strings.ContainsAny(err.Error(), "\n\r") {
+		t.Fatalf("the refusal carries the raw name: %q", err)
 	}
 }

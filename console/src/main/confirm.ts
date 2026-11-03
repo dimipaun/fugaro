@@ -1,15 +1,23 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
-// The launch confirmation window's main-process module (design section 5.1 rule
-// 11; console V2.5.1a part 2b-1, and the seam `launch.ts`'s `LaunchConfirmer`
-// names).
+// The confirmation window's main-process module (design section 5.1 rules 11
+// and 12; console V2.5.1a part 2b-1, the settings-edit plan's C3, and the seam
+// `launch.ts`'s `LaunchConfirmer` names).
 //
 // **What this module is.** One `BrowserWindow`, built for one answer: a modal
 // window loading `app://console/confirm.html` over the `app://` scheme with a
-// preload of its own, showing the frozen launch's display-only fields and two
+// preload of its own, showing one question's display-only fields and two
 // buttons. `dialog.showMessageBox` is deliberately not used -- a native box
 // cannot show a 16 KiB task scrollably, and the design names the window for
 // exactly that reason.
+//
+// **One window, two questions** (the owner's ruling of 2026-11-01, D1115). The
+// launch (rule 11) and a settings edit (rule 12) are the same window, the same
+// gate and the same keyboard: what differs is the *subject* -- `ConfirmSubject`,
+// the union of a frozen launch's view and a settings edit's -- and one extra
+// gate the settings edit carries, the tick a widening needs (D1109,
+// `CONFIRM_TICK_NEEDED`). Two windows would have been two copies of the three
+// properties below, and the copy is the one that would drift.
 //
 // **The three properties that make it a confirmation rather than a prompt.**
 //
@@ -40,24 +48,29 @@
 //      over, and Cancel takes no delay at all. What the delay covers, and the
 //      case it does not, is on `CONFIRM_READY_DELAY_MS` below.
 //
-// What the window is shown is `ConfirmView`, a deep-frozen copy built once by
-// `confirmView` -- never the `FrozenLaunch`, which carries the plan, the child's
-// environment and the task's `Uint8Array`.
+// What the window is shown is `ConfirmSubject`, a deep-frozen copy built once by
+// `confirmView` or by `settingsView` -- never the `FrozenLaunch`, which carries
+// the plan, the child's environment and the task's `Uint8Array`, and never the
+// dry run's raw document, which is the CLI's own bytes with no bound on what a
+// later version of the CLI may hold.
 //
-// **The other way a window goes away.** `close(runId)` is the caller's, and it
-// is rule 11's "an installation removed or re-chosen while the window is open
-// closes the window as a cancel": the caller -- `index.ts`, which is watching
-// the records -- names the run, and the window goes away declined. It is the
-// seam's second half because the window cannot know this for itself: what it was
-// built from is frozen and deliberately never re-read.
+// **The other way a window goes away.** `close(id)` is the caller's, and it is
+// rule 11's "an installation removed or re-chosen while the window is open closes
+// the window as a cancel" (and its settings-edit half): the caller -- `index.ts`,
+// which is watching the records -- names the window's own subject identity
+// (`confirmSubjectID`), and the window goes away declined. It is the seam's
+// second half because the window cannot know this for itself: what it was built
+// from is frozen and deliberately never re-read.
 
 import { join } from 'node:path'
 
 import type { BrowserWindow, BrowserWindowConstructorOptions, Session } from 'electron'
 
-import type { ConfirmView, LaunchConfirmer } from './launch'
+import type { ConfirmSubject, LaunchConfirmer } from './launch'
 import type { ConsoleEventLike, IpcMainLike } from './ipc'
 import { SENDER_REFUSAL } from './ipc'
+import { settingsConfirmID } from './settingsedit'
+import { settingsConfirmAnswerable } from './settingsview'
 import { APP_ORIGIN } from './protocol'
 import {
   consoleWebPreferences,
@@ -110,9 +123,28 @@ export function confirmPreloadPath(appPath: string): string {
   return join(appPath, 'dist', 'preload', 'confirm.js')
 }
 
-/** CONFIRM_ANSWER_REFUSAL is what a message that is not a boolean is answered
- * with. It carries nothing the sender supplied. */
-export const CONFIRM_ANSWER_REFUSAL = 'a confirmation is answered with a yes or a no and nothing else'
+/** CONFIRM_ANSWER_REFUSAL is what a message that is not a yes-or-no and a tick
+ * is answered with. It carries nothing the sender supplied. */
+export const CONFIRM_ANSWER_REFUSAL =
+  'a confirmation is answered with a yes or a no, and a tick where the window draws one, and nothing else'
+
+/** CONFIRM_TICK_NEEDED is what a yes is answered with when the window is a
+ * widening whose tick is not set (D1109). It is enforced **here** and not only
+ * in the document: the document is the one place a tick can be forgotten, and a
+ * limit raised by a window that drew no tick is exactly what the tick exists to
+ * prevent. The click decides nothing and the window stays open, like
+ * `CONFIRM_NOT_YET`. */
+export const CONFIRM_TICK_NEEDED = 'this confirmation raises a limit: tick the box that says so before confirming'
+
+/** confirmSubjectID is the one spelling of "which window this is", read by
+ * `close` and by nothing else. A launch's identity is its run id, which is what
+ * every caller of `close` before this task passed; a settings window's is
+ * `settingsConfirmID(project)`, whose definition sits beside the flow that opens
+ * one (`settingsedit.ts`), because that module is the one that must know a
+ * project's identity without loading this one's Electron. */
+export function confirmSubjectID(subject: ConfirmSubject): string {
+  return subject.kind === 'settings' ? settingsConfirmID(subject.project) : subject.runId
+}
 
 /** CONFIRM_ALREADY_ANSWERED is what a second answer for one window is answered
  * with: the first valid answer is the one that decides, and a repeat decides
@@ -221,8 +253,9 @@ export function confirmOptions(
   }
 }
 
-/** ConfirmEntry is one open window: the view it may read, the `decide` its answer
- * resolves, and whether it has answered yet. It lives until the window is gone.
+/** ConfirmEntry is one open window: the subject it may read, the `decide` its
+ * answer resolves, and whether it has answered yet. It lives until the window is
+ * gone.
  *
  * `contents` is the window's own `webContents`, **read once while the window is
  * alive and kept here**. Electron's `BrowserWindow.webContents` getter throws
@@ -233,7 +266,7 @@ export function confirmOptions(
  * the life of the process. The map is keyed by this same value, so a window that
  * is gone is reachable by neither channel. */
 interface ConfirmEntry {
-  readonly view: ConfirmView
+  readonly subject: ConfirmSubject
   readonly decide: (yes: boolean, reason?: string) => void
   readonly window: BrowserWindow
   readonly contents: BrowserWindow['webContents']
@@ -305,19 +338,30 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
   deps.ipcMain.handle(confirmChannel('fields'), (event) => {
     const entry = entryFor(event)
     if (entry === null) return { ok: false, reason: SENDER_REFUSAL }
-    return { ok: true, data: entry.view }
+    return { ok: true, data: entry.subject }
   })
 
-  deps.ipcMain.handle(confirmChannel('answer'), (event, raw) => {
+  deps.ipcMain.handle(confirmChannel('answer'), (event, raw, ticked) => {
     const entry = entryFor(event)
     if (entry === null) return { ok: false, reason: SENDER_REFUSAL }
-    if (typeof raw !== 'boolean') return { ok: false, reason: CONFIRM_ANSWER_REFUSAL }
+    if (typeof raw !== 'boolean' || (ticked !== undefined && typeof ticked !== 'boolean')) {
+      return { ok: false, reason: CONFIRM_ANSWER_REFUSAL }
+    }
     if (entry.answered) return { ok: false, reason: CONFIRM_ALREADY_ANSWERED }
     // The readiness delay is on the yes alone. A no is the window's own way out
     // and is answered at the instant it is clicked, delay or no delay: what the
     // delay protects is a spend, and an operator who wants out of a window that
     // just appeared under their pointer must never have to wait for it.
     if (raw && now() < entry.readyAt) return { ok: false, reason: CONFIRM_NOT_YET }
+    // The widening's tick, on the yes alone and for the delay's reason: a no is
+    // the way out and needs no tick. It is checked here rather than only in the
+    // document because a document that forgot to draw the tick would otherwise
+    // raise a limit on one click -- the tick is D1109's own answer to a stray
+    // click, and the main process is where it can be enforced whatever the
+    // document does.
+    if (raw && entry.subject.kind === 'settings' && !settingsConfirmAnswerable(entry.subject, ticked === true)) {
+      return { ok: false, reason: CONFIRM_TICK_NEEDED }
+    }
     finish(entry, raw)
     return { ok: true, data: { answered: true } }
   })
@@ -332,7 +376,7 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
   denyEveryPermission(deps.session)
 
   return Object.freeze({
-    open(view: ConfirmView, decide: (yes: boolean, reason?: string) => void): void {
+    open(subject: ConfirmSubject, decide: (yes: boolean, reason?: string) => void): void {
       const window = new deps.BrowserWindow(
         confirmOptions(confirmPreloadPath(deps.appPath), deps.parent(), deps.session),
       )
@@ -340,7 +384,14 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
       // listener below (and the `closed` one especially) has to be able to name
       // it after the window is destroyed, and the getter throws by then.
       const contents = window.webContents
-      const entry: ConfirmEntry = { view, decide, window, contents, answered: false, readyAt: Number.POSITIVE_INFINITY }
+      const entry: ConfirmEntry = {
+        subject,
+        decide,
+        window,
+        contents,
+        answered: false,
+        readyAt: Number.POSITIVE_INFINITY,
+      }
       entries.set(contents, entry)
 
       // The readiness delay is measured here, from the two events that mean the
@@ -425,18 +476,20 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
 
     /**
      * close is rule 11's "an installation removed or re-chosen while the window is
-     * open closes the window as a cancel": the caller names the run whose window
-     * is open, and the window goes away declined, with no reason of its own -- the
-     * operator answered nothing, so the sentence is the cancel sentence.
+     * open closes the window as a cancel", and its settings-edit half: the caller
+     * names the window's own subject identity (`confirmSubjectID`) -- a run id for
+     * a launch, `settingsConfirmID(project)` for an edit -- and the window goes
+     * away declined, with no reason of its own -- the operator answered nothing,
+     * so the sentence is the cancel sentence.
      *
-     * A run with no window open is **not** a cancel and nothing here decides: an
+     * An id with no window open is **not** a cancel and nothing here decides: an
      * answer that has already arrived and a window that never opened are both
-     * states where the launch is settled or on its way to being settled, and a
-     * close that decided anyway would be a second decision on a spent run id.
+     * states where the caller is settled or on its way to being settled, and a
+     * close that decided anyway would be a second decision on a spent subject.
      */
-    close(runId: string): void {
+    close(id: string): void {
       for (const entry of entries.values()) {
-        if (entry.view.runId !== runId) continue
+        if (confirmSubjectID(entry.subject) !== id) continue
         finish(entry, false)
         return
       }

@@ -27,38 +27,78 @@ import (
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
-// The two paths the service serves, spelled as Anthropic spells them: the
-// in-runner gateway forwards a run's request here instead of to
-// api.anthropic.com, so the path is the one the SDK built.
+// The two Anthropic paths the service serves, spelled as Anthropic spells them:
+// the in-runner gateway forwards a run's request here instead of to
+// api.anthropic.com, so the path is the one the SDK built. The mint's and the
+// sign route's paths are this service's own contract and are declared beside
+// the routes themselves (github.go, verdict.go).
 const (
 	MessagesPath    = "/v1/messages"
 	CountTokensPath = "/v1/messages/count_tokens"
+	// SignPath is the path a review run signs its artifact's digest on
+	// (C3.9e). It is not an Anthropic path: the request and the answer are
+	// this service's own contract.
+	SignPath = "/v1/review/sign"
+	// VerifyPath is the path a coordinator asks whether a verdict's signature
+	// is one this service made (C3.9f). It is the sign route's counterpart and
+	// is served to a caller class of its own: a verifier holds no run identity,
+	// so this path is answered ahead of the shared request parse that every
+	// other route is read by (ServeHTTP).
+	VerifyPath = "/v1/review/verify"
 )
 
 // routeAct is the ONE rule for the two facts an audit line carries about the
 // call rather than about what the service did with it: the purpose the call
 // asked for, and the credential name a line for it may carry (C1.13).
 //
-// It exists so the rule is written once. The two routes are two acts of the
-// service — a proxied model call (C1.11) and a mint (C2.1) — and every refusal
-// either route answers has to be recorded as the act the run asked for and not
-// as the branch it was answered in, whether that refusal is taken before the
-// route is branched on (the binding and the stop switches in ServeHTTP) or
-// inside the route's own code (the mint's own refusals, github.go's refuseMint
-// and auditMint). Two spellings of one rule is how they drift: a mint's
-// refusals named the App key while the stop-switch refusal named nothing until
-// this rule replaced both.
+// It exists so the rule is written once. The routes are four acts of the
+// service — a proxied model call (C1.11), a mint (C2.1), a signature over a
+// review run's digest (C3.9e) and an answer about one (C3.9f) — and every
+// refusal a route answers has to be
+// recorded as the act the run asked for and not as the branch it was answered
+// in, whether that refusal is taken before the route is branched on (the
+// binding and the stop switches in ServeHTTP) or inside the route's own code
+// (the mint's own refusals, github.go's refuseMint and auditMint). Two
+// spellings of one rule is how they drift: a mint's refusals named the App key
+// while the stop-switch refusal named nothing until this rule replaced both.
 //
 // The credential answers for the mint because the App key is what the endpoint
 // issues from: it is the endpoint's own name for it and not something read out
 // of the bundle, so it is known before the bundle is read and after it alike,
 // and a mint's line that named no credential would be a mint an operator
-// cannot account for. A model call's line names none here: which credential a
-// model call used, or would have used, is the cascade's answer and not the
-// route's, and a refusal taken before one was chosen has no name to carry.
+// cannot account for. A model call's line names none here, and so do a sign's
+// and a verify's: which credential a model call used, or would have used, is the
+// cascade's answer and not the route's, and a sign or a verify line's credential
+// is an account's review-signing key — a name the route cannot read off a path,
+// because it is the CALLER'S account (a sign's) or the account the caller NAMED
+// (a verify's). Either way a refusal taken before one was chosen has no name to
+// carry.
 func routeAct(path string) (purpose, credential string) {
-	if path == MintPath {
+	switch path {
+	case MintPath:
 		return PurposeMint, config.GitHubAppKeySecret
+	case VerifyPath:
+		// A verify line's credential is the named account's review-signing key
+		// — the key the answer was computed with — and, like the sign route's,
+		// that name is not in the path. The handler fills it in once the
+		// bundle has it; a refusal answered before then carries none.
+		return PurposeReviewVerify, ""
+	case BitbucketReadPath:
+		// The read mint's credential is the read consumer, which is the
+		// endpoint's own name for what it issues from and not a value read out
+		// of the bundle (BB4, B1): a line for it is written before the bundle is
+		// read and after it alike, and an operator reading one can tell a read
+		// mint from the App key's mint without a second field.
+		return PurposeBitbucketRead, BitbucketReadConsumerSecret
+	case SignPath:
+		// The sign route's credential is the account's review-signing key
+		// (verdict.go), and THAT NAME IS NOT IN THE PATH: it is the caller's
+		// account, which the pairing resolves, so the route names the purpose
+		// and leaves the credential to the handler — which fills it in from
+		// the account once the key is in hand, the same way the cascade fills
+		// in a model call's. A refusal answered before the handler has no
+		// account to name and so carries none.
+		return PurposeReviewSign, ""
 	}
 	return PurposeForward, ""
 }
@@ -207,6 +247,15 @@ type Config struct {
 	// probing a credential, which lapses on its own and is never deleted.
 	// *rtdb.Client is one.
 	Probes ProbeLeases
+	// Signs is the create-only write the one-signature mark is taken with
+	// (C3.9e, D1074): the sign route's own node, which is why it is neither
+	// DB's business nor State's. It may be nil, and a nil one is a service
+	// that signs nothing — the route refuses rather than answering a
+	// signature the mark would have bounded, and the refusal says so. It is
+	// not required at construction because an installation that deploys no
+	// review job signs nothing and is a service this build starts.
+	// *rtdb.Client is one.
+	Signs SignMarks
 	// AuditLog is where the service's audited acts are written (C1.13): every
 	// line this service writes, the mint's (C2.1) and the probe's (C1.12)
 	// included. There is one writer and one handler — Server.audit is the ONLY
@@ -224,6 +273,26 @@ type Config struct {
 	// are launched as it. It is the table the run-to-job binding is checked
 	// against (N1), so an empty one refuses every call.
 	JobAccounts []JobAccount
+	// ReviewAccounts are the installation's review jobs (C3.9a): the same rows
+	// AuthConfig.ReviewJobAccounts holds, and the reason they are here as well
+	// is that the pairing needs the account NAME — the name the published
+	// admissions speak — where the verifier needs the class. A caller the
+	// verifier answered as a review one whose email is not in this table is
+	// refused (pairReview): the two lists are configured together, so a
+	// disagreement is a deployment that cannot serve the class at all.
+	//
+	// It may be empty, and an empty one is the same statement an empty
+	// SharedJobAccounts makes: this installation has no review job, so no
+	// caller of that class exists.
+	ReviewAccounts []ReviewJobAccount
+	// Repos is the installation's repository table (RepositoryTableFor): the
+	// slug a run identity carries to the canonical repository name the
+	// published policy speaks. It is what pairs a review caller with a run,
+	// because a review job's account names no repository (review.go), and it
+	// is deliberately the same derivation the per-repository accounts are
+	// bound by rather than a second spelling of it. A slug it does not hold is
+	// refused, never guessed (D1066).
+	Repos map[string]string
 	// Client is the HTTP client the upstream call is made with. nil is a client
 	// with the service's own bounds. Either way it is put through
 	// upstreamClient, so the client that carries a credential never follows a
@@ -238,6 +307,18 @@ type Config struct {
 // Verifier is the part of C1.10's authenticator the service calls.
 type Verifier interface {
 	Verify(ctx context.Context, req Request) (Identity, error)
+	// VerifyVerifier admits the caller of the verify route, which presents a
+	// token and no Request at all (C3.9f): the path is answered ahead of
+	// RequestFromHTTP, so the two identity headers a Request is built from are
+	// not there to read.
+	VerifyVerifier(ctx context.Context, tok string) (string, error)
+	// VerifyReadCaller admits the caller of the Bitbucket read mint, which
+	// presents a token and no Request for VerifyVerifier's reason and no new one
+	// (BB4, B2): the path is answered ahead of RequestFromHTTP. It is the same
+	// check against two more lists — the installation's people and its
+	// coordinator (BB5) — and the classes are told apart by the list their
+	// caller is in rather than by a flag on a route.
+	VerifyReadCaller(ctx context.Context, tok string) (string, error)
 }
 
 // PolicyReader is the published policy as the service reads it: the project's
@@ -309,11 +390,16 @@ func (k RTDBKills) Stop(ctx context.Context, slug string) (bool, string, error) 
 
 // Server is the credentials service: one http.Handler.
 type Server struct {
-	cfg   Config
-	log   *slog.Logger
-	now   func() time.Time
-	jobs  map[string]JobAccount
-	audit *Auditor
+	cfg  Config
+	log  *slog.Logger
+	now  func() time.Time
+	jobs map[string]JobAccount
+	// review is Config.ReviewAccounts by folded email: the same lookup the
+	// verifier makes (NewAuthenticator folds the same way), held here because
+	// the pairing and the cascade's offering rule both need the account name
+	// rather than the class.
+	review map[string]ReviewJobAccount
+	audit  *Auditor
 }
 
 // NewServer validates cfg and returns the service.
@@ -357,6 +443,14 @@ func NewServer(cfg Config) (*Server, error) {
 	if len(cfg.JobAccounts) == 0 {
 		return nil, errors.New("credsvc: the service has no job accounts, so it can bind no run to a repository")
 	}
+	if len(cfg.ReviewAccounts) > 0 && len(cfg.Repos) == 0 {
+		// The review class's pairing is the account's admission to the
+		// repository the run identity names, and the table is the only thing
+		// that can name it: a service with review accounts and no table would
+		// answer every review call with a refusal, which is fail-closed but is
+		// not the service the deployment configured.
+		return nil, errors.New("credsvc: the service has review job accounts and no repository table, so it can pair no review call with a run")
+	}
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
@@ -375,7 +469,7 @@ func NewServer(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), audit: audit}
+	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), review: make(map[string]ReviewJobAccount, len(cfg.ReviewAccounts)), audit: audit}
 	for _, ja := range cfg.JobAccounts {
 		if ja.Email == "" || ja.Slug == "" || ja.Repo == "" {
 			return nil, errors.New("credsvc: a job account with no email, slug or repository binds nothing")
@@ -384,6 +478,28 @@ func NewServer(cfg Config) (*Server, error) {
 			return nil, errors.New("credsvc: the same job account is bound to two repositories")
 		}
 		s.jobs[ja.Email] = ja
+	}
+	for _, ra := range cfg.ReviewAccounts {
+		if ra.Email == "" || ra.Account == "" {
+			return nil, errors.New("credsvc: a review job account with no email or no Claude account binds nothing")
+		}
+		// Keyed by the folded email, exactly as the verifier keys its own
+		// review table: the account Verify answers with is the CONFIGURED
+		// spelling of the email it matched, so a deployment whose two lists
+		// spell the same address in different cases would have the verifier
+		// admit a caller this table could not look up — a miss on case alone,
+		// and a pairing refused for a reason no operator could see.
+		folded, ok := foldEmail(ra.Email)
+		if !ok {
+			return nil, errors.New("credsvc: a review job service account is not a printable ASCII email address")
+		}
+		if prev, dup := s.review[folded]; dup {
+			if prev.Account != ra.Account {
+				return nil, errors.New("credsvc: the same review job account is bound to two Claude accounts")
+			}
+			continue
+		}
+		s.review[folded] = ra
 	}
 	return s, nil
 }
@@ -410,6 +526,18 @@ func NewServer(cfg Config) (*Server, error) {
 // mint's whole admission is the two identities, the binding and the switch
 // (C2.1, D145), and the policy, the cascade and the shape of a model call are
 // none of its business.
+//
+// The verify route (C3.9f) does not share it at all, and it is the ONE route
+// answered ahead of the shared parse. Every route above is admitted by
+// RequestFromHTTP, which reads the two identity headers, and by Verify, which
+// refuses a call that carries no run identity — and a verifier holds none: it is
+// not a run of this installation and not a job of it. Left behind that parse, the
+// route would refuse every verifier before the class was ever consulted, and the
+// whole route would be dead configuration (spec §5.4). So the path is recognised
+// first, the one token it carries is verified on its own by its own class, and
+// its refusal is that class's own typed refusal — after which everything the
+// verifier's handler needs is the call's own body and the key the account it
+// names would be at.
 //
 // What this path answers is recorded (C1.13), one line per call: the issuance
 // the cascade's answer is (cascade.go's answer), and every refusal from the
@@ -439,12 +567,32 @@ func NewServer(cfg Config) (*Server, error) {
 // credential is the App key, the only one that endpoint has.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	if r.Method != http.MethodPost || (r.URL.Path != MessagesPath && r.URL.Path != CountTokensPath && r.URL.Path != MintPath) {
+	if r.Method != http.MethodPost || (r.URL.Path != MessagesPath && r.URL.Path != CountTokensPath &&
+		r.URL.Path != MintPath && r.URL.Path != SignPath && r.URL.Path != VerifyPath &&
+		r.URL.Path != BitbucketReadPath) {
 		// There is no other route, and in particular no admin route: D143's
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+" and "+MintPath)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+" and "+BitbucketReadPath)
+		return
+	}
+	if r.URL.Path == VerifyPath {
+		// The one route that is answered before the shared parse, and it has to
+		// be: RequestFromHTTP reads the two identity headers below and Verify
+		// refuses a call with no run identity, while the caller of this route
+		// holds none and never will (C3.9f, spec §5.4).
+		s.verify(ctx, w, r)
+		return
+	}
+	if r.URL.Path == BitbucketReadPath {
+		// The second route answered before the shared parse, for the verifier
+		// class's reason and not a new one (BB4, B2): its caller is a person,
+		// who holds no run identity either, so RequestFromHTTP would refuse the
+		// call before its own class ever read the token. What replaces the parse
+		// is this route's own read of the body (readReadRequest), and the
+		// run-identity headers are refused by name inside the handler.
+		s.bitbucketRead(ctx, w, r)
 		return
 	}
 	req, err := RequestFromHTTP(r)
@@ -473,21 +621,52 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// name for it, not a value read out of a bundle, which is why the mint
 	// itself (auditMint, refuseMint) takes both from the same rule.
 	purpose, credential := routeAct(r.URL.Path)
-	ja, bound := s.jobs[id.JobAccount]
-	if !bound || ja.Slug != id.Slug {
-		// Review finding N1: the two identities a call carries are verified
-		// separately and nothing in C1.10 pairs them, so the pairing is an
-		// admission question and it is asked here. A run identity is honoured
-		// only by the job whose repository it belongs to, which is what stops
-		// an admitted job account from presenting a run token of another
-		// repository. The refusal is recorded like the ones below it: the
-		// identity Verify returned is whole, so the line names the run, the
-		// repository the run belongs to, the job and the account — and the
-		// route's credential and no other, which for a model call is none (the
-		// bundle has not been read) and for a mint is the App key's name.
-		s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnverified, ErrorUnverifiedRunIdentity,
-			"the run identity is not a run of the calling job's repository")
-		return
+	// The pairing, which is where the two classes differ (spec §3.2), and the
+	// canonical repository every check below is made against.
+	//
+	// A per-repository job's account names a repository, so the pairing is one
+	// comparison: a run identity is honoured only by the job whose repository
+	// it belongs to, which is what stops an admitted job account from
+	// presenting a run token of another repository (review finding N1). A
+	// review job's account names none, so that comparison cannot be made and
+	// must not be replaced by "trust the run token": the repository is the run
+	// identity's own slug, resolved through the installation's table and
+	// admitted to by the calling account (pairReview). Either way the call
+	// below reads the repository from the pairing and not from the job
+	// account, because a review caller has no job account to read it from.
+	var (
+		ja        JobAccount
+		canonical string
+	)
+	switch id.JobClass {
+	case ClassReview:
+		repo, err := s.pairReview(ctx, id)
+		if err != nil {
+			s.refusePairing(ctx, w, id, purpose, credential, err)
+			return
+		}
+		canonical = repo
+		// What the mint is handed in place of a job account: the same account,
+		// the run identity's slug and the repository the pairing resolved. The
+		// mint's own shape is unchanged — C3.9b is the task that chooses its
+		// permission set from the class — and what it is scoped to is already
+		// the pairing's answer here.
+		ja = JobAccount{Email: id.JobAccount, Slug: id.Slug, Repo: canonical}
+	default:
+		bound := false
+		ja, bound = s.jobs[id.JobAccount]
+		if !bound || ja.Slug != id.Slug {
+			// The refusal is recorded like the ones below it: the identity
+			// Verify returned is whole, so the line names the run, the
+			// repository the run belongs to, the job and the account — and the
+			// route's credential and no other, which for a model call is none
+			// (the bundle has not been read) and for a mint is the App key's
+			// name.
+			s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnverified, ErrorUnverifiedRunIdentity,
+				"the run identity is not a run of the calling job's repository")
+			return
+		}
+		canonical = ja.Repo
 	}
 	on, which, err := s.cfg.Kills.Stop(ctx, id.Slug)
 	if err != nil {
@@ -515,7 +694,29 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// bundle itself, because the App key is in it, and it reads no policy
 		// and consults no cascade: an installation token is not a model
 		// credential and no tier or admission has anything to say about it.
+		//
+		// The review class reaches this endpoint too, and what it is served
+		// here is the class's own decision (mintPermissions, D1065): CSR1's
+		// read-only set, never the run's write set over the repository the
+		// review is about. The pairing above already refused a review identity
+		// of any other shape, so a coding run launched into the review job never
+		// reaches a mint at all.
 		s.mint(ctx, w, r, id, ja)
+		return
+	}
+	if r.URL.Path == SignPath {
+		// The sign route (C3.9e). Everything above it is its admission and
+		// nothing below it is: the two identities have been verified, the
+		// pairing — for a review caller, the class's own, with the claim rule
+		// of §3.3 — has fixed the repository the frame binds, and the
+		// operator's stop flag has been read, so a stopped service signs
+		// nothing. It reads the bundle itself, because the account's
+		// review-signing key is in it, and it reads no policy and consults no
+		// cascade: a signature is not a model credential and no tier or
+		// admission has anything to say about it. The class is the route's own
+		// gate and the handler makes it, because the key is the CALLER'S
+		// account's.
+		s.sign(ctx, w, r, id, req, purpose)
 		return
 	}
 	// The project's policy, and the request itself, are read before the bundle:
@@ -578,7 +779,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
 		return
 	}
-	cands, notAdmitted, err := s.candidates(ctx, id.Slug, ja.Repo, b)
+	cands, notAdmitted, err := s.candidates(ctx, id, canonical, b)
 	if err != nil {
 		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, "the repository's admissions could not be read")
 		return

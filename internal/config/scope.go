@@ -68,6 +68,23 @@ var Scopes = []ScopeRow{
 	{Key: "agent.max_run_tokens", In: InRepo, Why: whyPolicy},
 	{Key: "agent.first_line_review", In: InProject | InRepo},
 	{Key: "agent.first_line_rounds", In: InProject | InRepo},
+	// The per-level review block (L1.3, D722): each level's four keys are its
+	// own row because a level's settings are read one by one, and either
+	// layer may set any of them — the merge is per key, so a project's l1
+	// stays in effect beside a repository's l2.
+	{Key: "agent.levels.l1.model", In: InProject | InRepo},
+	{Key: "agent.levels.l1.effort", In: InProject | InRepo},
+	{Key: "agent.levels.l1.none", In: InProject | InRepo},
+	{Key: "agent.levels.l1.focus", In: InProject | InRepo},
+	{Key: "agent.levels.l2.model", In: InProject | InRepo},
+	{Key: "agent.levels.l2.effort", In: InProject | InRepo},
+	{Key: "agent.levels.l2.none", In: InProject | InRepo},
+	{Key: "agent.levels.l2.focus", In: InProject | InRepo},
+	{Key: "agent.levels.l3.model", In: InProject | InRepo},
+	{Key: "agent.levels.l3.effort", In: InProject | InRepo},
+	{Key: "agent.levels.l3.none", In: InProject | InRepo},
+	{Key: "agent.levels.l3.focus", In: InProject | InRepo},
+	{Key: "agent.adversarial_rounds", In: InProject | InRepo},
 	{Key: "agent.recipe", In: InProject | InRepo | InOverride},
 	{Key: "agent.oauth_token", In: InRepo | InOverride, Why: "it names a credential identity that only the repository's own, PR-reviewed fugaro.yaml may choose among names the local config (never the project layer) allow-lists"},
 	{Key: "agent.compression", In: InRepo | InOverride, Why: "it changes what the model sees on every call; the project layer and a profile are the same launcher-writable bucket object agent.oauth_token already distrusts for the identical reason"},

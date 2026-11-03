@@ -93,11 +93,11 @@ func resolveCheckout(ctx context.Context, dir string) (*localcfg.Checkout, error
 // It is best effort in every direction: a checkout with no project:, an
 // origin git rewrites (readOrigin's Rewritten: the repository a checkout
 // resolves to is not the one its own config says), a host no provider lives
-// on, a repository the project does not enroll, a checkout path the state
-// file refuses — none of them is an error, and none of them is printed.
-// Nothing here can fail the command that runs it, and the path never reaches
-// stdout, stderr or a log line: it is local state for `fugaro config list
-// --json` and nothing else.
+// on, a repository the project does not enroll, a linked worktree, a checkout
+// path the state file refuses — none of them is an error, and none of them is
+// printed. Nothing here can fail the command that runs it, and the path never
+// reaches stdout, stderr or a log line: it is local state for `fugaro config
+// list --json` and nothing else.
 func recordCheckout(ctx context.Context, co *localcfg.Checkout) {
 	if consoleRead(ctx) {
 		// A read the desktop console spawns changes nothing (see
@@ -132,8 +132,66 @@ func recordCheckout(ctx context.Context, co *localcfg.Checkout) {
 	if err != nil || !lc.Enrolls(provider, oi.Repo) {
 		return
 	}
+	if linked, known := linkedWorktree(ctx, co.Root); !known || linked {
+		return
+	}
 	_ = localcfg.RecordCheckout(os.Getenv, co.Project,
-		localcfg.CheckoutIdentity{Provider: provider, Repo: oi.Repo}, co.Root, time.Now())
+		localcfg.CheckoutIdentity{Provider: provider, Repo: oi.Repo}, co.Root, time.Now(), checkoutTempRoots())
+}
+
+// checkoutTempRoots is the machine's temporary directories as this package
+// names them — tempRoots, the list the XDG warnings read — and it is what
+// localcfg.RecordCheckout refuses a path under. It is a variable because every
+// checkout a test can make is inside the machine's temporary directory, so a
+// test states its own list; nothing a repository, a launcher or the
+// environment says reaches it.
+var checkoutTempRoots = tempRoots
+
+// linkedWorktree reports whether root is a linked git worktree — a second
+// working directory of one repository, `git worktree add` — and whether git
+// could say at all.
+//
+// A linked worktree is what a coding agent's scratchpad is: a checkout of the
+// operator's own repository, on a branch of its own, in a directory nobody
+// works in twice and the agent deletes when it is done. It enrolls like any
+// other checkout, so nothing else in this function keeps it out of the
+// remembered set, and a remembered path is what the console offers as a
+// working directory — the operator's first run would offer a directory that
+// will not be there tomorrow. The main checkout of a clone is remembered as it
+// always was.
+//
+// The test is git's own, because there is no other: --git-dir is the
+// worktree's own git state (.git/worktrees/<name> under the common directory)
+// and --git-common-dir is the repository every worktree of it shares, and in
+// the checkout git clone made the two are the same path. Both are read in one
+// call and made absolute against root, since git prints the first relative to
+// the working directory it was given and the second as the repository was
+// configured.
+//
+// git not answering is a checkout this command cannot describe, and it records
+// nothing: the read that got this far already asked git for the origin, so a
+// git that has stopped answering is one whose answers are not worth a
+// remembered path.
+func linkedWorktree(ctx context.Context, root string) (linked, known bool) {
+	out, err := gitRead(ctx, root, "rev-parse", "--git-dir", "--git-common-dir")
+	if err != nil {
+		return false, false
+	}
+	dir, common, ok := strings.Cut(out, "\n")
+	if !ok || dir == "" || common == "" {
+		return false, false
+	}
+	return gitDirAbs(root, dir) != gitDirAbs(root, common), true
+}
+
+// gitDirAbs is a path git printed, absolute: git -C root prints a relative one
+// relative to root.
+func gitDirAbs(root, p string) string {
+	p = strings.TrimSpace(p)
+	if filepath.IsAbs(p) {
+		return filepath.Clean(p)
+	}
+	return filepath.Join(root, p)
 }
 
 // providerForHost is the provider whose repositories live on host
@@ -219,10 +277,21 @@ var consoleReadPaths = map[string]bool{
 	"fugaro report":      true,
 	"fugaro runs ls":     true,
 	"fugaro runs stats":  true,
-	"fugaro diagnose":    true,
-	"fugaro logs":        true,
-	"fugaro secrets ls":  true,
-	"fugaro accounts ls": true,
+	// The jobs-free totals read (console 0.119.0, B4/#1580): it counts the
+	// budget database's day nodes and the spend history's daily documents and
+	// opens no run at all, and it is a cloud read like the rest, so it goes
+	// through the resolver every cloud command does and has to be here.
+	"fugaro runs summary": true,
+	"fugaro diagnose":     true,
+	"fugaro logs":         true,
+	"fugaro secrets ls":   true,
+	"fugaro accounts ls":  true,
+	// The read-only models panel (console 0.119.0, the owner's ruling of
+	// 2026-11-02): it resolves the selected project config the way every cloud
+	// read here does and opens no bucket, no database and no host -- the CLI's
+	// own comment says so -- so a console that asks it must remember no
+	// checkout either.
+	"fugaro models ls":   true,
 	"fugaro version":     true,
 	"fugaro doctor":      true,
 	"fugaro config list": true,
@@ -235,6 +304,23 @@ var consoleReadPaths = map[string]bool{
 	// writes nothing -- but it is a cloud read like the rest, so it goes
 	// through the resolver every cloud command does and has to be here.
 	"fugaro coordinator status": true,
+	// The pull request read (coordinator v2 C3, D816): one pull request as the
+	// host has it, through the coordinator's own read-only installation token.
+	// It resolves the repository's checkout the way the view does -- to tell
+	// the repository's provider -- and writes nothing, the remembered checkouts
+	// included.
+	"fugaro coordinator show": true,
+	// The declarations read (coordinator v2 C4, D827): it resolves the checkout
+	// the way the stored view does -- to tell each repository's provider -- and
+	// writes nothing, the remembered checkouts included. It asks nothing else
+	// of the machine: the read is the caller's own database node.
+	"fugaro coordinator intents": true,
+	// The settings read (the settings-edit plan's C1): the project's settings,
+	// each with the layer that decided it and the three writability facts. It
+	// writes nothing -- no file, no cache, no cloud object (`newSettingsCmd`'s
+	// own comment) -- and it is a read of the installation's records like the
+	// rest, aimed with `--project`/`--config`, so it belongs here with them.
+	"fugaro settings": true,
 	// The one the design names and §5.1 has not carried a row for yet (the
 	// console task adds it); it resolves no checkout today.
 	"fugaro plan graph": true,

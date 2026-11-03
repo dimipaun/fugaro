@@ -107,20 +107,31 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 	// reading at all — `data-segments` is a bare attribute, not a reading. Each
 	// row below is pinned to what the source says, so putting the old claim back
 	// is a failing test.
-	notes := mdRow(t, path, mdBetween(t, path, doc, "### 2.5 Projects", "### 2.6 Run detail"), "| Notes |")
-	for _, hook := range []string{"`projects-note`", "`projects-jobs-note`", "`projects-accounts-note`"} {
+	// The screen carried three note hooks until the jobs panel left it (console
+	// 0.117.0, the owner's report of 2026-10-31): `projects-jobs-note` was the
+	// jobs panel's "runs not drawn:" line, and the run list that fed the panel is
+	// gone. Two hooks remain, one per panel that still carries a note, and the
+	// count in the row has to move with them.
+	notes := mdRow(t, path, mdBetween(t, path, doc, "### 2.5 Project", "### 2.6 Run detail"), "| Notes |")
+	for _, hook := range []string{"`projects-note`", "`projects-accounts-note`"} {
 		if !strings.Contains(notes, hook) {
-			t.Errorf("%s: §2.5's notes row does not name %s; that screen carries three note hooks, one per panel, and no single one of them reaches all three", path, hook)
+			t.Errorf("%s: §2.5's notes row does not name %s; that screen carries two note hooks, one per panel, and no single one of them reaches both", path, hook)
 		}
+	}
+	if strings.Contains(notes, "`projects-jobs-note`") {
+		t.Errorf("%s: §2.5's notes row still names `projects-jobs-note`; the jobs panel and its note left the screen with the run list (console 0.117.0), so the class is emitted by nothing", path)
 	}
 	if live := mdFlat(mdBetween(t, path, doc, "### 2.3 Live", "### 2.4 Spend")); !strings.Contains(live, "never writes `data-state=\"notional\"`") {
 		t.Errorf("%s: §2.3 claims Live's notional state without saying the attribute is not its own; Live's `data-state` is a bar's percent reading, which is measured, unavailable or gap", path)
 	}
 	prose := mdRow(t, path, mdBetween(t, path, doc, "### 3.7 Typography", "### 3.8 Spacing"), "| Screen prose (")
-	for _, hook := range []string{"`projects-note`", "`projects-jobs-note`", "`projects-accounts-note`"} {
+	for _, hook := range []string{"`projects-note`", "`projects-accounts-note`"} {
 		if !strings.Contains(prose, hook) {
 			t.Errorf("%s: §3.7's screen-prose rule does not name %s, so the Projects note that carries it falls outside the rule", path, hook)
 		}
+	}
+	if strings.Contains(prose, "`projects-jobs-note`") {
+		t.Errorf("%s: §3.7's screen-prose rule still names `projects-jobs-note`; the jobs panel left the Projects screen with the run list (console 0.117.0), so no element carries that class", path)
 	}
 	// §2.5's third note hook carries no second class: the `'note'` in that call
 	// is the wire field `textCell` writes, not a class, and a rule written
@@ -131,7 +142,7 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 	if strings.Contains(notes, "generic `note` class") {
 		t.Errorf("%s: §2.5 says the accounts note carries a generic `note` class; the element's only class is `projects-accounts-note`, and a rule written against `p.note` matches nothing", path)
 	}
-	projects := mdBetween(t, path, doc, "### 2.5 Projects", "### 2.6 Run detail")
+	projects := mdBetween(t, path, doc, "### 2.5 Project", "### 2.6 Run detail")
 	if !strings.Contains(projects, "reachable by no feed today") {
 		t.Errorf("%s: §2.5 no longer says `projects-accounts-note` is reachable from no document the CLI produces, which is why it cannot be keyed on", path)
 	}
@@ -185,7 +196,7 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 	// reserve line and not the banner, the banner hangs inside the caps panel
 	// rather than beside it, the person note is text and not a `title`, and the
 	// unknown-breakdown flag is on the switch, not on the item under it.
-	spendSection := mdFlat(mdBetween(t, path, doc, "### 2.4 Spend", "### 2.5 Projects"))
+	spendSection := mdFlat(mdBetween(t, path, doc, "### 2.4 Spend", "### 2.5 Project"))
 	for _, want := range []struct {
 		has, because string
 	}{
@@ -2588,6 +2599,41 @@ func TestDocsConsoleStylingRailIsInThePlan(t *testing.T) {
 		}
 		if !strings.Contains(mdFlat(clause), want.has) {
 			t.Errorf("%s: Task %s's **%s** does not name %q; %s", planPath, want.task, want.label, want.has, want.because)
+		}
+	}
+}
+
+// TestDocsConsoleStylingSettingsSectionCarriesItsEditorAndWindow: §2.5 is the
+// document the Project screen's hooks live in, and the settings section is the
+// one part of it that writes. The stylesheet selects three of its hooks, so the
+// editor's vocabulary has to be named here for the same reason every other
+// hook is -- and the confirmation window's two shapes have to be described
+// here, because the window is a document of its own (§2.13's) that this
+// section's pencil opens, and a shape a reader cannot find is a shape no
+// review checks the code against.
+func TestDocsConsoleStylingSettingsSectionCarriesItsEditorAndWindow(t *testing.T) {
+	const path = "docs/design/console-styling.md"
+	doc := readDoc(t, path)
+	section := mdBetween(t, path, doc, "### 2.5 Project", "### 2.6 Run detail")
+
+	row := mdRow(t, path, section, "| Settings |")
+	for _, hook := range []string{"`projects-settings-editor`", "`projects-settings-editor-outcome`"} {
+		if !strings.Contains(row, hook) {
+			t.Errorf("%s: §2.5's Settings row does not name %s; the entry draws it and this table is the vocabulary a rule may select from", path, hook)
+		}
+	}
+	for _, want := range []string{
+		"Review and write",
+		"Read again",
+		"I understand this raises a limit",
+		"widening",
+		"narrowing",
+		// The window is the launch's own document and module, so the section
+		// has to say which document it is rather than describing a second one.
+		"§2.13",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("%s: §2.5 does not state %q, so the settings section's write -- the editor the pencil opens and the window's two shapes -- is described nowhere in this document", path, want)
 		}
 	}
 }

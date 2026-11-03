@@ -19,7 +19,9 @@
 //     6). That last check is decided from the verified email and never from
 //     the caller's own X-Fugaro-Run-Job header: one service account is
 //     dedicated to one Cloud Run job, so the email is what says which job
-//     called, while the header is text the caller chose;
+//     called, while the header is text the caller chose. The same email
+//     answers the account's class — per-repository, shared or review
+//     (review.go) — which is what the rest of the call branches on;
 //   - the run identity is a Firebase ID token this installation's project
 //     issued, signed by a key Google publishes, for uid r~<slug>~<run>, with
 //     its fx claim still ahead of us (D134);
@@ -180,9 +182,13 @@ type Identity struct {
 	// Job is the Cloud Run job the run reported — the caller's claim, which is
 	// why JobAccount, the verified service account, is the one of the two that
 	// identifies the job — and JobAccount is the account that called: the
-	// audit line's "who" (C1.13).
+	// audit line's "who" (C1.13). JobClass is which kind of job that account
+	// belongs to (review.go), decided from the verified email in verifyJob:
+	// the class the rest of the call branches on, and the one field of this
+	// struct that is not a fact about the run.
 	Job        string
 	JobAccount string
+	JobClass   JobClass
 }
 
 // KeySource returns the RSA public key a token's kid names. A kid that is not
@@ -232,8 +238,9 @@ func (o RTDBOutcomes) OutcomeExists(ctx context.Context, day int64, slug, run st
 // AuthConfig is the service's identity configuration. Everything a check
 // depends on is required: a service that cannot check one of these does not
 // start, because the alternative is a service that admits what it cannot
-// check. SharedJobAccounts is the one set that may be empty, and an empty one
-// is a statement — this installation has no shared project jobs.
+// check. SharedJobAccounts and ReviewJobAccounts are the two sets that may be
+// empty, and an empty one is a statement — this installation has no shared
+// project job, or no review job.
 type AuthConfig struct {
 	// Project is the Fugaro project (fp), e.g. "fugaro".
 	Project string
@@ -285,6 +292,84 @@ type AuthConfig struct {
 	// Constraint 6; a caller whose account is in both this set and
 	// JobAccounts is refused, because the refusal is the safe answer.
 	SharedJobAccounts []string
+	// ReviewJobAccounts are the installation's review-only jobs
+	// (ReviewJobAccountsFor over the published policy's profiles). A caller
+	// whose verified email is one of them is of the review class (review.go):
+	// admitted on the model path for its own account only, where the pairing
+	// resolves which account that is (server.go), and refused everywhere the
+	// class has no route.
+	//
+	// Like SharedJobAccounts it may be empty, and an empty one is a statement
+	// rather than a missing gate: an installation that publishes no profile
+	// for a review job has none. It is decided from the verified email for the
+	// same reason, and a caller whose account is in both this set and
+	// JobAccounts is refused rather than admitted, because the two classes do
+	// not have the same routes.
+	ReviewJobAccounts []ReviewJobAccount
+	// VerifierAccounts are the identities that may ask the verify route
+	// whether a verdict's signature is this service's (C3.9f, D1068): the
+	// coordinator's own account, and the owner's for a manual check. A verifier
+	// is NOT a job of this installation and holds no run identity, so it is a
+	// class of its own: an entry is a bare `email` claim and never an IAM
+	// member spelling, and it is matched against the caller's Google ID token
+	// by the same fold every other account is matched by.
+	//
+	// It is empty by default, and an empty list is a statement rather than a
+	// missing gate: an installation with no coordinator has no verifier, and
+	// the route answers every call with the class's own refusal. That is why
+	// the deployment reads it as an OPTIONAL value — a service that refused to
+	// start without it would be one an installation that never set it could not
+	// run at all (D1068).
+	VerifierAccounts []string
+	// PersonAccounts are the people an installation admits as the person
+	// caller class (BB4, B1/B2): the identities that may ask the Bitbucket
+	// read mint for a token. They are the installation's operators
+	// (internal/infra/firebase.go) — the people list that already mints run
+	// tokens and reads the database — and not its launchers, because the token
+	// the mint returns reaches the installing person's whole workspace, which a
+	// launcher may have no Bitbucket access to.
+	//
+	// A person is NOT a job of this installation and holds no run identity, so
+	// this is the same shape VerifierAccounts has: an entry is a bare `email`
+	// claim and never an IAM member spelling, matched against the caller's
+	// Google ID token by the same fold. An email with a member prefix on it
+	// could never be matched, so it is a configuration error here rather than a
+	// class that silently admits nobody.
+	//
+	// It is empty by default, and an empty list is a statement rather than a
+	// missing gate: an installation that admits nobody to the read route has
+	// none, and the route answers every call with the class's own refusal.
+	//
+	// A person is a class of its own and this list may not overlap another
+	// one: NewAuthenticator refuses a person that is also a job, a shared job,
+	// a review job, a verifier or the coordinator, and a person whose address
+	// is a *.gserviceaccount.com one. A service account is not a human
+	// operator, and an address two lists admit would be a caller whose class
+	// depends on which route it reached.
+	PersonAccounts []string
+	// CoordinatorAccount is the installation's coordinator service account: the
+	// SECOND class the Bitbucket read mint admits (BB5, B5), because the sweep
+	// is not a run of this installation and holds no run identity either.
+	//
+	// It is one bare `email` claim — the coordinator Cloud Run job's own service
+	// account, which the installation module gives the read mint's invoker role
+	// and this variable — and it is matched against the caller's Google ID token
+	// by the same fold every other account is. It is empty by default, and an
+	// empty one is a statement rather than a missing gate: an installation that
+	// runs no coordinator admits nobody through this class, and the read mint
+	// answers every such call with the class's own refusal (F24/G8).
+	//
+	// It may NOT also be one of PersonAccounts: the two are the read mint's two
+	// classes, so an address in both would be a caller the route admits twice
+	// and a class decided by which list the lookup happened to read. It MAY be
+	// one of VerifierAccounts, and on an installation that has both that is the
+	// ordinary configuration (C3.9f): the two are classes of DIFFERENT routes —
+	// the verify route is not the read mint — and one address being admitted by
+	// both is not the overlap the class rule is about.
+	//
+	// The name is recorded in the audit line exactly as the person class's is,
+	// and it is an address like any other: never a credential.
+	CoordinatorAccount string
 	// Now is the clock, for tests; nil means time.Now.
 	Now func() time.Time
 }
@@ -297,7 +382,28 @@ type Authenticator struct {
 	// and the spelling is what the identity carries.
 	jobAccounts    map[string]string
 	sharedAccounts map[string]bool
-	now            func() time.Time
+	// reviewAccounts maps a presented email, folded the same way, to the
+	// review job's row: the class is read from this map and the account name
+	// the pairing uses comes from the same row.
+	reviewAccounts map[string]ReviewJobAccount
+	// verifierAccounts maps a presented email, folded the same way, to the
+	// configured spelling of that verifier: the list the verify route's caller
+	// class is (C3.9f). It is read by VerifyVerifier and by nothing else — the
+	// route is answered ahead of the shared parse, so no branch of Verify
+	// consults it.
+	verifierAccounts map[string]string
+	// personAccounts maps a presented email, folded the same way, to the
+	// configured spelling of that person: one of the read mint's two caller
+	// classes (BB4). Like verifierAccounts it is read by one entry point and
+	// by nothing else — the read route is answered ahead of the shared parse,
+	// so no branch of Verify consults it.
+	personAccounts map[string]string
+	// coordinatorAccount is the read mint's OTHER class, folded (BB5): the
+	// installation's coordinator service account, or "" when it has none. It is
+	// the folded key alone because the spelling the identity carries is
+	// cfg.CoordinatorAccount, and there is exactly one entry.
+	coordinatorAccount string
+	now                func() time.Time
 }
 
 // NewAuthenticator validates the configuration and returns the verifier.
@@ -351,22 +457,136 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		}
 		shared[folded] = true
 	}
+	// The review set is read the same way, and it is held to one rule more:
+	// the account name a review call is served by is never empty, because an
+	// empty one is a credential no bundle holds and a pairing that could only
+	// refuse.
+	review := make(map[string]ReviewJobAccount, len(cfg.ReviewJobAccounts))
+	for _, ra := range cfg.ReviewJobAccounts {
+		folded, ok := foldEmail(ra.Email)
+		if !ok {
+			return nil, errors.New("credsvc: a review job service account is not a printable ASCII email address")
+		}
+		if ra.Account == "" {
+			return nil, errors.New("credsvc: a review job account names no Claude account, so no call of it could be served")
+		}
+		if prev, dup := review[folded]; dup {
+			if prev.Account != ra.Account {
+				return nil, errors.New("credsvc: the same review job service account is bound to two Claude accounts")
+			}
+			continue
+		}
+		review[folded] = ra
+	}
+	// The verifier list is the fourth set and the only one that is not a job
+	// set: its entries are bare addresses, matched by the same fold, and a
+	// duplicate is the same address twice and not an error — nothing is bound
+	// to a verifier the way a job account is bound to a repository, so two
+	// spellings of one address admit the same caller either way.
+	verifiers := make(map[string]string, len(cfg.VerifierAccounts))
+	for _, email := range cfg.VerifierAccounts {
+		folded, ok := foldEmail(email)
+		if !ok {
+			return nil, errors.New("credsvc: a verifier account is not a printable ASCII email address")
+		}
+		verifiers[folded] = email
+	}
+	// The coordinator class is one address and not a list (BB5): the read
+	// mint's second admission is the installation's own coordinator account, and
+	// an installation has one. It is held to the same printable-ASCII rule, and
+	// an empty one is not validated at all — an installation that runs no
+	// coordinator has named none, and the class admits nobody (F24).
+	//
+	// It is deliberately NOT held to the rule that keeps people off the service
+	// account shape: the coordinator IS a service account, which is the whole
+	// point of the class. Nor is it refused for also being a verifier: that list
+	// is the verify route's class and this one is the read mint's, and an
+	// installation whose coordinator verifies is the ordinary configuration.
+	var coordinator string
+	if cfg.CoordinatorAccount != "" {
+		folded, ok := foldEmail(cfg.CoordinatorAccount)
+		if !ok {
+			return nil, errors.New("credsvc: the coordinator account is not a printable ASCII email address")
+		}
+		coordinator = folded
+	}
+	// The person list is read the same way and for the same reason: its
+	// entries are bare addresses, and a duplicate admits the same caller
+	// either way. It is the one list held to two rules more than the verifier
+	// list is, and both are fail-closed here rather than at the route:
+	//
+	//   - a person may not be an account another class admits. Neither the
+	//     read mint nor any other route would then have one answer for that
+	//     caller: the class a call is served by would be decided by which list
+	//     its route happens to read, and an installation that configured a job
+	//     or a verifier as a person would be one whose classes are not the
+	//     sets its deployment names. The overlap is therefore a deployment
+	//     that disagrees with itself, which is a configuration error and not a
+	//     caller that is admitted twice (G4).
+	//   - a person may not be a service account address. The people are the
+	//     installation's operators — the humans who already mint run tokens
+	//     and read the database — and *.gserviceaccount.com is the shape every
+	//     one of this installation's jobs, its verifier and its coordinator
+	//     has. Admitting one as a person would hand the workspace-wide token
+	//     the read mint issues to an automation, which is exactly the caller
+	//     the class is not for.
+	people := make(map[string]string, len(cfg.PersonAccounts))
+	for _, email := range cfg.PersonAccounts {
+		folded, ok := foldEmail(email)
+		if !ok {
+			return nil, errors.New("credsvc: a person account is not a printable ASCII email address")
+		}
+		if _, isJob := accounts[folded]; isJob {
+			return nil, errors.New("credsvc: a person account is also one of the job service accounts, so one caller would be two classes")
+		}
+		if shared[folded] {
+			return nil, errors.New("credsvc: a person account is also a shared job service account, so one caller would be two classes")
+		}
+		if _, isReview := review[folded]; isReview {
+			return nil, errors.New("credsvc: a person account is also a review job service account, so one caller would be two classes")
+		}
+		if _, isVerifier := verifiers[folded]; isVerifier {
+			return nil, errors.New("credsvc: a person account is also one of the verifiers, so one caller would be two classes")
+		}
+		if coordinator != "" && folded == coordinator {
+			// The two are the SAME route's classes (BB5), which is what makes
+			// this overlap different from the verifier one above: the read mint
+			// would then admit that caller through whichever of the two lists its
+			// admission happened to read, and the class would be an accident of
+			// the lookup rather than the deployment's statement.
+			return nil, errors.New("credsvc: a person account is also the coordinator's account, so one caller would be two classes on the read mint")
+		}
+		if strings.HasSuffix(folded, ".gserviceaccount.com") {
+			return nil, errors.New("credsvc: a person account is a service account address, and the person class is the installation's operators")
+		}
+		people[folded] = email
+	}
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
 	}
-	return &Authenticator{cfg: cfg, jobAccounts: accounts, sharedAccounts: shared, now: now}, nil
+	return &Authenticator{
+		cfg:                cfg,
+		jobAccounts:        accounts,
+		sharedAccounts:     shared,
+		reviewAccounts:     review,
+		verifierAccounts:   verifiers,
+		personAccounts:     people,
+		coordinatorAccount: coordinator,
+		now:                now,
+	}, nil
 }
 
 // Verify admits a call, or refuses it with ErrUnverifiedJob (the caller is
 // not one of the installation's job service accounts, or is a shared project
 // job's, which Global Constraint 6 refuses whole until C3.9), ErrUnverified
-// (the run identity is not this installation's, is past its fx, or names a run
-// that has ended) or ErrUnavailable (the service could not read the outcome).
-// It never returns a partially verified identity.
+// (the run identity is not this installation's, is past its fx, names a run
+// that has ended, or — for a review caller — is not a review identity) or
+// ErrUnavailable (the service could not read the outcome). It never returns a
+// partially verified identity.
 func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, error) {
 	now := a.now()
-	account, err := a.verifyJob(ctx, req.JobIDToken, now)
+	account, class, err := a.verifyJob(ctx, req.JobIDToken, now)
 	if err != nil {
 		return Identity{}, err
 	}
@@ -395,12 +615,18 @@ func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, erro
 	if err != nil {
 		return Identity{}, err
 	}
-	id.Job, id.JobAccount = req.Job, account
+	id.Job, id.JobAccount, id.JobClass = req.Job, account, class
+	// The review claim rule (spec §3.3) is NOT asked here. It is the pairing's
+	// first step (pairReview), and that is where it is answered — because a
+	// refusal from this function returns Identity{} and is answered by
+	// refuseIdentity, which writes no audit line, while the area rule holds a
+	// refusal to exactly one line once both identities are verified. Both are
+	// by the time the pairing runs.
 	return id, nil
 }
 
 // verifyJob checks the caller's Google ID token and returns the account that
-// called.
+// called and the class of job it is.
 //
 // Two checks, and the plan asks for both ("checked by Cloud Run IAM **and** by
 // this code"):
@@ -420,42 +646,17 @@ func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, erro
 //     here too, before that membership check, because the account is the only
 //     part of "which job is this run in" that the caller cannot write (Global
 //     Constraint 6, C3.9).
-func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time) (string, error) {
-	head, claims, err := decodeJWT(tok)
+//
+// The class is answered beside the account, because the class is the same fact
+// read further: the email says which job called, and which kind of job that is
+// decides which pairing the call is bound by (server.go) and which credential
+// it may be served (cascade.go). The one class that is answered with no
+// account is the shared one: its caller is refused whole, and the class is
+// what says the refusal is about the class and not about the account.
+func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time) (string, JobClass, error) {
+	claims, folded, err := a.callerClaims(ctx, tok)
 	if err != nil {
-		return "", fmt.Errorf("%w: the caller's ID token is not a JWT", ErrUnverifiedJob)
-	}
-	if alg := claimString(head, "alg"); alg != "RS256" {
-		return "", fmt.Errorf("%w: the caller's ID token is not signed with RS256", ErrUnverifiedJob)
-	}
-	key, err := a.cfg.JobKeys.Key(ctx, claimString(head, "kid"))
-	if err != nil {
-		if errors.Is(err, ErrUnknownKeyID) {
-			return "", fmt.Errorf("%w: %w", ErrUnverifiedJob, err)
-		}
-		return "", err
-	}
-	if err := verifySignature(tok, key); err != nil {
-		return "", fmt.Errorf("%w: the caller's ID token's signature does not verify", ErrUnverifiedJob)
-	}
-	if aud := claimString(claims, "aud"); aud != a.cfg.Audience {
-		return "", fmt.Errorf("%w: the caller's ID token is for another audience", ErrUnverifiedJob)
-	}
-	if iss := claimString(claims, "iss"); iss != "https://accounts.google.com" && iss != "accounts.google.com" {
-		return "", fmt.Errorf("%w: the caller's ID token was not issued by Google", ErrUnverifiedJob)
-	}
-	email := claimString(claims, "email")
-	// The email is folded to lower case *as ASCII* before it is matched, and an
-	// address that is not printable ASCII is refused rather than folded
-	// (review nit). strings.ToLower is Unicode-aware, so it folds characters
-	// that merely look like the ones a service account's address is made of —
-	// U+212A KELVIN SIGN lowercases to 'k', U+0130 to 'i' — and a claim whose
-	// spelling the issuer let the caller choose would then be matched against
-	// an account it is not. Every Google service account address is ASCII, so
-	// nothing a real caller presents is lost by the rule.
-	folded, ok := foldEmail(email)
-	if !ok {
-		return "", fmt.Errorf("%w: the caller's email claim is not a service account address", ErrUnverifiedJob)
+		return "", "", err
 	}
 	// The shared-job gate of Global Constraint 6 (C3.9) comes first, and it is
 	// decided from this verified email and never from the caller's own
@@ -470,33 +671,213 @@ func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time
 		// The reason is named and the account is not repeated: it is the
 		// caller's own claim set, and the package doc's no-echo rule is that no
 		// refusal repeats what a caller presented.
-		return "", fmt.Errorf("%w: the caller is a shared project job's service account, and this service admits runs in per-repository jobs only until the phase-3 shared-job rules are on main (C3.9)", ErrUnverifiedJob)
+		return "", ClassShared, fmt.Errorf("%w: the caller is a shared project job's service account, and this service admits runs in per-repository jobs only until the phase-3 shared-job rules are on main (C3.9)", ErrUnverifiedJob)
+	}
+	// The review class is read before the per-repository table, and an account
+	// a deployment's input puts in both is refused rather than admitted: the
+	// two classes do not have the same routes — a review caller is offered one
+	// account's model credential and nothing else — and the wider class is the
+	// one the lookup below would answer with, so the narrower one has to be
+	// asked first.
+	if ra, review := a.reviewAccounts[folded]; review {
+		if _, alsoJob := a.jobAccounts[folded]; alsoJob {
+			return "", "", fmt.Errorf("%w: the caller's account is both a review job's and a per-repository job's, and the two classes do not have the same routes", ErrUnverifiedJob)
+		}
+		if err := checkCallerToken(claims, now); err != nil {
+			return "", "", err
+		}
+		return ra.Email, ClassReview, nil
 	}
 	account, ok := a.jobAccounts[folded]
 	if !ok {
-		return "", fmt.Errorf("%w: the caller is not one of the installation's job service accounts", ErrUnverifiedJob)
+		return "", "", fmt.Errorf("%w: the caller is not one of the installation's job service accounts", ErrUnverifiedJob)
 	}
-	if verified, ok := claims["email_verified"].(bool); !ok || !verified {
-		return "", fmt.Errorf("%w: the caller's email is not verified", ErrUnverifiedJob)
-	}
-	if exp, ok := claimInt(claims, "exp"); !ok || !now.Before(time.Unix(exp, 0)) {
-		return "", fmt.Errorf("%w: the caller's ID token has expired", ErrUnverifiedJob)
-	}
-	// The token's own validity window, checked as verifyRun checks the run
-	// identity's: a token issued in the future, or one that is not valid yet,
-	// is not one this service admits (review nit). Google's ID tokens carry an
-	// iat; a nbf is checked when it is there.
-	if iat, ok := claimInt(claims, "iat"); ok && time.Unix(iat, 0).After(now.Add(clockSkew)) {
-		return "", fmt.Errorf("%w: the caller's ID token is issued in the future", ErrUnverifiedJob)
-	}
-	if nbf, ok := claimInt(claims, "nbf"); ok && time.Unix(nbf, 0).After(now.Add(clockSkew)) {
-		return "", fmt.Errorf("%w: the caller's ID token is not valid yet", ErrUnverifiedJob)
+	if err := checkCallerToken(claims, now); err != nil {
+		return "", "", err
 	}
 	// The account this returns is the configured spelling, not the claim's:
 	// the two are the same address in whatever case the token carries, and the
 	// one this service writes to its audit line (C1.13) is the one an operator
 	// configured and can search for (review nit).
+	return account, ClassRepository, nil
+}
+
+// callerClaims verifies the caller's Google ID token as far as its identity and
+// returns the claim set and the email folded to ASCII lower case. It is the
+// WHOLE of what every class of caller shares: the signature against Google's own
+// certificates, this service's audience, Google as the issuer, and an email
+// claim that is one an account of this installation could be spelled with. Which
+// set that folded address is then looked up in — the job accounts, the review
+// jobs, the shared jobs, or the verifier list — is the caller's class's own
+// answer, and it is the only place the classes differ.
+//
+// It is written once so that the verifier branch (VerifyVerifier) is the same
+// token check as a job token and not a second spelling of it (D1068): a rule
+// added to one and not the other would be a caller of one class checking
+// something the other does not.
+//
+// The email is folded to lower case *as ASCII* before it is matched, and an
+// address that is not printable ASCII is refused rather than folded
+// (review nit). strings.ToLower is Unicode-aware, so it folds characters that
+// merely look like the ones a service account's address is made of — U+212A
+// KELVIN SIGN lowercases to 'k', U+0130 to 'i' — and a claim whose spelling the
+// issuer let the caller choose would then be matched against an account it is
+// not. Every Google service account address is ASCII, so nothing a real caller
+// presents is lost by the rule.
+func (a *Authenticator) callerClaims(ctx context.Context, tok string) (map[string]any, string, error) {
+	head, claims, err := decodeJWT(tok)
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: the caller's ID token is not a JWT", ErrUnverifiedJob)
+	}
+	if alg := claimString(head, "alg"); alg != "RS256" {
+		return nil, "", fmt.Errorf("%w: the caller's ID token is not signed with RS256", ErrUnverifiedJob)
+	}
+	key, err := a.cfg.JobKeys.Key(ctx, claimString(head, "kid"))
+	if err != nil {
+		if errors.Is(err, ErrUnknownKeyID) {
+			return nil, "", fmt.Errorf("%w: %w", ErrUnverifiedJob, err)
+		}
+		return nil, "", err
+	}
+	if err := verifySignature(tok, key); err != nil {
+		return nil, "", fmt.Errorf("%w: the caller's ID token's signature does not verify", ErrUnverifiedJob)
+	}
+	if aud := claimString(claims, "aud"); aud != a.cfg.Audience {
+		return nil, "", fmt.Errorf("%w: the caller's ID token is for another audience", ErrUnverifiedJob)
+	}
+	if iss := claimString(claims, "iss"); iss != "https://accounts.google.com" && iss != "accounts.google.com" {
+		return nil, "", fmt.Errorf("%w: the caller's ID token was not issued by Google", ErrUnverifiedJob)
+	}
+	folded, ok := foldEmail(claimString(claims, "email"))
+	if !ok {
+		return nil, "", fmt.Errorf("%w: the caller's email claim is not a service account address", ErrUnverifiedJob)
+	}
+	return claims, folded, nil
+}
+
+// VerifyVerifier admits the caller of the verify route, or refuses it with
+// ErrUnverifiedJob (the caller is not one of the installation's verifiers) or
+// ErrUnavailable (the key set could not be read). It answers the configured
+// spelling of the address that matched, which is what the audit line carries, or
+// the empty string with an error — never a partially verified caller.
+//
+// The check is verifyJob's token check MINUS one gate and against one other
+// list (D1068, spec §5.4), and the two differences are stated rather than
+// implied:
+//
+//   - the folded address is matched against AuthConfig.VerifierAccounts rather
+//     than against the installation's job accounts, because a verifier is not
+//     one of them;
+//   - the shared-job gate does not apply, because a verifier is not a job of
+//     this installation's job set AT ALL — not a per-repository one and not a
+//     shared project one. An address that is both a shared job's account and a
+//     verifier is therefore admitted here, and that is the class's own answer
+//     and not an oversight: the gate refuses a run that would be launched as an
+//     account the phase-3 rules do not yet cover, and a verifier launches
+//     nothing.
+//
+// Which set a caller is looked up in is what makes it a class, so this is a
+// branch beside verifyJob and not a second verifier: the signature, the
+// audience, the issuer and the fold above are shared code. This is also why it
+// takes the caller's token directly rather than a Request: the verify path is
+// answered ahead of RequestFromHTTP (server.go), so a Request is the one thing
+// its caller cannot build.
+func (a *Authenticator) VerifyVerifier(ctx context.Context, tok string) (string, error) {
+	now := a.now()
+	claims, folded, err := a.callerClaims(ctx, tok)
+	if err != nil {
+		return "", err
+	}
+	account, ok := a.verifierAccounts[folded]
+	if !ok {
+		// The reason names the class and never the address: it is the caller's
+		// own claim set, and the package doc's no-echo rule is that no refusal
+		// repeats what a caller presented.
+		return "", fmt.Errorf("%w: the caller is not one of this installation's verifiers, so it may not ask about a verdict", ErrUnverifiedJob)
+	}
+	if err := checkCallerToken(claims, now); err != nil {
+		return "", err
+	}
 	return account, nil
+}
+
+// VerifyReadCaller admits the caller of the Bitbucket read mint, or refuses it
+// with ErrUnverifiedJob (the caller is neither one of the installation's people
+// nor its coordinator) or ErrUnavailable (the key set could not be read). It
+// answers the configured spelling of the address that matched, which is what
+// the audit line carries, or the empty string with an error — never a partially
+// verified caller.
+//
+// The route has TWO classes and this one function is both, because they are
+// one admission read twice (BB5, B5). The person class is BB4's: the
+// installation's operators, who run `fugaro coordinator status` on their own
+// machine. The coordinator class is the coordinator Cloud Run job's service
+// account, which runs the sweep — also not a run of this installation, also
+// holding no run identity. Both ask the same question of the same route (may
+// this caller have a read-scoped token for a repository of this installation's
+// workspace), and both are answered by the same mint, so a second entry point
+// would be a second place for the token check to be spelled.
+//
+// What makes them two classes is still the list the folded address is looked up
+// in, and the order is the whole of the rule: the people first, then the
+// coordinator, and nothing else. Neither lookup may widen — the class is the
+// deployment's statement and not the shape of an address — which is why the
+// coordinator's OWN planned resident service (coordinator P7) is refused like
+// any other stranger even though it has exactly this account's shape.
+//
+// It is VerifyVerifier's mechanism and not a third spelling of the token check:
+// the signature, the audience, the issuer, the email fold and the token's own
+// window are the same shared code (callerClaims, checkCallerToken).
+//
+// It takes the caller's token directly for VerifyVerifier's reason: the read
+// route is answered ahead of RequestFromHTTP (server.go), because neither class
+// holds a run identity and the shared parse refuses a call that has none.
+func (a *Authenticator) VerifyReadCaller(ctx context.Context, tok string) (string, error) {
+	now := a.now()
+	claims, folded, err := a.callerClaims(ctx, tok)
+	if err != nil {
+		return "", err
+	}
+	account, ok := a.personAccounts[folded]
+	if !ok && a.coordinatorAccount != "" && folded == a.coordinatorAccount {
+		// The configured spelling, not the claim's, for the reason verifyJob
+		// returns the configured one: it is what an operator searches the audit
+		// log for.
+		account, ok = a.cfg.CoordinatorAccount, true
+	}
+	if !ok {
+		// The reason names both classes and never the address, for the reason
+		// VerifyVerifier's does.
+		return "", fmt.Errorf("%w: the caller is neither one of this installation's people nor its coordinator, so it may not mint a Bitbucket read token", ErrUnverifiedJob)
+	}
+	if err := checkCallerToken(claims, now); err != nil {
+		return "", err
+	}
+	return account, nil
+}
+
+// checkCallerToken is the rest of the caller's ID token's checks, and they are
+// the same four for every class of caller: the address it names is verified,
+// the token has not expired, and it is neither issued in the future nor
+// carried before it is valid.
+//
+// The last two are the run identity's own window checks (verifyRun): Google's
+// ID tokens carry an iat, and a nbf is checked when it is there, because a
+// token this service cannot yet honour is not one it admits (review nit).
+func checkCallerToken(claims map[string]any, now time.Time) error {
+	if verified, ok := claims["email_verified"].(bool); !ok || !verified {
+		return fmt.Errorf("%w: the caller's email is not verified", ErrUnverifiedJob)
+	}
+	if exp, ok := claimInt(claims, "exp"); !ok || !now.Before(time.Unix(exp, 0)) {
+		return fmt.Errorf("%w: the caller's ID token has expired", ErrUnverifiedJob)
+	}
+	if iat, ok := claimInt(claims, "iat"); ok && time.Unix(iat, 0).After(now.Add(clockSkew)) {
+		return fmt.Errorf("%w: the caller's ID token is issued in the future", ErrUnverifiedJob)
+	}
+	if nbf, ok := claimInt(claims, "nbf"); ok && time.Unix(nbf, 0).After(now.Add(clockSkew)) {
+		return fmt.Errorf("%w: the caller's ID token is not valid yet", ErrUnverifiedJob)
+	}
+	return nil
 }
 
 // foldEmail folds an email address to lower case as ASCII, reporting false for

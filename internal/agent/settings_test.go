@@ -178,17 +178,25 @@ var denyExtensions = []string{"png", "jpg", "jpeg", "gif", "webp", "bmp", "ico",
 // full Read tool, and one Read of a changed PNG is the whole of the failure
 // run 20261021-002046-31cc ended on (`images aren't priced for model ...`).
 //
+// D891(a)'s five tools are deliberately NOT part of it: a review stage is not
+// the independent review job, and a coding run's own review rounds keep their
+// tools (the runner's agentenv.go is where the two are told apart, and its
+// TestManagedSettingsDenyBinaryReadsInReviewStages is what holds the launch).
+// ReviewJobDenyRules carries them, and this test holds the two lists apart in
+// both directions: none of the five may appear in a stage's list, and the
+// job's list is exactly the five.
+//
 // Mutation (return deniedWebTools alone whatever review says): the review
 // assertion fails. Mutation (return the binary reads for every stage): the
 // non-review assertion fails. Mutation (drop one extension from
 // deniedBinaryReads): the list assertion fails. Mutation (add a rule the
 // specifier of which is not a Read of a file kind, e.g. "Read(/etc/**)"):
-// the list assertion fails.
+// the list assertion fails. Mutation (return deniedReviewTools from DenyRules
+// for every stage, which is where this list was before the review job was
+// told apart from a review stage): the non-review assertion and the row below
+// fail.
 func TestDenyRulesPerStage(t *testing.T) {
-	var reads []string
-	for _, ext := range denyExtensions {
-		reads = append(reads, "Read(**/*."+ext+")")
-	}
+	reviewRules := denyExtensionsOf()
 	for _, c := range []struct {
 		name    string
 		denyWeb bool
@@ -196,13 +204,144 @@ func TestDenyRulesPerStage(t *testing.T) {
 		want    []string
 	}{
 		{"implement, fix or plan", true, false, []string{"WebSearch", "WebFetch"}},
-		{"a review stage", true, true, append([]string{"WebSearch", "WebFetch"}, reads...)},
-		{"a review stage with no gateway", false, true, reads},
+		{"a review stage", true, true, append([]string{"WebSearch", "WebFetch"}, reviewRules...)},
+		{"a review stage with no gateway", false, true, reviewRules},
 		{"neither", false, false, nil},
 	} {
 		if got := DenyRules(c.denyWeb, c.review); !slices.Equal(got, c.want) {
 			t.Errorf("%s: DenyRules(%v, %v) = %v, want %v", c.name, c.denyWeb, c.review, got, c.want)
 		}
+	}
+	if got := ReviewJobDenyRules(); !slices.Equal(got, deniedReviewTools) {
+		t.Errorf("ReviewJobDenyRules() = %v, want %v", got, deniedReviewTools)
+	}
+	for _, rule := range DenyRules(true, true) {
+		if slices.Contains(deniedReviewTools, rule) {
+			t.Errorf("a review stage's list carries %q, which is the review job's rule", rule)
+		}
+	}
+	// A copy, not the list: a caller that appends to what it was given must
+	// not be able to change what the next stage is denied.
+	got := ReviewJobDenyRules()
+	got[0] = ""
+	if slices.Contains(deniedReviewTools, "") {
+		t.Error("ReviewJobDenyRules returns the package's own list, so a caller can empty a rule for every later run")
+	}
+}
+
+// denyExtensionsOf is the Read rule per binary kind a review stage carries,
+// spelled the way DenyRules spells it.
+func denyExtensionsOf() []string {
+	reads := make([]string, 0, len(denyExtensions))
+	for _, ext := range denyExtensions {
+		reads = append(reads, "Read(**/*."+ext+")")
+	}
+	return reads
+}
+
+// reviewStageDeny carries the rule the review stage's own settings file holds:
+// the list the runner composes for the stage of the independent review job
+// (agentenv.go's writeManagedSettings), read back out of the file
+// WriteManagedSettings wrote, so what is pinned is the launch and not the
+// functions' answers alone. That stage is the one D891(a) is about — a coding
+// run's own review stage is not launched under this list at all, which
+// TestDenyRulesPerStage and the runner's own
+// TestMutationDenyRulesBelongToTheReviewJob are what hold.
+func reviewStageDeny(t *testing.T) []string {
+	t.Helper()
+	deny := append(DenyRules(true, true), ReviewJobDenyRules()...)
+	path := filepath.Join(t.TempDir(), "managed-settings.json")
+	if err := WriteManagedSettings(path, map[string]string{"A": "1"}, deny); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Permissions struct{ Deny []string }
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	return got.Permissions.Deny
+}
+
+// TestReviewStageDeniesBashForTheRestOfTheStage: D891(a)'s own rule, and the red
+// step of the task that adds it. The reviewer's shell is the general
+// exfiltration path a token in the stage's environment would leave open —
+// `denyWeb` denies Claude Code's WebSearch/WebFetch tools and does not stop
+// `curl` from Bash — so the independent review job is launched with Bash
+// denied outright, and the runner applies and reverts the mutant itself rather
+// than through it (F24). The rule is that job's alone: a coding run's own
+// review rounds — and `fugaro run --pr N`'s — are stages of the repository's
+// own run, and an implement or fix stage is a container that runs the
+// repository's own commands by design.
+//
+// Mutation (add "Bash" to DenyRules for every review stage rather than to
+// ReviewJobDenyRules): this test still passes and the runner's own
+// TestManagedSettingsDenyBinaryReadsInReviewStages fails, which is the pair
+// that keeps the rule where it belongs. Mutation (drop "Bash" from
+// deniedReviewTools): this test fails, and so does TestDenyRulesPerStage.
+func TestReviewStageDeniesBashForTheRestOfTheStage(t *testing.T) {
+	if deny := reviewStageDeny(t); !slices.Contains(deny, "Bash") {
+		t.Fatalf("the review job's settings do not deny Bash: %v", deny)
+	}
+	if deny := DenyRules(true, false); slices.Contains(deny, "Bash") {
+		t.Fatalf("every stage denies Bash: %v", deny)
+	}
+}
+
+// TestReviewStageDeniesEditForTheRestOfTheStage: the reviewer must not rewrite
+// the tree it is being checked against. The mutation check applies a mutant
+// and reverts it from the runner's own memory, so the agent's Edit tool has
+// nothing to do with the head and everything to do with hiding what a second
+// look would find.
+func TestReviewStageDeniesEditForTheRestOfTheStage(t *testing.T) {
+	if deny := reviewStageDeny(t); !slices.Contains(deny, "Edit") {
+		t.Fatalf("the review job's settings do not deny Edit: %v", deny)
+	}
+	if deny := DenyRules(true, false); slices.Contains(deny, "Edit") {
+		t.Fatalf("every stage denies Edit: %v", deny)
+	}
+}
+
+// TestReviewStageDeniesWriteForTheRestOfTheStage: the same rule for the tool
+// that creates a file rather than changing one.
+func TestReviewStageDeniesWriteForTheRestOfTheStage(t *testing.T) {
+	if deny := reviewStageDeny(t); !slices.Contains(deny, "Write") {
+		t.Fatalf("the review job's settings do not deny Write: %v", deny)
+	}
+	if deny := DenyRules(true, false); slices.Contains(deny, "Write") {
+		t.Fatalf("every stage denies Write: %v", deny)
+	}
+}
+
+// TestReviewStageDeniesNotebookEditForTheRestOfTheStage: and for the notebook
+// editor, which is a Write by another name and is denied with it.
+func TestReviewStageDeniesNotebookEditForTheRestOfTheStage(t *testing.T) {
+	if deny := reviewStageDeny(t); !slices.Contains(deny, "NotebookEdit") {
+		t.Fatalf("the review job's settings do not deny NotebookEdit: %v", deny)
+	}
+	if deny := DenyRules(true, false); slices.Contains(deny, "NotebookEdit") {
+		t.Fatalf("every stage denies NotebookEdit: %v", deny)
+	}
+}
+
+// TestReviewStageDeniesProcReadsForTheRestOfTheStage: /proc is where the
+// job's own environment and its one-hour read-only installation token are
+// readable from, which is the residual the fence does not close for the
+// agent's own stage (caveat 3: it cannot be fenced, because its model calls
+// need the loopback). The Read tool is what would read it, so the read of
+// /proc is denied as a rule of its own — the mutation's fenced child gets a
+// /proc of its own instead, and this rule is the half that covers the
+// reviewer.
+func TestReviewStageDeniesProcReadsForTheRestOfTheStage(t *testing.T) {
+	if deny := reviewStageDeny(t); !slices.Contains(deny, "Read(/proc/**)") {
+		t.Fatalf("the review job's settings do not deny Read(/proc/**): %v", deny)
+	}
+	if deny := DenyRules(true, false); slices.Contains(deny, "Read(/proc/**)") {
+		t.Fatalf("every stage denies Read(/proc/**): %v", deny)
 	}
 }
 
@@ -320,5 +459,122 @@ func TestRoutingKeysAnyProviderSwitchAndAllProxy(t *testing.T) {
 		if err != nil || len(got) != 1 || got[0] != strings.ToUpper(k) {
 			t.Errorf("%s: %v, %v", k, got, err)
 		}
+	}
+}
+
+// reviewPostureKeys are the keys of the review stage's launch posture
+// (D894(a)). A coding run's stages carry none of them: the promise is that a
+// coding run's own review rounds keep byte-for-byte the file they had.
+var reviewPostureKeys = []string{"disableAllHooks", "allowManagedHooksOnly", "allowManagedMcpServersOnly", "allowedMcpServers"}
+
+// TestWriteReviewManagedSettings: the review stage's file turns hooks off
+// except the managed ones (and the managed file declares none), and allows
+// MCP servers from the managed file alone — of which there are none, the
+// allow-list being empty. Everything else about the file is unchanged: the
+// gateway's env and the stage's deny rules are there as they are for any
+// stage.
+//
+// The two keys this file used to carry and must never carry again are
+// asserted absent by name: settingSources is not a settings key at all
+// (setting-source selection is --setting-sources, which the stage's argv
+// passes, and TestArgs pins it), and enableAllProjectMcpServers blocks
+// nothing under `claude -p`, where a project-scoped MCP server loads without
+// asking.
+//
+// Mutation (write the ordinary file for a review stage): every posture
+// assertion fails. Mutation (drop one key from reviewPosture): the assertion
+// for that key fails. Mutation (put either dead key back): the absent-key
+// assertion fails. Mutation (make WriteManagedSettings call reviewPosture
+// too): the coding-run assertion fails.
+func TestWriteReviewManagedSettings(t *testing.T) {
+	dir := t.TempDir()
+	review := filepath.Join(dir, "review.json")
+	if err := WriteReviewManagedSettings(review, map[string]string{"A": "1"}, DenyRules(true, true)); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(review)
+	var got struct {
+		Env                        map[string]string
+		Permissions                struct{ Deny []string }
+		DisableAllHooks            *bool
+		AllowManagedHooksOnly      *bool
+		AllowManagedMcpServersOnly *bool
+		AllowedMcpServers          *[]string
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.DisableAllHooks == nil || !*got.DisableAllHooks {
+		t.Errorf("hooks are not disabled: %s", data)
+	}
+	if got.AllowManagedHooksOnly == nil || !*got.AllowManagedHooksOnly {
+		t.Errorf("hooks are not restricted to the managed file's: %s", data)
+	}
+	if got.AllowManagedMcpServersOnly == nil || !*got.AllowManagedMcpServersOnly {
+		t.Errorf("MCP servers are not restricted to the managed file's: %s", data)
+	}
+	if got.AllowedMcpServers == nil {
+		t.Errorf("the MCP allow-list is absent, which is not an empty allow-list: %s", data)
+	} else if len(*got.AllowedMcpServers) != 0 {
+		t.Errorf("the MCP allow-list is not empty: %s", data)
+	}
+	for _, dead := range []string{`"settingSources"`, `"enableAllProjectMcpServers"`} {
+		if strings.Contains(string(data), dead) {
+			t.Errorf("the review stage's settings carry %s, which enforces nothing: %s", dead, data)
+		}
+	}
+	if got.Env["A"] != "1" || !slices.Contains(got.Permissions.Deny, "Read(**/*.png)") {
+		t.Errorf("the review posture cost the file its env or deny rules: %s", data)
+	}
+
+	coding := filepath.Join(dir, "coding.json")
+	if err := WriteManagedSettings(coding, map[string]string{"A": "1"}, DenyRules(true, true)); err != nil {
+		t.Fatal(err)
+	}
+	plain, _ := os.ReadFile(coding)
+	for _, key := range reviewPostureKeys {
+		if strings.Contains(string(plain), key) {
+			t.Errorf("a coding run's stage carries %q: %s", key, plain)
+		}
+	}
+}
+
+// TestReviewHome: the review stage's HOME is a directory of its own under the
+// run's state directory, empty, and closed to everyone but its owner — the
+// user level of Claude Code's settings, which the image's own home would
+// otherwise fill.
+//
+// Mutation (return the state directory itself, or the image's home): the
+// distinctness assertion fails. Mutation (leave the mode at 0755): the mode
+// assertion fails. Mutation (write anything into it): the emptiness assertion
+// fails.
+func TestReviewHome(t *testing.T) {
+	state := t.TempDir()
+	if err := os.WriteFile(filepath.Join(state, "task.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	home, err := ReviewHome(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if home == state || filepath.Dir(home) != state {
+		t.Fatalf("home = %s, want a directory under %s", home, state)
+	}
+	fi, err := os.Stat(home)
+	if err != nil || !fi.IsDir() {
+		t.Fatalf("home = %s: %v", home, err)
+	}
+	if fi.Mode().Perm() != 0o700 {
+		t.Errorf("mode = %v, want 0700", fi.Mode().Perm())
+	}
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("the review stage's home holds %v", entries)
+	}
+	if again, err := ReviewHome(state); err != nil || again != home {
+		t.Errorf("a second call = %s, %v, want %s", again, err, home)
 	}
 }

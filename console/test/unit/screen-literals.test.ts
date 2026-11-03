@@ -159,12 +159,6 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'row.perRunCapSource': '`capSourceAt` keeps a word only when it is on `CAP_SOURCES`, else `unknown`',
     'panel.because':
       'every panel constructor draws its reason through `sanitizeRefusal` (`drawnRefusal`) before it is stored, or it is one of the two console constants (`POLICY_BECAUSE`, `ENROLLMENT_BECAUSE`); a document\'s own `note` takes the `putText` branch instead (`becauseKind`)',
-    RIGOR_ABSENT: 'the dash `runs ls`\'s MODE column draws for a run whose record carries no rigor block (`shared/rigor.ts`), a console constant',
-    word: {
-      within: 'rigorCell',
-      reason:
-        '`rigorModeWord(view.mode)`, which answers one of the console\'s five mode words or `null`; `null` is the branch that hands the document\'s own value to `textCell` (the `label` class, the `runs[].rigor.mode` field), so only the console\'s word reaches the sink',
-    },
   },
   // The drawers outside `src/renderer/screens`: `src/shared/notice.ts` writes
   // the notice card's text slots, and `src/shared/version.ts` composes the
@@ -218,6 +212,21 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       'a pull request number the model read as a positive integer (`prNumberAt`), drawn as **text**: design section 5.1 rule 2 and its gap 7 leave the console no URL to build, so the number is the whole of it and its `title` carries `GRAPH_PR_NO_LINK_REASON` -- the treatment `live.ts` and `run.ts` give the same field',
     '`run …${node.run.text}`':
       'the run suffix as the model\'s `Sanitized` `run` value, which `suffixRefusal` refuses unless it is four characters, under this file\'s own "run …" label -- so the interpolation is a sanitized four-character suffix and never a run id or a path',
+    'door.because': {
+      within: 'inspector',
+      reason:
+        '`doorFor`\'s own sentence for a task whose run nothing opens -- the same sentence the card carries in a tooltip, drawn in the panel as its run line because the panel is text and a tooltip is not',
+    },
+    label: {
+      within: 'fact',
+      reason:
+        'the `fact` helper\'s own label parameter; every call site passes one of this file\'s four fact words (`GRAPH_STREAM_FACT`, `GRAPH_RUN_FACT`, `GRAPH_DEPENDS_ON`, `GRAPH_UNBLOCKS`)',
+    },
+    spelling: {
+      within: 'legendItem',
+      reason:
+        'one line of the legend: a word of `GRAPH_LEGEND_WORDS` (`graph/model.ts`\'s own `STATE_WORDS`, which is one exhaustive function over the closed `PlanState` union, less the unreachable `stuck`), or `GRAPH_DEPENDS_ON`/`GRAPH_CRITICAL_PATH` for the two kinds of line -- this file\'s own vocabulary and never a document string',
+    },
   },
   'run.ts': {
     UNAVAILABLE_MARK:
@@ -238,6 +247,23 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       reason:
         'the parameter of the `numberCell` helper itself; every call site passes one of this file\'s own count words (`COORDINATOR_RECORDS_WORD`, `COORDINATOR_IN_FLIGHT_COUNT_WORD`, `COORDINATOR_COLLISIONS_WORD`), so no document string reaches the sink',
     },
+    label: {
+      within: 'jobsControl',
+      reason:
+        'the parameter of the `jobsControl` helper itself, which is the job list\'s two controls (console 0.119.0, K4): its two call sites pass `COORDINATOR_JOBS_LOAD_WORD` and `COORDINATOR_JOBS_OLDER_WORD`, this file\'s own control words, so no document string reaches the sink',
+    },
+    'question.word': {
+      within: 'fillTranscriptQuestions',
+      reason:
+        'a word of `COORDINATOR_TRANSCRIPT_QUESTIONS`, the console\'s own frozen table of the pane\'s three fixed questions (console 0.119.0, K5), so no document string reaches the sink',
+    },
+    STAMP_REFRESH_LABEL:
+      'the console\'s own word for the stamp\'s one control (`src/renderer/section.ts`), the label `renderStamp` already writes on every screen\'s Refresh: K4\'s and K5\'s follow-ups draw the row a **refused** read is left with (`coordinatorRefreshLine`), and its control is the console\'s press and never a string a document chose',
+    sentence: {
+      within: 'floorNote',
+      reason:
+        'the parameter of the `floorNote` helper itself, which is the sentence a floor is drawn as (`coordinatorJobsFloorNote` and `coordinatorWindowNote`): its two call sites pass `COORDINATOR_JOBS_FLOOR_WORD` and `COORDINATOR_WINDOW_FLOOR_WORD`, this file\'s own floor words, and the version drawn beside each is the handshake\'s own line rather than a document string',
+    },
   },
   // The two drawings console 0.116.1 adds: the panel's reading placeholder and
   // the Graph's no-checkout card. Neither is handed a document string that
@@ -250,6 +276,8 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
   'nocheckout.ts': {
     'drawn.ok ? drawn.text : REFUSAL_UNREADABLE':
       'the CLI\'s refusal sentence on the `SourceRefusal` channel (`src/source/source.ts`), not a document string, **through `sanitizeRefusal`** -- the same text and the same treatment `degraded.ts` gives it (design section 6.3 requires the remedy verbatim, a token a child echoed is still redacted), with `REFUSAL_UNREADABLE` for a sentence the sanitizer refuses, so the disclosure is never empty',
+    '`${NO_CHECKOUT_AUTO_SENTENCE} ${checkoutLabel(only)}`':
+      'this file\'s own sentence and **`checkoutLabel` of one entry of `row.checkoutChoices`**: that function\'s answer is a sanitizer\'s own result for the CLI\'s repository identity and directory (or this console\'s marker for a string it refused), which is the one document-shaped string a drawer may write -- the `launch.ts` `refusalText(recorded)` entry is the same case. The label names the directory the Graph is reading, which a bare "one checkout" would leave the operator to look up',
   },
   // The launch control (V2.5.1b) is the one screen that writes a string it was
   // also handed by a document -- the repository identities main recorded -- and
@@ -470,7 +498,21 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'panel.operation': '`OperationName`, the closed IPC allow-list union',
     'row.scope': '`ProjectCapScope`, a closed union the model assigns (`global`, `defaults`, `repo`)',
     slug: { within: 'capRowLine', reason: '`sanitizedKey(row.slug)`: the slug as `sanitizeText` drew it, null when refused' },
-    theme: { within: 'renderProjects', reason: 'a `ProjectsTheme`, the closed theme tuple' },
+    named: {
+      within: 'settingsPencil',
+      reason:
+        '`settingsKeyText(key)`: the row\'s key as `sanitizeText` drew it in the `branch` class -- the class whose grammar admits a dotted identifier whole -- or the console\'s own unavailable mark when the sanitizer refuses it, which is the same answer the key\'s own cell draws. The document string reaches the attribute only through that door',
+    },
+    '`${SETTINGS_PENCIL_LABEL} ${named}`': {
+      within: 'settingsPencil',
+      reason:
+        'the pencil\'s accessible name: the console\'s own word for the control, a space, and the sanitized key above. It is a name built from a constant and a sanitizer\'s answer, so no document string is in it that is not one already',
+    },
+    theme: {
+      within: 'renderProjectsFrame',
+      reason:
+        'a `ProjectsTheme`, the closed theme tuple. The write is the frame\'s: it is the shell the entry mounts in the frame the tab is opened in, and `renderProjects` draws the whole screen by calling it (console 0.117.0)',
+    },
   },
   'degraded.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
@@ -503,9 +545,24 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'picture.state.view': { within: 'header', reason: '`GraphViewName`, the closed `GRAPH_VIEWS` tuple' },
     'GRAPH_VIEW_NAMES[picture.state.view]': { within: 'header', reason: 'this file\'s own table of what each drawing is called, keyed by the same closed union' },
     'tabKey(option.tab)': {
-      within: 'tabs',
+      within: 'filter',
       reason:
         '`tabKey` spells a `GraphTab` as one string -- `all` for the All tab, `stream:<name>` otherwise -- so the attribute tells a stream called `all` from the All tab, which `tabOf` reads back',
+    },
+    'nodeKey(plan.id, task.id)': {
+      within: 'related',
+      reason:
+        'the layout key of one of the two lists the inspector draws, built the same way a card\'s own key is -- ids the model holds as **keys** and never spells (`graph/model.ts`\'s header) -- written into `data-key` and never drawn; the text beside it is the task\'s `Sanitized` title',
+    },
+    'key.state': {
+      within: 'legendItem',
+      reason:
+        'one legend line\'s `data-state`: a word of `GRAPH_LEGEND_WORDS` (the model\'s own `STATE_WORDS`, less `stuck`), so the swatch is drawn for a state the model can actually name',
+    },
+    'key.edge': {
+      within: 'legendItem',
+      reason:
+        'one legend line\'s `data-edge`: one of the two literal kinds this file\'s `legend` passes (a dependency and the critical path), the console\'s own vocabulary and never a document string',
     },
     'group.stream': {
       within: 'chips',
@@ -535,7 +592,7 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
   },
   'run.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
-    theme: { within: 'renderRun', reason: 'a `RunTheme`, the closed theme tuple' },
+    theme: { within: 'renderRunFrame', reason: 'a `RunTheme`, the closed theme tuple' },
     '`the document carries no ${field}`':
       'the console\'s own sentence for a field the record left out of this run, interpolating the wire path the caller passes (`row.repo`, `row.oauth_account`, `row.branch`) and nothing the document chose -- the same sentence `putReading` writes into the `title` of a reading with no number, written here because a column of the header is text rather than a reading',
     'stageShare(value, longest)': {
@@ -627,7 +684,16 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
   },
   'coordinator.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
-    theme: { within: 'renderCoordinator', reason: 'a `CoordinatorTheme`, the closed theme tuple' },
+    theme: {
+      within: 'renderCoordinatorFrame',
+      reason:
+        'a `CoordinatorTheme`, the closed theme tuple. The write is the frame\'s: it is the shell the entry mounts in the frame the tab is opened in, and `renderCoordinator` draws the whole screen by calling it (console 0.117.0)',
+    },
+    'pullName(label, link.repo)': {
+      within: 'pullButton',
+      reason:
+        'a pull request number\'s accessible name (K2b), and the same kind of value as `graph.ts`\'s `cardLabel`: the console\'s own verb, the repository that passed `pullLink` (main\'s own `PULL_REQUEST_REPO_RE` **and** the `repository` text class the cell beside it draws), and the label the row draws. The label is not a second conversion of a document string: `pullButton` is only reached with a link, and `pullLink` builds one only from a record that carries a whole positive `pr.number` -- which is exactly the case `recordLabel` answers `#<n>` for, so no run id, title or branch ever reaches the name. It is a name and not a drawing: it is never painted, and what a reader who cannot see the row hears is the number and where it lives',
+    },
   },
   'reading.ts': {
     theme: { within: 'renderReading', reason: 'a `SkewTheme`, the closed two-word theme union' },
@@ -1378,6 +1444,7 @@ describe('no module under src/renderer writes an inline style', () => {
     // the walk has nothing to find there.
     expect([...RENDERER_FILES]).toEqual([
       'app.ts',
+      'checkout.ts',
       'confirm.ts',
       'entry.ts',
       'graph/layout-client.ts',
@@ -1395,6 +1462,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'screens/run.ts',
       'screens/spend.ts',
       'section.ts',
+      'skeleton.ts',
       'writes.ts',
     ])
   })

@@ -24,6 +24,7 @@ import (
 
 	"github.com/dimipaun/fugaro/ee/coordinator"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -182,7 +183,7 @@ func newCoordinatorFixture(t *testing.T, seeds []coordinatorRunSeed, prs ...fake
 	host := &fake.Provider{Repo: "acme/app", SelfID: "1"}
 	host.State.PRs = prs
 	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
-		return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		return func(context.Context, string, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			return host, nil, nil
 		}, nil
 	})
@@ -222,7 +223,7 @@ func setCoordinatorGitHubRoot(t *testing.T, root string) {
 func setCoordinatorProject(t *testing.T, hosts map[string]*fake.Provider, tokens map[string]string) {
 	t.Helper()
 	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
-		return func(ctx context.Context, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		return func(ctx context.Context, kind, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			host, ok := hosts[repo]
 			if !ok {
 				return nil, nil, fmt.Errorf("the fixture has no host for %s", repo)
@@ -1044,6 +1045,26 @@ func TestCoordinatorStatusRefusesABitbucketProject(t *testing.T) {
 	}
 }
 
+// The refusal above is a property of the READ and not of the installation's
+// configuration: an installation that has opted into the credentials service
+// — the block IS the opt-in (localcfg.CredentialsService) — still gets it from
+// status, which is the read it has always been. `show` reads one Bitbucket
+// repository through the service's read mint (BB4); the project-wide read of
+// Bitbucket is BB5's, and a status read that widened with the block would be
+// BB5 arriving as a side effect of `fugaro update` writing a URL.
+func TestCoordinatorStatusBitbucketUnchangedWithService(t *testing.T) {
+	f := newCoordinatorFixture(t, coordinatorSeeds(), coordinatorPRs()...)
+	f.appendConfig(t, "  acme/legacy: { provider: bitbucket, base_branch: main, workflows: [web] }\n")
+	f.appendConfig(t, "credentials_service: { url: https://fugaro-credentials-abcde-uc.a.run.app }\n")
+	if lc := f.config(t); lc.CredentialsService == nil || lc.CredentialsService.URL == "" {
+		t.Fatal("the fixture's config carries no credentials_service block, so this test aims at nothing")
+	}
+	_, _, err := execute(t, "coordinator", "status", "--all", "--since", "0")
+	if fcli.ExitCode(err) != fcli.ExitUserError || !strings.Contains(err.Error(), "cannot be widened to a project") {
+		t.Fatalf("status on an installation with the credentials service: exit %d, %v", fcli.ExitCode(err), err)
+	}
+}
+
 // secretErrHost fails every read of a pull request with an error carrying the
 // credential, which is what a real host's 401 does.
 type secretErrHost struct {
@@ -1065,13 +1086,13 @@ func TestCoordinatorStatusNeverPrintsACredential(t *testing.T) {
 		open func([]string, func(string)) (coordinator.ProviderOpener, error)
 	}{
 		{"opening the provider", func([]string, func(string)) (coordinator.ProviderOpener, error) {
-			return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+			return func(context.Context, string, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 				return nil, []string{secret}, fmt.Errorf("github: the App credential %s was refused", secret)
 			}, nil
 		}},
 		{"reading a pull request", func([]string, func(string)) (coordinator.ProviderOpener, error) {
 			host := &fake.Provider{Repo: "acme/app", SelfID: "1"}
-			return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+			return func(context.Context, string, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 				return secretErrHost{Provider: host, secret: secret}, []string{secret}, nil
 			}, nil
 		}},
@@ -1426,10 +1447,19 @@ type coordinatorReportFixture struct {
 	db *gcpfake.RTDB
 }
 
+// newCoordinatorReportFixture is the ordinary installation the report and the
+// declarer are driven against: budget.firebase_project recorded beside
+// budget.rtdb_url — the pair `fugaro update --firebase-project` writes — and the
+// database carrying the mark that same command writes. It is the shape the
+// ownership question every writer into that database asks is answered "yes"
+// by (budgetDBUnadopted, docs/design/upgrade.md), so a test that hands the
+// database another installation's mark, or empties the mark and leaves data, is
+// the refusal and not a fixture that never could have been written to.
 func newCoordinatorReportFixture(t *testing.T) *coordinatorReportFixture {
 	t.Helper()
 	f := &coordinatorReportFixture{cloudFixture: newCloudFixture(t), db: gcpfake.NewRTDB(t)}
-	f.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, rtdb_url: "+f.db.URL+" }\n")
+	f.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: "+f.db.URL+" }\n")
+	f.db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "version": 1, "project": "aurora", "gcp_project": "proj-1234"})
 	return f
 }
 
@@ -1916,7 +1946,7 @@ func TestCoordinatorSweepMarksAHostItCannotOpenStale(t *testing.T) {
 	}
 	before, _ := f.view()
 	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
-		return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		return func(context.Context, string, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			return nil, nil, errors.New("the host is unreachable")
 		}, nil
 	})
@@ -1995,7 +2025,7 @@ func TestCoordinatorSweepNeverPrintsACredentialOrTheHostsText(t *testing.T) {
 	host := &fake.Provider{Repo: "acme/app", SelfID: "1"}
 	host.State.PRs = coordinatorPRs()
 	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
-		return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		return func(context.Context, string, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			return secretErrHost{Provider: host, secret: secret}, []string{secret}, nil
 		}, nil
 	})
@@ -2053,7 +2083,7 @@ func TestCoordinatorSweepRevokesEveryTokenItMinted(t *testing.T) {
 // to take back rather than a nil record to fail on.
 func TestCoordinatorSweepWithAnInjectedReader(t *testing.T) {
 	f := newCoordinatorSweepFixture(t, coordinatorSeeds(), coordinatorPRs()...)
-	reader, _, err := coordinatorReader(io.Discard)
+	reader, _, err := coordinatorReader(nil, os.Getenv, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2079,5 +2109,102 @@ func TestCoordinatorSweepIsHidden(t *testing.T) {
 				t.Errorf("fugaro coordinator sweep is not hidden")
 			}
 		}
+	}
+}
+
+// TestCoordinatorShowPrintsNoEscapeFromTheHostsText: the description and the
+// title are `coordinator show`'s two fields carrying a stranger's bytes, and
+// the text output is the surface that draws them for a person. The fixture's
+// title and body each carry a screen-clear (ESC [ 2J) and an OSC-8 hyperlink
+// (ESC ] 8 ; ; … BEL) — a sequence a terminal acts on and a reader cannot see —
+// so what this holds is the sanitiser's contract at the point it is reached: no
+// ESC and no BEL anywhere in the output, and the host's readable words still
+// there. The second half is why: a command that printed nothing would satisfy
+// the first on its own, and a reader that sanitised the document instead of the
+// line would satisfy it by inventing a field (§6.15 — the document is the
+// host's own answer).
+func TestCoordinatorShowPrintsNoEscapeFromTheHostsText(t *testing.T) {
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "coordinator_show_hostile.json"))
+	realOpen := showFixtureEnv(t, srv.URL)
+
+	newCoordinatorFixture(t, nil)
+	setCoordinatorHost(t, realOpen)
+
+	out, errOut, err := execute(t, "coordinator", "show", "--repo", "acme/app", "--pr", "1458")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	for _, bad := range []struct {
+		name string
+		r    rune
+	}{{"ESC", 0x1b}, {"BEL", 0x07}} {
+		if i := strings.IndexRune(out, bad.r); i >= 0 {
+			t.Errorf("the text output carries %s at byte %d, so the host's own bytes reached the terminal:\n%q", bad.name, i, out)
+		}
+	}
+	for _, want := range []string{"Add search", "Adds a search box to the header.", "Closes #1200."} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the text output does not carry %q, so the sanitiser dropped the host's words and not only its escapes:\n%q", want, out)
+		}
+	}
+	if strings.Contains(out, "ghs_fixture") {
+		t.Errorf("the text output carries the installation token:\n%q", out)
+	}
+
+	// The document is the other half of the boundary: it is the host's answer
+	// as data, and the escapes are still in it. A decoder at the far edge
+	// sanitises for its own surface; the CLI's text renderer is the one that
+	// does it here, and a rewrite of the field would be a field this read
+	// invented.
+	srv = httpfixture.Serve(t, filepath.Join("testdata", "coordinator_show_hostile.json"))
+	setCoordinatorHost(t, showFixtureEnv(t, srv.URL))
+	docOut, _, err := execute(t, "coordinator", "show", "--repo", "acme/app", "--pr", "1458", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(docOut), &doc); err != nil {
+		t.Fatalf("the document is not JSON (%v):\n%s", err, docOut)
+	}
+	for _, field := range []struct{ name, value string }{{"title", doc.Title}, {"body", doc.Body}} {
+		if !strings.ContainsRune(field.value, 0x1b) || !strings.ContainsRune(field.value, 0x07) {
+			t.Errorf("the document's %s = %q, want the host's own bytes: the read sanitised the data rather than the line", field.name, field.value)
+		}
+	}
+}
+
+// TestCoordinatorShowNeverPrintsTheTokenTheHostEchoed: the failure path of the
+// single read, end to end. The fixture's host answers the pull-request read
+// with a 500 whose body quotes the Authorization header back — the shape a
+// proxy or a debugging host really produces — so the text the provider hands
+// the reader carries the installation token. The reader holds that token in its
+// own cache (Project.minted) and not in the opener's secrets, which is the half
+// a redactor built from the opener alone would miss, so this asserts the
+// command's whole output and the failure it reports: the token in neither, the
+// marker in the failure, and the host's status as the exit code.
+func TestCoordinatorShowNeverPrintsTheTokenTheHostEchoed(t *testing.T) {
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "coordinator_show_echo.json"))
+	realOpen := showFixtureEnv(t, srv.URL)
+
+	newCoordinatorFixture(t, nil)
+	setCoordinatorHost(t, realOpen)
+
+	out, errOut, err := execute(t, "coordinator", "show", "--repo", "acme/app", "--pr", "1458", "--json")
+	if err == nil {
+		t.Fatalf("the host answered 500 and the command printed a document: %s", out)
+	}
+	for _, got := range []string{out, errOut, err.Error()} {
+		if strings.Contains(got, "ghs_fixture") {
+			t.Errorf("the installation token the host echoed reached the output: %q", got)
+		}
+	}
+	if !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Errorf("the failure is %v, want the token redacted in it", err)
+	}
+	if fcli.ExitCode(err) != fcli.ExitRemoteError {
+		t.Errorf("exit %d, want %d: the host refused the read, and that is the host's failure", fcli.ExitCode(err), fcli.ExitRemoteError)
 	}
 }

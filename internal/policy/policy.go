@@ -503,3 +503,36 @@ func (e Effective) Allows(model string) bool {
 	}
 	return false
 }
+
+// ValidVerifierAccounts checks the node's verifier list, entry by entry: each
+// one the bare address a Google ID token's email claim carries, and never one
+// of the IAM member spellings (user:, serviceAccount:) the installation's
+// launcher, operator and budget-admin lists are written with.
+//
+// The distinction is the whole rule rather than a style (C3.9g3, D1068): the
+// service matches this list against the claim the caller's ID token verified,
+// not against an IAM binding, so an entry written as a member spelling admits
+// nobody — a list the operator believes names a verifier and that admits no
+// caller at all. Refusing it here names the entry where the operator can see
+// it, which is the point of validating the node rather than trusting it: the
+// node is hand-writable, and the operator's own file is where the list is
+// written.
+//
+// It lives here and not in internal/projectpolicy because both the node's
+// decoder and the local config's loader apply it, and the loader importing
+// projectpolicy closes an import cycle through internal/backend/gcp that the
+// live-tagged tests of that package hit. The error text keeps the node's
+// "projectpolicy:" prefix, which is what the operator reads either way.
+func ValidVerifierAccounts(accounts []string) error {
+	for i, addr := range accounts {
+		at := fmt.Sprintf("projectpolicy: verifier_accounts[%d]", i)
+		if strings.Contains(addr, ":") {
+			return fmt.Errorf("%s: %q is an IAM member spelling, and a verifier is not an IAM binding: an entry is the bare address a Google ID token's email claim carries (for example fugaro-coordinator@<gcp-project>.iam.gserviceaccount.com), never \"user:%s\" or \"serviceAccount:%s\"", at, addr, addr, addr)
+		}
+		local, domain, ok := strings.Cut(addr, "@")
+		if !ok || local == "" || domain == "" || strings.Contains(domain, "@") || strings.ContainsAny(addr, " \t\r\n") {
+			return fmt.Errorf("%s: %q is not an email address: an entry is the bare address a Google ID token's email claim carries (for example fugaro-coordinator@<gcp-project>.iam.gserviceaccount.com)", at, addr)
+		}
+	}
+	return nil
+}

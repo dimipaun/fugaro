@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/summary.schema.json",
+  "title": "Fugaro runs summary",
+  "description": "The document `fugaro runs summary --json` prints: the runs of one window counted by repository and by state, and what they spent, read from the budget database's day counters and the spend history's daily documents, with no run object read. It is the read the console's Project, Coordinator and Spend tabs paint their totals from, so it is cheap by construction: neither the runs bucket nor the compute backend is opened. Members are only ever added within a version (D784), so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps v. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which D784 promises to keep readable under the same version.",
+  "type": "object",
+  "required": [
+    "v",
+    "project",
+    "since",
+    "until",
+    "repositories",
+    "totals",
+    "days_unknown",
+    "notes"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "$comment": "summaryDocVersion in internal/cli/runs_summary.go."
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The selected project's name: the installation whose budget database and spend history were read."
+    },
+    "since": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "The window's first UTC day, YYYY-MM-DD. It is always a date: a summary is per UTC day, so a window with no lower bound is refused rather than answered."
+    },
+    "until": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "The window's last UTC day, which is today."
+    },
+    "repositories": {
+      "type": "array",
+      "description": "One row per repository either source named in the window, sorted by slug. Empty when nothing ran: the repositories the sources do not mention are not rows, since the runs bucket is never listed to find them.",
+      "items": {
+        "$ref": "#/$defs/repository"
+      }
+    },
+    "totals": {
+      "$ref": "#/$defs/figures",
+      "description": "The same figures over every row of repositories."
+    },
+    "days_unknown": {
+      "type": "array",
+      "description": "The window's UTC days that neither source answered for, ascending, YYYY-MM-DD. Their runs and their spend are unknown and are counted in no figure here: zero would be a figure, and nothing is known about them. A day is unknown when the budget database no longer holds it (it holds today and the budget.PruneAfter days before it) and the spend history could not answer -- no Firebase backend, no database, no history mark, or a read that failed. A day inside the database's window with no node is a day nothing ran on, which is known, and is not listed.",
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+      }
+    },
+    "notes": {
+      "type": "array",
+      "description": "What the figures count and what the read could not cover, one line each: the two sources, the day a run is counted on, an unavailable source with its reason, and how much of the window is unknown. A human table prints them above its table; a consumer may show them as they are.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "$defs": {
+    "figures": {
+      "type": "object",
+      "required": [
+        "runs",
+        "states",
+        "spent_micros",
+        "notional_micros",
+        "compute_micros",
+        "compute_runs"
+      ],
+      "properties": {
+        "runs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many runs the window holds, each counted once on the UTC day the budget recorded its spend. A run the sources have not settled is counted here and in no state, so runs is at least the sum of states."
+        },
+        "states": {
+          "$ref": "#/$defs/states"
+        },
+        "spent_micros": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The model money the caps count, in micro-dollars: the same quantity the budget database's day counters hold, so nothing is rounded on the way out."
+        },
+        "notional_micros": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The part of the model figure a subscription paid, in micro-dollars: it counts toward the plan's limits and is nobody's bill. It is separate from spent_micros and the two are never summed."
+        },
+        "compute_micros": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "What the runs whose compute was priced came to, in micro-dollars, over the compute_runs of them. null when the row has runs and no run's compute is known -- 'not estimated' is not 'free' -- and 0 when the row has no run at all, which is a fact. This read opens no runs bucket, so a live day's compute is never estimated here."
+        },
+        "compute_runs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many runs compute_micros covers: the runs of the window whose compute was priced. It is at most runs, and a figure covering fewer runs than the window holds is a lower bound a consumer can see."
+        }
+      }
+    },
+    "states": {
+      "type": "object",
+      "description": "One count per state, each derived by adding the window's day records together. A source figure below zero is not a count -- a window's nodes can disagree, and a history document can hold one an older release miscounted -- so it is added as nothing and every count here stays at or above the 0 its own minimum states. The document carries the clamped figure, which is the figure the human table prints beside it.",
+      "required": [
+        "succeeded",
+        "failed",
+        "halted",
+        "cancelled",
+        "infra_error",
+        "other"
+      ],
+      "properties": {
+        "succeeded": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "halted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cancelled": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "infra_error": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "other": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Every run whose outcome node or history document names a status outside this vocabulary: a status another release wrote is visible here rather than dropped or given a key of its own. All six keys are always present, zero included, so a consumer reads a count without a nil check."
+        }
+      }
+    },
+    "repository": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/figures"
+        }
+      ],
+      "required": [
+        "slug",
+        "repo"
+      ],
+      "properties": {
+        "slug": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The storage key the budget database and the spend history hold the repository under (task.Slug), which is what a day record's own slug is."
+        },
+        "repo": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The repository's owner/name, as the day records carry it. It falls back to slug for a repository whose display name nothing recorded."
+        }
+      }
+    }
+  }
+}

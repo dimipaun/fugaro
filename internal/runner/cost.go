@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
-	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -39,7 +38,7 @@ func (r *run) stageTiming(name string, started time.Time, claudeUSD float64, sub
 		Name:      name,
 		StartedAt: started.UTC(),
 		DurationS: r.d.Now().Sub(started).Seconds(),
-		Model:     r.cfg.Agent.ModelFor(config.StageRole(name)),
+		Model:     r.stageModel(name),
 		// The stage's sub-agent tool calls, counted by the relay from its
 		// own stream for every auth mode. Always set: the relay counts even
 		// a stage that spawned none, and 0 sub-agents is a figure, unlike an

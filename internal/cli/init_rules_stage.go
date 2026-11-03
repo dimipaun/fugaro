@@ -170,27 +170,43 @@ func rulesSeparateFirebaseProject(lc *localcfg.Config) string {
 //
 // declined names what the caller would have written there and program the
 // command the way out is run with, so one sentence serves every door. declined
-// ends the sentence on every path, the two halves of the config and the
-// database's own refusals alike: what was NOT done is the caller's fact and not
-// the database's, and the operator reading a skipped stage or a refused job has
-// to know nothing was written.
+// ends the sentence on the database's own answers — Check refusing and Check
+// failing alike — because what was NOT done is the caller's fact and not the
+// database's, and the operator reading a refused job has to know nothing was
+// written. The config's half keeps the stage's sentence instead and not a
+// caller's (rulesUnavailable): the two sentences there are what `fugaro update`
+// is skipped with, they are printed before any database is opened, and the
+// foreign-database one already ends on the fact that nothing was read or
+// written.
 func budgetDBUnadopted(ctx context.Context, lc *localcfg.Config, db *infra.DB, declined, program string) string {
+	why, _ := budgetDBUnadoptedErr(ctx, lc, db, declined, program)
+	return why
+}
+
+// budgetDBUnadoptedErr is budgetDBUnadopted with the database's own error kept
+// beside the sentence. There is one implementation and not two — the string form
+// above is this function with the error dropped — and the error is kept because
+// a CLI command has to turn the answer into an exit code: Check refusing (a mark
+// that is not ours, data and no mark) is the user's to fix and exits 1, while
+// Check failing to reach the database is an outage and exits 2, and a rendered
+// sentence cannot carry that difference.
+func budgetDBUnadoptedErr(ctx context.Context, lc *localcfg.Config, db *infra.DB, declined, program string) (string, error) {
 	if detail := rulesUnavailable(lc); detail != "" {
-		return detail
+		return detail, nil
 	}
 	marked, err := db.Check(ctx)
 	if err != nil {
-		return fmt.Sprintf("%v: %s", oneLine(err.Error()), declined)
+		return fmt.Sprintf("%v: %s", oneLine(err.Error()), declined), err
 	}
 	if marked {
-		return ""
+		return "", nil
 	}
 	detail := rulesSeparateFirebaseProject(lc)
 	if detail == "" {
-		return ""
+		return "", nil
 	}
 	return fmt.Sprintf("%s: nothing proves the database at %s is this installation's — an empty database passes every check that asks it, and the mark (%s) is the one proof there is — so it is not this installation's database, and %s. Drop the config's budget.firebase_project (with the budget.rtdb_url beside it, which is that project's database) and run `%s --firebase-project %s` once to adopt the installation's own Firebase project: the mark that door writes is what lets plain %s converge there from then on",
-		detail, oneLine(lc.Budget.RTDBURL), budget.PathMark, declined, program, firebaseProjectIDWord(lc.GCPProject), program)
+		detail, oneLine(lc.Budget.RTDBURL), budget.PathMark, declined, program, firebaseProjectIDWord(lc.GCPProject), program), nil
 }
 
 // unadopted is budgetDBUnadopted for this stage: it is the stage that neither
