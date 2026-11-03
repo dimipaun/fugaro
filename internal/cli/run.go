@@ -2827,11 +2827,11 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 // entry no longer covers what the workflow needs — is refused, naming `fugaro
 // update`: the launcher cannot change a deployed job's image, and going on
 // would apply the tag's rule to an entry the run does not have. Nothing else
-// the ask can say refuses a launch: a backend that has no deployed job to read
-// (Cloud Batch starts one per run and keeps none), a job not deployed yet, and
-// a catalog the launcher cannot read — no checkout of this repository, no
-// fugaro.yaml, a file this binary cannot parse — are all "cannot tell", and
-// the launch's own steps speak for the two that are errors.
+// the ask can say refuses a launch: a backend that has no deployed job to
+// read (Cloud Batch starts one per run and keeps none) cannot be asked at all,
+// a job not deployed yet is refused by the launch's own step, and a catalog
+// the launcher cannot read — no checkout of this repository, no fugaro.yaml, a
+// file this binary cannot parse — is the deploy-time arm's to refuse (F7).
 //
 // The workflow it judges is the one in this launcher's working tree, as the
 // artifact gate's recipe is (recipeForLaunch) and for the same reason: the

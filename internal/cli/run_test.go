@@ -1787,9 +1787,9 @@ func TestACatalogMoveBetweenDeployAndLaunchIsRefused(t *testing.T) {
 			t.Errorf("the refusal is not a user error: %v", err)
 		}
 	})
-	// The entry is still there and no longer covers what the job needs: the
-	// catalog changed the entry under the job, and the deployed image is not
-	// the one the entry names now.
+	// The entry the deployed image is stays and no longer carries every tag
+	// the workflow needs: the catalog changed the entry under the job, so the
+	// deployed image is one the deploy would no longer choose for it.
 	t.Run("the entry no longer covers what the job needs", func(t *testing.T) {
 		f := newCloudFixture(t)
 		dockerCheckout(t, needsDocker)
@@ -1823,7 +1823,8 @@ func TestADeployedImageTheLauncherCannotReadIsNeverSwallowed(t *testing.T) {
 		dockerCheckout(t, needsDocker)
 		env := catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML, "")
 		env.be = deployedJob{codec: backend.CloudRunCodec(), readErr: errors.New("the platform is unreachable")}
-		if ask, err := catalogDockerAsk(context.Background(), env, appSlug, spec); ask || err == nil {
+		ask, err := catalogDockerAsk(context.Background(), env, appSlug, spec)
+		if ask || err == nil || !strings.Contains(err.Error(), "the platform is unreachable") {
 			t.Fatalf("ask = %v, err = %v, want the read's own failure", ask, err)
 		}
 	})
