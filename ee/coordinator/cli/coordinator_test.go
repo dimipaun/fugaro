@@ -580,7 +580,7 @@ func TestCoordinatorStatusAllReadsEveryRepository(t *testing.T) {
 			branch: "fugaro/20261013-150000-ffff", who: "someone@example.com",
 			status: runstore.StatusRunning, prRef: 21, base: "main", files: []string{"internal/api/handler.go"}},
 	), coordinatorPRs()...)
-	f.appendConfig(t, "  acme/other: { provider: github, base_branch: main, workflows: [web], github_app_id: \"" + appIDFixture + "\" }\n")
+	f.appendConfig(t, "  acme/other: { provider: github, base_branch: main, workflows: [web], github_app_id: \""+appIDFixture+"\" }\n")
 	other := &fake.Provider{Repo: "acme/other", SelfID: "2"}
 	other.State.PRs = []fake.PRState{coordinatorPR(21, "fugaro/20261013-150000-ffff", gitprov.PROpen, false)}
 	// The person's class: the two repositories are read through the tokens the
