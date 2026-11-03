@@ -29,8 +29,8 @@ const (
 
 // catalogBuildYAML is the catalog a build fixture's project names: an entry
 // written in project state, an entry whose Dockerfile is fetched out of the
-// repository the build runs from, and an entry that is a prebuilt image and
-// so has nothing to build.
+// repository the build runs from, an entry that is a prebuilt image and so has
+// nothing to build, and an entry whose Dockerfile is another repository's.
 const catalogBuildYAML = `image_catalog:
   entries:
     - name: tools
@@ -42,15 +42,42 @@ const catalogBuildYAML = `image_catalog:
     - name: prebuilt
       tags: [docker]
       source: { kind: image, image: "docker.io/library/node:22" }
+    - name: other
+      tags: [node]
+      source: { kind: dockerfile, repo: acme/other, path: .fugaro/other.Dockerfile }
 `
+
+// catalogBuildThreeYAML is three entries that all build, in the order they are
+// declared: what a whole-catalog build of a catalog whose second entry fails
+// shows about the first and the third.
+const catalogBuildThreeYAML = `image_catalog:
+  entries:
+    - name: alpha
+      tags: [node]
+      source: { kind: inline, inline: "FROM example.invalid/alpha\nRUN true\n" }
+    - name: beta
+      tags: [node]
+      source: { kind: inline, inline: "FROM example.invalid/beta\nRUN true\n" }
+    - name: gamma
+      tags: [node]
+      source: { kind: inline, inline: "FROM example.invalid/gamma\nRUN true\n" }
+`
+
+// catalogBuildWorkflowsYAML is bitbucketYAML with a second workflow, so a
+// catalog build has to take its secrets from the repository rather than from
+// one workflow: extra declares the secrets the test at hand needs.
+func catalogBuildWorkflowsYAML(secrets string) string {
+	second := "  extra: { secrets: [" + secrets + "], commands: { build: sh build.sh, test: sh test.sh } }\n"
+	return strings.Replace(bitbucketYAML, "workflows:\n", "workflows:\n"+second, 1)
+}
 
 // catalogBuildBucket is the runs bucket the catalog fixture's config names.
 const catalogBuildBucket = "fugaro-runs-proj-1234"
 
-// catalogBuildCheckout is a Bitbucket checkout of acme/app whose project names
-// the catalog above, with the fakes a Cloud Build needs, the installation's
-// shared registry a catalog image is pushed to (D1152) and the one build
-// secret the workflow declares.
+// catalogBuildCheckout is a Bitbucket checkout of acme/app whose fugaro.yaml
+// is repo and whose project names the catalog catalog, with the fakes a Cloud
+// Build needs, the installation's shared registry a catalog image is pushed to
+// (D1152) and the build secrets repo's workflows declare.
 //
 // Its record bucket is the GCS fake rather than the file:// bucket every other
 // cloud fixture uses: what the submission pins is the copy's object
@@ -59,10 +86,10 @@ const catalogBuildBucket = "fugaro-runs-proj-1234"
 // written through openRecordBucket, the seam every record-bucket caller has,
 // and the project-name check is answered from its cache, as it is in the
 // fixture that records to a gs:// bucket (setBucketURL).
-func catalogBuildCheckout(t *testing.T) (*gcpfake.Build, *gcpfake.GCS, *cloudFixture) {
+func catalogBuildCheckout(t *testing.T, repo, catalog string) (*gcpfake.Build, *gcpfake.GCS, *cloudFixture) {
 	t.Helper()
 	files := npmFiles()
-	files["fugaro.yaml"] = bitbucketYAML
+	files["fugaro.yaml"] = repo
 	files[".fugaro/base.Dockerfile"] = catalogBuildFetched
 	dir := checkoutWith(t, files)
 	testutil.Git(t, dir, "remote", "set-url", "origin", "https://bitbucket.org/acme/app.git")
@@ -93,7 +120,7 @@ func catalogBuildCheckout(t *testing.T) (*gcpfake.Build, *gcpfake.GCS, *cloudFix
 		return gcs.Bucket(t, catalogBuildBucket), nil
 	}
 	t.Cleanup(func() { openRecordBucket = prev })
-	f.appendConfig(t, catalogBuildYAML)
+	f.appendConfig(t, catalog)
 	fb.AddRegistry("proj-1234", "us-east5", gcp.SharedRegistryRepoID())
 	return fb, gcs, f
 }
@@ -176,7 +203,7 @@ func catalogBuildStep(t *testing.T, fb *gcpfake.Build, id string) map[string]any
 // Without a name every entry that has a Dockerfile is built, and one that is a
 // prebuilt image is named and passed over rather than failing the others.
 func TestImageBuildWithACatalogBuildsTheEntry(t *testing.T) {
-	fb, gcs, _ := catalogBuildCheckout(t)
+	fb, gcs, _ := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
 	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
 
 	out, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
@@ -273,8 +300,45 @@ func TestImageBuildWithACatalogBuildsTheEntry(t *testing.T) {
 	if got := buildPosts(fb) - before; got != 2 {
 		t.Errorf("the unnamed build submitted %d builds, want one per buildable entry", got)
 	}
-	if !strings.Contains(stderr, "prebuilt") {
-		t.Errorf("stderr = %q, want the prebuilt entry named", stderr)
+	for _, want := range []string{"prebuilt", "other"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr = %q, want %s named among the entries passed over", stderr, want)
+		}
+	}
+
+	// An entry whose Dockerfile is another repository's is refused by name:
+	// its build would run as that repository's account, which this checkout's
+	// submission is not.
+	before = buildPosts(fb)
+	_, _, err = executeBuild(t, "image", "build", "other", "--base", "b:1")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "other") || !strings.Contains(err.Error(), "acme/other") {
+		t.Fatalf("exit %d, err %v: a name of another repository's entry is refused where to run it", ExitCode(err), err)
+	}
+	if buildPosts(fb) != before {
+		t.Errorf("another repository's entry reached Cloud Build: %d posts", buildPosts(fb)-before)
+	}
+	// A named prebuilt entry is refused in the same way: it has no Dockerfile
+	// to copy and no build to submit.
+	_, _, err = executeBuild(t, "image", "build", "prebuilt", "--base", "b:1")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "prebuilt") {
+		t.Fatalf("exit %d, err %v: a prebuilt entry is named as having nothing to build", ExitCode(err), err)
+	}
+	if buildPosts(fb) != before {
+		t.Errorf("a prebuilt entry reached Cloud Build: %d posts", buildPosts(fb)-before)
+	}
+
+	// --no-wait reports the submitted build and its log instead of waiting
+	// for the digest the wait would report.
+	before = buildPosts(fb)
+	out, stderr, err = executeBuild(t, "image", "build", "tools", "--base", "b:1", "--no-wait")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if got := buildPosts(fb) - before; got != 1 {
+		t.Errorf("a --no-wait build submitted %d builds", got)
+	}
+	if !strings.Contains(out, "submitted Cloud Build build") || !strings.Contains(out, "log:") || strings.Contains(out, "@sha256:") {
+		t.Errorf("stdout = %q, want the submitted build and its log and no digest", out)
 	}
 }
 
@@ -315,7 +379,7 @@ func TestImageBuildWithoutACatalogKeepsItsMeaning(t *testing.T) {
 // the build does with it.
 func TestCatalogBuildNeverPutsASecretInALogOrAnError(t *testing.T) {
 	value := "npm-token-value-" + strings.Repeat("9", 24)
-	fb, _, f := catalogBuildCheckout(t)
+	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
 	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
 	// The secret holds a value in the project, as it does in a real one: what
 	// the CLI may carry of it is its name.
@@ -383,7 +447,7 @@ func TestCatalogBuildNeverPutsASecretInALogOrAnError(t *testing.T) {
 // with a name that only a catalog has — submits nothing and leaves the bucket
 // as it found it.
 func TestCatalogBuildCopiesNothingWithoutConfirmation(t *testing.T) {
-	fb, gcs, _ := catalogBuildCheckout(t)
+	fb, gcs, _ := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
 	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
 	noTerminal(t)
 
@@ -396,5 +460,108 @@ func TestCatalogBuildCopiesNothingWithoutConfirmation(t *testing.T) {
 	}
 	if !catalogCopyAbsent(t, gcs, "tools") {
 		t.Errorf("an unconfirmable build copied the entry's Dockerfile")
+	}
+}
+
+// TestCatalogBuildMountsEveryWorkflowsSecrets: an entry is not a workflow
+// (D1144), so its build mounts the secrets the repository declares — every
+// workflow's, each one mounted once — and a repository that declares several
+// workflows builds an entry the way one that declares a single workflow does.
+func TestCatalogBuildMountsEveryWorkflowsSecrets(t *testing.T) {
+	// extra declares app's own pair again beside one of its own, so a build
+	// that mounted the list per workflow would either mount NPM_TOKEN twice
+	// (which the request refuses) or drop a secret.
+	repo := catalogBuildWorkflowsYAML("{ name: npm-token, env: NPM_TOKEN }, { name: registry-token, env: REGISTRY_TOKEN }")
+	fb, _, _ := catalogBuildCheckout(t, repo, catalogBuildYAML)
+	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+
+	if _, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1"); err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if got := catalogBuildSubs(t, fb)["_SECRET_ENVS"]; got != "NPM_TOKEN REGISTRY_TOKEN" {
+		t.Errorf("_SECRET_ENVS = %v, want each declared variable once", got)
+	}
+	avail, _ := fb.Last()["availableSecrets"].(map[string]any)
+	mounted, _ := avail["secretManager"].([]any)
+	counts := map[string]int{}
+	for _, raw := range mounted {
+		m, _ := raw.(map[string]any)
+		env, _ := m["env"].(string)
+		counts[env]++
+	}
+	if counts["NPM_TOKEN"] != 1 || counts["REGISTRY_TOKEN"] != 1 {
+		t.Errorf("availableSecrets mounts %v, want each declared secret once", counts)
+	}
+	body, err := json.Marshal(fb.Last())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"npm-token", "registry-token"} {
+		if want := gcp.SecretID(mustSlug("bitbucket", "acme/app"), name); !strings.Contains(string(body), want) {
+			t.Errorf("the request does not name %s, which a workflow declares: %s", want, body)
+		}
+	}
+}
+
+// TestCatalogBuildRefusesTwoSecretsOnOneVariable: two workflows that mount
+// different secrets on one variable are refused before anything is copied or
+// submitted: a build mounts the repository's secrets, and one variable cannot
+// carry two of them.
+func TestCatalogBuildRefusesTwoSecretsOnOneVariable(t *testing.T) {
+	repo := catalogBuildWorkflowsYAML("{ name: other-token, env: NPM_TOKEN }")
+	fb, gcs, _ := catalogBuildCheckout(t, repo, catalogBuildYAML)
+	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+
+	_, _, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "NPM_TOKEN") || !strings.Contains(err.Error(), "other-token") {
+		t.Fatalf("exit %d, err %v: two secrets on one variable are refused", ExitCode(err), err)
+	}
+	if buildPosts(fb) != 0 {
+		t.Errorf("a refused build reached Cloud Build: %d posts", buildPosts(fb))
+	}
+	if !catalogCopyAbsent(t, gcs, "tools") {
+		t.Errorf("a refused build copied the entry's Dockerfile")
+	}
+}
+
+// TestCatalogBuildStopsAtTheEntryThatFails: a whole-catalog build submits its
+// entries in the order the catalog declares them and stops at the first that
+// fails. What was built before it stands — each entry is a build of its own,
+// promoted to its own image — and the entries after it are never copied or
+// submitted.
+func TestCatalogBuildStopsAtTheEntryThatFails(t *testing.T) {
+	fb, gcs, _ := catalogBuildCheckout(t, bitbucketYAML, catalogBuildThreeYAML)
+	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+	// The fake runs a build's steps under its own lock, so the hook is the
+	// only place a test can fail one build and not the next.
+	n := 0
+	fb.SetStep("build", func(string) error {
+		n++
+		if n == 2 {
+			return errors.New("this entry's build fails")
+		}
+		return nil
+	})
+
+	out, stderr, err := executeBuild(t, "image", "build", "--base", "b:1")
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v (%s)", ExitCode(err), err, stderr)
+	}
+	if buildPosts(fb) != 2 {
+		t.Fatalf("the failed build submitted %d builds, want the first two and no more", buildPosts(fb))
+	}
+	if !strings.Contains(err.Error(), "b0002") {
+		t.Errorf("err = %v, want the failing build named", err)
+	}
+	alpha := catalogBuildImage(t, "alpha")
+	if !strings.Contains(out, "built "+alpha+"@sha256:") {
+		t.Errorf("stdout = %q, want the first entry reported as built before the failure", out)
+	}
+	if fb.Tag(alpha, "latest") == "" || fb.Tag(alpha, "candidate-b0001") != "" {
+		t.Errorf("the first entry's build did not finish on its own: latest %q, candidate %q", fb.Tag(alpha, "latest"), fb.Tag(alpha, "candidate-b0001"))
+	}
+	catalogCopy(t, gcs, "alpha")
+	if !catalogCopyAbsent(t, gcs, "gamma") {
+		t.Errorf("an entry after the failing one was copied: the build went on past the failure")
 	}
 }

@@ -51,7 +51,15 @@ func runImageBuildCatalogOrDerived(cmd *cobra.Command, name string, o imageBuild
 	if err != nil {
 		return err
 	}
-	if cat := effectiveCatalog(ctx, env); cat != nil && len(cat.Entries) > 0 {
+	cat, catErr := effectiveCatalog(ctx, env)
+	if catErr != nil {
+		// The published node is what decides between two different things
+		// here — the entry the operator named and the checkout's derived
+		// image — so a node this machine cannot read is said out loud rather
+		// than taken for an empty catalog.
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: could not read the project's published policy (%s), so this machine's own configuration is what says whether the project has an image catalog\n", oneLine(catErr.Error()))
+	}
+	if cat != nil && len(cat.Entries) > 0 {
 		defer env.Close()
 		for _, w := range env.lc.Warnings() {
 			fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
@@ -102,11 +110,21 @@ func catalogBuildNotConfirmable(conds initflow.Conditions, o imageBuildOptions, 
 func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv, cat *config.Catalog, name string) error {
 	ctx := cmd.Context()
 	lc := env.lc
-	root, rf, workflow, err := loadCheckoutWorkflow(ctx, "", lc, layerOptions{})
+	root, rf, err := loadCheckoutResolved(ctx, "", lc, layerOptions{})
 	if err != nil {
 		return err
 	}
 	cfg := rf.Cfg
+	// A catalog entry is not a workflow (D1144), and nothing a catalog build
+	// reads is per workflow: the base kind is the one there is (below), the
+	// smoke's spec is the same for every workflow (image.SpecForCloud reads
+	// that same constant and only checks that the name it is given exists),
+	// and the secrets are the repository's (catalogBuildSecrets). So a
+	// repository that declares several workflows is not asked to pick one to
+	// build an entry with: the first name is the one the spec is rendered for.
+	// loadCheckoutResolved has already refused a file with no workflow, so
+	// there is always one.
+	workflow := slices.Sorted(maps.Keys(cfg.Workflows))[0]
 	origin, err := originRepo(ctx)
 	if err != nil {
 		return err
@@ -130,9 +148,14 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	if err != nil {
 		return err
 	}
+	// There is one base kind (config.Bases holds it alone, and every workflow
+	// reports it), so no base here is any workflow's: a catalog image is built
+	// FROM an arbitrary base by its own Dockerfile (D1151), and this one is
+	// the base the build itself runs on.
+	kind := config.BaseKind
 	base := o.base
 	if base == "" {
-		base = lc.BaseImage(cfg.Workflows[workflow].BaseKind())
+		base = lc.BaseImage(kind)
 	}
 	if base == "" {
 		if base, err = image.BaseRef(Version); err != nil {
@@ -148,7 +171,6 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	if err != nil {
 		return userErr("%v", err)
 	}
-	kind := cfg.Workflows[workflow].BaseKind()
 	for _, k := range slices.Sorted(maps.Keys(lc.BaseImages)) {
 		if foreignProxyRef(lc.BaseImages[k], host, k, baseOwner(lc)) {
 			return foreignProxyRefusal("the base image for "+k, lc.BaseImages[k], host, k, baseOwner(lc))
@@ -162,10 +184,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	if specLC.BaseImages == nil {
 		specLC.BaseImages = map[string]string{}
 	}
-	for _, w := range cfg.Workflows {
-		k := w.BaseKind()
-		specLC.BaseImages[k] = cmp.Or(specLC.BaseImages[k], base)
-	}
+	specLC.BaseImages[kind] = cmp.Or(specLC.BaseImages[kind], base)
 	rs, err := infra.Repo(infra.Inputs{LC: &specLC, Repo: repo, Cfg: cfg, FileSetsBaseBranch: fileSetsBaseBranch(rf), RepoURL: repoURL})
 	if err != nil {
 		return userErr("%v", err)
@@ -193,6 +212,10 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	selftestJSON, err := json.Marshal(selftest)
 	if err != nil {
 		return userErr("%v", err)
+	}
+	secrets, err := catalogBuildSecrets(cfg)
+	if err != nil {
+		return err
 	}
 	// The image is spelled from the host the installation's registries are
 	// under and not from a region of this command's own, so a build pushes
@@ -259,7 +282,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			Base: base, Image: imageRef,
 			Definition:     gcp.CatalogDefinition{SourceCommit: commit, Generation: gen, SHA256: hex.EncodeToString(sum[:])},
 			ServiceAccount: rs.BuildServiceAccountEmail, MachineType: lc.Build.MachineType,
-			WorkflowSecrets: cfg.Workflows[workflow].Secrets,
+			WorkflowSecrets: secrets,
 			Bucket:          lc.RecordBucketURL(), Selftest: selftestJSON, NoSmoke: o.noSmoke,
 		})
 		switch {
@@ -354,6 +377,37 @@ func catalogEntryNamed(cat *config.Catalog, name string) (config.Entry, bool) {
 		}
 	}
 	return config.Entry{}, false
+}
+
+// catalogBuildSecrets is what a catalog build mounts as BuildKit file
+// secrets: the repository's build secrets, which are the ones its workflows
+// declare. An entry is not a workflow (D1144), so no one workflow's list is
+// the entry's, and a build that took one workflow's would go without a secret
+// another declares. The same pair declared twice is one mount; two workflows
+// that mount different secrets on one variable are refused, rather than the
+// build silently getting one of the two (CatalogBuildSpec.check refuses a
+// variable used twice for the same reason).
+func catalogBuildSecrets(cfg *config.Config) ([]config.Secret, error) {
+	var out []config.Secret
+	owner := []string{} // parallel to out: the workflow whose declaration added it
+	at := map[string]int{}
+	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+		for _, ws := range cfg.Workflows[name].Secrets {
+			i, ok := at[ws.Env]
+			if !ok {
+				at[ws.Env] = len(out)
+				owner = append(owner, name)
+				out = append(out, ws)
+				continue
+			}
+			if out[i] != ws {
+				return nil, userErr("workflows %s and %s mount different secrets as %s (%s and %s): a catalog build mounts the repository's secrets, so one variable cannot carry two",
+					pluginwire.Printable(owner[i]), pluginwire.Printable(name), pluginwire.Printable(ws.Env),
+					pluginwire.Printable(out[i].Name), pluginwire.Printable(ws.Name))
+			}
+		}
+	}
+	return out, nil
 }
 
 // catalogBuildBanner is what a catalog build's confirmation says it does:
