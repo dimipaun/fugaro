@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -1464,5 +1465,216 @@ func TestStoredFollowUpRefusesADifferentPlanTask(t *testing.T) {
 	out, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--plan-task", "setup-wizard/W1.3", "also rename x")
 	if err != nil || !strings.Contains(out, "already launched") {
 		t.Fatalf("out = %q, err = %v", out, err)
+	}
+}
+
+// dockerCatalogYAML is a project catalog in which one entry carries the
+// docker tag, so a job that needs a daemon has exactly one candidate on the
+// VM backend and none on Cloud Run (reconciliation §3.1, D1149).
+const dockerCatalogYAML = `image_catalog:
+  entries:
+    - name: minimal
+      tags: [node]
+      source: { kind: image, image: ghcr.io/acme/minimal:1 }
+    - name: dind
+      tags: [node, docker]
+      source: { kind: image, image: ghcr.io/acme/dind:1 }
+`
+
+// dockerDefaultCatalogYAML is the same catalog with the docker-tagged entry
+// marked default: the shape that makes the catalog speak for a repository that
+// names nothing, and the one a workflow keeping its own image definition must
+// still not be judged by.
+const dockerDefaultCatalogYAML = `image_catalog:
+  entries:
+    - name: minimal
+      tags: [node]
+      source: { kind: image, image: ghcr.io/acme/minimal:1 }
+    - name: dind
+      tags: [node, docker]
+      default: true
+      source: { kind: image, image: ghcr.io/acme/dind:1 }
+`
+
+// dockerCheckout makes the working directory a checkout of acme/app whose web
+// workflow is web: the selection reads a job's tags from the checkout's
+// fugaro.yaml, so a job only asks for the docker tag when its repository's
+// file says so.
+func dockerCheckout(t *testing.T, web string) {
+	t.Helper()
+	baseBranchCheckout(t, "acme/app",
+		"version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web: "+web+"\n", "main")
+}
+
+// needsDocker is the web workflow of a repository whose job needs the docker
+// tag, and needsNode the one of an ordinary job: the two the tag's rule
+// separates.
+const (
+	needsDocker = "{ needs: [docker], commands: { build: sh b.sh, test: sh t.sh } }"
+	needsNode   = "{ needs: [node], commands: { build: sh b.sh, test: sh t.sh } }"
+)
+
+// catalogLaunchEnv is the fixture's local config with catalog appended, as
+// the launcher reads it, and the backend named by codec: the two things the
+// docker tag's rule is judged against at launch.
+func catalogLaunchEnv(t *testing.T, f *cloudFixture, codec backend.Codec, catalog string) *cloudEnv {
+	t.Helper()
+	f.appendConfig(t, catalog)
+	lc, err := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &cloudEnv{lc: lc, be: backendNamed{codec: codec}}
+}
+
+// startedAny reports whether the fake started any execution: the "nothing was
+// created" half of a refusal that has to happen before the job exists.
+func startedAny(f *cloudFixture) bool {
+	for _, r := range f.run.Requests() {
+		if strings.HasSuffix(r.Path, ":run") {
+			return true
+		}
+	}
+	return false
+}
+
+// The docker tag is a claim about the backend, not about the image (D1149),
+// and the launcher is what picks the backend: a job the deploy chose while
+// the catalog was read for one backend can be launched onto the other, so the
+// tag's rule is judged again here, before anything of the run is written. The
+// job this catalog gives a docker-needing workflow is dind, on Cloud Run that
+// is a job that would start and die on its first docker command, and §3.3's
+// second message says so instead.
+//
+// Mutation (drop the call in launchRun): the run is launched on Cloud Run.
+func TestACatalogDockerImageIsRefusedOnCloudRunBeforeTheLaunch(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, dockerCatalogYAML)
+	dockerCheckout(t, needsDocker)
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261103-100000-a1b2", "Add a feature")
+	if err == nil || !strings.Contains(err.Error(), "Cloud Run gen-2 has no Docker daemon") {
+		t.Fatalf("err = %v, want the docker tag's Cloud Run refusal", err)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("the refusal is not a user error: %v", err)
+	}
+	if startedAny(f) {
+		t.Fatal("a job was started for a run whose image needs a Docker daemon this backend has not got")
+	}
+}
+
+// The same launch on the VM backend is not refused: the socket recipe is
+// asked for, exactly as a workflow that set docker: true asks for it, and the
+// batch backend mounts the socket when its installation records a gid
+// (design compute-backend.md §2.2). The tag is one rule everywhere (D1149),
+// so the only difference between the two subtests is the backend.
+func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
+	spec := &task.Spec{Version: 1, RunID: "20261103-100000-a1b2", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "Add a feature"}
+
+	t.Run("the VM backend is given the socket", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dockerCheckout(t, needsDocker)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.BatchCodec(), dockerCatalogYAML), spec)
+		if err != nil {
+			t.Fatalf("the VM backend refused a docker-tagged image: %v", err)
+		}
+		if !ask {
+			t.Error("the run did not ask the VM backend for the Docker socket, so its first docker command would fail")
+		}
+	})
+	t.Run("Cloud Run refuses it", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dockerCheckout(t, needsDocker)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML), spec)
+		if ask || err == nil || !strings.Contains(err.Error(), "Cloud Run gen-2 has no Docker daemon") {
+			t.Fatalf("ask = %v, err = %v, want the Cloud Run refusal", ask, err)
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("the refusal is not a user error: %v", err)
+		}
+	})
+	// The control for both: the same catalog and the same checkout, with a
+	// workflow that needs no daemon. Nothing is refused and nothing is asked
+	// for, so what the two subtests above see is the tag and not the catalog.
+	t.Run("a job that needs no daemon asks for nothing", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dockerCheckout(t, needsNode)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML), spec)
+		if err != nil || ask {
+			t.Fatalf("ask = %v, err = %v, want neither", ask, err)
+		}
+	})
+	// A pin reaches the entry by name and not by coverage, and the tag's rule
+	// follows the pin (D1149): the repository that names dind is refused on
+	// Cloud Run even though it needs no tag at all.
+	t.Run("a pin to the docker entry is refused on Cloud Run", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dockerCheckout(t, "{ image_name: dind, commands: { build: sh b.sh, test: sh t.sh } }")
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), dockerCatalogYAML), spec)
+		if ask || err == nil || !strings.Contains(err.Error(), "Cloud Run gen-2 has no Docker daemon") {
+			t.Fatalf("ask = %v, err = %v, want the Cloud Run refusal for the pin", ask, err)
+		}
+	})
+	// A project with no catalog is not a refusal: the tag's rule has nothing
+	// to judge, and the job runs the image the deploy gave it, which is every
+	// installation before its catalog exists (F1).
+	t.Run("no catalog, nothing to judge", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dockerCheckout(t, needsDocker)
+		ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, backend.CloudRunCodec(), ""), spec)
+		if err != nil || ask {
+			t.Fatalf("ask = %v, err = %v, want neither", ask, err)
+		}
+	})
+	// A workflow that keeps its own image definition is not the catalog's job
+	// at all (D1155): the deploy gave it the image this project builds for the
+	// repository, so the launcher must not judge it against an entry it does
+	// not run — here the catalog's default is the docker entry, which would
+	// otherwise refuse this launch on Cloud Run and ask a VM for a socket.
+	t.Run("its own image definition is not the catalog's", func(t *testing.T) {
+		for name, codec := range map[string]backend.Codec{"cloud-run": backend.CloudRunCodec(), "cloud-batch": backend.BatchCodec()} {
+			f := newCloudFixture(t)
+			dockerCheckout(t, "{ image: { apt: [jq] }, commands: { build: sh b.sh, test: sh t.sh } }")
+			ask, err := catalogDockerAsk(context.Background(), catalogLaunchEnv(t, f, codec, dockerDefaultCatalogYAML), spec)
+			if err != nil || ask {
+				t.Fatalf("%s: ask = %v, err = %v, want neither", name, ask, err)
+			}
+		}
+	})
+}
+
+// TestARefusedLaunchDeclaresNothing: the docker tag's refusal is the launch's
+// own judgement (D1149), and a launch that is refused is not a launch. The
+// declaration is the coordinator's record that this run is about to work, so a
+// refusal has to come before it and not only before the token: otherwise the
+// coordinator is told about a run that had already been refused, and a reader
+// of its record sees work that never existed.
+//
+// Mutation (move the call back below declareLaunch): the declarer is handed a
+// refused run.
+func TestARefusedLaunchDeclaresNothing(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, dockerCatalogYAML)
+	dockerCheckout(t, needsDocker)
+	env := memEnv(t, f)
+	spec := raceSpecAt(t, env, "20261103-100002-abcd")
+	declared := 0
+	installDeclarer(t, func(context.Context, *Cloud, string, *task.Spec) error {
+		declared++
+		return nil
+	})
+
+	_, err := launchRun(context.Background(), env, appSlug, spec, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "Cloud Run gen-2 has no Docker daemon") {
+		t.Fatalf("err = %v, want the docker tag's Cloud Run refusal", err)
+	}
+	if declared != 0 {
+		t.Errorf("the refused launch was declared to the coordinator %d time(s)", declared)
+	}
+	if startedAny(f) {
+		t.Fatal("a refused launch started a job")
+	}
+	if _, err := runstore.Open(env.bucket.Bucket, appSlug, spec.RunID).ReadLaunch(context.Background()); err == nil {
+		t.Error("a refused launch left a launch record behind")
 	}
 }

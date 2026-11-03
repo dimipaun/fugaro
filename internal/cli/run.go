@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
+	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -2791,6 +2792,80 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 	return l, nil
 }
 
+// catalogDockerAsk answers whether this run needs a Docker daemon because the
+// image the project's catalog gave its job carries the docker tag (D1149),
+// and refuses the launch where the backend it is about to use cannot give it
+// one.
+//
+// It is the tag's own rule and not the workflow's `docker: true`, which the
+// backend refuses by itself (LaunchSpec.Docker is that ask, and the workflow
+// key reaches it through the task): a docker-tagged entry is an ordinary
+// candidate on the VM backend and never one on Cloud Run, which is decided
+// where the job's image is chosen (internal/infra) and judged here again
+// because the launcher is what picks the backend — a job deployed for one
+// backend, launched onto the other, would otherwise start and die on its
+// first docker command.
+//
+// Which jobs the catalog speaks for is catalog.Applies, the same predicate the
+// deploy-time spec builder uses: a workflow that keeps its own image
+// definition, or that runs the base or a shared layer, is not the catalog's,
+// and asking the rule on its behalf would refuse a launch for an entry the job
+// does not run.
+//
+// Nothing else the selection can say refuses a launch: an uncovered needed set
+// is a condition of the project's configuration and is refused where the job
+// spec is built (F7), before the job exists at all, and a catalog the launcher
+// cannot read — no checkout of this repository, no fugaro.yaml, a file this
+// binary cannot parse — is "cannot tell", which is never a refusal.
+//
+// The workflow it judges is the one in this launcher's working tree, as the
+// artifact gate's recipe is (recipeForLaunch) and for the same reason: the
+// launcher has the operator's checkout and the runner reads the task's ref. A
+// launch whose ref says something else is therefore judged by the tree, which
+// is the residual the deploy-time arm does not have — that arm builds the spec
+// the job is deployed with, from the same file (F7).
+func catalogDockerAsk(ctx context.Context, env *cloudEnv, spec *task.Spec) (bool, error) {
+	co := checkoutConfig(ctx, spec.Repo)
+	if co == nil {
+		return false, nil
+	}
+	w, ok := co.Workflows[spec.Workflow]
+	if !ok {
+		return false, nil
+	}
+	var published *config.Catalog
+	if p, found, err := env.policy.read(ctx, env.lc); err == nil && found {
+		published = p.ImageCatalog
+	}
+	cat := env.lc.ImageCatalogEffective(published)
+	if cat == nil || !catalog.Applies(*cat, w) {
+		return false, nil
+	}
+	be := catalog.Backend(launchBackend(env.be))
+	choice, err := catalog.Choose(catalog.Job{
+		Catalog: *cat,
+		Repos:   []catalog.Repo{{Slug: spec.Repo, Pin: w.ImageName, Needs: w.Needs}},
+		Backend: be,
+	})
+	if err != nil {
+		if errors.Is(err, catalog.ErrDockerOnCloudRun) {
+			return false, userErr("workflow %s: %v", spec.Workflow, err)
+		}
+		return false, nil
+	}
+	if !slices.Contains(choice.Entry.Tags, catalog.DockerTag) {
+		return false, nil
+	}
+	if be == catalog.Batch {
+		return true, nil
+	}
+	// The choice carries the tag on a backend with no daemon. Choose refuses
+	// this itself for a pin and for the default; an entry chosen from the
+	// candidates never carries the tag, so this is the same rule reached from
+	// the launcher's own backend rather than from the deploy-time one.
+	return false, userErr("workflow %s: %v", spec.Workflow, catalog.DockerOnCloudRunError())
+}
+
 // launchRun starts spec's execution, stored under slug, at most once, however many CLIs race
 // on the same run ID (design §4.7, Review Focus 1):
 //
@@ -2898,6 +2973,20 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		rcancel()
 		return res, userErr("run %s was cancelled; start a new one", res.Run)
 	}
+	// The docker tag's rule, before anything of this launch is written or
+	// reported (D1149): a run whose job image the catalog gave the docker tag
+	// is refused here on a backend with no daemon, and on the VM backend the
+	// answer asks the backend for the socket. Before the mint below, so a
+	// refused launch has no token to drop, and before the declaration, which
+	// is the coordinator's record that this run is about to work — a refusal
+	// must leave nothing behind that says otherwise.
+	docker, err := catalogDockerAsk(hctx, env, spec)
+	if err != nil {
+		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		releaseClaim(rctx, env, s, holder)
+		rcancel()
+		return res, err
+	}
 	// The launch declares itself to the coordinator's record (P4), beside the
 	// claim it just won: the caller the task already names, the branch the run
 	// is about to work on and the release that branch targets. It is a
@@ -2947,7 +3036,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, userErr("workflow %s is not a plain workflow name, so it can't be combined with Claude account %s; nothing started", oneLineCLI(spec.Workflow), pluginwire.Printable(spec.OAuthToken))
 	}
 	lctx, cancel := context.WithTimeout(hctx, launchTimeout)
-	lspec := backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: variant, RunID: spec.RunID, Timeout: launchTimeoutOf(spec)}
+	lspec := backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: variant, RunID: spec.RunID, Timeout: launchTimeoutOf(spec), Docker: docker}
 	if job != nil {
 		// The shared project job, by its own name. FUGARO_RUN is still set
 		// (backend/gcp's Launch): on a job every repository shares it is the
