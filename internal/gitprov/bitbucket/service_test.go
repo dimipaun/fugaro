@@ -157,11 +157,11 @@ func TestServiceReadTokens(t *testing.T) {
 	t.Run("a mint with nothing to present is refused without a call", func(t *testing.T) {
 		for _, tc := range []struct {
 			name string
-			s    ServiceReadTokens
+			s    *ServiceReadTokens
 		}{
-			{"no service URL", ServiceReadTokens{Repository: testReadRepo, IDToken: func(context.Context) (string, error) { return "x", nil }}},
-			{"no repository", ServiceReadTokens{URL: f.srv.URL, IDToken: func(context.Context) (string, error) { return "x", nil }}},
-			{"no identity", ServiceReadTokens{URL: f.srv.URL, Repository: testReadRepo}},
+			{"no service URL", &ServiceReadTokens{Repository: testReadRepo, IDToken: func(context.Context) (string, error) { return "x", nil }}},
+			{"no repository", &ServiceReadTokens{URL: f.srv.URL, IDToken: func(context.Context) (string, error) { return "x", nil }}},
+			{"no identity", &ServiceReadTokens{URL: f.srv.URL, Repository: testReadRepo}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				before := f.callCount
