@@ -28,6 +28,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -422,7 +423,7 @@ func runCoordinatorSweep(ctx context.Context, cmd *cobra.Command, getenv func(st
 	var tokens *coordinatorTokens
 	if test != nil && test.reader != nil {
 		reader = test.reader
-	} else if reader, tokens, err = coordinatorReader(warn); err != nil {
+	} else if reader, tokens, err = coordinatorReader(nil, warn); err != nil {
 		return err
 	}
 	// The tick holds each repository's token for as long as it reads and no
@@ -689,7 +690,7 @@ func runCoordinatorStatus(cmd *cobra.Command, o *coordinatorOptions) error {
 	if err != nil {
 		return err
 	}
-	reader, tokens, err := coordinatorReader(warn)
+	reader, tokens, err := coordinatorReader(env.Config(), warn)
 	if err != nil {
 		return err
 	}
@@ -873,17 +874,21 @@ func coordinatorRun(in runview.Input) coordinator.Run {
 // revokes when the command is done (coordinatorTokens). It is returned rather
 // than deferred here because "the command is done" is the caller's fact and not
 // the reader's: the reader has no end of its own.
-func coordinatorReader(warn io.Writer) (coordinator.Reader, *coordinatorTokens, error) {
+func coordinatorReader(lc *localcfg.Config, warn io.Writer) (coordinator.Reader, *coordinatorTokens, error) {
 	open, err := openCoordinatorProvider(os.Environ(), func(s string) { fmt.Fprintln(warn, safetext.MultiLine(s)) })
 	if err != nil {
 		return nil, nil, fcli.UserErr("%v", err)
 	}
+	// The Bitbucket read mint, wired only where a service URL resolved: with
+	// none, this reader has no Bitbucket credential and refuses one with
+	// ErrBitbucket exactly as it did before BB4 (G8).
+	readTokens := coordinatorBitbucketSource(lc, warn)
 	// The mint runs on the first call a repository's provider makes, and that
 	// call happens only for a repository whose runs name a pull request: this
 	// read needs no App credential to look at a project with nothing in it, and
 	// nothing here reads one to find that out.
 	tokens := &coordinatorTokens{}
-	return &coordinator.Project{Mint: tokens.mint, Open: open, Redact: agent.Redact}, tokens, nil
+	return &coordinator.Project{Mint: tokens.mint, Open: open, ReadTokens: readTokens, Redact: agent.Redact}, tokens, nil
 }
 
 // coordinatorTokens remembers the installation tokens one status run minted, so
@@ -975,19 +980,97 @@ func (t *coordinatorTokens) revoke(ctx context.Context) {
 // change it.
 var coordinatorGitHubAPIURL = github.DefaultBaseURL
 
+// envBitbucketReadServiceURL is the read mint's own override, read by the
+// Bitbucket opener and by nothing else. It is NOT
+// FUGARO_CREDENTIALS_SERVICE_URL: that one makes coordinatorAppCredential
+// refuse, so setting it on a person's machine would turn their GitHub read off
+// as well — the same reason the coordinator job gets its own name for the
+// service rather than the general one (F2, F23).
+const envBitbucketReadServiceURL = "FUGARO_BITBUCKET_READ_SERVICE_URL"
+
+// coordinatorBitbucketReadURL is where the read mint is, for the person
+// running this command: the override when it is set, and otherwise the
+// installation's own published credentials_service block — the value
+// `fugaro init` wrote from Terraform's outputs on the machine that deployed
+// the service and `localcfg.MergeShared` carries to every machine. Empty is an
+// installation that has not opted into the service, where Bitbucket is refused
+// exactly as it was before BB4 (G8).
+//
+// The override is an override on the BLOCK and not on the credential: what it
+// names is the service the person's own ID token is presented to, and the
+// block is what an operator's `fugaro update` wrote.
+func coordinatorBitbucketReadURL(lc *localcfg.Config) string {
+	if v := os.Getenv(envBitbucketReadServiceURL); v != "" {
+		return v
+	}
+	if lc != nil && lc.CredentialsService != nil {
+		return lc.CredentialsService.URL
+	}
+	return ""
+}
+
+// coordinatorBitbucketIDToken mints the caller's own Google ID token for the
+// read mint, which is the identity the service's person class verifies (BB4).
+//
+// It is a package variable and it REFUSES by default, deliberately: the
+// `fugaro` command that mints a person's ID token from their own Application
+// Default Credentials is coordinator P7's
+// (docs/coordinator/implementation-plan.md), and it is not in this tree yet.
+// A default that reached for something else — the metadata server, the
+// gcloud SDK — would be a second way to be a person, which is exactly what
+// BB4's whole design refuses. Until P7 lands, a Bitbucket read on a machine
+// with the service URL set is refused with this sentence and a test injects a
+// fake here.
+var coordinatorBitbucketIDToken = func(context.Context) (string, error) {
+	return "", fcli.UserErr("a Bitbucket read presents your own Google ID token to the installation's credentials service, and the command that mints one from your own credentials is not in this build (coordinator P7, docs/coordinator/implementation-plan.md). The read is refused rather than made with another identity")
+}
+
+// coordinatorBitbucketProvider opens the Bitbucket provider the read goes
+// through, on the API root this code pins. It is a seam so that a test can
+// hold the root to DefaultBaseURL with FUGARO_BITBUCKET_API_URL set, without a
+// network: the root is an argument to New and never a value read out of the
+// environment, which is what makes G10 a property of the call rather than of a
+// check.
+var coordinatorBitbucketProvider = func(o bitbucket.Options) (gitprov.Provider, error) {
+	return bitbucket.New(o)
+}
+
+// coordinatorBitbucketSource is the read mint as a token source for one
+// repository (BB4): the person's token, minted by the service for the one
+// repository named here and checked against the repository it was minted for.
+//
+// It is nil when no service URL resolved, and that nil is what keeps the
+// reader's own refusal of Bitbucket (coordinator.ErrBitbucket) in place on an
+// installation that has not opted into the service.
+func coordinatorBitbucketSource(lc *localcfg.Config, warn io.Writer) func(string) gitprov.TokenSource {
+	url := coordinatorBitbucketReadURL(lc)
+	if url == "" {
+		return nil
+	}
+	tokens := &bitbucket.ServiceReadTokens{URL: url, IDToken: coordinatorBitbucketIDToken}
+	return func(repo string) gitprov.TokenSource { return tokens.Repo(repo) }
+}
+
 // coordinatorProviderEnv is the environment a provider is opened with: the one
 // this command was handed, with the GitHub API root replaced by the pinned one,
 // so the redirect the process may carry for the run's own sake cannot decide
 // where the App credential's calls go (coordinatorGitHubAPIURL).
 func coordinatorProviderEnv(env []string) []string {
-	out := make([]string, 0, len(env)+1)
+	out := make([]string, 0, len(env)+2)
 	for _, kv := range env {
-		if strings.HasPrefix(kv, providers.EnvGitHubAPIURL+"=") {
+		if strings.HasPrefix(kv, providers.EnvGitHubAPIURL+"=") || strings.HasPrefix(kv, providers.EnvBitbucketAPIURL+"=") {
 			continue
 		}
 		out = append(out, kv)
 	}
-	return append(out, providers.EnvGitHubAPIURL+"="+coordinatorGitHubAPIURL)
+	// Both roots are pinned, and the Bitbucket one is pinned HERE as well as
+	// being pinned structurally in the opener (coordinatorBitbucketProvider
+	// passes DefaultBaseURL to New, which reads no environment): no path this
+	// process opens a provider on may carry a launcher's root, and a variable
+	// left in the environment is one a later caller could read.
+	return append(out,
+		providers.EnvGitHubAPIURL+"="+coordinatorGitHubAPIURL,
+		providers.EnvBitbucketAPIURL+"="+bitbucket.DefaultBaseURL)
 }
 
 // coordinatorRevoke revokes one installation token this command minted. It is a
@@ -1070,7 +1153,10 @@ var openCoordinatorProvider = func(env []string, warn func(string)) (coordinator
 	if err != nil {
 		return nil, err
 	}
-	return func(ctx context.Context, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
+	return func(ctx context.Context, kind, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		if kind == gitprov.KindBitbucket {
+			return openCoordinatorBitbucket(repo, src, warn)
+		}
 		if _, _, _, err := coordinatorAppCredential(); err != nil {
 			return nil, nil, err
 		}
@@ -1083,6 +1169,37 @@ var openCoordinatorProvider = func(env []string, warn func(string)) (coordinator
 		}
 		return p, secrets, nil
 	}, nil
+}
+
+// openCoordinatorBitbucket opens one Bitbucket repository's provider around
+// the token source the read mint gave it (BB4).
+//
+// The API root is DefaultBaseURL, passed to New as an argument: this provider
+// reads the environment for nothing, so FUGARO_BITBUCKET_API_URL cannot move
+// it (G10, T2.5). The source is the service's read token and never one of this
+// command's own mints, because this command holds no Bitbucket credential to
+// mint from — that is the whole of the Q12/(A)/D362 answer as BB4 builds it.
+//
+// It returns no credential values to redact: the consumer's key and secret
+// never leave the service, and the token is not this process's to print. The
+// provider's own Warn is the caller's, for the same reason the GitHub path
+// uses it.
+func openCoordinatorBitbucket(repo string, src gitprov.TokenSource, warn func(string)) (gitprov.Provider, []string, error) {
+	workspace, name, ok := gitprov.SplitRepo(repo)
+	if !ok {
+		return nil, nil, fcli.UserErr("repository %q must look like workspace/name", repo)
+	}
+	p, err := coordinatorBitbucketProvider(bitbucket.Options{
+		Workspace:   workspace,
+		Slug:        name,
+		TokenSource: src,
+		BaseURL:     bitbucket.DefaultBaseURL,
+		Warn:        warn,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return p, nil, nil
 }
 
 // installCoordinatorSource hands src to p as the source of every installation

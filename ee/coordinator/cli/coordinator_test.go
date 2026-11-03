@@ -183,7 +183,7 @@ func newCoordinatorFixture(t *testing.T, seeds []coordinatorRunSeed, prs ...fake
 	host := &fake.Provider{Repo: "acme/app", SelfID: "1"}
 	host.State.PRs = prs
 	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
-		return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		return func(context.Context, string, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			return host, nil, nil
 		}, nil
 	})
@@ -223,7 +223,7 @@ func setCoordinatorGitHubRoot(t *testing.T, root string) {
 func setCoordinatorProject(t *testing.T, hosts map[string]*fake.Provider, tokens map[string]string) {
 	t.Helper()
 	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
-		return func(ctx context.Context, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		return func(ctx context.Context, kind, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			host, ok := hosts[repo]
 			if !ok {
 				return nil, nil, fmt.Errorf("the fixture has no host for %s", repo)
@@ -1066,13 +1066,13 @@ func TestCoordinatorStatusNeverPrintsACredential(t *testing.T) {
 		open func([]string, func(string)) (coordinator.ProviderOpener, error)
 	}{
 		{"opening the provider", func([]string, func(string)) (coordinator.ProviderOpener, error) {
-			return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+			return func(context.Context, string, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 				return nil, []string{secret}, fmt.Errorf("github: the App credential %s was refused", secret)
 			}, nil
 		}},
 		{"reading a pull request", func([]string, func(string)) (coordinator.ProviderOpener, error) {
 			host := &fake.Provider{Repo: "acme/app", SelfID: "1"}
-			return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+			return func(context.Context, string, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 				return secretErrHost{Provider: host, secret: secret}, []string{secret}, nil
 			}, nil
 		}},
@@ -1926,7 +1926,7 @@ func TestCoordinatorSweepMarksAHostItCannotOpenStale(t *testing.T) {
 	}
 	before, _ := f.view()
 	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
-		return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		return func(context.Context, string, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			return nil, nil, errors.New("the host is unreachable")
 		}, nil
 	})
@@ -2005,7 +2005,7 @@ func TestCoordinatorSweepNeverPrintsACredentialOrTheHostsText(t *testing.T) {
 	host := &fake.Provider{Repo: "acme/app", SelfID: "1"}
 	host.State.PRs = coordinatorPRs()
 	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
-		return func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		return func(context.Context, string, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			return secretErrHost{Provider: host, secret: secret}, []string{secret}, nil
 		}, nil
 	})
@@ -2063,7 +2063,7 @@ func TestCoordinatorSweepRevokesEveryTokenItMinted(t *testing.T) {
 // to take back rather than a nil record to fail on.
 func TestCoordinatorSweepWithAnInjectedReader(t *testing.T) {
 	f := newCoordinatorSweepFixture(t, coordinatorSeeds(), coordinatorPRs()...)
-	reader, _, err := coordinatorReader(io.Discard)
+	reader, _, err := coordinatorReader(nil, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}

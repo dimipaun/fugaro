@@ -116,7 +116,7 @@ func runCoordinatorShow(cmd *cobra.Command, o *coordinatorShowOptions) error {
 		return err
 	}
 
-	reader, tokens, err := coordinatorReader(cmd.ErrOrStderr())
+	reader, tokens, err := coordinatorReader(env.Config(), cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}

@@ -168,6 +168,24 @@ func (s *ServiceReadTokens) now() time.Time {
 	return s.Now()
 }
 
+// Repo is this client for one repository: the same service, the same identity,
+// the same client, and a fresh cache, because a token minted for one
+// repository must never be handed to a read of another (G11). The service
+// mints for ONE repository per call and the answer names it, so the field this
+// sets is what the call carries and what the answer is checked against.
+//
+// It is a constructor rather than a field a caller sets, so a caller cannot
+// leave the repository empty and get a mint whose answer could not be checked.
+func (s *ServiceReadTokens) Repo(repo string) *ServiceReadTokens {
+	return &ServiceReadTokens{
+		URL:        s.URL,
+		Repository: repo,
+		IDToken:    s.IDToken,
+		HTTP:       s.HTTP,
+		Now:        s.Now,
+	}
+}
+
 // Token returns a read token valid for at least minValid, minting one at the
 // service when the cached token would expire sooner.
 //
