@@ -409,11 +409,11 @@ rather than its conclusion.
 
 - **D1178 (every non-writable key names a command that exists, or a sentence saying `setup` or `update`
   owns it) — OPEN, recommended.**
-  Recommendation, in three parts. **The rule**: a key the allowlist carries is `settings set`'s and its
-  row says so; every other key names a command that exists or a sentence naming `fugaro setup` or
-  `fugaro update`. **The mechanism**: the read resolves an owner through a table of its own instead of
-  `settingsFamilyCommands` (`internal/cli/settings_set.go:43`), which answers the *write*'s refusal and
-  cannot be widened — `config` owns `max_parallel` (`internal/settings/registry.go:560`) and `setup`
+  Recommendation: **the rule**, **the mechanism** and **the table**. The rule: a key the allowlist
+  carries is `settings set`'s and its row says so; every other key names a command that exists or a
+  sentence naming `fugaro setup` or `fugaro update`. The mechanism: the read resolves an owner through a
+  table of its own instead of `settingsFamilyCommands` (`internal/cli/settings_set.go:43`), which answers
+  the *write*'s refusal and cannot be widened — `config` owns `max_parallel` (`internal/settings/registry.go:560`) and `setup`
   owns `update_check` (`:566`), and both are keys the generic path writes today (F11). **The table**:
   every key whose owner string changes is listed in the plan's own table (G12), so the change is
   reviewable as a diff of names. The owner column is a read path
