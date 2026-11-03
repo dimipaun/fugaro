@@ -384,6 +384,56 @@ func TestManagedGateDoesNotConfirmAClassItDoesNotCover(t *testing.T) {
 	}
 }
 
+// The whole-project inventory's fallback (D59) is the fourth field of the
+// answer, and it is the one a command cannot get from the plan: the document
+// still converged — the fallback is not a verdict on it — and the step's
+// confirmation is kept because the inventory could not clear the project.
+func TestManagedGateCarriesTheInventoryFallback(t *testing.T) {
+	r := newManagedGateRig(t)
+	facts := r.facts()
+	facts.InventoryFallback = true
+	gate, err := readManagedGate(context.Background(), r.env(), facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := gate.admit(context.Background(), initflow.YesOrTyped, managedmode.ConvergeAdmitted([]byte("{}"), initflow.YesOrTyped, nil))
+	if err != nil {
+		t.Fatalf("an inventory that fell back was reported as a refusal of the plan: it is not a verdict on the document: %v", err)
+	}
+	if !m.Managed || !m.Admitted {
+		t.Errorf("the gate answered %+v, want a managed project whose plan it admitted", m)
+	}
+	if !m.Fallback {
+		t.Fatal("the answer does not carry the inventory's fallback, so nothing downstream can keep the confirmation")
+	}
+	if m.Removes(initflow.YesOrTyped) {
+		t.Error("a fallback removed the coding agent's refusal: D59 keeps every confirmation the inventory could not clear")
+	}
+	if initflow.CanConfirmManaged(initflow.YesOrTyped, r.agent(), m) {
+		t.Error("a coding agent's session confirmed a step whose whole-project inventory fell back")
+	}
+	// A person at a terminal is not the case D59 is about, and the fallback is
+	// not a second rule beside theirs: for them the answer is the one
+	// CanConfirm gives with no gate at all.
+	if got, want := initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Terminal: true}, m), initflow.CanConfirm(initflow.YesOrTyped, initflow.Conditions{Terminal: true}); got != want {
+		t.Errorf("a fallback changed a person's own confirmation (%v, want %v): it keeps the confirmation a coding agent's session cannot give and no other", got, want)
+	}
+	// And the record is not the fallback's to drop: the person's apply DID
+	// happen, so the admission is still held here and the command's `recorded`
+	// files it. A gate that suppressed it would lose the trail of a managed
+	// project's applied step (D1025).
+	if err := gate.recorded(context.Background()); err != nil {
+		t.Fatalf("recording the admission of a step whose inventory fell back: %v", err)
+	}
+	got := r.audits(t)
+	if len(got) != 1 {
+		t.Fatalf("the day holds %d records, want the one admission of the apply that happened", len(got))
+	}
+	if got[0].Verdict != managedmode.AuditAdmitted {
+		t.Errorf("the record's verdict is %q, want %q", got[0].Verdict, managedmode.AuditAdmitted)
+	}
+}
+
 // The mark is read twice, and the second read is what decides (D1024): an owner
 // who unflags the project between the read and the write takes the admission
 // away, and the step keeps the confirmation a project that is not managed has.
@@ -408,6 +458,13 @@ func TestManagedGateReReadsTheMarksBeforeTheWrite(t *testing.T) {
 	}
 	if initflow.CanConfirmManaged(initflow.YesOrTyped, r.agent(), m) {
 		t.Error("a coding agent's session was admitted to a step after the owner revoked the mark")
+	}
+	// The gate's own answer is the second read's and not the first's: the read
+	// that found the marks gone is the last word on whether the project is
+	// managed, so a later call on this gate finds the un-managed project the
+	// second read found and not the managed one the first read saw.
+	if gate.managed {
+		t.Error("the gate still reports the project as managed after the read that found the mark gone: the stale answer is the one a later call would act on")
 	}
 	if keys := r.auditKeys(t); len(keys) != 0 {
 		t.Errorf("a revoked project left %q: nothing was judged under a mark that is no longer there", keys)
@@ -492,6 +549,13 @@ func TestManagedGateFailsTheStepWhenTheRecordCannotBeWritten(t *testing.T) {
 		// operator's own failure is not swallowed to make the message shorter.
 		if !strings.Contains(err.Error(), managedmode.NotConverged) {
 			t.Errorf("the failure does not carry the gate's refusal: %v", err)
+		}
+		// And the gate's refusal is still in the CHAIN and not only in the
+		// text: a caller that has to tell a plan the gate refused from any
+		// other failure asks errors.Is, and a sentence it can only read in
+		// English is not an answer it can act on.
+		if !errors.Is(err, managedmode.ErrNotConverged) {
+			t.Errorf("the failure's chain does not reach the gate's own refusal (managed.ErrNotConverged), so nothing can tell this refusal from any other failure: %v", err)
 		}
 		if ExitCode(err) != ExitUserError {
 			t.Errorf("the failure exits %d, want %d (the write's own cause): %v", ExitCode(err), ExitUserError, err)
@@ -621,9 +685,15 @@ func TestManagedGateNamesTheAccountTheWriteRanAs(t *testing.T) {
 	})
 	t.Run("neither, and the command fails", func(t *testing.T) {
 		r := newManagedGateRig(t)
+		// The rig's own stub is replaced here and put back on the way out, so
+		// this subtest's answer cannot leak into the one after it whichever
+		// order they run in — the rig's cleanup would restore it too, but only
+		// when the whole test ends.
+		oldUser := authenticatedUser
 		authenticatedUser = func(context.Context, *localcfg.Config) (string, error) {
 			return "", errors.New("no application default credentials")
 		}
+		defer func() { authenticatedUser = oldUser }()
 		err := write(t, r)
 		if err == nil {
 			t.Fatal("a step whose account could not be established was reported as done")

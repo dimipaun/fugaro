@@ -59,10 +59,14 @@ import (
 // AFTER the command's write (spec §6), so an admission's record is the caller's
 // `recorded` call and nothing else can be recorded as applied; a refusal's is
 // written where the refusal happens, because there is no write to wait for. A
-// command that applied nothing — its own confirmation kept, a whole-project
-// inventory that fell back, a step the gate does not judge — records nothing:
-// the record is the GATE's, and a record saying "admitted" about a write that
-// never happened is worse than no record at all.
+// command that applied nothing — one whose own confirmation was kept, so it
+// never reached its write — records nothing: the record is the GATE's, and a
+// record saying "admitted" about a write that never happened is worse than no
+// record at all. The whole-project inventory's fallback (D59) is one reason a
+// confirmation is kept, and it travels in the answer (Fallback) rather than
+// being decided on here: whether the step is applied is the command's own rule
+// over conditions this helper never sees, so a gate that dropped the admission
+// on a fallback would lose the record of a person's own confirmed apply.
 //
 // Why a project that is not managed is not this helper's business (D1025). Both
 // marks absent or unreadable is the ordinary installation, and its steps are
@@ -235,6 +239,12 @@ func (g *managedGate) admit(ctx context.Context, class initflow.ConfirmClass, co
 		// project that is not managed has. Nothing is recorded — the project is
 		// not managed at this moment, and D1025 is about managed projects only
 		// — and the window D1024 narrows is exactly this one.
+		//
+		// The gate's own answer goes back with it: the second read is the last
+		// word on whether this project is managed, so a later call on this gate
+		// finds the same un-managed project the second read did and not the
+		// managed one the first read saw.
+		g.managed = false
 		return initflow.Managed{}, nil
 	}
 	g.marks = fresh
@@ -244,11 +254,13 @@ func (g *managedGate) admit(ctx context.Context, class initflow.ConfirmClass, co
 	}
 	if err := conv.Refuse(); err != nil {
 		// The refusal and the record of it are one answer. The session reads
-		// why nothing was applied, and the failed write keeps its own
-		// classification (an operator's missing grant is theirs to fix, an
-		// outage is not) in the chain rather than replacing the sentence.
+		// why nothing was applied, and both sentences stay in the chain (a %w
+		// each): the gate's own refusal is what errors.Is finds, so a caller
+		// can tell a step the plan refused from any other failure, and the
+		// write's own cause is what classifies the exit — an operator's missing
+		// grant is theirs to fix, an outage is not.
 		if werr := g.record(ctx, conv); werr != nil {
-			return m, fmt.Errorf("%v: %w", err, werr)
+			return m, fmt.Errorf("%w: %w", err, werr)
 		}
 		return m, err
 	}
