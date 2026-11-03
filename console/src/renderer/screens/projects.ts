@@ -35,8 +35,9 @@
 // screen no longer reads, and a repository listed with no run is not the same
 // fact as a repository running with no cap row (`repositoriesBecause`).
 //
-// **`budget show` is the screen's only read**, about a second on the owner's
-// installation, and the entry draws the whole panel from it.
+// **`budget show` is the screen's first read**, about a second on the owner's
+// installation, and the entry draws the seven panels below from it -- the whole
+// of the tab but the models section.
 //
 // **The models panel is the screen's second read** (console 0.119.0, the
 // owner's ruling of 2026-11-02): `models ls --json`, drawn by
@@ -1420,8 +1421,11 @@ export type ProjectsTheme = (typeof PROJECTS_THEMES)[number]
 export const PROJECTS_BUSY = 'Reading the project’s budget…'
 
 /** PROJECTS_BODY_CLASS is the section the model is drawn into, and it is the
- * element the entry's busy mark belongs to: the screen's one read is the whole
- * of its content, so the section and the screen are the same box. */
+ * element the entry's busy mark belongs to: `budget show`'s seven panels are the
+ * whole of its content, so for that read the section and the screen are the same
+ * box. The models read draws into a section of its own instead
+ * (`PROJECTS_MODELS_CLASS`, a sibling), which is what keeps the two lifecycles
+ * apart. */
 export const PROJECTS_BODY_CLASS = 'projects-body'
 
 /** PROJECTS_MODELS_BUSY is the tab's **second** section's mark (console
