@@ -132,6 +132,7 @@ import type {
   CoordinatorInputs,
   CoordinatorQueueItem,
   CoordinatorRepoPanel,
+  CoordinatorRunRow,
   ScreenElement,
   ScreenFactory,
 } from '../../src/renderer/screens/coordinator'
@@ -510,6 +511,39 @@ function plans(nodes: readonly unknown[]): PlanStatusView {
   const result = decodePlanStatus(aPlanStatus(nodes))
   if (!result.ok) throw new Error(result.skew.because)
   return result.value
+}
+
+/** queued is the queue's rows for a `runs ls --json` document, through the
+ * console's own strict decoder, or the refusal it made of one. A case that is
+ * about what the decoder admits uses it the way the entry point does; a case
+ * about a refusal reads `refusal` instead. */
+function queued(document: unknown): readonly CoordinatorRunRow[] {
+  const decoded = queueRuns(document)
+  if (!decoded.ok) throw new Error(decoded.skew.because)
+  return decoded.value
+}
+
+/** refusalFor is what the queue's decoder refused a document over, or `null`
+ * when it admitted it: the field and the reason, without the sentence. */
+function refusalFor(document: unknown): { readonly field: string; readonly name: string } | null {
+  const decoded = queueRuns(document)
+  if (decoded.ok) return null
+  const { field, name } = decoded.skew.refusal
+  return { field, name }
+}
+
+/** withMember is a row with one member added or replaced, which is how a
+ * document a newer CLI wrote, or one whose count is the wrong type, is spelled. */
+function withMember(row: unknown, key: string, value: unknown): Record<string, unknown> {
+  return { ...(row as Record<string, unknown>), [key]: value }
+}
+
+/** without is a row with one member removed, which is the shape of a document
+ * that cannot say what a row is. */
+function without(row: unknown, key: string): Record<string, unknown> {
+  const copy = { ...(row as Record<string, unknown>) }
+  delete copy[key]
+  return copy
 }
 
 /** aBudget is a `budget show --json` document: the global block and one
@@ -1134,7 +1168,7 @@ describe('the action queue (K1)', () => {
     // in that order.
     const node = drawsQueue({
       view: decodes(aStore([aRecord({})])),
-      runs: queueRuns(runsDocument([aRunRow({ halted: true })])),
+      runs: queued(runsDocument([aRunRow({ halted: true })])),
       plans: plans([aTask('C2', 'ready')]),
     })
     const items = all(node, 'coordinator-queue-item')
@@ -1177,7 +1211,7 @@ describe('the action queue (K1)', () => {
           aRecord({ number: 1460, inFlight: true }),
         ]),
       ),
-      runs: queueRuns(
+      runs: queued(
         runsDocument([
           // A run that is still going, a terminal run that succeeded, and the
           // body's own record of a halt: none of them is waiting for a person.
@@ -1201,7 +1235,7 @@ describe('the action queue (K1)', () => {
     const model = buildCoordinatorModel(
       queueInputs({
         view: decodes(aStore([aRecord({ number: 1458 })])),
-        runs: queueRuns(
+        runs: queued(
           runsDocument([aRunRow({ run: '20261030-220114-77bd', planTask: 'C9', title: 'a run title' })]),
         ),
         plans: plans([aTask('C2', 'ready')]),
@@ -1257,7 +1291,7 @@ describe('the action queue (K1)', () => {
     const rows = Array.from({ length: COORDINATOR_LIST_CAP + 3 }, (_unused, index) =>
       aRunRow({ run: `20261031-15150${String(index % 10)}-a${String(index).padStart(2, '0')}` }),
     )
-    const model = buildCoordinatorModel(queueInputs({ runs: queueRuns(runsDocument(rows)) }))
+    const model = buildCoordinatorModel(queueInputs({ runs: queued(runsDocument(rows)) }))
     expect(model.queue.runs?.items).toHaveLength(COORDINATOR_LIST_CAP)
     expect(model.queue.runs?.items[0]?.subject).toBe('20261031-151500-a00')
     expect(model.queue.runs?.items[COORDINATOR_LIST_CAP - 1]?.subject).toBe('20261031-151509-a19')
@@ -1377,7 +1411,7 @@ describe('the action queue (K1)', () => {
     for (const value of hostile) {
       const node = drawsQueue({
         view: decodes(aStore([aRecord({ title: value })])),
-        runs: queueRuns(runsDocument([aRunRow({ halted: true, run: value, title: value })])),
+        runs: queued(runsDocument([aRunRow({ halted: true, run: value, title: value })])),
         plans: plans([aTask(value, 'ready', value)]),
         caps: capsOf(aBudgetFor(value)),
       })
@@ -2476,5 +2510,88 @@ describe('the surface the project view is read through (T1.2)', () => {
     const element = new FakeScreen('span')
     putText(element, 'a value', 'sentence', 'a field')
     expect(element.textContent).toBe('a value')
+  })
+})
+
+describe('the queue’s runs list is decoded', () => {
+  it('admits a well-formed page, in the CLI’s order, and keeps only the rows that are waiting', () => {
+    // The four rows below are D810’s two grounds and the two states that are
+    // not them: a run that failed, one a person halted, one that succeeded and
+    // one still going. A row that a person halted is kept whatever its status
+    // says, and the order is the document’s -- the queue re-sorts nothing.
+    const page = runsDocument([
+      aRunRow({ run: '20261101-090000-aa01', status: 'failed' }),
+      aRunRow({ run: '20261101-080000-bb02', status: 'running', terminal: false }),
+      aRunRow({ run: '20261101-070000-cc03', status: 'succeeded' }),
+      aRunRow({ run: '20261101-060000-dd04', status: 'succeeded', halted: true }),
+    ])
+    expect(queued(page).map((row) => row.run)).toEqual(['20261101-090000-aa01', '20261101-060000-dd04'])
+  })
+
+  it('ignores a key the run record does not have, at the root and in a row', () => {
+    // The owner’s ruling of 2026-10-30 holds at this door too: the CLI’s JSON
+    // only grows, so a key outside `lsDoc`’s or `runview.Row`’s own set is a
+    // column a newer CLI added, and a console that refused the addition would
+    // refuse a document the CLI wrote correctly. The queue reads its rows field
+    // by field, so a member it does not know reaches neither the drawing nor an
+    // act -- and the row beside it is the row it always was.
+    const page = {
+      ...(runsDocument([
+        aRunRow({ run: '20261101-090000-aa01', status: 'failed' }),
+        withMember(aRunRow({ run: '20261101-080000-bb02', status: 'failed' }), 'widget', 'x'),
+      ]) as Record<string, unknown>),
+      notice: 'a newer CLI wrote this',
+    }
+    expect(queued(page).map((row) => row.run)).toEqual([
+      '20261101-090000-aa01',
+      '20261101-080000-bb02',
+    ])
+  })
+
+  it('refuses a known member whose value is not the kind the struct writes', () => {
+    // Strict on types is the other half of the ruling, and it is what the queue
+    // needs: `artifact_count` is a member this build reads, so a string in its
+    // place is a document no `runs ls` wrote -- read as absent it would be a
+    // row the console had quietly repaired rather than refused.
+    const page = runsDocument([
+      withMember(aRunRow({ run: '20261101-090000-aa01', status: 'failed' }), 'artifact_count', '3'),
+    ])
+    expect(refusalFor(page)).toEqual({ field: 'runs[0].artifact_count', name: 'not-a-number' })
+  })
+
+  it('refuses a row that names no run', () => {
+    // There is no id to draw, to open or to offer a re-run of, so the row is
+    // refused rather than dropped: a queue that dropped it would draw a shorter
+    // list than the document holds and say nothing about the difference.
+    const nameless = without(without(aRunRow({ status: 'failed' }), 'run'), 'run_id')
+    expect(refusalFor(runsDocument([nameless]))).toEqual({ field: 'runs[0].run', name: 'missing' })
+  })
+
+  it('refuses the document as a whole rather than drawing the rows around the one it cannot read', () => {
+    // The queue’s own list is all-or-nothing: a page holding one row it cannot
+    // read is refused whole, so no row of it reaches a screen or a button --
+    // and the refusal is the one the section draws in its own place. Ignorance
+    // of an unknown key does not soften this: what refuses the page is a member
+    // this build *does* read, arriving as something the struct cannot write.
+    const page = runsDocument([
+      aRunRow({ run: '20261101-090000-aa01', status: 'failed' }),
+      withMember(aRunRow({ run: '20261101-080000-bb02', status: 'failed' }), 'terminal', 'yes'),
+    ])
+    const decoded = queueRuns(page)
+    expect(decoded.ok).toBe(false)
+    if (!decoded.ok) expect(decoded.skew.because).toContain('runs[1].terminal')
+  })
+
+  it('refuses a document whose root is not the shape `runs ls` prints', () => {
+    // The one key the reader needs is `runs`, an array: a document without it is
+    // one this console cannot find the jobs in, and a `runs` that is not a list
+    // is one it cannot read. Everything else the root carries is ignored -- the
+    // document’s own `project`, `totals` and `warnings`, and a key no `runs ls`
+    // wrote.
+    expect(refusalFor({ runs: 'not a list' })).toEqual({ field: 'runs', name: 'not-an-array' })
+    expect(refusalFor({ runs: [] })).toBeNull()
+    expect(refusalFor({ runs: [], notice: 'a newer CLI wrote this' })).toBeNull()
+    expect(refusalFor({})).toEqual({ field: 'runs', name: 'missing' })
+    expect(refusalFor([])).toEqual({ field: 'the document', name: 'not-an-object' })
   })
 })

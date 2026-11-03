@@ -2463,6 +2463,204 @@ export function decodeCoordinatorIntents(
 }
 
 // ---------------------------------------------------------------------------
+// §5's runs list.
+//
+// The queue reads this document and does not merely draw it -- its rows become
+// the console's own acts (the run a press re-runs, the plan task a launch is
+// prefilled with) -- so its rows are held to more than a screen's drawing is:
+// the four keys the queue decides by have to be there, and every member this
+// build knows has to be the kind the struct declares.
+//
+// What it does not know it ignores, exactly as every door above does (the
+// owner's ruling of 2026-10-30): a key a newer CLI added is a column this build
+// has not read, and refusing it would turn the queue into a refusal over a
+// document the CLI wrote correctly.
+//
+// The kinds come from `RECORD_MEMBERS` below, whose names are the console's own
+// `RECORD_KEYS` -- the list of `runview.Row`'s every JSON key that
+// `schema.test.ts` derives from `internal/runview/runview.go` and holds here in
+// step with it: the same list every other reader of this shape uses, and one
+// that cannot drift from the struct without a failing test.
+// ---------------------------------------------------------------------------
+
+/** RecordMemberKind is the JSON kind of one member of `runview.Row`, as the Go
+ * struct declares it: a string, a whole number, a boolean, an RFC 3339 stamp,
+ * or a nested block the reader does not open. */
+type RecordMemberKind = 'text' | 'count' | 'flag' | 'stamp' | 'block'
+
+/**
+ * RECORD_MEMBERS is the kind of every scalar member of `runview.Row`, in the
+ * struct's own spelling (`internal/runview/runview.go`). A member that is there
+ * and is not of its kind is a document no `runs ls` wrote, refused by name.
+ *
+ * The nested blocks (`cost`, `halt`, `changed_files`, `rigor`, `project_layer`)
+ * are held to being blocks and are not opened: the queue reads none of their
+ * members, and a reader that did would own a second copy of a shape whose own
+ * decoder is the screen that draws it.
+ *
+ * A key this table does not name is ignored, and it is ignored whether the
+ * struct has it or not: this build checks the members it knows a kind for, and a
+ * key outside them -- a member whose type is not read here, or the column a
+ * newer CLI added -- reaches no drawing and no act.
+ *
+ * An absent member, and a `null` at one, both read as the CLI having nothing to
+ * say -- this module's house reading of a `null` (`optionalText`), and what the
+ * struct's pointer members write. It is the reading of every member here and not
+ * only of those: `recordMemberAt` returns on a `null` whatever the key's kind is.
+ * The four keys a row must carry are not read there but through `required`,
+ * whose `null` reaches the reader of the key's own type and is refused by it
+ * (`not-a-string`, `not-a-boolean`) rather than read as an absence.
+ */
+const RECORD_MEMBERS: Readonly<Record<string, RecordMemberKind>> = Object.freeze({
+  run: 'text',
+  repo: 'text',
+  workflow: 'text',
+  oauth_account: 'text',
+  recipe: 'text',
+  title: 'text',
+  project_layer: 'block',
+  config_sha256: 'text',
+  run_id: 'text',
+  status: 'text',
+  stage: 'text',
+  reason: 'text',
+  derived: 'text',
+  halt: 'block',
+  batch: 'text',
+  requested_by: 'text',
+  launched_by: 'text',
+  plan_task: 'text',
+  pr_url: 'text',
+  execution: 'text',
+  log_url: 'text',
+  created: 'stamp',
+  cost: 'block',
+  image_age_s: 'count',
+  terminal: 'flag',
+  settled: 'flag',
+  branch: 'text',
+  outcome: 'text',
+  changed_files: 'block',
+  rigor: 'block',
+  artifact_count: 'count',
+  artifact_bytes: 'count',
+  task_pr: 'count',
+  record_pr: 'count',
+  pr: 'count',
+  pushed: 'flag',
+  pushed_head: 'text',
+  started_at: 'stamp',
+  base_branch: 'text',
+  previous_run: 'text',
+  follow_up: 'flag',
+  draft_fallback: 'flag',
+  pr_status_at: 'stamp',
+  stale_draft: 'flag',
+})
+
+/** RunsListRow is one row of the list as this console admitted it: the four
+ * members the queue decides by (`run`, `repo`, `status`, `terminal`) and the
+ * three it draws (`title`, `plan_task`, `halt`). */
+export interface RunsListRow {
+  readonly run: string
+  readonly repo: string
+  readonly status: string
+  readonly terminal: boolean
+  readonly title: string
+  readonly planTask: string
+  readonly halted: boolean
+}
+
+/** RunsListView is a `runs ls --json` document this console has read: its rows,
+ * in the CLI's own order. */
+export interface RunsListView {
+  readonly runs: readonly RunsListRow[]
+}
+
+/**
+ * decodeRunsList admits `runs ls --json` (§5): the root's `runs`, an array, with
+ * each member of it a `runview.Row`. A key the document carries and this build
+ * does not know is ignored, the way every other door above reads a document --
+ * what is refused is a row that cannot say what a row is.
+ *
+ * The four members a row must carry are the ones the queue cannot do without:
+ * the id (`run`, or `run_id` where a shape carries only that), the repository a
+ * press would act on, the status the decision is made from, and `terminal` --
+ * all four written without `omitempty`. The rest of the struct's optional keys
+ * are read as the empty string (or, for `halt`, as no halt) when they are absent,
+ * which is the CLI's own "there was nothing to say".
+ *
+ * A row this door cannot read refuses the whole document: the caller draws the
+ * refusal in place of the list rather than the rows beside the one it could not
+ * read, because a dropped row is a shorter list the operator cannot tell from a
+ * shorter day.
+ */
+export function decodeRunsList(raw: unknown, where = 'the runs list document'): Decoded<RunsListView> {
+  return at(where, () => {
+    const root = objectAt(raw, 'the document', where)
+    const rows = arrayAt(required(root, 'runs', '', where), 'runs', where)
+    return { runs: rows.map((row, index) => runsRowAt(row, index, where)) }
+  })
+}
+
+function runsRowAt(raw: unknown, index: number, where: string): RunsListRow {
+  const field = `runs[${String(index)}]`
+  const record = objectAt(raw, field, where)
+  // The members this build knows a kind for are held to it; a key it does not
+  // name -- including a member of `runview.Row` no reader here types -- is left
+  // where it is and read by nothing.
+  for (const key of Object.keys(record)) {
+    const kind = RECORD_MEMBERS[key]
+    if (kind !== undefined) recordMemberAt(record, key, kind, field, where)
+  }
+  return {
+    run: runIdAt(record, field, where),
+    repo: stringAt(required(record, 'repo', field, where), `${field}.repo`, where),
+    status: stringAt(required(record, 'status', field, where), `${field}.status`, where),
+    terminal: boolAt(required(record, 'terminal', field, where), `${field}.terminal`, where),
+    title: optionalText(record, 'title', field, where),
+    planTask: optionalText(record, 'plan_task', field, where),
+    halted: record['halt'] !== undefined && record['halt'] !== null,
+  }
+}
+
+/** recordMemberAt holds one member of a row to the kind the struct declares it
+ * with. A member that is absent, and a `null` at one, are both the CLI saying it
+ * has nothing, whatever the key's kind is -- `RECORD_MEMBERS` reads the count
+ * above the same way, and the four keys a row must carry are read through
+ * `required` and refused by their own reader rather than here. */
+function recordMemberAt(
+  record: Record<string, unknown>,
+  key: string,
+  kind: RecordMemberKind,
+  field: string,
+  where: string,
+): void {
+  const value = record[key]
+  if (value === undefined || value === null) return
+  const at = `${field}.${key}`
+  if (kind === 'text') stringAt(value, at, where)
+  else if (kind === 'count') intAt(value, at, where)
+  else if (kind === 'flag') boolAt(value, at, where)
+  else if (kind === 'stamp') timestampAt(value, at, where)
+  else objectAt(value, at, where)
+}
+
+/** runIdAt is the id a row names its run by: `run`, or `run_id` for a shape that
+ * carries only that. A row that names no run -- both keys absent, or the empty
+ * string the CLI writes nowhere -- is refused by the id's own name: there is no
+ * id to draw, to open or to offer a re-run of, and a queue that dropped such a
+ * row would draw a shorter list than the document holds. */
+function runIdAt(record: Record<string, unknown>, field: string, where: string): string {
+  for (const key of ['run', 'run_id']) {
+    const value = record[key]
+    if (typeof value === 'string' && value !== '') return value
+  }
+  return refuse('missing', `${field}.run`, where)
+}
+
+
+// ---------------------------------------------------------------------------
 // The jobs-free totals read (console 0.119.0 "Pomelo"; contract §6.17).
 // ---------------------------------------------------------------------------
 

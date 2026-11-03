@@ -5847,8 +5847,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       runs = null
       if (!answer.ok) sentences.runs = answer.sentence
       else {
-        delete sentences.runs
-        runs = queueRuns(answer.data)
+        // The queue's own reader refuses a page **whole** when a row cannot be
+        // read, and the refusal is the section's own sentence -- the same state
+        // a read that failed draws -- rather than a list of the rows that
+        // happened to parse.
+        const decoded = queueRuns(answer.data)
+        if (!decoded.ok) sentences.runs = decoded.skew.because
+        else {
+          delete sentences.runs
+          runs = decoded.value
+        }
       }
       draw('runs')
     }

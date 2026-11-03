@@ -61,12 +61,14 @@ import { maskCredentialBlocks, nameableText, sanitizeText } from '../../shared/s
 import type { TextClass } from '../../shared/sanitize'
 import { BUSY_SLOT_CLASS, STAMP_CLASS, STAMP_REFRESH_CLASS, STAMP_REFRESH_LABEL } from '../section'
 import type { SkeletonBlock, SkeletonShape } from '../skeleton'
+import { decodeRunsList } from '../../shared/schema'
 import type {
   CoordinatorIntent,
   CoordinatorIntentsView,
   CoordinatorRecord,
   CoordinatorRepoView,
   CoordinatorStatusView,
+  Decoded,
   PlanStatusView,
   RunsSummaryView,
 } from '../../shared/schema'
@@ -1127,42 +1129,43 @@ function textAt(raw: unknown): string | null {
 /**
  * queueRuns reads the jobs out of a `runs ls --json` document: one row per run
  * that ended without succeeding, or that a person halted -- the two grounds D810
- * names. It is the same shape of reader as `rigor.ts`'s `rigorIndex`, and for
- * the same reason: the document is handed in as it arrived and this is the one
- * place a row becomes the console's own.
+ * names.
+ *
+ * **It is a decoder, and a row it cannot read refuses the page.** `queueRuns`
+ * holds each row to what the queue cannot do without -- the two keys that name
+ * the run, the repository and the status a press acts on, `terminal`, and the
+ * kind of every member this build knows (`decodeRunsList`, and the ruling of
+ * 2026-10-30 it reads a document by: an unknown key is a column a newer CLI
+ * added and is ignored). A page it cannot read is refused whole rather than
+ * drawn around: the caller draws the refusal in the section's own place, the way
+ * it draws a read that failed, so a page with one bad row never becomes a
+ * shorter list with no sign of what was left out.
  *
  * **The CLI's order is kept.** `runs ls` answers newest first, and a queue that
  * re-sorted it would be a second opinion about which run is the newest -- the
  * order is the document's, and the cap below cuts the oldest off rather than
- * reordering anything. A row that names no run is dropped: there is no id to
- * draw and none to open.
+ * reordering anything.
  *
- * It reads the **whole** document, so the caller can hand the rows to the model
- * and to nothing else: the queue is not the job list (spec section 2.6), and no
- * row this function drops reaches any drawing.
+ * The rows it keeps are the model's and nothing else: the queue is not the job
+ * list (spec section 2.6), and a row this function leaves out reaches no
+ * drawing.
  */
-export function queueRuns(document: unknown): readonly CoordinatorRunRow[] {
-  const rows = objectAt(document)?.['runs']
-  if (!Array.isArray(rows)) return []
+export function queueRuns(document: unknown): Decoded<readonly CoordinatorRunRow[]> {
+  const decoded = decodeRunsList(document)
+  if (!decoded.ok) return decoded
   const waiting: CoordinatorRunRow[] = []
-  for (const row of rows) {
-    const record = objectAt(row)
-    if (record === null) continue
-    const halted = objectAt(record['halt']) !== null
-    const status = textAt(record['status']) ?? ''
-    if (!halted && !(record['terminal'] === true && status !== 'succeeded')) continue
-    const run = textAt(record['run']) ?? textAt(record['run_id']) ?? ''
-    if (run === '') continue
+  for (const row of decoded.value.runs) {
+    if (!row.halted && !(row.terminal && row.status !== 'succeeded')) continue
     waiting.push({
-      repo: textAt(record['repo']) ?? '',
-      run,
-      status,
-      title: textAt(record['title']) ?? '',
-      planTask: textAt(record['plan_task']) ?? '',
-      halted,
+      repo: row.repo,
+      run: row.run,
+      status: row.status,
+      title: row.title,
+      planTask: row.planTask,
+      halted: row.halted,
     })
   }
-  return waiting
+  return { ok: true, value: waiting }
 }
 
 /**
