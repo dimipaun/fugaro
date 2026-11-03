@@ -1493,6 +1493,10 @@ func (rs RepoSpec) Addresses() []string {
 		add(root + "google_service_account_iam_member.operator_build[" + q(member) + "]")
 	}
 	add(root + "google_storage_bucket_iam_member.build")
+	// The build account's read of the copied catalog definitions (PIC4,
+	// gcp.CatalogReadCondition): declared without a gate, so an address of
+	// every repository root, like the build account's own grant above.
+	add(root + "google_storage_bucket_iam_member.catalog_read")
 	// modules/repo/check.tf
 	if rs.Check != nil && rs.Check.DeployJob {
 		add(root + "google_cloud_run_v2_job.check[0]")

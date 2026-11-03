@@ -1697,6 +1697,16 @@ var runAccountGrants = setOf(
 	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=local.secrets[each.value] | google_service_account.build.member | for_each=toset(var.repo.build_secrets) | perms=`,
 	`google_service_account_iam_member | "roles/iam.serviceAccountUser" | service_account_id=google_service_account.build.name | google_service_account.build.member | for_each= | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=var.installation.runs_bucket | google_service_account.build.member | for_each= | perms=`,
+	// Reviewed for PIC4, the project image catalog: the same account's
+	// read-only grant on the catalog's copied definitions, builds/catalog/
+	// of the runs bucket (gcp.CatalogReadCondition), which the repository
+	// module computes from the bucket's own name because the copies belong
+	// to no repository. objectViewer carries no create, no delete and no
+	// update, so a build reads the definition the operator copied and cannot
+	// write one — which is the property that keeps one repository's build
+	// from choosing the definition every other repository's jobs run — and
+	// the condition names a prefix under objects/, never the bucket's root.
+	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=var.installation.runs_bucket | google_service_account.build.member | for_each= | perms=`,
 
 	// The history account's: the Firebase databases, its run listing, and a
 	// read of the runs bucket.
