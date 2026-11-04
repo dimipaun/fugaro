@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -646,11 +648,14 @@ func TestUpdateManagedPolicyStageUnderTheGate(t *testing.T) {
 }
 
 // A publish that loosens a ceiling is the policy stage's Typed class (D846),
-// and D1026 never admits one: the node keeps every confirmation it has, so the
-// session reads its own refusal — not a sentence about the node — and nothing
-// is written and nothing is recorded about it. The gate does not judge the
-// document at all, which is what "the gate makes no judgment calls" means here.
-func TestUpdateManagedPolicyStageKeepsTheTypedLoosening(t *testing.T) {
+// and D1026 never admits one: the node keeps every confirmation it has, nothing
+// is written and nothing is recorded about it. What the session reads is the
+// gate's sentence and not its own: this step's document WAS admitted by the
+// rules the stage answered before the write, so the class is what refused it,
+// and the sentence says which kind of step this is and that no flag reaches
+// past the gate (D1023's "names the rule that refused, and the fact that a
+// person is not being asked") rather than telling a session it is a session.
+func TestUpdateManagedPolicyStageRefusesTheTypedLoosening(t *testing.T) {
 	r, db := updateBudgetRig(t)
 	r.managedRuns(t, initProjectName, initProject)
 	t.Setenv("CLAUDECODE", "1")
@@ -665,11 +670,25 @@ func TestUpdateManagedPolicyStageKeepsTheTypedLoosening(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a managed project's agent session published a looser node:\n%s", got)
 	}
-	if !strings.Contains(got, initflow.AgentRefusal("CLAUDECODE")) {
-		t.Errorf("the session does not read its own refusal for a typed step:\n%s", got)
+	// The step's own line is what is read here and not the whole account: this
+	// run also notes that the shared config was not published, which is another
+	// step's refusal in the session's words and has nothing to do with the node.
+	head := "[needs you]  " + initflow.Policy
+	if !strings.Contains(got, head) {
+		t.Fatalf("the run did not reach the policy stage, so nothing here was judged:\n%s", got)
 	}
-	if strings.Contains(got, managedmode.NotConverged) {
-		t.Errorf("a typed step was judged by the gate rather than left with its own confirmation:\n%s", got)
+	line := got[strings.Index(got, head):]
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	if !strings.Contains(line, managedmode.NotConverged) {
+		t.Errorf("the policy step is the user's in a sentence that is not the gate's: %s", line)
+	}
+	if !strings.Contains(line, "the step's confirmation class is Typed, which no plan gate admits (D1026)") {
+		t.Errorf("the refusal does not name the class rule that refused the node: %s", line)
+	}
+	if strings.Contains(line, initflow.AgentRefusal("CLAUDECODE")) {
+		t.Errorf("the policy step reads the session's own refusal rather than what about the node the gate would not admit: %s", line)
 	}
 	if got := ceilingOn(t, db); got != 3 {
 		t.Errorf("the published ceiling is %v, want the 3 it had: the refused step wrote the local config's 5", got)
@@ -680,5 +699,40 @@ func TestUpdateManagedPolicyStageKeepsTheTypedLoosening(t *testing.T) {
 				t.Errorf("a step the gate never judged left a record: %+v", rec)
 			}
 		}
+	}
+}
+
+// The one failure this step has of its own: a node write with no bytes to write
+// is a step whose document does not exist, and a document nobody could read is
+// never applied (D1012's direction, the same one managed.Gate takes for a plan
+// terraform cannot read). The step stops in the gate's sentence rather than
+// being published empty, and it stops before M6's helper is asked anything at
+// all: no verdict is left held afterwards and no record is written.
+//
+// The migration the command itself builds never has an empty payload — it is
+// rendered from the node and this machine's config — so the step is driven
+// directly with the one field that makes its own contract true, which is what
+// makes this a check of the contract rather than of a state a run can reach.
+func TestUpdateManagedPolicyStageRefusesAnEmptyNode(t *testing.T) {
+	r := updateManagedRig(t)
+	run := &initRun{o: &initOptions{door: updateDoor.name}, w: io.Discard, cmd: NewRootCmd()}
+	run.gate = &initGate{read: true, managed: true}
+	s := &policyMigrateStage{e: &initEngine{r: run}}
+	admitted, err := s.gateStep(context.Background(), &policyMigration{moved: []byte{}})
+	if !admitted {
+		t.Errorf("a step with no document was left to its own confirmation: an empty node would be published")
+	}
+	var ge *initflow.GatedError
+	if !errors.As(err, &ge) {
+		t.Fatalf("the refusal is %v, want the gate's own sentence", err)
+	}
+	if ge.Reason != gateUnreadable {
+		t.Errorf("the refusal reads %q, want %q", ge.Reason, gateUnreadable)
+	}
+	if run.gate.g.judged != nil {
+		t.Errorf("the gate judged a document that does not exist: %+v", *run.gate.g.judged)
+	}
+	for _, rec := range audits(t, r) {
+		t.Errorf("a step that was never judged left a record: %+v", rec)
 	}
 }

@@ -388,14 +388,41 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 		// the one thing this gate must never hand to a write.
 		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the policy node this step would publish is empty")}
 	}
-	mg, err := r.gate.g.admit(ctx, class, managedmode.ConvergeAdmitted(doc, class, policyAdmittedRules))
+	conv := managedmode.ConvergeAdmitted(doc, class, policyAdmittedRules)
+	mg, err := r.gate.g.admit(ctx, class, conv)
 	if err != nil {
 		return true, &initflow.GatedError{Reason: err.Error(), Err: err}
 	}
+	marker := agentMarker(os.Getenv)
 	if !initflow.CanConfirmManaged(class, r.conditions(), mg) {
+		// A Typed class is the one not-admitted answer with a sentence of the
+		// gate's own to give, and it is given here rather than left to the
+		// caller's coding-agent refusal: this step's document WAS admitted by
+		// the rules above, so what refuses it is the class rule and nothing
+		// about the session — a session told only that a coding agent is
+		// present learns that it is an agent and nothing about the node every
+		// run of the project is admitted by, which is the thing D1026 keeps out
+		// of a plan gate's reach. The verdict is the one this step built, so
+		// Refuse's own sentence names the class rule (D1026) and no rule that
+		// passed.
+		//
+		// The marker is asked for beside the class, and it is what keeps this
+		// inside the session the gate is about: in an owner's own terminal a
+		// publish that loosens keeps exactly what it has today — the typed
+		// confirmation this class asks for, which --yes does not stand in for —
+		// and the gate is nobody's answer there.
+		//
+		// Every other not-admitted answer keeps the caller's refusal, because
+		// the gate has no sentence for it: a mark revoked between the two reads
+		// is a project that is not managed at this moment, and a fallback
+		// inventory is not a verdict about this document either.
+		if class == initflow.Typed && marker != "" {
+			refused := conv.Refuse()
+			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused}
+		}
 		return false, nil
 	}
-	fmt.Fprintf(r.w, "  %s\n", initflow.AgentProceeded(agentMarker(os.Getenv)))
+	fmt.Fprintf(r.w, "  %s\n", initflow.AgentProceeded(marker))
 	return true, nil
 }
 
