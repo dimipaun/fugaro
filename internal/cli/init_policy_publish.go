@@ -563,8 +563,13 @@ func policyEmptyAllowListWarning() string {
 // allow-list is never written on the operator's behalf by something that cannot
 // have read the consequence (#1674). The same wording is both the confirmation
 // and the refusal, so the two cannot drift.
-func confirmEmptyAllowList(cmd *cobra.Command, lc *localcfg.Config) error {
+func confirmEmptyAllowList(cmd *cobra.Command, lc *localcfg.Config, agent string) error {
 	why := policyEmptyAllowListWarning()
+	// A coding agent's session is refused before any prompt: a terminal it can
+	// give itself (a pty wrapper) is not a person reading the consequence.
+	if agent != "" {
+		return userErr("%s", why)
+	}
 	return confirmTypedStrict(cmd, lc, why, why)
 }
 

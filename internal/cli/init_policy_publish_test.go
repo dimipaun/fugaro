@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -1510,6 +1513,25 @@ func setConfigWithNoRepos(t *testing.T, f *projectFixture) {
 	}
 	if err := os.WriteFile(f.path, []byte(text), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestConfirmEmptyAllowListRefusesAnAgentSessionBeforeAnyPrompt pins the guard
+// directly: no route of the publish reaches it from a coding agent's session
+// today (a managed project keeps the published allow-list), so a later route
+// that did would otherwise accept a name the session piped into stdin.
+func TestConfirmEmptyAllowListRefusesAnAgentSessionBeforeAnyPrompt(t *testing.T) {
+	typed(t)
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader("aurora\n"))
+	err := confirmEmptyAllowList(cmd, &localcfg.Config{Name: "aurora"}, "CLAUDECODE")
+	if err == nil {
+		t.Fatal("an agent session's typed name confirmed an empty allow-list")
+	}
+	if strings.Contains(out.String(), "Type ") {
+		t.Errorf("the session was prompted for the name:\n%s", out.String())
 	}
 }
 

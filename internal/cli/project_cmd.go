@@ -295,7 +295,7 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		// refused (#1674). Asked once across the retries below, because it is a
 		// decision about the document and not about the attempt.
 		if len(pol.AllowRepos) == 0 && !emptyAllowListConfirmed {
-			if err := confirmEmptyAllowList(cmd, lc); err != nil {
+			if err := confirmEmptyAllowList(cmd, lc, agent); err != nil {
 				return publishFailure(err, narrowedSoFar)
 			}
 			emptyAllowListConfirmed = true
