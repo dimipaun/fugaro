@@ -4223,9 +4223,17 @@ a target. With no --layer the narrowest layer the key may be set in is the
 target. --layer repo without --repo uses the current directory's checkout and
 refuses when the directory is not one.
 
-A string-list key takes --add V or --remove V instead of a value. A list
-emptied by --remove is refused: an absent key and an empty list mean different
-things to the loader, so use unset to remove the key.
+A string-list key takes --add V or --remove V instead of a value. A map or an
+object list takes --add-entry and --remove-entry instead: --add-entry carries
+one entry, one field=value per member the entry has, and --remove-entry carries
+the one value the entry is addressed by — a map member's name, or an object
+list's key field value, which is how an entry of an object list is named and
+never its position. One entry per command: several entries are several
+invocations. A map's entry is one member, so --add-entry edits the members of a
+map the file already holds, and a map the loader wants whole cannot be built
+one member at a time. A list emptied by --remove or --remove-entry is refused:
+an absent key and an empty list mean different things to the loader, so use
+unset to remove the key.
 
 Loosening a ceiling key (budget.*, governance.*, the agent caps
 agent.max_budget_usd and agent.max_run_tokens with the layer's own spellings),
@@ -4251,6 +4259,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--add` | string | "" | no | add an item to a string-list key |
+| `--add-entry` | stringArray | `[]` | no | add one entry to a map or an object list (field=value, once per member the entry has) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dry-run` | bool | `false` | no | print what the edit would do and write nothing |
 | `-h`, `--help` | bool | `false` | no | help for set |
@@ -4258,6 +4267,7 @@ Flags:
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--remove` | string | "" | no | remove an item from a string-list key |
+| `--remove-entry` | stringArray | `[]` | no | remove one entry from a map or an object list (the member's name, or the key field's value) |
 | `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name) |
 | `--yes` | bool | `false` | no | confirm the write without a prompt |
 
