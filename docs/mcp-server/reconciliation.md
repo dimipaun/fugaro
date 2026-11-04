@@ -15,8 +15,9 @@ pull requests that touch the same ground were read too, in particular #1472
 **How to read it.** Each finding is **Exists**, **Missing** or **Conflicts**, and each carries what
 follows from it — a finding with no consequence is not in this document. §4 is the decisions, and
 **all fifteen were answered by the owner on 2026-11-04**; the design in [spec.md](spec.md) §1 onward
-is now written to those answers, and an answer that differed from the recommendation is marked
-**not the recommendation** where it is recorded.
+is now written to those answers. **Every answer took the recommendation**, so nothing here is marked
+**not the recommendation** — and §4's answers table records the one place where that was briefly not
+so (D922 was first answered the other way and restated the same day).
 
 ## 1. What exists
 
@@ -29,7 +30,7 @@ is now written to those answers, and an answer that differed from the recommenda
 | F5 | **Firebase ID-token verification exists, and it is exact**: `internal/credsvc/auth.go:1069` compares the audience to the **bare project id**, `:1072` builds the issuer as `https://securetoken.google.com/<projectId>`, and `:1373` (`GoogleKeysURL`) is the public signing-key endpoint the owner's spec names. Its refusals name the failed check and never the value; `internal/credsvc/audit.go` writes one structured line per act and per refusal. **Exists** — the design's §4 adds no verification of its own. |
 | F6 | **Identity Platform is initialized with no sign-in providers, and a public sign-up path is refused**: `internal/cli/init_firebase.go:582` records "initialized Identity Platform (no sign-in providers)", `:686` calls `refusePublicSignUp` (`:709`) on a project whose config enables any public sign-up path, and `internal/infra/identityplatform.go:32` is the step's own name. **Exists** — and it is what F26 collides with. |
 | F7 | **The database rules already fence a coordinator subtree**: `internal/budget/rules/rules.json.tmpl:10-13` — `"coordinator": { ".read": "USER", ".write": false }`, with `USER` defined at `internal/budget/rules/rules.go:517` as a signed-in, device-allow-listed person. |
-| F8 | **The project's people lists exist and are its only permission model**: `internal/cli/user.go:32-33` writes `terraform.launchers` / `terraform.operators` into the machine's own project config, named together at `:66`, applied by the next update. |
+| F8 | **The project's people lists exist and are its only permission model**: `internal/cli/user.go:32-33` writes `terraform.launchers` / `terraform.operators` into the machine's own project config, named together at `:66`, applied by the next update — and **the door already admits one person at a time**: `internal/cli/user.go:266` refuses `domain:`, `group:`, `serviceAccount:`, `allUsers`, `allAuthenticatedUsers` and wildcards, and takes `user:<email>` only, for the reason the comment at `:254-257` gives (the launcher and operator roles carry the token signer's own role, so a `domain:` member would hand a whole domain that role). **Exists** — D923's `user:`-only rule is this rule read at the front door. |
 | F9 | **The rigor vocabulary, its order and its one off-axis member exist**: `internal/rigor/mode.go:36` (`var Modes = []Mode{POC, Startup, Pro, Critical, Hotfix}`, the members at `:21-30`) is the closed vocabulary, `:46` is `Default = Pro`, `:75` ranks the four on-axis modes and gives Hotfix **0**, and `internal/rigor/resolve.go:116` states why ("off the axis and ranks below every on-axis mode"). |
 | F10 | **The run's ceiling and the enforcer exist**: `internal/runner/spend.go:21-34` is the environment the run reads its ceiling from (`FUGARO_MAX_RUN_USD` at `:23`, `Spend` at `:34`), and `internal/runner/gateway.go:141` is "The real credential stays here" — the gateway holds the cap and the agent never sees the key. |
 | F11 | **Cancelling is a marker, not a kill**: `internal/cli/cancel.go:114` (`cancelRun`), writing the marker at `:139`. |
@@ -45,7 +46,7 @@ is now written to those answers, and an answer that differed from the recommenda
 | --- | --- |
 | F16 | **There is no MCP surface at all**: no endpoint, no JSON-RPC handler, no MCP SDK, no tool schema. `ee/coordinator` reads state through `internal/runstore` and writes it through its own sinks; nothing in it answers a protocol. |
 | F17 | **There is no authorization server**: no metadata document, no registration, no authorize, no token, no revocation, no PKCE. `go.mod` carries no OIDC library (F15), so the library the owner's open item asks to pick is a **new dependency** the implementation task adds. |
-| F18 | **The coordinator cannot launch a run.** F3 lists its grants, and none of them reaches the job: no `roles/run.developer`, and no call from `ee/coordinator` into `internal/backend` (the launch seam `fugaro run` uses). `submit_task` therefore needs a grant that does not exist. |
+| F18 | **The coordinator cannot launch a run.** F3 lists its grants, and none of them reaches the job: no `roles/run.developer`, and no call from `ee/coordinator` into `internal/backend` (the launch seam `fugaro run` uses). `spawn_task` therefore needs a grant that does not exist. |
 | F20 | **Nothing carries a token's limits.** `internal/task`'s `Overrides` (`internal/task/task.go:854-856`) holds review rounds, a budget, a model and a timeout, and `:1324-1325` applies the budget to the agent — but there is no rigor window, no Hotfix flag and no scope vocabulary outside the rigor package's own mode. |
 | F21 | **There is no configuration home for the front door's own knobs** — the redirect allowlist of D928 — and no CLI surface to mint, list or revoke an MCP token. |
 | F22 | **There is no audit record a person can read.** F5's audit is a structured **log line**; a project operator reading the console or the database gets nothing. |
@@ -94,51 +95,74 @@ design is now written to them.
 Every decision above was answered on **2026-11-04**. The table is the record in the owner's own
 terms: the answer, whether it is the recommendation, and the one-line reason the design carries for
 it. **The design in [spec.md](spec.md) and the tasks in
-[implementation-plan.md](implementation-plan.md) are written to these answers**, and a row marked
-**not the recommendation** is a place where the design had to change rather than be accepted.
+[implementation-plan.md](implementation-plan.md) are written to these answers**, and **no row is
+marked "not the recommendation"** — every answer took it, so the design is the recommended shape
+throughout. D922 is the one row whose answer was **restated**: it is marked as such there and the
+note under the table says what moved.
 
 | D | The answer, 2026-11-04 | Why, in one line |
 | --- | --- | --- |
 | **D920** | **The recommendation** — the MCP endpoint is **public**, the bearer token is the gate, and the six unauthenticated paths are the metadata documents and the authorization endpoints | A standard MCP client on a laptop or a phone cannot mint a Google ID token, so P8's IAM invoker makes the feature reachable only by software already written against Fugaro — and spec.md §8 is the price the owner accepts for that. |
 | **D921** | **The recommendation** — **zitadel/oidc** for the protocol machinery, with storage and Dynamic Client Registration supplied by the coordinator — **and the licence is UNCONFIRMED.** **The owner or counsel must confirm the licence before any build.** | Apache 2.0 is the library's own claim and nothing in this container can check it, and a dependency a self-hosted product cannot ship would sink the whole design — so the licence becomes a gate of its own, and it is the first owner check in §6. |
-| **D922** | **Not the recommendation.** The owner took the **separate top-level subtree** — **not under `coordinator/`** — but made it **readable by any signed-in user of the project**, where the recommendation refused it to everything but the coordinator's service account | The separate subtree is kept (the coordinator's shared view and the token records do not share a node), and the read rule is the owner's: the **client list, the redirect URIs, the revocation state and the whole tool-call audit are readable by every person the installation admits.** Only token **values** stay out of reach, because only hashes are ever stored — F26's finding survives, at a lower severity. spec.md §6 and §8 state the consequence, and M3's red step inverts. |
-| **D923** | **The recommendation** — the installation's own custom-token flow; no provider page | The project's Identity Platform is initialized with no sign-in providers and refuses every public sign-up path (F6), so there is no hosted page to redirect to, and enabling one is the exact reversal `docs/mobile-auth` D221 refused. |
-| **D924** | **The recommendation** — the token's limit travels in **a variable of its own** on the execution override, and the run's ceiling is the tighter of it and the job's own | The override mechanism already exists (F19) and the gateway is already the place the real stop lives (F10, F27); a variable of its own is what makes "only narrows" structural rather than a launcher's arithmetic. |
+| **D922** | **The recommendation**, in the owner's words of 2026-11-04: the **separate top-level subtree** — **not under `coordinator/`** — is the **`mcpauth`** node, **not readable by any client** (`.read: false`) and with **`.write: false`**; **only the coordinator's account writes it**, because that account holds `roles/firebasedatabase.admin` and the rules do not bind it | The separate subtree is what keeps the coordinator's shared view and the token records off one node, and the closed read is what keeps F26's finding closed: the client list, the redirect URIs, the revocation state and the whole tool-call audit are read by the coordinator's account and by nobody the rules admit. **This answer was restated the same day** — see the note under the table — and the restatement is the one every document is written to. spec.md §6 and §8 state the closed rule, and M3's red step is the "named and denied to every client" one. |
+| **D923** | **The recommendation**, with the mechanism named: **a PAIRED DEVICE approves the sign-in**, and **the coordinator never mints a custom token**; **v1 admits only exact `user:` launcher entries, and refuses `group:`, `domain:` and `serviceAccount:` entries**; **the Firebase ID token is consumed only at `/oauth/authorize` and is never a grant at `/oauth/token`** | The project's Identity Platform is initialized with no sign-in providers and refuses every public sign-up path (F6), so there is no hosted page to redirect to and enabling one is the exact reversal `docs/mobile-auth` D221 refused — and the pairing the repository already has (`fugaro pair`, D165) is the signer that does not make the coordinator one. A `user:` entry is one person (F8's lists), where `domain:`, `group:` and `serviceAccount:` are refused **at `fugaro user` already** (`internal/cli/user.go:266`). Consuming the ID token at authorize is what keeps it out of the token endpoint's grant list. |
+| **D924** | **The recommendation** — the token's limit travels in **a variable of its own** on the execution override, and the run's ceiling is the tighter of it and the job's own — and **spend is counted across the whole token family**, so a rotated refresh token is the same budget and not a new one | The override mechanism already exists (F19) and the gateway is already the place the real stop lives (F10, F27); a variable of its own is what makes "only narrows" structural rather than a launcher's arithmetic, and a per-family counter is what stops rotation from being a way to ask for the limit twice. |
 | **D925** | **The recommendation** — Hotfix is a **separate flag, off by default**, beside the window | `Rank()` gives Hotfix **0** deliberately (F9, F28), so folding it into a `min`/`max` window admits Hotfix at every minimum — the opposite of "off by default". |
 | **D926** | **The recommendation** — an optional `min` and an optional `max`, unset meaning the project's policy alone; a window that admits nothing is refused **at mint** | A token that could never start a run should not be mintable: the failure has to surface at the person's keyboard rather than in an agent's retry loop. |
 | **D927** | **The recommendation** — `tasks:read` and `tasks:write` only; `roadmap:write` is **not** in v1 | A scope is a wire contract: it exists the moment a token can hold it, and the console's own roadmap-write design — which does not exist yet — is what should decide its name and its permission (F30). |
-| **D928** | **The recommendation** — the redirect-URI allowlist is the **project's own configuration**, with loopback always allowed; validated at registration and at authorize, exact match | A vendor's callback URL baked into a self-hosted product goes stale in somebody else's release cycle and refuses every client the owner has not heard of. |
+| **D928** | **The recommendation**, tightened by the owner: the redirect-URI allowlist is the **project's own configuration**, with loopback always allowed and validated at registration and at authorize, exact match — and **registration refuses a non-loopback URI that is not on the allowlist**, **the consent page shows the redirect host**, and **the flow is CSRF-bound** | A vendor's callback URL baked into a self-hosted product goes stale in somebody else's release cycle and refuses every client the owner has not heard of. The three tightenings are the owner's: refusing at registration is the earlier door, a person consents to a host they were shown rather than to a client id, and a flow with no CSRF binding lets an attacker's client finish a sign-in the person started for another. |
 | **D929** | **The recommendation** — a pre-registered confidential client using the client credentials grant, with **mandatory** limits | The owner's option B would make every stored API key an OAuth client by another name, and revocation would stop being one act — against the owner's own non-goal that the keys are not replaced. |
 | **D930** | **The recommendation** — **short-lived access tokens and refresh tokens that rotate on every use**, with reuse detection, a replayed token revoking the family, and revocation as one delete | Rotation is what makes a theft detectable rather than merely survivable: a long-lived token that is stolen lives its whole life and nothing distinguishes theft from use. |
-| **D931** | **The recommendation** — `submit_task` starts the run through the same seam `fugaro run` uses (`internal/backend`), the coordinator gains one **new launch grant**, and both tool sets are served on one endpoint under their existing names | The sweep alternative delays a launch by the sweep interval, races a second writer, and can leave a caller seeing success for a run that never starts. |
+| **D931** | **The recommendation**, with the owner's three tightenings: the tool is **`spawn_task`** (the owner's name for the `submit_task` of §0), it starts the run through the same seam `fugaro run` uses (`internal/backend`), the coordinator gains one **new launch grant**, and both tool sets are served on one endpoint under their existing names — and **there is a single launch path**: concurrency, rate, idempotency and the kill switch all go through the **same pre-launch code as `fugaro run`** (`budget.Precheck`, `internal/budget/precheck.go:58`, and the launch claim, `internal/runstore/launch.go:112`) | The sweep alternative delays a launch by the sweep interval, races a second writer, and can leave a caller seeing success for a run that never starts. A second pre-launch path beside `fugaro run`'s is the one that drifts: a front door that skipped the kill switch or the claim would spend money a person's launch could not, and would let one submit become two runs. |
 | **D932** | **The recommendation** — `stream_logs` reads the run's own recorded artefacts in the runs bucket | The coordinator may already read them (F3, F14), the answer is the same material the console and `get_result` draw on, and it cannot read a log line outside the run — where streaming Cloud Logging live needs a grant that reaches every log line in the project. |
-| **D933** | **The recommendation** — **only the project's launcher and operator lists may call the front door**: a launcher may call the task tools, an operator may also read the audit record | With a public endpoint, "any signed-in identity of the project" (F29's sentence) would make every Firebase user of the project a launcher, and the two lists `fugaro user` maintains would govern nothing. |
-| **D934** | **The recommendation** — the front door is **OFF** on every installation until a person turns it on, on the coordinator's own opt-in | An installation that opted into the coordinator for its read-only aggregator must not acquire a **public write endpoint** — `submit_task` spends money — as a side effect of an upgrade. |
+| **D933** | **The recommendation** — **only the project's launcher and operator lists may call the front door**: a launcher may call the task tools, an operator may also read the audit record — and the entries those lists admit are D923's answer, **exact `user:` entries only** | With a public endpoint, "any signed-in identity of the project" (F29's sentence) would make every Firebase user of the project a launcher, and the two lists `fugaro user` maintains would govern nothing. Admitting only `user:` entries is the same rule `fugaro user` already applies at its own door, so the front door cannot be the way a `domain:` entry gets in. |
+| **D934** | **The recommendation** — the front door is **OFF** on every installation until a person turns it on, on the coordinator's own opt-in | An installation that opted into the coordinator for its read-only aggregator must not acquire a **public write endpoint** — `spawn_task` spends money — as a side effect of an upgrade. |
 
 **The four the owner read first.** **D920** decided whether the owner's spec is implementable at
-all, and it reverses a departure the coordinator's own plan recorded deliberately — the answer was
+all, and it reverses a departure the coordinator's own plan recorded deliberately — the answer took
 the recommendation, so the reason was judged worth it and spec.md §8 is the price. **D923** was not a
 design choice but a collision with a decision already taken once (`docs/mobile-auth` D221) on the
-identical question; the answer keeps that decision. **D922** is the one place where "store only
-hashes" is not enough by itself — and it is the answer the owner took **against** the recommendation,
-which is why §6 and §8 now state the exposure it accepts. **D924** is the one place where the
-owner's own words, read literally, would produce a limit that does not hold; the answer takes the
-recommendation, so the limit holds.
+identical question; the answer keeps that decision and names the signer — a paired device, with the
+coordinator never minting a token. **D922** is the one place where "store only hashes" is not enough
+by itself; the answer took the recommendation, so the subtree is closed and nothing about the
+metadata is exposed at all. **D924** is the one place where the owner's own words, read literally,
+would produce a limit that does not hold; the answer takes the recommendation, so the limit holds.
 
 **What each answer changes.** A different answer to D920 or D923 is a different document: the flow,
 the endpoint's shape and §8 all move. A different answer to D927, D928, D930, D932 or D934 is a
 parameter and an edit. A different answer to D922, D924, D929 or D931 is an edit plus a task in the plan that
 would otherwise not exist — the plan's task list names which.
 
-**What the answers of 2026-11-04 actually changed**, now that they are in: **D922 is the only
-deviation**, and it moved three documents — spec.md §6's "what is stored, and where" and §8's token-
-storage paragraph now state the read rule the owner chose, and M3's red step inverts from "named and
-denied to every client" to "named, readable by a signed-in person and writable by nobody but the
-coordinator". **D921's unconfirmed licence** added the first owner check in §6 and a build gate in
-the plan. The other thirteen answers took the recommendation, so what is written in spec.md §1
-onward already reflects them; the **status of the whole folder** moved from "design only, nothing
-approved" to the line every file now carries — **design answered by the owner 2026-11-04; plan only;
-nothing implemented; no task approved.**
+**The answer D922 was restated, and the restatement is the record.** D922 was first answered the
+other way — a closed-to-writers subtree the owner made **readable by any signed-in user of the
+project** — and the owner restated it on the same day, **2026-11-04**, as the recommendation itself:
+**`.read: false`, `.write: false`, and only the coordinator's account writes it.** The folder is
+written to the restatement, because it is the later answer and the tighter one: the exposure the
+first answer accepted is not in this design at all, §6 and §8 state a closed subtree, M3's red step
+is the "named and denied to every client" one, and **every sentence the first answer put into these
+documents has been removed rather than left standing** — a reader who takes the folder's wording as
+it now is cannot arrive at the exposure the first answer accepted. Nothing about the
+recommendation's own reasoning changes; only which answer is in force.
+
+**What the answers of 2026-11-04 actually changed**, now that they are all in: **no answer deviates
+from the recommendation**, so the design in spec.md §1 onward is the recommended shape throughout —
+and what the day's answers added is detail rather than a different design. Four of them are
+load-bearing:
+
+- **D922's restatement** closed the subtree, so spec.md §6 and §8 carry a refusal rather than an
+  accepted exposure, and M3 asserts the denial.
+- **D923's mechanism** — a paired device, no custom token minted by the coordinator, the ID token
+  consumed only at authorize — moved §3's flow, §2's token-shape paragraph and §8's Firebase-token
+  paragraph, and added the `user:`-only entry rule (spec.md §4).
+- **D931's single launch path** named `spawn_task` and put concurrency, rate, idempotency and the
+  kill switch on `fugaro run`'s own pre-launch code, which is what M9 builds against.
+- **D928's three tightenings** — refusal at registration, the redirect host on the consent page, and
+  a CSRF-bound flow — are in §3's registration rules, §3's flow and §8's redirect-URI paragraph.
+
+**D921's unconfirmed licence** added the first owner check in §6 and a build gate in the plan. The
+**status of the whole folder** moved from "design only, nothing approved" to the line every file now
+carries — **design answered by the owner 2026-11-04; plan only; nothing implemented; no task
+approved.**
 
 ## 5. The number block, and why it stays D920
 
@@ -204,7 +228,7 @@ code task starts:
 ## 7. What `main` had overtaken, and what was fixed in place
 
 The findings above were written against `3d6ed04d` on 2026-11-01. Re-read on **2026-11-04** at
-`b41709ea`, seven things had moved, and each is recorded here rather than left for a reader to
+`b41709ea`, eight things had moved, and each is recorded here rather than left for a reader to
 discover:
 
 1. **Managed mode landed.** The gate is `internal/cli/managed_gate.go` (its one helper, "the four
@@ -243,3 +267,15 @@ discover:
    run left untracked (`internal/runner/stray.go:29`, `strayArtifacts`). Nothing in this design
    reads the run's leftovers, so no finding moves; it is recorded because a reader of F14's "a run's
    transcripts land in the runs bucket" should know what else finalize now decides.
+8. **The paired device is on `main`, and it is what D923's answer leans on.** `fugaro pair`
+   (`internal/cli/pair.go`) walks an operator through one pairing: a one-shot token, the QR's
+   payload, the phone's key, the typed eight-character code, and the device node it writes —
+   `internal/budget/token/device.go:176` (`MintDevice`) mints the device's custom token, and
+   the pairing session's own claim is `PAIRING` (`internal/budget/rules/rules.go:540`, read at
+   `:561`) over the device allowlist `PathDevices` (`:458`) that the `USER` claim already requires
+   (`:517`). **This is why D923's answer can name a signer that is not the coordinator:** the
+   repository already has a flow where a person approves something from a device that is paired to
+   the installation, and the principal that mints a custom token is deliberately **not** a resident
+   service — `internal/budget/rules/rules.go:482-487` records that whoever can sign for the project chooses the uid and
+   every claim in it, and that such a principal is a launcher or a service-account key holder. The
+   coordinator holds neither.

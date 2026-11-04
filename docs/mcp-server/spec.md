@@ -3,11 +3,12 @@
 **Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
 approved.** The owner's spec of 2026-10-24 is §0, copied **verbatim**; the design that follows (§1
 onward) is written to the **answers the owner gave on 2026-11-04** to the fifteen decisions in
-[reconciliation.md](reconciliation.md) §4 (D920–D934) — fourteen of them the recommendation and
-**D922 not the recommendation**, which is why §6 and §8 state a read rule the recommendation did not
-propose. **Where §0 and this design disagree the reconciliation wins** — §0 is the record of what
-was asked, not of what this design proposes. Implementation is **not** approved: the owner decides,
-task by task, after [implementation-plan.md](implementation-plan.md) has been reviewed.
+[reconciliation.md](reconciliation.md) §4 (D920–D934) — **every one of them the recommendation**,
+with the owner's own detail written into §2, §3, §4, §5, §6 and §8. **Where §0 and this design
+disagree the reconciliation wins** — §0 is the record of what was asked, not of what this design
+proposes, and the one name that moved is the tool §0 calls `submit_task` and this design calls
+**`spawn_task`** (§5). Implementation is **not** approved: the owner decides, task by task, after
+[implementation-plan.md](implementation-plan.md) has been reviewed.
 
 Repository names in this folder are placeholders (`owner/repo-a`, `owner/repo-b`), people are
 `person-1`, and a workspace is `workspace-a`; [README.md](README.md) says which names in §0 are the
@@ -190,9 +191,11 @@ token, validates it (D920), and only then looks at the JSON-RPC body.
 **The metadata document's shape.** A Firebase ID token's audience is the bare project id rather than
 a URL, which is the gotcha the owner's spec names. The design answers it exactly as the spec says it
 should: the coordinator issues its own tokens and never passes a Firebase token through as a bearer.
-A Firebase ID token is accepted at **one** endpoint, `POST /oauth/token`, as the proof of the
-sign-in step, and the access token the coordinator mints in exchange carries a real resource
-audience — the coordinator's own URL — so a client's standard check works.
+A Firebase ID token is accepted at **one** endpoint, **`GET /oauth/authorize`** — the owner's answer
+of 2026-11-04, and not at `POST /oauth/token` as an earlier draft of this design had it: it is the
+proof of the *sign-in* step, which is the authorize step, and it is never a grant the token endpoint
+accepts. The access token the coordinator mints afterwards carries a real resource audience — the
+coordinator's own URL — so a client's standard check works.
 
 ## 3. The authorization server
 
@@ -227,11 +230,15 @@ MCP client registers before any person has signed in. Openness is bound by four 
   rule (D928): a loopback address (`http://127.0.0.1:*`, `http://localhost:*`) is always allowed,
   because that is how a native client receives a code; any other URI must match the project's own
   allowlist, which is a line in the project's configuration and **not a constant in the
-  coordinator**. The owner's spec names a chat client's hosted callbacks as the example of the
-  second kind; this design keeps the example out of the code, because a vendor's callback URL baked
-  into a self-hosted product is a URL that goes stale in somebody else's release cycle.
+  coordinator**. **Registration refuses a non-loopback URI that is not on the allowlist** — the
+  owner's answer of 2026-11-04 — so a client that could never receive a code here is refused at the
+  earlier door with a message naming the rule, rather than registering and failing at a person's
+  sign-in. The owner's spec names a chat client's hosted callbacks as the example of the allowed
+  kind; this design keeps the example out of the code, because a vendor's callback URL baked into a
+  self-hosted product is a URL that goes stale in somebody else's release cycle.
 
-**The flow, end to end** (the owner's §"Auth flow", with the two places this design changes it):
+**The flow, end to end** (the owner's §"Auth flow", with the places this design changes it — none
+of them the endpoints, all of them what happens at them):
 
 1. A client calls the MCP endpoint with no token; it gets 401 and a `WWW-Authenticate` header naming
    the resource metadata URL.
@@ -240,16 +247,31 @@ MCP client registers before any person has signed in. Openness is bound by four 
    caller (§7).
 4. Authorization code + **PKCE with S256, required and never optional**. The code is single-use,
    short-lived, and bound to the client, the redirect URI and the code challenge.
-5. The user signs in. **This design does not redirect to a Firebase-hosted sign-in page** (D923):
-   the project's Identity Platform is initialized with no sign-in providers and refuses any public
+5. The user signs in, and **the sign-in is approved by a paired device** (D923, the owner's answer
+   of 2026-11-04). **This design does not redirect to a Firebase-hosted sign-in page**: the
+   project's Identity Platform is initialized with no sign-in providers and refuses any public
    sign-up path, so there is no hosted page to redirect to, and turning one on is the exact change
-   `docs/mobile-auth` ruled against in D221. The authorize step hands the person to the sign-in
-   Fugaro already has, the custom-token flow, and verifies the resulting Firebase ID token the way
-   `internal/credsvc` already verifies one.
-6. The coordinator mints a short-lived access token and a refresh token, scoped to the MCP resource
-   URL, carrying the identity, the client, the scopes and the limits of §6.
+   `docs/mobile-auth` ruled against in D221. What approves the sign-in is the mechanism the
+   repository already has — the pairing of `fugaro pair` (`internal/cli/pair.go`, D165): the person
+   approves from a device paired to the installation, that device's session is the signer, and
+   **the coordinator never mints a custom token** and holds no signer role. The coordinator verifies
+   the Firebase ID token the approval yields the way `internal/credsvc` already verifies one
+   (`internal/credsvc/auth.go:1069`), and it **consumes that token here and nowhere else**: it is
+   the proof of the sign-in step, and it is never a grant at `POST /oauth/token`.
+6. The coordinator issues the authorization code, and the exchange at `POST /oauth/token` mints a
+   short-lived access token and a refresh token, scoped to the MCP resource URL, carrying the
+   identity, the client, the scopes and the limits of §6.
 7. Every subsequent call is validated on its own: signature, issuer, audience, expiry, revocation,
    scopes, and the tool's own limit check.
+
+**The consent step is a page a person reads, and it is bound to the flow.** Before the code is
+issued, the coordinator shows what is being consented to — the client, and **the host the redirect
+URI names** (D928, the owner's answer of 2026-11-04), so a person consents to somewhere their code
+will be sent rather than to an opaque client id. **The flow is CSRF-bound**: the authorize request
+carries a `state` the client generated, the coordinator keeps its own binding between the request
+and the consent it answers, a consent that does not carry that binding is refused rather than
+honoured, and the `state` is returned on the redirect unaltered. Without that binding an attacker's
+client can finish a sign-in the person started for another.
 
 ## 4. Firebase as the identity provider
 
@@ -287,11 +309,16 @@ project-scoped service by a verified email, against a list the installation alre
 therefore the pattern here rather than an invention — and it is the same two lists `fugaro user`
 writes (`internal/cli/user.go:66`).
 
-**And it is a rule about the front door, not about the database** — §6 is where the two part company,
-because the token records' subtree is readable by a signed-in person under D922's answer while the
-audit *record* a tool returns is still the operator's under D933. A launcher therefore reads no audit
-through the API even though the raw subtree is not closed to them; the design states the tension
-rather than hiding it, and §9 says the tool surface is the one that gates it.
+**And v1 reads one entry kind only** (D923, the owner's answer of 2026-11-04): **the lists are read
+for exact `user:<email>` entries, and `group:`, `domain:` and `serviceAccount:` entries are refused
+at the front door.** That is not a new rule invented here — it is the rule `fugaro user` already
+applies at its own door, for the reason its own comment gives: the launcher and operator roles carry
+the token signer's own role, so a `domain:` member would hand every account in a domain the right to
+mint a run's token (`internal/cli/user.go:254-257`, refused at `internal/cli/user.go:266`). A front
+door that admitted a
+`domain:` entry would be the way such an entry got in after all, so it refuses them for the same
+reason and says which kind it will not read. Nothing here is a rule about the database: §6's subtree
+is closed to every client, so the two can no longer differ.
 
 ## 5. The tools
 
@@ -309,12 +336,31 @@ are enforced in one place, ahead of every handler:
 
 | Tool | Scope | What it does | What it must not do |
 | --- | --- | --- | --- |
-| `submit_task` | `tasks:write` | Starts a run on a repository with a prompt, a recipe and a rigor mode (D931) | Must not widen the run's ceiling, must not pass a model credential, must not launch anything but the project's own job |
+| `spawn_task` | `tasks:write` | Starts a run on a repository with a prompt, a recipe and a rigor mode (D931) | Must not widen the run's ceiling, must not pass a model credential, must not launch anything but the project's own job, must not reach the job except through the launch path below |
 | `get_task_status` | `tasks:read` | The run's state, from the run record | Must not read the runs bucket outside the project's own prefix |
 | `stream_logs` | `tasks:read` | The run's recorded progress (D932) | Must not stream the project's whole log |
 | `get_result` | `tasks:read` | The outcome, the diff or the pull request link | Must not return a body from the forge that carries a token |
 | `cancel_task` | `tasks:write` | Writes the cancel marker `fugaro cancel` writes | Must not stop a job the project does not own |
 | `list_tasks` | `tasks:read` | Recent runs of the project, with filters | Must not list another project's runs |
+
+**The tool is `spawn_task`, not the `submit_task` of §0** — the owner's name for it, answered on
+2026-11-04, and the one this design, [reconciliation.md](reconciliation.md) and
+[implementation-plan.md](implementation-plan.md) all use. §0 keeps the old name because §0 is copied
+verbatim; there is no second tool.
+
+**And there is one launch path, not two** (D931, the owner's answer of 2026-11-04). `spawn_task`
+does not reach the run's job by a route of its own: **concurrency, rate, idempotency and the kill
+switch all go through the same pre-launch code `fugaro run` uses**, so a run the front door starts is
+refused by exactly what refuses a run a person starts. Concretely, the front door takes the same
+launch claim in the runs bucket (`internal/runstore/launch.go:112`, `ClaimKey`, with `ClaimTTL` at
+`:117`) before it starts anything, which is what makes one submit one run and a repeated submit an
+answer about the run already in flight rather than a second one; and it runs the same budget
+pre-check of kill switches, caps and headroom — `internal/budget/precheck.go:58` (`budget.Precheck`),
+which `internal/cli/launch_budget.go:283` is the CLI's own call to — before it mints anything. The
+front door's own concurrency and rate limits are enforced **at that same point**, not beside it. A
+second path is the failure this rule exists to prevent: a front door that skipped the kill switch or
+the claim would spend money a person's launch could not, and would let a retrying agent turn one
+submit into two runs. The tool is a caller of that path and never a second implementation of it.
 
 The "candidates for later" the owner names — list recipes, list repos, promote a task's rigor — are
 **not** in v1 and carry no scope (D927). A scope that exists is a scope a token can hold, and a
@@ -353,27 +399,39 @@ agent's own estimate of cost, and the repository's own dogfooding notes record t
 non-Anthropic models by roughly an order of magnitude. A limit enforced there would be a limit
 enforced by the wrong number.
 
-**What is stored, and where** (D922, answered 2026-11-04 — **not the recommendation**). Only
-**hashes** — never a token value, never a refresh token, never a client secret — and the record lives
-in a **separate top-level subtree of the project's database, not under `coordinator/`**. That much is
-the recommendation. **The read rule is the owner's and is the opposite of it: the subtree is readable
-by any signed-in user of the project.** Writes stay refused to every client: only the coordinator's
-own service account writes a record.
+**And spend is counted across the whole token family**, not per access token (the owner's answer of
+2026-11-04). A rotated refresh token is the same family spending against the same counter, so the
+rotation of D930 is a lifetime mechanism and never a budget mechanism: a client cannot reset its
+limit by rotating, and the number the operator set is the number the family gets. This is the reason
+the counter is the family's and not the token's — a per-token counter would make the tightest
+control in the design trivially optional.
 
-The consequence is stated rather than softened, because it is what the answer buys and what it costs.
-The separate subtree is right — the coordinator's shared view and the token records do not share a
-node, so a future change to `coordinator/` cannot widen this one by accident. But **the client list,
-the redirect URIs registered against them, the revocation state and the whole tool-call audit are
-readable by every person the installation admits** — the same readership `coordinator/` already has
-(`internal/budget/rules/rules.json.tmpl:10-13`, `USER`), in a subtree of its own. What the answer
-does **not** weaken is the thing "store only hashes" was for: a reader gets **no presentable value**.
-Only hashes are at rest, the value is shown once at mint and never again, and a project operator
-holding the database admin grant reads a list of clients and a list of when tokens were issued and
-revoked — never a token they could present. What is genuinely exposed is the **metadata**: who
-registered what, which redirect URIs exist, which tokens are revoked, and every tool call with its
-identity. A run's own identity cannot read it (the rules' `USER` claim is a signed-in, device-
-allow-listed person, `internal/budget/rules/rules.go:517`), and no caller outside the project can
-reach the database at all.
+**What is stored, and where** (D922, answered 2026-11-04 — **the recommendation**). Only
+**hashes** — never a token value, never a refresh token, never a client secret — and the record lives
+in a **separate top-level subtree of the project's database, not under `coordinator/`**: the
+**`mcpauth`** node. The node carries **`.read: false`** and **`.write: false`**, and **only the
+coordinator's own account writes it** — that account holds `roles/firebasedatabase.admin`
+(`deploy/terraform/gcp/modules/firebase/iam.tf:138`), which is what makes "the coordinator writes it
+and no client does" true in one rule rather than two.
+
+So the subtree is closed on both sides and there is nothing to weigh: **no client reads it, no
+client writes it, and no signed-in person reads it either** — not the client list, not the redirect
+URIs registered against them, not the revocation state, not the tool-call audit. The one account
+that reaches it is the coordinator's own, over IAM, and a run's identity cannot: the template's root
+denies by default, and `mcpauth` carries no read rule for `TOKEN` or `USER` to satisfy
+(`internal/budget/rules/rules.json.tmpl:2-4` is the root's own
+denial, and `:10-13` is the `coordinator` node whose `USER` read `mcpauth` deliberately does not
+take).
+"Store only hashes" is therefore the *second* line of defence and not the only one: even the
+account that may read the node reads hashes, and the value itself is shown once at mint and never
+again. The rules' two claims are unaffected — `USER` (`internal/budget/rules/rules.go:517`) is what
+`coordinator/` still grants and `mcpauth` deliberately does not, so the two subtrees now differ in
+exactly the way the decision was asked about.
+
+**D922 was answered the other way first, and restated the same day.** The first answer kept the
+separate subtree but made it readable by any signed-in user of the project; the restatement of
+**2026-11-04** closed it, and this design is written to the restatement.
+[reconciliation.md](reconciliation.md) §4 records both and why the later one is the record.
 
 **Rotation and revocation** (D930, answered on 2026-11-04 as **rotating refresh tokens and
 short-lived access tokens** — the recommendation). The refresh token rotates on every use, and a
@@ -437,35 +495,52 @@ the same limits. Rotation is what turns the theft into an event: the next time t
 presents the rotated-away token, the family is revoked and the theft is visible in the audit record
 rather than silent.
 
-**What a stolen Firebase ID token reaches.** One thing: `POST /oauth/token`, and only while it is
-unexpired and only if its issuer and audience match the project. It is never a bearer for the MCP
-endpoint, which is the whole reason the coordinator mints its own tokens, and it is why the design
-will not accept a Firebase token as an access token "just for convenience".
+**What a stolen Firebase ID token reaches.** One thing: **`GET /oauth/authorize`** — the single
+endpoint that consumes one (the owner's answer of 2026-11-04; an earlier draft had it at
+`POST /oauth/token`) — and only while it is unexpired and only if its issuer and audience match the
+project, and only for an identity the project's own lists admit. It is never a bearer for the MCP
+endpoint and it is never a grant at the token endpoint, which is the whole reason the coordinator
+mints its own tokens, and it is why the design will not accept a Firebase token as an access token
+"just for convenience". **The coordinator mints no Firebase token of its own** either: it holds no
+signer role, so a compromised coordinator cannot answer "this person signed in" for somebody who
+did not — that is the paired device's act (§3), and the coordinator only verifies what the device's
+session produced.
 
-**Token storage.** Only hashes, in a separate subtree of the project's database, **readable by any
-signed-in user of the project and writable by nobody but the coordinator's service account** (D922,
-answered 2026-11-04 — **not the recommendation**). A reader of the database gets a list of clients,
-their redirect URIs, which tokens are revoked and when they were issued — and **no value it can
-present**. The values are shown once, at mint, and never again — there is no "show me my token
-again" path, because that path would need the value at rest. **The exposure the answer accepts is
-metadata, and it is stated here rather than left to be discovered:** every signed-in person of the
-project can read which clients are registered, which redirect URIs they carry, which tokens are
-revoked, and the whole tool-call audit with its identities — a list a person could act on socially
-even though every token in it is unreadable. What makes that the price of the answer rather than a
-hole in it is that nothing in the subtree is a secret: no token value, no refresh token, no client
-secret, and no credential of any kind is derivable from it (§9), and a run's own identity cannot read
-it at all (the `USER` claim is a signed-in, device-allow-listed person —
-`internal/budget/rules/rules.go:517`). §6 states the rule; [reconciliation.md](reconciliation.md) §4
-records the answer and the recommendation it departs from.
+**Token storage.** Only hashes, in a separate subtree of the project's database — **`mcpauth`** —
+that is **not readable by any client and writable by no client**, with **the coordinator's own
+account the only writer** (D922, answered 2026-11-04 — **the recommendation**). So there is no
+reader to describe a partial exposure to: the client list, the redirect URIs, the revocation state
+and the whole tool-call audit are read by the coordinator's account over IAM and by nobody else, and
+a run's own identity cannot reach the node at all. The values are shown once, at mint, and never
+again — there is no "show me my token again" path, because that path would need the value at rest —
+so **"store only hashes" and "nothing may read it" are two independent barriers** and this design
+has both. The one account that can read the node is the coordinator's, and it holds
+`roles/firebasedatabase.admin` (`deploy/terraform/gcp/modules/firebase/iam.tf:138`), which is why
+the rule is written as **`.read: false` beside `.write: false`** rather than as a grant: the database
+admin is the writer, and the database rules say so by refusing everybody the rules bind. §6 states
+the rule; [reconciliation.md](reconciliation.md) §4 records the answer and the earlier one it
+replaced.
 
 **Redirect-URI abuse.** The registration endpoint is open, so an attacker can register a client with
 a redirect URI it controls — and gains nothing, because a code is delivered to that URI only after a
-person signs in and consents, and a person only consents to a client they meant to use. The defences
-that matter are on the code itself: exact-match validation of the redirect URI at authorize and at
-token, PKCE S256 required with no plain fallback, a single-use code bound to the client and the
-redirect URI, and a short code lifetime. A custom scheme is not accepted; a wildcard or a
-prefix match is not accepted; a redirect URI is never matched case-insensitively or after
-normalisation that could collapse two different hosts.
+person signs in and consents, and a person only consents to a client they meant to use. Four things
+carry that sentence, and the first three are the owner's answers of 2026-11-04:
+
+- **Registration refuses a non-loopback URI that is not on the allowlist** (D928). An attacker's
+  redirect URI is therefore refused before any person is asked anything about it, unless it is a
+  loopback address — and a loopback address is the attacker's own machine, which is not where the
+  victim's browser is.
+- **The consent page names the redirect host** (D928), so the person sees where their code is going
+  rather than a client id. Consenting to a name they were never shown is not consent.
+- **The flow is CSRF-bound** (D928): the authorize request carries the client's `state`, the
+  coordinator holds its own binding between the request and the consent it answers, a consent
+  without that binding is refused, and the `state` returns on the redirect unaltered. Without it an
+  attacker's client can complete a sign-in the person began for another client.
+- **The defences on the code itself** are unchanged and are the last line: exact-match validation of
+  the redirect URI at authorize and at token, PKCE S256 required with no plain fallback, a
+  single-use code bound to the client and the redirect URI, and a short code lifetime. A custom
+  scheme is not accepted; a wildcard or a prefix match is not accepted; a redirect URI is never
+  matched case-insensitively or after normalisation that could collapse two different hosts.
 
 **Open Dynamic Client Registration.** Openness is a real property with a real cost: the registration
 endpoint is reachable by anyone and writes a record, so it is rate-limited and audited, and a
@@ -483,7 +558,7 @@ remaining honest statement is that a compromised agent with `tasks:write` can sp
 limit and start runs, on the repositories its token admits, at the review rigor its token allows.
 That is what the limit is for.
 
-**Spend.** `submit_task` costs money, so it is the tool with the least slack: the token's limit, the
+**Spend.** `spawn_task` costs money, so it is the tool with the least slack: the token's limit, the
 repository's cap, the installation's cap and the run's own ceiling all apply, and the gateway is the
 enforcer, exactly as it is for every other run. A token cannot raise any of them, and a refusal
 names which one it hit.
@@ -493,6 +568,27 @@ JSON-RPC body and a bearer token — and it does so in the interview with a stra
 rules are that a token's content is never echoed, that a tool argument is never concatenated into a
 command or a path without validation against the project's own lists, and that the run identifier a
 caller supplies is resolved through the project's own run list rather than used as a key.
+
+**A compromised coordinator, and the launch override.** The coordinator is the launcher (D931), so
+it holds the one thing a launcher has that no token does: **the ability to set a run's environment
+for one execution**. On Cloud Run that is `run.jobs.runWithOverrides`, which is in the launcher role
+(`internal/cli/doctor_launcher.go:246`) and is why the repository already refuses to let a launch
+decide anything important: `internal/backend/gcp/names.go:175` records that **a launcher may override
+any variable through `run.jobs.runWithOverrides`, so the provider — which decides which repository
+the runner may clone and which git credential the job holds — must come from something only Cloud
+Run sets**, and `internal/backend/launchenv.go:91` (`LaunchEnv`) is where the seam refuses an entry
+naming a reserved variable at all, with the platform's five (`PlatformEnvNames`, `:32`, whose
+reservation `ReservedEnvNames` at `:52` hands both backends) pinned so a platform variable cannot be
+silently rewritten. **This design answers the same question the owner
+asked on 2026-11-04: the runner ignores the override environment except for an allowlist.** The
+allowlist is exactly the variables this design adds — the token's ceiling of D924, and the marker
+that says a launch carries one — and nothing else a caller could put there is read: not the
+repository, not the provider, not the backend, not the policy or the kill switch, not the account,
+not the credentials service's endpoint. A compromised coordinator therefore cannot change *what* a
+run does by rewriting its environment; the worst it can do through the override is **narrow** a run's
+ceiling, which is the direction D924 already requires — and everything else it could do it can do
+only as a launcher, which is the privilege the owner is being asked to grant and which the
+independent review of this section exists to price.
 
 ## 9. What the coordinator must never do
 
@@ -535,10 +631,11 @@ and ask for it.
   container, which is the limitation `docs/coordinator/reconciliation.md:794` recorded as U1, so the
   design stays written to the **2026-07-28** revision the owner named.
 - **Which of the fifteen decisions the owner answers differently later.** All fifteen were answered
-  on 2026-11-04 and the design is written to those answers — **D922 against the recommendation**, and
-  §6 and §8 carry what that costs. Every alternative stays priced in the reconciliation, so a later
-  change of mind is a priced edit rather than a rewrite, except for D920 and D923, where it is a
-  different document.
+  on 2026-11-04 and the design is written to those answers — **every one of them the recommendation**.
+  Every alternative stays priced in the reconciliation, so a later change of mind is a priced edit
+  rather than a rewrite, except for D920 and D923, where it is a different document. **D922 is the
+  one decision that was answered twice**: the first answer was read, written into §6 and §8 and
+  restated the same day as the recommendation, and what stands here is the restatement.
 - **The exact client-credentials shape for unattended callers** — one client per agent, or one per
   workspace — is a product question this design answers provisionally (one per agent, since the
   identity in the audit record is the point) and the plan carries as an owner check.
@@ -551,8 +648,11 @@ and ask for it.
   is to state that it has a home here, so a reader of either document does not have to guess whether
   the two are connected. If #1682 lands a tool the two scopes do not cover, the scope question comes
   back as D927's.
-- **What D922's read rule does to the operator's audit view.** D933 keeps the audit *record* a tool
-  returns to an operator; D922 makes the raw subtree readable by any signed-in person. §4 and §9
-  state the tension and D922's answer is what created it, so whether the tool surface, the subtree's
-  read rule or both should move is a question the owner may want to revisit — it is recorded here
-  rather than settled, because settling it would be a decision this folder has already been given.
+- **The client-credentials caller's own ergonomics** — how a script stores a client secret, and what
+  `fugaro` command (if any) mints one — is left to the implementation tasks rather than settled here,
+  because §7 fixes the shape and not the surface.
+- **What a `domain:` entry would need before the front door could read it.** D923's answer refuses
+  `domain:`, `group:` and `serviceAccount:` entries in v1, which is the same refusal `fugaro user`
+  makes at its own door. Whether a later version wants to admit a whole domain, and what would have
+  to be true of the signer's role before it safely could, is **not** a question this design answers —
+  it is named here so that the refusal reads as a decision rather than an omission.

@@ -2,10 +2,10 @@
 
 **Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
 approved.** The design is [spec.md](spec.md), the findings and the fifteen decisions are
-[reconciliation.md](reconciliation.md). **All fifteen were answered on 2026-11-04** — fourteen as
-recommended and **D922 not the recommendation** — and this plan is written to those answers: the
-"Answered" column below is what the tasks build, and the last column is what a later answer the other
-way would move. **No task here is approved, and two things gate the whole plan:** the
+[reconciliation.md](reconciliation.md). **All fifteen were answered on 2026-11-04** — **every one of
+them the recommendation**, with the owner's own detail written into M3, M5, M6 and M9 — and this
+plan is written to those answers: the "Answered" column below is what the tasks build, and the last
+column is what a later answer the other way would move. **No task here is approved, and two things gate the whole plan:** the
 independent SECURITY review of [spec.md](spec.md) §8 (which the coordinator runs), and D921's
 **unconfirmed licence** ([reconciliation.md](reconciliation.md) §6, checks 1 and 7).
 
@@ -15,17 +15,17 @@ independent SECURITY review of [spec.md](spec.md) §8 (which the coordinator run
 | --- | --- | --- | --- |
 | D920 | Public endpoint, or P8's IAM invoker | **Public**, bearer token is the gate — **the recommendation** | **M5, M6, M8, M9, M10 are void, and M4 and M7 shrink.** An IAM-invoked endpoint has no metadata documents, no registration and no token endpoint; what survives is M1–M3 and a tool registry reached by a Google identity. The plan is then a different, much smaller plan. |
 | D921 | The OAuth library | **`zitadel/oidc` — the recommendation, with the licence UNCONFIRMED**, so the owner or counsel confirms it before any build: **M5 does not start until that is settled** | **M5's shape changes** (the endpoints stay; who implements them does not), and `go.mod` gains a different dependency. |
-| D922 | Where the token records live | **A separate subtree, readable by any signed-in user of the project — NOT the recommendation**, which refused it to everything but the coordinator's service account | **M3 changes** from "named, readable by a signed-in person, writable by nobody else" to "named and denied to every client, granted to the coordinator's account", and its red step inverts again. |
-| D923 | How the person signs in | **The installation's own custom-token flow** — the recommendation | **M6 changes**, and a decision already taken once (`docs/mobile-auth` D221) is reopened. |
-| D924 | How the spend limit is enforced | **A variable of its own, tighter-of-two** — the recommendation | **M9 loses its core change** and gains the launcher-side arithmetic instead. |
+| D922 | Where the token records live | **The separate `mcpauth` subtree, `.read: false` and `.write: false`, written by the coordinator's own account only** — the recommendation (**restated the same day**: the first answer made it readable by any signed-in person) | **M3 changes** by taking `coordinator/`'s `.read: "USER"` for the new node, and its red step inverts from the denial to the admission. |
+| D923 | How the person signs in | **The installation's own custom-token flow, with a PAIRED DEVICE approving and the coordinator never minting a token** — the recommendation, mechanism named; the ID token is consumed at `/oauth/authorize` only, and only exact `user:` list entries are read | **M6 changes** (the verifier moves to the authorize endpoint), **M7 gains the `user:`-only rule**, and a decision already taken once (`docs/mobile-auth` D221) is reopened. |
+| D924 | How the spend limit is enforced | **A variable of its own, tighter-of-two, counted across the whole token family** — the recommendation | **M9 loses its core change** and gains the launcher-side arithmetic instead, and **M2 gains the family counter** that makes rotation a lifetime mechanism rather than a budget one. |
 | D925, D926 | Hotfix as a flag; the window's shape | **Flag beside the window; an empty window refused at mint** — the recommendation | **M1 changes**, and M9's refusal message changes. |
 | D927 | The v1 scopes | **`tasks:read`, `tasks:write` only** — the recommendation | **M7 and M10 gain a scope**, and the console's blocked write (F30) gains a route. |
-| D928 | Who owns the redirect allowlist | **The project's configuration** — the recommendation | **M5 and M9 gain a configuration field** and the project-format version question that comes with it. |
+| D928 | Who owns the redirect allowlist | **The project's configuration**, with registration refusing a non-loopback URI off the allowlist, the consent page naming the redirect host, and the flow CSRF-bound — the recommendation, tightened | **M5 and M9 gain a configuration field** and the project-format version question that comes with it, and M5's registration, consent and authorize tests go with them. |
 | D929 | What an unattended caller is | **A pre-registered confidential client** — the recommendation | **M5 and M9 gain a key-exchange endpoint**, and the owner's own non-goal is reopened. |
 | D930 | Lifetimes and rotation | **Short-lived access tokens, rotating refresh, one-delete revocation** — the recommendation | **M2 and M10 change**; a long-lived-token design deletes most of M2. |
-| D931 | How a run is started, and the coordinator's own tools | **`internal/backend`, one new grant, both tool sets on one endpoint** — the recommendation | **M9 changes** (the sweep instead of a direct launch), and the tool-naming decision moves into M7. |
+| D931 | How a run is started, and the coordinator's own tools | **`internal/backend`, one new grant, both tool sets on one endpoint, and a single launch path**: the tool is `spawn_task`, and concurrency, rate, idempotency and the kill switch all go through `fugaro run`'s own pre-launch code — the recommendation, tightened | **M9 changes** (the sweep instead of a direct launch), and the tool-naming decision moves into M7. |
 | D932 | Where `stream_logs` reads | **The run's own artefacts** — the recommendation | **M8 and M4 change**: one more grant, able to read every log line in the project. |
-| D933 | Who a person is | **The project's launcher and operator lists** — the recommendation | **M7 and M10 change**, and a permission model that does not exist yet has to be designed. |
+| D933 | Who a person is | **The project's launcher and operator lists**, read for exact `user:` entries only — the recommendation | **M7 and M10 change**, and a permission model that does not exist yet has to be designed. |
 | D934 | Whether the front door is on by default | **OFF until the owner turns it on** — the recommendation | **M4 gains the switch** and the live checklist gains a state; the other reading puts a public write endpoint on installations that asked only for a read-only view. |
 
 ## 2. The order, and what forces it
@@ -97,29 +97,32 @@ D921 back to its alternatives before any code exists rather than after.
 - **SEC:** yes — it is the task that decides what is at rest.
 - **Depends on:** M1.
 
-### M3 — The rules name the token records' home, open it to a person and close it to every writer
+### M3 — The rules name the token records' home and close it to every client
 
 - **Files (3):** `internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/rules.go`,
   `internal/budget/rules/mcpauth_test.go`.
 - **Interface:** a top-level `mcpauth` subtree in the template — **a sibling of `coordinator/`, not a
-  child of it** (D922's answer) — with `.read: "USER"` and `.write: false`, named in the file so that
-  the next person who adds a grant can see it is there, plus the constant the parity test reads it
-  through. `USER` is the claim the coordinator's own subtree already uses
-  (`internal/budget/rules/rules.json.tmpl:10-13`, `internal/budget/rules/rules.go:517`).
-- **Red step:** `TestMCPAuthIsNamedAndReadableByAPersonAndWritableByNobody` — it asserts the subtree
-  is **named** in the template, that the emulator **admits** a read as `USER`, and that it refuses a
-  read as a run's `TOKEN` and refuses a **write** as `USER` and as `TOKEN`. It fails before the
-  template change because the key is absent. (The root's blanket denial already refuses the `TOKEN`
-  read, which is exactly why the test has to assert the *name*: an unnamed subtree is protected by a
-  rule nobody reading the file can see — and D922's answer is why the test asserts the `USER`
-  **admission** as well, since the read rule is now a fact the design depends on rather than a
-  refusal.)
-- **Tests:** `TestMCPAuthIsNamedAndReadableByAPersonAndWritableByNobody`, and `TestRulesParity` must
-  stay green.
+  child of it** (D922's answer) — with **`.read: false` and `.write: false`**, named in the file so
+  that the next person who adds a grant can see it is there, plus the constant the parity test reads
+  it through. It deliberately does **not** copy `coordinator/`'s `.read: "USER"`
+  (`internal/budget/rules/rules.json.tmpl:10-13`, the claim at `internal/budget/rules/rules.go:517`):
+  the node is refused to every client, and the one account that writes it — the coordinator's own —
+  reaches it through `roles/firebasedatabase.admin`
+  (`deploy/terraform/gcp/modules/firebase/iam.tf:138`) and not through a rule.
+- **Red step:** `TestMCPAuthIsNamedAndDeniedToEveryClient` — it asserts the subtree is **named** in
+  the template, and that the emulator refuses a **read** as `USER` and as a run's `TOKEN` and refuses
+  a **write** as `USER` and as `TOKEN`. It fails before the template change because the key is
+  absent. (The root's blanket denial already refuses the `TOKEN` read, which is exactly why the test
+  has to assert the *name*: an unnamed subtree is protected by a rule nobody reading the file can
+  see. It asserts the `USER` **refusal** too, because that is the half D922's restatement decides —
+  a later change that gave `mcpauth` the `coordinator` node's read rule would be a decision, and this
+  test is what makes it a failing one rather than a quiet widening.)
+- **Tests:** `TestMCPAuthIsNamedAndDeniedToEveryClient`, and `TestRulesParity` must stay green.
 - **SEC:** **yes, mandatory** — it is the rules change that decides who reads the token records, the
-  client list, the revocation state and the whole tool-call audit. **D922's answer widened that
-  readership to every signed-in person of the project**, so the review reads this task beside
-  [spec.md](spec.md) §8's token-storage paragraph, which states the exposure the answer accepts.
+  client list, the revocation state and the whole tool-call audit. **D922's answer is the closed
+  one**, so the review's question here is the reverse of the one an open read rule would raise: not
+  what the exposure accepts, but whether anything but the coordinator's account can reach a node the
+  rules refuse and the database admin grant reaches past them.
 - **Depends on:** nothing. **Can land first.**
 - **Do not touch:** `internal/budget/rules/rules.go` is shared with every other rules work; the
   change is one constant and one template key, and a conflict there is a rebase, not a redesign.
@@ -184,25 +187,38 @@ ends with exactly the resources above — and an installation that did not pass 
 - **Tests:** `TestNoTokenIsA401NamingTheMetadataURL`, `TestMetadataPointsAtItsOwnServer`,
   `TestRegisterIsOpenAndGrantsNothing`, `TestPKCEIsRequiredAndPlainIsRefused`,
   `TestCodeIsSingleUseAndBoundToTheRedirectURI`, `TestRedirectURIMustMatchExactly`,
-  `TestRedirectURIMustBeLoopbackOrAllowlisted`, `TestRefreshTokenIsSingleUse`.
-- **SEC:** **yes, mandatory** — this is the endpoint the threat model's redirect-URI and open-
+  `TestRedirectURIMustBeLoopbackOrAllowlisted`, `TestRefreshTokenIsSingleUse`, and the three
+  D928 tightenings' own: `TestRegistrationRefusesANonLoopbackURI` (a non-loopback URI that is not on
+  the allowlist is refused **at registration**, not at a person's sign-in),
+  `TestConsentNamesTheRedirectHost` (the page a person consents on carries the redirect URI's host),
+  `TestConsentIsCSRFBound` (a consent that does not carry the flow's own binding is refused, and the
+  `state` returns on the redirect unaltered).
+- **SEC:** **yes, mandatory** — this is the endpoint the threat model's redirect-URI, CSRF and open-
   registration paragraphs are about.
 - **Depends on:** M2, M4, D921, D928 — **and on D921's licence being confirmed**, by the owner or by
   counsel, before the dependency is added ([reconciliation.md](reconciliation.md) §6, check 1). This
   is the one task the licence gates directly.
 
-### M6 — Firebase at the token endpoint
+### M6 — Firebase at the authorize endpoint
 
 - **Files (4):** `ee/coordinator/mcpauth/firebase.go`, `firebase_test.go`,
   `ee/coordinator/mcpauth/firebase_keys.go`, `ee/coordinator/testdata/mcpauth/jwks.json`.
 - **Interface:** `VerifyIDToken(ctx, raw string) (Identity, error)`, sharing the verification rules
   `internal/credsvc` already implements (issuer built from the project id, audience compared to the
-  bare project id, keys from the public endpoint) and never echoing a token in a refusal.
+  bare project id, keys from the public endpoint) and never echoing a token in a refusal. It is
+  called from **`GET /oauth/authorize` and from nowhere else** (D923's answer of 2026-11-04): the ID
+  token is the proof of the sign-in step, and the token endpoint has no path that accepts one. The
+  task carries the other half of that answer too: **the coordinator mints no Firebase custom token
+  and holds no signer role**, so there is no minting code here for a reviewer to find, and no way for
+  a compromised coordinator to assert an identity the paired device did not approve.
 - **Red step:** `TestTokenFromAnotherProjectIsRefused` — a token whose audience is another project's
   id is refused, and the refusal names neither the token nor the audience. It fails because there is
   no verifier.
 - **Tests:** `TestTokenFromAnotherProjectIsRefused`, `TestWrongIssuerIsRefused`,
-  `TestExpiredTokenIsRefused`, `TestRefusalNeverEchoesTheToken`.
+  `TestExpiredTokenIsRefused`, `TestRefusalNeverEchoesTheToken`,
+  `TestTheTokenEndpointRefusesAFirebaseIDToken` (the same token that is accepted at authorize is
+  refused where it is not a grant) and `TestTheCoordinatorMintsNoCustomToken` (no code path signs
+  one).
 - **SEC:** **yes** — token verification is where a mistake is silent.
 - **Depends on:** M4. **Reuses rather than duplicates** `internal/credsvc`'s verification; the review
   must ask why it is a second implementation, and the answer has to be that `internal/credsvc` is a
@@ -222,6 +238,9 @@ ends with exactly the resources above — and an installation that did not pass 
 - **Red step:** `TestUnknownScopeIsRefusedNotIgnored` — a token carrying a scope the server does not
   know is refused rather than treated as holding no scopes. It fails because there is no registry.
 - **Tests:** `TestUnknownScopeIsRefusedNotIgnored`, `TestIdentityOffTheListsIsRefused`,
+  `TestOnlyExactUserEntriesAreRead` (D923's answer: a list holding `group:`, `domain:` and
+  `serviceAccount:` entries beside its `user:` ones admits the `user:` identity and none of the
+  others — the same rule `internal/cli/user.go:266` applies at its own door),
   `TestToolsListNamesBothSetsOnce`, `TestAnExpiredTokenIsRefused`,
   `TestAToolAnswerCarriesNoCredential` (a table over every tool, asserting the answer's text
   contains none of the project's credential names).
@@ -242,23 +261,33 @@ ends with exactly the resources above — and an installation that did not pass 
 - **SEC:** yes — read reach.
 - **Depends on:** M7.
 
-### M9 — `submit_task`, `cancel_task`, and the narrowed ceiling
+### M9 — `spawn_task`, `cancel_task`, and the narrowed ceiling
 
-- **Files (8):** `ee/coordinator/mcpauth/tool_submit.go`, `tool_submit_test.go`,
+- **Files (8):** `ee/coordinator/mcpauth/tool_spawn.go`, `tool_spawn_test.go`,
   `ee/coordinator/mcpauth/tool_cancel.go`, `tool_cancel_test.go`,
   `ee/coordinator/mcpauth/launch.go`, `launch_test.go`, `internal/runner/spend.go`,
   `internal/runner/spend_test.go`.
-- **Interface:** `submit_task` starts the project's own job through `internal/backend` with the
+- **Interface:** **`spawn_task`** (D931's answer of 2026-11-04 — the owner's name for the
+  `submit_task` of the spec §0) starts the project's own job through `internal/backend` with the
   token's spend limit in a variable of its own on the execution override (D924); the run's ceiling
-  becomes the tighter of that and the job's own. `cancel_task` writes the marker `fugaro cancel`
-  writes.
+  becomes the tighter of that and the job's own. **It starts it through one launch path and no
+  other**, which is the whole of D931's second half: the same **launch claim** in the runs bucket
+  (`internal/runstore/launch.go:112`, `ClaimKey`, `ClaimTTL` at `:117`) so one submit is one run and
+  a repeat answers about the run in flight, the same **budget pre-check** of kill switches, caps and
+  headroom (`internal/budget/precheck.go:58`, `budget.Precheck`, which
+  `internal/cli/launch_budget.go:283` is the CLI's own call to), and the front door's own
+  **concurrency and rate** limits enforced at that same point. `launch.go` is the one file that
+  reaches the job, and a second route to `internal/backend` in any later task is a finding rather
+  than a convenience. `cancel_task` writes the marker `fugaro cancel` writes.
 - **Red step:** `TestTokenCeilingOnlyNarrowsTheRunsOwn` in `internal/runner/spend_test.go` — a run
   whose environment carries a token ceiling **above** the job's own resolves to the job's own, and
   one below resolves to the token's. It fails before the variable exists.
 - **Tests:** `TestTokenCeilingOnlyNarrowsTheRunsOwn`,
-  `TestSubmitRefusesAModeOutsideTheTokensWindow`, `TestSubmitRefusesHotfixWithoutTheFlag`,
-  `TestSubmittedRunCarriesTheTokenCeiling`, `TestSubmitNeverMountsACredential`,
-  `TestCancelOfAnotherProjectsRunIsRefused`.
+  `TestSpawnRefusesAModeOutsideTheTokensWindow`, `TestSpawnRefusesHotfixWithoutTheFlag`,
+  `TestSpawnedRunCarriesTheTokenCeiling`, `TestSpawnNeverMountsACredential`,
+  `TestSpawnTakesTheLaunchClaim` (a second submit of the same task answers about the run already in
+  flight rather than starting a second), `TestSpawnRunsTheBudgetPrecheck` (a kill switch that refuses
+  `fugaro run` refuses `spawn_task`), `TestCancelOfAnotherProjectsRunIsRefused`.
 - **SEC:** **yes, mandatory.** It adds the launch grant, and it is the one task that spends money.
 - **Depends on:** M4 (the grant), M7, D924.
 - **Hand-off:** `internal/runner/spend.go` is a core file and **every release's** runner work has
@@ -274,11 +303,11 @@ ends with exactly the resources above — and an installation that did not pass 
 - **Interface:** one structured line per call and per refusal, naming the identity, the tool, the
   scopes and the outcome and never a value, on `internal/credsvc/audit.go`'s pattern; a bounded
   per-identity record an operator can read; and revocation reachable from the API and from a
-  person's own surface. **The record is written into M3's subtree**, which D922's answer makes
-  readable by any signed-in person of the project — so "an operator can read it" is the **tool
-  surface's** rule (D933) and not the database's, and the two are deliberately different: a launcher
-  gets no audit through the API while the raw nodes are not closed to them
-  ([spec.md](spec.md) §4, §6 and §8 state the tension).
+  person's own surface. **The record is written into M3's subtree**, which D922's answer closes to
+  every client, so "an operator can read it" is the **tool surface's** rule alone (D933): an operator
+  reads the record through a tool, a launcher does not read it at all, and no caller of any kind
+  reaches the raw nodes — the database rule and the tool rule agree here rather than parting
+  ([spec.md](spec.md) §4, §6 and §8).
 - **Red step:** `TestEveryRefusalWritesOneLineNamingNoValue` — the audit line for a refusal whose
   token is a recognizable marker string contains neither the marker nor its first eight characters.
   It fails because there is no audit writer.

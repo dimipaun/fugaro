@@ -4,8 +4,10 @@
 approved.** The owner's spec of 2026-10-24 is copied verbatim into [spec.md](spec.md) §0 and is
 reconciled against the code here; [reconciliation.md](reconciliation.md) §4 puts fifteen decisions
 (D920–D934) in front of the owner, each with the recommendation first and the cost of the
-alternative — and **all fifteen were answered on 2026-11-04**: fourteen as recommended and **D922
-not the recommendation**. **If the implementation happens,
+alternative — and **all fifteen were answered on 2026-11-04**, **every one of them the
+recommendation**, with the owner's own detail written into the design (D922's was restated the same
+day: the first answer opened the subtree and the restatement closes it). **If the implementation
+happens,
 [implementation-plan.md](implementation-plan.md) §5 recommends 0.20.0 "Quokka" or later** — 0.15.0,
 0.16.0 and 0.17.0 have all shipped since this design was written, and §5 says why the work is big and
 security-heavy enough to want a window of its own.
@@ -13,17 +15,19 @@ security-heavy enough to want a window of its own.
 **Asked by.** The owner, on 2026-10-24: a hosted MCP server inside the coordinator, with OAuth 2.1
 and PKCE and the project's own Firebase as the identity provider, so that MCP clients can submit and
 manage tasks without the CLI. The owner approved a design PR on 2026-10-31 and **answered the fifteen
-decisions on 2026-11-04** — D920's public endpoint, D933's two lists, D930's rotating tokens, D934's
-off-by-default front door, D921's library **with its licence still UNCONFIRMED**, and D922's separate
-subtree readable by any signed-in user of the project.
+decisions on 2026-11-04** — D920's public endpoint, D923's paired-device sign-in and its `user:`-only
+lists, D930's rotating tokens, D931's single launch path, D934's off-by-default front door, D921's
+library **with its licence still UNCONFIRMED**, and D922's separate **`mcpauth`** subtree, closed to
+every client.
 
 **Reconciled against.** `origin/main` at `3d6ed04d`, read on 2026-11-01, and **re-read on 2026-11-04
 at `b41709ea`**, with the seventeen pull requests open at the first reading — most closely #1472
 (`docs/cloud-senior-review`, D880–D899), #1481 (`docs/run-without-checkout`, D901–D919) and #1483
 (`internal/rigor/rounds.go`). Every citation in [reconciliation.md](reconciliation.md) is a path and a
-line at the later commit, and its §7 records the seven things `main` had overtaken in between:
+line at the later commit, and its §7 records the eight things `main` had overtaken in between:
 **managed mode, the person-class reads, `settings`/`rigor`/`accounts`, the project image catalog and
-#1676, `fugaro upgrade`, 0.17.0 shipped, and `stray.go`.**
+#1676, `fugaro upgrade`, 0.17.0 shipped, `stray.go`, and the paired device** (`fugaro pair` and the
+device allowlist, which is what D923's answer signs a person in with).
 
 **SECURITY-SENSITIVE.** Two things about this folder are not ordinary design text:
 
@@ -116,7 +120,14 @@ README, in its own diff, is where the block above D1189 is written.
   the public specification**, which is the limitation `docs/coordinator/reconciliation.md`:794
   recorded as U1, so the design stays written to the **2026-07-28** revision because that is the one
   the owner named.
-- **Not a closed threat model.** [spec.md](spec.md) §8's token-storage paragraph states the exposure
-  **D922's answer accepts**: the client list, the redirect URIs, the revocation state and the
-  tool-call audit are readable by any signed-in person of the project. Only hashes are at rest, so no
-  token is presentable — but the metadata is not private, and the review reads that paragraph first.
+- **Not a design with a second reader to argue about.** D922's answer closes the token records'
+  subtree to every client (`.read: false`, `.write: false`, the coordinator's own account the only
+  writer), so [spec.md](spec.md) §8's token-storage paragraph states a **refusal** rather than an
+  accepted exposure — and the `mcpauth` node is the one place in this design where nothing but the
+  coordinator's database admin grant reaches the data at all. The review reads that paragraph
+  beside the rest of §8 anyway: the paragraph a review should check hardest is the one that says
+  nothing can get in.
+- **Not settled on what a later version might admit.** D923 refuses `domain:`, `group:` and
+  `serviceAccount:` entries in v1, the same refusal `fugaro user` makes at its own door; whether a
+  later version admits a whole domain, and what would have to be true of the signer's role first, is
+  deliberately left open rather than answered by omission.
