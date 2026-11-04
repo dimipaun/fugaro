@@ -972,7 +972,7 @@ func catalogCheckCatalogRead(computed bool, title, expr string) *Plan {
 // — actAs on each repository's build account, the copied definitions read-only,
 // one repository's build records and check state, the build submitter, its own
 // log lines, and run.invoker on its own job — are a project-wide reach no
-// confirmation of `fugaro init`/`update` announced, so a plan carrying any of
+// confirmation of `fugaro setup` or `fugaro update` announced, so a plan carrying any of
 // them is one the step asks its owner about. Nothing else may accept it either:
 // an account that could ride one of the tables' rows would be one whose next
 // grant (a secret accessor, an IAM admin role, a key) is covered silently.
