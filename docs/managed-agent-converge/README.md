@@ -9,6 +9,7 @@
 | [spec.md](spec.md) | The design in full: what makes a project managed, which commands the agent may run and which it never may, the gate's rules per command, the cost bound on billable builds, the audit record, how a session learns it is in a managed project, the interaction with `fugaro update` and the other chains, revocation, and the threat model. **Where it disagrees with [reconciliation.md](reconciliation.md), the reconciliation wins** |
 | [reconciliation.md](reconciliation.md) | Each claim of the spec against the code on `main` and in the open pull requests: findings **F1–F21**, what exists and what is missing, the owner decisions **D1011–D1027** (§3) with the recommendation and the cost of each alternative, the number block and how it was read (§4), and the residual the design refuses to hide (§5) |
 | [implementation-plan.md](implementation-plan.md) | Ten tasks **M0–M9**, each with its files (at most twelve), its interface, its **red step**, its named tests and its SEC flag; the shared-files table (§4); the order and what forces it (§3); the recommended slot (§6) |
+| [handoffs.md](handoffs.md) | M9's note: the three handoff rows §2 owes the settings, rigor and accounts designs, each read against the tree, and the paragraph `plugin/skills/setup/reference/managed.md` owes, written as a handoff rather than placed |
 | `README.md` | This file: the status, the reading of the number block, what is being asked, and what a reader should not take from here |
 
 ## The owner's answers (2026-11-01)
