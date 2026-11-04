@@ -498,6 +498,65 @@ describe('the checkouts a row may offer', () => {
 
     expect(rowOf(reply, 'aurora').checkouts).toEqual([])
   })
+
+  it('collapses the menu to one entry per repository, drops what the CLI did not re-validate, and counts the rest', async () => {
+    // **What the dropdown is drawn from** (design §3.4 rule 7): one entry per
+    // repository, over the rows carrying `valid: true` and `enrolled: true`, with
+    // the tool-owned and temporary directories dropped. `orbit` records three
+    // directories of one repository -- one ordinary, one under the machine's
+    // temporary root, one the CLI refused -- and one of another repository the
+    // project does not enroll; the menu is two entries, and the one that stands
+    // for `orbit` says how many directories it stands for.
+    const document = {
+      installations: [
+        {
+          name: 'orbit',
+          gcp_project: 'orbit-482301',
+          region: 'europe-west4',
+          checkouts: [
+            { repository: 'github/owner/orbit', path: '/home/operator/src/orbit', enrolled: true, valid: true },
+            { repository: 'github/owner/orbit', path: `${TMP}/orbit-scratch`, enrolled: true, valid: true },
+            { repository: 'github/owner/orbit', path: '/home/operator/src/orbit-two', enrolled: true, valid: true },
+            { repository: 'github/owner/orbit', path: '/home/operator/src/gone', enrolled: true, valid: false, reason: 'missing' },
+            { repository: 'github/owner/other', path: '/home/operator/src/other', enrolled: false, valid: false, reason: 'not_enrolled' },
+            { repository: 'github/owner/aurora', path: '/home/operator/src/aurora', enrolled: true, valid: true },
+          ],
+        },
+      ],
+      warnings: [],
+    }
+    const userData = store([{ id: '0123456789abcdef', project: 'orbit' }])
+    const { ipcMain } = over({ userData, stub: stubWith(document) })
+    const reply = await list(ipcMain)
+
+    expect(rowOf(reply, 'orbit').checkoutChoices).toEqual([
+      { repository: 'github/owner/orbit', path: '/home/operator/src/orbit', more: 1 },
+      { repository: 'github/owner/aurora', path: '/home/operator/src/aurora', more: 0 },
+    ])
+    // The picker window's own list is the one it always was: every path the CLI
+    // re-validated, the refused row's included nowhere, and no repository pairing.
+    expect(rowOf(reply, 'orbit').checkouts).toEqual([
+      '/home/operator/src/orbit',
+      '/home/operator/src/orbit-two',
+      '/home/operator/src/aurora',
+    ])
+  })
+
+  it('offers a row the CLI did not list nothing at all', async () => {
+    // A record this console holds and the CLI did not list has no document
+    // behind it: the menu is empty rather than drawn from the store, and the
+    // chooser says so in the console's own words.
+    const userData = store([{ id: '0123456789abcdef', project: 'acme', checkout: '/home/operator/src/acme' }])
+    const { ipcMain } = over({ userData, stub: stubWith(DOCUMENT, [CONFIG_LINE]) })
+    const reply = await list(ipcMain)
+
+    const row = reply.rows.find((each) => each.project === 'acme')
+    expect(row?.listed).toBe(false)
+    expect(row?.checkoutChoices).toEqual([])
+    // ...while the directory the operator recorded is still the row's own
+    // checkout, which is what the rail draws it with.
+    expect(row?.checkout).toBe('/home/operator/src/acme')
+  })
 })
 
 describe('removing the installation the console is open on', () => {

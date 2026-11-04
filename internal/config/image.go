@@ -155,6 +155,56 @@ func validateImage(p string, w Workflow) []Problem {
 	if d := w.Dockerfile; d != "" && (strings.HasPrefix(d, "/") || slices.Contains(strings.Split(d, "/"), "..")) {
 		add(p+".dockerfile", "must be a relative path inside the repository, such as .fugaro/%s.Dockerfile", strings.TrimPrefix(p, "workflows."))
 	}
+	ps = append(ps, validateCatalogRef(p, w)...)
+	return ps
+}
+
+// validateCatalogRef checks a workflow's catalog reference (spec
+// project-image-catalog §Repo configuration, D1155): image_name: names one
+// entry of the project's catalog and needs: lists the tags the job needs.
+// Both are the repository's, and both are definitions of what the job runs,
+// which is why they are judged here rather than with the project's catalog:
+// whether the name exists is the selection's question (PIC5), and what this
+// refuses is a file that states two definitions at once.
+//
+// D1155 (answered 2026-11-02) is the refusal below: a repository that sets
+// its own image: or dockerfile: AND a catalog reference is refused, and the
+// message names both keys — the override's and the reference's — the shape
+// "image and dockerfile are mutually exclusive" already takes. The two
+// together would leave the precedence, which is first match wins, stated
+// nowhere in the file two readers could disagree about.
+//
+// A repository that names both an entry and tags is not a conflict: the
+// precedence is stated (image_name: first, then needs:), so the pin wins and
+// the tags are what the deploy-time warning of D1146 checks the pin against.
+func validateCatalogRef(p string, w Workflow) []Problem {
+	var ps []Problem
+	add := func(path, format string, args ...any) {
+		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(format, args...)})
+	}
+	if w.ImageName == "" && len(w.Needs) == 0 {
+		return nil
+	}
+	override := ""
+	switch {
+	case !w.Image.IsZero():
+		override = "image"
+	case w.Dockerfile != "":
+		override = "dockerfile"
+	}
+	if override != "" {
+		if w.ImageName != "" {
+			add(p+".image_name", "%s and image_name are mutually exclusive; a repository uses its own image definition or a catalog entry, not both", override)
+		}
+		if len(w.Needs) > 0 {
+			add(p+".needs", "%s and needs are mutually exclusive; a repository uses its own image definition or a catalog entry, not both", override)
+		}
+		return ps
+	}
+	if !catalogNameRE.MatchString(w.ImageName) && w.ImageName != "" {
+		add(p+".image_name", "%s", catalogNameMessage)
+	}
+	validateCatalogTags(p+".needs", w.Needs, add)
 	return ps
 }
 
@@ -216,12 +266,20 @@ func validateKeyFiles(p string, files []string, add func(path, format string, ar
 	}
 }
 
-// SharedCheckoutSince is the first fugaro release that builds and refreshes a
-// shared dependency-layer image: the release validateCheckout refuses
-// checkout: shared until. It is a different fact from internal/cli's
-// sharedSince, which names the release whose *runner* clones for a shared job
-// (0.14.0): the runner half landed first, and the image such a job runs does
-// not exist before this release.
+// SharedCheckoutSince records the release shared dependency-layer images
+// were to arrive in, and it is stale: 0.15.0 shipped without them, so no
+// release builds or refreshes one and nothing gates on this number. The
+// gate is sharedCheckoutShipped below, a flag the release that actually
+// builds these images flips. The value stays at 0.15.0 because one reader
+// still names it — docs/release.md's bullet for internal/cli's sharedSince,
+// which TestSharedSinceHasAReleaseBullet holds to it — so the release that
+// ships them moves this to its own tag.
+// SharedCheckoutRefusal names no release at all, so a stale number here
+// cannot reach a repository.
+//
+// It is a different fact from internal/cli's sharedSince, which names the
+// release whose *runner* clones for a shared job (0.14.0): the runner half
+// landed first, and the image such a job runs does not exist yet.
 const SharedCheckoutSince = "0.15.0"
 
 // sharedCheckoutShipped is false until the release that actually builds and
@@ -229,18 +287,33 @@ const SharedCheckoutSince = "0.15.0"
 // does, so a repository that declares checkout: shared gets a job that
 // cannot run. Everything else the kind needs is already here — the
 // CheckoutShared value, its key rules in validateCheckout, the schema's enum
-// value, PlanWorkflowJob's acceptance of FUGARO_CHECKOUT=shared and the
-// sharedSince launch gate — so the release that ships shared images flips
-// this one value and nothing else, the way cloneShipped and catalogShipped
-// (internal/cli/recipes_skew.go) were flipped.
+// value, PlanWorkflowJob's acceptance of FUGARO_CHECKOUT=shared (which reads
+// this gate through SharedCheckoutShipped) and the sharedSince launch gate —
+// so the release that ships shared images flips this one value and nothing
+// else, the way cloneShipped and catalogShipped (internal/cli/recipes_skew.go)
+// were flipped.
 var sharedCheckoutShipped = false
+
+// SharedCheckoutShipped reports whether this build ships shared images.
+// internal/infra reads it: validateCheckout refuses a config that declares
+// checkout: shared while the gate is off, but a job's own environment is not a
+// config, and a mark a person wrote into a Cloud Run job by hand would
+// otherwise move that job's image to a shared one no build produces.
+func SharedCheckoutShipped() bool { return sharedCheckoutShipped }
 
 // SharedCheckoutRefusal is the problem validateCheckout reports for
 // checkout: shared while sharedCheckoutShipped is false. It is exported so a
 // launch, which reads the checkout's fugaro.yaml leniently, can find it among
 // that file's problems and refuse with this sentence rather than with
 // whatever later step trips over the config it could not use.
-const SharedCheckoutRefusal = "shared images arrive in " + SharedCheckoutSince + ": no release builds or refreshes a shared dependency-layer image yet, so a shared workflow's job could not run; use checkout: baked to build a per-repository image, or checkout: clone to run the base image and clone the source at launch"
+//
+// It names no release. It used to promise "shared images arrive in 0.15.0",
+// and that release shipped without them, so a version here is a promise
+// either already broken or made about a slot nobody has scheduled; what
+// lifts the refusal is sharedCheckoutShipped, not a number — so the sentence
+// says what is true today and names the two kinds that work in it.
+// TestSharedCheckoutRefusalNamesNoReleaseAsAFutureArrival holds it that way.
+const SharedCheckoutRefusal = "no released fugaro builds or refreshes a shared dependency-layer image yet, so a shared workflow's job could not run; use checkout: baked to build a per-repository image, or checkout: clone to run the base image and clone the source at launch"
 
 // validateCheckout checks a workflow's checkout: (design generic-tool.md §2,
 // G3). clone runs the installation's base image directly, with no build, so
@@ -294,6 +367,17 @@ func validateCheckout(p string, w Workflow) []Problem {
 		if w.Dockerfile != "" {
 			add(p+".dockerfile", "%s", msg)
 		}
+		// A catalog reference is the same kind of key: the shared image is
+		// chosen from the resolved dependency set, not from the project's
+		// catalog, so a workflow that names an entry here would get an image
+		// it did not ask for (D1142: the catalog is what a baked image is
+		// built from, and this kind is not baked).
+		if w.ImageName != "" {
+			add(p+".image_name", "%s", msg)
+		}
+		if len(w.Needs) > 0 {
+			add(p+".needs", "%s", msg)
+		}
 		return ps
 	}
 	if w.Checkout != CheckoutClone {
@@ -317,6 +401,15 @@ func validateCheckout(p string, w Workflow) []Problem {
 	}
 	if w.Dockerfile != "" {
 		add(p+".dockerfile", "%s", msg)
+	}
+	// A catalog reference is refused for the same reason: it replaces the
+	// per-workflow definition a build honors, and a clone workflow has no
+	// build (D1142).
+	if w.ImageName != "" {
+		add(p+".image_name", "%s", msg)
+	}
+	if len(w.Needs) > 0 {
+		add(p+".needs", "%s", msg)
 	}
 	return ps
 }

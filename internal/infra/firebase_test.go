@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -197,6 +198,34 @@ func TestTheCoordinatorIsOffByDefault(t *testing.T) {
 	// Firebase root grants, and an installation without one has no root.
 	if off, err := Installation(lc, InstallOptions{Coordinator: true}); err != nil || off.Coordinator != nil {
 		t.Errorf("an installation without a budget backend planned the coordinator: %+v (err %v)", off.Coordinator, err)
+	}
+}
+
+// The coordinator's App ID is asked for where the sweep reads GitHub and
+// nowhere else (F24): an installation whose repositories are all Bitbucket
+// resolves a spec with no App ID and no error — the sweep mints its read
+// tokens at the credentials service instead (BB5) — and the repositories it
+// names are the config's own, provider and all. It is the state every
+// installation migrated from GitHub to Bitbucket passes through, and it must
+// be a spec to plan rather than a config to fix; internal/cli's coordinatorJob
+// is the caller that decides which credential a run is looking at.
+//
+// Fails when Coordinator resolves the App ID through projectJobGitHubAppID,
+// whose refusal of "none" is a shared project job's and not a sweep's.
+func TestCoordinatorNeedsNoAppWithoutAGitHubRepository(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions)
+	cs, err := Coordinator(lc)
+	if err != nil {
+		t.Fatalf("a bitbucket-only installation resolves no coordinator: %v", err)
+	}
+	if cs.GitHubAppID != "" {
+		t.Errorf("GitHubAppID = %q, want none: this config records no App", cs.GitHubAppID)
+	}
+	if want := (CoordinatorRepo{Provider: gitprov.KindBitbucket, Repo: "acme/sandbox"}); !slices.Equal(cs.Repos, []CoordinatorRepo{want}) {
+		t.Errorf("the sweep reconciles %+v, want the config's one bitbucket repository %+v", cs.Repos, want)
+	}
+	if cs.AppKeySecret == "" || cs.AccountID != CoordinatorAccountID || cs.Job != CoordinatorJob {
+		t.Errorf("coordinator = %+v, want the account, the job and the key's container named", cs)
 	}
 }
 

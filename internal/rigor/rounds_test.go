@@ -6,87 +6,102 @@ import (
 	"github.com/dimipaun/fugaro/internal/recipe"
 )
 
-// TestRoundCeilingIsTheModesTable pins D7b's per-mode ceiling (T3.2): one
-// number per mode, the cheaper the mode the fewer the rounds. POC's and
-// Hotfix's rows carry one round, and O3's floor is what makes the answer two
-// until the owner rules on whether a mode may go below today's default — so
-// the table's own number stays visible here while the clamp lives in
-// RoundCeiling.
-func TestRoundCeilingIsTheModesTable(t *testing.T) {
-	if got := roundCeilings[POC]; got != 1 {
-		t.Errorf("POC's row = %d; want the single round O3's question is about", got)
+// TestDefaultRoundsIsTheModesTable pins the owner's ruling of 2026-10-31,
+// which answers O3: the loop counts depend on the rigor mode, and each mode's
+// row is its own — POC and Hotfix the single round the question was about,
+// Critical the senior's five (docs/rigor-command/reconciliation.md §4).
+func TestDefaultRoundsIsTheModesTable(t *testing.T) {
+	want := map[Mode]Rounds{
+		POC:      {Inner: 1, Senior: 1},
+		Startup:  {Inner: 2, Senior: 2},
+		Pro:      {Inner: 3, Senior: 3},
+		Critical: {Inner: 3, Senior: 5},
+		Hotfix:   {Inner: 1, Senior: 1},
 	}
-	if got := roundCeilings[Hotfix]; got != 1 {
-		t.Errorf("Hotfix's row = %d; want the single round O3's question is about", got)
-	}
-	want := map[Mode]int{POC: 2, Startup: 2, Pro: 3, Critical: widestRoundCeiling, Hotfix: 2}
-	for m, n := range want {
-		if got := RoundCeiling(m); got != n {
-			t.Errorf("RoundCeiling(%s) = %d; want %d", m, got, n)
+	for m, w := range want {
+		if got := DefaultRounds(m); got != w {
+			t.Errorf("DefaultRounds(%s) = %+v; want %+v", m, got, w)
 		}
 	}
 }
 
-// TestAdversarialCeilingNeverRaises: the adversarial pass may not spend more
-// rounds than the review does, at any mode (D726, L2.2). While O3 is open that
-// means the same floor of two everywhere; the second loop is the part that
-// outlives the answer, since it is the property the first one's constant
-// stands for.
-func TestAdversarialCeilingNeverRaises(t *testing.T) {
+// TestDefaultRoundsHasARowForEveryMode: every mode of the vocabulary has its
+// own row, so a mode added to Modes without one fails here rather than
+// silently taking the row DefaultRounds answers for a mode it cannot place.
+func TestDefaultRoundsHasARowForEveryMode(t *testing.T) {
 	for _, m := range Modes {
-		if got := AdversarialCeiling(m); got > minRoundCeiling {
-			t.Errorf("AdversarialCeiling(%s) = %d; want at most minRoundCeiling %d while O3 is open", m, got, minRoundCeiling)
+		if _, ok := roundDefaults[m]; !ok {
+			t.Errorf("roundDefaults has no row for %s", m)
 		}
 	}
-	for _, m := range append(Modes, Mode(""), Mode("poc ")) {
-		if got, ceiling := AdversarialCeiling(m), RoundCeiling(m); got > ceiling {
-			t.Errorf("AdversarialCeiling(%q) = %d; want at most the review's ceiling %d", m, got, ceiling)
+	if len(roundDefaults) != len(Modes) {
+		t.Errorf("roundDefaults has %d rows; want one per mode, %d", len(roundDefaults), len(Modes))
+	}
+}
+
+// TestDefaultRoundsRowsAreWithinTheRecipeBounds: no row reaches outside the
+// recipe's own bounds, so the number a mode supplies for a step is one the
+// recipe could have carried itself (inner 1..MaxFirstLineRounds, senior
+// 1..MaxReviewRounds). Asserted over the raw rows rather than through
+// DefaultRounds, whose clamp would hide a row the table should not carry.
+func TestDefaultRoundsRowsAreWithinTheRecipeBounds(t *testing.T) {
+	for m, r := range roundDefaults {
+		if r.Inner < 1 || r.Inner > recipe.MaxFirstLineRounds {
+			t.Errorf("roundDefaults[%s].Inner = %d; want 1..%d", m, r.Inner, recipe.MaxFirstLineRounds)
+		}
+		if r.Senior < 1 || r.Senior > recipe.MaxReviewRounds {
+			t.Errorf("roundDefaults[%s].Senior = %d; want 1..%d", m, r.Senior, recipe.MaxReviewRounds)
 		}
 	}
 }
 
-// TestRoundCeilingHasARowForEveryMode: every mode of the vocabulary has its own
-// row, so a mode added to Modes without one fails here rather than silently
-// taking the widest ceiling RoundCeiling gives a mode it cannot place.
-func TestRoundCeilingHasARowForEveryMode(t *testing.T) {
+// TestDefaultRoundsForAModeItCannotPlace: a mode outside the vocabulary takes
+// the strictest row there is, the fail-closed reading table.go gives a mode it
+// cannot read — a value this code cannot place must never be the lenient
+// answer (the zero Mode, a typo). The resolution path only ever hands over a
+// known mode, so this is the guard behind it, not a run's behaviour.
+func TestDefaultRoundsForAModeItCannotPlace(t *testing.T) {
+	strictest := DefaultRounds(Critical)
+	for _, r := range roundDefaults {
+		if r.Inner > strictest.Inner || r.Senior > strictest.Senior {
+			t.Fatalf("row %+v is above Critical's %+v, so Critical is not the strictest row", r, strictest)
+		}
+	}
+	for _, m := range []Mode{"", "poc ", "Critical", "critical"} {
+		if got := DefaultRounds(m); got != strictest {
+			t.Errorf("DefaultRounds(%q) = %+v; want the strictest row %+v", m, got, strictest)
+		}
+	}
+}
+
+// TestDefaultRoundsFollowTheAxisAbovePOC: the table sits on the modes' own
+// axis (D7b, T3.2) — the stricter the mode, the more rounds, never fewer. It
+// is the property a hand-edited table breaks, and the one a reader of the
+// table takes for granted.
+func TestDefaultRoundsFollowTheAxisAbovePOC(t *testing.T) {
+	for i := 1; i < len(Modes)-1; i++ { // the four on-axis modes; Hotfix is off it
+		a, b := DefaultRounds(Modes[i-1]), DefaultRounds(Modes[i])
+		if b.Inner < a.Inner || b.Senior < a.Senior {
+			t.Errorf("%s %+v is below %s %+v; the table follows the axis", Modes[i], b, Modes[i-1], a)
+		}
+	}
+}
+
+// TestAdversarialDefaultIsTheModesSeniorRow: the adversarial pass — review
+// level 3 — starts from the mode's own senior number, because the ruling
+// gives the modes' rounds two cells and the adversarial step is a review pass
+// on the same axis, run after the senior one on the same budget. A step's own
+// max_rounds and the layers above it still set another number, as they do for
+// the senior loop: this is a default and not a ceiling.
+func TestAdversarialDefaultIsTheModesSeniorRow(t *testing.T) {
 	for _, m := range Modes {
-		if _, ok := roundCeilings[m]; !ok {
-			t.Errorf("roundCeilings has no row for %s", m)
+		if got, want := AdversarialDefault(m), DefaultRounds(m).Senior; got != want {
+			t.Errorf("AdversarialDefault(%s) = %d; want the mode's senior rounds %d", m, got, want)
 		}
 	}
-	if len(roundCeilings) != len(Modes) {
-		t.Errorf("roundCeilings has %d rows; want one per mode, %d", len(roundCeilings), len(Modes))
-	}
-}
-
-// TestRoundCeilingRowsAreWithinTheRecipeBound: no row of the table reaches
-// above widestRoundCeiling, so no mode buys a run more rounds than the recipe
-// itself allows (T3.2). Asserted over the raw rows rather than through
-// RoundCeiling, whose two clamps would hide a row the table should not carry:
-// a Critical row of twenty would still answer MaxReviewRounds and pass a test
-// that reads only RoundCeiling's answer.
-func TestRoundCeilingRowsAreWithinTheRecipeBound(t *testing.T) {
-	for m, n := range roundCeilings {
-		if n < 1 || n > widestRoundCeiling {
-			t.Errorf("roundCeilings[%s] = %d; want 1..%d", m, n, widestRoundCeiling)
+	for _, m := range []Mode{"", "poc "} {
+		if got, want := AdversarialDefault(m), DefaultRounds(Critical).Senior; got != want {
+			t.Errorf("AdversarialDefault(%q) = %d; want the strictest row's senior rounds %d", m, got, want)
 		}
-	}
-	if widestRoundCeiling != recipe.MaxReviewRounds {
-		t.Errorf("widestRoundCeiling = %d; want recipe.MaxReviewRounds %d", widestRoundCeiling, recipe.MaxReviewRounds)
-	}
-}
-
-// TestRoundCeilingNeverLowersABelowTheRecipeBound: a mode the table cannot
-// place takes the widest ceiling, the fail-closed reading table.go gives a mode
-// it cannot read — an unplaced mode lowers nothing.
-func TestRoundCeilingNeverLowersABelowTheRecipeBound(t *testing.T) {
-	for _, m := range []Mode{"", "Critical", "poc "} {
-		if got := RoundCeiling(m); got != widestRoundCeiling {
-			t.Errorf("RoundCeiling(%q) = %d; want the widest ceiling %d", m, got, widestRoundCeiling)
-		}
-	}
-	if widestRoundCeiling != recipe.MaxReviewRounds {
-		t.Errorf("widestRoundCeiling = %d; want recipe.MaxReviewRounds %d, or the code guard and the recipe bound have drifted",
-			widestRoundCeiling, recipe.MaxReviewRounds)
 	}
 }

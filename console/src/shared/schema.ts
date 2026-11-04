@@ -234,6 +234,116 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   next: 'label',
   tag_prefix: 'label',
   mark: 'sentence',
+  // The coordinator's pull request documents (coordinator v2 C3, D816): the nine
+  // keys of `coordinator show`'s document and the six of the stored view's
+  // reduced record beside it (`ee/coordinator/view.go`; §6.13, §6.15). `title`
+  // and `branch` are already above, as the run shapes' keys; the five here are
+  // the ones only those two documents carry, and every one of them is the
+  // **host's own answer** rather than a value this console or the CLI composed
+  // -- which is why each is text and goes through the sanitizer.
+  //
+  // `body` is the description, the whole reason the read exists: unbounded prose
+  // written by whoever opened the pull request, and the key a screen must never
+  // spell a class for itself.
+  body: 'sentence',
+  // `state` is the host's own word (`open`, `merged`, `closed`), not one of the
+  // CLI's constant tables -- so it is a label here, and it is no longer a member
+  // of `NON_TEXT_STRING_KEYS`, where it sat beside `status` and `outcome`. The
+  // CLI's own state words are drawn by their own tables and spell `label` at the
+  // call site already (`connection.state` on the Live screen, a plan node's
+  // through `PLAN_STATES`), so nothing drawn changes; and a key whose meaning
+  // differs between two documents takes the **drawn** reading, which is the
+  // direction deny-by-default has to fail in.
+  state: 'label',
+  // `author` is the host's identity for whoever opened the pull request: an
+  // account id (GitHub's numeric user id, Bitbucket's `account_id`) and never a
+  // display name. A `label` rather than `person`: that class validates a login
+  // and would draw a refusal for Bitbucket's `<digits>:<uuid>`.
+  author: 'label',
+  // `base` is the branch the pull request targets now, the class `base_branch`
+  // carries, and `url` is its own URL, the class `pr_url` and `log_url` carry --
+  // carried as data, with no link built from it (design section 4.3 gap 7).
+  base: 'branch',
+  url: 'url',
+  // The declared intents document (coordinator v2 C4, D827). `declared_by` is
+  // the key that says who wrote a record, in either document that carries it --
+  // the declared intents and the stored view's runs -- and it is a **label**
+  // rather than the `person` class the recorded identities carry
+  // (`launched_by`, `requested_by`, `account`): those are values the recorder
+  // read out of a file the CLI wrote, while this one is a **declaration** --
+  // what the declaring side said about itself, which nothing verifies and by
+  // which nothing is admitted (contract §6.16, reconciliation finding #11).
+  // `label`'s free-text rules are a superset of `person`'s validating ones, so
+  // this fails in the safe direction; the coordinator screen is the second
+  // deliberate exception to this map, the way `launched_by`'s is the first:
+  // `screens/coordinator.ts` draws the stored view's run column in `person`
+  // explicitly, because it validates a launch's own recorded address.
+  declared_by: 'label',
+  // A declaration's `files` are repository-relative paths, which is the class
+  // `artifact` beside the plan graph carries, and `services` is a list of the
+  // names of services -- a label, the class a name a repository wrote carries.
+  files: 'path',
+  services: 'label',
+  // The jobs-free totals read (contract §6.17). `notes` is the one text key it
+  // adds: the CLI's own lines about what the figures count and what the read
+  // could not cover, which can carry a source's own reason -- so it is a
+  // `sentence`, drawn through the sanitizer like every other reason string.
+  // The other strings of that document are classified already (`project`,
+  // `slug`, `repo`) or are days, which are `NON_TEXT_STRING_KEYS`' below.
+  notes: 'sentence',
+  // The models read (contract §6.18). Every one of these is the **owner's own
+  // configuration or a catalog's own text**, never a value this console
+  // composed, so each is drawn through the sanitizer like any other string a
+  // document carries.
+  //
+  // `base_url` is a URL and takes the url class -- `pr_url`'s and `log_url`'s,
+  // which is the class that keeps a `javascript:` one from becoming an
+  // attribute, and which is drawn as **text**: no screen builds a link out of
+  // this document (design §4.3 gap 7). The class is https-only, so a provider
+  // whose base_url is plain http draws the class's own refusal rather than a
+  // URL -- the safe direction, and the read is offline either way.
+  base_url: 'url',
+  // `host` is the host of `base_url`: a machine name, so it takes the host
+  // class, which draws `HOST_PLACEHOLDER` for every value. That is the
+  // console's rule for a machine and not a decision this document gets to
+  // change -- the panel cannot show which host a route points at, and
+  // `docs/design/desktop-console.md` §5.1's row is where that is stated.
+  host: 'host',
+  // A route's or a model's `note`, a row's `refused` (why it has no price) and
+  // a repository's `problems[]` (the refusals a launch would give for its pins)
+  // are prose the CLI wrote about the configuration: sentences, drawn through
+  // the sanitizer's one-line and clipping rules like every other reason string.
+  note: 'sentence',
+  refused: 'sentence',
+  problems: 'sentence',
+  // `route` is the name of the route a model would go down, `kind` the
+  // provider entry's own kind, and `coder`, `reviewer`, `background` and
+  // `background_effective` are the model ids a repository pins: identifiers a
+  // policy or a file wrote, drawn as labels -- the class `job`, `profile` and
+  // `models` above carry.
+  route: 'label',
+  kind: 'label',
+  coder: 'label',
+  reviewer: 'label',
+  background: 'label',
+  background_effective: 'label',
+  // The two allow-lists (`allow_data_to`, `allowed_to`) are repository names,
+  // and they are **labels** rather than the `repository` class `repo` carries:
+  // the direct route's is `["*"]`, the marker that says "every repository", and
+  // a validating class would refuse it. A label draws the marker and a name
+  // alike, as text, which is what a route's allow-list is.
+  allow_data_to: 'label',
+  allowed_to: 'label',
+  // `source` is the one key of this document with **two readings**, and the
+  // map cannot have two entries for one key: on a model row it is one of the
+  // CLI's four price-source words (`embedded`, `catalog`, `local`, `none`),
+  // and on the catalog block it is the price catalog's own source URL. It takes
+  // the **drawn** reading, `label`, which is what the four enum words need --
+  // a URL under a label is drawn as the free-text rules' marker rather than as
+  // a link, so the collision fails in the safe direction. (`state`, which has
+  // the same shape of collision between the CLI's own word and a host's, took
+  // the same reading in coordinator v2 C3.)
+  source: 'label',
 })
 
 /**
@@ -244,12 +354,18 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
  * a key in this list must not be in `WIRE_TEXT_CLASSES`, and every other string
  * key of the corpus must be.
  *
- * `mode`, `state`, `health`, `status`, `outcome`, `auth` and `deadline` are
+ * `mode`, `health`, `status`, `outcome`, `auth` and `deadline` are
  * enums the CLI writes from its own constant tables; `day`, `now`, `at` and
  * `created` are timestamps; `model_basis` is the spend basis (`subscription`
  * or `api-list`) and is therefore a *value* the console compares and never a
  * label it draws -- and since C1.16 the split itself is `model_notional_usd`,
  * with the basis only the fallback for a row that carries none (P12).
+ *
+ * **`state` left this list in coordinator v2 C3** (D816), and it is the one key
+ * with two readings: the enums above are still the CLI's own, but the
+ * coordinator's stored view and `coordinator show` carry the **host's** word for
+ * a pull request under the same key, and that word is text. A key that can be
+ * either takes the drawn reading, and `WIRE_TEXT_CLASSES` carries it.
  */
 export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   'mode',
@@ -259,7 +375,6 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   // which is that same `mode` vocabulary again. `rigor.at` and the moments of
   // `rigor.areas[]` are `at`, already below.
   'from',
-  'state',
   'health',
   'status',
   // `derived` is the read side's own derivation for a run whose record was
@@ -296,6 +411,24 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   // clock (`tools/scrub-fixture/scrub.ts`'s `instant` rule, beside `now` and a
   // kill's `at`), so a fixture's copy is a reading and not the wire's own value.
   'waiting_until',
+  // The jobs-free totals read (contract §6.17): `since` and `until` are the
+  // window's two UTC days and `days_unknown` the days neither source answered
+  // for. They are the same kind of value as `day` above -- a day the CLI
+  // computed and enumerated, which a screen draws and a reader sorts by, and
+  // **not** text a job wrote -- so they carry no class.
+  'since',
+  'until',
+  'days_unknown',
+  // The models read (contract §6.18): `checked_at` is the UTC day the price
+  // catalog was generated -- the same kind of value as `day` beside it, which
+  // `age_days` is the whole-day distance from -- and `tier` (`zdr` | `all`) and
+  // `bound` (`min` | `max`) are two enums the CLI writes from its own tables,
+  // the kind of value `mode`, `health` and `derived` are. A screen that draws
+  // `tier` or `bound` spells a class for it at the call site, as the Live
+  // screen does for a connection's own state word.
+  'checked_at',
+  'tier',
+  'bound',
 ])
 
 /**
@@ -335,6 +468,8 @@ export type SchemaRefusalName =
   | 'not-a-boolean'
   /** a key that must be an RFC 3339 timestamp is not one */
   | 'not-a-timestamp'
+  /** a key that must be a UTC calendar day, `YYYY-MM-DD`, is not one */
+  | 'not-a-day'
   /** a key that must be a number is not one */
   | 'not-a-number'
   /** a key whose value must be one of a closed set of words carries none of them */
@@ -783,6 +918,14 @@ export const TOTAL_KEYS = [
   'leased_usd',
   'daily_cap_usd',
   'percent',
+  // Written by the CLI since the release that added it, and declared here as
+  // part of the struct's key set before any view reads it: `TOTAL_KEYS` is
+  // `JSONTotal`'s own keys, pinned against `internal/watch/json.go` by
+  // `schema.test.ts`, so a key the struct writes belongs in this list. The
+  // concurrent-runs cap bar is the view that will read it; a document from an
+  // older CLI carries no such key at all, and `null` is one whose writer had
+  // no cap to report -- never `0`.
+  'max_parallel',
   'burn',
   'kill',
   'runs',
@@ -1723,7 +1866,7 @@ export function decodePlanStatus(raw: unknown, where = 'the plan status document
  * a failing test rather than an unread field. */
 export const COORDINATOR_STATUS_KEYS: readonly string[] = Object.freeze(['repos'])
 
-export const COORDINATOR_REPO_KEYS: readonly string[] = Object.freeze(['repo', 'stored', 'view', 'stale'])
+export const COORDINATOR_REPO_KEYS: readonly string[] = Object.freeze(['repo', 'provider', 'stored', 'view', 'stale'])
 
 export const COORDINATOR_VIEW_KEYS: readonly string[] = Object.freeze([
   'repo',
@@ -1766,6 +1909,26 @@ export const COORDINATOR_PR_KEYS: readonly string[] = Object.freeze([
   'state',
 ])
 
+/** COORDINATOR_PR_DOCUMENT_KEYS is `coordinator show --json`'s own shape
+ * (`ee/coordinator/view.go`, `PRDocument`; coordinator v2 C3, D816), in the
+ * struct's declaration order. It is a second list rather than a widening of
+ * `COORDINATOR_PR_KEYS` because it is a second shape: the view's reduced record
+ * and the read that carries the description are two documents, and the whole
+ * difference between them is `body` (the view drops it by design, F3). A key
+ * one struct gains without the other is a failing test rather than an unread
+ * field. */
+export const COORDINATOR_PR_DOCUMENT_KEYS: readonly string[] = Object.freeze([
+  'number',
+  'url',
+  'title',
+  'body',
+  'state',
+  'draft',
+  'branch',
+  'base',
+  'author',
+])
+
 export const COORDINATOR_COLLISION_KEYS: readonly string[] = Object.freeze(['a', 'b', 'files', 'services'])
 
 export const COORDINATOR_UNREAD_KEYS: readonly string[] = Object.freeze([
@@ -1777,6 +1940,34 @@ export const COORDINATOR_UNREAD_KEYS: readonly string[] = Object.freeze([
 ])
 
 export const COORDINATOR_STALE_KEYS: readonly string[] = Object.freeze(['since', 'reason'])
+
+/** CoordinatorPullRequestDocument is one pull request as the host has it,
+ * whole: what `fugaro coordinator show --repo owner/name --pr N --json` prints
+ * (coordinator v2 C3, D816; `console/docs/json-contract.md` §6.15).
+ *
+ * **`body` is why the document exists** and the one field of the nine that is
+ * many lines. It is untrusted text written by whoever opened the pull request
+ * — like `title` — and it is carried whole and never parsed: nothing in it is
+ * a link, a path, a command or a decision, and a renderer puts it through
+ * `safetext.MultiLine` before it reaches a line or a cell. `url` is carried as
+ * data and, like the view's own, is **not drawn at all** (design §5.1 rule 2).
+ *
+ * Every field but `number` is `omitempty` on the Go struct, so a field the host
+ * did not answer arrives absent and reads as the empty string (or, for `draft`,
+ * as false) — the CLI's own "there was nothing to say", never a gap this screen
+ * has to draw as unknown. `number` is the one key the document must carry.
+ */
+export interface CoordinatorPullRequestDocument {
+  readonly number: number
+  readonly url: string
+  readonly title: string
+  readonly body: string
+  readonly state: string
+  readonly draft: boolean
+  readonly branch: string
+  readonly base: string
+  readonly author: string
+}
 
 /** CoordinatorPullRequest is one pull request as the host last showed it.
  * `title` is untrusted text written by whoever opened it, and `url` is carried
@@ -1861,10 +2052,14 @@ export interface CoordinatorView {
   readonly omittedCollisions: number
 }
 
-/** CoordinatorRepoView is one repository's node: whether the database held a
- * view at all, the view, and the marker beside it. */
+/** CoordinatorRepoView is one repository's node: the host it is on, whether the
+ * database held a view at all, the view, and the marker beside it. */
 export interface CoordinatorRepoView {
   readonly repo: string
+  /** The host the repository is on, `github` or `bitbucket`, or `''` for a CLI
+   * that had none to give — which is also what a CLI older than this field
+   * answers, and what a screen draws as text rather than as a link. */
+  readonly provider: string
   readonly stored: boolean
   readonly view: CoordinatorView
   readonly stale: CoordinatorStale | null
@@ -1875,6 +2070,73 @@ export interface CoordinatorRepoView {
 export interface CoordinatorStatusView {
   readonly repos: readonly CoordinatorRepoView[]
 }
+
+/** CoordinatorIntent is one declaration as the store holds it: the record's own
+ * fields and nothing derived from them (coordinator v2 C4; `console/docs/
+ * json-contract.md` §6.16). `declaredBy` is **what the declaring side wrote
+ * about itself** and never an identity: nothing verifies it and nothing may
+ * admit or authorise anything by it (reconciliation finding #11), so a screen
+ * draws it as a label.
+ *
+ * `branch`, `release`, the paths and the services are all written by whoever
+ * can reach the report path, so every one of them is untrusted text carried as
+ * data (design §5.1 rule 2) — and `at` is the **writer's** own clock, not this
+ * console's, which is why no age is derived from it anywhere here. */
+export interface CoordinatorIntent {
+  /** The node's key: `IntentID`'s lower-case hex, a function of the caller and
+   * the declaration alone. It names one record and is **not** a secret. */
+  readonly id: string
+  readonly declaredBy: string
+  readonly at: string
+  readonly branch: string
+  readonly release: string
+  readonly files: readonly string[]
+  readonly services: readonly string[]
+}
+
+/** CoordinatorRepoIntents is one repository's stored declarations, newest first
+ * by the record's own `at`. `provider` is the caller's answer and not the
+ * node's, exactly as the stored view's is, and `''` is one of its answers: a
+ * machine that had no provider to give. */
+export interface CoordinatorRepoIntents {
+  readonly repo: string
+  readonly provider: string
+  readonly intents: readonly CoordinatorIntent[]
+}
+
+/** CoordinatorIntentsView is the whole document. It is the `--all` shape and
+ * only that: the CLI's single-repository form prints the repository object
+ * alone, and this console's row fixes `--all` (`src/main/spawn.ts`), so the
+ * one-repository document is refused here rather than read as a project with no
+ * repositories. */
+export interface CoordinatorIntentsView {
+  readonly repos: readonly CoordinatorRepoIntents[]
+}
+
+/** COORDINATOR_INTENT_KEYS, COORDINATOR_REPO_INTENTS_KEYS and
+ * COORDINATOR_INTENTS_KEYS are the declared intents document's keys, in the
+ * spelling the wire uses: one record, one repository and the project. They are
+ * here for the renderer that has to know which keys it owns — an unknown key is
+ * ignored by the decoder (the module header's rule) and must never be drawn as
+ * a figure — and for the tests that hold this list and the Go struct in step
+ * (`ee/coordinator/cli/console_contract_test.go`). */
+export const COORDINATOR_INTENT_KEYS: readonly string[] = Object.freeze([
+  'id',
+  'declared_by',
+  'at',
+  'branch',
+  'release',
+  'files',
+  'services',
+])
+
+export const COORDINATOR_REPO_INTENTS_KEYS: readonly string[] = Object.freeze([
+  'repo',
+  'provider',
+  'intents',
+])
+
+export const COORDINATOR_INTENTS_KEYS: readonly string[] = Object.freeze(['repos'])
 
 /** coordinatorIntAt is a whole number the shape must carry and that must not be
  * negative: a pull request's number, a retry count. A fraction, a negative or a
@@ -1912,9 +2174,11 @@ function coordinatorOptionalStampAt(raw: Record<string, unknown>, key: string, f
 }
 
 /** coordinatorStringsAt is a string array that must be there: a record's and a
- * run's `files`, a collision's `files` and `services`. An empty list is the
- * answer "no path" and not a missing answer, so the key is required and each
- * member is a string. */
+ * run's `files`, a collision's `files` and `services`, and -- since console
+ * 0.119.0, which is why the name is the coordinator's and the reader is not --
+ * the models read's `models`, `allow_data_to` and `allowed_to`. An empty list
+ * is the answer "no path" and not a missing answer, so the key is required and
+ * each member is a string. */
 function coordinatorStringsAt(raw: unknown, field: string, where: string): readonly string[] {
   return arrayAt(raw, field, where).map((item, index) =>
     stringAt(item, `${field}[${String(index)}]`, where),
@@ -2034,6 +2298,14 @@ function coordinatorRepoAt(raw: unknown, index: number, where: string): Coordina
   const stale = repo['stale']
   return {
     repo: stringAt(required(repo, 'repo', field, where), `${field}.repo`, where),
+    // `provider` is additive (D814), so a CLI older than it writes no key at
+    // all: absent is the empty provider rather than a refusal of the whole
+    // document, and it is the same answer a machine with no provider to give
+    // sends — a screen draws the number as text for either.
+    provider:
+      repo['provider'] === undefined || repo['provider'] === null
+        ? ''
+        : stringAt(repo['provider'], `${field}.provider`, where),
     stored: boolAt(required(repo, 'stored', field, where), `${field}.stored`, where),
     view: coordinatorViewAt(required(repo, 'view', field, where), `${field}.view`, where),
     stale: stale === undefined || stale === null ? null : coordinatorStaleAt(stale, `${field}.stale`, where),
@@ -2060,4 +2332,846 @@ export function decodeCoordinatorStatus(
   where = 'the coordinator status document',
 ): Decoded<CoordinatorStatusView> {
   return at(where, () => coordinatorStatusAt(objectAt(raw, 'the document', where), where))
+}
+
+function coordinatorPullRequestAt(raw: Record<string, unknown>, where: string): CoordinatorPullRequestDocument {
+  return {
+    // `number` is the one key of this document that is **structure rather than
+    // a quantity**: it is the pull request the read was for, so an absent or
+    // fractional one is a document this console cannot draw rather than a
+    // figure it withholds (`intAt`).
+    number: intAt(required(raw, 'number', '', where), 'number', where),
+    url: optionalText(raw, 'url', '', where),
+    title: optionalText(raw, 'title', '', where),
+    body: optionalText(raw, 'body', '', where),
+    state: optionalText(raw, 'state', '', where),
+    // `draft` is the host's own flag, and absent is false, which is what the
+    // CLI's `omitempty` means -- never a claim that the host said it was not a
+    // draft.
+    draft: optionalBool(raw, 'draft', '', where),
+    branch: optionalText(raw, 'branch', '', where),
+    base: optionalText(raw, 'base', '', where),
+    author: optionalText(raw, 'author', '', where),
+  }
+}
+
+/**
+ * decodeCoordinatorPullRequest admits `coordinator show --json` and nothing
+ * else: one flat object, the pull request the read asked for (coordinator v2
+ * C3, D816; `console/docs/json-contract.md` §6.15). It is a door of its own for
+ * `decodeCoordinatorStatus`'s reason — the two documents share no key, so
+ * neither is read as the other — and it is flat rather than wrapped because
+ * there is one pull request in it and no list to enumerate.
+ *
+ * A field the host did not answer is absent, and absent reads as the empty
+ * string (or, for `draft`, as false) rather than as a refusal: the CLI's
+ * `omitempty` is its own "there was nothing to say", and a screen tells the two
+ * apart by the key's presence rather than by its value. Nothing here is a
+ * reading — the one number of the document is its own identity — so no key goes
+ * through `readingOf`.
+ */
+export function decodeCoordinatorPullRequest(
+  raw: unknown,
+  where = 'the coordinator pull request document',
+): Decoded<CoordinatorPullRequestDocument> {
+  return at(where, () => coordinatorPullRequestAt(objectAt(raw, 'the document', where), where))
+}
+
+/** coordinatorOptionalTextAt is `optionalText` with `null` refused: the keys
+ * §6.16 marks "absent: yes, null: never" -- a declaration's `branch` and
+ * `release`. The Go struct's `omitempty` drops the key rather than writing a
+ * null, so absent is the empty string and a null is a document this build does
+ * not know. */
+function coordinatorOptionalTextAt(raw: Record<string, unknown>, key: string, field: string, where: string): string {
+  const value = raw[key]
+  if (value === undefined) return ''
+  return stringAt(value, field === '' ? key : `${field}.${key}`, where)
+}
+
+function coordinatorIntentAt(raw: unknown, field: string, where: string): CoordinatorIntent {
+  const record = objectAt(raw, field, where)
+  return {
+    id: stringAt(required(record, 'id', field, where), `${field}.id`, where),
+    declaredBy: stringAt(required(record, 'declared_by', field, where), `${field}.declared_by`, where),
+    // `at` is required and it is a stamp rather than free text: the contract's
+    // table marks it "never absent", and the CLI writes the writer's own clock
+    // through `time.RFC3339Nano`. A record whose stamp this console cannot read
+    // is one it must not draw as a declaration with no time (`ReadRepoIntents`'
+    // own rule).
+    at: timestampAt(required(record, 'at', field, where), `${field}.at`, where),
+    // `branch` and `release` are `omitempty` on the Go struct, so absent is one
+    // of the two shapes the CLI prints and reads as "declared none" -- but
+    // `omitempty` drops the key rather than writing a null, and §6.16 marks
+    // both "null: never", so a null in their place is a shape this build does
+    // not know and is refused (`optionalText`'s house reading of a null is for
+    // the keys whose contract admits one).
+    branch: coordinatorOptionalTextAt(record, 'branch', field, where),
+    release: coordinatorOptionalTextAt(record, 'release', field, where),
+    // Both lists are required: the record's own promise is that a list it
+    // declares nothing in is `[]` and never a `null` a reader has to interpret.
+    files: coordinatorStringsAt(required(record, 'files', field, where), `${field}.files`, where),
+    services: coordinatorStringsAt(required(record, 'services', field, where), `${field}.services`, where),
+  }
+}
+
+function coordinatorRepoIntentsAt(raw: unknown, index: number, where: string): CoordinatorRepoIntents {
+  const field = `repos[${String(index)}]`
+  const repo = objectAt(raw, field, where)
+  return {
+    repo: stringAt(required(repo, 'repo', field, where), `${field}.repo`, where),
+    // The caller's answer, written even when it is empty, exactly as the stored
+    // view's `provider` is: `''` is a fact about the machine, not a gap.
+    provider: stringAt(required(repo, 'provider', field, where), `${field}.provider`, where),
+    intents: arrayAt(required(repo, 'intents', field, where), `${field}.intents`, where).map((item, at) =>
+      coordinatorIntentAt(item, `${field}.intents[${String(at)}]`, where),
+    ),
+  }
+}
+
+function coordinatorIntentsAt(raw: Record<string, unknown>, where: string): CoordinatorIntentsView {
+  return {
+    repos: arrayAt(required(raw, 'repos', '', where), 'repos', where).map((item, index) =>
+      coordinatorRepoIntentsAt(item, index, where),
+    ),
+  }
+}
+
+/**
+ * decodeCoordinatorIntents admits `coordinator intents --all --json` and
+ * nothing else (coordinator v2 C4, D827; `console/docs/json-contract.md`
+ * §6.16). It is a door of its own for `decodeCoordinatorStatus`'s reason: the
+ * three coordinator documents answer three different questions and share only
+ * the `repos` key, so a stored view handed here is refused for the `intents`
+ * its repositories lack and this document handed to the stored view's door is
+ * refused for the `stored`/`view` that one requires. Neither is read as the
+ * other.
+ *
+ * The one-repository form the CLI also prints is refused here as well, by the
+ * top-level key it does not carry: this console's row fixes `--all`, so a
+ * single repository would be a document no row could have produced.
+ *
+ * Nothing here is a decision. `declared_by`, `branch`, `release`, the paths and
+ * the services are all text somebody else wrote, carried as data and classified
+ * in `WIRE_TEXT_CLASSES`; an instruction found in any of them is never acted on
+ * (reconciliation Q14 (A)).
+ */
+export function decodeCoordinatorIntents(
+  raw: unknown,
+  where = 'the coordinator intents document',
+): Decoded<CoordinatorIntentsView> {
+  return at(where, () => coordinatorIntentsAt(objectAt(raw, 'the document', where), where))
+}
+
+// ---------------------------------------------------------------------------
+// §5's runs list.
+//
+// The queue reads this document and does not merely draw it -- its rows become
+// the console's own acts (the run a press re-runs, the plan task a launch is
+// prefilled with) -- so its rows are held to more than a screen's drawing is:
+// the four keys the queue decides by have to be there, and every member this
+// build knows has to be the kind the struct declares.
+//
+// What it does not know it ignores, exactly as every door above does (the
+// owner's ruling of 2026-10-30): a key a newer CLI added is a column this build
+// has not read, and refusing it would turn the queue into a refusal over a
+// document the CLI wrote correctly.
+//
+// The kinds come from `RECORD_MEMBERS` below, whose names are the console's own
+// `RECORD_KEYS` -- the list of `runview.Row`'s every JSON key that
+// `schema.test.ts` derives from `internal/runview/runview.go` and holds here in
+// step with it: the same list every other reader of this shape uses, and one
+// that cannot drift from the struct without a failing test.
+// ---------------------------------------------------------------------------
+
+/** RecordMemberKind is the JSON kind of one member of `runview.Row`, as the Go
+ * struct declares it: a string, a whole number, a boolean, an RFC 3339 stamp,
+ * or a nested block the reader does not open. */
+type RecordMemberKind = 'text' | 'count' | 'flag' | 'stamp' | 'block'
+
+/**
+ * RECORD_MEMBERS is the kind of every scalar member of `runview.Row`, in the
+ * struct's own spelling (`internal/runview/runview.go`). A member that is there
+ * and is not of its kind is a document no `runs ls` wrote, refused by name.
+ *
+ * The nested blocks (`cost`, `halt`, `changed_files`, `rigor`, `project_layer`)
+ * are held to being blocks and are not opened: the queue reads none of their
+ * members, and a reader that did would own a second copy of a shape whose own
+ * decoder is the screen that draws it.
+ *
+ * A key this table does not name is ignored, and it is ignored whether the
+ * struct has it or not: this build checks the members it knows a kind for, and a
+ * key outside them -- a member whose type is not read here, or the column a
+ * newer CLI added -- reaches no drawing and no act.
+ *
+ * An absent member, and a `null` at one, both read as the CLI having nothing to
+ * say -- this module's house reading of a `null` (`optionalText`), and what the
+ * struct's pointer members write. It is the reading of every member here and not
+ * only of those: `recordMemberAt` returns on a `null` whatever the key's kind is.
+ * The four keys a row must carry are not read there but through `required`,
+ * whose `null` reaches the reader of the key's own type and is refused by it
+ * (`not-a-string`, `not-a-boolean`) rather than read as an absence.
+ */
+const RECORD_MEMBERS: Readonly<Record<string, RecordMemberKind>> = Object.freeze({
+  run: 'text',
+  repo: 'text',
+  workflow: 'text',
+  oauth_account: 'text',
+  recipe: 'text',
+  title: 'text',
+  project_layer: 'block',
+  config_sha256: 'text',
+  run_id: 'text',
+  status: 'text',
+  stage: 'text',
+  reason: 'text',
+  derived: 'text',
+  halt: 'block',
+  batch: 'text',
+  requested_by: 'text',
+  launched_by: 'text',
+  plan_task: 'text',
+  pr_url: 'text',
+  execution: 'text',
+  log_url: 'text',
+  created: 'stamp',
+  cost: 'block',
+  image_age_s: 'count',
+  terminal: 'flag',
+  settled: 'flag',
+  branch: 'text',
+  outcome: 'text',
+  changed_files: 'block',
+  rigor: 'block',
+  artifact_count: 'count',
+  artifact_bytes: 'count',
+  task_pr: 'count',
+  record_pr: 'count',
+  pr: 'count',
+  pushed: 'flag',
+  pushed_head: 'text',
+  started_at: 'stamp',
+  base_branch: 'text',
+  previous_run: 'text',
+  follow_up: 'flag',
+  draft_fallback: 'flag',
+  pr_status_at: 'stamp',
+  stale_draft: 'flag',
+})
+
+/** RunsListRow is one row of the list as this console admitted it: the four
+ * members the queue decides by (`run`, `repo`, `status`, `terminal`) and the
+ * three it draws (`title`, `plan_task`, `halt`). */
+export interface RunsListRow {
+  readonly run: string
+  readonly repo: string
+  readonly status: string
+  readonly terminal: boolean
+  readonly title: string
+  readonly planTask: string
+  readonly halted: boolean
+}
+
+/** RunsListView is a `runs ls --json` document this console has read: its rows,
+ * in the CLI's own order. */
+export interface RunsListView {
+  readonly runs: readonly RunsListRow[]
+}
+
+/**
+ * decodeRunsList admits `runs ls --json` (§5): the root's `runs`, an array, with
+ * each member of it a `runview.Row`. A key the document carries and this build
+ * does not know is ignored, the way every other door above reads a document --
+ * what is refused is a row that cannot say what a row is.
+ *
+ * The four members a row must carry are the ones the queue cannot do without:
+ * the id (`run`, or `run_id` where a shape carries only that), the repository a
+ * press would act on, the status the decision is made from, and `terminal` --
+ * all four written without `omitempty`. The rest of the struct's optional keys
+ * are read as the empty string (or, for `halt`, as no halt) when they are absent,
+ * which is the CLI's own "there was nothing to say".
+ *
+ * A row this door cannot read refuses the whole document: the caller draws the
+ * refusal in place of the list rather than the rows beside the one it could not
+ * read, because a dropped row is a shorter list the operator cannot tell from a
+ * shorter day.
+ */
+export function decodeRunsList(raw: unknown, where = 'the runs list document'): Decoded<RunsListView> {
+  return at(where, () => {
+    const root = objectAt(raw, 'the document', where)
+    const rows = arrayAt(required(root, 'runs', '', where), 'runs', where)
+    return { runs: rows.map((row, index) => runsRowAt(row, index, where)) }
+  })
+}
+
+function runsRowAt(raw: unknown, index: number, where: string): RunsListRow {
+  const field = `runs[${String(index)}]`
+  const record = objectAt(raw, field, where)
+  // The members this build knows a kind for are held to it; a key it does not
+  // name -- including a member of `runview.Row` no reader here types -- is left
+  // where it is and read by nothing.
+  for (const key of Object.keys(record)) {
+    const kind = RECORD_MEMBERS[key]
+    if (kind !== undefined) recordMemberAt(record, key, kind, field, where)
+  }
+  return {
+    run: runIdAt(record, field, where),
+    repo: stringAt(required(record, 'repo', field, where), `${field}.repo`, where),
+    status: stringAt(required(record, 'status', field, where), `${field}.status`, where),
+    terminal: boolAt(required(record, 'terminal', field, where), `${field}.terminal`, where),
+    title: optionalText(record, 'title', field, where),
+    planTask: optionalText(record, 'plan_task', field, where),
+    halted: record['halt'] !== undefined && record['halt'] !== null,
+  }
+}
+
+/** recordMemberAt holds one member of a row to the kind the struct declares it
+ * with. A member that is absent, and a `null` at one, are both the CLI saying it
+ * has nothing, whatever the key's kind is -- `RECORD_MEMBERS` reads the count
+ * above the same way, and the four keys a row must carry are read through
+ * `required` and refused by their own reader rather than here. */
+function recordMemberAt(
+  record: Record<string, unknown>,
+  key: string,
+  kind: RecordMemberKind,
+  field: string,
+  where: string,
+): void {
+  const value = record[key]
+  if (value === undefined || value === null) return
+  const at = `${field}.${key}`
+  if (kind === 'text') stringAt(value, at, where)
+  else if (kind === 'count') intAt(value, at, where)
+  else if (kind === 'flag') boolAt(value, at, where)
+  else if (kind === 'stamp') timestampAt(value, at, where)
+  else objectAt(value, at, where)
+}
+
+/** runIdAt is the id a row names its run by: `run`, or `run_id` for a shape that
+ * carries only that. A row that names no run -- both keys absent, or the empty
+ * string the CLI writes nowhere -- is refused by the id's own name: there is no
+ * id to draw, to open or to offer a re-run of, and a queue that dropped such a
+ * row would draw a shorter list than the document holds. */
+function runIdAt(record: Record<string, unknown>, field: string, where: string): string {
+  for (const key of ['run', 'run_id']) {
+    const value = record[key]
+    if (typeof value === 'string' && value !== '') return value
+  }
+  return refuse('missing', `${field}.run`, where)
+}
+
+
+// ---------------------------------------------------------------------------
+// The jobs-free totals read (console 0.119.0 "Pomelo"; contract §6.17).
+// ---------------------------------------------------------------------------
+
+/** RUNS_SUMMARY_VERSION is the only `v` this build reads. The contract promises
+ * a field is only ever *added* within a version (D784), so a version this build
+ * does not know is a document whose figures may have been re-meant rather than
+ * grown -- which is exactly the case a reader must refuse instead of drawing. */
+export const RUNS_SUMMARY_VERSION = 1
+
+/** RunsSummaryStates is the six counts the contract always writes, zero
+ * included: a screen reads one without a nil check, and a status outside the
+ * six is the CLI's `other` rather than a key of its own. */
+export interface RunsSummaryStates {
+  readonly succeeded: number
+  readonly failed: number
+  readonly halted: number
+  readonly cancelled: number
+  readonly infraError: number
+  readonly other: number
+}
+
+/** RunsSummaryFigures is the six figures a repository row and `totals` carry.
+ * `spentMicros` and `notionalMicros` are **two separate facts** and are never
+ * summed: the first is the model money the caps count, the second the part a
+ * subscription paid, which is nobody's bill. `computeMicros` is `null` when the
+ * row has runs and no run's compute is known -- "not estimated" is not "free"
+ * -- and `0` only when the row has no run at all, which is a fact. */
+export interface RunsSummaryFigures {
+  readonly runs: number
+  readonly states: RunsSummaryStates
+  readonly spentMicros: number
+  readonly notionalMicros: number
+  readonly computeMicros: number | null
+  readonly computeRuns: number
+}
+
+/** RunsSummaryRepository is one repository row: the two names the sources hold
+ * it under, plus the figures. `slug` is the storage key (a hash, not a name to
+ * draw) and `repo` is the `owner/name` a day record carried, which falls back
+ * to the slug for a repository nothing recorded a display name for. */
+export interface RunsSummaryRepository extends RunsSummaryFigures {
+  readonly slug: string
+  readonly repo: string
+}
+
+/** RunsSummaryView is the whole document. `since` and `until` are UTC days --
+ * a summary is per UTC day, so the window is always bounded -- and
+ * `daysUnknown` names the days **neither source answered for**: their runs and
+ * their spend are counted in no figure, so a screen shows the window as partly
+ * unknown rather than as a small one. */
+export interface RunsSummaryView {
+  readonly v: number
+  readonly project: string
+  readonly since: string
+  readonly until: string
+  readonly repositories: readonly RunsSummaryRepository[]
+  readonly totals: RunsSummaryFigures
+  readonly daysUnknown: readonly string[]
+  readonly notes: readonly string[]
+}
+
+/** SUMMARY_DAY_RE is a UTC calendar day as the contract's own pattern spells
+ * one, and the shape `since`, `until` and every member of `days_unknown`
+ * carries. It is the shape and not the calendar: the CLI is the one that
+ * enumerated the window, so a day it wrote is a day it has. */
+const SUMMARY_DAY_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/** summaryDayAt is one UTC day, refused by name when it is not that shape. */
+function summaryDayAt(raw: unknown, field: string, where: string): string {
+  const day = stringAt(raw, field, where)
+  if (!SUMMARY_DAY_RE.test(day)) return refuse('not-a-day', field, where)
+  return day
+}
+
+/** summaryCountAt is one of the document's counts: a whole number and never a
+ * negative one. It is `intAt` with the schema's own `minimum: 0`, because a
+ * count below zero is a document this console does not know rather than a
+ * figure it withholds. */
+function summaryCountAt(raw: unknown, field: string, where: string): number {
+  const count = intAt(raw, field, where)
+  if (count < 0) return refuse('not-a-number', field, where)
+  return count
+}
+
+/** summaryComputeMicrosAt is `compute_micros`, the one key of the document that
+ * may be `null` -- and the reason this decoder is strict about it: a `null`
+ * read as `0` would draw "not estimated" as "free", which is the one wrong
+ * figure this read exists to avoid. */
+function summaryComputeMicrosAt(raw: unknown, field: string, where: string): number | null {
+  if (raw === null) return null
+  return summaryCountAt(raw, field, where)
+}
+
+function summaryStatesAt(raw: unknown, field: string, where: string): RunsSummaryStates {
+  const states = objectAt(raw, field, where)
+  return {
+    succeeded: summaryCountAt(required(states, 'succeeded', field, where), `${field}.succeeded`, where),
+    failed: summaryCountAt(required(states, 'failed', field, where), `${field}.failed`, where),
+    halted: summaryCountAt(required(states, 'halted', field, where), `${field}.halted`, where),
+    cancelled: summaryCountAt(required(states, 'cancelled', field, where), `${field}.cancelled`, where),
+    infraError: summaryCountAt(required(states, 'infra_error', field, where), `${field}.infra_error`, where),
+    other: summaryCountAt(required(states, 'other', field, where), `${field}.other`, where),
+  }
+}
+
+function summaryFiguresAt(raw: unknown, field: string, where: string): RunsSummaryFigures {
+  const figures = objectAt(raw, field, where)
+  return {
+    runs: summaryCountAt(required(figures, 'runs', field, where), `${field}.runs`, where),
+    states: summaryStatesAt(required(figures, 'states', field, where), `${field}.states`, where),
+    spentMicros: summaryCountAt(
+      required(figures, 'spent_micros', field, where),
+      `${field}.spent_micros`,
+      where,
+    ),
+    notionalMicros: summaryCountAt(
+      required(figures, 'notional_micros', field, where),
+      `${field}.notional_micros`,
+      where,
+    ),
+    computeMicros: summaryComputeMicrosAt(
+      required(figures, 'compute_micros', field, where),
+      `${field}.compute_micros`,
+      where,
+    ),
+    computeRuns: summaryCountAt(
+      required(figures, 'compute_runs', field, where),
+      `${field}.compute_runs`,
+      where,
+    ),
+  }
+}
+
+function summaryRepositoryAt(raw: unknown, index: number, where: string): RunsSummaryRepository {
+  const field = `repositories[${String(index)}]`
+  const repository = objectAt(raw, field, where)
+  return {
+    slug: stringAt(required(repository, 'slug', field, where), `${field}.slug`, where),
+    // `repo` is a day record's own string, so it is carried as text and never
+    // as a link: a hostile name is a value this console draws, not one it acts
+    // on (design §5.1 rule 2). It falls back to the slug when nothing recorded
+    // a display name, so `''` is not a shape the CLI prints.
+    repo: stringAt(required(repository, 'repo', field, where), `${field}.repo`, where),
+    ...summaryFiguresAt(repository, field, where),
+  }
+}
+
+/** runsSummaryAt decodes §6.17's `v: 1` document field by field. Unknown keys
+ * are ignored, per this module's header rule (the owner's ruling of
+ * 2026-10-30): a key outside the shape is a field a newer CLI added, and it
+ * reaches no screen, no sanitizer and no sum. */
+function runsSummaryAt(raw: Record<string, unknown>, where: string): RunsSummaryView {
+  const v = intAt(required(raw, 'v', '', where), 'v', where)
+  if (v !== RUNS_SUMMARY_VERSION) return refuse('unknown-value', 'v', where)
+  return {
+    v,
+    project: stringAt(required(raw, 'project', '', where), 'project', where),
+    since: summaryDayAt(required(raw, 'since', '', where), 'since', where),
+    until: summaryDayAt(required(raw, 'until', '', where), 'until', where),
+    repositories: arrayAt(required(raw, 'repositories', '', where), 'repositories', where).map(
+      (item, index) => summaryRepositoryAt(item, index, where),
+    ),
+    totals: summaryFiguresAt(required(raw, 'totals', '', where), 'totals', where),
+    daysUnknown: arrayAt(required(raw, 'days_unknown', '', where), 'days_unknown', where).map(
+      (item, index) => summaryDayAt(item, `days_unknown[${String(index)}]`, where),
+    ),
+    // A note is a line the CLI wrote about what it could not cover, and it may
+    // carry a source's own reason -- text like every other drawn string, so it
+    // is carried as data and classified in `WIRE_TEXT_CLASSES`.
+    notes: arrayAt(required(raw, 'notes', '', where), 'notes', where).map((item, index) =>
+      stringAt(item, `notes[${String(index)}]`, where),
+    ),
+  }
+}
+
+/**
+ * decodeRunsSummary admits `runs summary --json` and nothing else (contract
+ * §6.17). It is a door of its own for `decodePlanStatus`'s reason: the document
+ * carries no marker a feed document has, so a feed handed here is refused for
+ * the keys it is missing and this document handed to the feed's door is refused
+ * as an unknown shape. Neither is read as the other.
+ *
+ * **Nothing here reaches a run object or the runs bucket.** The read is the
+ * budget database's day nodes and the spend history's daily documents, so the
+ * document holds counts and money and no task, result or transcript -- which is
+ * why no key of it is a path, a URL or a run id.
+ */
+export function decodeRunsSummary(raw: unknown, where = 'the runs summary document'): Decoded<RunsSummaryView> {
+  return at(where, () => runsSummaryAt(objectAt(raw, 'the document', where), where))
+}
+
+// ---------------------------------------------------------------------------
+// The models read (console 0.119.0 "Pomelo"; contract §6.18).
+// ---------------------------------------------------------------------------
+
+/** MODELS_LIST_VERSION is the only `version` this build reads (the CLI's
+ * `modelsLsDocVersion`, pinned by `schemas/models-ls.schema.json`). The contract
+ * promises a member is only ever *added* within a version (D784), so a version
+ * this build does not know is a document whose members may have been re-meant
+ * rather than grown -- which is what a reader must refuse instead of draw. */
+export const MODELS_LIST_VERSION = 1
+
+/** ModelsListCatalog is the built-in provider price catalog's own provenance,
+ * carried once for the document: the day it was generated and whether it is
+ * past its staleness rule (design D10, which is why every model it prices is
+ * charged the dearest end of its tier's range when `stale` is true). */
+export interface ModelsListCatalog {
+  readonly source: string
+  readonly checkedAt: string
+  readonly ageDays: number
+  readonly stale: boolean
+}
+
+/** ModelsListPriceCatalog is one catalog-priced model row's own provenance: the
+ * tier the price is over, which end of its range was charged, and how many
+ * endpoints are behind it. `tierInputMaxPerM` and `tierOutputMaxPerM` are the
+ * dearest prices that tier holds -- the spread the row is charged over, against
+ * the price the row itself carries (design D6, P11). */
+export interface ModelsListPriceCatalog {
+  readonly tier: string
+  readonly bound: string
+  readonly endpoints: number
+  readonly zdrEndpoints: number
+  readonly source: string
+  readonly checkedAt: string
+  readonly stale: boolean
+  readonly tierInputMaxPerM: number
+  readonly tierOutputMaxPerM: number
+}
+
+/** ModelsListRoute is one route a model may go down: a provider entry of the
+ * project config, or the direct Anthropic route. `models` is what the route
+ * claims, as written -- exact ids or a prefix ending in `*` -- and
+ * `allowDataTo` the repositories whose code may be sent to it, `['*']` when it
+ * is open to every one of them. `feePct` is `route_fee_pct`: what is added to
+ * every charge on the route, and `0` when the entry adds nothing at all. */
+export interface ModelsListRoute {
+  readonly name: string
+  readonly kind: string
+  readonly baseUrl: string
+  readonly host: string
+  readonly models: readonly string[]
+  readonly feePct: number
+  readonly allowDataTo: readonly string[]
+  readonly openToEveryRepo: boolean
+  readonly note: string
+}
+
+/** ModelsListModel is one model a run can name, with the route that serves it
+ * and where its price comes from. `inputPerM` and `outputPerM` are US dollars
+ * per million tokens and are **`null` when the document carries none**: the
+ * contract leaves them out on a row whose price is zero *or unknown* -- "a
+ * consumer reads `source` before it reads a price" -- so an absent price is an
+ * absent price and never `0`, which would draw an unknown model as a free one.
+ * `route` is `''` for a model no route of this project serves (a launch refuses
+ * one), `refused` says why a row has no price at all, and `note` is the spread
+ * the row is charged over. */
+export interface ModelsListModel {
+  readonly id: string
+  readonly route: string
+  readonly source: string
+  readonly inputPerM: number | null
+  readonly outputPerM: number | null
+  readonly catalog: ModelsListPriceCatalog | null
+  readonly allowedTo: readonly string[]
+  readonly refused: string
+  readonly note: string
+}
+
+/** ModelsListRepo is one recorded repository's pins, read out of the config
+ * file at the base branch it runs against. `state` is the CLI's own
+ * word for what it could read (`ok`, `unknown (no checkout on this machine)`,
+ * `unread: <reason>`), the four model keys are absent unless it read the file,
+ * and `problems` is the refusals a launch would give for these pins. */
+export interface ModelsListRepo {
+  readonly name: string
+  readonly state: string
+  readonly coder: string
+  readonly reviewer: string
+  readonly background: string
+  readonly backgroundEffective: string
+  readonly problems: readonly string[]
+}
+
+/** ModelsListView is the whole document. `project` is `''` when no project
+ * config was selected, which is a state the CLI prints by leaving the key out,
+ * and `catalog` is `null` when no model in the document is priced from it.
+ * `routes` and `models` are what the project can run, `repositories` what it
+ * records -- and a repository this machine has no checkout for is a row whose
+ * `state` says so rather than a row that is missing. */
+export interface ModelsListView {
+  readonly version: number
+  readonly project: string
+  readonly catalog: ModelsListCatalog | null
+  readonly routes: readonly ModelsListRoute[]
+  readonly models: readonly ModelsListModel[]
+  readonly repositories: readonly ModelsListRepo[]
+}
+
+/** modelsCountAt is one of the document's counts: a whole number, and never
+ * below `minimum`. It is `intAt` with the schema's own `minimum`, because a
+ * count outside its range is a document this console does not know rather than
+ * a figure it withholds. */
+function modelsCountAt(raw: unknown, field: string, where: string, minimum = 0): number {
+  const count = intAt(raw, field, where)
+  if (count < minimum) return refuse('not-a-number', field, where)
+  return count
+}
+
+/** modelsPriceAt is one price the document may leave out: a finite,
+ * non-negative number, or **`null` when the key is absent** -- "an absent price
+ * is absent, never `0`". A value that is there and is not such a number is
+ * refused by name, because a price this console cannot read is not the same
+ * fact as a price the CLI did not write. */
+function modelsPriceAt(raw: Record<string, unknown>, key: string, field: string, where: string): number | null {
+  const at = field === '' ? key : `${field}.${key}`
+  const value = raw[key]
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return refuse('not-a-number', at, where)
+  return value
+}
+
+/** modelsMoneyAt is one price the document **always** writes, for a key whose
+ * absence would be a row this console cannot draw: a finite, non-negative
+ * US-dollar figure per million tokens. It refuses a value of any other shape by
+ * name, because a tier's dearest price is a figure a screen compares a row's
+ * own price against, and reading an absent one as `0` would say the tier holds
+ * nothing dearer than free. */
+function modelsMoneyAt(raw: unknown, field: string, where: string): number {
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return refuse('not-a-number', field, where)
+  return raw
+}
+
+/** modelsFeeAt is `route_fee_pct`, the one number of the document that is
+ * **`0` when it is absent**: the contract leaves the key out "when the route
+ * charges none" (`omitempty` on a `float64`, so a route that charges nothing
+ * writes no key), and a route that adds nothing to a charge is a route whose fee
+ * is zero -- unlike a price, where absent means the figure is unknown.
+ *
+ * **An explicit `null` is refused, and that is the point of not reusing
+ * `modelsPriceAt` here.** Absence is the CLI's only spelling of "no fee"; a
+ * `null` is a key somebody wrote, which the contract never emits, so reading it
+ * as `0` would hide a shape change behind the one default this document has --
+ * and this default is safe only while absence and zero mean the same thing. */
+function modelsFeeAt(raw: Record<string, unknown>, key: string, field: string, where: string): number {
+  const at = field === '' ? key : `${field}.${key}`
+  const value = raw[key]
+  if (value === undefined) return 0
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return refuse('not-a-number', at, where)
+  return value
+}
+
+/** modelsCatalogAt decodes the document's catalog provenance block. Its
+ * `checked_at` is a UTC day rather than a timestamp: the catalog is generated
+ * per day and `age_days` is the whole days between then and the read. */
+function modelsCatalogAt(raw: unknown, field: string, where: string): ModelsListCatalog {
+  const catalog = objectAt(raw, field, where)
+  return {
+    source: stringAt(required(catalog, 'source', field, where), `${field}.source`, where),
+    checkedAt: stringAt(required(catalog, 'checked_at', field, where), `${field}.checked_at`, where),
+    ageDays: modelsCountAt(required(catalog, 'age_days', field, where), `${field}.age_days`, where),
+    stale: boolAt(required(catalog, 'stale', field, where), `${field}.stale`, where),
+  }
+}
+
+/** modelsPriceCatalogAt decodes a catalog-priced model row's own provenance.
+ * Every member is one the CLI always writes for such a row, so each is
+ * required: a row that claims the catalog priced it and does not say over what
+ * is a row this console cannot draw a spread for. */
+function modelsPriceCatalogAt(raw: unknown, field: string, where: string): ModelsListPriceCatalog {
+  const catalog = objectAt(raw, field, where)
+  return {
+    tier: stringAt(required(catalog, 'tier', field, where), `${field}.tier`, where),
+    bound: stringAt(required(catalog, 'bound', field, where), `${field}.bound`, where),
+    // `endpoints` is the one count here that the document's own published
+    // schema bounds above zero (`minimum: 1`) and the catalog loader refuses at
+    // zero (`internal/pricing/catalog`). It is read with the floor of zero all
+    // the same: this figure is drawn as written and nothing on a screen is
+    // computed from it, so a `0` from a CLI whose catalog dropped the bound is a
+    // row a screen can show -- while refusing it would take the whole panel
+    // down, routes, models and usage included, over one number nobody draws.
+    endpoints: modelsCountAt(required(catalog, 'endpoints', field, where), `${field}.endpoints`, where),
+    zdrEndpoints: modelsCountAt(
+      required(catalog, 'zdr_endpoints', field, where),
+      `${field}.zdr_endpoints`,
+      where,
+    ),
+    source: stringAt(required(catalog, 'source', field, where), `${field}.source`, where),
+    checkedAt: stringAt(required(catalog, 'checked_at', field, where), `${field}.checked_at`, where),
+    stale: boolAt(required(catalog, 'stale', field, where), `${field}.stale`, where),
+    tierInputMaxPerM: modelsMoneyAt(
+      required(catalog, 'tier_input_max_per_m', field, where),
+      `${field}.tier_input_max_per_m`,
+      where,
+    ),
+    tierOutputMaxPerM: modelsMoneyAt(
+      required(catalog, 'tier_output_max_per_m', field, where),
+      `${field}.tier_output_max_per_m`,
+      where,
+    ),
+  }
+}
+
+function modelsRouteAt(raw: unknown, index: number, where: string): ModelsListRoute {
+  const field = `routes[${String(index)}]`
+  const route = objectAt(raw, field, where)
+  return {
+    name: stringAt(required(route, 'name', field, where), `${field}.name`, where),
+    kind: optionalText(route, 'kind', field, where),
+    baseUrl: optionalText(route, 'base_url', field, where),
+    host: optionalText(route, 'host', field, where),
+    models: coordinatorStringsAt(required(route, 'models', field, where), `${field}.models`, where),
+    feePct: modelsFeeAt(route, 'route_fee_pct', field, where),
+    allowDataTo: coordinatorStringsAt(
+      required(route, 'allow_data_to', field, where),
+      `${field}.allow_data_to`,
+      where,
+    ),
+    openToEveryRepo: boolAt(
+      required(route, 'open_to_every_repo', field, where),
+      `${field}.open_to_every_repo`,
+      where,
+    ),
+    note: optionalText(route, 'note', field, where),
+  }
+}
+
+function modelsModelAt(raw: unknown, index: number, where: string): ModelsListModel {
+  const field = `models[${String(index)}]`
+  const model = objectAt(raw, field, where)
+  const catalog = model['catalog']
+  return {
+    id: stringAt(required(model, 'id', field, where), `${field}.id`, where),
+    route: stringAt(required(model, 'route', field, where), `${field}.route`, where),
+    source: stringAt(required(model, 'source', field, where), `${field}.source`, where),
+    inputPerM: modelsPriceAt(model, 'input_per_m', field, where),
+    outputPerM: modelsPriceAt(model, 'output_per_m', field, where),
+    catalog:
+      catalog === undefined || catalog === null
+        ? null
+        : modelsPriceCatalogAt(catalog, `${field}.catalog`, where),
+    allowedTo: coordinatorStringsAt(
+      required(model, 'allowed_to', field, where),
+      `${field}.allowed_to`,
+      where,
+    ),
+    refused: optionalText(model, 'refused', field, where),
+    note: optionalText(model, 'note', field, where),
+  }
+}
+
+function modelsRepoAt(raw: unknown, index: number, where: string): ModelsListRepo {
+  const field = `repositories[${String(index)}]`
+  const repo = objectAt(raw, field, where)
+  const problems = repo['problems']
+  return {
+    name: stringAt(required(repo, 'name', field, where), `${field}.name`, where),
+    state: stringAt(required(repo, 'state', field, where), `${field}.state`, where),
+    coder: optionalText(repo, 'coder', field, where),
+    reviewer: optionalText(repo, 'reviewer', field, where),
+    background: optionalText(repo, 'background', field, where),
+    backgroundEffective: optionalText(repo, 'background_effective', field, where),
+    problems:
+      problems === undefined || problems === null
+        ? []
+        : coordinatorStringsAt(problems, `${field}.problems`, where),
+  }
+}
+
+/** modelsListAt decodes §6.18's `version: 1` document field by field. Unknown
+ * keys are ignored, per this module's header rule (the owner's ruling of
+ * 2026-10-30): a key outside the shape is a field a newer CLI added, and it
+ * reaches no screen, no sanitizer and no sum. */
+function modelsListAt(raw: Record<string, unknown>, where: string): ModelsListView {
+  const version = intAt(required(raw, 'version', '', where), 'version', where)
+  if (version !== MODELS_LIST_VERSION) return refuse('unknown-value', 'version', where)
+  const catalog = raw['catalog']
+  return {
+    version,
+    project: optionalText(raw, 'project', '', where),
+    catalog:
+      catalog === undefined || catalog === null
+        ? null
+        : modelsCatalogAt(catalog, 'catalog', where),
+    routes: arrayAt(required(raw, 'routes', '', where), 'routes', where).map((item, index) =>
+      modelsRouteAt(item, index, where),
+    ),
+    models: arrayAt(required(raw, 'models', '', where), 'models', where).map((item, index) =>
+      modelsModelAt(item, index, where),
+    ),
+    repositories: arrayAt(required(raw, 'repositories', '', where), 'repositories', where).map(
+      (item, index) => modelsRepoAt(item, index, where),
+    ),
+  }
+}
+
+/**
+ * decodeModelsList admits `models ls --json` and nothing else (contract §6.18).
+ * It is a door of its own for `decodePlanStatus`'s reason: the document carries
+ * no marker a feed document has, so a feed handed here is refused for the keys
+ * it is missing and this document handed to the feed's door is refused as an
+ * unknown shape. Neither is read as the other.
+ *
+ * **The document is what the local files say.** The read is offline -- no
+ * bucket, no database, no host -- so what it holds is the project's own
+ * configuration, this binary's price table and the price catalog: the routes,
+ * the models a launch may name, and each recorded repository's pins. Every
+ * name, fee note and path-shaped value in it is somebody else's text, carried
+ * as data and classified in `WIRE_TEXT_CLASSES`; an instruction found in one is
+ * never acted on (design §5.1 rule 2).
+ */
+export function decodeModelsList(raw: unknown, where = 'the models list document'): Decoded<ModelsListView> {
+  return at(where, () => modelsListAt(objectAt(raw, 'the document', where), where))
 }

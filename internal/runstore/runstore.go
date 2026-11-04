@@ -159,6 +159,22 @@ type ReviewSummary struct {
 	// recorded none, which is every review written before this field
 	// existed.
 	Head string `json:"head,omitempty"`
+	// Model is the model this round's reviewer ran on: the stage's pinned
+	// model (StageTiming.Model, config.Agent.ModelFor), which is the review
+	// level's own when a layer named it one. It is what a reader needs to
+	// tell which model reviewed the head beside it, as the record states it:
+	// the bytes of an unsigned file, so a hint for a person and never an input
+	// to a decision (the coordinator decides on the signed review artifact,
+	// docs/c39-review-identity). Empty in a round that recorded none, which is
+	// every review written before this field existed.
+	Model string `json:"model,omitempty"`
+	// Effort is the reasoning effort this round's reviewer ran at, and it is
+	// the value that reached the stage rather than the one a layer asked for:
+	// a level with no effort of its own and a stage on a provider route (which
+	// runs with thinking off, G5/D725) both leave it empty, so an empty field
+	// is the same statement the stage's own environment makes. Empty in every
+	// review written before this field existed.
+	Effort string `json:"effort,omitempty"`
 	// Bounce is which cheap loop this review followed, under review:
 	// {bounce: first_line}: 0 for a review before any senior rejection, 1
 	// for the cheap loop after the first one, and so on. Always 0 on a
@@ -171,6 +187,14 @@ const (
 	TierFirst       = "first"
 	TierSenior      = "senior"
 	TierAdversarial = "adversarial"
+	// TierIndependent is the independent review job's own tier
+	// (docs/cloud-senior-review, O4): the review the coordinator launched as
+	// its own run on a named account, whose verdict is a signed artifact
+	// rather than an in-run pair. It is DISPLAY-ONLY — it tells a reader
+	// which reviewer wrote the entry and carries no authority: the signed
+	// artifact is the only authority on that run's outcome, and the entry's
+	// Verdict stays one of the record's own two words.
+	TierIndependent = "independent"
 )
 
 // MaxReviewScopeFiles bounds each path list a review-scope comparison
@@ -616,12 +640,28 @@ type Record struct {
 	// docs/design/named-oauth-tokens.md); informational only, never read by
 	// anything that makes a security decision. Absent in records from
 	// before this field existed.
-	OAuthAccount string  `json:"oauth_account,omitempty"`
-	Execution    string  `json:"execution,omitempty"` // canonical full name, never the short CLOUD_RUN_EXECUTION; compare only via backend.SameExecution
-	Status       Status  `json:"status"`
-	Stage        string  `json:"stage"`
-	Outcome      Outcome `json:"outcome"`
-	Reason       string  `json:"reason,omitempty"`
+	OAuthAccount string `json:"oauth_account,omitempty"`
+	// StageAccounts is the account that served each stage of this run, keyed
+	// by the stage name the record's own stage list and result.json's stage
+	// enum use: the per-stage answer OAuthAccount cannot give, because that
+	// field is one scalar the run writes last (D876, spec §11.5 of
+	// docs/accounts-add). The property arrives ahead of the writer that fills
+	// it — the runner's stage-start resolution: the account a
+	// stages.<stage>.claude_account override or default_claude_account names,
+	// and the one a failover took over with — so that writer needs no version
+	// move of its own. Nothing writes the field and nothing reads it: a map of
+	// account names is a new shape, and putting it on a screen goes through
+	// the console's redactor, which is a task of its own. Additive:
+	// OAuthAccount keeps the meaning it has (the account the run used last), a
+	// record written before this field decodes unchanged, and the format's
+	// version does not move (schemas/result.schema.json declares the
+	// property).
+	StageAccounts map[string]string `json:"stage_accounts,omitempty"`
+	Execution     string            `json:"execution,omitempty"` // canonical full name, never the short CLOUD_RUN_EXECUTION; compare only via backend.SameExecution
+	Status        Status            `json:"status"`
+	Stage         string            `json:"stage"`
+	Outcome       Outcome           `json:"outcome"`
+	Reason        string            `json:"reason,omitempty"`
 	// Gate is "clean" or "fixed" when the recipe's check step decided the
 	// run (gate.go); "" when the recipe has no check step, or it found a
 	// failure and the run went on to implement as usual.
@@ -748,23 +788,24 @@ type Record struct {
 	// Backlog is the ids of the backlog items this run filed for what it
 	// left open, in the order it filed them: the `<YYYYMMDD-NN>` names
 	// their files under docs/backlog/ are known by (docs/rigor-modes/
-	// implementation-plan.md T4.5, D9, D26). Nothing reads it yet — no
+	// implementation-plan.md T4.5, D9, D26). The runner files none any more:
+	// an item was committed after the suite's last run, on a commit that
+	// suite never saw, so a test pinning a fact about the tree passed on the
+	// commit the run tested and failed on the one it pushed. What a run
+	// leaves open is in Reviews and Tolerated instead (runner.go, finalize).
+	// The field stays, absent for every run now as it was for a run that
+	// filed nothing before — a record written earlier carries its ids, and a
+	// field never changes meaning. Nothing reads it yet either: no
 	// `Diagnosis` field carries it and `runview.Row`, which the console's
-	// record keys are derived from, has no backlog key; the items
-	// themselves are on the run's branch and in its pull request, and
-	// `fugaro backlog list` is how they are read today. It is written
-	// because the record is what survives the run, and the ids are the one
-	// part of the filing nothing else on the record names. Absent — never
-	// an empty list — for a run that filed none, which is every record
-	// written before this field existed.
+	// record keys are derived from, has no backlog key.
 	Backlog []string `json:"backlog,omitempty"`
 	// BacklogClosed is the ids of the backlog items this run closed as the
 	// follow-up whose review shipped the round an earlier run on its pull
 	// request left open (D31, plan T4.7), in the order it closed them, the
-	// same `<YYYYMMDD-NN>` names as Backlog. Nothing reads it yet either; it
-	// is written so the record says what the run answered as well as what it
-	// left. At most MaxBacklogClosed, and absent — never an empty list — for
-	// a run that closed none.
+	// same `<YYYYMMDD-NN>` names as Backlog — and, like Backlog, no longer
+	// written by the runner, which closes nothing now that it files nothing.
+	// At most MaxBacklogClosed, and absent — never an empty list — for a run
+	// that closed none.
 	BacklogClosed []string `json:"backlog_closed,omitempty"`
 	// ReviewScope is the comparison between the paths implement changed and
 	// the paths the review range covers, taken right after implement

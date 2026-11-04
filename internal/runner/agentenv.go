@@ -46,18 +46,20 @@ func (r *run) parentEnv() map[string]string {
 }
 
 // stagePins are the pins of a stage's role: its model, the background model
-// and its output limit per call. They exist for the gateway's pricing, so
-// without the gateway there are none and a run sets no variable the
-// budget-off runs never set. When the role's model or the background model is
-// served by a provider route, agent.ProviderRouteVars are added: a Claude
-// stage is never touched by them.
+// and its output limit per call. Its model is the review level's own when the
+// stage is a review stage a layer named one for (stageModel), and the role
+// slot's otherwise. They exist for the gateway's pricing, so without the
+// gateway there are none and a run sets no variable the budget-off runs never
+// set. When the stage's model or the background model is served by a provider
+// route, agent.ProviderRouteVars are added: a Claude stage is never touched by
+// them.
 func (r *run) stagePins(stage string) map[string]string {
 	if !r.gatewayOn() {
 		return nil
 	}
-	role := config.StageRole(stage)
+	role := stageRole(stage)
 	a := r.cfg.Agent
-	model, bg := a.ModelFor(role), r.backgroundModel()
+	model, bg := r.stageModel(stage), r.backgroundModel()
 	pins := agent.PinVars(model, bg, a.MaxOutputFor(role))
 	if r.stageOnProviderRoute(model, bg) {
 		maps.Copy(pins, agent.ProviderRouteVars())
@@ -85,25 +87,58 @@ func (r *run) stageOnProviderRoute(model, background string) bool {
 // does nothing without the gateway: a budget-off run writes no file, and so
 // carries no deny rule at all. A failure is an error, since the settings are
 // what keep a repository's own settings from rerouting the agent.
+//
+// A review-mode run is the one exception, and it is not about the gateway at
+// all: with auth: oauth and the budget off — the cloud reviewer's own
+// configuration, where the gateway is off — this run's one stage is the one
+// stage that reads a pull request's own head, and its posture (D894(a)) is
+// what that stage must be launched under whatever the budget says. Such a run
+// writes the posture alone: the deny list is left out because both of its
+// halves exist for refusals the gateway itself makes.
 func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 	gw := r.gateway()
-	if gw == nil {
+	if gw == nil && !r.review {
 		return nil
 	}
-	vars, err := agent.GatewayVars(r.cfg.Agent.Auth, *gw, r.parentEnv())
-	if err != nil {
-		return fmt.Errorf("writing Claude Code's managed settings: %w", err)
+	vars := map[string]string{}
+	if gw != nil {
+		gwVars, err := agent.GatewayVars(r.cfg.Agent.Auth, *gw, r.parentEnv())
+		if err != nil {
+			return fmt.Errorf("writing Claude Code's managed settings: %w", err)
+		}
+		vars = gwVars
+		if r.compression != nil {
+			// After GatewayVars, not before: the managed settings outrank the
+			// agent's environment, so leaving the gateway's URL here would route
+			// Claude Code around the sidecar whatever BuildEnv did (P5).
+			vars["ANTHROPIC_BASE_URL"] = r.compression.BaseURL
+		}
+		for k, v := range pins {
+			vars[k] = v
+		}
 	}
-	if r.compression != nil {
-		// After GatewayVars, not before: the managed settings outrank the
-		// agent's environment, so leaving the gateway's URL here would route
-		// Claude Code around the sidecar whatever BuildEnv did (P5).
-		vars["ANTHROPIC_BASE_URL"] = r.compression.BaseURL
+	write, deny := agent.WriteManagedSettings, agent.DenyRules(true, config.IsReviewStage(stage))
+	if r.review {
+		// A review-mode run's stage reads a pull request's own head, so the
+		// settings it is launched under are the review posture (D894(a)):
+		// managed hooks only, no project MCP server, and setting sources
+		// from the user and managed levels alone. A coding run's own stages
+		// — its in-loop review rounds included — keep the file they had.
+		write = agent.WriteReviewManagedSettings
+		if r.reviewJob() {
+			// The independent review job is the one review stage that runs
+			// the head's own code (the mutation check) and reads nothing of
+			// its own repository, so it is the one that loses the tools that
+			// would run or write anything (D891(a)). A coding run's own
+			// review rounds, and `fugaro run --pr N --recipe review-only`,
+			// are the repository's own run and keep them.
+			deny = append(deny, agent.ReviewJobDenyRules()...)
+		}
+		if gw == nil {
+			deny = nil
+		}
 	}
-	for k, v := range pins {
-		vars[k] = v
-	}
-	if err := agent.WriteManagedSettings(r.managedPath(), vars, agent.DenyRules(true, config.IsReviewStage(stage))); err != nil {
+	if err := write(r.managedPath(), vars, deny); err != nil {
 		return fmt.Errorf("writing Claude Code's managed settings: %w", err)
 	}
 	r.mu.Lock()

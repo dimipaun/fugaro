@@ -84,6 +84,8 @@ import {
   PRIVATE_DIR_LEAF,
   PRIVATE_DIR_NAME,
   privateWorkingDirectory,
+  RUNS_LIST_EQUALS_FLAGS,
+  RUNS_SUMMARY_EQUALS_FLAGS,
   shellQuoteWord,
   probeVersion,
   resolveBinary,
@@ -106,6 +108,7 @@ import {
   wslStopArgs,
   wslWrapperMarker,
   SpawnTimeout,
+  SETTINGS_EDIT_PHASE_WORDS,
 } from '../../src/main/spawn'
 import { WSL_UTF8_VAR, WSL_UTF8_VALUE } from '../../src/main/wsl'
 import type {
@@ -120,7 +123,7 @@ import type {
 } from '../../src/main/spawn'
 import { createSpawnLog, disabledSpawnLog } from '../../src/main/spawnlog'
 import type { SpawnLogWriter } from '../../src/main/spawnlog'
-import { validateArguments } from '../../src/main/ipc'
+import { RUNS_LIST_MAX_LIMIT, validateArguments } from '../../src/main/ipc'
 import type { OperationName, ValidatedArguments } from '../../src/main/ipc'
 import { CliSource, LOG_WINDOW_MAX_ENTRIES, MAX_LIVE_FEEDS, createInstallationStore, parseLogEntries } from '../../src/source/cli'
 import type { InstallationCandidate } from '../../src/source/cli'
@@ -141,13 +144,20 @@ const PROJECT = 'fugaro'
 const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
 
 /**
- * COMMANDS_TAKING_PROJECT is the plan's own list, hard-coded: the thirteen
+ * COMMANDS_TAKING_PROJECT is the plan's own list, hard-coded: the seventeen
  * operations `addCloudFlags` gives `--project` to (`internal/cli/cloud.go:51`,
  * called from each of those constructors), including the two log operations
  * that share the `logs` command -- console L5b's `runs.stats` is the eleventh,
  * plan GV2.1's `plan.status` the twelfth, Bitbucket credentials T1.2's
- * `coordinator.status` the thirteenth, and the console's one write, V2.5.1a's
- * `run.launch`, the fourteenth. The complement -- the commands
+ * `coordinator.status` the thirteenth, the console's one write, V2.5.1a's
+ * `run.launch`, the fourteenth, coordinator v2 C3's `coordinator.show` the
+ * fifteenth, coordinator v2 C4's `coordinator.intents` the sixteenth, and
+ * console 0.119.0's jobs-free totals read, `runs.summary`, the seventeenth, and
+ * console 0.119.0's read-only models panel, `models.list`, the eighteenth, and
+ * the settings read, `settings.read`, the nineteenth, and the settings write,
+ * `settings.edit`, the twentieth -- the same command's second row, since an edit
+ * reads the project's configuration the read does. The
+ * complement -- the commands
  * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
  * command words the CLI itself uses (`version` and the rail's `config list`),
@@ -160,14 +170,20 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'spend.report',
   'runs.list',
   'runs.stats',
+  'runs.summary',
   'plan.status',
   'run.diagnose',
   'run.logs',
   'run.logLink',
   'secrets.inventory',
   'accounts.inventory',
+  'models.list',
+  'settings.read',
+  'settings.edit',
   'environment.report',
   'coordinator.status',
+  'coordinator.show',
+  'coordinator.intents',
   'run.launch',
 ]
 /** freshDirectory is a temporary directory this test owns, one per call. */
@@ -241,17 +257,28 @@ function safeContext(overrides: {
  * `argvFor` refuses an id on a row that has no `runIdFlag`. */
 const LAUNCH_RUN_ID = '20261028-152618-a2fc'
 
+/** SETTINGS_EDIT_CONTEXT is the two facts the settings write cannot be built
+ * without (the settings-edit plan's C3): the phase and the layer, and both of
+ * them are the main process's -- no schema key declares either. The loops over
+ * the whole table supply them here, so the row that needs them is built like
+ * every other one, and a row that starts requiring a third fact fails in the
+ * loop that builds it. */
+const SETTINGS_EDIT_CONTEXT = Object.freeze({ phase: 'narrowing', layer: 'project' } as const)
+
 /** contextFor is the plan context one row is built with: `safeContext` for
  * every read, and the same plus the run id for the launch, which cannot be
- * built without one. A loop over the whole table goes through here rather than
- * asking each row what it needs, so a row that starts requiring a new piece of
- * main-process state fails in the loop that builds it. */
+ * built without one, or the phase and the layer for the settings write. A loop
+ * over the whole table goes through here rather than asking each row what it
+ * needs, so a row that starts requiring a new piece of main-process state fails
+ * in the loop that builds it. */
 function contextFor(
   operation: OperationName,
   overrides: Parameters<typeof safeContext>[0] = {},
 ): Parameters<typeof planFor>[2] {
   const context = safeContext(overrides)
-  return operation === 'run.launch' ? { ...context, runId: LAUNCH_RUN_ID } : context
+  if (operation === 'run.launch') return { ...context, runId: LAUNCH_RUN_ID }
+  if (operation === 'settings.edit') return { ...context, settingsEdit: SETTINGS_EDIT_CONTEXT }
+  return context
 }
 
 /**
@@ -457,15 +484,27 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: sixteen argvs, fifteen commands, fourteen of them with --project', () => {
+  it('fixes the design allow-list exactly: twenty-two argvs, twenty-one commands, twenty of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
     // plan GV2.1's `plan status --json` is the fourteenth, and Bitbucket
     // credentials T1.2's `coordinator status --from-store --all --json` the
-    // fifteenth, and V2.5.1a's launch the sixteenth -- the one row here that is
-    // a write, and the one whose words carry `--task-file -` (the literal word
-    // `-` puts the task on the child's stdin). The Go side pins
+    // fifteenth, V2.5.1a's launch the sixteenth -- the one row here that is a
+    // write, and the one whose words carry `--task-file -` (the literal word
+    // `-` puts the task on the child's stdin) -- coordinator v2 C3's pull
+    // request read the seventeenth, whose two arguments (the repository and the
+    // number) are filled by the caller and so are not words of this list -- and
+    // coordinator v2 C4's declared intents the eighteenth, whose `--all` and
+    // `--json` are the row's own two words, exactly as `coordinator status`'s
+    // are, console 0.119.0's models read the nineteenth, whose whole argv is
+    // its own three words -- the group's one reachable word -- and the settings
+    // read the twentieth, whose whole argv is its own two words and the
+    // installation's, no argument a renderer can fill -- and the settings write
+    // the twenty-first, whose words are the group alone: its subcommand, its key
+    // and its value are arguments, so the row's own word is `settings` and the
+    // rest of the argv is built from the main process's phase and layer. The Go
+    // side pins
     // the document's list (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
     // console's; the two are held in step by hand on purpose.
@@ -475,21 +514,28 @@ describe('the spawn table and the argv it builds', () => {
       'report --json',
       'runs ls --json',
       'runs stats --json',
+      'runs summary --json',
       'plan status --json',
       'diagnose --json',
       'logs --json',
       'logs --url',
       'secrets ls --json',
       'accounts ls --json',
+      'models ls --json',
+      'settings --json',
+      'settings',
       'version',
       'doctor --json',
       'config list --json',
       'coordinator status --from-store --all --json',
+      'coordinator show --json',
+      'coordinator intents --all --json',
       'run --task-file - --json',
     ])
-    // The twelve *commands* that take the flag (addCloudFlags, internal/cli/
-    // cloud.go:51) are thirteen rows plus one: `logs` has two rows, `--json`
-    // and `--url`, and neither of them may be the one that forgets --project.
+    // The commands that take the flag (addCloudFlags, internal/cli/cloud.go:51)
+    // are twenty rows plus one: `logs` has two rows, `--json` and `--url`, and
+    // neither of them may be the one that forgets --project -- and `settings`
+    // has two as well, the read and the edit.
     // A word is a flag or a separator if it begins with `-`, which is what
     // keeps the launch's literal `-` -- the argv word that means "read the task
     // from stdin" -- out of the command path it is compared as.
@@ -503,17 +549,22 @@ describe('the spawn table and the argv it builds', () => {
         'report',
         'runs ls',
         'runs stats',
+        'runs summary',
         'plan status',
         'diagnose',
         'logs',
         'secrets ls',
         'accounts ls',
+        'models ls',
+        'settings',
         'doctor',
         'coordinator status',
+        'coordinator show',
+        'coordinator intents',
         'run',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(14)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(20)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -688,6 +739,94 @@ describe('the spawn table and the argv it builds', () => {
     }
   })
 
+  it('spawns `coordinator show` with the repository, the number and nothing else', () => {
+    // **C3's row, word for word** (coordinator v2 C3, D816; the design
+    // allow-list's `coordinator show --json --repo <owner/name> --pr <n>`). The
+    // child this argv starts mints a credential of the host's -- the
+    // coordinator's own read-only installation token -- so what the console may
+    // put in the argv is the whole question, and it is written out here rather
+    // than read off the row. The order is `argvFor`'s for every row: the row's
+    // fixed words, then the arguments the schema declares, then `--project`.
+    expect(
+      argvFor('coordinator.show', { repo: 'acme/app', pr: 1458 }, safeContext({ project: 'chosen' })),
+    ).toEqual([
+      'coordinator',
+      'show',
+      '--json',
+      '--repo',
+      'acme/app',
+      '--pr',
+      '1458',
+      '--project',
+      'chosen',
+    ])
+    // Both arguments are the operation's own and both are required by its
+    // schema (`src/main/ipc.ts`; the argument-schema case there pins the two).
+    // What this row adds is the argv spelling: the repository as the CLI's own
+    // `owner/name`, and the number as the digits `IntVar --pr` reads. So a
+    // number that is not a pull request number is refused here rather than
+    // spelled into argv, which is the whole of what the `pullRequest` kind buys
+    // on a row whose child mints a credential.
+    expect(() => argvFor('coordinator.show', { repo: 'acme/app', pr: 0 }, safeContext())).toThrow(
+      /not a pull request number/,
+    )
+    expect(() => argvFor('coordinator.show', { repo: 'acme/app', pr: 1.5 }, safeContext())).toThrow(
+      /not a pull request number/,
+    )
+    // ...and a key the row does not declare never reaches an element, which is
+    // the rule that keeps a payload from smuggling a flag in.
+    expect(() => argvFor('coordinator.show', { repo: 'acme/app', pr: 1, token: 'x' }, safeContext())).toThrow(
+      /does not declare/,
+    )
+    // **No token, no host and no path**, in any position: the credential is the
+    // child's own and nothing a renderer sends may name one. The flags the argv
+    // carries are exactly the schema's two plus the console's own.
+    const argv = argvFor('coordinator.show', { repo: 'acme/app', pr: 1458 }, safeContext())
+    expect(argv.filter((word) => word.startsWith('--'))).toEqual([
+      '--json',
+      '--repo',
+      '--pr',
+      '--project',
+    ])
+  })
+
+  it('spawns `coordinator intents` with `--all`, `--json` and nothing else', () => {
+    // **C4's row, word for word** (coordinator v2 C4, D827; the design
+    // allow-list's `coordinator intents --all --json`). It is the project view's
+    // shape again -- the argv is the row's own words and the caller fills none
+    // of them -- and the read is the caller's own database node: it mints no
+    // credential of the host's, opens no provider and reaches no host, which is
+    // what its empty argument schema buys (`src/main/ipc.ts`). Spelled out here
+    // rather than read off the row, so a change to the row is a failing test.
+    expect(argvFor('coordinator.intents', {}, safeContext({ project: 'chosen' }))).toEqual([
+      'coordinator',
+      'intents',
+      '--all',
+      '--json',
+      '--project',
+      'chosen',
+    ])
+    // `--all` is a fixed word and not a control: the screen draws every
+    // repository the local config lists, so there is no argument that turns the
+    // project-wide wrapper off -- and `--repo`/`--since`, which the CLI does
+    // have, are on no row here.
+    const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === 'coordinator.intents')
+    expect(row?.args).toEqual([])
+    expect(row?.dirFlag).toBe(false)
+    // A key the row does not declare never reaches an element, which is the
+    // rule that keeps a payload from smuggling a flag in -- and the two flags
+    // the command owns but no row declares are refused like any other word.
+    expect(() => argvFor('coordinator.intents', { repo: 'acme/app' }, safeContext())).toThrow(/does not declare/)
+    expect(() => argvFor('coordinator.intents', { since: '3d' }, safeContext())).toThrow(/does not declare/)
+    expect(() => argvFor('coordinator.intents', { all: true }, safeContext())).toThrow(/does not declare/)
+    expect(() => argvFor('coordinator.intents', { token: 'x' }, safeContext())).toThrow(/does not declare/)
+    expect(() => argvFor('coordinator.intents', { json: true }, safeContext())).toThrow(/does not declare/)
+    // The argv's whole flag list is the row's two words plus the console's own
+    // `--project`: no credential, no host, no path and no other command's flag.
+    const argv = argvFor('coordinator.intents', {}, safeContext({ project: 'chosen' }))
+    expect(argv.filter((word) => word.startsWith('--'))).toEqual(['--all', '--json', '--project'])
+  })
+
   it('emits one array element per value, in the operation’s own order', () => {
     const argv = argvFor(
       'runs.list',
@@ -733,6 +872,454 @@ describe('the spawn table and the argv it builds', () => {
     expect(argv).toContain('--pr')
     expect(argv).toContain('412')
     expect(argv[argv.indexOf('--pr') + 1]).toBe('412')
+  })
+
+  it('pages the runs list with two `=`-form words, in the row’s own order', () => {
+    // The page and its cursor (D818, coordinator v2 C2). Both are **one word
+    // each** -- `--limit=<n>` and `--after=<run id>` -- and the form is the
+    // point: a value inside the flag's own word cannot be read as a flag, so
+    // neither argument can spell a word of the command line of its own. They
+    // come after the row's other arguments, which is where the table declares
+    // them, and before the installation's own `--project`.
+    const cursor = '20261030-184402-31de'
+    expect([...argvFor('runs.list', { since: '24h', limit: 50 }, safeContext({ project: 'chosen' }))]).toEqual([
+      'runs',
+      'ls',
+      '--json',
+      '--since',
+      '24h',
+      '--limit=50',
+      '--project',
+      'chosen',
+    ])
+    const argv = argvFor('runs.list', { since: '24h', limit: 50, after: cursor }, safeContext({ project: 'chosen' }))
+    expect([...argv]).toEqual([
+      'runs',
+      'ls',
+      '--json',
+      '--since',
+      '24h',
+      '--limit=50',
+      `--after=${cursor}`,
+      '--project',
+      'chosen',
+    ])
+    // The value lives inside the flag's word and nowhere else: neither flag is
+    // a word of its own, and neither value is either.
+    for (const word of ['--limit', '--after', '50', cursor]) {
+      expect(argv, word).not.toContain(word)
+    }
+  })
+
+  it('refuses a page size the CLI’s IntVar would not read', () => {
+    // The validator's cap is `ipc.ts`'s `RUNS_LIST_MAX_LIMIT`, and this is the
+    // second of the two checks: `String` would happily spell `1e+21` or
+    // `1.5`, which cobra's `IntVar` refuses a stage later -- after a child
+    // exists, which is the one outcome the schema and this guard both exist to
+    // prevent.
+    for (const limit of [0, -1, 1.5, RUNS_LIST_MAX_LIMIT + 1, 1e21, Number.NaN, Number.POSITIVE_INFINITY, '50']) {
+      expect(() => argvFor('runs.list', { limit }, safeContext()), String(limit)).toThrow(/page size/)
+    }
+    expect(() => argvFor('runs.list', { limit: RUNS_LIST_MAX_LIMIT }, safeContext())).not.toThrow()
+  })
+
+  it('refuses a cursor that is not a run id this console will pass', () => {
+    for (const after of ['--watch', '-x', '', 'a b', '$(id)', '20261030-184402-31de; rm -rf /', 'a\nb']) {
+      expect(() => argvFor('runs.list', { after }, safeContext()), JSON.stringify(after)).toThrow()
+    }
+  })
+
+  it('takes the `=` form on the runs list row, and never a bare or empty flag', () => {
+    const cursor = '20261030-184402-31de'
+    expect(() => assertArgvFlags('runs.list', ['runs', 'ls', '--json', '--limit=25'])).not.toThrow()
+    expect(() => assertArgvFlags('runs.list', ['runs', 'ls', '--json', `--after=${cursor}`])).not.toThrow()
+    // A bare word and an `=` with nothing after it are both refused: the
+    // exception is a *prefix with a value*, not a flag name.
+    expect(() => assertArgvFlags('runs.list', ['runs', 'ls', '--json', '--limit'])).toThrow()
+    expect(() => assertArgvFlags('runs.list', ['runs', 'ls', '--json', '--limit='])).toThrow()
+    expect(() => assertArgvFlags('runs.list', ['runs', 'ls', '--json', '--after'])).toThrow()
+    expect(() => assertArgvFlags('runs.list', ['runs', 'ls', '--json', '--after='])).toThrow()
+    // The two prefixes are this row's own: no other row may borrow them, and
+    // the launch's two are still the launch's alone.
+    for (const row of ['live.watch', 'run.diagnose', 'plan.status', 'spend.report']) {
+      expect(() => assertArgvFlags(row, [row, '--limit=25']), row).toThrow()
+      expect(() => assertArgvFlags(row, [row, `--after=${cursor}`]), row).toThrow()
+    }
+    expect(() => assertArgvFlags('runs.list', ['runs', 'ls', '--json', '--title=x'])).toThrow()
+    expect(() => assertArgvFlags('run.launch', ['run', '--limit=25'])).toThrow()
+    // ...and the row declares exactly these two `=`-form flags, so the table
+    // and the argv check cannot drift apart.
+    expect(RUNS_LIST_EQUALS_FLAGS).toStrictEqual(['--limit=', '--after='])
+  })
+
+  it('spawns `runs summary` with exactly these words, and at most one `=`-form window', () => {
+    // The jobs-free totals read (console 0.119.0, B4's console half). Two
+    // argvs, written out: the command and its one fixed flag, and the same with
+    // the window inside the flag's own word. The window is the console's closed
+    // set (`SUMMARY_SINCE_WINDOWS`) and not `parseSince`'s grammar, so what is
+    // refused below is refused *before* a child exists.
+    expect([...argvFor('runs.summary', {}, safeContext({ project: 'chosen' }))]).toEqual([
+      'runs',
+      'summary',
+      '--json',
+      '--project',
+      'chosen',
+    ])
+    const argv = argvFor('runs.summary', { since: '1d' }, safeContext({ project: 'chosen' }))
+    expect([...argv]).toEqual(['runs', 'summary', '--json', '--since=1d', '--project', 'chosen'])
+    // One word, and the value inside it: neither the flag nor the window is a
+    // word of its own, so neither can be read as anything else.
+    for (const word of ['--since', '1d']) {
+      expect(argv, word).not.toContain(word)
+    }
+    expect(RUNS_SUMMARY_EQUALS_FLAGS).toStrictEqual(['--since='])
+  })
+
+  it('refuses a summary window outside the console’s own set', () => {
+    // Every value here is a form the CLI itself takes for `runs summary
+    // --since` (`parseSince`) and this surface still refuses: the set is the
+    // screens' two windows, and the whole history is the read the command
+    // exists to make unnecessary. **Both guards refuse it**: the validator
+    // (`ipc.ts`'s `summarySince`) is the renderer's gate, and the argv builder
+    // re-checks the membership for the `limit` case's reason -- a bound asked
+    // in one place is a bound the next caller can miss, and the window this one
+    // admits by accident is the whole history.
+    for (const since of ['0', '30d', '2d', '36h', '12w', '2026-10-16', '7D', ' 7d', '7d ', '']) {
+      expect(validateArguments('runs.summary', { since }).ok, JSON.stringify(since)).toBe(false)
+      expect(
+        () => argvFor('runs.summary', { since }, safeContext()),
+        JSON.stringify(since),
+      ).toThrow(/not a window this console will pass/)
+    }
+    for (const since of ['7d', '1d']) {
+      expect(validateArguments('runs.summary', { since }).ok, since).toBe(true)
+      expect(argvFor('runs.summary', { since }, safeContext()), since).toContain(`--since=${since}`)
+    }
+    // What the spawn alphabet refuses on top of that is a word an argv could
+    // not carry at all -- the builder's other half.
+    for (const since of ['a b', '$(id)', 'a;b', 'a\u0000b']) {
+      expect(() => argvFor('runs.summary', { since }, safeContext()), JSON.stringify(since)).toThrow()
+    }
+    // And a word that is not a window at all cannot reach the argv builder by
+    // another key: the row declares `since` and nothing else.
+    for (const key of ['repo', 'all', 'until', 'dir', 'project']) {
+      expect(() => argvFor('runs.summary', { [key]: 'x' }, safeContext()), key).toThrow(/does not declare/)
+    }
+  })
+
+  it('spawns `models ls` with exactly these words and no argument a renderer can fill', () => {
+    // The read-only models panel's read (console 0.119.0, the owner's ruling of
+    // 2026-11-02). One argv, written out: the command, its one fixed flag and
+    // the installation's own `--project`. The command is cobra's `NoArgs`, so
+    // there is no second form of this argv -- and the `does not declare` loop
+    // below is the half that says so.
+    expect([...argvFor('models.list', {}, safeContext({ project: 'chosen' }))]).toEqual([
+      'models',
+      'ls',
+      '--json',
+      '--project',
+      'chosen',
+    ])
+    // **The group's other four words are not on this table at all**, which is
+    // the spawn half of the never table's fence: `search` takes a positional
+    // `<text>`, and `add`, `rm` and `use` write the project's or a repository's
+    // own configuration.
+    expect(SPAWN_COMMANDS.filter((row) => row.words[0] === 'models').map((row) => row.operation)).toEqual([
+      'models.list',
+    ])
+    for (const key of ['repo', 'model', 'route', 'text', 'all', 'since', 'dir', 'project']) {
+      expect(() => argvFor('models.list', { [key]: 'x' }, safeContext()), key).toThrow(/does not declare/)
+    }
+  })
+
+  it('spawns `settings` with exactly these words and no argument a renderer can fill', () => {
+    // The settings read (the settings-edit plan's C1, D1102). One argv, written
+    // out: the command, its one fixed flag and the installation's own
+    // `--project`. The command takes positional keys or globs (`settings
+    // [KEY|GLOB ...]`) and seven more flags of its own, and **none of them is a
+    // word of this row**: a renderer chooses nothing about this read, which is
+    // why `args` is empty and the `does not declare` loop below is the half
+    // that says so. The keys the screen draws are the document's own rows.
+    expect([...argvFor('settings.read', {}, safeContext({ project: 'chosen' }))]).toEqual([
+      'settings',
+      '--json',
+      '--project',
+      'chosen',
+    ])
+    // **`--offline` is deliberately not a word of this row** (the plan's own
+    // sentence): the read answers the layers that could not be read with a
+    // `state` saying so, and the screen draws that row as unread. An offline
+    // read would answer less and say less about it.
+    expect(SPAWN_COMMANDS.filter((row) => row.words[0] === 'settings').map((row) => row.operation)).toEqual([
+      'settings.read',
+      'settings.edit',
+    ])
+    for (const key of ['key', 'glob', 'layer', 'grep', 'repo', 'allRepos', 'dir', 'project', 'config']) {
+      expect(() => argvFor('settings.read', { [key]: 'x' }, safeContext()), key).toThrow(/does not declare/)
+    }
+  })
+
+  it('spawns `settings set` for a narrowing with exactly these words, and the CLI’s own `--yes`', () => {
+    // The settings write (the settings-edit plan's C3, D1103, D1104, D1107).
+    // One argv, written out word by word: the group, the subcommand, the key,
+    // the layer the read's own row named (**D1105** -- it is the main process's
+    // fact and no schema key declares it), the phase's words, the installation's
+    // two flags, and last of all the terminator with the operator's value behind
+    // it.
+    //
+    // **The value is behind `--` and the `--` is last but one** (D1104, and the
+    // reason this row is the one that terminates): the value is a positional, so
+    // a value spelled `-draft` or `--layer` would otherwise be read as a flag,
+    // and the CLI's own parser stops reading flags at the terminator -- a
+    // `--project` written after it would be a positional rather than a flag. The
+    // terminator is emitted by `argvFor` after every flag this row knows, which
+    // is why the order below is the order a child gets.
+    //
+    // **`--yes` is the one word the phase table puts on a narrowing too**, and
+    // the vector below is where that is written down: this write has no
+    // terminal (the console spawns every child with stdin `'ignore'`), so
+    // `confirmSettingsWrite`'s ordinary y/N has nobody to ask and refuses
+    // without the flag. What the dry run's classification decides is the
+    // console's own question -- the tick, which gates Confirm for a widening --
+    // and not a word of this argv.
+    //
+    // **This is the test the `--yes` guard fails without.** The phase is the
+    // main process's (`settingsedit.ts`'s `phaseOf`, from the dry run's own
+    // `widening` field) and `SETTINGS_EDIT_PHASE_WORDS` is the only place a
+    // phase becomes words: with the narrowing row's words dropped -- the
+    // mutation is `narrowing: Object.freeze([])` -- this vector loses its
+    // `--yes` and fails, which is what makes it a guard rather than a
+    // description.
+    const args = { op: 'set', key: 'budget.cap_usd', value: '25' }
+    const narrowing = [...argvFor('settings.edit', args, {
+      ...safeContext({ project: 'chosen' }),
+      settingsEdit: { phase: 'narrowing', layer: 'project' },
+    })]
+    expect(narrowing).toEqual([
+      'settings',
+      'set',
+      'budget.cap_usd',
+      '--layer',
+      'project',
+      '--yes',
+      '--project',
+      'chosen',
+      '--',
+      '25',
+    ])
+  })
+
+  it('spells one write argv for a widening and for a narrowing alike', () => {
+    // The classification is not a word: a widening and a narrowing are one
+    // command line, and the same one the vector above writes out. What a
+    // widening adds is the console's own gate -- `confirmNeedsTick` and the
+    // main process's refusal of an unticked yes -- rather than a flag, so a
+    // narrowing that lost `--yes` would be a write the CLI refuses for having no
+    // terminal at all.
+    const args = { op: 'set', key: 'budget.cap_usd', value: '25' }
+    const context = (phase: 'widening' | 'narrowing'): Parameters<typeof argvFor>[2] => ({
+      ...safeContext({ project: 'chosen' }),
+      settingsEdit: { phase, layer: 'project' },
+    })
+    const widening = [...argvFor('settings.edit', args, context('widening'))]
+    const narrowing = [...argvFor('settings.edit', args, context('narrowing'))]
+    expect(widening).toEqual([
+      'settings',
+      'set',
+      'budget.cap_usd',
+      '--layer',
+      'project',
+      '--yes',
+      '--project',
+      'chosen',
+      '--',
+      '25',
+    ])
+    expect(narrowing).toEqual(widening)
+  })
+
+  it('never puts `--yes` on a dry run, and never puts a value anywhere but after `--`', () => {
+    // The dry run is the first of the two spawns and it writes nothing (D1106):
+    // `--dry-run` and `--json` are its two words, and `--yes` is not one of them
+    // whatever the edit turns out to be -- the phase is decided **after** this
+    // document comes back, so a dry run cannot carry a write's flag.
+    const args = { op: 'set', key: 'budget.cap_usd', value: '25' }
+    const dry = [...argvFor('settings.edit', args, {
+      ...safeContext({ project: 'chosen' }),
+      settingsEdit: { phase: 'dry-run', layer: 'project' },
+    })]
+    expect(dry).toEqual([
+      'settings',
+      'set',
+      'budget.cap_usd',
+      '--layer',
+      'project',
+      '--dry-run',
+      '--json',
+      '--project',
+      'chosen',
+      '--',
+      '25',
+    ])
+    expect(dry).not.toContain('--yes')
+    // A value that is spelled like this row's own flags is still a value: it is
+    // one element of an array argv spawned with `shell: false`, and the
+    // terminator is what keeps the child's parser from reading it as a flag. The
+    // layer word the child is given is the read's, not the value's.
+    const tricky = [...argvFor(
+      'settings.edit',
+      { op: 'set', key: 'budget.cap_usd', value: '--layer' },
+      { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'narrowing', layer: 'local' } },
+    )]
+    expect(tricky).toEqual([
+      'settings',
+      'set',
+      'budget.cap_usd',
+      '--layer',
+      'local',
+      '--yes',
+      '--project',
+      'chosen',
+      '--',
+      '--layer',
+    ])
+    expect(tricky.indexOf('--')).toBe(tricky.length - 2)
+    expect(tricky[tricky.length - 1]).toBe('--layer')
+  })
+
+  it('spawns `settings unset` with no value and no terminator, and `--yes` at either phase', () => {
+    // **The unset form has nothing behind a terminator at all** (D1103): there
+    // is no value to protect, and a row that emitted a bare `--` would be a
+    // command line with an empty positional the CLI does not take. The key is
+    // the only positional this argv has, and the layer is still the read's.
+    expect([
+      ...argvFor(
+        'settings.edit',
+        { op: 'unset', key: 'budget.cap_usd' },
+        { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'narrowing', layer: 'local' } },
+      ),
+    ]).toEqual(['settings', 'unset', 'budget.cap_usd', '--layer', 'local', '--yes', '--project', 'chosen'])
+    // An `unset` that **widens** -- the CLI classifies it, and the console asks
+    // the same question of either subcommand -- carries the same `--yes` and
+    // still no terminator. The two spellings differ by the subcommand word and
+    // the layer, and by nothing else.
+    expect([
+      ...argvFor(
+        'settings.edit',
+        { op: 'unset', key: 'rigor.areas' },
+        { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'widening', layer: 'repo' } },
+      ),
+    ]).toEqual(['settings', 'unset', 'rigor.areas', '--layer', 'repo', '--yes', '--project', 'chosen'])
+  })
+
+  it('carries the installation’s config path on a settings write, and refuses every word a renderer could not be trusted with', () => {
+    // The two flags every cloud command of this tab takes (rule 3): the write is
+    // not special, and an installation that declares a config file gets it.
+    expect([
+      ...argvFor(
+        'settings.edit',
+        { op: 'set', key: 'budget.cap_usd', value: '25' },
+        {
+          ...safeContext({ project: 'chosen', configPath: '/tmp/owner/config.yaml' }),
+          settingsEdit: { phase: 'narrowing', layer: 'project' },
+        },
+      ),
+    ]).toEqual([
+      'settings',
+      'set',
+      'budget.cap_usd',
+      '--layer',
+      'project',
+      '--yes',
+      '--project',
+      'chosen',
+      '--config',
+      '/tmp/owner/config.yaml',
+      '--',
+      '25',
+    ])
+    // **Three words of this argv are not the renderer's to name.** `layer` and
+    // `phase` are not keys of the operation's schema, so a payload carrying one
+    // is refused before a word is built; the layer reaches the argv only through
+    // `context.settingsEdit`, which only the main process holds.
+    const context = { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'narrowing' as const, layer: 'project' } }
+    for (const key of ['layer', 'phase', 'yes', 'dir', 'project', 'config', 'add', 'remove']) {
+      expect(() => argvFor('settings.edit', { op: 'set', key: 'k', value: 'v', [key]: 'x' }, context), key).toThrow(
+        /does not declare/,
+      )
+    }
+    // A row that carries a layer flag with no layer to write is refused rather
+    // than defaulted, and a layer outside the three documents an edit lands in
+    // is refused by name.
+    expect(() => argvFor('settings.edit', { op: 'set', key: 'k', value: 'v' }, {
+      ...safeContext(),
+    } as Parameters<typeof argvFor>[2])).toThrow(/needs the layer/)
+    expect(() => argvFor('settings.edit', { op: 'set', key: 'k', value: 'v' }, {
+      ...safeContext(),
+      settingsEdit: { phase: 'narrowing', layer: 'global' },
+    })).toThrow(/which is not one of the three documents/)
+    // And **no other row may carry a phase**: the table column that emits
+    // `--layer`/`--yes` is this row's alone.
+    expect(() => argvFor('settings.read', {}, {
+      ...safeContext(),
+      settingsEdit: { phase: 'narrowing', layer: 'project' },
+    })).toThrow(/takes no settings phase/)
+  })
+
+  it('has exactly one settings row for each question, and no `settings` verb on the never table', () => {
+    // The group's other verbs are not on this table at all: `settings get`,
+    // `settings layers` and the rest are reads the console does not make, and
+    // the only two `settings` rows are the read and the edit above -- so a third
+    // one is a test failure rather than a review finding.
+    expect(SPAWN_COMMANDS.filter((row) => row.words[0] === 'settings').map((row) => row.operation)).toEqual([
+      'settings.read',
+      'settings.edit',
+    ])
+    // `--yes` is the settings write's own word, and the phase table is the only
+    // thing that can produce it: **both** write phases carry it -- the child has
+    // no terminal to answer the CLI's ordinary y/N with -- and the dry run is
+    // the one phase that carries no flag of the write at all. A fourth phase, or
+    // a `--yes` on another row, fails here.
+    expect(Object.keys(SETTINGS_EDIT_PHASE_WORDS).sort()).toEqual(['dry-run', 'narrowing', 'widening'])
+    for (const [phase, words] of Object.entries(SETTINGS_EDIT_PHASE_WORDS)) {
+      expect(words.includes('--yes'), phase).toBe(phase !== 'dry-run')
+    }
+  })
+
+  it('takes the `=` form on the summary row, and never an empty one', () => {
+    expect(() => assertArgvFlags('runs.summary', ['runs', 'summary', '--json', '--since=7d'])).not.toThrow()
+    expect(() => assertArgvFlags('runs.summary', ['runs', 'summary', '--json', '--since='])).toThrow()
+    // A bare `--since` is a word of the *runs list's* own argv (`--since` is on
+    // `SPAWN_FLAGS`, where the list and the stats read emit it as its own word
+    // with the value beside it), so this check admits it for every row. It is
+    // not a word the summary row can produce: the row's declared flag is the
+    // `=` form, so the builder emits `--since=<window>` or nothing at all.
+    expect(() => assertArgvFlags('runs.summary', ['runs', 'summary', '--json', '--since'])).not.toThrow()
+    expect(argvFor('runs.summary', { since: '7d' }, safeContext())).toContain('--since=7d')
+    expect(argvFor('runs.summary', {}, safeContext())).not.toContain('--since')
+    // The prefix is this row's own: no other row may borrow it, and the
+    // summary may not borrow the launch's two or the runs list's two.
+    for (const row of ['live.watch', 'runs.list', 'run.diagnose', 'spend.report']) {
+      expect(() => assertArgvFlags(row, [row, '--since=7d']), row).toThrow()
+    }
+    expect(() => assertArgvFlags('runs.summary', ['runs', 'summary', '--json', '--limit=25'])).toThrow()
+    expect(() => assertArgvFlags('runs.summary', ['runs', 'summary', '--json', '--title=x'])).toThrow()
+  })
+
+  it('keeps `--watch` and every other runs ls flag off the runs list row', () => {
+    // `--watch` is `watch` under another name and is on the never-reachable
+    // table as a *flag*, so it stays refused however a payload spells it. The
+    // page and the cursor are the only two words this task adds: every other
+    // `runs ls` flag (`--state`, `--batch`, `--interval`, `--watch`) is not a
+    // key of the operation's schema and has no row table entry either.
+    for (const value of ['--watch', '--interval=10s', '--state=failed']) {
+      expect(validateArguments('runs.list', { after: value }).ok, value).toBe(false)
+      expect(validateArguments('runs.list', { limit: value }).ok, value).toBe(false)
+    }
+    for (const key of ['watch', 'state', 'batch', 'interval']) {
+      expect(() => argvFor('runs.list', { [key]: true }, safeContext()), key).toThrow(/does not declare/)
+    }
+    expect(() => assertArgvFlags('runs.list', ['runs', 'ls', '--json', '--watch'])).toThrow(/--watch/)
   })
 
   it('refuses a pull request that is not a number the validator would hand over', () => {
@@ -901,6 +1488,30 @@ describe('the spawn table and the argv it builds', () => {
     expect(() =>
       assertSpawnSurface(SPAWN_COMMANDS.map((row) => ({ ...row, takesProject: false, dirFlag: false }))),
     ).toThrow(/--project/)
+  })
+
+  it('fails a table whose `=`-form flags are not the ones the surface names (C2)', () => {
+    // The runs list is the first row that is a read and carries `=`-form words,
+    // and the check that holds them to `EQUALS_FORM_FLAGS` is two-sided. Both
+    // directions are mutations of the real table, so a later edit that drops
+    // either half fails here: a row writing an `=`-form flag the table does not
+    // name, and a row writing a named one as a separate word.
+    const withFlag = (key: string, flag: string): SpawnCommand[] =>
+      SPAWN_COMMANDS.map((row) =>
+        row.operation === 'runs.list'
+          ? { ...row, args: row.args.map((spec) => (spec.key === key ? { ...spec, flag } : spec)) }
+          : row,
+      )
+    // `--since` is a plain word here; in `=` form it is a permission the table
+    // does not carry, and `assertArgvFlags` would refuse it only at spawn time.
+    expect(() => assertSpawnSurface(withFlag('since', '--since='))).toThrow(/EQUALS_FORM_FLAGS/)
+    // `--limit=` is a member; written without its `=` the row no longer declares
+    // the prefix the table admits, and `argvFor` would build the word
+    // `--limit50` from the flag and the number it renders.
+    expect(() => assertSpawnSurface(withFlag('limit', '--limit'))).toThrow(/EQUALS_FORM_FLAGS/)
+    // ...and the real row passes it, so neither case is one that refuses every
+    // table: the two mutations above are what the check is for.
+    expect(() => assertSpawnSurface(SPAWN_COMMANDS)).not.toThrow()
   })
 
   it('fails a table with a command-bearing operation missing from it', () => {

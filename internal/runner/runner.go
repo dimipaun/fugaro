@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -27,7 +26,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
-	"github.com/dimipaun/fugaro/internal/backlog"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
@@ -176,9 +174,24 @@ type run struct {
 	// travels with the layer, which is re-read on every launch.
 	providers map[string]config.ModelProvider
 	// plan is the loop after implement, from the recipe resolved at
-	// bootstrap (resolveRecipe) with its rounds decided (planOf); it always
-	// ends with a review step.
+	// bootstrap (resolveRecipe) and the review levels resolved with it
+	// (resolveLevels), with its rounds decided (planOf); it always ends with
+	// a review step.
 	plan []planStep
+	// rcp is the recipe the run resolved at bootstrap (resolveRecipe), kept
+	// because the review levels are resolved against it and its steps are
+	// what the plan is built from.
+	rcp *recipe.Recipe
+	// derived is whether rcp is the catalog's own `default`, the one recipe
+	// whose first_line step runs only when a layer turns level 1 on
+	// (config.LevelInputs.CatalogDefault).
+	derived bool
+	// levels are the run's three review levels, resolved by resolveLevels
+	// inside resolvePolicy (config.ResolveLevels, L3.1): which levels run,
+	// the model, effort and focus each one runs with, and whether the recipe
+	// has no step for it. The plan is built from them (planRecipe) and every
+	// review stage reads its own level here.
+	levels config.Levels
 	// gateSteps are the recipe's leading check steps (gate.go), run before
 	// implement; nil for a recipe with none.
 	gateSteps []recipe.Step
@@ -420,16 +433,13 @@ type run struct {
 	// the record's block carries no per-moment history: which moment raised the
 	// mode is what readiness reads (T3.5, outcome.go).
 	rigorRaise *RigorRaise
-	// lastSenior is the last senior review round as the loop read it: the
-	// findings the record's summary only counts, kept because the mode's
-	// threshold table reads their scores (outcome.go, T3.1). It is the round
-	// seniorReview(r.rec.Reviews) returns, which is the only one readiness
-	// reads.
+	// lastSenior is the last review round the level that decides readiness
+	// recorded as the loop read it: the findings the record's summary only
+	// counts, kept because the mode's threshold table reads their scores
+	// (outcome.go, T3.1). It is the round decidingReview(r.rec.Reviews)
+	// returns, which is the only one readiness reads: level 3's where it ran,
+	// level 2's otherwise, and level 1's where no outer level ran at all.
 	lastSenior seniorRound
-	// filedFrom is the commit finalize's backlog filing was committed on
-	// top of, "" when the run wrote no item at all: the report names it as
-	// the commit the suite ran on (report.go's testsLine).
-	filedFrom string
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
 	// stageCkptStop is the running stage's checkpointer stop — startCheckpoints'
@@ -1268,7 +1278,7 @@ func (r *run) stageEnv(stage string, pins map[string]string) []string {
 		return env
 	}
 	stamp := gitops.Stamp{Author: r.stampAuthor,
-		Trailers: r.stampTrailers(r.cfg.Agent.ModelFor(config.StageRole(stage)))}
+		Trailers: r.stampTrailers(r.stageModel(stage))}
 	return gitops.StampEnv(stamp, r.stampHooks, env)
 }
 
@@ -1928,6 +1938,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.rec.Recipe = &rrec
 	derived := rrec.Name == recipe.DefaultName && rrec.Source == string(recipe.SourceCatalog)
+	r.rcp, r.derived = rcp, derived
 	r.gateSteps = checkGateSteps(rcp)
 	if err := checkGateCommands(rcp, wf, spec.Ref); err != nil {
 		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
@@ -2000,17 +2011,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// nothing yet.
 	r.recordTier()
 	// The plan is derived here, *after* the policy: the routing switch is
-	// applied inside resolvePolicy and rewrites the pins the plan's
-	// first-line decision is read off — Agent.FirstLineOn asks whether the
-	// coder's model is claimed by a route and the reviewer's is not — so a
-	// plan derived before it would answer from the pins the switch replaced.
-	// Concretely, with `agent.first_line_review: auto` and a switch that
-	// routes only the coder, the canonical coder pin is unclaimed before the
-	// rewrite and claimed after it, and the earlier order silently dropped the
-	// cheap first-line loop of exactly the runs a switch routed (the review
-	// finding on this change). Nothing between here and the loop reads the
-	// plan, so deriving it here changes nothing else, and the steps' rounds
-	// and the trailing-review check are the same derivation as before.
+	// applied inside resolvePolicy, and the levels it resolved with it are what
+	// decide which steps the plan carries (L2.1's O7). A plan derived before
+	// the switch would answer from the pins it replaced, and a plan derived
+	// before the levels would be the recipe's steps rather than the run's.
+	// Nothing between here and the loop reads the plan, so deriving it here
+	// changes nothing else.
 	if !r.artifact {
 		// An artifact run has no implement/fix/review loop: planOf builds
 		// the ordinary loop's plan and checkPlan demands a trailing review
@@ -2018,23 +2024,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// has. Its own stage list is read directly (artifactHasPlan), and
 		// the render is the runner's (artifact.go).
 		//
-		// The plan is derived from the champion's coder, never the arm's: the
-		// arms share a shape (D555 keeps "the reviewer, recipe, mode, tier
-		// and caps" the same), and the first-line step is derived from the
-		// coder's own family — Agent.FirstLineOn asks whether the coder's
-		// model is served by a route of this run's and the reviewer's is not
-		// — so a challenger whose family is routed would otherwise gain a
-		// stage the champion never had. Two runs whose stage sets differ are
-		// not two runs that differ in the coder model, and their records,
-		// costs and review findings would not be comparable. It is read after
-		// resolvePolicy, as every other run's is, so the switch has rewritten
-		// it like any pin.
-		planAgent := r.cfg.Agent
-		if r.shadow {
-			planAgent.Models.Coder = r.championCoder
-		}
-		plan := planOf(rcp, derived, planAgent, r.modelProviders(), spec.Overrides.ReviewRounds, r.reachedRigor(), r.rigorCfg.Configured())
-		if err := checkPlan(plan); err != nil {
+		// The rounds come from the run's own configuration, which for a shadow
+		// run is the arm's: resolveLevels put the champion's coder back only
+		// for the length of its own call, because the level 1 *model* is read
+		// off the coder while the rounds are not.
+		plan := planOf(rcp, r.levels, r.cfg.Agent, spec.Overrides.ReviewRounds, r.reachedRigor())
+		if err := checkPlan(rcp, r.levels, plan); err != nil {
 			return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 		}
 		r.plan = plan
@@ -2649,28 +2644,310 @@ func (r *run) agentLoop(ctx context.Context) {
 		case recipe.StepFirstLine:
 			tier = runstore.TierSenior
 			var ok bool
-			if sessionID, ok = r.firstLine(ctx, st.Rounds, reviewPrompt, sys, sessionID); !ok {
+			if sessionID, ok = r.firstLine(ctx, st.Rounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
 				return
 			}
 		case recipe.StepReview:
-			// The last step (recipe.Parse refuses any other order).
-			r.seniorLoop(ctx, st, tier, reviewPrompt, sys, sessionID)
-			return
+			// The plan ends with the review step when level 3 is off, and with
+			// the adversarial step when it is on (planRecipe): a review that
+			// could not finish — a failed stage, a cap, a closed pull request,
+			// an answer with no verdict — is where the run stops, and the
+			// levels after it are not run (checkPlan keeps the order fixed).
+			if !r.seniorLoop(ctx, st, tier, reviewPrompt, sys, sessionID) {
+				return
+			}
+		case recipe.StepAdversarial:
+			if !r.adversarialLoop(ctx, st, reviewPrompt, sys, sessionID) {
+				return
+			}
 		}
 	}
 }
 
 // seniorLoop is a review step: up to (*run).reviewRounds senior reviews on the
-// reviewer's model, each followed by a fix while it asks for changes. Its
-// verdict alone decides readiness (seniorReview). tier is "senior" when a
-// first line came before it, "" otherwise, as runs without a first line
-// always recorded. When st.Bounce and st.FirstRounds > 0 (review:
+// reviewer's model, each followed by a fix while it asks for changes. tier is
+// "senior" when a first line came before it, "" otherwise, as runs without a
+// first line always recorded. When st.Bounce and st.FirstRounds > 0 (review:
 // {bounce: first_line} with a first_line step before it), a rejection's fix
 // is followed by another cheap loop (firstLine) instead of going straight to
 // the next senior round; a bounce with FirstRounds == 0 behaves like a plain
 // review step, since there is no cheap loop to bounce back to.
-func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string) {
+//
+// A round whose answer carries no parseable verdict is asked once more
+// (seniorRound) and, failing that, recorded as the `none` a skipped review is
+// recorded as: a reviewer that answered nothing asked for nothing, so it is not
+// a finding, and no fix round and no phantom blocker are spent on it (D4's rule
+// is about a round that names what it wants). The run then carries on to
+// finalize, where the record and the pull request's status say what happened
+// and the run ends a draft — a round with no verdict is not a review the run
+// can be called ready on (Decide, reviewsPart), and no level after this one
+// runs: an outer level that could not answer cannot be part of the "every
+// enabled outer level shipped" readiness is decided on (G4).
+//
+// It reports whether the plan may go on to the step after it, which is false
+// for every way the run stops here.
+func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string) bool {
+	// Level 2's own reviewer reads the level's focus quoted under the run's
+	// heading (reviewPromptWithFocus), exactly as level 3's does; the bounce's
+	// cheap loop below is level 1's and reads level 1's.
+	prompt := reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL2))
 	for round := 1; ; round++ {
+		// The head is read per round rather than once: a fix between two rounds
+		// moves the branch, and the summary keeps the commit *this* round read
+		// (D727), so the levels can be told apart by the head they approved.
+		head := r.reviewedHead(ctx)
+		v, parsed, ok := r.seniorRound(ctx, round, prompt)
+		if !ok {
+			return false
+		}
+		if !parsed {
+			r.lastSenior = seniorRound{Round: round}
+			model, effort := r.reviewFacts("review")
+			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: "none", Head: head, Model: model, Effort: effort})
+			r.save(ctx)
+			r.d.Log.Warn("the review round returned no parseable verdict after a retry; the run carries on and ends a draft", "round", round)
+			return false
+		}
+		// The round is kept whole as well as counted: the mode's threshold
+		// table reads the findings' scores, which the summary does not carry
+		// (outcome.go, T3.1).
+		r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
+		model, effort := r.reviewFacts("review")
+		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort})
+		r.save(ctx)
+		if r.capReached() {
+			return false
+		}
+		if v.Verdict == "ship" || round >= r.reviewRounds(st) {
+			return true
+		}
+		r.afterStage(ctx, "review")
+		if r.pr.gone {
+			return false
+		}
+		if sessionID, ok = r.fix(ctx, v, sys, sessionID); !ok {
+			return false
+		}
+		if st.Bounce && st.FirstRounds > 0 {
+			r.bounce++
+			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
+				return false
+			}
+		}
+	}
+}
+
+// adversarialLoop is level 3's step: up to (*run).adversarialRounds adversarial
+// reviews on the level's own model and prompt, each followed by a fix while it
+// asks for changes. It is seniorLoop's twin, and the two differ in three
+// things that are the level's own: the stage, the tier it records, and the
+// prompt — an adversarial reviewer asked to find what the senior review missed,
+// rather than the senior question asked again.
+//
+// A rejection bounces to the cheap loop exactly as the senior review's does
+// (st.Bounce, st.FirstRounds), and the level 2 loop is never run on the way
+// back: the senior review shipped the head it read, and asking it again about a
+// head it never saw would be a second review of the change level 3 already
+// rejected (D727). The level that decides readiness is level 3 from then on.
+//
+// It reports whether the run may go on, which the plan does not ask of it: the
+// adversarial step is the plan's last, so the answer only decides whether the
+// loop returns early or falls out of its own bottom.
+func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sys, sessionID string) bool {
+	prompt := AdversarialPrompt(reviewPrompt, r.levelFocus(policy.LevelL3))
+	for round := 1; ; round++ {
+		head := r.reviewedHead(ctx)
+		v, parsed, ok := r.adversarialRound(ctx, round, prompt)
+		if !ok {
+			return false
+		}
+		if !parsed {
+			// The deciding round is this one, whatever it answered: the round
+			// is kept so the policy is read off the level that ran and never
+			// off the round the bounce before it left behind (seniorLoop does
+			// the same).
+			r.lastSenior = seniorRound{Round: round}
+			model, effort := r.reviewFacts(stageAdversarial)
+			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: "none", Head: head, Model: model, Effort: effort})
+			r.save(ctx)
+			r.d.Log.Warn("the adversarial review round returned no parseable verdict after a retry; the run carries on and ends a draft", "round", round)
+			return false
+		}
+		r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
+		model, effort := r.reviewFacts(stageAdversarial)
+		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort})
+		r.save(ctx)
+		if r.capReached() {
+			return false
+		}
+		if v.Verdict == "ship" || round >= r.adversarialRounds(st) {
+			return true
+		}
+		r.afterStage(ctx, stageAdversarial)
+		if r.pr.gone {
+			return false
+		}
+		if sessionID, ok = r.fix(ctx, v, sys, sessionID); !ok {
+			return false
+		}
+		if st.Bounce && st.FirstRounds > 0 {
+			r.bounce++
+			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
+				return false
+			}
+		}
+	}
+}
+
+// adversarialRound runs one adversarial review round's stage calls, retrying
+// the review when the answer carries no parseable verdict, exactly as
+// seniorRound does and for the same reasons: the retry is a stage of its own,
+// in a session of its own, and it is not run once the run has crossed its token
+// cap.
+func (r *run) adversarialRound(ctx context.Context, round int, prompt string) (Verdict, bool, bool) {
+	for attempt := 1; attempt <= noVerdictRetries+1; attempt++ {
+		if attempt > 1 && r.capReached() {
+			return Verdict{}, false, false
+		}
+		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, prompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
+		res, ok, _ := r.stage(ctx, stageAdversarial, req, stageOpts{})
+		r.noteReviewSession(req, res)
+		r.countTokens(res)
+		if !ok {
+			return Verdict{}, false, false
+		}
+		if v, parsed := TryVerdict(res); parsed {
+			return v, true, true
+		}
+		r.d.Log.Warn("the adversarial review round produced no parseable verdict", "round", round, "attempt", attempt)
+	}
+	return Verdict{}, false, true
+}
+
+// noVerdictRetries is how many times one round's review is asked again after an
+// answer with no parseable verdict: one, so a round costs at most two calls.
+const noVerdictRetries = 1
+
+// reviewedHead is the commit the review stage about to run reads: the
+// checkout's HEAD, which every fix round, every checkpoint and the agent's own
+// commits move. It is read immediately before each round rather than once per
+// level, because the levels can approve different heads (D727): after an
+// adversarial rejection the cheap loop runs and the senior level is not
+// reviewed again, so its verdict names an earlier head than the one shipped. A
+// head that cannot be read is recorded as none, which is how every review
+// written before the field existed reads.
+func (r *run) reviewedHead(ctx context.Context) string {
+	sha, err := r.repo.HeadSHA(ctx)
+	if err != nil {
+		r.d.Log.Warn("reading the head this review round reads failed", "err", r.redact(err.Error()))
+		return ""
+	}
+	return sha
+}
+
+// levelFocus is the text the level's reviewer is asked to look at, "" for a
+// level no layer gave one. It is quoted into the prompt as data (FocusPrompt)
+// and into the pull request body through the sanitiser every job-written field
+// takes: it is written by a launcher, and a launcher's text must not become
+// instructions to the reviewer (L4.2).
+func (r *run) levelFocus(level policy.Level) string {
+	return resolvedLevel(r.levels, level).Focus
+}
+
+// reviewEffort is a review stage's reasoning effort as the level answers it and
+// as it reaches the stage: the level's own effort and EffortVars' variables for
+// the stage's route, the two answers a reader of it needs. The effort is "" and
+// the variables are nil for a stage that is not a review one, for a level with
+// no effort of its own, and for a provider route, whose calls run with thinking
+// off (G5, D725) -- an empty effort is then the same statement the stage's own
+// environment makes.
+//
+// It exists so the one rule is spelled once: reviewFacts records the effort that
+// reached the stage and applyStageEffort merges the variables into the stage's
+// pins, and both have to ask the same question of the level, the pins and the
+// route.
+func (r *run) reviewEffort(stage string) (string, map[string]string, error) {
+	s, ok := reviewStageOf(stage)
+	if !ok {
+		return "", nil, nil
+	}
+	effort := resolvedLevel(r.levels, s.level).Effort
+	if effort == "" {
+		return "", nil, nil
+	}
+	vars, err := agent.EffortVars(effort, r.stageOnProviderRoute(r.stageModel(stage), r.backgroundModel()))
+	if err != nil || len(vars) == 0 {
+		return "", nil, err
+	}
+	return effort, vars, nil
+}
+
+// reviewFacts is what a review round's summary records beside its verdict: the
+// model the stage was pinned to and the reasoning effort it ran at
+// (runstore.ReviewSummary.Model, .Effort). The two are read off the stage's own
+// pins — the same answers stageTiming and applyStageEffort take — so the record
+// names the model that reviewed the head beside it and not a second spelling of
+// the run's configuration.
+//
+// The effort is the value that reached the stage rather than the one a layer
+// asked for: EffortVars drops a provider route's, whose calls run with thinking
+// off (G5, D725), so an empty effort is the same statement the stage's own
+// environment makes. Nothing is answered for a stage that is not a review one.
+func (r *run) reviewFacts(stage string) (model, effort string) {
+	model = r.stageModel(stage)
+	effort, _, err := r.reviewEffort(stage)
+	if err != nil {
+		return model, ""
+	}
+	return model, effort
+}
+
+// applyStageEffort merges the review level's own reasoning effort into the
+// stage's pins (L4.3's EffortVars): each of the three levels may name one, and
+// a stage takes its own level's. It is merged into the pins rather than set
+// beside them because the pins are what the stage's environment and its managed
+// settings both read, and one answer is what keeps a stage from running under
+// two (stagePins, agentenv.go). Nothing is merged for a stage that is not a
+// review, for a level with no effort, or for a provider route, whose calls run
+// with thinking off (G5, D725).
+func (r *run) applyStageEffort(stage string, pins map[string]string) (map[string]string, error) {
+	_, vars, err := r.reviewEffort(stage)
+	if err != nil {
+		return pins, err
+	}
+	if len(vars) == 0 {
+		return pins, nil
+	}
+	if pins == nil {
+		// stagePins answers nil with the gateway off, and a Claude stage's
+		// effort is not the gateway's business: the variable is the stage's
+		// however the run is billed.
+		pins = map[string]string{}
+	}
+	maps.Copy(pins, vars)
+	return pins, nil
+}
+
+// seniorRound runs one senior review round's stage calls, retrying the review
+// when the answer carries no parseable verdict (TryVerdict). It reports the
+// verdict, whether there was one to read, and whether the run may go on at all
+// — a failed stage ends the loop whether or not the round had a verdict.
+//
+// The retry is a stage of its own, in a session of its own, exactly as another
+// round would be: the reviewer is asked the same question again rather than
+// reminded of the answer that did not parse, because what the run needs is a
+// verdict, not a repair of the one it got. Being a stage, it is not run once
+// the run has crossed its token cap (capReached): a round that costs more than
+// the cap allows is where the review stops.
+func (r *run) seniorRound(ctx context.Context, round int, reviewPrompt string) (Verdict, bool, bool) {
+	for attempt := 1; attempt <= noVerdictRetries+1; attempt++ {
+		// The retry is a stage the run pays for, and the cap that stops it is
+		// the runner's own: the gateway enforces the dollar cap, and nothing
+		// else in this loop reads the token one between two attempts of the
+		// same round.
+		if attempt > 1 && r.capReached() {
+			return Verdict{}, false, false
+		}
 		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
 		res, ok, _ := r.stage(ctx, "review", req, stageOpts{})
 		// The review's own session is saved like a work stage's (C1.17,
@@ -2678,32 +2955,14 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		r.noteReviewSession(req, res)
 		r.countTokens(res)
 		if !ok {
-			return
+			return Verdict{}, false, false
 		}
-		v := ParseVerdict(res)
-		// The round is kept whole as well as counted: the mode's threshold
-		// table reads the findings' scores, which the summary does not carry
-		// (outcome.go, T3.1).
-		r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
-		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: v.Verdict, Findings: len(v.Findings)})
-		r.save(ctx)
-		if r.capReached() || v.Verdict == "ship" || round >= r.reviewRounds(st) {
-			return
+		if v, parsed := TryVerdict(res); parsed {
+			return v, true, true
 		}
-		r.afterStage(ctx, "review")
-		if r.pr.gone {
-			return
-		}
-		if sessionID, ok = r.fix(ctx, v, sys, sessionID); !ok {
-			return
-		}
-		if st.Bounce && st.FirstRounds > 0 {
-			r.bounce++
-			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPrompt, sys, sessionID); !ok {
-				return
-			}
-		}
+		r.d.Log.Warn("the review round produced no parseable verdict", "round", round, "attempt", attempt)
 	}
+	return Verdict{}, false, true
 }
 
 // fix runs a fix stage for review v in the implement session and reports the
@@ -2741,19 +3000,30 @@ func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string
 
 // firstLine is the first-line review (design m10 §11a): up to rounds
 // reviews (the plan's first_line step) by the coder's model, each followed by a
-// fix when it asks for changes. Its verdict never decides readiness: it is
-// recorded with its tier, and the senior review that follows is told
+// fix when it asks for changes. Its verdict never decides readiness on its own:
+// it is recorded with its tier, and the senior review that follows is told
 // nothing of it. A first-line stage that fails or has no verdict is
 // recorded and skipped, never failing the run; a halt or a cancel still
 // ends it. It reports the session to go on with, and whether the run may
 // go on to the senior review.
+//
+// A run in which level 2 does not run at all has no outer level only when level
+// 3 is off too, so the first line is what decides readiness (D723,
+// rigor.defaultLevels' POC row): its last round is kept as the deciding round
+// exactly as a senior round would be. In a run with an outer level the cheap
+// loop is never the decider, and a bounce's extra rounds must not overwrite the
+// senior round the mode's findings policy is read off (outcome.go,
+// findingsPolicy).
 func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sessionID string) (string, bool) {
+	decides := !levelOn(r.levels, policy.LevelL2) && !levelOn(r.levels, policy.LevelL3)
 	for round := 1; round <= rounds; round++ {
+		head := r.reviewedHead(ctx)
 		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
 		res, ok, err := r.stage(ctx, "review_first", req, stageOpts{Skippable: true})
 		r.noteReviewSession(req, res)
 		r.countTokens(res)
-		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none", Bounce: r.bounce}
+		model, effort := r.reviewFacts("review_first")
+		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none", Head: head, Model: model, Effort: effort, Bounce: r.bounce}
 		var v Verdict
 		switch skipped := (skippedError{}); {
 		case errors.As(err, &skipped):
@@ -2767,6 +3037,9 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			} else {
 				r.d.Log.Warn("the first-line review produced no parseable verdict; skipping it", "round", round)
 			}
+		}
+		if decides {
+			r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
 		}
 		r.rec.Reviews = append(r.rec.Reviews, sum)
 		r.save(ctx)
@@ -3014,7 +3287,14 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 			return agent.Result{}, false, errors.New(reason)
 		}
 	}
-	pins := r.stagePins(name)
+	pins, effErr := r.applyStageEffort(name, r.stagePins(name))
+	if effErr != nil {
+		// The resolver refuses an effort outside the closed set (L3.1), so this
+		// is a value that reached the run some other way: the stage is not run
+		// with an effort Claude Code would drop in silence.
+		r.fail("stage " + name + ": " + effErr.Error())
+		return agent.Result{}, false, effErr
+	}
 	if err := r.writeManagedSettings(name, pins); err != nil {
 		r.fail("stage " + name + ": " + err.Error())
 		return agent.Result{}, false, err
@@ -3057,7 +3337,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	tw := agent.NewRedactor(io.MultiWriter(&transcript, transcriptTail, relay), r.secretList())
 	sw := agent.NewRedactor(io.MultiWriter(NewLineWriter(log, "agent"), stderrTail), r.secretList())
 	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, r.stageEnv(name, pins), tw, sw
-	req.Model, req.MaxBudgetUSD = r.cfg.Agent.ModelFor(config.StageRole(name)), r.cfg.Agent.MaxBudgetUSD
+	req.Model, req.MaxBudgetUSD = r.stageModel(name), r.cfg.Agent.MaxBudgetUSD
 
 	deadlineCtx, cancelDeadline := r.budget.StageContext(ctx)
 	defer cancelDeadline()
@@ -3413,7 +3693,7 @@ func (r *run) finalize(ctx context.Context) error {
 		// A challenger arm's finalize is its own (shadow.go,
 		// shadowFinalize): the same record it would otherwise carry, and
 		// nothing that reaches the developer — no push, no pull request, no
-		// comment, no filing.
+		// comment.
 		return r.shadowFinalize(ctx)
 	}
 	// A report run's last word before anything is pushed: the files it commits
@@ -3439,7 +3719,23 @@ func (r *run) finalize(ctx context.Context) error {
 	if halt != nil {
 		leftover = leftoverHaltMessage
 	}
-	committed, err := r.repo.CommitAll(ctx, leftover)
+	// A build's artifact the run left in the tree is never this commit's
+	// (stray.go): it is refused by name, and held out of the commit, so what
+	// the branch carries is the run's work and no compiled file beside it.
+	//
+	// The refusal is a failure and not a stop, like every other failure at this
+	// point of a run: finalize carries on, and what a refused run leaves is the
+	// same draft a failed run leaves — the work pushed, the pull request open,
+	// the reason naming the file. That is what makes it actionable; a run that
+	// returned here would put nothing on the branch and open nothing.
+	strays, err := r.strayArtifacts(ctx)
+	if err != nil {
+		return fmt.Errorf("listing what the run left untracked: %w", err)
+	}
+	if len(strays) > 0 {
+		r.fail(strayRefusal(strays))
+	}
+	committed, err := r.repo.CommitAllExcept(ctx, leftover, strayPaths(strays))
 	if err != nil {
 		return fmt.Errorf("committing leftover work: %w", err)
 	}
@@ -3480,22 +3776,15 @@ func (r *run) finalize(ctx context.Context) error {
 	// value a later slice's rules act on is the one the run's whole diff
 	// answered (rigor.go).
 	r.finalizeRigor()
-	// What the run left open is filed so the branch a reviewer reads and the
-	// pull request carry the items (D9). Filing commits, which moves HEAD, and
-	// the suite is not run again on that commit: an item is Markdown rather
-	// than code, so it cannot change the verdict the suite already gave, and a
-	// suite slower than the finalize reserve would spend the context the push
-	// needs. The readiness rule reads the commit the suite last ran on
-	// (decided), which differs from the head this run pushes only by the items
-	// — including when the filing follows a round that shipped, which is
-	// Hotfix's deferral (D30, D15) and the ordinary case for that row.
+	// Nothing is written after the commit the suite ran on. The run used to
+	// file the findings it left open as backlog items here, which committed
+	// after that suite run and was not verified: a test that pins a fact
+	// about the tree — the repository's own census of docs/backlog/ is the
+	// one that bit (docs/rigor-modes/reconciliation.md) — then fails on the
+	// commit the run pushes, though it passed on the commit it tested. What
+	// the run left open stays in the record (Reviews, Tolerated) and in the
+	// pull request's status section instead (reviewsPart, report.go).
 	decided := sha
-	if r.fileOpenItems(ctx) {
-		r.filedFrom = decided
-		if sha, err = r.repo.HeadSHA(ctx); err != nil {
-			return fmt.Errorf("reading head sha after filing: %w", err)
-		}
-	}
 	records, err := verify.Records(r.d.StateDir)
 	if err != nil {
 		return fmt.Errorf("reading verify records: %w", err)
@@ -3506,13 +3795,13 @@ func (r *run) finalize(ctx context.Context) error {
 	r.uploadVerifyRecords(ctx, records)
 	// Both arms' patch objects (A2.1): the run's own tree diff, from the
 	// commit it started at to the head it is about to push. sha is that head
-	// — the leftover commit, the run's own commits and the filing above are
-	// all behind it — so the champion's patch is the diff of the branch it
-	// publishes and the challenger's is the diff it holds back.
+	// — the leftover commit and the run's own commits are behind it — so the
+	// champion's patch is the diff of the branch it publishes and the
+	// challenger's is the diff it holds back.
 	r.uploadPatch(ctx, sha)
 
 	pol := r.findingsPolicy()
-	ready, reason := Decide(records, decided, seniorReview(r.rec.Reviews), pol)
+	ready, reason := Decide(records, decided, r.decidingReview(), pol)
 	r.rec.Tolerated = r.toleratedRecord(pol)
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
@@ -3667,7 +3956,7 @@ func (r *run) finalize(ctx context.Context) error {
 		fu = r.followUpSection()
 		fu.MovedToDraft = r.follow.wasReady && !ready
 	}
-	report := agent.Redact(followUpReport(r.rec, r.d.Store.Prefix(), r.logTail(ready, records), fu, notes, r.filedFrom), r.secretList())
+	report := agent.Redact(followUpReport(r.rec, r.d.Store.Prefix(), r.logTail(ready, records), fu, notes), r.secretList())
 	// A follow-up's pull request is the one people watch: an earlier
 	// attempt of this execution may already have posted this report.
 	if r.follow != nil && r.reportPosted(ctx, pr) {
@@ -3684,430 +3973,6 @@ func (r *run) finalize(ctx context.Context) error {
 	}
 	r.storeReport(ctx, report, fu)
 	return nil
-}
-
-// openFindings is what this run left open: the last senior review, when it
-// did not ship and its findings stand. A round that shipped left nothing, a
-// run with no senior review at all — one that died before review, or ended
-// after its first line — has nothing to file either, and a "none" verdict is
-// a skipped review rather than a review with findings.
-//
-// One round's worth, not one per round: the fix loop answers an earlier
-// round's findings, and only the last round's are what the run hands over.
-func openFindings(rs []runstore.ReviewSummary) *runstore.ReviewSummary {
-	last := seniorReview(rs)
-	if last == nil || last.Findings == 0 || last.Verdict != "changes" {
-		return nil
-	}
-	return last
-}
-
-// fileOpenItems writes this run's backlog items and closes the ones it fixed,
-// and says whether it wrote anything (docs/rigor-modes/implementation-plan.md
-// T4.5, T4.6, T4.7, D9, D26, D27, D30, D31). What it writes goes into this
-// run's own checkout and one commit of its own — the same branch and the same
-// pull request as the change they belong to, so the writing dirties nothing a
-// reviewer was not already reading (D9) — and the ids it filed are recorded
-// beside the round they came from.
-//
-// Whether a run writes at all is first the repository's opt-in — a rigor:
-// block, or a project-layer rigor default (rigor.Config.Configured) — and then
-// D30's per-mode table, read from internal/rigor (T4.6): a mode whose row files
-// nothing of its own leaves the branch exactly as it was, so a Critical run's
-// tree and pull request body are the ones main produces. That gate covers the
-// closing too: the close is the same commit as a filing, and a mode with no row
-// has no such commit. The table is asked rather than compared here, so a mode
-// that files differently is a row in that package and not a branch in this one.
-//
-// A row carries two independent things a run can owe — the findings it
-// tolerated and, for Hotfix alone, the fix it deferred (D30, D15) — and a run
-// that owes both files both, in one commit: a hotfix that also could not
-// satisfy its review owes the proper fix *and* the round, and writing one of
-// them would drop the other exactly where the run has least to show for
-// itself.
-//
-// A follow-up on a pull request is the other half of D31: the run that fixes an
-// item is the run that closes it, so a follow-up whose own review shipped
-// closes the items an earlier run on the same pull request filed for a round it
-// answered (openRoundItems). Closing is the whole of what a follow-up does
-// about an item that is already open: what a run files is D30's table and
-// nothing else — one item per tolerated finding — so a follow-up that also left
-// findings open files its own round's item beside the earlier one rather than
-// suppressing it, and the pull request's status section says which ids this run
-// filed and which it closed.
-//
-// The item is written before the run's diff is what a reviewer reads and
-// after the record's own ChangedFiles was measured, so the item file is
-// deliberately not part of "the paths this run changed" (D22's third moment
-// reads that field, and an item about the run must not move the mode the run
-// resolved).
-//
-// A write that cannot be made is a warning, never the run's outcome: the
-// pull request, the report and the record are what the run is for, and an
-// item that could not be written costs a follow-up, not the run.
-//
-// The title opens with the run's own id (filedTitle), because a repository is
-// filed into by every run it has at once: two parallel runs that end at the
-// same round with the same count would otherwise compose one title, one slug
-// and one file name, and merging both branches would be a conflict over one
-// path rather than a union of two.
-func (r *run) fileOpenItems(ctx context.Context) bool {
-	// A report run files nothing, whatever its repository configures: its
-	// branch is the reports and nothing else (digest.go, T3.3), and an item is
-	// a model-written finding about the run's review, which is exactly what the
-	// digest step's own commit must not carry.
-	if r.digest {
-		return false
-	}
-	// A halted or cancelled run was stopped mid-loop: its last round is not
-	// one it finished acting on, and its push needs the time a filing spends.
-	if r.haltValue() != nil || r.isCancelled() {
-		return false
-	}
-	// Filing is opt-in: a repository that configures no rigor resolves Pro
-	// for its budget (D19) and files nothing, so its tree, pull request body
-	// and record are the ones it had before modes existed.
-	if !r.rigorCfg.Configured() {
-		return false
-	}
-	files := rigor.Files(r.reachedRigor())
-	if !files.Any() {
-		return false
-	}
-	open := openFindings(r.rec.Reviews)
-	// The items an earlier run on this pull request filed for a round and the
-	// folder still holds open: this run's checkout carries them, because a run
-	// writes into its own branch and a follow-up starts from that branch (D9).
-	earlier := r.openRoundItems(ctx)
-	// The deferral leads: it is the mode's own substance rather than a
-	// review's residue, so it takes the day's first id.
-	var owed []backlog.New
-	var what []string
-	if files.Deferred {
-		owed = append(owed, r.filedItem(nil))
-		what = append(what, "the follow-up this hotfix deferred")
-	}
-	// One item per tolerated finding, whatever the pull request already
-	// carries (D30): a follow-up that left findings open is handing over a
-	// round of its own, and an item open for an earlier run's round is not a
-	// reason to leave this one with nothing. Round numbers restart per run, so
-	// a later run cannot tell an earlier item's round from its own and could
-	// not dedup on it; suppressing the filing while any item on the pull
-	// request is open would instead lose a finding for good the moment that
-	// item is closed (implementation-plan §7 Q5, Q8).
-	if open != nil && files.Tolerated {
-		owed = append(owed, r.filedItem(open))
-		what = append(what, fmt.Sprintf("what review round %d left open", open.Round))
-	}
-	// What this run fixed: a follow-up whose review shipped answered the round
-	// an earlier run left open, so those items are closed here, in the same
-	// commit as anything this run files (D31).
-	var closing []string
-	if r.shippedItsRound() {
-		closing = earlier
-	}
-	if len(owed) == 0 && len(closing) == 0 {
-		return false
-	}
-	dir := filepath.Join(r.repo.Dir, backlog.Dir)
-	ids := make([]string, 0, len(owed))
-	for _, n := range owed {
-		item, err := backlog.Write(dir, n)
-		if err != nil {
-			r.d.Log.Warn("filing the run's open items failed", "err", r.redact(err.Error()))
-			return false
-		}
-		ids = append(ids, item.ID)
-	}
-	// A close that cannot be made is a warning per item rather than the end of
-	// the sweep: the items of one pull request are independent, and one the
-	// folder refuses must not leave the others open.
-	closed := make([]string, 0, len(closing))
-	for _, id := range closing {
-		if _, err := backlog.Close(dir, id, r.pullRequestRef()); err != nil {
-			r.d.Log.Warn("closing the item this run fixed failed", "item", id, "err", r.redact(err.Error()))
-			continue
-		}
-		closed = append(closed, id)
-	}
-	if len(ids) == 0 && len(closed) == 0 {
-		return false
-	}
-	if _, err := r.repo.CommitAll(ctx, backlogCommit(ids, what, closed)); err != nil {
-		r.d.Log.Warn("committing the run's backlog items failed", "err", r.redact(err.Error()))
-		return false
-	}
-	r.rec.Backlog = append(r.rec.Backlog, ids...)
-	// The record's list is bounded; the closed items on the branch are the
-	// whole account whatever it holds.
-	r.rec.BacklogClosed = append(r.rec.BacklogClosed, closed...)
-	if len(r.rec.BacklogClosed) > runstore.MaxBacklogClosed {
-		r.rec.BacklogClosed = r.rec.BacklogClosed[:runstore.MaxBacklogClosed]
-	}
-	return true
-}
-
-// maxRunsOnOnePR bounds the walk back through the runs of one pull request
-// (roundItemIDs). A chain longer than this is a loop or a pull request nothing
-// else bounds; the walk stops either way, and what it has read is what the run
-// acts on.
-const maxRunsOnOnePR = 20
-
-// openRoundItems is the ids an earlier run on this run's pull request filed for
-// a review round, as the items this run's own checkout holds them and only
-// while the folder still holds them open: the items D31's follow-up closes when
-// its own review shipped.
-//
-// The checkout is the only place the statuses are read: an item is closed on
-// the branch of the run that fixed it, so the folder a follow-up starts from
-// carries the closes made before it (D9, D31). A folder that is not there holds
-// none — the items have not reached this checkout — and the run then files what
-// it owes rather than closing something it cannot see: a finding that
-// disappears is the failure this feature risks (the plan's §7.5).
-func (r *run) openRoundItems(ctx context.Context) []string {
-	ids := r.roundItemsOnThisPR(ctx)
-	if len(ids) == 0 {
-		return nil
-	}
-	items, err := backlog.Load(filepath.Join(r.repo.Dir, backlog.Dir))
-	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			r.d.Log.Warn("reading the backlog folder failed; the run closes nothing and files its own round", "err", r.redact(err.Error()))
-		}
-		return nil
-	}
-	open := map[string]bool{}
-	for _, it := range items {
-		if it.Status == "open" {
-			open[it.ID] = true
-		}
-	}
-	var out []string
-	for _, id := range ids {
-		if open[id] {
-			out = append(out, id)
-		}
-	}
-	return out
-}
-
-// roundItemsOnThisPR walks the run chain this follow-up hangs off — its
-// previous run, and the runs before that while each record names one on this
-// pull request (runstore.Record.FollowUp) — and collects the ids each run on
-// the pull request filed for a review round. The chain is what makes "the same
-// pull request" a fact rather than a guess: a record names the pull request it
-// ran on and the run it followed, so the walk stops at the first run that was
-// not on this one. A run's own record carries the ids it filed
-// (runstore.Record.Backlog), which is what keeps this a read of what was filed
-// rather than a reading of the item files' titles.
-//
-// A chain whose records cannot be read ends the walk where it is: what was read
-// is what the run acts on, and an unreadable record is a warning rather than a
-// refusal, like every other read on this path. A record that names a previous
-// run that is not a run id ends it too, before that id names an object
-// (runstore.Store.Sibling's own rule for its callers).
-func (r *run) roundItemsOnThisPR(ctx context.Context) []string {
-	pr, id := r.spec.PR, r.spec.PreviousRun
-	if pr == 0 || id == "" || r.d.Store == nil {
-		return nil
-	}
-	var ids []string
-	seen := map[string]bool{}
-	for id != "" && !seen[id] && len(seen) < maxRunsOnOnePR {
-		if !task.ValidRunID(id) {
-			r.d.Log.Warn("a record names a previous run that is not a run id; the runs behind it are not read", "run", r.redact(id))
-			return ids
-		}
-		seen[id] = true
-		rec, err := r.d.Store.Sibling(id).ReadRecord(ctx)
-		if err != nil {
-			r.d.Log.Warn("an earlier run on this pull request has no readable record; the runs behind it are not read", "run", id, "err", r.redact(err.Error()))
-			return ids
-		}
-		if rec.PR == nil || rec.PR.Number != pr {
-			return ids
-		}
-		ids = append(ids, roundItemIDs(rec)...)
-		if rec.FollowUp == nil {
-			return ids
-		}
-		id = rec.FollowUp.PreviousRun
-	}
-	return ids
-}
-
-// roundItemIDs is the ids one run filed for a review round: what its record
-// carries, less the deferral a hotfix's row files first (D30, fileOpenItems).
-// A record whose last senior review left nothing open filed no round item, so
-// whatever it filed — a hotfix's deferral alone — is not one, and a deferral is
-// never closed by a follow-up that merely shipped its review: the run that
-// revisits the area at its normal mode is the one that answers it (D30, D15).
-func roundItemIDs(rec *runstore.Record) []string {
-	if openFindings(rec.Reviews) == nil {
-		return nil
-	}
-	if rec.Rigor != nil && rigor.Files(rec.Rigor.Mode).Deferred && len(rec.Backlog) > 0 {
-		return rec.Backlog[1:]
-	}
-	return rec.Backlog
-}
-
-// shippedItsRound reports whether this run answered the round it was handed: it
-// is a follow-up whose last senior review shipped. A run that left findings open
-// did not fix them, and a run that never reached a senior review — one that died
-// before review — fixed nothing, however empty its record's review list looks.
-func (r *run) shippedItsRound() bool {
-	if r.spec.PR == 0 || r.spec.PreviousRun == "" {
-		return false
-	}
-	last := seniorReview(r.rec.Reviews)
-	return last != nil && last.Verdict == "ship"
-}
-
-// pullRequestRef is the pull request this run is on, as D31's `## Closed by`
-// section names one. Only a follow-up reaches it: an item is closed by the
-// follow-up that fixed it, and a follow-up is the run whose spec names a pull
-// request.
-func (r *run) pullRequestRef() string { return fmt.Sprintf("#%d", r.spec.PR) }
-
-// backlogCommit is the one commit message the run's backlog writes go into:
-// what it filed and what it closed, each named by id.
-func backlogCommit(ids, what, closed []string) string {
-	var parts []string
-	if len(ids) > 0 {
-		parts = append(parts, fmt.Sprintf("file %s, %s", strings.Join(ids, " and "), strings.Join(what, " and ")))
-	}
-	if len(closed) > 0 {
-		parts = append(parts, fmt.Sprintf("close %s, fixed by this pull request", strings.Join(closed, " and ")))
-	}
-	return "fugaro: " + strings.Join(parts, "; ")
-}
-
-// filedItem is one item this run files: the round it left open when the mode's
-// row files what it tolerated, and the deferral Hotfix's row files whether or
-// not a round was left open (D30). open is nil only in that second case, which
-// is why the deferral's own text is what the item then carries.
-func (r *run) filedItem(open *runstore.ReviewSummary) backlog.New {
-	n := backlog.New{
-		Mode:    r.filedMode(),
-		Area:    r.filedArea(),
-		FiledBy: r.filedBy(),
-		FiledIn: "run:" + r.rec.RunID,
-		Date:    r.d.Now().UTC().Format("2006-01-02"),
-	}
-	if open == nil {
-		n.Title, n.Body = r.deferredTitle(), r.deferredBody()
-		return n
-	}
-	n.Title, n.Body = r.filedTitle(open), r.filedBody(open)
-	return n
-}
-
-// filedTitle is the item's title, and it opens with the run's id so that no
-// two runs compose the same one (D26). A run's own checkout is all it can read
-// — two parallel runs in one repository each allocate the day's sequence from
-// their own tree, and a run cut from a base that does not yet carry another
-// run's item sees nothing to differ from — so the run's id is the one part of
-// the name that is run-unique. It leads rather than trails, because the slug
-// is cut to MaxSlugRunes and a trailing id would be the first thing cut off a
-// long title, which would put two runs back on one name.
-//
-// The id is also the one thing a reader of a shared backlog wants first: D29
-// settles a project's items into one repository, where an item's run is not
-// obvious from the title alone, and `filed-in` repeats it in the front matter.
-func (r *run) filedTitle(open *runstore.ReviewSummary) string {
-	return fmt.Sprintf("Run %s: review round %d left %s open", r.rec.RunID, open.Round, Plural(open.Findings, "finding"))
-}
-
-// filedMode is the mode the item records: the one the run resolved (D27), or
-// `none` when the record carries no rigor block at all, which is the value a
-// run that resolved nothing leaves — never a mode nobody chose.
-func (r *run) filedMode() string {
-	if r.rec.Rigor == nil || !rigor.Known(r.rec.Rigor.Mode) {
-		return "none"
-	}
-	return string(r.rec.Rigor.Mode)
-}
-
-// filedArea is the area the item records: the names of the rules the run's
-// paths matched, strictest first as the record carries them, or the layer
-// that decided the mode when no rule matched — `project` for the project
-// layer and `repo` for everything below it, since an item about no rule in
-// particular is an item about the whole repository (D27).
-func (r *run) filedArea() string {
-	rg := r.rec.Rigor
-	if rg == nil {
-		return "repo"
-	}
-	if len(rg.Areas) > 0 {
-		names := make([]string, 0, len(rg.Areas))
-		for _, a := range rg.Areas {
-			names = append(names, a.Name)
-		}
-		return strings.Join(names, ",")
-	}
-	if rg.From == rigor.FromProject {
-		return "project"
-	}
-	return "repo"
-}
-
-// filedBy is the item's launcher: the login the task was requested by, which
-// is who asked for the run (D27). An item is committed into the repository, so
-// it never carries an email address (the owner's ruling of 2026-10-24): a
-// launcher recorded as one — the cloud account `fugaro run` reads — is not
-// shortened to a guessed login, and it records `unknown`, as does a task that
-// names nobody, rather than the empty field D27's format refuses.
-func (r *run) filedBy() string {
-	if by := strings.TrimSpace(r.spec.RequestedBy); by != "" && !strings.Contains(by, "@") {
-		return by
-	}
-	return "unknown"
-}
-
-// filedBody is the item's body: what the round left open, why it is filed
-// rather than fixed here, and what closes it (D27). The findings' own text is
-// not carried yet — a round's findings are a count on the record and their
-// text is in the run's transcript (T3.4 owns persisting them) — so the item
-// says which round and how many, and links the run it came from.
-func (r *run) filedBody(open *runstore.ReviewSummary) string {
-	who := "senior review"
-	if open.Tier == runstore.TierFirst {
-		who = "first-line review"
-	}
-	what := fmt.Sprintf("Round %d's %s ended `%s` with %s: the run did not ship them, so they are carried here rather than fixed in this pull request.",
-		open.Round, who, open.Verdict, Plural(open.Findings, "finding"))
-	why := "The run left them open: they are not what this pull request's outcome was decided on, and an item filed here is a record a later reader can cite, which a finding in a transcript is not (D9)."
-	done := "The pull request that addresses them closes this item (D31)."
-	links := []string{fmt.Sprintf("run `%s`", r.rec.RunID)}
-	if r.rec.PR != nil && r.rec.PR.Number != 0 {
-		links = append(links, fmt.Sprintf("pull request #%d", r.rec.PR.Number))
-	}
-	return backlog.Body(what, why, done, links)
-}
-
-// deferredTitle is the title of the item a hotfix files for its own deferral,
-// which is the proper fix, because the one it shipped is the expedient one
-// (spec.md, D15, D30). It opens with the run's id for the same reason
-// filedTitle does (D26).
-func (r *run) deferredTitle() string {
-	return fmt.Sprintf("Run %s: revisit this hotfix in the area's normal mode", r.rec.RunID)
-}
-
-// deferredBody is that item's body: what the hotfix deferred, why it is filed
-// rather than done here, and what closes it. Nothing else carries this — the
-// deferred text the agent wrote is the agent's own free-form file, which no
-// part of the run parses — so the item says what a hotfix is rather than
-// inventing a summary of the change.
-func (r *run) deferredBody() string {
-	what := "This run was a hotfix: it made the smallest change that stops the bleeding, and revisiting the fix properly is what it deferred (spec.md, D15)."
-	why := "Time is the dominant constraint in Hotfix mode, so the fix ships first and is done properly afterwards — in the area's normal mode, which is a separate run rather than another round of this one."
-	done := "The pull request that revisits the fix in the area's normal mode closes this item (D31)."
-	links := []string{fmt.Sprintf("run `%s`", r.rec.RunID)}
-	if r.rec.PR != nil && r.rec.PR.Number != 0 {
-		links = append(links, fmt.Sprintf("pull request #%d", r.rec.PR.Number))
-	}
-	return backlog.Body(what, why, done, links)
 }
 
 // closedWord says "merged" when the provider can tell the PR was merged,

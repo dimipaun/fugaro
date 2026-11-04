@@ -69,7 +69,11 @@ import {
   firstInstallationState,
   installCliState,
 } from './onboarding'
-import type { InstallationsListReply, InstallationsListRow } from './onboarding'
+import type {
+  InstallationsCheckoutChoice,
+  InstallationsListReply,
+  InstallationsListRow,
+} from './onboarding'
 import { SENDER_REFUSAL, isSenderOnDocument } from './ipc'
 import { SPAWN_COMMANDS } from './spawn'
 import type { ConsoleEventLike, IpcMainLike } from './ipc'
@@ -107,6 +111,19 @@ export const INSTALLATIONS_MENU_LABEL = 'Installations…'
  * is where that is decided, and it hands them over only then. */
 export const UPDATE_AUTO_LABEL = 'Check for Updates Automatically'
 export const UPDATE_NOW_LABEL = 'Check for Updates Now'
+
+/** CRASH_SEND_ITEM_LABEL is the crash reporter's own switch, and it is one item
+ * with the note in it rather than two: the checkbox says what it does ("Send
+ * Crash Reports"), and the parenthetical says when the change takes effect. The
+ * reporter is started once, in the entry point's own startup, so a click here is
+ * a decision about the **next launch** -- turning reporting off does not
+ * interrupt the client this run started, and nothing an operator can click does.
+ * Saying so on the item is the honest description of that; a second, greyed-out
+ * menu line stating it would be an item nobody can focus or read out. Unlike the
+ * two items above it, this one is not macOS-only: it is the console's own setting
+ * rather than the updater's, so the entry point hands it over on every platform
+ * the console ships a menu on. */
+export const CRASH_SEND_ITEM_LABEL = 'Send Crash Reports (applies at the next launch)'
 
 /** PICKER_WINDOW_TITLE is the picker's window title. It carries no mode and no
  * version: the picker draws a list, and the console's own compatibility is the
@@ -162,6 +179,19 @@ export interface UpdateMenuOptions {
    * as this answer disagreeing with it. */
   readonly setAuto: (on: boolean) => boolean
   readonly checkNow: () => void
+}
+
+/** CrashMenuOptions is the crash reporter's switch as the menu sees it, in the
+ * same shape and for the same reason as `UpdateMenuOptions`: the value the
+ * checkbox draws, and the one thing the item does with it. What the switch *is*
+ * -- `crash.json`, its `O_NOFOLLOW` read and its atomic write -- stays in
+ * `./crashstore`, which this module never imports. */
+export interface CrashMenuOptions {
+  readonly send: boolean
+  /** setSend moves the switch and answers the value it holds afterwards, read
+   * from the file, for the reason `setAuto` does: the write can fail, and the
+   * checkbox Electron already moved is then not this console's state. */
+  readonly setSend: (on: boolean) => boolean
 }
 
 /** MenuLike is the slice of Electron's `Menu` this file uses. */
@@ -275,6 +305,10 @@ export interface InstallationPickerDeps {
    * app, where the entry point passes nothing and the menu carries neither
    * item. */
   readonly updateMenu?: UpdateMenuOptions | undefined
+  /** crashMenu is the crash reporter's checkbox, which is the console's own
+   * setting rather than the updater's: the entry point hands it over on the
+   * platforms the console ships a menu on, controller or no controller. */
+  readonly crashMenu?: CrashMenuOptions | undefined
 }
 
 /** InstallationPicker is what the entry point holds. */
@@ -358,8 +392,10 @@ export function installationsMenuTemplate(options: {
   readonly onQuit: () => void
   readonly appName: string
   readonly updateMenu?: UpdateMenuOptions | undefined
+  readonly crashMenu?: CrashMenuOptions | undefined
 }): readonly unknown[] {
   const updateMenu = options.updateMenu
+  const crashMenu = options.crashMenu
   // **Not frozen**, unlike every other table in this module: Electron's
   // `Menu.buildFromTemplate` sorts the template in place and assigns each
   // item's `submenu`, and a frozen template makes it throw ("Cannot assign to
@@ -382,24 +418,44 @@ export function installationsMenuTemplate(options: {
         // `checked` is the state the click has just moved it to, and that is
         // what moves the switch -- a value this file toggled itself could
         // disagree with what the user sees after the menu redraws it.
-        ...(updateMenu === undefined
+        ...(updateMenu === undefined && crashMenu === undefined
           ? []
           : [
               { type: 'separator' },
-              {
-                label: UPDATE_AUTO_LABEL,
-                type: 'checkbox',
-                checked: updateMenu.auto,
-                click: (item: { readonly checked: boolean }) => {
-                  updateMenu.setAuto(item.checked)
-                },
-              },
-              {
-                label: UPDATE_NOW_LABEL,
-                click: () => {
-                  updateMenu.checkNow()
-                },
-              },
+              ...(updateMenu === undefined
+                ? []
+                : [
+                    {
+                      label: UPDATE_AUTO_LABEL,
+                      type: 'checkbox',
+                      checked: updateMenu.auto,
+                      click: (item: { readonly checked: boolean }) => {
+                        updateMenu.setAuto(item.checked)
+                      },
+                    },
+                    {
+                      label: UPDATE_NOW_LABEL,
+                      click: () => {
+                        updateMenu.checkNow()
+                      },
+                    },
+                  ]),
+              // The crash reporter's switch is Electron's own checkbox too, and
+              // for the same reason: the click hands over an item whose `checked`
+              // the click itself has just moved, and that is the state the store
+              // is asked to keep.
+              ...(crashMenu === undefined
+                ? []
+                : [
+                    {
+                      label: CRASH_SEND_ITEM_LABEL,
+                      type: 'checkbox',
+                      checked: crashMenu.send,
+                      click: (item: { readonly checked: boolean }) => {
+                        crashMenu.setSend(item.checked)
+                      },
+                    },
+                  ]),
             ]),
         { type: 'separator' },
         { role: 'quit', click: options.onQuit },
@@ -656,6 +712,53 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
     return Object.freeze(identities)
   }
 
+  /**
+   * checkoutChoicesOf is one installation's menu for the dashboard's and the
+   * Graph's chooser: **one entry per repository**, in the order the CLI listed
+   * them, over the rows it re-validated and enrolled.
+   *
+   * Two rules, and both are the reason this is built here rather than in the
+   * renderer. The directory must be one the console may offer at all
+   * (`offeredCheckouts`, which drops the tool-owned and temporary paths -- the
+   * CLI remembers an agent's own worktrees, and a menu that offered one would
+   * offer a directory the write below then refuses), and a repository with
+   * several of them is **one** entry: the operator picks a repository, so the
+   * first surviving path stands for it and `more` says how many others the CLI
+   * remembers, rather than five rows of one repository pushing the rest off the
+   * menu. The count is read off the surviving list, so it never claims a
+   * directory that was dropped.
+   */
+  const checkoutChoicesOf = (installation: DiscoveredInstallation): readonly InstallationsCheckoutChoice[] => {
+    const usable = new Set(
+      offeredCheckouts(
+        undefined,
+        installation.checkoutChoices.map((one) => one.path),
+      ),
+    )
+    const order: string[] = []
+    const byRepository = new Map<string, string[]>()
+    for (const one of installation.checkoutChoices) {
+      if (!usable.has(one.path)) continue
+      const held = byRepository.get(one.repository)
+      if (held === undefined) {
+        byRepository.set(one.repository, [one.path])
+        order.push(one.repository)
+        continue
+      }
+      held.push(one.path)
+    }
+    return Object.freeze(
+      order.map((repository) => {
+        const paths = byRepository.get(repository) ?? []
+        return Object.freeze({
+          repository,
+          path: paths[0] ?? '',
+          more: Math.max(0, paths.length - 1),
+        })
+      }),
+    )
+  }
+
   const rowsOf = (
     discovered: readonly DiscoveredInstallation[],
     warnings: readonly string[],
@@ -693,6 +796,7 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         mode: held?.mode ?? 'unknown',
         ...(held?.checkout === undefined ? {} : { checkout: held.checkout }),
         checkouts: offeredCheckouts(held?.checkout, installation.checkouts),
+        checkoutChoices: checkoutChoicesOf(installation),
         repositories: repositoryIdentities(installation.repositories),
         state: classifyInstallation(rowFacts, facts),
         open: false,
@@ -712,6 +816,10 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         mode: row.mode,
         ...(row.checkout === undefined ? {} : { checkout: row.checkout }),
         checkouts: offeredCheckouts(row.checkout, []),
+        // A record the CLI did not list has no document behind it, so there is
+        // nothing this console may offer for it: `[]` is the honest list, and
+        // the chooser draws the sentence that stands in for the control.
+        checkoutChoices: Object.freeze([]),
         repositories: repositoryIdentities([]),
         state: classifyInstallation(rowFacts, facts),
         open: false,
@@ -1173,12 +1281,19 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
    * not using -- and the value that *is* in force only comes back from
    * `setAuto`, which reads it from wherever the switch is kept and answers
    * rather than throwing (a throw here would be Electron's uncaught-error
-   * dialog over the running app). The menu is built again from that answer when
-   * the two disagree. */
+   * dialog over the running app). Every answer moves this local, agreeing or
+   * not, so the menu is built again from the value in force whenever the two
+   * disagree and every later rebuild draws that same value. */
   let drawnAuto = deps.updateMenu?.auto ?? false
+
+  /** drawnSend is the same value for the crash reporter's checkbox, and the same
+   * redraw: the store answers what is in force after a write, and the menu is
+   * built again when that disagrees with the state the click left the item in. */
+  let drawnSend = deps.crashMenu?.send ?? false
 
   const installMenu = (): void => {
     const updateMenu = deps.updateMenu
+    const crashMenu = deps.crashMenu
     deps.menu.setApplicationMenu(
       deps.menu.buildFromTemplate(
         installationsMenuTemplate({
@@ -1190,14 +1305,30 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
                   auto: drawnAuto,
                   setAuto: (on) => {
                     const actual = updateMenu.setAuto(on)
-                    if (actual !== on) {
-                      drawnAuto = actual
-                      installMenu()
-                    }
+                    // The value in force is kept whether or not it disagreed
+                    // with the click: a write that landed leaves the two equal,
+                    // and any later rebuild -- the crash item's redraw, another
+                    // click's -- draws from this local rather than from the
+                    // click it was built beside.
+                    drawnAuto = actual
+                    if (actual !== on) installMenu()
                     return actual
                   },
                   checkNow: () => {
                     updateMenu.checkNow()
+                  },
+                },
+              }),
+          ...(crashMenu === undefined
+            ? {}
+            : {
+                crashMenu: {
+                  send: drawnSend,
+                  setSend: (on) => {
+                    const actual = crashMenu.setSend(on)
+                    drawnSend = actual
+                    if (actual !== on) installMenu()
+                    return actual
                   },
                 },
               }),
@@ -1278,6 +1409,7 @@ export function installInstallationPicker(options: {
   readonly onRemoved?: InstallationPickerDeps['onRemoved']
   readonly onRecordRemoved?: InstallationPickerDeps['onRecordRemoved']
   readonly updateMenu?: UpdateMenuOptions | undefined
+  readonly crashMenu?: CrashMenuOptions | undefined
 }): InstallationPicker {
   const { electron } = options
   // **The home is this app's own environment's, and not `app.getPath('home')`.**
@@ -1342,6 +1474,7 @@ export function installInstallationPicker(options: {
     ...(options.onRemoved === undefined ? {} : { onRemoved: options.onRemoved }),
     ...(options.onRecordRemoved === undefined ? {} : { onRecordRemoved: options.onRecordRemoved }),
     ...(options.updateMenu === undefined ? {} : { updateMenu: options.updateMenu }),
+    ...(options.crashMenu === undefined ? {} : { crashMenu: options.crashMenu }),
   })
 }
 

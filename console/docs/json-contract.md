@@ -161,6 +161,7 @@ permission refusal, which `watchStream` emits once and then returns `dbErr`
 | `leased_usd` | float64 | USD | no | measured — **`BuildJSON` writes it**, so it is always present and `0` when nothing is leased (the console still reads it as optional, for a CLI older than the release that added it). The **outstanding** leased dollars: `counted_usd − spent_usd`, floored at zero (`watch.LeasedUSD`, `internal/watch/json.go`), where `max_reserve_usd` (§3) is the **ceiling** on one lease. The label is *leased, not yet spent*, never "live leases": the sweeper never releases a lease (`internal/budget/sweep.go`), so a crashed run's stays in the figure for the rest of the day |
 | `daily_cap_usd` | `*float64` | USD | no | **null = unavailable** (no cap set) |
 | `percent` | `*float64` | 0–100 | no | **null = unavailable**, together with `daily_cap_usd` (`usdPtr`) |
+| `max_parallel` | `*int` | count | no | **null = unknown** — the concurrent-run cap a launch is checked against (`checkMaxParallel`, `internal/cli/run.go`): the selected config's `max_parallel` as the config layer resolved it, which no budget node holds, so `internal/cli/watch.go` (`maxParallelOf`) sets it rather than `BuildJSON`. The resolution is why a config file that names none still reads a number: `localcfg` gives it the engine's default **20**, and 20 is then what the launcher compares against, so the document reports the resolved cap rather than guessing one. Null is the shape for a writer with no config to read — never `0`, which a cap bar would draw as a limit of none. **No view reads it yet**: the console's decoder declares the key — `'max_parallel'` in `TOTAL_KEYS` (`console/src/shared/schema.ts`), pinned against this struct by `console/test/unit/schema.test.ts` — so a document carrying it decodes, and the scrub tool replaces it with an invented cap where `shared/digest` accepts it and produces nothing from it. The bar it is for is [the review-levels plan's V1.2](../../docs/review-levels-ab-jobmax/implementation-plan.md), the Live screen's concurrent-runs cap bar, which has not landed; what that bar must draw for an unknown value is `n/a`, never a full bar |
 | `burn` | `JSONBurn` | — | no | see below |
 | `kill` | `*JSONKill` | — | no | **null = not killed** |
 | `runs` | int | count | no | measured |
@@ -428,7 +429,7 @@ repositories, then, for each repository shown, a listing of its runs minted
 since the previous day began and a record read for each of those — a run's
 start day is only known once its record is read, so the reader looks a day
 wider than the day it reports. That cost is why `--compute` is opt-in: the rail
-and the Projects screen call this same command and pay for no bucket read. The
+and the Project screen call this same command and pay for no bucket read. The
 figure reaches a person too: with the flag the text view prints `compute:` per
 repository, `n/a` where the JSON says `null`. **The console's own `budget.show`
 row may pass it too — opt-in, on the Spend screen's caps read alone and only to
@@ -436,7 +437,7 @@ a CLI at or above `BUDGET_COMPUTE_CLI_FLOOR` (`0.13.0`, the release that ships
 the flag; `budgetComputeSupported`, `console/src/shared/version.ts`), so an
 older CLI is read with the key absent and handed no argv it would refuse: the
 Spend caps panel draws no compute cell at all for a document that carries no
-`compute_usd`, rather than a column of `n/a` — while the rail and the Projects
+`compute_usd`, rather than a column of `n/a` — while the rail and the Project
 screen pass nothing.**
 
 `showRun`: `slug`, `run`, `repo`°, `workflow`°, `title`°,
@@ -716,8 +717,31 @@ compute is unknown: their `compute_usd` 0 means "not estimated", so the sums
 are a lower bound** — the console renders that, it does not hide it).
 
 **Flags** (`f := cmd.Flags()`, `newLsCmd`): `--repo`, `--all`, `--mine`, `--since`, `--batch`,
-`--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud flags. The
-allow-list excludes `--watch` (it is `watch` under another name).
+`--limit`, `--after`, `--state`, `--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud
+flags. The allow-list excludes `--watch` (it is `watch` under another name).
+
+**`--limit=N` and `--after=RUN-ID` are the page and its cursor, and they are the two
+flags the console's `runs ls` row adds to the list above** (D818, the console
+coordinator-v2 plan's C2). `--limit=N` prints the **newest** `N` rows of the window;
+`--after=RUN-ID` starts the listing after that run, in the listing's own order, so a
+page is what the previous page's last row hands on — the two are the console's one
+way to walk a window a row at a time. **Both travel in the `=` form**, one word each,
+the value inside the flag's own word and never a word of its own, so a value can never
+be read as a flag (`--after=--watch` is a cursor the grammar below refuses, not a
+second flag on this argv); and **both are held before a child exists**: the limit is a
+positive integer of at most `RUNS_LIST_MAX_LIMIT` (**200**, this console's own
+ceiling rather than the command's — `--limit 0` is the command's own "every row",
+which is the read the page exists to avoid asking for), and the cursor is a run id in
+the `run_id` grammar of this very section, which is the id a page prints. An id the
+window does not hold stays the command's refusal and not this console's business: only
+the command knows what its window held.
+
+**A page is not a total: `totals` is the whole window's, never the page's.** `--limit`
+shortens what is printed and shortens nothing else — the window is read either way, so
+a page costs what the window costs — and therefore `totals.runs`, the counts behind it
+and every dollar figure in it stay the window's however small the page is. A reader
+that divided one of those figures by the rows it drew would print a number this
+document does not carry, which is the one wrong answer the two flags could produce.
 
 ## 6. The other documents
 
@@ -745,17 +769,18 @@ exactly its own tags and nothing is nested under a `process` or `checks` key:
 | `comments_path` | string | **yes** | where the comments it was given are stored |
 | `route_by`, `model_by` | `map[string]float64` | **yes** | the run's spend by provider route and by model (a Claude call has no route) |
 | `stages` | `[]runstore.StageTiming` | **yes** | the run's per-stage record (governance T1.1–T1.3), in the record's own order and bounded at `diagnoseStages` = 128: each entry is `name`, `started_at`, `duration_s`, `calls`°, `agents`°, `model_usd`°, `model`° and `model_notional_usd`°. `calls` and `agents` are **pointers**, so a stage nobody counted has the key absent, which is not the same fact as a stage counted at zero. `model_usd` is what the stage's calls cost, `model_notional_usd` the notional part of it (D140). The stages are the run's whole model spend but for gateway spend that settled after its stage's wait ran out, which is in `model_by["unattributed"]` and in no stage: exactly, `sum(stages[].model_usd) + model_by["unattributed"] == row.cost.model_usd`. **That identity is why the bound is where it is**: it holds only for the whole list, so `diagnoseStages` sits above the loop's own maximum (87 stages under the config limits, plus the provision and render stages) and never truncates a run the loop can make — it guards against the record a hand can edit, not against the loop. Absent when the record has no stages, and when there is no record at all |
+| `reviews` | `[]runstore.ReviewSummary` | **yes** | the record's review rounds, in the record's own order and bounded at `diagnoseReviews` = 96: each entry is `round`, `tier`, `verdict`, `findings` and, when the round recorded one, `bounce`°, `head`°, **`model`°** and **`effort`°** (CLI 0.16.0). `tier` is `first`, `senior` or `adversarial`, and `verdict` is the reviewer's own word or `none` for a round that returned nothing parseable. `model` and `effort` are what **reviewed** the round — the stage's pinned model and the reasoning effort that reached the stage — and the pair with `head`, the commit the round read, tells a reader which model the record says reviewed which head: these are the record's own unsigned bytes, recorded and not verified, so they are a hint for a person and never an input to a decision. `model`, `effort` and `head` are **absent** in a round that recorded none, which is every review written before CLI 0.16.0, so a reader tests the key rather than the empty string. Every string in the list is redacted, `model` and `effort` included: they are the record's bytes, which a hand can edit. The bound sits above the loop's own maximum (77 rounds), so it guards against the record a hand can edit, never against the loop; a run that reached it prints the first `diagnoseReviews` rounds and then the line `… at most 96 review rounds are printed`, which says the list is cut and not how many rounds it left out. Absent when the record has no reviews, and when there is no record at all |
 | `reported_usd`, `charge_usd` | float64 | **yes** | what providers said the calls cost, beside what the table charged — **absent (0) when no provider reported one**, so the pair is read together |
 | `reported_warning` | string | **yes** | set when the two differ by more than `reportedGapPct` percent |
 | `pin_warnings` | `[]string` | **yes** | the model prices the run's cap counted on a guess |
 | `tolerated` | `*runstore.ToleratedFindings` | **yes** | the findings the run's resolved mode let through, in the reviewer's order (rigor T3.4): `findings` (one entry per finding — `title`, `label`, `mode`, `likelihood`, `impact`, `fix_cost`, `class`) and `total`, how many findings the mode really tolerated, never below the entries listed. The block is bounded at `runstore.MaxTolerated` = 100 when it is written and **again on read** — the record is an object a hand can edit — and every string in it is redacted, the enums included (they are the write path's vocabulary, which a hand-edited record need not respect). Absent — never an empty block — for a run that tolerated nothing |
 | `checkpoint` | `*runstore.Checkpoint` | **yes** | the report a governance stop left (governance T6.1, read here by T6.2; D329, G7): `trigger`, one of the governance halt reasons (`stage_budget`, `review_ratio`, `fanout`, `review_scope`, `expected_exceeded`), `why_over`, the runner's own words for the stop, `estimate_usd`, the model spend the record had reached (notional dollars included, like `cost_usd`), and the stopping agent's `done`, `next` and `hard_instructions`. The last three are **absent until the run's checkpoint stage answers** (T7.3), so a missing key is an answer nobody was asked for — never a claim that there was nothing to say. Each text field is clipped to `runstore.MaxCheckpointText` = 500 runes when it is written and **again on read**, and every string in it is redacted, `trigger` included (a hand-edited record need not respect either). Absent for a run that took no governance halt — a budget or credential halt carries none — and absent, rather than an empty block, for the `"checkpoint": {}` a hand can write |
 
-**`runs ls --json` deliberately does not carry `stages` or `tolerated`.** Both
-are the record's, and the list is one document for a whole window of runs: a
-per-stage and a per-finding payload on every row would multiply the list's cost
-to print and to read, for a screen that draws one run at a time. `diagnose RUN
---json` is where the console reads them.
+**`runs ls --json` deliberately does not carry `stages`, `reviews` or
+`tolerated`.** All three are the record's, and the list is one document for a
+whole window of runs: a per-stage, a per-round and a per-finding payload on
+every row would multiply the list's cost to print and to read, for a screen that
+draws one run at a time. `diagnose RUN --json` is where the console reads them.
 
 **Every string from the run is redacted** (`Diagnosis`'s own comment), and the
 console reads `row` and the keys above.
@@ -965,7 +990,7 @@ opens `~/.config/fugaro` (§3.4 rule 7).
 
 **Who reads it.** Since the owner's design ruling of 2026-10-25 it is the
 installation rail's read: the dashboard's `installation.list` operation (one of
-the surface's twenty-four, `CONSOLE_OPERATIONS` in `src/main/ipc.ts`), answered by
+the surface's twenty-five, `CONSOLE_OPERATIONS` in `src/main/ipc.ts`), answered by
 the same dispatcher the picker window uses. The console reads two of the
 `warnings` lines by their wording, to mark the rail's rows
 (`src/main/installationstate.ts`): `<path> could not be read: <reason>`, matched
@@ -1080,19 +1105,24 @@ checkout again. A repository the project config does not enroll is
 `not_enrolled`; a path that had to be escaped or truncated for printing, or
 that is not absolute or does not carry a well-formed identity, is
 `not_representable` — **the printed string names a different directory than the
-stored one, so it must never be presented as a path that works**. A state file
-that cannot be read (not JSON, another version, over its size bound, not a
-regular file) is a warning naming it and `checkouts: []` for every
+stored one, so it must never be presented as a path that works** — and so is a
+path under the machine's temporary directory, which this machine does not
+record any more and does not read: a scratchpad a coding agent made is a live
+checkout, and the row is a working directory the console must not be sent to. A
+state file that cannot be read (not JSON, another version, over its size bound,
+not a regular file) is a warning naming it and `checkouts: []` for every
 installation — never a silent "there are none", and never a listing that fails.
 
 **One row carries one reason, and which one it is is fixed.** In order:
 
 1. `not_representable` — decided from the row's own strings, **before anything
    touches the disk**: the path as printed is not the path as stored, the path
-   is not absolute, or the identity is not a provider and an `owner/name`. A
-   row that fails here is never examined further, so a relative path that
-   happens to exist under the reader's working directory is still
-   `not_representable` and not a valid checkout.
+   is not absolute, the identity is not a provider and an `owner/name`, or the
+   path is under the machine's temporary directory. A row that fails here is
+   never examined further, so a relative path that happens to exist under the
+   reader's working directory is still `not_representable` and not a valid
+   checkout, and a path under the temporary directory is `not_representable`
+   whether it is there or not, and whatever it is a checkout of.
 2. `missing` — the path is not a directory that exists.
 3. `unreadable` — it is there, and its `fugaro.yaml` cannot be read.
 4. `not_a_checkout` — it is not a git checkout's own root.
@@ -1192,8 +1222,12 @@ ever becomes (or embeds) `localcfg.Config`.
 absent, null and a malformed entry are each an empty list rather than a refusal,
 because a console that refused a document over a field it only *offers* would stop
 listing installations on the day the field is added. Where it is present the
-console offers the `path` of each entry carrying `valid: true` (an absolute path;
-a `valid: false` entry is never offered, whatever its `reason`) and nothing else: a directory the document never
+console offers the `path` of each entry carrying `valid: true` **and**
+`enrolled: true` (an absolute path; a `valid: false` entry is never offered,
+whatever its `reason`, and neither is a row this installation's own config does
+not enroll) — **one entry per repository**, because a repository with several
+remembered directories would otherwise fill a menu and hide the others — and
+nothing else: a directory the document never
 named is refused by name, so the list is the CLI's own enumeration even at the
 point of use. An installation listed with no `checkouts` is drawn with no way to
 set one, which is the truthful state — the console does not invent a directory.
@@ -1729,6 +1763,7 @@ one entry of `repos`:
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
 | `repo` | string | never | never | the repository this node is about, `owner/name`. **Untrusted display text**: it comes from the local config, and a screen draws it as text and never as a link, a path or an attribute |
+| `provider` | string | never | never | the host the repository is on, `github` or `bitbucket`: the caller's own config for it, else its checkout's `fugaro.yaml`, which is the same resolution the node's slug is keyed by (D814). It is **not** read off `pr.url`, which is a field a job wrote and not a fact about the repository. **`""` is a real answer and not a gap** — a machine that records no provider for the repository and has no checkout of it has none to give, and a screen draws the number as text rather than as a link for it. The key is written even when it is empty, so `""` is told apart from a document older than this field — and the console's decoder reads a document that has no such key at all, as `""` rather than as skew, because the field is additive |
 | `stored` | bool | never | never | **the flag this whole read turns on.** `true` means the document's `view` is what the sweep last stored; `false` means the coordinator has never reconciled this repository and `view` is the runs half alone. It is a bool and not the presence of `view`, because both halves carry one |
 | `view` | object | never | never | the view itself, below |
 | `stale` | object | **yes** | **yes** | the sweep's marker for this repository, as stored, below. Absent on a view `status` computes and on a repository whose last sweep was clean. **Absent and null both mean "no marker"**, and a screen has one branch for the two |
@@ -1827,10 +1862,11 @@ the console does not pass), `--json`, and the cloud flags `--project`,
 
 **Command:** `internal/cli/run.go` (`newRunCmd`), printed by `printLaunch` with
 `json.Encoder` and `SetIndent("", "  ")`: **one indented object**, the shape
-every command in the console's set prints (§9.2). **This is the one write in the
-whole console** — the operation `run.launch`, whose twenty-fourth row on the IPC
-allow-list V2.5.1a added (2026-10-28/29) — and the only document below that a
-launch produces rather than a read. The argv the console builds from the form's
+every command in the console's set prints (§9.2). **This was the one write in the
+whole console, and it is the first of the two it has now** — the operation
+`run.launch`, the row V2.5.1a added to the IPC allow-list (2026-10-28/29), the
+surface's twenty-fourth; the settings edit (§6.20) is the second — and it is one
+of the two documents below that a write produces rather than a read. The argv the console builds from the form's
 five fields, and the confirmation window the main process owns, are design §5.1
 rule 11's and are not repeated here; what this section settles is the shape of
 the answer those fields come back as.
@@ -1887,6 +1923,660 @@ partial set of facts. A replayed answer — a second click on the window's own
 button, or a re-sent call — is the app's own in-memory record of the first
 `launchResult` and reaches no child at all (design §5.1 rule 11).
 
+### 6.15 `fugaro coordinator show --repo <owner/name> --pr <n> --json` (coordinator v2 C3)
+
+**Command:** `ee/coordinator/cli/coordinator_show.go` `newCoordinatorShowCmd` /
+`runCoordinatorShow`. **Document:** `coordinator.PRDocument`
+(`ee/coordinator/view.go`), printed by `writeCoordinatorJSON` — the same
+indented-object shape as every other read in this set (§9.2). The read behind it
+is `Project.PullRequest` (`ee/coordinator/project.go`), beside the view's own
+`Project.PullRequests`.
+
+**Why it is a read of its own.** The stored view (§6.13) carries no body, by
+design: a body is unbounded text written by whoever opened the pull request, and
+one per record would ride in the document every reader of the view fetches
+(reconciliation F3, D816's (a)). The shape that carries one is therefore a read
+of one pull request, and the console's row that draws a description reads here.
+The document is **one flat object**, never wrapped: there is one pull request in
+it and no list to enumerate.
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `number` | number | never | never | the pull request's own number, as the host gave it. It is a number to **show**: no screen builds a link from it (design §5.1 rule 2) |
+| `url` | string | **yes** | **yes** | the host's own address for it. **Carried as data and never drawn**: not as text, and never as a link (design §5.1 rule 2), because it is a hostile field like any other. Absent when the host answered none, which is a real answer and not a gap |
+| `title` | string | **yes** | **yes** | **untrusted text written by whoever opened the pull request.** Carried as data and never a decision: a renderer sanitises it before it reaches a line or a cell (`safetext`) |
+| `body` | string | **yes** | **yes** | the description the host holds, **as the host holds it** — untrusted text of the same kind as `title` and the reason this read exists. It is the one field here that is many lines: a renderer sanitises it as a block (`safetext.MultiLine`) and never parses it, and **nothing in it is a link, a path, a command or a decision**. `""` is the host answering with an empty description, which is not the same as the key being absent |
+| `state` | string | **yes** | **yes** | the host's own word (`"open"`, `"merged"`, `"closed"`), never a derivation from the runs behind the pull request. It is **not** normalised into a boolean and not mapped onto §6.13's `state`, which the view computes over many records |
+| `draft` | bool | **yes** | **yes** | whether the host says the pull request is a draft. The adapter answers the same way where the host has no real drafts, so the field is the host's answer as the CLI reads the host |
+| `branch` | string | **yes** | **yes** | the source branch the host reports |
+| `base` | string | **yes** | **yes** | the branch it targets **now**, which a retargeted pull request makes different from the one it was opened against. It is the host's current answer and not a record of the launch |
+| `author` | string | **yes** | **yes** | the host's own **account id** for whoever opened it — GitHub's numeric user id, Bitbucket's `account_id`. It is an account id and never a display name, it is a **string even where it is numeric**, and **nothing may authorise or admit anything by it**. A screen that wants a name resolves it itself or draws the id |
+
+**Every field is the host's own answer and nothing is derived from it.** A field
+the host did not answer is **absent** rather than empty or guessed: the document
+says what the host said, and a screen tells "the host said nothing" from "the
+host said an empty string" by the key's presence, not by its value. **There is no
+update stamp**: `updated` is not carried, because the CLI's own pull-request read
+(`gitprov.PRInfo`) has no such field to carry — the document stops where the
+host's answer the CLI holds stops, and a timestamp invented here would be a
+figure no command emitted.
+
+**A pull request the host does not have is a refusal, not an empty document.**
+The command prints **no document at all** and exits non-zero with the host's own
+status in the sentence on stderr (a 404 for a number the repository has no pull
+request for): the failure is the host's, so the exit code is **2**. An empty
+document would draw a pull request with no description, which is a different
+fact from "the host has no such pull request", and a screen that rendered one
+would be showing work that does not exist.
+
+**The credential is the coordinator's own, and it is read-only.** The read goes
+through the same path as §6.13's project-wide read (`coordinatorReader`): one
+GitHub App installation token per repository, minted from the installation's App
+with the coordinator's named permission set — **metadata read and pull requests
+read, no `write` of any kind** (Q3 answered (A)) — cached for the token's life
+and revoked when the command is done. There is no second credential path, and
+**no credential of the host's reaches the document, an error or a log line**;
+the provider's own error text is redacted with the values the read held before it
+is reported.
+
+**The refusals.** With `FUGARO_CREDENTIALS_SERVICE_URL` set, the installation's
+credentials service holds the App's key and this command holds none, so it
+refuses **naming the service** and exits **1** before it reads the App's ID or
+key, opens a provider or mints anything (reconciliation F9). A repository on a
+host this read does not serve is refused the way the project-wide view refuses
+it — **Bitbucket, whose credential is one repository's access token and cannot
+be widened to a project** (reconciliation Q12 (A), finding #30) — and the
+sentence names the reason rather than the repository; that is also exit **1**.
+A `--repo` that is not `owner/name` or a `--pr` that is not a pull request number
+is refused before any read is made, exit **1**. **Exit codes: 1 for a refusal of
+the caller's own environment or argv, 2 for a failure of the host.**
+
+**The provider is the repository's own**, resolved the way §6.13's `provider`
+field is (C1): the local config's entry for the repository, else its checkout's
+`fugaro.yaml`. A screen that has just drawn a `provider` from §6.13 and asks for
+a description here is asking the same question of the same resolution.
+
+**The console's row is built on this section.** It is coordinator v2 C3's console
+half: the design's §5.1 table carries `coordinator show --json --repo <owner/name>
+--pr <n>` as the `coordinator.show` / `coordinatorShow` operation
+(`console/src/main/ipc.ts`), whose two arguments are the `repository` and
+`pullRequest` kinds and are both required — the argv above is the whole of what a
+renderer can influence about the child, and there is no key of that schema for a
+token, a host, a path or a flag. The decoder written against the table above is
+`decodeCoordinatorPullRequest` (`console/src/shared/schema.ts`): `number` is the
+one key the document must carry and the one that must be a whole number, the
+other eight are carried as the host's own text (or, for `draft`, its flag), an
+absent or `null` key reads as absent rather than as a value, and a key none of
+the nine is does not reach a screen. A screen that draws a description reads
+this operation and treats `body` as the untrusted block it is.
+
+**Version skew.** Every field is additive. A CLI older than this command has no
+such read at all, and the console shows the section as unavailable (the
+availability rule, §1) rather than an error loop. A field added later is a field
+an older console does not draw; a console that requires one must refuse the
+document rather than fill it in.
+
+**Flags** (`newCoordinatorShowCmd`): `--repo` (the repository, `owner/name`),
+`--pr` (the pull request number), `--json`, and the cloud flags `--project`,
+`--config`, `--gcp-project` and `--region`.
+
+### 6.16 `fugaro coordinator intents [--all | --repo <owner/name>] [--since <d>] --json` (coordinator v2 C4)
+
+**Command:** `ee/coordinator/cli/coordinator_intents.go` `newCoordinatorIntentsCmd` /
+`runCoordinatorIntents`. **Document:** `coordinator.RepoIntents` and
+`coordinator.StoredProjectIntents` (`ee/coordinator/state.go`), printed by
+`writeCoordinatorJSON` — the same indented-object shape as every other read in
+this set (§9.2). The read behind it is `Store.ReadRepoIntents`, beside
+`Store.ReadRepoView` and through the same store.
+
+**Why it is a read of its own.** The declared intents are a second document from
+the stored view (§6.13), written by a different writer: `coordinator report` and
+every launch's own declarer put one record per declaration under the
+repository's `intents/` node (P4), and the sweep prunes them. The stored view
+joins runs and pull requests and names no declaration at all, so the read-only
+pane of reconciliation §5.8 draws the two documents side by side: what the fleet
+has declared, and what is in flight. **Nothing in this document is derived**: the
+fields are the record's own, as the node holds them.
+
+**The document is one object per repository, and one list with `--all`.** One
+repository (the default, or `--repo`) prints the repository object alone, and
+`--all` wraps them:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `repos` | array of repository objects | never | never | every repository the selection names, **in that order** (the local config's repositories, sorted), never in the order the reads finished. The key exists only in `--all`'s document: one repository is printed as the object itself, so a reader never has to unwrap a single-element list |
+
+Each repository object is:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `repo` | string | never | never | the repository the caller asked about, `owner/name`, **as the caller spelled it**: the node's key is a slug (a hash of provider and name) and cannot be inverted, so an absent node carries no name to read back. Carried as data and never drawn as a link (design §5.1 rule 2) |
+| `provider` | string | never | never | the git provider kind the caller resolved for this repository — the local config's entry, else the checkout's `fugaro.yaml` — one of `config.Providers`' two words, or `""` when the caller had none to give. It is **the caller's answer and not the node's**, exactly as §6.13's `provider` is, and the key is written even when it is empty |
+| `intents` | array | never | never | every declaration the node holds for this repository, **newest first** by the record's own `at` (ties by `id`, so the order never depends on the order the database listed them in). A repository the store holds none for is **`[]`**, never `null` and never a failure |
+
+**One intent record is the fields `coordinator.Intent` carries, and no others:**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | string | never | never | the node's key, `coordinator.IntentID`'s lower-case hex: a function of the caller and the declaration and of nothing else, so the same declaration reported twice is one row. Carried so a screen can name one record; **it is not a secret and not a capability** |
+| `declared_by` | string | never | never | **who declares it, as a declaration and never an identity.** It is what the declaring side wrote about itself — a run's own launch record (`launch.json`'s `launched_by`) or a person's `coordinator report` (the local config's `user:`, else `git config user.email`) — and **nothing verifies it and nothing may authorise or admit anything by it** (reconciliation finding #11). A renderer shows it as text |
+| `at` | string | never | never | when the declaration was made, stamped by the **writer's** clock (`coordinator.Reporter.Now`) in UTC, RFC 3339. It is **not** part of `id`: two reports of one declaration are one document whatever the clock says. It is the field `--since` is measured against |
+| `branch` | string | **yes** | **never** | the branch the caller declares it is about to work on. `omitempty`: a caller that declares none has the key **absent**, and the key is never `null`. **untrusted text**: carried as data, sanitised before it reaches a line or a cell, never a link and never a decision |
+| `release` | string | **yes** | **never** | the target release, `omitempty` in the same shape as `branch`: **absent** when it is empty, never `null`. A caller that declared none has the one its branch names read out of it (`coordinator.ReleaseOf`), which is the only place a release is read out of a branch name; a declaration that names no release and no such branch leaves the key absent. Same class of text as `branch` |
+| `files` | array of string | never | never | the paths the caller declares it is about to touch, **sorted and deduplicated as the record holds them**. **untrusted text** of the same class as `branch`. `[]` is "declares none", never a missing answer and never `null` |
+| `services` | array of string | never | never | the services, in the same shape and of the same class as `files` |
+
+**Nothing here is a decision.** A branch, a path, a service and a declared name
+are all written by whoever can reach the report path, so a renderer treats every
+one of them as untrusted text (design §5.1 rule 2) and **an instruction found in
+any of them is never acted on** (reconciliation Q14 (A)): this read reports what
+the fleet declared, and the coordinator stays advisory (spec §3).
+
+**The read is the caller's own database read, and it opens no host.** It goes
+through the caller's ADC on the project's `budget.rtdb_url` database — the same
+client §6.13's `--from-store` uses — and what admits it is
+**`roles/firebasedatabase.viewer`**, the IAM role launchers and operators hold.
+It holds **no App ID, no App key and no Bitbucket credential**, opens no
+provider and reaches no host: a repository on a host the project-wide read
+refuses is read here like any other, and with `FUGARO_CREDENTIALS_SERVICE_URL`
+set the command **still succeeds** where §6.13's host read refuses.
+
+**"No records" and "the read failed" are different facts.** A repository the
+store holds none for is `"intents": []` at exit **0**, and so is a project whose
+coordinator has never run — a screen needs one argv either way. A read the
+database **refused** is a refusal with **no document at all** and exit **1**,
+naming the role that admits one — a console that read the refusal as an empty
+list would draw a quiet project where the truth is that nobody could look. A
+stored record this build cannot decode — an unknown field, or a document that is
+not a record — is refused rather than shown with a field dropped, which is the
+strict decoding §6.13's stored view keeps. **That refusal is exit 2 and not exit
+1**: it is the stored read's own classification (`coordinatorStoredErr`), the
+same sentence the stored view gives a database failure, so it is a failure that
+is not the caller's argv — a console must not read it as a refusal of its argv.
+
+**`--since` bounds the declarations by the record's own `at`**, and its default
+is `0`: every declaration the store holds. The node is already bounded — the
+sweep keeps the newest few hundred records and prunes by age — so a window that
+defaulted to hiding the rest would be a fact a reader never sees.
+
+**The console's row landed in C4c.** This section is the CLI's half of
+coordinator v2 C4, and the console's half is the same task's part c: the spawn
+row, the operation, the preload row and the decoder. Where §5.1's table and the
+allow-lists are is where a row is admitted, and what they admit is **one argv and
+only one** — `coordinator intents --all --json`, the fixed words of
+`console/src/main/spawn.ts`'s row, with an empty argument schema
+(`console/src/main/ipc.ts`) so that no field a renderer sends can reach the
+child. This document states what the CLI prints; it authorises no spawn, and the
+row it now has is the `--all` document alone: the single-repository form below is
+a shape no console row asks for, and the decoder refuses it.
+
+**Version skew.** Every field is additive. A CLI older than this command has no
+such read at all, and the console shows the section as unavailable (the
+availability rule, §1) rather than an error loop. A field added later is a field
+an older console does not draw; a console that requires one must refuse the
+document rather than fill it in.
+
+**Flags** (`newCoordinatorIntentsCmd`): `--repo` (the repository, `owner/name`),
+`--all` (every repository the local config lists), `--since` (the window,
+measured against `at`), `--json`, and the cloud flags `--project`, `--config`,
+`--gcp-project` and `--region`. `--all` with `--repo` is refused rather than
+resolved, the way §6.13's selection refuses it.
+
+### 6.17 `fugaro runs summary --json` (**CLI 0.16.0**)
+
+**Command:** `internal/cli/runs_summary.go` `newRunsSummaryCmd` / `runRunsSummary`.
+**Document:** `summaryDoc`, with its `summaryRepo` rows and its `summaryTotals`,
+indented (`writeSummary`), all in `internal/cli/runs_summary.go` — cited by
+symbol, not by line, for §6.11's reason. This is the fourth command in this
+document the console did not spawn when the section was written, and **the
+console spawns it now**: console 0.119.0 put it on the surface (`runs.summary`
+in `console/src/main/ipc.ts`), the console's half of B4, as the read the
+Project, Coordinator and Spend screens' totals are built on. Its argv is design
+§5.1 rule 6's `runs summary --json` row: at most one `--since=<window>` word,
+from the console's own closed set. The section stays here for §6.11's reason —
+the screens read a shape off the code rather than assuming one from a design.
+
+**Why it exists: a totals read that opens no run.** `runs ls` (§5) answers by
+reading the runs bucket — one run object per row, its task and its result — and
+that is what makes it a listing and what makes it slow. This read answers from
+the budget database's day nodes (`spend`, `outcomes`, `runs`: the counters the
+caps are enforced against) and from the spend history's daily documents — the
+same two sources §4's `report` reads — over the database's own window of eight
+days, a few hundred kilobytes, in about a second. **Neither the runs bucket nor
+the compute backend is opened**: no run's task, result or transcript is read,
+which is why the compute figure is the archived one alone (its own row below).
+It is a command of its own rather than a totals block on `runs ls --json`
+because the two count different things from different sources — here a run's
+day is the UTC day the budget recorded its spend, there a row is an object in a
+bucket — and two totals under one document name would leave a reader unable to
+say which basis a figure has.
+
+**A run is counted on the UTC day the budget recorded its spend**: the day the
+rollover files it under and the day its money is counted on. The counts
+therefore agree with the budget and **not necessarily with `runs ls`**, whose
+rows are the runs bucket's. A run whose outcome has not settled yet is counted
+in `runs` and in no state, so `runs` is at least the sum of `states`.
+
+**The document is one object, and the window is a span of UTC days ending
+today.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `v` | int | never | never | the document's version, `1` today (`summaryDocVersion`). A consumer that does not know a version refuses the document rather than reading it as the one it does |
+| `project` | string | never | never | the selected project's name: the installation whose budget database and spend history were read |
+| `since` | string | never | never | the window's first UTC day, `YYYY-MM-DD` — a date, never a timestamp and never a clock read at render time. `--since 7d` is today and the six days before it, so this is six days before `until` |
+| `until` | string | never | never | the window's last UTC day, which is today |
+| `repositories` | array of repository rows | never | never | one row per repository either source named in the window, **sorted by `slug`**; `[]` when nothing ran in it. A repository the sources do not mention is not a row: nothing lists the runs bucket to find one |
+| `totals` | object | never | never | the same figures as a repository row, without the two names — the figures table below |
+| `days_unknown` | array of string | never | never | the window's UTC days, ascending, `YYYY-MM-DD`, that **neither source answered for**: their runs and their spend are unknown and are counted in no figure here, so a screen shows the window as partly unknown rather than as a small one. `[]` when both sources answered every day |
+| `notes` | array of string | never | never | what the figures count and what the read could not cover, one line each: the two sources, the day a run is counted on, a source that could not answer with its reason, and how much of the window is unknown. A renderer shows them as text, as it shows any other reason string |
+
+**A repository row carries the figures and the two names the sources hold:**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `slug` | string | never | never | the storage key both sources file the repository under — a hash of provider and name, so it is not a name to draw. It is the row's own key and the sort order |
+| `repo` | string | never | never | the repository's `owner/name`, as the day records carry it (the name `fugaro budget set --repo` writes). It falls back to the slug for a repository nothing recorded a display name for, so a renderer treats it as text and never as a link without checking it |
+
+**The figures are the same six keys on a repository row and on `totals`:**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `runs` | int | never | never | how many runs the window holds, each counted once on its own day. At least the sum of `states` |
+| `states` | object | never | never | the counts by state. **All six of `succeeded`, `failed`, `halted`, `cancelled`, `infra_error` and `other` are always present**, zero included, so a consumer reads a count without a nil check; a run whose outcome names a status outside the six is counted in `other` rather than dropped or given a key of its own |
+| `spent_micros` | int | never | never | the model money the caps count, in micro-dollars — the budget database's own figure, so nothing is rounded on the way out |
+| `notional_micros` | int | never | never | the part of the model figure a subscription paid, in micro-dollars: it counts toward the plan's limits and is nobody's bill. **It is separate from `spent_micros`, and the two are never summed** |
+| `compute_micros` | int or **null** | never | **yes** | what the runs whose compute was priced came to, in micro-dollars. **null when the row has runs and no run's compute is known** — "not estimated" is not "free", and a renderer draws it as `n/a` — and `0` when the row has no run at all, which is a fact. This read opens no bucket, so a live day's compute is never estimated here |
+| `compute_runs` | int | never | never | how many runs `compute_micros` covers: at most `runs`. A figure covering fewer runs than the window holds is a **lower bound** a consumer can see, and the reason a row's compute is not read as the window's whole |
+
+**A day nothing answered for is named, never counted as zero.** The budget
+database holds the days it has not pruned — today and the eight before it
+(`budget.PruneAfter`) — and the rollover archives each of them as one daily
+document in the spend history. So a day inside the database's window with no
+node is a day nothing ran on, **which is known**, and it is not in
+`days_unknown`; a day older than that window is the history's to answer, and a
+day the history holds no document for is a day nothing ran on too, as long as
+the history answered at all. Only a day **neither** source could answer for is
+listed there, and a window whose days are all unknown is refused rather than
+printed: a document of zeros would read as "nothing ran", which is the opposite
+of what is known.
+
+**"Nothing ran" and "the read failed" are different facts.** Three states a
+project may be in are not failures — no Firebase budget backend, no Firestore
+database, no history mark — and each is reported as itself: the database's own
+days are counted, the older days are named in `days_unknown`, and a `notes`
+line says which of the three it was, because a screen needs a document either
+way. A read a source **refused** or lost is a failure only when the other could
+not answer the window either: then there is **no document at all**, exit **1**
+for a refusal (naming the role that admits the read) and exit **2** for an
+outage — a console that read either as an empty summary would draw a quiet
+project where the truth is that nobody could look. When one source did answer,
+the days the other could not answer for are in `days_unknown` and the note
+names the reason, so the figures a screen gets are the ones that are known and
+the gap is visible rather than filled with zeros.
+
+**The window is always bounded.** `--since` takes the durations `runs ls` and
+`runs stats` take (`7d`, `36h`, `90m`), and a span with no lower bound — `0` —
+is **refused** (exit 1), because a summary is per UTC day and the whole history
+is not a window: the refusal names `--since 7d`, and `--since 365d` for the
+last year, as the way to ask. A window longer than ten years is refused too,
+since the spend history is not built for one.
+
+**Version skew.** Every field is additive within `v: 1` (D784). A CLI older
+than this command has no such read at all, and the console shows the section as
+unavailable (the availability rule, §1) rather than an error loop. A field
+added later is a field an older console does not draw; a console that requires
+one must refuse the document rather than fill it in.
+
+**The console's row has landed.** This section is the CLI's half of the read,
+and the console's half is in the allow-lists' code rather than here: the spawn
+row (design §5.1 rule 6's), the operation (`runs.summary`) and the decoder
+(`decodeRunsSummary`, `console/src/shared/schema.ts`) were added by console
+0.119.0. Nothing here authorises a spawn on its own — §5.1's table and the
+allow-lists are where a row is admitted — and this document still describes the
+CLI's side of the contract.
+
+**Flags** (`newRunsSummaryCmd`): `--repo` (one repository, `owner/name`),
+`--since` (the window, default `7d`), `--json`, and the cloud flags
+`--project`, `--config`, `--gcp-project` and `--region`.
+
+### 6.18 `fugaro models ls --json` (**CLI 0.16.0**)
+
+**Command:** `internal/cli/models_ls.go` `newModelsLsCmd` / `runModelsLs`.
+**Document:** `modelsLsDoc`, with its `modelsCatalog`, its `modelsRoute`,
+`modelsModel` and `modelsRepo` rows, and the `priceCatalog` a catalog-priced
+row carries — all in `internal/cli/models_ls.go` except `priceCatalog`, which
+is `internal/cli/budget.go`'s and is the same shape `budget prices --json`
+prints on a row (D794). Cited by symbol, not by line, for §6.11's reason. This
+is the fifth command in this document the console did not spawn when its
+section was written, and **the console spawns it now**: console 0.119.0 put it
+on the surface (`models.list` in `console/src/main/ipc.ts`), the main-process
+half of the read-only models panel the owner ruled on 2026-11-02. Its argv is
+design §5.1 rule 6's `models ls --json` row, and it is that row's whole argv:
+the command takes **no argument at all** (`cobra.NoArgs`), so there is nothing
+on it a renderer fills. The section stays here for §6.11's reason — a screen
+reads a shape off the code rather than assuming one from a design.
+
+**Why it exists: what a project can run, read offline.** The command answers
+the project's own configuration, this binary's price table and the price
+catalog, and nothing else: **it reaches no bucket, no database and no host** —
+the sentence is the command's own (`newModelsLsCmd`'s `Long`), and it is the
+reason the panel can be drawn before any credential exists. What it reads is
+the four questions a user asks: which routes a call may go down, which models a
+run can name today and what each costs, which repositories each model may be
+sent to, and what each recorded repository pins. It is not `budget prices --json`
+(§6.4's sibling read, which prints the price table alone) and not `config list
+--json` (§6.8): it is the project's routes and allow-lists joined to the
+prices, which is what makes a route's fee or a repository's refusal visibly
+somebody's configuration rather than a number this binary chose.
+
+**A repository this machine has no checkout for is unknown, never guessed at**
+(D793). The `USAGE` rows are read out of each recorded repository's
+`fugaro.yaml` at the base branch it runs against, from the checkout this
+machine remembers for it; a repository with no remembered checkout, or one
+whose checkout does not hold that ref, carries a `state` that says so and no
+pins. The published policy's `base_branch` is **not** consulted — reading it is
+a cloud read, and this command reaches nothing — so a project whose default
+lives only there reads as `main` here.
+
+**The document is one object.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `version` | int | never | never | the document's version, `1` today (`modelsLsDocVersion`, pinned by `schemas/models-ls.schema.json`). A consumer that does not know a version refuses the document rather than reading it as the one it does |
+| `project` | string | **yes** | never | the selected project's name. `omitempty`, so no project config selected leaves it out — and the `routes` then hold the direct route alone |
+| `catalog` | object | **yes** | never | the built-in provider price catalog's provenance, taken from the first catalog-priced row (`catalogProvenanceOf`): one header for every row it prices. **Absent when no row is catalog-priced** — that is "no catalog-priced model here", not "no catalog" |
+| `routes` | array of route rows | never | never | the direct route first, then the owner's providers in name order. **Never empty**: the direct route is always a row |
+| `models` | array of model rows | never | never | every model a run can name today, in ID order: the price table's rows, the exact IDs a route claims, the `model_prices` keys, the project's `allowed_models` entries and every model a recorded repository pins. A model with no price row is a row here too, with the reason it has none |
+| `repositories` | array of repository rows | never | never | one row per repository the selected project records, in name order, `[]` when it records none. A repository this machine has no checkout for is a row with a `state`, never a missing row |
+
+**The catalog block is the built-in provider price catalog's own provenance:**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `source` | string | never | never | the catalog URL the prices came from. **It is untrusted text**, a URL a generated catalog names |
+| `checked_at` | string | never | never | the date the catalog was last checked, `YYYY-MM-DD` — a date, never a timestamp |
+| `age_days` | int | never | never | how many days ago that was, as the read computed it |
+| `stale` | bool | never | never | `true` when `age_days` is past the catalog's 30-day rule (design D10). Every row priced from this catalog carries the same four facts; this block states them once for all of them (`modelsCatalogOf`) |
+
+**A route row is the project's provider entry, or the direct route.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `name` | string | never | never | the provider entry's name, or the direct route's own (`config.RouteDirect`). It is the key a model row's `route` names, and the row's sort order |
+| `kind` | string | **yes** | never | the provider entry's `kind`; `anthropic` on the direct route |
+| `base_url` | string | **yes** | never | the entry's own base URL; the Anthropic API's own on the direct route. **It is untrusted text**, a URL somebody's config names: a screen draws it as text and never as a link |
+| `host` | string | **yes** | never | the host of `base_url` (`hostOf`), or the URL itself when it parses to no host, so a base URL that names none is shown as written rather than blanked. It is what a reader recognises the route by |
+| `models` | array of string | never | never | the exact model IDs the route claims, in the entry's order; the direct route's are the embedded table's keys, sorted. A claimed ID may be a prefix pattern (`claude-*`), which is the entry's own spelling and is drawn as text |
+| `route_fee_pct` | number | **yes** | never | what is added to every charge on the route, in percent (`float64`, `omitempty`). **Absent when the route charges none**, and a consumer reads that as `0`: a route that adds nothing charges nothing, which is a fact rather than an unknown — unlike a model's price below, where the same absence is an unknown. **A `null` is not this key's shape**: absence is the CLI's only spelling of "no fee", so a consumer refuses an explicit `null` rather than folding it into the same `0`, which would hide a shape change behind the one default this document has |
+| `allow_data_to` | array of string | never | never | the repositories whose code may be sent here, as written, or `["*"]` for a route open to every repository. `[]` when the route names none and is not open |
+| `open_to_every_repo` | bool | never | never | the entry's own switch. On the direct route it is `true`: no `allow_data_to` governs a call to Anthropic, whose credential the owner stores for the project rather than per repository |
+| `note` | string | **yes** | never | what the entry's own keys do not say: `require_zdr: ...` on a ZDR entry, or `routing.claude.via: ...` on the direct route when the project routes a Claude ID elsewhere. It is untrusted text |
+
+**A model row is one model a run can name.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | string | never | never | the model ID as a run names it (a `fugaro.yaml`'s pin, a `model_prices` key, a route's claim). It is the row's own key and the sort order |
+| `route` | string | never | never | the name of the route a run would send it down, or `""` when **no route serves it** — the empty string is a fact here, and a screen draws it as "no route" rather than as a missing field |
+| `source` | string | never | never | where the price comes from, one of `embedded` (this binary's Claude table), `catalog` (the built-in provider price catalog), `local` (the owner's `model_prices`) or `none` (**the model has no price row at all**). A consumer reads this before it reads a price |
+| `input_per_m` | number | **yes** | never | the input price per million tokens (`float64`), or the row's own `priceCatalog.tier_input_max_per_m` when a stale catalog is charged at the top of its tier. **Absent when the price is zero or unknown**: `omitempty`, and `source` is what tells the two apart — a screen that read an absent price as `0` would draw a model nothing prices as a free one |
+| `output_per_m` | number | **yes** | never | the output price per million tokens, under the same rule as `input_per_m` |
+| `catalog` | object | **yes** | never | a catalog-priced row's own provenance: the `priceCatalog` below. Absent on every other row |
+| `allowed_to` | array of string | never | never | the repositories this model may be used by, as the rules compute them, `["*"]` for every repository and **`[]` when none may**: a model no route serves, or one the project's `budget.allowed_models` leaves out. `[]` is a refusal to use, never a missing list |
+| `refused` | string | **yes** | never | why the model has no price, when it has none (`table.Refusal`, or the fallback sentence naming `model_prices`). It is the string a launch's own refusal is built on, and a screen draws it as text |
+| `note` | string | **yes** | never | the row's spread or its price's own qualification (`entry.CatalogRange()`). It is untrusted text |
+
+**A catalog-priced row's provenance is `budget prices --json`'s own nine
+keys** — the same `priceCatalog` shape, so a console that reads one read's
+provenance reads both:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `tier` | string | never | never | `zdr` or `all`: the tier the price was taken from |
+| `bound` | string | never | never | the end of that tier's range charged, `min` (the cheapest) or `max` (the dearest — whether `price_policy` asked for it or the catalog is stale) |
+| `endpoints` | int | never | never | how many endpoints the model is served by. The published schema bounds this at `1` and the catalog loader refuses a zero, so a zero should not arrive; a consumer reads it with a floor of zero all the same, because the figure is drawn as written and refusing it would take the whole read down over a number nothing is computed from |
+| `zdr_endpoints` | int | never | never | how many of them are ZDR-eligible (the `zdr` tier's own count) |
+| `source` | string | never | never | the catalog URL the price came from |
+| `checked_at` | string | never | never | the date the catalog was last checked, `YYYY-MM-DD` |
+| `stale` | bool | never | never | `true` when that date is older than the catalog's 30-day rule (design D10); a stale catalog is charged at the dearest end of the tier's range |
+| `tier_input_max_per_m` | number | never | never | the dearest input price per million tokens the tier prices: the top of the range `bound` was taken from, and so the most a call served from the dearest endpoint can be billed (design D6, P11) |
+| `tier_output_max_per_m` | number | never | never | the same for output |
+
+**A repository row is one recorded repository's pins.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `name` | string | never | never | the repository's `owner/name` as the project records it |
+| `state` | string | never | never | how the read went: `ok`, `unknown (no checkout on this machine)` when this machine remembers none, or the parser's or the policy's own reason when the checkout's `fugaro.yaml` could not be read at the base branch. **The pins are absent whenever it is not `ok`** — never filled from a guess |
+| `coder` | string | **yes** | never | `agent.models.coder`'s model, resolved (`Agent.ModelFor`) |
+| `reviewer` | string | **yes** | never | the senior review's model, resolved |
+| `background` | string | **yes** | never | the file's own `agent.models.background` |
+| `background_effective` | string | **yes** | never | the model Claude Code's background requests actually reach (`config.EffectiveBackground`). **Present only when it differs from `background`**, so a consumer draws `background_effective` when it has one and `background` otherwise |
+| `problems` | array of string | **yes** | never | what a launch would refuse this repository on, one line each (`config.CheckProviderPolicy`, the same check a run makes): a pin no route serves, a model the project's `allowed_models` leaves out. `omitempty`, so a repository with nothing wrong carries no key at all |
+
+**Version skew.** Every field is additive within `version: 1` (D784), and the
+document is under `schemas/models-ls.schema.json` with `additionalProperties`
+true at every level. A CLI older than this command has no such read at all, and
+the console shows the panel as unavailable (the availability rule, §1) rather
+than an error loop. A field added later is a field an older console does not
+draw; a console that requires one must refuse the document rather than fill it
+in. **A console must not read an absent `input_per_m` or `output_per_m` as
+zero**: that is the one skew in this document that draws a wrong figure instead
+of a missing one.
+
+**Nothing here is a spend.** Every figure in this document is a **price** — what
+a call would cost — and no key is money already spent. The document names no
+bucket, no budget database and no run, which is why no key here is a figure the
+caps are enforced against, and why a console shows it as somewhere to go rather
+than as money that moved.
+
+**Never on this surface: the writes.** The `models` command group's `add`, `rm`
+and `use` subcommands change the project's or the machine's own configuration,
+and `search` takes a positional `<text>` no console read needs. The console's
+allow-lists refuse all four by name — the three writes as commands and all four
+as words (`NEVER_REACHABLE`, `console/src/main/ipc.ts`) — so this section's
+document is the group's whole surface on the dashboard.
+
+**The console's row has landed.** This section is the CLI's half of the read,
+and the console's half is in the allow-lists' code rather than here: the spawn
+row (design §5.1 rule 6's `models ls --json`), the operation (`models.list`)
+and the decoder (`decodeModelsList`, `console/src/shared/schema.ts`) were added
+by console 0.119.0, with the CLI floor `MODELS_LIST_CLI_FLOOR` (`0.16.0`) in
+`console/src/shared/version.ts` — this read landed after v0.15.0, so a console
+that spawns it before that version gets no such command. Nothing here
+authorises a spawn on its own — §5.1's table and the allow-lists are where a
+row is admitted — and this document still describes the CLI's side of the
+contract.
+
+**Flags** (`newModelsLsCmd`): `--json`, and the cloud flags `--project`,
+`--config`, `--gcp-project` and `--region`. **It takes no argument of its own**
+(`cobra.NoArgs`): the console's argv is `models ls --json` plus the project
+flags and nothing else.
+
+### 6.19 `fugaro settings --json` (**CLI 0.16.0**)
+
+**Command:** `internal/cli/settings.go` `newSettingsCmd` / `runSettings`, the
+read whose `--json` document this section describes; `internal/cli/settings_render.go`
+`writeSettingsJSON` prints it, and `internal/cli/settings_read.go` builds the
+rows. Cited by symbol, not by line, for §6.11's reason. **The console spawns
+the read since the settings-edit plan's C1** (operation `settings.read`,
+`console/src/main/ipc.ts`, design §5.1 rule 6's `settings --json --project <name>
+[--config <path>]` row), and it is that row's whole argv. Unlike §6.17 and
+§6.18 above, this row carries **no console-side CLI floor**: C1 adds none, so a
+CLI older than 0.16.0 answers the read with its own refusal (a 0.15.x `fugaro
+settings` has no `--project`), which the section draws as the read's own reason.
+
+**Why it exists: every setting, what decides it, and what a write would have to
+respect.** The command answers one row per registry key: the value a run gets,
+the layer that decided it, the built-in default and its constant, and the state
+of the read. It writes nothing — no file, no cache, no cloud object — so it
+runs anywhere, a coding agent's session included (D850), and it is the read the
+**settings-edit feature** is built on: the three writability members below are
+what lets a console draw an edit without keeping a copy of the generic path's
+own key allowlist, which is the copy that drifts the day a key is added to the
+registry (D1102).
+
+**The document is one object.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `version` | int | never | never | the document's version, `1` today (`settingsDocVersion`, pinned by `schemas/settings.schema.json`). Members are only ever added within a version: a renamed or re-meant member is a new name and the old one stays, and removing or retyping one bumps this number (D848) |
+| `project` | string | never | never | the project the read was aimed at — the selected project's name, or the empty string when the read resolved none |
+| `generated_at` | string | never | never | when the read ran, `RFC3339` |
+| `sources` | array of layer rows | never | never | **the layers this read touched**, one row each. A layer that was not read is not listed, so a consumer never sees a source that answered nothing |
+| `settings` | array of row rows | never | never | one row per key, in the registry's own order |
+
+**A source row is one layer the read touched.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `layer` | string | never | never | the layer's own name (`settings.Layers`, plus the levels below) |
+| `read_at` | string | **yes** | never | when that layer was read, `RFC3339` |
+| `duration_ms` | int | never | never | how long its read took |
+| `status` | string | never | never | what came of it |
+| `note` | string | **yes** | never | why, when the status needs one |
+
+**A settings row is one key.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `key` | string | never | never | the registry key, dotted (`agent.review_rounds`). It is the row's identity and the sort order, and it is the name every other member describes |
+| `scope` | string | never | never | which scope the row answers for: the project's own keys, or a repository's under `--repo`/`--all-repos`, where the same key is a row per scope |
+| `value` | string | **yes** | never | the value a run gets. **Absent on a `sensitive: true` row and on no other row**: an absent member is the one spelling a consumer cannot mistake for the value, and the row's own text (`set`, `unset`) is what the human table prints in its place |
+| `wins` | string | never | never | the layer that decided the row, in the read's own vocabulary: `default`, `project`, `profile`, `repo`, `flag`, `local`, `shared`, `policy`, `caps` or `env`, plus the two levels `job` and `branch` that `WINS` may name and no `--layer` selects. `default` means **no layer decides it** and the row prints its default |
+| `default` | object | never | never | the built-in default: the value and the constant that holds it, or the sentence saying what unset means. **Exactly one of the two is set** |
+| `state` | string | never | never | the read's own words for the row: a stale layer's age (`stale 3h`), or `unread: <what could not be read>`. The console's argv deliberately omits `--offline`, so an unreachable layer says so and the row is drawn as unread rather than as a value |
+| `sensitive` | bool | **yes** | never | `omitempty`, so it appears only on a sensitive row. **The console drops such a row whole** — no key, no value, no control (D1111, the owner's ruling of 2026-11-01) — which is why the `value` member above is absent for one |
+| `writable` | bool | never | never | whether the **generic path** may write this key (`settings set KEY --layer <L> --yes -- <VALUE>`). Written on every row — a consumer branches on the value, never on the member's presence |
+| `owner` | string | never | never | the command family that writes the key when the generic path may not (`settingsFamilyCommands`, `internal/cli/settings_set.go`: `fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`, `fugaro project`), or `""` when there is none. `writable` and `owner` are answers about the same question, and a row with neither is a row no command writes |
+| `target_layer` | string | never | never | the layer an edit would write (`project` or `local`, the two the generic path writes), or `""` when the generic path would not write the key at all. **Empty is a refusal, not a default**: a console offers no pencil for such a row |
+| `levels` | array of level rows | **yes** | never | one row per layer that sets the key, for `--why`. Absent when the read did not compute them |
+
+**The default block is the built-in default, and exactly one of its two
+spellings is set:**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `value` | string | **yes** | never | the value the loaders leave in place |
+| `source` | string | **yes** | never | the qualified Go constant holding that value |
+| `unset` | string | **yes** | never | the sentence saying what **unset means**, where the answer is a decision rather than a value. It is text, and a screen draws it as a sentence |
+
+**A level row is one layer that sets the key** (`--why`):
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `layer` | string | never | never | the layer's own name |
+| `value` | string | never | never | what that layer gives the key |
+| `outcome` | string | never | never | that layer's part in the result (`wins`, and the tightening or union rules of the keys whose layers combine) |
+
+**The three writability members are the whole point of the console's half**
+(D1102), and they are the reason no list of the generic path's keys is kept in
+`console/`: `writable` says whether the generic path may write the key at all,
+`target_layer` says which layer it would write and is **empty** for a key it
+would not, and `owner` names the family that does write the key when the
+generic path may not — in S5's own words, so the sentence the screen draws
+("`written by <owner>, not by the generic path`") is the CLI's refusal
+sentence and not the console's invention. A screen reads the three and draws a
+control from them; it never decides for itself which keys are editable.
+
+**A `sensitive` row's value is never in this document.** `settingsJSON` writes
+no `value` member for one at all, and the human table prints `set`/`unset`
+(`sensitiveText`) in place of the value — the set/unset fact and nothing a
+consumer could mistake for the value. The console's own rule is one step
+further: the row is **dropped whole**, so not even the key is drawn.
+
+**The write is an operation of the console, and it is the console's second
+write** (the settings-edit plan's C3, design §5.1 rule 12, SECURITY-SENSITIVE
+because a new write always is). `settings.edit` drives the pair on the argv
+§5.1's write row spells and nothing else of the group: the dry run's is
+`settings set|unset KEY --layer <L> --dry-run --json --project <name> [--config
+<path>] [-- <VALUE>]`, and the confirmed write is the same line with `--yes` in
+place of `--dry-run --json` — the flag is on **both** phases, because the
+console's child has no terminal to answer the CLI's ordinary y/N with, and what
+the dry run's classification decides is the console's own window's shape and not
+the argv (§6.20). **Neither `--layer` nor a phase word is a renderer's**: the
+layer is this read's own `target_layer`, held in the console's main process, and
+the two phase spellings are that process's own — so no payload of a renderer's
+can name a layer the CLI did not offer, which is the whole of D1105.
+
+**The group's other words stay off this surface.** `settings get` reads a single
+key this screen does not need (the row set is the whole document); the group's
+positional keys and globs, its `--repo`, `--all-repos`, `--layer`, `--grep`,
+`--changed`, `--why` and `--offline` flags are not words of either row, because
+they narrow the table by a rule no screen control sets; and `--add`/`--remove`
+is a form no control can choose, since this document carries no member saying a
+key is list-shaped. **A refusal is not a document**: the CLI exits non-zero with
+its own sentence and prints none of these, so a consumer branches on the exit
+and draws that sentence verbatim — the console does, and **no write is ever
+retried silently** (D1112): the write's own compare-and-swap refuses an edit
+built on bytes of the target file that moved (it does not re-measure the dry run's classification: see the limits in desktop-console.md rule 12), and its `Read again` control re-runs the read rather
+than repeating the write.
+
+**Flags** (`newSettingsCmd`): `--json`, the aiming pair `--project` and
+`--config` (`settingsAimFlags`), and the read's own `--repo`, `--all-repos`,
+`--layer`, `--grep`, `--changed`, `--why` and `--offline`. **It does not carry
+the other two cloud flags** — `--gcp-project` and `--region` are `addCloudFlags`'
+and this command does not call it — so it is the one row of §8's inventory
+whose pair is the command's own flag group rather than that helper's, and the
+console's argv is unaffected either way: neither word was ever on it.
+**The console's argv is `settings --json` plus the two project flags and
+nothing else** (design §5.1 rule 6): the command takes arbitrary positional
+arguments, and the row's own `args` is empty, so no renderer names a key, a
+scope or a layer.
+
+### 6.20 `fugaro settings set|unset … --dry-run --json` — the write's dry run
+
+**Command:** `internal/cli/settings.go`'s `newSettingsCmd` reaching
+`internal/cli/settings_set.go`'s write path; `settingsDryRun.document` builds
+the document and `writeSettingsWriteDoc` prints it. Cited by symbol, not by
+line, for §6.11's reason. **The console spawns it since the settings-edit plan's
+C3** (operation `settings.edit`, design §5.1 rule 12), and it is **not** the
+console's read of the settings: §6.19's document is the table the pencil is
+drawn from, and this one is about **one edit of one key**.
+
+**Why it exists: one edit, classified by the CLI's own code, before a window is
+shown or a byte is written.** The dry run writes nothing — no file, not even the
+backup a real write takes — so a console can show the operator what an edit
+would do and let the CLI decide whether the edit widens a limit, and it does the
+deciding so the console never re-implements it (D1106): the members below are
+what the confirmation window and the write are built over, and the window's key,
+old value and shape come from this document and from nowhere else.
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `version` | int | never | never | the document's version, `1` today (`settingsWriteDocVersion`, pinned by `schemas/settings-write.schema.json`). Members are only ever added within a version (D848) |
+| `key` | string | never | never | the key the edit is about, printed through `safetext.Field`. A consumer reads it to check that the document is about **the** edit it asked for: the window draws the key from here and writes the layer from the read's own row, so a document answering about another key is refused before any window exists |
+| `layer` | string | never | never | the layer the edit would write, `local`, `project` or `repo` (`settingsWriteLayers`). A console cannot name it: it is §6.19's `target_layer`, and this member is the check that the child was aimed where the read said |
+| `path` | string | never | never | the file the edit would write, printed through `safetext.Field`. It is a path of the operator's machine: a consumer may show it and may never spawn anything built from it |
+| `changed` | bool | never | never | the write path's own comparison of the two byte strings — the same comparison that decides whether a write would happen at all — so the document cannot claim a change the write path did not see |
+| `widening` | bool | never | never | the write path's own classification, from `settingsCeilingKey`, `settingsLoosens`, `settingsListSubset` and `settingsTypedWrite` (D1106). **A consumer never re-derives it**: a form the CLI cannot compare counts as a widening, and a re-implementation would answer *narrowing* where the CLI answers *widening* — the one direction a console must not get wrong |
+| `why` | string | never | never | the CLI's own sentence for a widening (`settingsTypedWhy`), empty for a narrowing: the reason the CLI will demand a typed project name, shown beside the fields it explains |
+| `old` | string | never | never | the value the TARGET layer's own file holds for the key before the edit, which is not the value a run gets (the winning layer decides that). Empty when that layer's file holds none |
+| `new` | string | never | never | the value the edit would write. Empty for an unset, which is the fact that makes the pair meaningful: `changed` is the CLI's comparison and not a consumer's reading of these two strings |
+| `refusal` | string | never | never | **empty in every document this CLI prints.** A refusal is the CLI's own sentence with a non-zero exit and **no document at all**, which is what a consumer branches on (D1106, D1112); the member is written out because the shape is the contract, and a consumer reads it by name |
+
+**Every string is printed through `safetext.Field`**, for §6.19's reason: a key,
+a path and a value are as much the file's and the command line's as they are the
+program's, and a console draws them as text rather than as anything a renderer
+built.
+
+**The table shape carries the same facts.** Without `--json` the command prints
+one `FIELD`/`VALUE` row per member, in this document's own order, so the two
+shapes cannot drift into two contracts.
+
+**The two phase words are exclusive, and that is the command's own rule.**
+`--json` without `--dry-run` is refused ("`--json` is the dry run's document"),
+and `--dry-run` with `--yes` is refused too ("a dry run says what the edit would
+do and writes nothing, `--yes` answers a write"): a console passes exactly one
+of the two spellings, and the CLI is what makes that a property rather than a
+convention. **The layer is never guessed by the console** either: the CLI itself falls back to the narrowest layer when `--layer` is
+omitted, but the console always names one (`argvFor` refuses a settings edit without it), the layer must be
+one `settingsWriteLayers` names, and a layer outside them is a refusal rather
+than a document. The command is the same pair §6.19's paragraph describes, so the
+`--`-terminated value, the two phase words and the layer's provenance are
+written down there and not twice here.
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
@@ -1903,7 +2593,7 @@ does not move, and its row carries the closure in place, as gap 5's does.
 |---|---|---|---|
 | 1 | The degraded path prints a **plain sentence to stdout** on the same stream as the documents | `runWatchDegraded`, `internal/cli/watch.go` (`"%s\nrun records unavailable (retrying): %s\n"`) | Skip any line that is not a JSON object; show it as a header warning (§2, fact (iii)) |
 | 2 | `version` has **no `--json`** and no flags at all | `newVersionCmd`, `internal/cli/root.go` — `cobra.NoArgs`, no `Flags()` | Parse the human line, pinned by a test |
-| 3 | **`project show --json` does not exist on this tree** — there is no `fugaro project` command at all | no `newProjectCmd` in `internal/cli`; `docs/plans/2026-10-14-project-centric.md` phase 1 (PR #390) ships `project show`, `project policy publish` and `project repos add` — and only that one verb of the `repos` group comes with phase 1: the plan's phase 4 (Enrollment and migration, Task 4.1) is where `project repos ls`, `rm` and `sync` ship — **and no `project ls`** | The Projects screen renders the caps, kill state and repositories it can see, and says the policy object is not readable yet |
+| 3 | **`project show --json` does not exist on this tree** — there is no `fugaro project` command at all | no `newProjectCmd` in `internal/cli`; `docs/plans/2026-10-14-project-centric.md` phase 1 (PR #390) ships `project show`, `project policy publish` and `project repos add` — and only that one verb of the `repos` group comes with phase 1: the plan's phase 4 (Enrollment and migration, Task 4.1) is where `project repos ls`, `rm` and `sync` ship — **and no `project ls`** | The Project screen renders the caps, kill state and repositories it can see, and says the policy object is not readable yet |
 | 4 | **No schema version in the `watch --json` document** | `JSONDoc` (`internal/watch/json.go`) — no version field | Infer from the CLI version and from which shape arrived (the `degraded` key) |
 | 5 | **Nothing enumerates installations** | `fugaro config` is `example\|show\|layer\|init\|publish` (`internal/cli/configcmd.go`); no `fugaro project` command exists; that phase's commands describe the *selected* project's policy and repositories, not the machine's installations | The operator adds each installation by hand (D13): binary picker, typed project name, optional checkout directory. **Closed 2026-10-18: `fugaro config list --json` exists (§6.8), so the typed name becomes a pick from the list of names the CLI prints — the field stays for an installation the operator adds before the CLI is updated** |
 | 6 | **No PR URL on a run that has not finished** | `JSONRun` carries `repo` and no `pr_url`/`pr` — `pr_url` exists only on `JSONFinished`, and `runview.Row` spells the pair `pr_url` + `pr` — and it does carry `pr_number` (§2), for a run that has recorded a draft PR | A live row shows no link; the detail screen takes it from `diagnose RUN --json`'s `row`. **Half closed 2026-10-27: `pr_number` landed** (GV2.5, §2) — the run's own `record_pr`, read from the registry entry the live row is already built from, so the graph screen shows a running node's number from the feed alone. The URL half is still open, so the row stays in this list and the link is still rebuilt from `diagnose` |
@@ -1942,13 +2632,17 @@ and **not** off this document or the design:
 | `logs` | yes (`newLogsCmd`) |
 | `secrets ls` | yes (`secretsOptions.addFlags`) |
 | `accounts ls` | yes (`newAccountsLsCmd`) |
+| `settings` | yes (`newSettingsCmd`, §6.19) — the settings read (the settings-edit plan's C1): the pair is **`settingsAimFlags`' own** rather than `addCloudFlags`', so it carries `--project` and `--config` and **not** `--gcp-project` or `--region`. It is the console's third read of the Project tab, and its argv is the command, `--json` and those two words and nothing else |
 | `doctor` | yes (`newDoctorCmd`) |
 | **`version`** | **no — it takes no flags at all** (`internal/cli/root.go`; the root's `--version`/`-v` is the root's own, not this subcommand's — §6.7) |
 | **`config list`** | **no — it reads the operator's local project configs, not a cloud** (`internal/cli/config_list.go`, §6.8) |
 | **`plan graph`** | **no — it reads the graph artifact in the checkout, not a cloud** (`internal/cli/plan.go`, §6.9) |
 | `plan status` | yes (`newPlanStatusCmd`, §6.12) — a task's state is a *run's* state, so it reads the runs bucket too |
 | `coordinator status` | yes (`newCoordinatorStatusCmd`, §6.13) — with `--from-store` it is the one read here that asks nothing of the host (the stored view, through the caller's own credentials), and it is a cloud read all the same: the view lives in the project's database, so it carries `--project` and `--config` like the rest |
-| **`run`** | yes (`newRunCmd`, §6.14) — **the one row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
+| `coordinator show` | yes (`newCoordinatorShowCmd`, §6.15) — the pull request read (coordinator v2 C3, D816): `--repo` and `--pr` are its own two arguments, both required, and it carries `--project` and `--config` like the rest because it resolves the repository's provider the way the project view does. **The second row here whose child mints a credential of the host's** — the first is `run`'s below, whose child is a run and mints the write-capable token it pushes and opens the pull request with; this row's is the coordinator's own read-only installation token, revoked when the command is done — so its argv is the whole of what a renderer may influence about it |
+| `coordinator intents` | yes (`newCoordinatorIntentsCmd`, §6.16) — the declarations read (coordinator v2 C4, D827): it has **no argument of its own** (`--all` and `--json` are the console row's fixed words), and it carries `--project` and `--config` like the rest because it resolves the local config the way the project view does. **The one row here whose child asks nothing of the host at all**: the declarations are the caller's own database node, read through the same credentials §6.13's stored read uses, so there is no App key, no installation token and no provider anywhere in it |
+| `settings set\|unset` | yes (`newSettingsCmd`, §6.20) — **the second row here that writes** (the settings-edit plan's C3, design §5.1 rule 12): the dry run and the confirmed write are the same command with the same aiming pair, and the layer written is §6.19's `target_layer` rather than a flag a renderer chose |
+| **`run`** | yes (`newRunCmd`, §6.14) — **the other row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
 
 So the console passes `--project <name>` (and `--config <path>` when the
 installation is not the ambient one) on **every spawn except the handshake**,
@@ -1961,12 +2655,19 @@ table against the live constructors.
 
 ## 9. What the console may do with all this
 
-1. **Every document in the console's set is read-only** — with **one exception,
-   the launch** (§6.14, design §5.1 rule 11), which is the console's single
-   write and whose confirmation window is the main process's own. The allow-list
-   is by exact argv (design §5.1 rule 6), and the write is on it: the
-   twenty-fourth operation is `run.launch` (V2.5.1a, 2026-10-28/29), and no other
-   argv that writes is reachable from a renderer. Two further commands this file
+1. **Every document in the console's set is read-only** — with **two
+   exceptions, and both are writes the console's own confirmation windows
+   answer**: the launch (§6.14, design §5.1 rule 11), which was the console's
+   **first write**, and the settings edit (§6.20, design §5.1 rule 12, the
+   settings-edit plan's C3), which is its **second write**. The allow-list is by
+   exact argv (design §5.1 rule 6), and both are on it: `run.launch` and
+   `settings.edit` are the two operations of the surface that write (V2.5.1a,
+   2026-10-28/29, took the surface to twenty-four; K2a's
+   `link.openPullRequest` took it to twenty-five and writes nothing, and C4c's
+   `coordinator.intents` took it to twenty-six and writes nothing — **the
+   counts in this parenthesis are the history up to that commit, and rule 5's
+   thirty-one is today's**), and no other argv that writes is reachable
+   from a renderer. Two further commands this file
    describes are writes, and **neither is in the console's set**: `fugaro cancel
    RUN --json` (§6.3), which is on the design's "never" table and which no v1
    console spawns, and `fugaro accounts clear NAME` (§6.5a, credentials-service

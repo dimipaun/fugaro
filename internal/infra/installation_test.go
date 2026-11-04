@@ -196,7 +196,7 @@ func TestInstallationCredentialsServiceVars(t *testing.T) {
 	// The service on: the digest-pinned image the stage verified, and the one
 	// bundle container of Q6.
 	image := "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3@sha256:" + strings.Repeat("ab", 32)
-	svc, err := Credentials(lc, image)
+	svc, err := Credentials(lc, image, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ budget: {mode: observe, per_run_usd: 5, firebase_project: ` + credentialsFP + `,
 func TestCredentialsRefusesWithoutTheFirebaseFacts(t *testing.T) {
 	lc := parseLC(t, m4LocalConfig+m5Additions)
 	image := "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3@sha256:" + strings.Repeat("ab", 32)
-	if _, err := Credentials(lc, image); err == nil || !strings.Contains(err.Error(), "budget.firebase_project") {
+	if _, err := Credentials(lc, image, nil); err == nil || !strings.Contains(err.Error(), "budget.firebase_project") {
 		t.Errorf("Credentials without a Firebase project and database = %v, want a refusal naming budget.firebase_project and budget.rtdb_url", err)
 	}
 	// A database URL that is not one: refused by name here too. The local
@@ -334,7 +334,7 @@ func TestCredentialsRefusesWithoutTheFirebaseFacts(t *testing.T) {
 	// what a config that reached the stage another way still has to pass.
 	lc = credentialsLC(t)
 	lc.Budget.RTDBURL = "aurora-fp-default-rtdb.firebaseio.com"
-	if _, err := Credentials(lc, image); err == nil || !strings.Contains(err.Error(), "budget.rtdb_url") {
+	if _, err := Credentials(lc, image, nil); err == nil || !strings.Contains(err.Error(), "budget.rtdb_url") {
 		t.Errorf("Credentials with a database URL that is not one = %v, want a refusal naming budget.rtdb_url", err)
 	}
 }
@@ -359,7 +359,7 @@ func TestCredentialsRefusesAnImageThatIsNotADigest(t *testing.T) {
 		reg + "fugaro-base/fugaro-credentials@sha256:" + strings.Repeat("AB", 32): false, // upper case is not a digest
 		"": false,
 	} {
-		svc, err := Credentials(lc, image)
+		svc, err := Credentials(lc, image, nil)
 		switch {
 		case ok && err != nil:
 			t.Errorf("Credentials(%q) = %v, want it admitted", image, err)
@@ -370,6 +370,48 @@ func TestCredentialsRefusesAnImageThatIsNotADigest(t *testing.T) {
 		case !ok && !strings.Contains(err.Error(), "@sha256:"):
 			t.Errorf("the refusal of %q does not say what is missing: %v", image, err)
 		}
+	}
+}
+
+// TestCredentialsVerifierAccountsFollowTheKeepRule is the writer's half of the
+// one rule both writers apply (C3.9g1, localcfg's VerifierAccountsEffective,
+// D1075): the configuration's own list when it states one — an explicit empty
+// one included, which is how the verify route is turned off on purpose — and
+// the published node's, which the caller reads and this writer cannot,
+// otherwise. The last case is what keeps an installation that names no verifier
+// byte for byte what it was: no entry at all, so the module renders its seven
+// names and the process reads an empty list.
+func TestCredentialsVerifierAccountsFollowTheKeepRule(t *testing.T) {
+	image := "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3@sha256:" + strings.Repeat("ab", 32)
+	published := []string{"person-1@example.com"}
+	for _, tc := range []struct {
+		name      string
+		own       []string
+		want      []string
+		wantEntry bool
+	}{
+		{"a config silent about the list keeps the published one", nil, published, true},
+		{"a config that states one publishes it", []string{"person-2@example.com"}, []string{"person-2@example.com"}, true},
+		{"an explicit empty list writes no entry at all", []string{}, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lc := credentialsLC(t)
+			lc.VerifierAccounts = tc.own
+			svc, err := Credentials(lc, image, published)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(svc.VerifierAccounts, tc.want) {
+				t.Errorf("VerifierAccounts = %v, want %v", svc.VerifierAccounts, tc.want)
+			}
+			data, err := json.Marshal(svc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Contains(string(data), "verifier_accounts"); got != tc.wantEntry {
+				t.Errorf("the tfvars carry verifier_accounts = %v, want %v:\n%s", got, tc.wantEntry, data)
+			}
+		})
 	}
 }
 

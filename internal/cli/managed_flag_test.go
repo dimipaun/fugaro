@@ -80,9 +80,10 @@ func managedFlagIsManaged(t *testing.T, r *initRig) bool {
 // TestManagedFlagWritesTheMarker is the write the command exists for: the
 // exact project ID typed at a terminal writes gs://<runs bucket>/fugaro/
 // managed.json, in the version that carries the amount the owner stated —
-// the version the apply-time budget read opens the gate on (Task 4.4). A
-// flag that wrote the bare creation fact would be one that lowers a guard
-// and buys nothing.
+// the version the apply-time budget read opens the gate on (Task 4.4) — and,
+// beside it, the bound on billable image builds the object's own default
+// records (M5, D1013). A flag that wrote the bare creation fact would be one
+// that lowers a guard and buys nothing.
 func TestManagedFlagWritesTheMarker(t *testing.T) {
 	r := managedFlagRig(t)
 	terminal(t, true)
@@ -94,7 +95,7 @@ func TestManagedFlagWritesTheMarker(t *testing.T) {
 	if !ok {
 		t.Fatalf("no %s in gs://%s after the command:\n%s", managed.MarkerObject, initRunsBucket, out)
 	}
-	want := `{"version":2,"gcp_project":"proj-1234","budget":{"amount":50,"currency":"USD"}}`
+	want := `{"version":3,"gcp_project":"proj-1234","budget":{"amount":50,"currency":"USD"},"max_image_builds":1}`
 	if got != want {
 		t.Errorf("gs://%s/%s = %s, want %s", initRunsBucket, managed.MarkerObject, got, want)
 	}
@@ -110,6 +111,47 @@ func TestManagedFlagWritesTheMarker(t *testing.T) {
 	// project-number check, before the command says it is done.
 	if !strings.Contains(out, "read back") {
 		t.Errorf("the command does not say the marker was read back:\n%s", out)
+	}
+}
+
+// TestManagedFlagWritesTheRecordedBound: the flag's marker records the bound
+// on billable image builds as well as the amount, and it records it as the
+// object's own default of one — this command asks the owner for no count, the
+// same way it asks for no count anywhere else (M5, D1013: the bound is not a
+// new question). It is asserted through the managed read's own bound read,
+// over the real fakes, with the project-number check and the label, so what is
+// pinned is a figure the object really records and not one a read supplies.
+func TestManagedFlagWritesTheRecordedBound(t *testing.T) {
+	r := managedFlagRig(t)
+	terminal(t, true)
+	out, _, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := newInitClients(t.Context(), lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := managed.ReadImageBuilds(t.Context(), c.Storage, c.CRM, lc.Name, lc.GCPProject)
+	if err != nil {
+		t.Fatalf("the bound read of the marker the flag wrote: %v\n%s", err, out)
+	}
+	if !a.OK || a.Default || a.Invalid || a.Reason != "" {
+		t.Fatalf("ReadImageBuilds after the flag = %+v, want a recorded bound", a)
+	}
+	if a.Builds != managed.DefaultImageBuilds {
+		t.Errorf("the flag recorded a bound of %d builds, want the object's own default (%d)", a.Builds, managed.DefaultImageBuilds)
+	}
+	// The object carries it, so the read believes a figure that is there
+	// rather than one it would have defaulted to anyway: an OK answer for a
+	// marker that records no bound would be the same answer for the state the
+	// version exists to tell apart.
+	if b, ok := managedFlagAt(t, r.gcs, initRunsBucket); !ok || !strings.Contains(b, `"max_image_builds":1`) {
+		t.Errorf("gs://%s/%s = %s (present %v), want it to record the bound", initRunsBucket, managed.MarkerObject, b, ok)
 	}
 }
 
@@ -168,8 +210,8 @@ func TestManagedFlagWritesTheLabelToo(t *testing.T) {
 		t.Fatalf("the command prints no undo for what it just wrote:\n%s", out)
 	}
 	for _, want := range []string{
-		"delete the object gs://" + initRunsBucket + "/" + managed.MarkerObject,
-		"no command of ours removes the marker in this release",
+		"fugaro managed unflag " + initProject,
+		"gs://" + initRunsBucket + "/" + managed.MarkerObject,
 		"gcloud projects update " + initProject + " --remove-labels=" + managed.ProjectLabelKey,
 		"UNVERIFIED",
 	} {
@@ -668,7 +710,7 @@ func TestManagedFlagReplacesTheCreationFactThatRecordsNoAmount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	want := `{"version":2,"gcp_project":"proj-1234","budget":{"amount":50,"currency":"USD"}}`
+	want := `{"version":3,"gcp_project":"proj-1234","budget":{"amount":50,"currency":"USD"},"max_image_builds":1}`
 	if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); !ok || got != want {
 		t.Errorf("gs://%s/%s = %s (present %v), want %s", initRunsBucket, managed.MarkerObject, got, ok, want)
 	}
@@ -698,7 +740,8 @@ func TestManagedFlagReplacesTheCreationFactThatRecordsNoAmount(t *testing.T) {
 func TestManagedFlagRefusesAProjectThatAlreadyRecordsAnAmount(t *testing.T) {
 	for name, existing := range map[string]string{
 		"a version-2 marker":                 `{"version":2,"gcp_project":"proj-1234","budget":{"amount":50,"currency":"USD"}}`,
-		"a version this build does not know": `{"version":3,"gcp_project":"proj-1234"}`,
+		"a version-3 marker":                 `{"version":3,"gcp_project":"proj-1234","budget":{"amount":50,"currency":"USD"},"max_image_builds":1}`,
+		"a version this build does not know": `{"version":4,"gcp_project":"proj-1234"}`,
 		"a marker about another project":     `{"version":1,"gcp_project":"another-proj"}`,
 		"an object that is not a marker":     "not json at all",
 	} {

@@ -11,7 +11,13 @@
     "run_id": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
     "repo": { "type": "string" },
     "workflow": { "type": "string" },
-    "oauth_account": { "type": "string", "maxLength": 64 },
+    "oauth_account": { "type": "string", "maxLength": 64, "description": "The named Claude OAuth account this run's agent.auth: oauth workflow used last (docs/accounts-add spec §11.2): one scalar for the whole run." },
+    "stage_accounts": {
+      "type": "object",
+      "description": "The Claude OAuth account that served each stage, keyed by stage name (docs/accounts-add spec §11.5, D876). Declared ahead of the runner's stage-start resolution, which is the writer that fills it, so it is written and read by nothing yet: additive, and oauth_account keeps its meaning.",
+      "propertyNames": { "enum": ["bootstrap", "plan", "implement", "review_first", "review", "fix", "render", "finalize", "writeback"] },
+      "additionalProperties": { "type": "string", "maxLength": 64 }
+    },
     "execution": { "type": "string", "description": "The canonical full execution name; empty or absent for local runs." },
     "status": { "enum": ["running", "succeeded", "failed", "infra_error", "cancelled", "halted"] },
     "stage": { "enum": ["bootstrap", "plan", "implement", "review_first", "review", "fix", "render", "finalize", "writeback"], "description": "The step the run is in. plan and render are a mode: artifact run's optional plan stage and its render step (design artifact-runs.md §3)." },
@@ -41,10 +47,12 @@
         "required": ["round", "verdict", "findings"],
         "properties": {
           "round": { "type": "integer", "minimum": 1 },
-          "tier": { "enum": ["first", "senior", "adversarial"], "description": "first: the coder model's first-line review, never decides readiness; senior: the reviewer's; adversarial: level 3's, which reviews after the senior's, so its rejection bounces the run into the cheap loop and this level is not reviewed again (docs/review-levels-ab-jobmax D727). Absent in a run without a first line (senior)." },
+          "tier": { "enum": ["first", "senior", "adversarial", "independent"], "description": "first: the coder model's first-line review, which decides readiness only in a run where neither level 2 nor level 3 runs at all (POC, docs/review-levels-ab-jobmax D723); senior: the reviewer's; adversarial: level 3's, which reviews after the senior's, so its rejection bounces the run into the cheap loop and this level is not reviewed again (docs/review-levels-ab-jobmax D727); independent: the cloud review job's, which ran as its own run against the coding run's pull request (docs/cloud-senior-review O4). independent is display-only: it is not a level of the coding run and nothing about it is decided here — its three-word verdict lives in the artifacts and this entry's verdict is the record's own two words, so a reader comparing tiers must not read one as a level of the other's ladder. Absent in a run without a first line (senior)." },
           "verdict": { "type": "string" },
           "findings": { "type": "integer", "minimum": 0 },
           "head": { "type": "string", "minLength": 1, "description": "The commit this review read. A level approves one head, and the levels' heads can differ within a round: a level reviewed again after a fix has the later one, and a level the bounce skipped keeps the earlier one. Absent when the round recorded none, which is every record written before this field existed." },
+          "model": { "type": "string", "minLength": 1, "description": "The model this round's reviewer ran on: the stage's pinned model (internal/runstore's StageTiming.Model, config.Agent.ModelFor), which is the review level's own when a layer named it one (CLI 0.16.0). It is the pair with `head` that tells a reader which model reviewed which commit, as the record states it: unsigned bytes, a hint for a person and never an input to a decision, which the coordinator takes from the signed review artifact (docs/c39-review-identity). Absent when the round recorded none, which is every record written before this field existed." },
+          "effort": { "type": "string", "minLength": 1, "description": "The reasoning effort this round's reviewer ran at, as the value that reached the stage rather than the one a layer asked for: a level with no effort of its own and a stage on a provider route (which runs with thinking off, G5/D725) both leave it absent, so an absent field is the same statement the stage's own environment makes. Absent in every record written before this field existed." },
           "bounce": { "type": "integer", "minimum": 0, "description": "Which cheap loop this review followed, under review: {bounce: first_line} (docs/recipes.md section 1, internal/runstore's ReviewSummary.Bounce). Absent (0) for a review before any senior rejection and on every senior review, 1 for the first-line loop after the first senior rejection, 2 after the second, and so on. The catalog recipes `standard` and `test-and-fix` set the bounce, so a schema missing this field refuses the record of their own bounced runs." }
         }
       }

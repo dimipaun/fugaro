@@ -398,6 +398,20 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(plan.StateStream{}),
 		reflect.TypeOf(planStatusDoc{}),
 		reflect.TypeOf(planStatusTotals{}),
+		// §6.17, the jobs-free totals read (CLI 0.16.0).
+		reflect.TypeOf(summaryDoc{}),
+		reflect.TypeOf(summaryRepo{}),
+		reflect.TypeOf(summaryTotals{}),
+		// §6.18, the offline models read (CLI 0.16.0): its own document and the
+		// four shapes under it, plus the price catalog a catalog-priced row
+		// carries -- `budget prices --json`'s own row shape, which this
+		// document names here rather than in a section of its own.
+		reflect.TypeOf(modelsLsDoc{}),
+		reflect.TypeOf(modelsCatalog{}),
+		reflect.TypeOf(modelsRoute{}),
+		reflect.TypeOf(modelsModel{}),
+		reflect.TypeOf(modelsRepo{}),
+		reflect.TypeOf(priceCatalog{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command:
 		// ee/coordinator/cli/console_contract_test.go pins them against the
 		// tagged tree, which is the tree that still serves the console.
@@ -525,14 +539,20 @@ var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
 // they cannot import. The same checks run over these sections against the
 // tagged tree, where the code is in the build
 // (ee/coordinator/cli/console_contract_test.go, ee/report/cli/console_contract_test.go).
-var consoleMovedSections = []string{"### 6.13 ", "## 4. `fugaro report --json`"}
+// §6.15 is the coordinator's too — coordinator v2 C3's `coordinator show`, whose
+// document and command are both under ee/ — and it is a heading of its own
+// rather than a part of §6.13 because the two document different reads of
+// different shapes. §6.16 is coordinator v2 C4's `coordinator intents`, under
+// ee/ for the same reason.
+var consoleMovedSections = []string{"### 6.13 ", "### 6.15 ", "### 6.16 ", "## 4. `fugaro report --json`"}
 
 // consoleMovedRows are the document's individual lines that name a flag of a
 // moved command without sitting under a moved heading: §8's inventory carries
-// one row per command the console may spawn, and the coordinator's and the
-// report's rows state their flags there. Like consoleMovedSections, the moved
+// one row per command the console may spawn, and the coordinator's two rows
+// (the project view's `coordinator status` and C3's `coordinator show`) and the
+// report's row state their flags there. Like consoleMovedSections, the moved
 // packages check the same lines against the tagged tree.
-var consoleMovedRows = []string{"| `coordinator status`", "| `report`"}
+var consoleMovedRows = []string{"| `coordinator status`", "| `coordinator show`", "| `coordinator intents`", "| `report`"}
 
 // inMovedSection answers whether heading opens one of consoleMovedSections.
 func inMovedSection(heading string) bool {
@@ -611,6 +631,22 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(plan.StatePlan{}), reflect.TypeOf(plan.StateNode{}),
 		reflect.TypeOf(plan.StateRelease{}), reflect.TypeOf(plan.StateStream{}),
 		reflect.TypeOf(planStatusDoc{}), reflect.TypeOf(planStatusTotals{}),
+		// §6.17, the same three shapes as the test above (CLI 0.16.0).
+		reflect.TypeOf(summaryDoc{}), reflect.TypeOf(summaryRepo{}),
+		reflect.TypeOf(summaryTotals{}),
+		// §6.18, the same six shapes as the test above (CLI 0.16.0).
+		reflect.TypeOf(modelsLsDoc{}), reflect.TypeOf(modelsCatalog{}),
+		reflect.TypeOf(modelsRoute{}), reflect.TypeOf(modelsModel{}),
+		reflect.TypeOf(modelsRepo{}), reflect.TypeOf(priceCatalog{}),
+		// §6.19, the settings document and its four row shapes (CLI 0.16.0,
+		// S5/#1525): the document, a layer the read touched, a settings row,
+		// the built-in default and one `--why` level.
+		reflect.TypeOf(settingsDoc{}), reflect.TypeOf(settingsLayer{}),
+		reflect.TypeOf(settingsJSON{}), reflect.TypeOf(settingsDefault{}),
+		reflect.TypeOf(settingsLevelJS{}),
+		// §6.20, the write's dry run (the settings-edit plan's C3, CLI 0.16.0):
+		// the one shape its field table is read against.
+		reflect.TypeOf(settingsWriteDoc{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -850,7 +886,12 @@ func TestDocsDesktopConsoleContractNamesTheFlagInventory(t *testing.T) {
 		"logs":        newLogsCmd,
 		"secrets ls":  newSecretsLsCmd,
 		"accounts ls": newAccountsLsCmd,
-		"doctor":      newDoctorCmd,
+		// The Project tab's settings read (the settings-edit plan's C1): it is
+		// the one command here whose aiming pair is `settingsAimFlags`' own
+		// rather than `addCloudFlags`', and the two flags are the pair either
+		// way, which is what this inventory is about.
+		"settings": newSettingsCmd,
+		"doctor":   newDoctorCmd,
 	}
 	for name, newCmd := range spawned {
 		for _, flag := range []string{"project", "config"} {
@@ -917,6 +958,32 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// ones, which this command carries and `plan graph` does not — are checked
 	// against this constructor like any other command's.
 	"plan status": newPlanStatusCmd,
+	// §6.17 documents the jobs-free totals read (CLI 0.16.0), and the console
+	// spawns it since 0.119.0, as §5.1 rule 6's `runs summary --json` row. The
+	// document describes its flags, so they are checked against this
+	// constructor like any other command's.
+	"runs summary": newRunsSummaryCmd,
+	// §6.18 documents the offline models read (CLI 0.16.0), and the console
+	// spawns it since 0.119.0, as §5.1 rule 6's `models ls --json` row (the
+	// read-only models panel, the owner's ruling of 2026-11-02). The document
+	// describes its flags, so they are checked against this constructor like
+	// any other command's.
+	"models ls": newModelsLsCmd,
+	// §6.19 documents the settings read (CLI 0.16.0, S5/#1525), and the console
+	// spawns it since the settings-edit plan's C1, as §5.1 rule 6's
+	// `settings --json --project <name> [--config <path>]` row. The document
+	// describes its flags, so they are checked against this constructor like
+	// any other command's.
+	"settings": newSettingsCmd,
+	// §6.20 documents the write's dry run (CLI 0.16.0, the settings-edit plan's
+	// C3), which is `settings set` and `settings unset` and not the read above:
+	// the two phase words, `--add`/`--remove`, `--layer` and `--repo` are those
+	// two commands' own flags, so the section's prose is checked against them
+	// like any other command's. Both constructors are here rather than only the
+	// set command's, because the pair's flags are written as one line in the
+	// document and half of them -- `--dry-run` not least -- belong to both.
+	"settings set":   newSettingsSetCmd,
+	"settings unset": newSettingsUnsetCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
@@ -1190,7 +1257,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the sixteen argvs and nothing else -- the console's one spawn table
+// the twenty-two argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1209,11 +1276,25 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// rows the CLI scopes to the caller, and the one argv here the console
 		// may not widen with --all-users.
 		"runs stats --json",
+		// The jobs-free totals read (console 0.119.0, the `runs.summary`
+		// operation, B4/#1580): the window's runs counted by repository and by
+		// state. Its one argument is a window from the console's own closed set
+		// (`SUMMARY_SINCE_WINDOWS`), so the argv the console emits is
+		// `runs summary --json` with `--since=<window>` on it and nothing else.
+		"runs summary --json",
 		"diagnose RUN --json",
 		"logs RUN --json",
 		"logs RUN --url",
 		"secrets ls --json",
 		"accounts ls --json",
+		// The read-only models panel (console 0.119.0, the `models.list`
+		// operation, the owner's ruling of 2026-11-02): the project's routes,
+		// the models a run can name and each repository's pins, read offline.
+		// It has no argument at all -- the command is cobra's `NoArgs` -- and
+		// it is the one argv here whose *group* the console may otherwise not
+		// touch: the never table below refuses `search`, `add`, `rm` and
+		// `use` on this command, so this row is the group's whole argv.
+		"models ls --json",
 		"version",
 		"doctor --json",
 		// The installation rail's read (`installation.list`), which the picker
@@ -1229,8 +1310,38 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// it prints the view the sweep stored -- and `--all` is every
 		// repository the installation's config lists.
 		"coordinator status --from-store --all --json",
+		// The pull request read (coordinator v2 C3, the `coordinator.show`
+		// operation): one pull request as the host has it, the description
+		// included. `--repo` and `--pr` are arguments the operation's own schema
+		// fills (both required, `src/main/ipc.ts`), so the table spells them in
+		// the order the console emits them -- the row's fixed words, then the
+		// arguments -- and this list spells that back.
+		"coordinator show --json --repo <owner/name> --pr <n>",
+		// The declarations read (coordinator v2 C4c, the `coordinator.intents`
+		// operation): what the fleet's writers have declared, newest first.
+		// It has no argument of its own -- `--all` and `--json` are the row's
+		// fixed words -- so this list spells the whole argv back with nothing
+		// an operation's schema fills.
+		"coordinator intents --all --json",
+		// The settings read (the settings-edit plan's C1, the `settings.read`
+		// operation, D1102): the selected project's settings, each with the
+		// layer that won, the value it gives and the writability facts the
+		// Project tab's settings section draws its pencils from. The two
+		// project flags §3.4 rule 3 gives every cloud command are the
+		// installation's, and the group's own flags and its positional keys
+		// and globs are not words of the argv, so the row spells the whole
+		// argv back with no argument an operation's schema fills.
+		"settings --json --project <name> [--config <path>]",
+		// The settings write (the settings-edit plan's C3, the `settings.edit`
+		// operation, D1103): one key of the document the row above reads, set
+		// or unset, at the layer that read named. It is the console's second
+		// write and the reason rule 6's fence grew a row, so it is spelled
+		// exactly as rule 12 spawns it -- the dry run's phase words first,
+		// then the write's -- with the value last, after the terminator, and
+		// the `unset` form the same words with no value at all.
+		"settings set KEY --layer <L> [--dry-run --json] [--yes] --project <name> [--config <path>] -- <VALUE>",
 		// The launch (console v2 plan V2.5.1a, the `run.launch` operation):
-		// the console's one write and the one thing this table is a fence
+		// the console's first write and the one thing this table is a fence
 		// against, spelled as rule 11's exact argv and nothing else.
 		"run --task-file - --json --run-id <run id> --repo <owner/name> [--title=<T>] [--plan-task=<P>] --project <name> [--config <path>]",
 	}
@@ -1280,6 +1391,54 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 	}
 }
 
+// TestDocsDesktopConsoleDesignCoordinatorCutNamesThePageTheRowAdmits: the
+// Coordinator tab's twenty-row cut is the console's own because the read it
+// makes passes no --limit, and not because the command has none. C2 put
+// `--limit=N` and `--after=RUN-ID` on §5.1's `runs ls` row and on the cobra
+// command behind it, so the sentence that justified the cut with "this tree's
+// `runs ls` has no `--limit`" is false: a reader who believes it does not know
+// the page exists, and the slice that moves the cut to the command would be
+// written against a document saying it cannot. The claim is in this design
+// document, whose §5.1 row is C2's own; the same words sit in
+// `.claude/rules/console.md`'s rule 5, which no run may edit.
+//
+// Mutation caught: a later edit that puts the old justification back, or a
+// document whose row drops one of the two words while the code keeps it.
+func TestDocsDesktopConsoleDesignCoordinatorCutNamesThePageTheRowAdmits(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+
+	// The command's half, read off newLsCmd rather than a list kept here: the
+	// two words the row admits are the command's, and the cut's justification
+	// is about the command.
+	for _, flag := range []string{"limit", "after"} {
+		if newLsCmd().Flags().Lookup(flag) == nil {
+			t.Errorf("`runs ls` has no --%s, which §5.1's row admits: the two paging words (C2) left the command", flag)
+		}
+	}
+
+	// The document's half, both ways: the row still names the pair, and no
+	// sentence still claims the command lacks one.
+	row := ""
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "| `runs ls --json`") {
+			row = line
+			break
+		}
+	}
+	if row == "" {
+		t.Fatalf("%s has no §5.1 row starting \"| `runs ls --json`\"", path)
+	}
+	for _, want := range []string{"`--limit=N`", "`--after=RUN-ID`"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("%s no longer names %s on the runs ls row, which is where the console's paging words are declared", path, want)
+		}
+	}
+	if stale := "this tree's `runs ls` has no `--limit`"; strings.Contains(doc, stale) {
+		t.Errorf("%s still says %q: `runs ls` has had --limit and --after since C2, so the twenty is the console's cut because its own read passes neither, not because the command has none", path, stale)
+	}
+}
+
 // TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode: §5.1 rule 6's
 // table is the console's whole read-only guarantee — D14 rests it on the
 // exact-argv table, because the CLI cannot tell an admin's identity from
@@ -1319,13 +1478,21 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Fifteen commands: the twelve dashboard reads (logs has two argvs), the
+	// Twenty-one commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the project view's
 	// `coordinator status --from-store --all --json` (Bitbucket credentials
-	// T1.2) and the launch `fugaro run` (V2.5.1a).
-	if len(allowed) != 15 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 15 (logs has two argvs)", path, argvs, len(allowed))
+	// T1.2), the pull request read `coordinator show --json --repo <owner/name>
+	// --pr <n>` (coordinator v2 C3), the declarations read
+	// `coordinator intents --all --json` (coordinator v2 C4c), the jobs-free
+	// totals read `runs summary --json` (console 0.119.0, B4/#1580), the models
+	// read `models ls --json` (console 0.119.0, the owner's ruling of
+	// 2026-11-02), the settings read `settings --json` (the settings-edit
+	// plan's C1), the settings write `settings set KEY ...` (the same plan's
+	// C3, and the row that is not a read at all) and the launch `fugaro run`
+	// (V2.5.1a).
+	if len(allowed) != 21 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 21 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -1341,12 +1508,19 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 }
 
 // consoleLaunchPaths is §5.1's allow-list written as an exemption rather
-// than as a hole: `fugaro run` is the console's one write (rule 11, D22), so
-// it is deliberately absent from consoleReadPaths -- a write is not a read
-// and must not be -- and a table that grew a second writer would have to
-// come back here and say so. The reason sits beside the exemption because
-// the exemption is the security claim: one write, named, and nothing else.
-var consoleLaunchPaths = map[string]bool{"fugaro run": true}
+// than as a hole: the writers the console spawns are deliberately absent from
+// consoleReadPaths -- a write is not a read and must not be -- and this map is
+// where each one is named instead. There are two: `fugaro run` is the launch
+// (rule 11, D22), and `fugaro settings set`/`fugaro settings unset` are the
+// settings write (the settings-edit plan's C3, D1103, rule 12), whose row on
+// §5.1's table is the `set` form and whose two words share this one entry's
+// reason. The exemption is the security claim, so it sits beside the reason:
+// a table that grew a third writer comes back here and says so.
+var consoleLaunchPaths = map[string]bool{
+	"fugaro run":            true,
+	"fugaro settings set":   true,
+	"fugaro settings unset": true,
+}
 
 // planPhaseRow returns the "What ships" cell of the project-centric plan's
 // phase table row whose Phase cell names phase (a substring of it), and the
@@ -2909,18 +3083,30 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		return consoleStepNamed(t, job, "release", name)
 	}
 
-	// **Secrets are in exactly one step's `env:`** of the release job, each
-	// bound to its own name; the publish job holds none, and `GH_TOKEN` is in
-	// exactly two steps: the release gate (read-only token, check-runs) and the
-	// publish job's release step.
+	// **The Apple secrets are in exactly one step's `env:`** of the release job,
+	// each bound to its own name; the publish job holds none, and `GH_TOKEN` is
+	// in exactly two steps: the release gate (read-only token, check-runs) and
+	// the publish job's release step.
+	//
+	// The staged symbol change (2026-11-01, re-cut 2026-11-02) adds the one
+	// *other* secret this file may name, `SENTRY_AUTH_TOKEN`, in two steps of its
+	// own -- never in the signing step, which is the point of splitting them: the
+	// stamping step holds it before the key material exists and the upload step
+	// after the signing step has removed it. The state is read off the text
+	// rather than off a file's existence, because this test reads
+	// console-release.yml both before that copy-in and after it.
+	symbolsApplied := strings.Contains(text, consoleReleaseSymbolsSecret)
+	isSymbolsStep := func(name string) bool {
+		return name == consoleReleaseSymbolsStep || name == consoleReleaseSymbolsStampStep
+	}
 	signIdx, sign := stepNamed(consoleReleaseSigningStep)
 	gateIdx, gate := stepNamed("The tag is strict, on main, and its checks passed")
 	_, publish := consoleStepNamed(t, pub, "publish", consoleReleasePublishStep)
 	for _, j := range jobs {
 		for i, step := range j.job.Steps {
 			for name, value := range step.Env {
-				if strings.Contains(value, "secrets.") && !(j.name == "release" && i == signIdx) {
-					t.Errorf("%s's step %q reads %s from a secret: secrets are in exactly one step's env, %q", consoleReleaseWorkflowPath, step.Name, name, consoleReleaseSigningStep)
+				if strings.Contains(value, "secrets.") && !(j.name == "release" && (i == signIdx || (symbolsApplied && isSymbolsStep(step.Name)))) {
+					t.Errorf("%s's step %q reads %s from a secret: the Apple material is in exactly one step's env, %q, and the symbol change's own token in the two steps it adds -- nowhere else", consoleReleaseWorkflowPath, step.Name, name, consoleReleaseSigningStep)
 				}
 				if strings.Contains(value, "github.token") || name == "GH_TOKEN" || name == "GITHUB_TOKEN" {
 					// The gate step is the one that runs the gate, whichever job
@@ -2966,8 +3152,12 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		}
 		refs++
 	}
-	if refs != len(consoleReleaseSecrets) {
-		t.Errorf("%s has %d secret references, want exactly %d (one each, in the signing step)", consoleReleaseWorkflowPath, refs, len(consoleReleaseSecrets))
+	wantRefs := len(consoleReleaseSecrets)
+	if symbolsApplied {
+		wantRefs += consoleReleaseSymbolsTokenRefs
+	}
+	if refs != wantRefs {
+		t.Errorf("%s has %d secret references, want exactly %d (one each in the signing step, plus the symbol change's token in the two steps it adds)", consoleReleaseWorkflowPath, refs, wantRefs)
 	}
 
 	// **The order: on main, a strict tag, the gate, then every install and
@@ -3169,9 +3359,31 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 		}
 	}
 
+	// **The bundle-only pack reads two ways, and both are right.** It is
+	// `npm run package -- --dir` while the symbol change is staged, and
+	// `npm run package:targets -- --dir` once that change's copy-in has landed,
+	// because it runs the build and the debug-id stamp in a step of its own
+	// before this one -- a `npm run package` here would rebuild `dist/main` and
+	// throw the ids away. Either spelling is the pinned local packer, the bundle
+	// alone, the tag's version and the packer's own notarisation off, which is
+	// what the checks below hold every pack line to.
+	bundlePackLine := func() int {
+		t.Helper()
+		for _, want := range []string{
+			`npm run package -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`,
+			`npm run package:targets -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`,
+		} {
+			if i := consoleLineIndex(lines, want, false); i >= 0 {
+				return i
+			}
+		}
+		t.Errorf("%s's signing step does not pack the bundle alone, in either spelling (%q or its `package:targets` form)", consoleReleaseWorkflowPath, `npm run package -- --dir`)
+		return -1
+	}
+
 	// The team, on the certificate, before packing; the signature after.
 	teamBefore := at(`*"($APPLE_TEAM_ID)\""*) ;;`, false)
-	pack := at(`npm run package -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`, false)
+	pack := bundlePackLine()
 	if teamBefore < 0 || pack < 0 || teamBefore > pack {
 		t.Errorf("%s's signing step does not check the certificate's team before packing", consoleReleaseWorkflowPath)
 	}
@@ -3205,7 +3417,7 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	// path. `npm run package:targets` is the same packer without the build
 	// (mutation: this line back to plain `npm run package --`, which the
 	// exact-line lookup below misses -- the first pack's line is not it).
-	bundlePack := at(`npm run package -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`, false)
+	bundlePack := bundlePackLine()
 	appScript := at(`scripts/notarize-and-staple.sh app "$APP"`, false)
 	targetsPack := at(`npm run package:targets -- --prepackaged "$APP" -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`, false)
 	if bundlePack < 0 || appScript < 0 || targetsPack < 0 || !(bundlePack < appScript && appScript < targetsPack) {
@@ -3269,8 +3481,23 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 			t.Errorf("%s's verification step does not run %q", consoleReleaseWorkflowPath, want)
 		}
 	}
-	if verifyIdx+1 >= len(job.Steps) || !strings.Contains(job.Steps[verifyIdx+1].Uses, "actions/upload-artifact@") ||
-		job.Steps[verifyIdx+1].With["name"] != "console-release-assets" || job.Steps[verifyIdx+1].With["if-no-files-found"] != "error" {
+	// The verified assets go up as the console-release-assets artifact **right
+	// after verifying them** -- the symbol change's upload step is the one thing
+	// allowed in between, since it files the maps the stamp left in `dist/main`
+	// and has to run while the runner still holds them. Nothing else may come
+	// between the verification and the upload: an artifact is the record of a
+	// run that passed.
+	assetsIdx := -1
+	for i := verifyIdx + 1; i < len(job.Steps); i++ {
+		if strings.Contains(job.Steps[i].Uses, "actions/upload-artifact@") {
+			assetsIdx = i
+			break
+		}
+		if !(symbolsApplied && job.Steps[i].Name == consoleReleaseSymbolsStep) {
+			break
+		}
+	}
+	if assetsIdx < 0 || job.Steps[assetsIdx].With["name"] != "console-release-assets" || job.Steps[assetsIdx].With["if-no-files-found"] != "error" {
 		t.Errorf("%s does not upload the verified assets as the console-release-assets artifact right after verifying them", consoleReleaseWorkflowPath)
 	}
 
@@ -4714,8 +4941,11 @@ func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
 	// D768/D770 answers of 2026-10-30 (auto-update U5): C8's wording stays, as
 	// the earlier amendment, and the newer one sits beside it.
 	design := readDoc(t, "docs/design/desktop-console.md")
-	if !strings.Contains(design, "10. **The app writes the spawn log, when asked, the installations file and `updates.json`, and nothing else.**") {
-		t.Error("design section 5.1 rule 10 was not amended to name the app's three writes (C8's second, D768's third)")
+	if !strings.Contains(design, "10. **The app writes the spawn log, when asked, the installations file, `updates.json` and `crash.json`, and nothing else.**") {
+		t.Error("design section 5.1 rule 10 was not amended to name the app's four writes (C8's second, D768's third, the crash switch's fourth)")
+	}
+	if !strings.Contains(design, "Amended 2026-11-01: the crash-reporting switch is a fourth file, `crash.json`") {
+		t.Error("design section 5.1 rule 10 lost the 2026-11-01 amendment: the crash-reporting switch is the fourth write, and a later amendment sits beside the earlier ones rather than replacing them")
 	}
 	if !strings.Contains(design, "(Amended 2026-10-18 by the owner's C8 answer") {
 		t.Error("design section 5.1 rule 10 lost the 2026-10-18 C8 amendment: a later amendment sits beside the earlier one rather than replacing it")
@@ -4723,8 +4953,16 @@ func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
 	if !strings.Contains(design, "Amended 2026-10-30 by the owner's D768 and D770 answers") {
 		t.Error("design section 5.1 rule 10 lost the 2026-10-30 D768/D770 amendment")
 	}
-	if !strings.Contains(design, "**The app writes three things to disk and nothing else (§5.1 rule 10, amended 2026-10-30 by the owner's D768 and D770 answers)") {
-		t.Error("design section 7.4 was not amended to D768/D770's wording")
+	if !strings.Contains(design, "**The app writes four things to disk and nothing else (§5.1 rule 10, amended 2026-10-30 by the owner's D768 and D770 answers and 2026-11-01 by his ruling of 2026-10-31)") {
+		t.Error("design section 7.4 was not amended to D768/D770's wording and the 2026-11-01 crash-switch amendment")
+	}
+	if !strings.Contains(design, "**No telemetry, no analytics, no update check that carries an identifier, and crash reporting only ever by the user's own opt-in.**") {
+		t.Error("design section 7.4's promise sentence was not amended: the console reports crashes to Sentry after the person turns the switch on, so the paragraph states that flow rather than promising no crash reporting")
+	}
+	for _, want := range []string{"hosted in the European Union", "**no message, no path, no user name, no environment and no host name**", "`console/src/main/crash-dsn.ts`", "the per-user switch is the only gate"} {
+		if !strings.Contains(design, want) {
+			t.Errorf("design section 7.4 no longer states %q: the crash reporter's disclosure is the sentence the website and the console's README repeat, and it names the one gate, the scrubbing, and the DSN's one embedded constant", want)
+		}
 	}
 	if !strings.Contains(design, "never a credential") {
 		t.Error("design section 5.1 rule 10's installations paragraph does not say the file holds no credential")
@@ -5694,13 +5932,13 @@ func TestDocsDesktopConsoleContractStatesTheAccountAxis(t *testing.T) {
 // added to the fixture; a required key dropped; a key moved; a number made a
 // string.
 //
-// The one key the fixture may *lack* is `leased_usd`, and the reason is the
-// fixture's own subject: its header says the recording is 0.8.6's, so a
-// required key a later release added cannot be in it, and this file is
+// The keys the fixture may *lack* are `leased_usd` and `max_parallel`, and the
+// reason is the fixture's own subject: its header says the recording is 0.8.6's,
+// so a required key a later release added cannot be in it, and this file is
 // deliberately the old document the console must still read -- updating it to
 // the current shape would delete what it exists to prove. Lack is the only
-// allowance: a fixture that *carried* `leased_usd` would still be walked
-// against the struct like every other key.
+// allowance: a fixture that *carried* either key would still be walked against
+// the struct like every other key.
 func TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(readDoc(t, "console/test/fixtures/normal.ndjson")), "\n")
 	if len(lines) < 2 {
@@ -5755,7 +5993,7 @@ func orderedJSONKeys(t *testing.T, raw json.RawMessage) []string {
 
 // mayLackOldRecording are the keys a document recorded before the release that
 // added them may leave out: see TestDocsDesktopConsoleNormalFixtureMatchesTheGoTypes.
-var mayLackOldRecording = map[string]bool{"leased_usd": true}
+var mayLackOldRecording = map[string]bool{"leased_usd": true, "max_parallel": true}
 
 // checkJSONShape walks one JSON value against a struct type: keys in struct
 // order, required keys present (bar those in mayLack), recursing into nested
@@ -6034,14 +6272,16 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 		tsNumber(t, scrub, "VERIFY_CLIP_RUNES"))
 
 	// The report globs the warning sentence carries and nowhere else in the
-	// document: the two `commands.reports` patterns internal/config/defaults.go
-	// installs, which are what internal/verify/verify.go joins into
-	// `no JUnit reports found under ...`. They are the vocabulary the fixture
-	// scan pins the glob slot to (VERIFY_REPORT_GLOBS), so a change to the
-	// defaults that the scrub did not follow would make the scan refuse a
-	// recording the CLI itself wrote.
+	// document: config.DefaultReports, which internal/config/defaults.go
+	// installs as `commands.reports` and which internal/verify/verify.go joins
+	// into `no JUnit reports found under ...`. They are the vocabulary the
+	// fixture scan pins the glob slot to (VERIFY_REPORT_GLOBS), so a change to
+	// the defaults that the scrub did not follow would make the scan refuse a
+	// recording the CLI itself wrote. The list is read at its own declaration
+	// (`defaultReports`), because the exported name is a function answering a
+	// copy of it.
 	sameSet(t, "verify report glob", quoted(sourceValues(t, "internal/config/defaults.go",
-		readDoc(t, "internal/config/defaults.go"), `w\.Commands\.Reports = \[\]string\{([^}]*)\}`)[0]),
+		readDoc(t, "internal/config/defaults.go"), `defaultReports = \[\]string\{([^}]*)\}`)[0]),
 		tsList(t, scrub, `VERIFY_REPORT_GLOBS = \[([^\]]*)\]`, "VERIFY_REPORT_GLOBS"))
 
 	// The connection states, the healths and the deadlines: three inline tables
@@ -6409,6 +6649,13 @@ const (
 	// after that the text it produced is the one that runs, and it is read from
 	// appliedConsoleReleasePath.
 	consoleReleaseFeedWorkflowPath = "docs/pending-workflows/console-release-feed.yml"
+	// consoleReleaseSymbolsWorkflowPath is the staged replacement of
+	// consoleReleaseWorkflowPath with the crash reporter's symbol upload added
+	// after the build (the owner's ruling of 2026-11-01; design section 7.4). Its
+	// copy-in copies it over the staged console-release.yml and into
+	// .github/workflows/, then removes it, exactly as the two supersessions
+	// before it do.
+	consoleReleaseSymbolsWorkflowPath = "docs/pending-workflows/console-release-symbols.yml"
 	// consoleLinuxJobName is the job's key AND its display name: a job name
 	// with an expression in it is a check name nobody can match, which is the
 	// reason console-tests.yml's own comment gives for its static `console`.
@@ -7639,6 +7886,232 @@ func TestDocsConsoleReleaseFeedIsStagedAndPinned(t *testing.T) {
 	}
 }
 
+// consoleReleaseSymbolsStep is the upload step the symbols supersession adds to
+// the macOS `release` job, by name; consoleReleaseSymbolsBuildStep and
+// consoleReleaseSymbolsStampStep are the two it adds *before the signing step*,
+// which build the app with no secret in the step's environment and then stamp
+// the built main process with its debug id; and consoleReleaseSymbolsScript is
+// what every one of them runs -- the script whose own unit test pins the
+// `sentry-cli` commands each run makes, their arguments, and that the token never
+// reaches an argv.
+const (
+	consoleReleaseSymbolsStep      = "Upload the crash reporter's symbols, when a token is configured"
+	consoleReleaseSymbolsBuildStep = "Build the app the stamp and the pack both read"
+	consoleReleaseSymbolsStampStep = "Stamp the built main process with its debug id"
+	consoleReleaseSymbolsScript    = "node scripts/upload-sentry-symbols.mjs"
+)
+
+// consoleReleaseSymbolsInject is the mode the stamping step passes the script,
+// as its own line: the run that rewrites `dist/main` before the packer copies
+// it, and the whole reason the stamp cannot move after the pack.
+const consoleReleaseSymbolsInject = "node scripts/upload-sentry-symbols.mjs inject"
+
+// consoleReleaseSymbolsSecret is the repository secret the two steps read -- the
+// console-release environment's seventh, beside the six the signing step reads
+// -- and consoleReleaseSymbolsRefCount is how many `secrets.NAME` references the
+// file carries: two more than the file it supersedes (whose own seven include
+// the one the header's rule about them is written with), because the change
+// reaches the token in two steps that must never hold it beside an Apple secret
+// -- the stamping step before the key material exists, the upload step after the
+// signing step has removed it.
+const (
+	consoleReleaseSymbolsSecret   = "SENTRY_AUTH_TOKEN"
+	consoleReleaseSymbolsRefCount = 9
+)
+
+// consoleReleaseSymbolsTokenRefs is how many times the file names
+// `secrets.SENTRY_AUTH_TOKEN` itself: once in each of the two steps' `env:`, and
+// nowhere else -- the count is a pin rather than a floor, because a third
+// mention is a third place a later change could put the token on a command line.
+const consoleReleaseSymbolsTokenRefs = 2
+
+// consoleSymbolsText is the console signing workflow's text as this tree holds
+// the symbol-upload change: the staged supersession while it is staged, and
+// console-release.yml once the owner's copy-in has written it over that file and
+// removed it. It goes through consoleReleaseEffectiveText first, so the
+// byte-identity clause between the two copies of console-release.yml stays live
+// in every state the copy-in passes through.
+func consoleSymbolsText(t *testing.T) (string, string) {
+	t.Helper()
+	file, path := consoleReleaseEffectiveText(t)
+	if docExists(t, consoleReleaseSymbolsWorkflowPath) {
+		return readDoc(t, consoleReleaseSymbolsWorkflowPath), consoleReleaseSymbolsWorkflowPath
+	}
+	return file, path
+}
+
+// TestDocsConsoleReleaseSymbolsIsStagedAndPinned holds the staged symbol change
+// to what it claims to be (the owner's rulings of 2026-11-01 and 2026-11-02;
+// design section 7.4): **two steps** in the macOS `release` job -- one before the
+// signing step that builds the app and stamps the built main process with its
+// debug id, one after the artifacts have been verified and before they leave the
+// job that uploads the symbols -- and **one changed pack line**, the signing
+// step's first pack switching to `npm run package:targets -- --dir` so that
+// nothing rebuilds over the stamp. Both steps run
+// `console/scripts/upload-sentry-symbols.mjs`, with **the file's second secret in
+// their environment and nowhere else** -- the token is never an operand of
+// anything, because an argv is readable by every process of the same user on the
+// runner, and neither step holds it beside an Apple secret. Everything that makes
+// the file safe to run is what runs today: the pins, the trigger, the
+// permissions, the protected environment and the six secrets the signing step
+// already reads.
+//
+// It reads the file the way this family reads a supersede file: from
+// docs/pending-workflows/console-release-symbols.yml while it is staged, and
+// from console-release.yml once the owner's copy-in has written it over that
+// file and removed it, so the same suite is green on both sides of the copy-in.
+// The mutation that proves the first half: the same test against a tree with
+// docs/pending-workflows/console-release-symbols.yml deleted, where the applied
+// file carries no step of that name and the reader's Fatalf names it.
+func TestDocsConsoleReleaseSymbolsIsStagedAndPinned(t *testing.T) {
+	text, path := consoleSymbolsText(t)
+
+	wf := consoleReleaseShape(t, path, text)
+	release, ok := wf.Jobs["release"]
+	if !ok {
+		t.Fatalf("%s has no release job: the symbols are uploaded from the build the release job has just verified, and there is nowhere else they could come from", path)
+	}
+	index, step := consoleStepNamed(t, release, "release", consoleReleaseSymbolsStep)
+	if step.Uses != "" {
+		t.Errorf("%s's %q step runs the action %q: the upload is a command in this file's own shell, not a marketplace action -- a `uses:` line is a third party's code inside the job that holds the release's signing material, and it would need a pin this file does not have", path, consoleReleaseSymbolsStep, step.Uses)
+	}
+	if step.WorkingDirectory != "console" {
+		t.Errorf("%s's %q step runs in %q, not `console`: the script is resolved from there, as every other step of this job that runs console code does", path, consoleReleaseSymbolsStep, step.WorkingDirectory)
+	}
+	if !strings.Contains(step.Run, "set -euo pipefail") || !strings.Contains(step.Run, consoleReleaseSymbolsScript) {
+		t.Errorf("%s's %q step runs %q: it has to run the pinned script with the same fail-closed shell every other step of this job uses -- a step that swallowed a failure would leave a release whose crashes cannot be read", path, consoleReleaseSymbolsStep, step.Run)
+	}
+	// The environment: the token, and nothing else. The org, the project, the
+	// region and the release are constants inside the script, where no run of
+	// this workflow can point them at somebody else's account.
+	if got, want := len(step.Env), 1; got != want {
+		t.Errorf("%s's %q step's env names %d variables (%v), want the token alone: the script takes the org, the project, the region and the release as its own constants and reads the token from the environment it inherits", path, consoleReleaseSymbolsStep, got, step.Env)
+	}
+	if got, want := step.Env[consoleReleaseSymbolsSecret], "${{ secrets."+consoleReleaseSymbolsSecret+" }}"; got != want {
+		t.Errorf("%s's %q step's %s is %q, want %q", path, consoleReleaseSymbolsStep, consoleReleaseSymbolsSecret, got, want)
+	}
+	if got := strings.Count(text, "secrets."+consoleReleaseSymbolsSecret); got != consoleReleaseSymbolsTokenRefs {
+		t.Errorf("%s names secrets.%s %d times, want %d (the two steps that stamp and upload): the token belongs to those two steps and to no other, and a further mention is a further place a change can put it on a command line", path, consoleReleaseSymbolsSecret, got, consoleReleaseSymbolsTokenRefs)
+	}
+	if got := len(consoleSecretRefRE.FindAllString(text, -1)); got != consoleReleaseSymbolsRefCount {
+		t.Errorf("%s names %d secrets, want %d: the console-release environment's six, this change's one reached in two steps, and the header's own rule about them written with one -- a secret this file does not need is a secret the release job can read for no reason", path, got, consoleReleaseSymbolsRefCount)
+	}
+
+	// **The build and the stamp, and the order they make.** The two steps the
+	// change adds before the signing step write the debug id into the files the
+	// packer copies into the archive, and they sit before the step that holds the
+	// signing material for the secret's reason: the token must not sit beside an
+	// Apple secret, and a build inside the signing step would be a build inside
+	// the step that holds the keychain.
+	//
+	// **They are two steps and not one, and the split is the token's.** `npm run
+	// build` runs the repository's toolchain and its dependencies' install scripts,
+	// and a step's `env:` is inherited by every process the step starts -- so the
+	// build's step carries no `env:` at all and the token is in the inject's step
+	// alone. A one-step file would put the token in the environment of a build,
+	// which is the shape this pair exists to refuse; the clause below holds the
+	// build's `env:` to nothing, and the file-wide env clause above holds every
+	// *other* step of the job to reading no secret.
+	buildIndex, build := consoleStepNamed(t, release, "release", consoleReleaseSymbolsBuildStep)
+	stampIndex, stamp := consoleStepNamed(t, release, "release", consoleReleaseSymbolsStampStep)
+	if stampIndex >= index {
+		t.Errorf("%s runs %q at step %d and the symbol upload at step %d: the stamp comes before the pack and the upload after it, and a file that put the stamp last would stamp a tree nobody packs", path, consoleReleaseSymbolsStampStep, stampIndex, index)
+	}
+	if buildIndex >= stampIndex {
+		t.Errorf("%s runs %q at step %d and %q at step %d: the inject rewrites the files `npm run build` has just written, so a stamp before the build is a build that throws the ids away", path, consoleReleaseSymbolsBuildStep, buildIndex, consoleReleaseSymbolsStampStep, stampIndex)
+	}
+	signIndex, _ := consoleStepNamed(t, release, "release", consoleReleaseSigningStep)
+	if stampIndex >= signIndex {
+		t.Errorf("%s runs %q at step %d, at or after the signing step %d: the pack is the signing step's, so the stamp has to be written before it -- and the stamping step is the one place the token can be reached without an Apple secret beside it", path, consoleReleaseSymbolsStampStep, stampIndex, signIndex)
+	}
+	for _, one := range []struct {
+		name string
+		step consoleReleaseStep
+		run  string
+	}{
+		{consoleReleaseSymbolsBuildStep, build, "npm run build"},
+		{consoleReleaseSymbolsStampStep, stamp, consoleReleaseSymbolsInject},
+	} {
+		if one.step.WorkingDirectory != "console" {
+			t.Errorf("%s's %q step runs in %q, not `console`: the script and `dist/main` are both resolved from there", path, one.name, one.step.WorkingDirectory)
+		}
+		if !slices.Contains(consoleRunLines(one.step.Run), one.run) {
+			t.Errorf("%s's %q step does not run %q: the build writes `dist/main` and the inject run stamps it, in that order, and a step that runs neither would leave the app without the ids", path, one.name, one.run)
+		}
+	}
+	if got := len(build.Env); got != 0 {
+		t.Errorf("%s's %q step names %d environment variables (%v), want none: it runs the repository's build tooling and its dependencies' install scripts, which a step's environment is inherited by -- the token belongs to the step that runs the inject, and to no other step of this job", path, consoleReleaseSymbolsBuildStep, got, build.Env)
+	}
+	if got := len(stamp.Env); got != 1 || stamp.Env[consoleReleaseSymbolsSecret] != "${{ secrets."+consoleReleaseSymbolsSecret+" }}" {
+		t.Errorf("%s's %q step's env is %v, want the token alone: it is the step before the key material exists, and no Apple secret may sit beside it", path, consoleReleaseSymbolsStampStep, stamp.Env)
+	}
+	if got := len(consoleRunLines(stamp.Run)); got != 2 {
+		t.Errorf("%s's %q step runs %d lines, want the fail-closed shell and the inject alone: the build is the step before it, which is what keeps the token out of a build's environment", path, consoleReleaseSymbolsStampStep, got)
+	}
+
+	// Where the step is: the app's debug files and its source maps have to
+	// describe the bytes that ship, so the upload runs after the step that
+	// verifies the shipped artifacts and before they leave the job as an
+	// artifact.
+	verifyIndex, _ := consoleStepNamed(t, release, "release", consoleReleaseVerifyStep)
+	if index < verifyIndex {
+		t.Errorf("%s runs the symbol upload at step %d and verifies the shipped artifacts at step %d: the symbols have to come from the bundle that has just been verified -- an upload before it describes bytes nobody has checked", path, index, verifyIndex)
+	}
+	artifact := -1
+	for i, other := range release.Steps {
+		if strings.HasPrefix(other.Uses, "actions/upload-artifact@") {
+			artifact = i
+		}
+	}
+	if artifact < 0 {
+		t.Fatalf("%s's release job uploads no artifact: this test reads the step order around it, and a file that stopped uploading the verified assets is a change of its own", path)
+	}
+	if index > artifact {
+		t.Errorf("%s runs the symbol upload at step %d, after the verified assets have left the job at step %d: the step would be reading a bundle the job no longer has, and a symbols upload that silently found nothing is a release whose reports cannot be read", path, index, artifact)
+	}
+
+	if !docExists(t, consoleReleaseSymbolsWorkflowPath) {
+		return
+	}
+	// The both-states half: while it is staged it has to be a change to the file
+	// it supersedes, and a change to nothing else -- the two token references
+	// aside, which are the change.
+	base, basePath := consoleWorkflowText(t, consoleReleaseWorkflowPath, appliedConsoleReleasePath)
+	if text == base {
+		t.Errorf("%s is byte-identical to %s: then it is not a change, and its copy-in commands are instructions to do nothing", consoleReleaseSymbolsWorkflowPath, basePath)
+		return
+	}
+	got := strings.ReplaceAll(consoleOtherwiseIdentical(t, text), "secrets."+consoleReleaseSymbolsSecret+"\n", "")
+	if want := consoleOtherwiseIdentical(t, base); got != want {
+		t.Errorf("%s and %s differ outside the symbol steps: the action pins, the trigger, the permissions, every job's environment and every other `secrets.` reference have to be identical, because this change adds two steps and a pack line and touches nothing that decides who may run it or what it may read.\nsymbols:\n%s\n%s:\n%s", consoleReleaseSymbolsWorkflowPath, basePath, got, basePath, want)
+	}
+	// The lines the superseded file carries and this one does not: the pack line
+	// the stamp makes untenable -- the signing step's first pack, which would
+	// rebuild over the debug ids -- and otherwise nothing but header, which the
+	// loop above skips. It is named rather than allowed in general: any *other*
+	// dropped line is a line of the pipeline the change silently took away.
+	const rebuiltPack = `npm run package -- --dir -c.mac.notarize=false -c.extraMetadata.version="$VERSION"`
+	namesRebuiltPack := false
+	for _, line := range strings.Split(base, "\n") {
+		if strings.TrimSpace(line) == rebuiltPack {
+			namesRebuiltPack = true
+		}
+	}
+	if !namesRebuiltPack {
+		t.Errorf("%s no longer carries %q: that is the line this change's exception is written for, and an exception that names nothing would let a real dropped line through", basePath, rebuiltPack)
+	}
+	if strings.Contains(text, rebuiltPack) {
+		t.Errorf("%s still carries %q: the signing step's first pack would rebuild `dist/main` and throw away the debug ids the stamping step wrote, which is the whole of the change", consoleReleaseSymbolsWorkflowPath, rebuiltPack)
+	}
+	for _, line := range consoleLinesDropped(base, text) {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || trimmed == rebuiltPack {
+			continue
+		}
+		t.Errorf("%s drops %q, which %s carries: the symbol change adds two steps, one changed pack line and a paragraph of header, and rewrites nothing else", consoleReleaseSymbolsWorkflowPath, trimmed, basePath)
+	}
+}
+
 // TestStagedLinuxFilesSurviveTheCopyIn is the proof of the property every test
 // in this family is written for: **the copy-in the owner does by hand does not
 // turn `main` red.** The tests above read the two Linux files through
@@ -7788,7 +8261,7 @@ const consoleCopyInRunPattern = `Console|Docs|Lint`
 // It is a regular expression with word boundaries rather than a list of
 // substrings: `pendingWorkflows` is a helper here and `pendingWorkflowsReadmePath`
 // is a constant in another file, and a substring search cannot tell them apart.
-var consoleCopyInSensitive = regexp.MustCompile(`\b(?:console-linux\.yml|console-release-linux\.yml|console-release-feed\.yml|consoleLinuxWorkflowPath|appliedConsoleLinuxPath|consoleReleaseLinuxWorkflowPath|consoleReleaseFeedWorkflowPath|consoleFeedText|consoleReleaseWorkflowPath|appliedConsoleReleasePath|pendingReadmeOpening|pendingWorkflows)\b`)
+var consoleCopyInSensitive = regexp.MustCompile(`\b(?:console-linux\.yml|console-release-linux\.yml|console-release-feed\.yml|console-release-symbols\.yml|consoleLinuxWorkflowPath|appliedConsoleLinuxPath|consoleReleaseLinuxWorkflowPath|consoleReleaseFeedWorkflowPath|consoleReleaseSymbolsWorkflowPath|consoleFeedText|consoleSymbolsText|consoleReleaseWorkflowPath|appliedConsoleReleasePath|pendingReadmeOpening|pendingWorkflows)\b`)
 
 // consoleCopyInUncoveredTests is every test in this package whose source
 // mentions what a copy-in changes and which consoleCopyInRunPattern does not
@@ -8844,7 +9317,7 @@ func consoleProductName(t *testing.T) string {
 }
 
 // TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown pins §5.1 rule 11 — the
-// launch, the console's one write — and the never table's moved row, which is
+// launch, the console's first write — and the never table's moved row, which is
 // the fence that rule moves.
 //
 // Rule 11 was added by the console v2 plan's V2.5.1 (2026-10-27) and amended the
@@ -8869,13 +9342,19 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 	const path = "docs/design/desktop-console.md"
 	doc := readDoc(t, path)
 
-	start := strings.Index(doc, "\n11. **The launch is the console's one write")
+	start := strings.Index(doc, "\n11. **The launch is the console's first write")
 	if start < 0 {
 		t.Fatalf("%s has no §5.1 rule 11: the launch's fence is not written down", path)
 	}
 	end := strings.Index(doc[start:], "\n### 5.2 ")
 	if end < 0 {
 		t.Fatalf("%s never closes §5.1: no `### 5.2` heading follows rule 11", path)
+	}
+	// Rule 12 (the settings write's four steps) is written between rule 11 and
+	// the section heading, and it is not this rule's fence: the slice stops at
+	// whichever of the two comes first.
+	if twelve := strings.Index(doc[start:], "\n12. **"); twelve >= 0 && twelve < end {
+		end = twelve
 	}
 	rule := flattenDoc(doc[start : start+end])
 
@@ -9030,8 +9509,8 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 			"a ten-second cool-down"},
 		{"the WSL wrapper is what makes an `=`-form word safe there",
 			"quotes every word of the CLI's argv with `shellQuoteWord`"},
-		{"and the argv check takes the two prefixes on this row alone",
-			"accept exactly the `--title=` and `--plan-task=` prefixes, for the `run.launch` row alone"},
+		{"and the argv check takes each row's own `=`-form prefixes alone",
+			"accept exactly the `=`-form prefixes its own table declares for a row, and no others"},
 		{"and the task still arrives there",
 			"on the same stdin the cell pipe carries"},
 		{"the spawn log records the launch and still no task text",
@@ -9076,8 +9555,8 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 		t.Errorf("%s §5.1 rule 11 still bounds the task at 64 KiB: the operator confirms by reading it, so the bound is 16 KiB", path)
 	}
 
-	if !strings.Contains(doc, "**The dashboard's surface is twenty-four operations**") {
-		t.Errorf("%s no longer says the surface is twenty-four operations: rule 5's count moved with the code when V2.5.1a landed, and the two cannot disagree", path)
+	if !strings.Contains(doc, "**The dashboard's surface is thirty-one operations**") {
+		t.Errorf("%s no longer says the surface is thirty-one operations: rule 5's count moves with the code (V2.5.1a took it to twenty-four, K2a to twenty-five, C4c to twenty-six, C3's pull request read to twenty-seven, console 0.119.0's totals read to twenty-eight, console 0.119.0's models read to twenty-nine, the settings-edit plan's C1 to thirty and the same plan's C3 to thirty-one), and the two cannot disagree", path)
 	}
 
 	var neverRows [][]string
@@ -9139,5 +9618,126 @@ func TestDocsDesktopConsoleDesignLaunchFenceIsWrittenDown(t *testing.T) {
 	}
 	if launches != 1 {
 		t.Errorf("%s's allow-list table carries %d `run` argvs, want exactly 1 (rule 11's)", path, launches)
+	}
+}
+
+// TestDocsDesktopConsoleDesignCarriesTheSettingsEditSections: the prose the
+// settings-edit plan's C5 is the task to move, in the design document. C1 and C3
+// moved the fences in their own commits -- rule 5's operation count, rule 6's two
+// settings rows and rule 12 itself -- and what is left is what a reader arrives
+// through: the project-flag paragraph's list, the sentence in rule 6's never
+// table that still called the launch the console's only write, the Project tab's
+// own prose, and rule 12's cross-reference into the settings commands'
+// reconciliation, where D846 is amended for `settings set|unset`.
+//
+// Each one is pinned by name, because each is a sentence that can be deleted by
+// an edit that leaves the document looking complete: a list that lost
+// `settings`, a never table that still says "single write", a screen that draws
+// a write nothing describes.
+func TestDocsDesktopConsoleDesignCarriesTheSettingsEditSections(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+
+	// §3.4 rule 3: the commands the console passes the aiming flags on. The
+	// settings read takes them (`settingsAimFlags`), so it belongs on this list.
+	rule3 := mdBetween(t, path, doc, "\n3. **The project is passed explicitly", "\n4. **The binary is resolved explicitly")
+	if !strings.Contains(rule3, "`plan status` and `settings`") {
+		t.Errorf("%s's §3.4 rule 3 does not name `settings` among the commands the console passes `--project`/`--config` on: the settings read takes them, and an argv built from a list that lost it is an argv no reader can check", path)
+	}
+
+	// Rule 6's never table: the row about every `run` argv but rule 11's. The
+	// launch was the console's *only* write until the settings edit landed, and
+	// that row is where the stale word survived.
+	never := mdBetween(t, path, doc, "\n6. **The spawn allow-list", "\n7. **Job-written text is text")
+	if strings.Contains(never, "the console's single write") {
+		t.Errorf("%s's rule 6 still calls the launch \"the console's single write\": the settings edit is the console's second write (rule 12), and a never table that denies it is a fence the reader cannot trust", path)
+	}
+	if !strings.Contains(never, "the console's first write") {
+		t.Errorf("%s's rule 6 never names the launch as the console's *first* write, so the second write has nothing to be second to", path)
+	}
+
+	// §6.2 item 3, the Project screen: the settings section is the tab's third
+	// read and rule 12's window is where its pencil leads.
+	project := mdItem(t, path, doc, "\n### 6.2 The screens", "\n### 6.3 ", 3)
+	for _, want := range []string{
+		"**The tab's third read, and a section of its own, is the settings section**",
+		"`settings --json`",
+		"is dropped whole",
+		"rule 12's window",
+		"next: fugaro update",
+	} {
+		if !strings.Contains(project, want) {
+			t.Errorf("%s's §6.2 item 3 does not name %q: the Project tab draws the settings section and its edit, and a screen the design does not describe is a screen no review can check against it", path, want)
+		}
+	}
+
+	// Rule 12 points at the settings commands' own reconciliation, which is
+	// where the typed-name rule D1107 amends for `settings set|unset` is written
+	// down. The console's half lives there and not here.
+	rule12 := mdBetween(t, path, doc, "\n12. **The launch's second question", "\n### 5.2 ")
+	if !strings.Contains(rule12, "[reconciliation.md](../settings-commands/reconciliation.md)") {
+		t.Errorf("%s's rule 12 does not cross-reference docs/settings-commands/reconciliation.md: D1107's amendment of the typed-name rule is written down there, and rule 12 is where a reader arrives", path)
+	}
+}
+
+// TestDocsDesktopConsoleContractFinishesTheSettingsWrite: the console's own
+// contract, finished against the screen C3 shipped (D848's own rule: the section
+// is written by the task that builds the screen). The read's section (§6.19) said
+// the writes were not operations of the console "until C3 lands"; C3 has landed,
+// so the write is an operation, its dry run's document is a document of the set,
+// and the two inventory paragraphs that call the launch the console's one write
+// count two.
+func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+
+	read := mdBetween(t, path, doc, "### 6.19 ", "\n## 7. The CLI gaps")
+	for _, want := range []string{
+		"operation `settings.edit`",
+		"it is the console's second",
+		"`settings set|unset KEY --layer <L> --dry-run --json",
+		"retried silently",
+	} {
+		if !strings.Contains(read, want) {
+			t.Errorf("%s's §6.19 does not state %q: the read's section is where a reader learns that the console also writes this group, and the screen C3 shipped does", path, want)
+		}
+	}
+	if strings.Contains(read, "Until C3 lands") {
+		t.Errorf("%s's §6.19 still says \"Until C3 lands no console operation drives either write\": C3 is on main, and a contract that denies an operation the console spawns is one a reviewer has to check against the wrong tree", path)
+	}
+
+	// The dry run's document: the shape the confirmation window is drawn from,
+	// member by member, off `settingsWriteDoc`.
+	write := mdBetween(t, path, doc, "### 6.20 ", "\n## 7. The CLI gaps")
+	for _, want := range []string{
+		"settingsWriteDoc",
+		"schemas/settings-write.schema.json",
+		"`widening`",
+		"`changed`",
+		"`refusal`",
+	} {
+		if !strings.Contains(write, want) {
+			t.Errorf("%s's §6.20 does not state %q: the write's dry run is the document the window and the write are built over, and it is the console's contract to describe", path, want)
+		}
+	}
+
+	inventory := mdBetween(t, path, doc, "## 8. The flag inventory", "## 9. What the console may do")
+	if !strings.Contains(inventory, `settings set\|unset`) {
+		t.Errorf("%s's §8 does not carry the settings write's row: the inventory is what the spawn contract turns on, and the second write's argv is on it", path)
+	}
+	if strings.Contains(inventory, "**the one row here that writes**") {
+		t.Errorf("%s's §8 still calls `run` \"the one row here that writes\": `settings set|unset` is the second, and the row it belongs in is above this sentence", path)
+	}
+
+	// §9: the console's documents are read-only **with** the two writes named,
+	// and the sentence that says so keeps the pinned claim about the set.
+	nine := mdBetween(t, path, doc, "## 9. What the console may do", "\n## 10. ")
+	for _, want := range []string{
+		"Every document in the console's set is read-only",
+		"**second write**",
+	} {
+		if !strings.Contains(nine, want) {
+			t.Errorf("%s's §9 does not state %q: the console now writes twice, and this is the section that counts what it may do with the documents it reads", path, want)
+		}
 	}
 }

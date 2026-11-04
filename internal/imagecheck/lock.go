@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
@@ -58,12 +60,15 @@ type LockedImage struct {
 	// BaseRef and BaseDigest are the base the build ran FROM.
 	BaseRef    string `json:"base_ref"`
 	BaseDigest string `json:"base_digest"`
-	// Packages and Tools are this image's own resolved set, as "name@version"
-	// — §2.4's pkg: and tool: lines without their prefix. They are what §4
-	// compares: an entry may be reused only when it holds the whole set at
-	// the same versions and the same tools, and §5 calls a repository
-	// diverged when the image it is on does not hold its set. Without them
-	// the lock would hold only hashes, and no reuse could be decided at all.
+	// Packages and Tools are this image's own resolved set, as one package per
+	// fact — its name, version and integrity as three quoted string literals
+	// (reduce.go's factOf) — and as "tool@version": §2.4's pkg: and tool:
+	// lines without their prefix, the integrity being the one the key file
+	// stated for that version's artifact (D618). They are what §4 compares:
+	// an entry may be reused only when it holds the whole set at the same
+	// versions and the same tools, and §5 calls a repository diverged when
+	// the image it is on does not hold its set. Without them the lock would
+	// hold only hashes, and no reuse could be decided at all.
 	Packages []string `json:"packages"`
 	Tools    []string `json:"tools"`
 	// BuiltAt and BuildID identify the build that made the image.
@@ -101,7 +106,77 @@ func ParseLock(data []byte) (*Lock, error) {
 	if l.Images == nil {
 		return nil, errors.New("the image lock: no images object")
 	}
+	if err := l.checkOneJobPerEntry(); err != nil {
+		return nil, err
+	}
 	return &l, nil
+}
+
+// checkOneJobPerEntry refuses a lock that places one job on two entries. A
+// job is one repository and one workflow together, and it runs one image: an
+// entry that said a job is on this image would have to be read against every
+// other entry saying otherwise, and §9's "is a job pointing at this image?"
+// would then answer with whichever entry the reader met first. A repository
+// whose two workflows are on two images is two jobs, and is not this.
+//
+// The job is the pair the entry states — the repository its Jobs map is keyed
+// by, and the job name beside it — because the pair is what a job is: two
+// repositories may carry the same job name, and reading the name alone would
+// refuse a lock that places one repository's job on one image while another
+// repository's job of that name is on a second. What the pair cannot catch is
+// one job renamed between two entries, since a name is all the lock states of
+// it; §3.3 leaves that to the refresh (C8b1b), which writes both entries.
+func (l *Lock) checkOneJobPerEntry() error {
+	type job struct{ repo, name string }
+	seen := map[job]string{}
+	for _, key := range slices.Sorted(maps.Keys(l.Images)) {
+		for _, repo := range slices.Sorted(maps.Keys(l.Images[key].Jobs)) {
+			name := l.Images[key].Jobs[repo]
+			if name == "" {
+				continue
+			}
+			j := job{repo: repo, name: name}
+			if prev, ok := seen[j]; ok && prev != key {
+				return fmt.Errorf("the image lock: job %s of %s is on two images (%s and %s), and a job runs one image: an entry is wrong and the lock has to be repaired before a launch reads it", name, repo, prev, key)
+			}
+			seen[j] = key
+		}
+	}
+	return nil
+}
+
+// LockReader is the part of a bucket the lock's read needs: *blobx.Bucket
+// satisfies it (the assertion under LockWriter holds the read's signature
+// too), and it is what ReadLock is written against, so the read is decided
+// here and can be tested without a bucket.
+type LockReader interface {
+	ReadStrict(ctx context.Context, key string) ([]byte, int64, error)
+}
+
+// ReadLock reads the installation's lock, and returns nil, nil when there is
+// none: absence means "this installation has not migrated", which a caller
+// permits, so it is not an error.
+//
+// A read this machine is not allowed to make is an error, which is why the read
+// is ReadStrict (LockWriter's comment has the whole of it): Read folds an HTTP
+// 403 into ErrNotExist, so through it a credentials fault would arrive as an
+// absent lock — the one answer a caller may act on by doing nothing, and a gate
+// that would then permit what it cannot see.
+func ReadLock(ctx context.Context, r LockReader) (*Lock, error) {
+	data, _, err := r.ReadStrict(ctx, LockKey)
+	switch {
+	case errors.Is(err, blobx.ErrNotExist):
+		return nil, nil
+	case errors.Is(err, blobx.ErrForbidden):
+		return nil, fmt.Errorf("reading %s: access denied (HTTP 403): this machine's credentials need read access to the project's runs bucket, and a denied read is not an absent lock: %w", LockKey, err)
+	case err != nil:
+		return nil, fmt.Errorf("reading %s: %w", LockKey, err)
+	}
+	l, err := ParseLock(data)
+	if err != nil {
+		return nil, err
+	}
+	return l, nil
 }
 
 // LockWriter is the part of a bucket the lock's write needs. *blobx.Bucket

@@ -339,9 +339,11 @@ func TestReadBudgetAnswersWhatTheFactRecords(t *testing.T) {
 // project, one of a version this build does not know — plus the ones the
 // fail-closed rule adds: a project whose number cannot be read or is zero, an
 // object this build cannot parse (an unknown field, a key spelled
-// differently, a key that appears twice, a second value after it), and the
-// object read itself failing every way it can — a 403, a 404, a 5xx, a body
-// that dies mid-read, a request the context ends — because a fail-open
+// differently, a key that appears twice, a second value after it), the
+// figures each version carries judged by the rule the write holds (the
+// version-2 and version-3 budget, and the version-3 image build bound), and
+// the object read itself failing every way it can — a 403, a 404, a 5xx, a
+// body that dies mid-read, a request the context ends — because a fail-open
 // mutation of that one branch is the mutation a table that only ever failed
 // the bucket read would not catch. A row whose read fails outright (a 5xx, or
 // a dead context: not an answer) is marked, and is still not managed.
@@ -586,7 +588,7 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 		"a version this build does not know": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
 				s, f, c, _ := managedWorld(t)
-				f.Put(testBucket, MarkerObject, []byte(`{"version":`+strconv.Itoa(MarkerVersionBudget+1)+`,"gcp_project":"`+testProject+`"}`))
+				f.Put(testBucket, MarkerObject, []byte(`{"version":`+strconv.Itoa(MarkerVersionBuilds+1)+`,"gcp_project":"`+testProject+`"}`))
 				return s, c
 			},
 			reason: "version",
@@ -707,6 +709,127 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
 				s, f, c, _ := managedWorld(t)
 				f.Put(testBucket, MarkerObject, []byte(`{"version":2,"gcp_project":"`+testProject+`","budget":50}`))
+				return s, c
+			},
+			reason: "not a marker",
+		},
+		// The builds version (M5, D1013). Version 3 is the version that
+		// carries the bound on billable image builds beside the amount, so an
+		// object of that version missing either figure — or carrying a count
+		// the write would not have made — is not a fact this build wrote.
+		// Believing one would be a managed project whose refresh is held to a
+		// bound nobody recorded, which is the whole of what this version is
+		// for, so each of these is a row rather than a note.
+		"version 3 with no budget recorded": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":3,"gcp_project":"`+testProject+`","max_image_builds":1}`))
+				return s, c
+			},
+			reason: "records no budget amount",
+		},
+		"version 3 with a budget that fails the check": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":3,"gcp_project":"`+testProject+`","budget":{"amount":7,"currency":"usd"},"max_image_builds":1}`))
+				return s, c
+			},
+			reason: "records no budget amount",
+		},
+		"version 3 with no bound recorded": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":3,"gcp_project":"`+testProject+`","budget":{"amount":7,"currency":"USD"}}`))
+				return s, c
+			},
+			reason: "records no image build bound",
+		},
+		// The zero of the field is the same reading as the key being absent
+		// (marker.go's own note on the field), and 0 builds is not a bound any
+		// creation could have chosen: the range starts at one.
+		"version 3 with a bound of 0": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":3,"gcp_project":"`+testProject+`","budget":{"amount":7,"currency":"USD"},"max_image_builds":0}`))
+				return s, c
+			},
+			reason: "records no image build bound",
+		},
+		"version 3 with a negative bound": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":3,"gcp_project":"`+testProject+`","budget":{"amount":7,"currency":"USD"},"max_image_builds":-5}`))
+				return s, c
+			},
+			reason: "records no image build bound",
+		},
+		"version 3 with a bound above the ceiling": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":3,"gcp_project":"`+testProject+`","budget":{"amount":7,"currency":"USD"},"max_image_builds":1001}`))
+				return s, c
+			},
+			reason: "records no image build bound",
+		},
+		"version 3 with the largest int64 bound": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":3,"gcp_project":"`+testProject+`","budget":{"amount":7,"currency":"USD"},"max_image_builds":9223372036854775807}`))
+				return s, c
+			},
+			reason: "records no image build bound",
+		},
+		// The bound is a version-3 field and no other version carries it, the
+		// same rule the budget has for version 1: the shape check refuses it
+		// first ("not a marker") and readFact's own version case refuses it
+		// again, so the field and the version cannot come apart.
+		"version 1 with an image build bound": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":1,"gcp_project":"`+testProject+`","max_image_builds":1}`))
+				return s, c
+			},
+			reason: "not a marker",
+		},
+		"version 2 with an image build bound": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":2,"gcp_project":"`+testProject+`","budget":{"amount":7,"currency":"USD"},"max_image_builds":1}`))
+				return s, c
+			},
+			reason: "not a marker",
+		},
+		"version 3 with the bound spelled differently": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":3,"gcp_project":"`+testProject+`","budget":{"amount":7,"currency":"USD"},"MAX_IMAGE_BUILDS":1}`))
+				return s, c
+			},
+			reason: "not a marker",
+		},
+		"version 3 with the bound twice": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":3,"gcp_project":"`+testProject+`","budget":{"amount":7,"currency":"USD"},"max_image_builds":1,"max_image_builds":2}`))
+				return s, c
+			},
+			reason: "not a marker",
+		},
+		// A count the shape check lets through (it is a value of the right
+		// kind) and CheckImageBuilds refuses: the row is what makes the two
+		// different judgements — the shape and the range — separately visible.
+		"version 3 with a bound that is not a whole number": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":3,"gcp_project":"`+testProject+`","budget":{"amount":7,"currency":"USD"},"max_image_builds":1.5}`))
+				return s, c
+			},
+			reason: "not a marker",
+		},
+		"version 3 with a bound that is a string": {
+			world: func(t *testing.T) (*storage.Service, *crm.Service) {
+				s, f, c, _ := managedWorld(t)
+				f.Put(testBucket, MarkerObject, []byte(`{"version":3,"gcp_project":"`+testProject+`","budget":{"amount":7,"currency":"USD"},"max_image_builds":"2"}`))
 				return s, c
 			},
 			reason: "not a marker",
@@ -981,6 +1104,143 @@ func TestReadBudgetAcceptsTheBounds(t *testing.T) {
 	}
 }
 
+// The version a managed creation writes now (M5, D1013): the fact, the amount
+// and the bound on billable image builds, read as managed with the amount and
+// the bound readable from the same object — and still a read that writes
+// nothing and asks for nothing but the project's number, the bucket and the
+// object. It is the read the refresh counts against (M4), so it is asserted
+// here beside the budget's own.
+func TestIsManagedReadsTheBuildsVersion(t *testing.T) {
+	ctx := context.Background()
+	s, f, c, cf := managedWorld(t)
+	f.Put(testBucket, MarkerObject, []byte(markerBuildsJSON))
+
+	ok, reason, err := IsManaged(ctx, s, c, testFugaroProject, testProject)
+	if err != nil || !ok || reason != "" {
+		t.Fatalf("IsManaged = %v, %q, %v; want true, \"\", nil", ok, reason, err)
+	}
+	builds, err := ReadImageBuilds(ctx, s, c, testFugaroProject, testProject)
+	if err != nil || !builds.OK || builds.Default || builds.Invalid {
+		t.Fatalf("ReadImageBuilds = %+v, %v; want a recorded bound, nil", builds, err)
+	}
+	if builds.Builds != DefaultImageBuilds {
+		t.Errorf("ReadImageBuilds = %+v, want the bound the fact records (%d)", builds, DefaultImageBuilds)
+	}
+	if builds.Reason != "" {
+		t.Errorf("ReadImageBuilds = %+v: a bound that was read carries no reason", builds)
+	}
+	for _, r := range f.Requests() {
+		if r.Method != http.MethodGet {
+			t.Errorf("the bound read made a %s %s: a marker read writes nothing", r.Method, r.Path)
+		}
+	}
+	for _, r := range cf.Requests() {
+		if r.Method != http.MethodGet {
+			t.Errorf("the bound read made a %s %s: a marker read writes nothing", r.Method, r.Path)
+		}
+	}
+}
+
+// The bound's range is the write's rule (CheckImageBuilds), so the smallest
+// count a creation may record and the largest are read back as they were
+// written: the ceiling is a bound, not an off-by-one that refuses the value
+// the write accepted.
+func TestReadImageBuildsAcceptsTheBounds(t *testing.T) {
+	ctx := context.Background()
+	for _, n := range []int64{MinImageBuilds, MaxImageBuilds} {
+		s, f, c, _ := managedWorld(t)
+		f.Put(testBucket, MarkerObject, []byte(fmt.Sprintf(`{"version":3,"gcp_project":"%s","budget":{"amount":7,"currency":"USD"},"max_image_builds":%d}`, testProject, n)))
+		builds, err := ReadImageBuilds(ctx, s, c, testFugaroProject, testProject)
+		if err != nil || !builds.OK || builds.Builds != n {
+			t.Errorf("bound %d: ReadImageBuilds = %+v, %v; want it read back", n, builds, err)
+		}
+	}
+}
+
+// The recorded bound is checked by the marker's own rule and by no other: a
+// count outside [MinImageBuilds, MaxImageBuilds] is refused — the project is
+// not managed by that object — rather than clamped to the nearest end or
+// quietly read as the default, which are the two ways a bound that cannot be
+// read would become a bound nobody chose. The refused figure is handed back
+// beside the refusal (Invalid), so a caller can say the recorded bound is
+// invalid rather than that the project is not managed.
+func TestManagedMarkerRecordedBoundRangeIsChecked(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		bound int64
+		want  string
+	}{
+		{0, "records no image build bound"},
+		{-1, "outside 1 to 1000"},
+		{MaxImageBuilds + 1, "outside 1 to 1000"},
+		{9223372036854775807, "outside 1 to 1000"},
+	} {
+		s, f, c, _ := managedWorld(t)
+		f.Put(testBucket, MarkerObject, []byte(fmt.Sprintf(`{"version":3,"gcp_project":"%s","budget":{"amount":7,"currency":"USD"},"max_image_builds":%d}`, testProject, tc.bound)))
+		ok, reason, err := IsManaged(ctx, s, c, testFugaroProject, testProject)
+		if err != nil || ok {
+			t.Fatalf("bound %d: IsManaged = %v, %q, %v; want false and a reason", tc.bound, ok, reason, err)
+		}
+		if !strings.Contains(reason, tc.want) {
+			t.Errorf("bound %d: reason = %q, want it to say %q", tc.bound, reason, tc.want)
+		}
+		builds, err := ReadImageBuilds(ctx, s, c, testFugaroProject, testProject)
+		if err != nil || builds.OK || builds.Default {
+			t.Fatalf("bound %d: ReadImageBuilds = %+v, %v; want neither a bound nor the default", tc.bound, builds, err)
+		}
+		if builds.Builds != tc.bound && tc.bound != 0 {
+			t.Errorf("bound %d: the refused figure handed back is %d, want it", tc.bound, builds.Builds)
+		}
+		if !builds.Invalid && tc.bound != 0 {
+			t.Errorf("bound %d: Invalid = false, want the refused figure reported as one", tc.bound)
+		}
+	}
+}
+
+// The plan's table row with the whole of its meaning: a version-1 or version-2
+// creation fact is managed and records NO bound, and that is the default of
+// one build per invocation — never "no bound", and never a figure a caller
+// could mistake for a recorded one. Both older versions are rows, because both
+// are in the table and a read taught only the newer one would answer neither
+// the way this test states.
+//
+// What the default IS (the value a command counts against) is the decision's
+// own, internal/managed.ImageBuildsBound, and its test is where that half is
+// pinned: this read answers Default, and the decision is what turns Default
+// into the default of one.
+func TestManagedMarkerOlderVersionMeansTheDefaultBound(t *testing.T) {
+	ctx := context.Background()
+	for name, object := range map[string]string{
+		"the version-1 creation fact": markerJSON,
+		"the version-2 creation fact": markerBudgetJSON,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f, c, _ := managedWorld(t)
+			f.Put(testBucket, MarkerObject, []byte(object))
+			ok, reason, err := IsManaged(ctx, s, c, testFugaroProject, testProject)
+			if err != nil || !ok {
+				t.Fatalf("IsManaged = %v, %q, %v; want true: an older fact stays managed", ok, reason, err)
+			}
+			builds, err := ReadImageBuilds(ctx, s, c, testFugaroProject, testProject)
+			if err != nil || builds.OK || builds.Invalid {
+				t.Fatalf("ReadImageBuilds = %+v, %v; want the default answered, not a failure and not a refusal", builds, err)
+			}
+			if !builds.Default {
+				t.Fatalf("ReadImageBuilds = %+v: an older fact records no bound, so the answer is the default", builds)
+			}
+			if builds.Builds != 0 {
+				t.Errorf("ReadImageBuilds = %+v: it hands back %d, which a caller could read as a recorded bound", builds, builds.Builds)
+			}
+			if !strings.Contains(builds.Reason, "default of 1 build per invocation") {
+				t.Errorf("reason = %q, want it to name the default of one build per invocation", builds.Reason)
+			}
+			if strings.Contains(builds.Reason, "unlimited") {
+				t.Errorf("reason = %q: the absence of a bound is never unlimited", builds.Reason)
+			}
+		})
+	}
+}
+
 // A version-1 creation fact — every --create-project run without --managed
 // writes one, and every project created before Task 4.2 carries one — is
 // managed (IsManaged true: the compatibility the merged code and its tests
@@ -1152,4 +1412,87 @@ func TestReadBudgetAnswerTheInvalidFigureOutranksTheMissingLabel(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The version this task adds is one an older build does not know, and an
+// older build must REFUSE it rather than read it as the version-2 shape it
+// partly resembles (reconciliation F12's consequence; D1013's answer, whose
+// whole point is that a project marked by a newer CLI and applied by an older
+// one keeps its confirmations rather than applying with no bound). What makes
+// the older build refuse is the field the new version carries: its Marker has
+// no max_image_builds, its decode refuses unknown fields, and its version
+// switch knows two versions. All three are modelled here rather than called,
+// because this build's parseMarker is the reader the version was added to and
+// a test that called it would be asserting the new answer instead of the old
+// one.
+func TestManagedMarkerBuildsVersionIsRefusedByAnOlderReader(t *testing.T) {
+	// The object this build writes for a managed creation, through the real
+	// writer, so the test is about the bytes a project actually carries.
+	data, err := (Marker{
+		Version:        MarkerVersionBuilds,
+		GCPProject:     testProject,
+		Budget:         &Budget{Amount: 7, Currency: "USD"},
+		MaxImageBuilds: DefaultImageBuilds,
+	}).Bytes()
+	if err != nil {
+		t.Fatalf("the version this task adds cannot be written: %v", err)
+	}
+	if !bytes.Contains(data, []byte(`"max_image_builds"`)) {
+		t.Fatalf("the object of the new version records no bound: %s", data)
+	}
+
+	// The control first: the version-2 object this build still writes is one
+	// the older reader believes, so the refusal below is about what the new
+	// version carries and not about the older reader refusing everything.
+	older, err := olderMarkerRead([]byte(markerBudgetJSON))
+	if err != nil {
+		t.Fatalf("the older reader refuses the version-2 object: %v", err)
+	}
+	if older.Version != MarkerVersionBudget || older.Budget == nil || older.Budget.Amount != 7 {
+		t.Fatalf("the older reader read the version-2 object as %+v", older)
+	}
+
+	// And the object of the new version: refused, with nothing of it believed.
+	if _, err := olderMarkerRead(data); err == nil {
+		t.Fatal("an older reader believed a version-3 object instead of refusing it")
+	}
+}
+
+// olderMarker is the marker as the release before this task held it: the
+// version, the project, and the budget version 2 records — no bound, because
+// the version that carries one did not exist.
+type olderMarker struct {
+	Version    int     `json:"version"`
+	GCPProject string  `json:"gcp_project"`
+	Budget     *Budget `json:"budget,omitempty"`
+}
+
+// olderMarkerRead is that release's parseMarker and version switch, over one
+// object: the same DisallowUnknownFields decode, the same one-JSON-value
+// rule, and the versions it knew with what each had to carry. It exists so
+// the fail-closed claim above is asserted against the older reader rather
+// than assumed.
+func olderMarkerRead(data []byte) (olderMarker, error) {
+	var m olderMarker
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&m); err != nil {
+		return olderMarker{}, err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return olderMarker{}, fmt.Errorf("it holds more than one JSON value")
+	}
+	switch m.Version {
+	case MarkerVersion:
+		if m.Budget != nil {
+			return olderMarker{}, fmt.Errorf("version %d carries no budget", m.Version)
+		}
+	case MarkerVersionBudget:
+		if m.Budget == nil {
+			return olderMarker{}, fmt.Errorf("version %d records no budget amount", m.Version)
+		}
+	default:
+		return olderMarker{}, fmt.Errorf("version %d is not one this build knows (%d and %d)", m.Version, MarkerVersion, MarkerVersionBudget)
+	}
+	return m, nil
 }

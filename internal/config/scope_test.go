@@ -126,7 +126,22 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		"agent.max_run_tokens":             InRepo,
 		"agent.first_line_review":          InProject | InRepo,
 		"agent.first_line_rounds":          InProject | InRepo,
-		"agent.recipe":                     InProject | InRepo | InOverride,
+		// The per-level review block (L1.3, D722): four keys per level, each
+		// its own row because either layer may set any one of them.
+		"agent.levels.l1.model":    InProject | InRepo,
+		"agent.levels.l1.effort":   InProject | InRepo,
+		"agent.levels.l1.none":     InProject | InRepo,
+		"agent.levels.l1.focus":    InProject | InRepo,
+		"agent.levels.l2.model":    InProject | InRepo,
+		"agent.levels.l2.effort":   InProject | InRepo,
+		"agent.levels.l2.none":     InProject | InRepo,
+		"agent.levels.l2.focus":    InProject | InRepo,
+		"agent.levels.l3.model":    InProject | InRepo,
+		"agent.levels.l3.effort":   InProject | InRepo,
+		"agent.levels.l3.none":     InProject | InRepo,
+		"agent.levels.l3.focus":    InProject | InRepo,
+		"agent.adversarial_rounds": InProject | InRepo,
+		"agent.recipe":             InProject | InRepo | InOverride,
 		// Named oauth tokens plan Task 6 (docs/design/named-oauth-tokens.md §3
 		// T2): added after agent.recipe, in config.Scopes already; the design
 		// doc's own §5 table (which this golden map otherwise mirrors) gains

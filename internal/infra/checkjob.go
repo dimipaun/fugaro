@@ -336,13 +336,15 @@ func applyJobPatch(ctx context.Context, c *Clients, job string, body []byte) err
 	return nil
 }
 
-// WorkflowJobUpdate is a planned direct update of a checkout: clone
-// workflow's job: its container's image alone. Unlike the check job, a
-// clone workflow's job carries no embedded spec to rewrite: there is
-// nothing to keep in step with it, because there is no per-repository
-// image or build record to compare against (fugaro image refresh always
-// moves it straight to base_images.base). Only PlanWorkflowJob makes one,
-// and ApplyWorkflowJob writes it at most once.
+// WorkflowJobUpdate is a planned direct update of a workflow job whose
+// container checks the repository out itself — checkout: clone, and checkout:
+// shared — of its container's image alone. Unlike the check job, such a job
+// carries no embedded spec to rewrite: there is nothing on the job to keep in
+// step with it, because nothing there is compared against a per-repository
+// record. A clone job's image is the local config's base image; a shared
+// job's is the lock's digest for the repository's key, and it is the lock, not
+// the job, that says which image that is. Only PlanWorkflowJob makes one, and
+// ApplyWorkflowJob writes it at most once.
 type WorkflowJobUpdate struct {
 	job                string
 	oldImage, newImage string
@@ -360,16 +362,21 @@ func (u *WorkflowJobUpdate) NewImage() string { return u.newImage }
 // Changes reports whether the update changes anything.
 func (u *WorkflowJobUpdate) Changes() bool { return u != nil && u.oldImage != u.newImage }
 
-// PlanWorkflowJob reads a checkout: clone workflow's job and plans moving
-// its container's image to newImage (the local config's base_images.base).
-// It is read-only; nil, nil when there is no such job. The job must be
-// owner's workflow job as fugaro update made it: labelled fugaro=managed,
-// fugaro_repo=owner.Label and fugaro_workflow=workflow, with
-// FUGARO_CHECKOUT=clone in its container's environment; anything else is
+// PlanWorkflowJob reads a workflow job whose container checks the repository
+// out itself — checkout: clone, and checkout: shared, neither of which bakes
+// the checkout into its image — or whose image is a project image catalog's
+// (isCatalogImage), and plans moving its container's image to newImage (the
+// image the caller resolved for this workflow). It is read-only; nil, nil
+// when there is no such job. The job must be owner's workflow job as fugaro
+// update made it: labelled fugaro=managed, fugaro_repo=owner.Label and
+// fugaro_workflow=workflow, with FUGARO_CHECKOUT set to clone or shared in
+// its container's environment, or with a catalog image; anything else is
 // ErrCheckJobShape (the same shape error the check job's own plan uses:
 // both name the same fix, fugaro update). The environment is checked
 // as well as the labels because a baked job's image must never be moved to
-// the base image: it still expects the checkout baked into its own image.
+// the base image: it still expects the checkout baked into its own image,
+// which is the one thing a catalog image does not change (a catalog job is
+// baked: the entry's image holds the checkout the catalog build put in it).
 func PlanWorkflowJob(ctx context.Context, c *Clients, gcpProject, region, job, workflow, newImage string, owner CheckJobOwner) (*WorkflowJobUpdate, error) {
 	if owner.Repo == "" || owner.Label == "" {
 		return nil, errors.New("planning the workflow job: no owner repository")
@@ -414,8 +421,34 @@ func PlanWorkflowJob(ctx context.Context, c *Clients, gcpProject, region, job, w
 	if image == "" {
 		return nil, shape("has a container with no image")
 	}
-	if !cloneShapedJobEnv(ct) {
-		return nil, shape("is not a checkout: clone or shared job: its container has no %s=%s or %s, so moving its image would leave a job expecting a baked checkout", CheckoutEnv, config.CheckoutClone, config.CheckoutShared)
+	// A checkout: shared job is clone-shaped — its image is a shared
+	// dependency-layer image a sibling repository's build made (design
+	// forge-authorship-images/shared-images.md §6, §10) and it clones its own
+	// source at launch — so it is accepted beside a checkout: clone job once
+	// this build ships such images, which is the one mark validateCheckout
+	// cannot gate: a config is refused before it reaches a job, a job's own
+	// environment is not a config, and a mark a person wrote there by hand
+	// would otherwise move a job to an image no build produces.
+	checkout, marked := jobCheckoutEnv(ct)
+	if !marked || (checkout != config.CheckoutClone && checkout != config.CheckoutShared) {
+		// A job the project's image catalog gave its image to is the third
+		// shape this function moves, and the only baked one: its image is a
+		// project-level image (D1152) rather than a per-repository derived
+		// tag, so the job's content is the catalog entry's, and the catalog
+		// moving which entry a workflow runs (D1155: a needs: list, a pin,
+		// a changed default) is a move this must accept. Both halves have to
+		// be catalog images — a baked job moved onto a base image still
+		// expects the checkout baked into its own image, whatever its
+		// current one is — and isCatalogImage recognises the built half
+		// alone (its own comment says why): a move involving an entry whose
+		// source is a prebuilt reference is refused here, with the fix the
+		// refusal names.
+		if !isCatalogImage(image) || !isCatalogImage(newImage) {
+			return nil, shape("is not a checkout: clone or shared job: its container has no %s=%s or %s, so moving its image would leave a job expecting a baked checkout", CheckoutEnv, config.CheckoutClone, config.CheckoutShared)
+		}
+	}
+	if checkout == config.CheckoutShared && !config.SharedCheckoutShipped() {
+		return nil, shape("carries %s=%s, which no fugaro update writes: no released fugaro builds or refreshes a shared dependency-layer image yet, so this job is not one this fugaro made", CheckoutEnv, config.CheckoutShared)
 	}
 	u := &WorkflowJobUpdate{job: full, oldImage: image, newImage: newImage}
 	if !u.Changes() {
@@ -434,17 +467,46 @@ func PlanWorkflowJob(ctx context.Context, c *Clients, gcpProject, region, job, w
 	return u, nil
 }
 
-// cloneShapedJobEnv reports whether ct's environment sets FUGARO_CHECKOUT to
-// clone or shared as a plain value: the marks fugaro update writes on a job
-// that clones its source at launch, whichever kind declared it (workflow() in
-// spec.go sets it from the workflow's checkout:). A checkout: shared job's
-// image is a shared dependency-layer image a sibling repository's build made
-// (design forge-authorship-images/shared-images.md §6, §10), so it is
-// clone-shaped for the same reason a checkout: clone job is — and a baked job,
-// which still expects its own source inside its image, is the one refused.
-// A variable set from a secret reference is not a mark, and a job that names
-// it twice is not one Fugaro wrote either way, so only the first entry counts.
-func cloneShapedJobEnv(ct map[string]any) bool {
+// isCatalogImage reports whether image is one of the project image catalog's
+// built images: an image of the installation's one shared registry, named
+// catalog-<entry> and tagged (D1152). Its writer is repoCtx.catalogImage in
+// spec.go, and this recognises the half of that writer which has a shape —
+// an entry whose source is a Dockerfile or an inline definition, built into
+// that name — because a job whose image this answers true for is a job the
+// catalog's own image was given to, and one no repository's derived tag
+// belongs to.
+//
+// The other half is not recognisable and is not guessed at: for an entry
+// whose source is a prebuilt reference (config.SourceImage) the same writer
+// returns the entry's own image verbatim (spec.md, D1152), and any reference
+// could be one — the installation's base image among them — so a job the
+// catalog gave such an entry to answers false here and the move guard above
+// refuses it. What would accept that move is the project's catalog, which
+// the mover is not given; the caller that holds it is the refresh path PIC6
+// adds, and until one passes it the refusal's own fix stands: fugaro update
+// deploys the job with the image the catalog now names.
+func isCatalogImage(image string) bool {
+	base, tag, ok := strings.Cut(image, ":")
+	if !ok || tag == "" {
+		return false
+	}
+	parts := strings.Split(base, "/")
+	if len(parts) < 3 || parts[len(parts)-2] != gcp.SharedRegistryRepoID() {
+		return false
+	}
+	name, ok := strings.CutPrefix(parts[len(parts)-1], catalogImagePrefix)
+	return ok && config.ProjectNameRE.MatchString(name)
+}
+
+// catalogImagePrefix is the spelling repoCtx.catalogImage gives every catalog
+// image's own name, beside the registry it lives in.
+const catalogImagePrefix = "catalog-"
+
+// jobCheckoutEnv reads the FUGARO_CHECKOUT mark ct's environment carries: the
+// value fugaro update wrote there, and whether it is a mark at all. A variable
+// set from a secret reference is not a mark, and a job that names it twice is
+// not one Fugaro wrote either way, so only the first entry counts.
+func jobCheckoutEnv(ct map[string]any) (string, bool) {
 	envs, _ := ct["env"].([]any)
 	for _, e := range envs {
 		m, ok := e.(map[string]any)
@@ -453,11 +515,11 @@ func cloneShapedJobEnv(ct map[string]any) bool {
 		}
 		v, plain := m["value"].(string)
 		if _, src := m["valueSource"]; !plain || src {
-			return false
+			return "", false
 		}
-		return v == config.CheckoutClone || v == config.CheckoutShared
+		return v, true
 	}
-	return false
+	return "", false
 }
 
 // ApplyWorkflowJob writes u: the job exactly as read, with only its

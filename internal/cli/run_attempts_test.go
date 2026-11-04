@@ -5,9 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -16,31 +14,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// bumpMaxParallel rewrites the fixture's local config to raise (or, for a
-// test that means to trigger the cap, lower) max_parallel from the
-// fixture's default of 2 (cloud_test.go's newCloudFixture).
-func bumpMaxParallel(t *testing.T, n int) {
-	t.Helper()
-	path := os.Getenv("FUGARO_CONFIG")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	updated := strings.Replace(string(data), "max_parallel: 2\n", fmt.Sprintf("max_parallel: %d\n", n), 1)
-	if updated == string(data) {
-		t.Fatal("max_parallel: 2 not found in the fixture's config")
-	}
-	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // TestRunAttemptsLaunchesNWithOneBatch is generic-tool plan Task 13's test:
 // --attempts N launches N runs of the same task under one batch label, and
 // refuses the flag combinations a best-of-N batch makes no sense with.
 func TestRunAttemptsLaunchesNWithOneBatch(t *testing.T) {
 	f := newCloudFixture(t)
-	bumpMaxParallel(t, 5)
+	setMaxParallel(t, 5)
 	// review-only needs a job image with a build record (needsRecipeImage);
 	// without one, --recipe review-only would be refused there instead of
 	// by the mode: review check this test means to exercise.
@@ -102,7 +81,7 @@ func TestRunAttemptsLaunchesNWithOneBatch(t *testing.T) {
 // cap the same fixture happens to also be short on.
 func TestRunAttemptsRangeIsTwoToFour(t *testing.T) {
 	newCloudFixture(t)
-	bumpMaxParallel(t, 10)
+	setMaxParallel(t, 10)
 	for _, n := range []string{"-1", "0", "1", "5"} {
 		_, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", n, "x")
 		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "use 2 to 4") {
@@ -120,7 +99,7 @@ func TestRunAttemptsRangeIsTwoToFour(t *testing.T) {
 // dedupe silently (item 1).
 func TestRunAttemptsRunIDIsRefused(t *testing.T) {
 	newCloudFixture(t)
-	bumpMaxParallel(t, 10)
+	setMaxParallel(t, 10)
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "--run-id", "20260927-100000-aaaa", "x")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "takes no --run-id") {
 		t.Fatalf("err = %v", err)
@@ -148,7 +127,7 @@ func TestRunAttemptsNeedsRoomForAll(t *testing.T) {
 // batch contradicts.
 func TestRunAttemptsRetry(t *testing.T) {
 	newCloudFixture(t)
-	bumpMaxParallel(t, 5)
+	setMaxParallel(t, 5)
 	// A review of this test (design generic-tool review, 2026-10-13, item
 	// 3) found that checking only the exit code did not actually pin
 	// --attempts's own exclusion of --retry: if --retry were removed from
@@ -166,7 +145,7 @@ func TestRunAttemptsRetry(t *testing.T) {
 // the batch instead of the default bestof-<first run id>.
 func TestRunAttemptsKeepsExplicitBatch(t *testing.T) {
 	f := newCloudFixture(t)
-	bumpMaxParallel(t, 5)
+	setMaxParallel(t, 5)
 	out, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "--batch", "nightly", "--json", "task")
 	if err != nil {
 		t.Fatal(err)
@@ -193,7 +172,7 @@ func TestRunAttemptsKeepsExplicitBatch(t *testing.T) {
 // for the right refusal if both just returned ExitUserError.
 func TestRunAttemptsRefusesReviewModeBeforeMaxParallel(t *testing.T) {
 	newCloudFixture(t)
-	bumpMaxParallel(t, 1)
+	setMaxParallel(t, 1)
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "--recipe", "review-only", "task")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "mode: review") || strings.Contains(err.Error(), "max_parallel") {
 		t.Fatalf("err = %v", err)
@@ -257,7 +236,7 @@ func TestReportBatchFailurePrintsWhatLaunched(t *testing.T) {
 // directly, through the resolveBatchPlan seam, instead.
 func TestRunAttemptsResolveRecipeOnce(t *testing.T) {
 	newCloudFixture(t)
-	bumpMaxParallel(t, 5)
+	setMaxParallel(t, 5)
 
 	orig := resolveBatchPlan
 	calls := 0
@@ -284,7 +263,7 @@ func TestRunAttemptsResolveRecipeOnce(t *testing.T) {
 // for the 2nd or 3rd attempt once the 2nd has failed.
 func TestRunAttemptsPartialFailureReportsWhatLaunched(t *testing.T) {
 	f := newCloudFixture(t)
-	bumpMaxParallel(t, 5)
+	setMaxParallel(t, 5)
 	boom := errors.New("boom")
 
 	orig := launchAttempt
@@ -324,7 +303,7 @@ func TestRunAttemptsPartialFailureReportsWhatLaunched(t *testing.T) {
 // rare in production.
 func TestRunAttemptsRetriesOnRunIDCollision(t *testing.T) {
 	newCloudFixture(t)
-	bumpMaxParallel(t, 5)
+	setMaxParallel(t, 5)
 
 	orig := runIDGenerator
 	calls := 0
@@ -363,7 +342,7 @@ func TestRunAttemptsRetriesOnRunIDCollision(t *testing.T) {
 // fewer than N runs it actually started.
 func TestRunAttemptsRefusesAlreadyLaunchedInsideBatch(t *testing.T) {
 	newCloudFixture(t)
-	bumpMaxParallel(t, 5)
+	setMaxParallel(t, 5)
 
 	orig := launchAttempt
 	calls := 0

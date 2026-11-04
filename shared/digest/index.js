@@ -94,6 +94,13 @@ const TOTAL_FIELDS = Object.freeze({
   leased_usd: NUMBER,
   daily_cap_usd: NUMBER,
   percent: NUMBER,
+  // `max_parallel` is on `total` alone -- the concurrent-run cap a launch is
+  // checked against, which `internal/watch/json.go` writes and a repository
+  // has no counterpart of -- so it is named here and not in `REPO_FIELDS`:
+  // accepted, and refused when it carries the wrong shape, like every other
+  // NUMBER above. The digest produces nothing from it, as it produces nothing
+  // from `leased_usd`: nothing downstream reads a cap yet.
+  max_parallel: NUMBER,
   burn: OBJECT,
   kill: OBJECT,
   runs: NUMBER,

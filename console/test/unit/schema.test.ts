@@ -36,8 +36,12 @@ import { describe, expect, it } from 'vitest'
 import { UNAVAILABLE_MARK, formatReading, readNumber, unavailable } from '../../src/shared/availability'
 import {
   COORDINATOR_COLLISION_KEYS,
+  COORDINATOR_INTENT_KEYS,
+  COORDINATOR_INTENTS_KEYS,
+  COORDINATOR_PR_DOCUMENT_KEYS,
   COORDINATOR_PR_KEYS,
   COORDINATOR_RECORD_KEYS,
+  COORDINATOR_REPO_INTENTS_KEYS,
   COORDINATOR_REPO_KEYS,
   COORDINATOR_RUN_KEYS,
   COORDINATOR_STALE_KEYS,
@@ -63,13 +67,21 @@ import {
   NON_TEXT_STRING_KEYS,
   WIRE_TEXT_CLASSES,
   decodeCoordinatorStatus,
+  decodeCoordinatorPullRequest,
+  decodeCoordinatorIntents,
   decodeDocument,
   decodePlanStatus,
   decodeSnapshot,
   knownTopLevelKeys,
   wireTextClass,
 } from '../../src/shared/schema'
-import type { CoordinatorStatusView, PlanState, PlanStatusView } from '../../src/shared/schema'
+import type {
+  CoordinatorIntentsView,
+  CoordinatorPullRequestDocument,
+  CoordinatorStatusView,
+  PlanState,
+  PlanStatusView,
+} from '../../src/shared/schema'
 import type { LiveDocument } from '../../src/shared/schema'
 import type { JSONDoc } from '../../src/source/source'
 import { loadFixture } from '../../src/source/fixture'
@@ -823,14 +835,29 @@ describe('both document shapes decode', () => {
     const fromTheStruct = structTags(WATCH_SOURCE, 'JSONTotal').map((tag) => tag.key)
     expect(fromTheStruct).toEqual([
       'counted_usd', 'spent_usd', 'notional_usd', 'leased_usd', 'daily_cap_usd',
-      'percent', 'burn', 'kill', 'runs', 'run_hours',
+      'percent', 'max_parallel', 'burn', 'kill', 'runs', 'run_hours',
     ])
     expect([...TOTAL_KEYS].sort()).toEqual([...fromTheStruct].sort())
     expect(TOTAL_KEYS.length).toBe(fromTheStruct.length)
     // And the recorded total still carries exactly the struct's keys, so the
     // addition did not come at the cost of the document the fixture holds.
+    //
+    // `max_parallel` is the one key the fixture is *approved to lack*: the
+    // synthetic documents are written by `synthetic.ts` and committed
+    // byte-identical -- `fixture.test.ts` regenerates the file from it and
+    // compares -- so putting the key in them is that module's own change and not
+    // this pin's. It is the same allowance the Go side makes for the recording it
+    // walks (`mayLackOldRecording`, `docs_desktop_console_test.go`): the list is
+    // the struct's, whether or not the document the fixture holds is old enough
+    // to carry every key.
+    const approvedAheadOfTheFixture = ['max_parallel']
     const wireTotal = (first as { total?: Record<string, unknown> }).total ?? {}
-    expect(Object.keys(wireTotal).sort()).toEqual([...fromTheStruct].sort())
+    expect(Object.keys(wireTotal).sort()).toEqual(
+      [...fromTheStruct].filter((key) => !approvedAheadOfTheFixture.includes(key)).sort(),
+    )
+    // ... and a document that does carry it is accepted rather than refused,
+    // drawing nothing: the key is the struct's, and no screen reads it yet.
+    ignoring(first, patched(first, ['total', 'max_parallel'], 4), (raw) => decodeDocument(raw))
   })
 
   it('carries notional as the wire wrote it, and never infers it from auth', () => {
@@ -1300,6 +1327,14 @@ describe('every wire string is classified', () => {
       expect(stringLeaves(PLAN_STATUS).map((leaf) => leaf.key), key).toContain(key)
     }
     expect(unclassified(PLAN_STATUS)).toEqual([])
+    // And the declared intents document's own keys: `declared_by`, `files` and
+    // `services` are in no other document of the corpus, so without their rows
+    // the map could claim to be total over the wire while missing exactly the
+    // keys this read writes.
+    for (const key of ['declared_by', 'files', 'services']) {
+      expect(stringLeaves(INTENTS).map((leaf) => leaf.key), key).toContain(key)
+    }
+    expect(unclassified(INTENTS)).toEqual([])
   })
 
   it('reports a key it has no class for, which is what makes the walk a test', () => {
@@ -1352,6 +1387,20 @@ describe('every wire string is classified', () => {
     expect(wireTextClass('pr_url')).toBe('url')
     expect(wireTextClass('round')).toBe('label')
     expect(wireTextClass('round')).not.toBe('sentence')
+    // The declared intents document (coordinator v2 C4): `declared_by` is the
+    // one key of the seven a record's own writer filled in about itself, and it
+    // is a **label** and not the `person` class the recorded identities carry --
+    // nothing verifies it and nothing admits anything by it, so it is drawn as
+    // the declaration it is (contract §6.16, reconciliation finding #11).
+    expect(wireTextClass('declared_by')).toBe('label')
+    expect(wireTextClass('declared_by')).not.toBe('person')
+    // `files` and `services` are the two lists another writer declared, drawn
+    // as the class each list already is: a repository-relative path, and a
+    // service's name.
+    expect(wireTextClass('files')).toBe('path')
+    expect(wireTextClass('services')).toBe('label')
+    expect(wireTextClass('at')).toBeUndefined()
+    expect(NON_TEXT_STRING_KEYS).toContain('at')
     expect(wireTextClass('mode')).toBeUndefined()
     expect(wireTextClass('rogue_key')).toBeUndefined()
     // A commit digest is not text. Classed as a label it would have gone
@@ -1625,6 +1674,7 @@ describe('the coordinator’s stored project view (T1.2)', () => {
     repos: [
       {
         repo: 'owner/repo-a',
+        provider: 'github',
         stored: true,
         view: {
           repo: 'owner/repo-a',
@@ -1700,6 +1750,10 @@ describe('the coordinator’s stored project view (T1.2)', () => {
     // the screen has one branch for each and not one branch for both.
     const stored = coordinatorDecoded(STORED_VIEW).repos[0]
     expect(stored?.repo).toBe('owner/repo-a')
+    // The host the repository is on, which is the one thing a pull request's
+    // link can be built from (D814): carried as the CLI's answer and never
+    // read off `pr.url`, which a job wrote.
+    expect(stored?.provider).toBe('github')
     expect(stored?.stored).toBe(true)
     expect(stored?.stale?.since).toBe('2026-10-27T02:00:00Z')
     expect(stored?.view.records[0]?.pr?.number).toBe(7)
@@ -1719,6 +1773,12 @@ describe('the coordinator’s stored project view (T1.2)', () => {
       repos: [{ repo: 'owner/repo-b', stored: false, view: { repo: 'owner/repo-b', records: [], collisions: [] } }],
     }).repos[0]
     expect(noNode?.stored).toBe(false)
+    // `provider` is additive (D814) and the CLI writes the key even when it is
+    // empty, so a document that has none — a CLI older than the field — reads
+    // as the empty provider rather than being refused whole. `''` is what a
+    // screen draws the number as text for, whether the CLI had no provider to
+    // give or predates the key.
+    expect(noNode?.provider).toBe('')
     // The sweep's three `omitempty` keys are absent from a view `status`
     // computes, and absent is the zero and the empty list -- "nothing was
     // dropped" -- never a gap a screen would have to draw as unknown.
@@ -1767,6 +1827,12 @@ describe('the coordinator’s stored project view (T1.2)', () => {
       unknown
     >).records = 'none'
     expect(coordinatorRefusal(wrongType)).toMatchObject({ name: 'not-an-array', field: 'repos[0].view.records' })
+    const providerRetyped = structuredClone(STORED_VIEW) as Record<string, unknown>
+    ;((providerRetyped.repos as Record<string, unknown>[])[0] as Record<string, unknown>).provider = 7
+    expect(coordinatorRefusal(providerRetyped)).toMatchObject({
+      name: 'not-a-string',
+      field: 'repos[0].provider',
+    })
 
     // An object that is not one at all is refused before anything is read from
     // it, and the live feed's document is refused by this door for the key it
@@ -1811,6 +1877,15 @@ describe('the coordinator’s stored project view (T1.2)', () => {
         COORDINATOR_COLLISION_KEYS,
         'collisions[]',
       ],
+      // The pull request document (coordinator v2 C3): `coordinator show`'s
+      // shape, in the same file as the view's reduced record of the same thing
+      // and deliberately not the same struct -- the difference between the two
+      // is `body`, which the view drops by design (D816).
+      [
+        structTags(COORDINATOR_VIEW_SOURCE, 'PRDocument', 'ee/coordinator/view.go'),
+        COORDINATOR_PR_DOCUMENT_KEYS,
+        'the pull request document',
+      ],
       [
         structTags(COORDINATOR_SWEEP_SOURCE, 'Unread', 'ee/coordinator/sweep.go'),
         COORDINATOR_UNREAD_KEYS,
@@ -1842,5 +1917,337 @@ describe('the coordinator’s stored project view (T1.2)', () => {
     const run = record.runs[0]
     if (run === undefined) throw new Error('the document lost its only run')
     expect(Object.keys(run).sort()).toEqual([...COORDINATOR_RUN_KEYS].sort())
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The pull request document (coordinator v2 C3).
+// ---------------------------------------------------------------------------
+
+/**
+ * PULL_REQUEST is `fugaro coordinator show --repo owner/repo-a --pr 1458
+ * --json`, as the CLI prints it (`ee/coordinator/view.go`, `PRDocument`): one
+ * flat object, and every field the host answered.
+ *
+ * `body` is the field this read exists for and the one this file is careful
+ * about. It is many lines, written by whoever opened the pull request, and the
+ * decoder's whole job with it is to carry it: nothing here parses it, and
+ * nothing here turns it into a link, a path or a decision.
+ */
+const PULL_REQUEST = {
+  number: 1458,
+  url: 'https://example.invalid/owner/repo-a/pull/1458',
+  title: 'a title someone wrote',
+  body: 'the description, as the host holds it\n\nwith a second paragraph, and a line that looks like --json and like <b>markup</b>',
+  state: 'open',
+  draft: false,
+  branch: 'feat/a-thing',
+  base: 'main',
+  author: '4242',
+}
+
+describe('the pull request document (coordinator v2 C3)', () => {
+  /** decoded is a document that must decode, or the test fails with the
+   * refusal's own sentence rather than on an assertion three lines later. */
+  function decoded(raw: unknown): CoordinatorPullRequestDocument {
+    const result = decodeCoordinatorPullRequest(raw)
+    if (!result.ok) throw new Error(result.skew.because)
+    return result.value
+  }
+
+  /** refusal is the refusal of a document that must be refused. */
+  function refusal(raw: unknown): { field: string; name: string } {
+    const result = decodeCoordinatorPullRequest(raw)
+    if (result.ok) throw new Error('expected a refusal')
+    return result.skew.refusal
+  }
+
+  it('carries the whole document, the description included, and derives nothing', () => {
+    const pull = decoded(PULL_REQUEST)
+    expect(pull.number).toBe(1458)
+    expect(pull.title).toBe('a title someone wrote')
+    expect(pull.url).toBe('https://example.invalid/owner/repo-a/pull/1458')
+    expect(pull.state).toBe('open')
+    expect(pull.draft).toBe(false)
+    expect(pull.branch).toBe('feat/a-thing')
+    expect(pull.base).toBe('main')
+    // The author is the host's own account id, carried as the **string** it is
+    // even where it is numeric: it is an id to show and never an identity
+    // anything is admitted by (`console/docs/json-contract.md` §6.15).
+    expect(pull.author).toBe('4242')
+    // The body, byte for byte: many lines, and nothing in it interpreted.
+    expect(pull.body).toBe(PULL_REQUEST.body)
+    expect(pull.body.split('\n')).toHaveLength(3)
+    expect(pull.body).toContain('--json')
+    // The other half of the key-list pin in the stored view's case below: this
+    // document carries every key of the shape, in the spelling the wire uses,
+    // and the Go struct is read for the same list.
+    expect(Object.keys(PULL_REQUEST).sort()).toEqual([...COORDINATOR_PR_DOCUMENT_KEYS].sort())
+  })
+
+  it('reads a field the host did not answer as absent, and a draft as the flag it is', () => {
+    // Every field but `number` is `omitempty` on the Go struct, so a host that
+    // answered none of them prints `{"number":7}` -- and that is a document this
+    // console draws rather than one it refuses: the keys are absent, not
+    // unknown.
+    const bare = decoded({ number: 7 })
+    expect(bare.number).toBe(7)
+    expect(bare.body).toBe('')
+    expect(bare.title).toBe('')
+    expect(bare.url).toBe('')
+    expect(bare.state).toBe('')
+    expect(bare.branch).toBe('')
+    expect(bare.base).toBe('')
+    expect(bare.author).toBe('')
+    // `draft` absent is false, which is the CLI's own `omitempty` and not a
+    // claim about the pull request beyond "the host did not say it was one".
+    expect(bare.draft).toBe(false)
+    // A `null` reads as absent too, which is what the contract table says for
+    // every optional field here.
+    expect(decoded({ number: 7, body: null, draft: null }).body).toBe('')
+    expect(decoded({ number: 7, draft: null }).draft).toBe(false)
+    // ...and a draft the host did answer is true, so the flag is read rather
+    // than fixed.
+    expect(decoded({ ...PULL_REQUEST, draft: true }).draft).toBe(true)
+  })
+
+  it('ignores, rather than refuses, a key no field of the document is, and refuses the number it needs', () => {
+    // The rule every document here is held to (the module header, the owner's
+    // ruling of 2026-10-30): a key this console has no field for is a field a
+    // newer CLI added, and it is **ignored** -- not a refusal -- and it does not
+    // reach a screen. Only a key the document must carry can refuse it.
+    ignoring(PULL_REQUEST, { ...PULL_REQUEST, colour: 'red' }, (raw) => decodeCoordinatorPullRequest(raw))
+    // `number` is the one key the document must carry, and the one that must be
+    // a whole number: it is structure rather than a reading, so an absent or
+    // fractional one is a document this console cannot draw.
+    expect(refusal({ title: 'no number' })).toMatchObject({ name: 'missing', field: 'number' })
+    expect(refusal({ number: '1458' })).toMatchObject({ name: 'not-a-number', field: 'number' })
+    expect(refusal({ number: 1.5 })).toMatchObject({ name: 'not-a-number', field: 'number' })
+    // A string field of the wrong type is refused by name rather than read as
+    // nothing, which is what keeps a number in `body` from reaching a screen.
+    expect(refusal({ number: 7, body: 42 })).toMatchObject({ name: 'not-a-string', field: 'body' })
+    expect(refusal({ number: 7, draft: 'yes' })).toMatchObject({ name: 'not-a-boolean', field: 'draft' })
+    // An object that is not one at all is refused before anything is read off
+    // it, and the stored view's document is refused by this door for the key it
+    // lacks: the two shapes share the name `number` on a nested object and no
+    // top-level key at all, so neither admits the other's.
+    expect(decodeCoordinatorPullRequest([]).ok).toBe(false)
+    expect(decodeCoordinatorPullRequest(null).ok).toBe(false)
+    expect(decodeCoordinatorPullRequest({ repos: [] }).ok).toBe(false)
+  })
+})
+
+/**
+ * INTENTS is the document `fugaro coordinator intents --all --json` prints
+ * (coordinator v2 C4, `ee/coordinator/state.go`'s `StoredProjectIntents`). It
+ * is this file's own words rather than a fixture: the console has no committed
+ * intents recording, and the two states the read turns on -- a repository the
+ * store holds nothing for, and a declaration that names neither a branch nor a
+ * release -- are not in one document anyway. The first record carries **every**
+ * key of the shape, because the key-list pin below reads it and the shape the
+ * same way.
+ */
+const INTENTS = {
+  repos: [
+    {
+      repo: 'owner/repo-a',
+      provider: 'github',
+      intents: [
+        {
+          id: 'a1b2c3d4',
+          // What the declaring side wrote about itself: a declaration, never an
+          // identity anything is admitted by (`console/docs/json-contract.md`
+          // §6.16, reconciliation finding #11).
+          declared_by: 'person-1',
+          at: '2026-11-02T05:00:00Z',
+          branch: 'feat/a-thing',
+          release: '1.5',
+          files: ['src/a.go', 'src/b.go'],
+          services: ['service-a'],
+        },
+        {
+          id: 'e5f6a7b8',
+          declared_by: 'person-2',
+          at: '2026-11-02T04:00:00Z',
+          files: [],
+          services: [],
+        },
+      ],
+    },
+    // A repository the store holds nothing for is an **empty list** and not a
+    // failure: "no declarations" is a fact about the repository, and a screen
+    // needs one answer either way.
+    { repo: 'owner/repo-b', provider: '', intents: [] },
+  ],
+}
+
+describe('the declared intents document (coordinator v2 C4)', () => {
+  /** decoded is a document that must decode, or the test fails with the
+   * refusal's own sentence rather than on an assertion three lines later. */
+  function decoded(raw: unknown): CoordinatorIntentsView {
+    const result = decodeCoordinatorIntents(raw)
+    if (!result.ok) throw new Error(result.skew.because)
+    return result.value
+  }
+
+  /** refusal is the refusal of a document that must be refused. */
+  function refusal(raw: unknown): { field: string; name: string } {
+    const result = decodeCoordinatorIntents(raw)
+    if (result.ok) throw new Error('expected a refusal')
+    return result.skew.refusal
+  }
+
+  it('carries the declarations as they are, and derives nothing', () => {
+    const view = decoded(INTENTS)
+    expect(view.repos.map((repo) => repo.repo)).toEqual(['owner/repo-a', 'owner/repo-b'])
+    expect(view.repos[0]?.provider).toBe('github')
+    // The provider is the caller's answer and not the node's, and `""` is one
+    // of its answers rather than a gap: a machine with no provider to give
+    // sends the empty string. What is **not** C1's additive reading is the key
+    // itself: in the stored view an absent or null provider is the empty string,
+    // while this door requires it (`repos[0].provider` is the field a document
+    // without it is refused by) and refuses a null as a not-a-string, which is
+    // the same answer §6.16's "absent: yes, null: never" gets for this record's
+    // `branch` and `release`.
+    expect(view.repos[1]?.provider).toBe('')
+    const [first, second] = view.repos[0]?.intents ?? []
+    expect(first?.id).toBe('a1b2c3d4')
+    expect(first?.declaredBy).toBe('person-1')
+    expect(first?.at).toBe('2026-11-02T05:00:00Z')
+    expect(first?.branch).toBe('feat/a-thing')
+    expect(first?.release).toBe('1.5')
+    expect(first?.files).toEqual(['src/a.go', 'src/b.go'])
+    expect(first?.services).toEqual(['service-a'])
+    // The order is the document's: newest first, by the writer's own clock,
+    // which is the CLI's sort and not this decoder's.
+    expect(second?.id).toBe('e5f6a7b8')
+    // Every key of the shape, in the spelling the wire uses -- read off the
+    // *document*, because the decoded record is the camelCase this console
+    // draws from. The Go struct is read for the same three lists in the ee
+    // package's console-contract test.
+    const wireRecord = (INTENTS.repos[0]?.intents[0] ?? {}) as Record<string, unknown>
+    expect(Object.keys(wireRecord).sort()).toEqual([...COORDINATOR_INTENT_KEYS].sort())
+    expect(Object.keys(INTENTS.repos[0] ?? {}).sort()).toEqual([...COORDINATOR_REPO_INTENTS_KEYS].sort())
+    expect(Object.keys(INTENTS).sort()).toEqual([...COORDINATOR_INTENTS_KEYS].sort())
+    // ...and the decoded record has every one of them, under this console's own
+    // spelling: `declared_by` is the one key the two spellings differ on, and
+    // that is on purpose (`declaredBy` is the JavaScript name, the wire keeps
+    // the record's).
+    expect(Object.keys(first ?? {}).sort()).toEqual(
+      ['at', 'branch', 'declaredBy', 'files', 'id', 'release', 'services'],
+    )
+  })
+
+  it('reads a declaration that names no branch and no release as absent, and a quiet repository as empty', () => {
+    // Both fields are `omitempty` on the Go struct, so a declaration that names
+    // neither prints neither key -- and that is a document this console draws
+    // rather than one it refuses.
+    const [second] = decoded(INTENTS).repos[0]?.intents.slice(1) ?? []
+    expect(second?.branch).toBe('')
+    expect(second?.release).toBe('')
+    expect(second?.files).toEqual([])
+    expect(second?.services).toEqual([])
+    // An empty list is the one list a quiet repository has: never a `null` a
+    // screen has to interpret.
+    const bare = { repos: [{ repo: 'owner/repo-a', provider: '', intents: [] }] }
+    expect(decoded(bare).repos[0]?.intents).toEqual([])
+    // **`null` is not the absent shape here.** §6.16's tables mark all three of
+    // `provider`, `branch` and `release` "absent: yes, **null: never**": the Go
+    // struct's `omitempty` drops the key rather than writing a null, so a null
+    // in its place is a document this build does not know, and `optionalText`'s
+    // house reading of one (the empty string) applies to no key of this record.
+    const withRecord = (patch: Record<string, unknown>): unknown => ({
+      repos: [
+        {
+          repo: 'owner/repo-a',
+          provider: '',
+          intents: [{ ...(INTENTS.repos[0]?.intents[0] ?? {}), ...patch }],
+        },
+      ],
+    })
+    expect(refusal(withRecord({ branch: null }))).toMatchObject({
+      name: 'not-a-string',
+      field: 'repos[0].intents[0].branch',
+    })
+    expect(refusal(withRecord({ release: null }))).toMatchObject({
+      name: 'not-a-string',
+      field: 'repos[0].intents[0].release',
+    })
+    expect(refusal({ repos: [{ repo: 'owner/repo-a', provider: null, intents: [] }] })).toMatchObject({
+      name: 'not-a-string',
+      field: 'repos[0].provider',
+    })
+  })
+
+  it('ignores a key no field of the document is, and refuses the ones a record must carry', () => {
+    // The rule every document here is held to (the module header, the owner's
+    // ruling of 2026-10-30): a key this console has no field for is a field a
+    // newer CLI added, and it is **ignored** rather than refused.
+    ignoring(INTENTS, { ...INTENTS, colour: 'red' }, (raw) => decodeCoordinatorIntents(raw))
+    // `id`, `declared_by`, `at`, `files` and `services` are the five keys a
+    // record must carry: a declaration with no record of who made it, no id to
+    // name it by, or no lists at all is a document this console cannot draw.
+    const record = INTENTS.repos[0]?.intents[0] ?? {}
+    // `only` takes the record *whole*, so a key deleted from it really is gone
+    // -- a patch spread over the original would put it back.
+    const only = (full: Record<string, unknown>): unknown => ({
+      repos: [{ repo: 'owner/repo-a', provider: 'github', intents: [full] }],
+    })
+    const withField = (patch: Record<string, unknown>): Record<string, unknown> => ({ ...record, ...patch })
+    for (const key of ['id', 'declared_by', 'at', 'files', 'services']) {
+      const stripped = withField({})
+      delete stripped[key]
+      expect(refusal(only(stripped))).toMatchObject({
+        name: 'missing',
+        field: `repos[0].intents[0].${key}`,
+      })
+    }
+    // A field the record does carry of the wrong type is refused by name rather
+    // than read as nothing, which is what keeps a number in `declared_by` from
+    // reaching a screen.
+    expect(refusal(only(withField({ declared_by: 42 })))).toMatchObject({
+      name: 'not-a-string',
+      field: 'repos[0].intents[0].declared_by',
+    })
+    expect(refusal(only(withField({ files: 'src/a.go' })))).toMatchObject({
+      name: 'not-an-array',
+      field: 'repos[0].intents[0].files',
+    })
+    expect(refusal(only(withField({ files: [7] })))).toMatchObject({
+      name: 'not-a-string',
+      field: 'repos[0].intents[0].files[0]',
+    })
+    expect(refusal(only(withField({ at: 'yesterday' })))).toMatchObject({
+      name: 'not-a-timestamp',
+      field: 'repos[0].intents[0].at',
+    })
+    // The repository's own three keys are required as well.
+    expect(refusal({ repos: [{ provider: 'github', intents: [] }] })).toMatchObject({
+      name: 'missing',
+      field: 'repos[0].repo',
+    })
+    expect(refusal({ repos: [{ repo: 'owner/repo-a', intents: [] }] })).toMatchObject({
+      name: 'missing',
+      field: 'repos[0].provider',
+    })
+    expect(refusal({ repos: [{ repo: 'owner/repo-a', provider: 'github' }] })).toMatchObject({
+      name: 'missing',
+      field: 'repos[0].intents',
+    })
+  })
+
+  it('admits the project-wide document and nothing else, so one repository is not read as a project', () => {
+    // The console's row fixes `--all` (`src/main/spawn.ts`), so `repos` is the
+    // document this door admits. The CLI's single-repository form prints the
+    // repository object itself (contract §6.16), and that shape is refused here
+    // by the key it lacks rather than read as a project with no repositories.
+    expect(decodeCoordinatorIntents(INTENTS.repos[0]).ok).toBe(false)
+    expect(decodeCoordinatorIntents({ repos: [] }).ok).toBe(true)
+    expect(decodeCoordinatorIntents([]).ok).toBe(false)
+    expect(decodeCoordinatorIntents(null).ok).toBe(false)
+    // The other two coordinator documents are refused by this door for the keys
+    // they lack: the three shapes share no top-level key but `repos`, and the
+    // stored view's `repos` members carry `stored`/`view` rather than `intents`.
+    expect(decodeCoordinatorIntents({ repo: 'owner/repo-a', stored: true }).ok).toBe(false)
   })
 })

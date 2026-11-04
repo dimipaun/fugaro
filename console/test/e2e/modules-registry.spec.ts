@@ -80,6 +80,9 @@ const specs = specSources
  */
 const declaring = specSources
   .filter((spec) => /readFileSync\(\s*join\(consoleDir,\s*'dist'/.test(spec.source))
+  // A spec that reads the built main entry (crash-init) injects no renderer
+  // module, so it has no registry to drift.
+  .filter((spec) => !/readFileSync\(\s*join\(consoleDir,\s*'dist',\s*'main'/.test(spec.source))
   .map((spec) => spec.name)
 
 test.describe('the hand-built module registries', () => {

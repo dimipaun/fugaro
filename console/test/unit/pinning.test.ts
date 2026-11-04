@@ -251,10 +251,20 @@ describe('console/package.json', () => {
       pkg.scripts?.['test:unit'],
       'test:unit must run vitest over test/unit: it is the command the plan names (Task 1.0) and the one the staged console workflow calls (Task 1.4)',
     ).toBe('vitest run --dir test/unit')
+    // Task 2.1b's fix round B edits the string again, deliberately: the packed
+    // console's notices are held to the archive the packer produces
+    // (`scripts/check-packed-notices.mjs`, which packs the app itself), and the
+    // e2e script is the step the console's CI job already runs after `npm run
+    // build` -- so the check rides there rather than in a step of its own that
+    // would mean editing the workflow.
     expect(
       pkg.scripts?.['test:e2e'],
-      'test:e2e must build first (the spec runs what `main` points at, which only `npm run build` writes) and must still pass --pass-with-no-tests, so a tree with no e2e spec stays green',
-    ).toBe('npm run build && playwright test --pass-with-no-tests')
+      'test:e2e must build first (the spec runs what `main` points at, which only `npm run build` writes), then check the packed app against the notices, and must still pass --pass-with-no-tests, so a tree with no e2e spec stays green',
+    ).toBe('npm run build && npm run check:packed && playwright test --pass-with-no-tests')
+    expect(
+      pkg.scripts?.['check:packed'],
+      'check:packed must run the packed-set check, which is the only thing that reads the packer\'s own answer',
+    ).toBe('node scripts/check-packed-notices.mjs')
   })
 
   // The runtime dependency set, as an allow-list rather than a prohibition.
@@ -262,11 +272,17 @@ describe('console/package.json', () => {
   // and no charting library -- and section 5.2 applies the pinning rule to
   // "dependencies and devDependencies alike", so a runtime dependency is
   // allowed as long as it is exact and belongs to the main process. There is
-  // one: everything a `dependencies` entry names is packed into the shipped
-  // asar, and electron-updater downloads and installs code, so it is the
-  // package whose presence needs the most saying. Task 4.4 adds it, with the
-  // one file that imports it.
-  const runtimeDependencyAllowList: string[] = ['electron-updater']
+  // two, and each with the case for it written down. Everything a
+  // `dependencies` entry names is packed into the shipped asar, so a row here
+  // is a package the operator's download carries: electron-updater downloads
+  // and installs code, and @sentry/electron is the crash reporter the owner's
+  // ruling of 2026-10-30 names, which the wiring starts only when the
+  // installation's own switch says on; the DSN it reports to is a constant of
+  // the build rather than an input of it (the owner's ruling of 2026-10-31,
+  // Task 2.1b). Task 4.4 added
+  // the first with the one file that imports it; Task 2.1b adds the second the
+  // same way, and the boundary below is what keeps the two to one importer each.
+  const runtimeDependencyAllowList: string[] = ['electron-updater', '@sentry/electron']
 
   it('ships exactly the main process runtime dependencies it names', () => {
     const runtime = Object.keys((pkg.dependencies ?? {}) as Record<string, string>).toSorted()
@@ -299,6 +315,46 @@ describe('console/package.json', () => {
       importers,
       `electron-updater is imported by ${JSON.stringify(importers)}; it must be imported by src/main/updater-electron.ts and by nothing else`,
     ).toEqual(['main/updater-electron.ts'])
+  })
+
+  it('imports the crash reporter from one file, its main entry, and no other', () => {
+    // The same shape as the update client's, and a stricter pin for the same
+    // kind of reason. `@sentry/electron` ships three entries -- `main`,
+    // `renderer` and `preload` -- and each one wires a *different process*: the
+    // renderer entry reports the page's errors, and the preload entry exists to
+    // carry the renderer's events across to main. The owner's ruling of
+    // 2026-10-30 is main process only, with no preload and no new IPC surface,
+    // so `main` and nothing else is imported, from exactly one file. A second
+    // importer is a second place a DSN, an integration or an IPC mode can be
+    // configured, which is the surface this test keeps to one.
+    const specifiers = sourceFiles().flatMap((file) =>
+      [
+        ...codeOnly(file.source).matchAll(
+          /(?:from|require\(|import\(|import)\s*['"](@sentry\/electron(?:\/[^'"]*)?)['"]/g,
+        ),
+      ].map((match) => `${file.path}: ${match[1]}`),
+    )
+    expect(
+      specifiers,
+      `@sentry/electron is reached as ${JSON.stringify(specifiers)}; it must be reached as src/main/crash-electron.ts and '@sentry/electron/main' and nothing else`,
+    ).toEqual(['main/crash-electron.ts: @sentry/electron/main'])
+  })
+
+  it('keeps the DSN in one file, reached from one file', () => {
+    // The owner's ruling of 2026-10-31 puts the console's Sentry DSN in the
+    // build as a public constant. One file holds it and one file reads it: a
+    // second importer would be a second place reporting is wired, and the value
+    // would then have two readers to drift between. `test/unit/secret-hygiene`
+    // pins the *value* side of the same ruling -- that it is the only
+    // DSN-shaped literal under `src/` -- and this is the reach side.
+    const importers = sourceFiles()
+      .filter((file) => /(?:from|require\(|import\(|import)\s*['"][^'"]*crash-dsn(?:\.js)?['"]/.test(codeOnly(file.source)))
+      .map((file) => file.path)
+      .toSorted()
+    expect(
+      importers,
+      `the DSN module is imported by ${JSON.stringify(importers)}; it must be imported by src/main/crash-electron.ts and by nothing else`,
+    ).toEqual(['main/crash-electron.ts'])
   })
 
   // One test per section, each naming its own offender, so "a ^ was added to

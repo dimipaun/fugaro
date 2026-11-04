@@ -133,6 +133,12 @@ func readRefreshRecord(ctx context.Context, lc *localcfg.Config, slug, wf string
 	}
 	rec, err := imagecheck.ParseRecord(data)
 	if err != nil {
+		// A record this binary cannot parse is read as an empty one, and an
+		// empty record carries no key. That is the whole of what D622 leaves
+		// here: a record's key is the value the operator's machine computed
+		// and the build's record step wrote as it was given it, so a record
+		// with no key says the build was handed none — never that a key
+		// should be recomputed from what the record does hold.
 		return &imagecheck.Record{}, nil
 	}
 	return rec, nil

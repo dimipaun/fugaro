@@ -5,12 +5,13 @@
 //
 // The console has no IPC bridge. It has a fixed table of named operations --
 // one per read the console performs, the CLI reads among them for the documents
-// the dashboard draws out of design section 2.1, plus the one validated link
-// (that section's list holds a thirteenth row, the picker's own `fugaro config
-// list --json`; it belongs to the installations picker window and is not an
-// operation of this table -- `src/preload/installations.ts` is its surface) --
-// and three
-// prohibitions that are the whole of the rule:
+// the dashboard draws out of design section 2.1, plus the two links (the one
+// validated URL the console is handed, and the pull request link it builds from
+// three fields of a document, K2a, D815) -- and three prohibitions that are the
+// whole of the rule. (That section's list holds a thirteenth row, the picker's
+// own `fugaro config list --json`; it belongs to the installations picker window
+// and is not an operation of this table -- `src/preload/installations.ts` is its
+// surface.)
 //
 //   - **no `invoke(channel, ...)`**: nothing anywhere in the console takes a
 //     channel from a caller. `channelForOperation` derives a channel from a name
@@ -92,7 +93,7 @@ import { invisibleRe, isInvisibleCodePoint, isSeparatorCodePoint } from '../shar
 import { REDUCED_VIEWS, hidesView, unreadableCompatibility } from '../shared/version'
 import type { CliCompatibility, ReducedView } from '../shared/version'
 import { APP_ENTRY_URL, APP_HOST, APP_SCHEME } from './protocol'
-import { validateExternalUrl } from './window'
+import { PULL_REQUEST_PROVIDERS, pullRequestUrl, validateExternalUrl } from './window'
 import { checkLaunchPlanTask, checkLaunchTask, checkLaunchTitle } from './launchrules'
 
 /**
@@ -155,6 +156,17 @@ export const MAX_REPLY_REASON_LENGTH = 2048
  * and the bound bites first. */
 export const MAX_REPOSITORY_LENGTH = 200
 
+/**
+ * SETTINGS_VALUE_MAX_LENGTH bounds the one argument of this surface that is
+ * **not** held to the renderer's own alphabet: a setting's new value (the
+ * settings-edit plan's C3, D1104). It is the console's own bound -- the CLI
+ * takes a value of any length -- and it is here rather than in the grammar
+ * because the value is passed behind a `--` terminator as one argv element, so
+ * what has to be bounded is how large a word this process will hand a child.
+ * `MAX_PAYLOAD_WIDTH` still bounds the whole payload, so this is the widest
+ * single value a screen may send and not the only bound on it. */
+export const SETTINGS_VALUE_MAX_LENGTH = 1024
+
 /** MAX_RUN_ID_LENGTH bounds a run id argument. */
 export const MAX_RUN_ID_LENGTH = 64
 
@@ -191,6 +203,37 @@ export const REPORT_MAX_DAYS = 3660
 export const REPORT_MAX_WEEKS = 522
 
 /**
+ * RUNS_LIST_MAX_LIMIT bounds the page `runs ls --limit=<n>` may be asked for
+ * from here, and **it is the console's own bound rather than the CLI's**: the
+ * command takes any count `strconv.Atoi` reads up to int, and a page exists
+ * because reading and holding a whole window is what the job list was built to
+ * avoid (the console coordinator-v2 reconciliation's D818 and its F5 behind it).
+ * A renderer that could ask for more than this could ask for the window by
+ * another name -- `runs ls --since 0` is one argv and no page at all -- so the
+ * ceiling is stated once, here, and both the schema and the argv builder read
+ * it: the second would otherwise let `1e21` through as the word `1e+21`, which
+ * cobra's `IntVar` refuses only after a child exists.
+ */
+export const RUNS_LIST_MAX_LIMIT = 200
+
+/**
+ * SUMMARY_SINCE_WINDOWS is the closed set of windows `runs summary --since` may
+ * be asked for from here, and **it is the console's own set rather than the
+ * CLI's**. The command takes every form `parseSince` reads -- `7d`, `36h`,
+ * `90m`, a year of days -- but the screens this read exists for need exactly
+ * two: the day they open on, and the week the budget's own live window covers,
+ * which is also the command's default (`summaryDefaultSince`, `internal/cli/
+ * runs_summary.go`). The read is per UTC day, so the CLI enumerates the window's
+ * days and refuses a span with no lower bound; a renderer that could ask for any
+ * window could ask for the whole history under another name. The set is
+ * therefore stated once, here, and both the schema and the argv builder read it.
+ *
+ * `7d` is first because it is the command's own default: a caller that asks for
+ * no window gets it, and one that asks names one of the two.
+ */
+export const SUMMARY_SINCE_WINDOWS: readonly string[] = Object.freeze(['7d', '1d'])
+
+/**
  * ArgumentKind is the closed set of things an operation's argument may be. Every
  * kind is a value the CLI's own flags already accept *in that position*, and
  * none of them is a path, a command, a flag name or a free-form string: a
@@ -223,11 +266,38 @@ export const REPORT_MAX_WEEKS = 522
  *     child exists. The two commands disagree about `--since` and one kind
  *     cannot say both: `report` refuses `3h` and a bare `0` (its `reportRange`
  *     has no duration branch), and `runs ls` refuses `12w` and every date;
+ *   - `runLimit` -- `runs ls --limit`'s own page size: a positive integer, at
+ *     most `RUNS_LIST_MAX_LIMIT`. **`0` is not one of its values** even though
+ *     the CLI takes it (`--limit 0` is "every row of the window"), because that
+ *     is exactly what omitting the argument means here: a payload that asks for
+ *     it asks for nothing, and a value that is a string (`"50"`), fractional
+ *     (`1.5`) or past the cap is refused before a child exists rather than by a
+ *     spawned CLI's flag parser;
+ *   - `runAfter` -- `runs ls --after`'s cursor: a run id in `runId`'s own
+ *     grammar, and it is the id the same read printed (`runview.Row.run_id`).
+ *     It is a separate kind from `runId` for the reason the two `--since`s are
+ *     separate kinds: the *position* differs -- this one is emitted as the `=`
+ *     form `--after=<id>`, one word, so a value can never read as a flag;
+ *   - `summarySince` -- `runs summary --since`'s window: one of
+ *     `SUMMARY_SINCE_WINDOWS` and nothing else. It is a closed set rather than
+ *     `parseSince`'s grammar (`runSince`) because the screens this read serves
+ *     need two windows and no more, and it is its own kind rather than a reuse
+ *     of `runSince` because the *position* differs as well: the row emits it as
+ *     the `=` form `--since=<window>`, one word, so a value can never read as a
+ *     flag;
  *   - `reportDimension` -- `report --by`'s closed set of eight words;
  *   - `secretScope` -- `secrets ls`'s two mutually exclusive scopes;
  *   - `pullRequest` -- a pull request number, a positive integer;
  *   - `flag` -- a boolean, for the flags the allow-list admits;
  *   - `link` -- the one URL, and it must pass `validateExternalUrl`;
+ *   - `gitProvider` -- the closed set of two words the coordinator stores a
+ *     repository's host as, in the stored view's own `provider` field
+ *     (`github`, `bitbucket`: `PULL_REQUEST_PROVIDERS`, `src/main/window.ts`).
+ *     It is read from the builder's own table rather than spelled again here,
+ *     so a provider the schema admits is one `pullRequestUrl` has a host for.
+ *     It is the one kind whose value is a document field rather than a CLI
+ *     flag's, and it exists because the pull request link is **built** from
+ *     that field instead of read out of the document's `url` (D814, D815);
  *   - `installationName` -- one installation's project name, the handle the CLI
  *     itself printed for it (`isProjectName`, `src/main/installations.ts`): not
  *     empty, at most `MAX_INSTALLATION_NAME_LENGTH`, no whitespace, no control
@@ -252,6 +322,20 @@ export const REPORT_MAX_WEEKS = 522
  * invented here, and `test/unit/installationstate.test.ts`'s sibling
  * `test/unit/ipc.test.ts` holds the two implementations to the same verdicts
  * value for value.
+ *
+ * **The last three are the settings write's** (the settings-edit plan's C3, and
+ * they are the only kinds on this surface whose operation is a write of a
+ * *document* rather than of a run). `settingOp` is the edit's subcommand, a
+ * closed set of two (`set`, `unset`); `settingKey` is a key of the read's own
+ * document, a dotted identifier whose shape this module checks and whose
+ * *membership* the CLI owns (D1102 -- the console keeps no key list of its
+ * own); and `settingValue` is the operator's new value, the one argument here
+ * that is passed to the child behind a `--` terminator and the one that is not
+ * held to the renderer's alphabet, because a value may be any text at all
+ * (D1104). Its bound is `SETTINGS_VALUE_MAX_LENGTH`, its hidden-character rule
+ * is the common one, and `settingsEdit`'s pairing rule in `validateArguments`
+ * is what ties the three together: a `set` carries a value and an `unset` does
+ * not.
  */
 export type ArgumentKind =
   | 'repository'
@@ -259,16 +343,23 @@ export type ArgumentKind =
   | 'day'
   | 'reportSince'
   | 'runSince'
+  | 'runLimit'
+  | 'runAfter'
+  | 'summarySince'
   | 'reportDimension'
   | 'secretScope'
   | 'pullRequest'
   | 'flag'
   | 'link'
+  | 'gitProvider'
   | 'installationName'
   | 'installationCheckout'
   | 'launchTask'
   | 'launchTitle'
   | 'launchPlanTask'
+  | 'settingOp'
+  | 'settingKey'
+  | 'settingValue'
 
 /** ArgumentSpec is one field of an operation's closed argument schema. */
 export interface ArgumentSpec {
@@ -370,7 +461,7 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Twenty-four operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Thirty operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -395,13 +486,34 @@ export const LAUNCH_PAYLOAD_WIDTH =
  * `--all` are fixed words of its argv rather than arguments, and
  * `console/docs/json-contract.md` §6.13 describes its document.
  *
+ * **`runs summary --json` is this surface's nineteenth argv** (console
+ * 0.119.0's jobs-free totals read; the CLI half is B4, #1580, and
+ * `console/docs/json-contract.md` §6.17 describes its document). It is the one
+ * read here that answers from the budget database and the spend history alone,
+ * so its child opens no runs bucket, no compute backend and no provider. Its own
+ * comment below says why its one argument is the console's closed set of windows
+ * and why it is withheld with the Spend screen's reads.
+ *
+ * **`models ls --json` is this surface's twentieth argv** (console 0.119.0's
+ * read-only models panel; the CLI half is M1, #1553, and
+ * `console/docs/json-contract.md` §6.18 describes its document). It is the one
+ * argv here whose **group** the console may otherwise not touch: `fugaro models`
+ * has four other words -- `search`, `add`, `rm` and `use` -- and each is on the
+ * never table below, the three writers as commands and all four as words of
+ * `models`, so this row is the group's whole reachable argv. It takes no
+ * argument at all and its child reaches no bucket, no database and no host.
+ *
  * The thirteenth **operation** (the row, not an argv) is the startup
  * handshake's answer (`startup.compatibility`, the console's own state, which
- * no CLI command can be asked for). `openExternal` is the one operation that is
- * not a command at all and the only way out of the console: its URL argument
- * goes through `validateExternalUrl` -- `https:` only, no credentials, no port,
- * host on `ALLOWED_EXTERNAL_HOSTS` -- so the renderer can open a link the
- * console would have opened anyway. `installation.current` is the dashboard's
+ * no CLI command can be asked for). **The two `link.` operations are the ones
+ * that are no command at all, and together they are the whole way out of the
+ * console.** `openExternal` is handed a URL, which goes through
+ * `validateExternalUrl` -- `https:` only, no credentials, no port, host on
+ * `ALLOWED_EXTERNAL_HOSTS` -- so the renderer can open a link the console would
+ * have opened anyway. `openPullRequest` (K2a, D814/D815) is handed **no URL at
+ * all**: three fields of a document, from which the main process builds the
+ * link itself, so the first gate is a build rather than a check and a `url`
+ * field a job wrote has nowhere to enter. `installation.current` is the dashboard's
  * read of the installation the operator chose, or D13's no-installation state;
  * its handler is `handlersFor`'s **optional** `installation` dep, so a build
  * without a store answers it with that state rather than failing to register.
@@ -540,6 +652,39 @@ export const CONSOLE_OPERATIONS = [
         required: false,
         why: 'the design allow-list admits `--all` on this command.',
       },
+      // The page and its cursor (D818, the console coordinator-v2 plan's C2).
+      // They are the two arguments the job list was waiting for: the read is
+      // about 248 KB for a day of runs, so the screen asks for a page and walks
+      // it with the cursor rather than holding a window it cannot draw.
+      //
+      // **A page shrinks the bytes and not the seconds.** Since #1545 `--limit`
+      // cuts what is *printed*: the command still reads the whole window it
+      // prints from, so a day of runs costs its six seconds whether the screen
+      // asks for fifty rows or all of them. What the page buys is a document
+      // the console can hold and a first row it can draw -- the six seconds are
+      // the read's and are paid either way. Both words are emitted as one
+      // `=`-form word each (`spawn.ts`), which is what keeps a value from ever
+      // reading as a flag.
+      //
+      // **`--limit`'s ceiling is the console's** (`RUNS_LIST_MAX_LIMIT`) and
+      // not the CLI's: the command takes any count it can parse, and a
+      // renderer that could ask for more than the cap could ask for the window
+      // under another name. `--after` is the id the same read printed, held to
+      // the run id's own grammar; an id the window does not hold is the CLI's
+      // refusal and not this one's, because only the CLI can know what the
+      // window held.
+      {
+        key: 'limit',
+        kind: 'runLimit',
+        required: false,
+        why: 'the design allow-list admits `--limit=N` on this command: the newest N rows of the window, at most RUNS_LIST_MAX_LIMIT. It needs CLI 0.16.0, the release that carries #1545: in the 0.15 line `--limit` means "read only the newest N", so its totals are the page’s and not the window’s. The caller is the Coordinator screen’s job list (`showCoordinator`, `src/renderer/entry.ts`), which passes it only above `RUNS_LIST_PAGE_CLI_FLOOR`; the queue’s own runs part passes neither word.',
+      },
+      {
+        key: 'after',
+        kind: 'runAfter',
+        required: false,
+        why: 'the design allow-list admits `--after=RUN-ID` on this command: the cursor pages on the row’s own run_id. It needs CLI 0.16.0, the release that carries #1545: a 0.15.x CLI refuses the word outright. The caller is the Coordinator screen’s job list (`showCoordinator`, `src/renderer/entry.ts`), which sends the last row it drew and only above `RUNS_LIST_PAGE_CLI_FLOOR`.',
+      },
     ],
   },
   // The Spend screen's by-person view (console L5b). It is the twelfth command
@@ -579,6 +724,44 @@ export const CONSOLE_OPERATIONS = [
         kind: 'runSince',
         required: false,
         why: 'the design allow-list admits `--since` on this command, in `runs stats`’s own forms (parseSince): 7d, 36h, 90m or 0 — never a date, and never `report`’s `12w`.',
+      },
+    ],
+  },
+  // The Project, Coordinator and Spend tabs' totals read (console 0.119.0's
+  // jobs-free totals read, `fugaro runs summary --json`, the CLI half of which
+  // is B4, #1580). It is the read those tabs paint **first**: run counts per
+  // repository and per state, and the spend, from the budget database's day
+  // nodes and the spend history's daily documents, **without reading a run
+  // object or listing the runs bucket** -- so its child opens no bucket, no
+  // compute backend and no provider, and it is the one read here whose cost does
+  // not grow with the window.
+  //
+  // **`since` is the console's own closed set and not the command's grammar.**
+  // `runs summary` reads a window in `parseSince`'s forms the way `runs stats`
+  // does, but this surface admits exactly `SUMMARY_SINCE_WINDOWS` -- the day a
+  // screen opens on and the week the budget's own live window covers, which is
+  // also the command's default -- because a window is the one thing about this
+  // read that a renderer chooses and the whole history is the one window the
+  // read exists to make unnecessary. The word is emitted as the `=` form
+  // `--since=<window>` (`src/main/spawn.ts`'s `summarySince` kind): one word, so
+  // a window can never be read as a flag.
+  //
+  // **It is the third operation on the surface that carries spend figures**
+  // (`spend.report` and `runs.stats` are the other two), so it is withheld with
+  // them in the reduced mode: `spent_micros` and `notional_micros` are the same
+  // quantities under another name (`REDUCED_VIEW_OPERATIONS` below).
+  {
+    name: 'runs.summary',
+    method: 'summaryRuns',
+    command: 'runs summary',
+    flags: ['--json'],
+    summary: 'the window’s runs counted by repository and by state, and what they spent',
+    args: [
+      {
+        key: 'since',
+        kind: 'summarySince',
+        required: false,
+        why: 'the design allow-list admits `--since` on this command, in the console’s own closed set of windows (SUMMARY_SINCE_WINDOWS): 7d, which is the command’s default and the window the budget’s live counters cover, or 1d for a screen that opens on today. The command itself needs CLI 0.16.0, the release that carries #1580 — `RUNS_SUMMARY_CLI_FLOOR`, `src/shared/version.ts` — because in the 0.15 line it does not exist at all. No caller passes this argument yet: the screens that will are drawn by a later task, and each will pass one of these two words.',
       },
     ],
   },
@@ -754,6 +937,135 @@ export const CONSOLE_OPERATIONS = [
       },
     ],
   },
+  // The Project tab's read-only models panel (console 0.119.0; the owner's
+  // ruling of 2026-11-02, and SECURITY-SENSITIVE because a new row on this
+  // surface always is). `fugaro models ls --json`: the selected project's
+  // routes, the models a run can name today and each recorded repository's
+  // pins. The panel is a later task; this is the main process's half.
+  //
+  // **It is the group's only word the console may drive.** `fugaro models` has
+  // five subcommands -- `ls`, `search`, `add`, `rm` and `use`
+  // (`internal/cli/models.go:33`) -- and the other four are on the never table
+  // below as words of this command: `add`, `rm` and `use` edit the project's or
+  // a repository's own config file, and `search` takes a positional `<text>`
+  // a renderer would fill, which is the shape this table exists to keep off the
+  // surface. So the console has **no write path into `models`**, and the one
+  // read is the row above.
+  //
+  // **No argument at all**, the strongest form of this rule's closed schema:
+  // the command is cobra's `NoArgs`, `--json` is a fixed word of the spawn row
+  // and the cloud group's `--project`/`--config` are the installation's -- so
+  // there is no field a renderer could fill. The read is **offline**: the CLI's
+  // own comment says it reaches no bucket, no database and no host, so this
+  // child mints nothing of the host's, opens no provider and spends nothing,
+  // and its document is what the local files already say.
+  //
+  // **It carries no spend and no cap**, so it is deliberately not in
+  // `REDUCED_VIEW_OPERATIONS` below: the model *prices* it draws are the
+  // catalog's own per-million-token figures rather than what this project
+  // spent, and the reduced mode withholds the screens that read money the
+  // operator's runs spent. `spent_micros`, `notional_micros` and a cap are
+  // words this document does not have.
+  //
+  // It needs CLI 0.16.0 (`MODELS_LIST_CLI_FLOOR`, `src/shared/version.ts`):
+  // `models ls` landed after v0.15.0 (#1553), so a 0.15.x CLI has no such verb
+  // and answers `unknown command "ls"`.
+  {
+    name: 'models.list',
+    method: 'listModels',
+    command: 'models ls',
+    flags: ['--json'],
+    summary: 'the project’s routes, the models a run can name, and each repository’s pins',
+    args: [],
+  },
+  // The settings read (the settings-edit plan's C1, D1102): the project's
+  // settings, each with the value a run gets, the layer that decided it, the
+  // built-in default and its state -- and the three writability facts
+  // (`writable`, `owner`, `target_layer`) the Project tab's settings section
+  // draws its pencils from. **The console keeps no list of its own**: D1102 is
+  // the ruling that the CLI's read carries those three, so there is no fourth
+  // copy of the generic path's allowlist here to drift the day a key is added
+  // to the registry.
+  //
+  // **No argument at all.** The command takes positional keys or globs and
+  // seven flags of its own, and no renderer chooses any of them -- the row's
+  // `args` is empty, its two words are fixed, and `--project`/`--config` are
+  // the installation's (`src/main/spawn.ts`). So no word of this argv is
+  // caller-influenced and the read is not a way to steer a child anywhere.
+  //
+  // **A sensitive row is never drawn** (the owner's ruling of 2026-11-01,
+  // D1111). The document carries no `value` member for one at all
+  // (`settingsJSON`), and the screen drops the row whole: no key, no value, no
+  // pencil. That is the screen's rule and not this table's; what belongs here
+  // is that the row's *edit* is the next task's (`settings.edit`), and this
+  // operation reads.
+  {
+    name: 'settings.read',
+    method: 'readSettings',
+    command: 'settings',
+    flags: ['--json'],
+    summary: 'the project’s settings, what decides each one, and which of them the console may edit',
+    args: [],
+  },
+  // **The settings write, and the console's second write** (the settings-edit
+  // plan's C3, D1103): one key of one document, set or unset, at the layer the
+  // read's own row named, after the operator has read the change in the
+  // confirmation window (rule 12).
+  //
+  // **`flags` is empty, and that is the one place this row differs from every
+  // read beside it.** The dry run's argv carries `--dry-run --json` and a
+  // confirmed write's carries `--yes` -- which is not a set of flags this
+  // operation *fixes*, so it is the phase the main process decides
+  // (`SETTINGS_EDIT_PHASE_WORDS`, `src/main/spawn.ts`) rather than a column
+  // here. A screen chooses none of them: not `--dry-run`, not `--yes`, not even
+  // `--json`.
+  //
+  // **The schema is three keys and no more**, and the layer is not one of them:
+  // it is the read's own `target_layer`, held in this process's copy of the
+  // document and emitted from `argvFor`'s own `settingsEdit` (D1105, D1114), so
+  // no payload of a renderer's can name one. `op` and `key` are the two the
+  // screen knows -- it drew the pencil for that row -- and `value` is the
+  // operator's own text: one argv element, so it is in the process table on the
+  // host route and in the spawn log when that log is on (rule 10), which is the
+  // trade rule 6's row states. Nothing keeps a credential out of it but D1111's
+  // rule: a sensitive row is dropped whole by the read, so it has no pencil and
+  // reaches this operation not at all.
+  //
+  // **What this operation does not have**: no `--repo` (the edit lands in the
+  // selected installation's own layers, and the layer a repository's own config
+  // file would be is the fourth one the read's `target_layer` would name if that
+  // were the one), no `--add`/`--remove` (a list edit is a form no control can
+  // choose: the read carries no member that says a key is list-shaped), and no
+  // third subcommand: `settings get` and every other word of the group stay off
+  // this surface and are on the never table below with the reason they are
+  // there.
+  {
+    name: 'settings.edit',
+    method: 'editSetting',
+    command: 'settings',
+    flags: [],
+    summary: 'the second write: one setting set or unset, at the layer the read named, after the operator confirms it',
+    args: [
+      {
+        key: 'op',
+        kind: 'settingOp',
+        required: true,
+        why: 'which of the command’s two subcommands this is. A closed set of two, because the word decides what the child does, and the third subcommand (`get`) is a read this screen does not need.',
+      },
+      {
+        key: 'key',
+        kind: 'settingKey',
+        required: true,
+        why: 'the setting to write — a key of the document the read answered, so the console invents none. Its membership in the generic path’s allow-list is the CLI’s (D1102): a key the generic path does not own is refused by the child’s own sentence, which the console shows.',
+      },
+      {
+        key: 'value',
+        kind: 'settingValue',
+        required: false,
+        why: 'the operator’s new value, passed behind a `--` terminator as one argv element (D1104): a value spelled `--layer` is the case the terminator exists for. Absent for an `unset`, which is what clearing the screen’s box sends.',
+      },
+    ],
+  },
   {
     name: 'cli.version',
     method: 'cliVersion',
@@ -925,6 +1237,53 @@ export const CONSOLE_OPERATIONS = [
       },
     ],
   },
+  // The clickable pull request number (Coordinator v2 K2a, D814 and D815).
+  //
+  // **This operation takes no URL, and that is its whole design.** A pull
+  // request document carries a `url` field, and no field of any document ever
+  // reaches this operation: it takes the three fields the URL is *built* from
+  // -- the repository's provider, its slug and the number -- and the main
+  // process builds the link itself with `pullRequestUrl` (`src/main/window.ts`),
+  // which is the first gate rule 2 asks for. What is built is then handed to
+  // `openExternalValidated`, the console's one call to `shell.openExternal` and
+  // its second gate, so the host allow-list is applied to a URL this process
+  // spelled rather than to a string a job wrote. A `null` build -- an unknown
+  // provider, a slug that is not `owner/name`, a number that is not a positive
+  // integer -- is a refusal that opens nothing and shows the number as text.
+  //
+  // It is a second operation rather than a second argument kind on
+  // `link.openExternal` because the two are two different things to say: that
+  // operation hands over a URL the console was given, and this one takes fields
+  // and has no way to express a URL at all. The three keys are closed like
+  // every other schema's, and the two providers are the builder's own set
+  // rather than a list spelled here.
+  {
+    name: 'link.openPullRequest',
+    method: 'openPullRequest',
+    command: null,
+    flags: [],
+    summary: 'a pull request number as a link: the URL is built here, from three fields, and never read',
+    args: [
+      {
+        key: 'provider',
+        kind: 'gitProvider',
+        required: true,
+        why: 'the host the link is built on, one of the two the builder knows. It is a word from the coordinator’s stored view (C1’s additive `provider` field), never an inference from a URL a job wrote (D814).',
+      },
+      {
+        key: 'repo',
+        kind: 'repository',
+        required: true,
+        why: 'the repository the pull request belongs to, as the CLI’s own canonical `owner/name`. The narrower pattern the link may be built from — exactly two segments, no `..`, no third `/` — is `pullRequestUrl`’s, and a value that only passes this kind is still refused there.',
+      },
+      {
+        key: 'number',
+        kind: 'pullRequest',
+        required: true,
+        why: 'the pull request number, a positive integer. It is a segment of the path the main process spells, so it can never carry one.',
+      },
+    ],
+  },
   // The project view (Bitbucket credentials T1.2, D364). `fugaro coordinator
   // status --from-store --all --json` is the one read that answers for **every
   // repository of the installation at once**, and it is the console's only read
@@ -956,6 +1315,72 @@ export const CONSOLE_OPERATIONS = [
     summary: 'every repository of the installation, from the coordinator’s stored view',
     args: [],
   },
+  // The pull request read (coordinator v2 C3, D816): `fugaro coordinator show
+  // --repo <owner/name> --pr <n> --json`, one pull request as the host has it
+  // **with its description**, which the stored view above drops by design (a
+  // body is unbounded text written by whoever opened the pull request, and one
+  // per record would ride in the document every reader of the view fetches).
+  //
+  // **It is the second operation here whose child mints a credential of the
+  // host's.** The first is `run.launch` above, and the two are not alike: a
+  // launched run holds the App's private key and mints installation tokens that
+  // carry `contents: write` and `pull_requests: write`, because it pushes and
+  // opens the pull request (`internal/gitprov/github/apptoken.go`), while the set
+  // this operation's child mints is the read-only one: pull requests read and
+  // metadata read, no `write` of any kind
+  // (`github.CoordinatorTokenPermissions`), minted for the one repository and
+  // revoked when the command is done. That is why the two arguments below are
+  // the whole of what a renderer can influence about this argv: there is no key
+  // for a token, a host, a path, an endpoint or a flag, and the row in
+  // `src/main/spawn.ts` declares the same two keys and no other word. Under
+  // `FUGARO_CREDENTIALS_SERVICE_URL` the command refuses -- the service holds
+  // the App's key and this read is not a run -- which the screen draws as its
+  // own refusal.
+  {
+    name: 'coordinator.show',
+    method: 'coordinatorShow',
+    command: 'coordinator show',
+    flags: ['--json'],
+    summary: 'one pull request as the host has it, the description included',
+    args: [
+      {
+        key: 'repo',
+        kind: 'repository',
+        required: true,
+        why: 'the repository the pull request is in, as the CLI’s own canonical `owner/name`. The read resolves the repository’s provider from it — the local config’s entry, else the checkout’s own config file, the same resolution the stored view above makes — and mints the installation token for it, so it is the one word that decides whose credential is used. It is a repository, never a host, a URL or a path.',
+      },
+      {
+        key: 'pr',
+        kind: 'pullRequest',
+        required: true,
+        why: 'the pull request number, a positive integer, which the CLI’s `IntVar --pr` reads as digits. A pull request the host does not have is the host’s own failure and reaches the screen as a refusal, never as an empty document.',
+      },
+    ],
+  },
+  // The declarations read (coordinator v2 C4, D827): `fugaro coordinator intents
+  // --all --json`, what the fleet's writers have stored, newest first.
+  //
+  // **It has no argument at all**, which is the strongest form of this file's
+  // rule: the whole argv is the row's own words (`src/main/spawn.ts`), so there
+  // is no field a renderer could fill and no way to steer the child anywhere.
+  // `--all` is fixed rather than a control, the way `coordinator status`'s two
+  // are: the screen draws every repository the local config lists, and no
+  // control turns that off.
+  //
+  // Like the stored view beside it, this read asks nothing of the host: the
+  // declarations are the caller's own database node (`roles/firebasedatabase.
+  // viewer`), so no App key is read, no installation token is minted, no
+  // provider is opened and no host is reached. `declared_by` is a *declaration*
+  // -- the string a writer put in its own record -- and never an identity the
+  // host or this console establishes (`src/shared/schema.ts`).
+  {
+    name: 'coordinator.intents',
+    method: 'coordinatorIntents',
+    command: 'coordinator intents',
+    flags: ['--all', '--json'],
+    summary: 'what the fleet’s writers have declared, newest first',
+    args: [],
+  },
 ] as const satisfies readonly ConsoleOperation[]
 
 /** OperationName is the closed union of the surface's operation names. */
@@ -972,9 +1397,10 @@ export const CONSOLE_OPERATION_NAMES: readonly OperationName[] = Object.freeze(
 
 /** ALLOWED_OPERATION_FLAGS is the whole of what an operation may fix. `--json`
  * asks for the document the console draws; `--url` is `logs RUN --url`, which is
- * its own argv; `--from-store` and `--all` are `coordinator status`'s two, fixed
- * together because the stored view and the project-wide wrapper are one question
- * and no screen control turns either off. Anything else an operation might want
+ * its own argv; `--from-store` is `coordinator status`'s, and `--all` is the
+ * project-wide wrapper that read fixes together with it and that
+ * `coordinator intents` fixes on its own -- in both cases no screen control
+ * turns it off. Anything else an operation might want
  * to fix is on `NEVER_REACHABLE`'s flag rows. */
 export const ALLOWED_OPERATION_FLAGS: readonly string[] = Object.freeze([
   '--json',
@@ -1267,6 +1693,72 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     why: 'a write: it publishes a recipe',
     where: 'internal/cli/recipes.go:327',
   },
+  // **The models group's writers, and the two shapes its fence is drawn in.**
+  // `fugaro models ls --json` is the group's one reachable word
+  // (`models.list` above, console 0.119.0); the three commands here are the
+  // writes beside it -- `add` claims a model on a route and prices it, `rm`
+  // drops its claim, price and allow-list entry, and `use` points one
+  // repository's own config file at a model in its working tree
+  // (`internal/cli/models_add.go:27`, `models_rm.go:20`, `models_use.go:24`).
+  // Each edits a configuration a reviewer signed off on, which is exactly the
+  // kind of act this table keeps off a screen.
+  //
+  // **Two shapes, and the order between them is deliberate.** The three
+  // `command` rows refuse the command paths themselves, and the `argv` rows
+  // under them refuse the four *words* wherever an operation under `models`
+  // spells them -- the command path or the flags -- which is what covers a
+  // mutation the command rows do not: a future operation whose command is
+  // `models add <id>` (the shape `run --task-file -` has) is not the command
+  // `models add` and would slip past a command row alone. Each `command` row
+  // must stay **above** the `argv` row carrying its word: an operation driving
+  // `models add` matches both, and `isNeverReachable` answers with the first,
+  // which `console/test/unit/ipc.test.ts` asserts per row.
+  {
+    shape: 'command',
+    value: 'models add',
+    why: 'a write: it appends the model to a route’s own list in the project config and writes a model_prices entry and a budget.allowed_models entry for it, so it changes what every run of the project may name and spend on',
+    where: 'internal/cli/models_add.go:27',
+  },
+  {
+    shape: 'command',
+    value: 'models rm',
+    why: 'a write: it drops the model’s claim, its price and its allow-list entry from the project config, which stops every run that names it',
+    where: 'internal/cli/models_rm.go:20',
+  },
+  {
+    shape: 'command',
+    value: 'models use',
+    why: 'a write: it rewrites `agent.models.<role>` in a repository’s own config file in its working tree, and the model it points a role at is a reviewed configuration fact',
+    where: 'internal/cli/models_use.go:24',
+  },
+  {
+    shape: 'argv',
+    command: 'models',
+    value: 'add',
+    why: 'the write above, refused as a word of this command as well: a `models` argv that spells `add` is refused before `spawn` is called, whether it spells it in the command path or in the flags it fixes',
+    where: 'internal/cli/models_add.go:27',
+  },
+  {
+    shape: 'argv',
+    command: 'models',
+    value: 'rm',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/models_rm.go:20',
+  },
+  {
+    shape: 'argv',
+    command: 'models',
+    value: 'use',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/models_use.go:24',
+  },
+  {
+    shape: 'argv',
+    command: 'models',
+    value: 'search',
+    why: 'a read, and the one word of this group that takes a **positional** `<text>` a renderer would fill: this surface reads the project’s models with `models ls`, which takes no argument at all, and a free word a caller chooses is the shape this table keeps off it — the CLI’s own search is a terminal’s verb',
+    where: 'internal/cli/models_search.go:21 (Use: "search <text>")',
+  },
   {
     shape: 'command',
     value: 'image build',
@@ -1371,6 +1863,12 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
   },
   {
     shape: 'flag',
+    value: '--check-bitbucket-token',
+    why: 'it reads the credentials service’s bundle — a Bitbucket token — with the operator’s own credentials and asks Bitbucket to accept it: the same reason as `--check-github-app`, a secret value this process would be the one to fetch',
+    where: 'internal/cli/doctor.go:301',
+  },
+  {
+    shape: 'flag',
     value: '--strict',
     why: 'its failure mode is the checkout’s plugin wiring, which is not what the environment view draws',
     where: 'internal/cli/doctor.go:199; design section 3.4 rule 5',
@@ -1456,6 +1954,9 @@ export function isNeverReachable(operation: {
 // leading segment cannot be `.` or `..`, which the grammar refuses by requiring
 // an alphanumeric first character.
 const REPOSITORY_RE = /^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)+$/
+/** MAX_PROVIDER_LENGTH bounds the `gitProvider` kind before its membership
+ * check runs, and it is the longest word the builder's own set carries. */
+const MAX_PROVIDER_LENGTH = Math.max(...PULL_REQUEST_PROVIDERS.map((name) => name.length))
 const RUN_ID_RE = /^\d{8}-\d{6}-[0-9a-f]{4,16}$/
 const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/
 // The two `--since` flags are two different grammars, and each one is written
@@ -1494,6 +1995,41 @@ const REPORT_DIMENSIONS: readonly string[] = Object.freeze([
   'mode',
 ])
 const SECRET_SCOPES: readonly string[] = Object.freeze(['project-wide', 'repo'])
+
+/** SETTINGS_OP_WORDS is the settings write's two subcommands, and the whole of
+ * them: `spawn.ts`'s `settingOp` case holds the same two, so the word that
+ * decides what a child does is closed in both the renderer's gate and the
+ * argv's. */
+const SETTINGS_OP_WORDS: readonly string[] = Object.freeze(['set', 'unset'])
+
+/** MAX_SETTING_KEY_LENGTH bounds a setting's key before its grammar runs, so a
+ * hostile payload cannot make the expression work. Every key the registry holds
+ * is far shorter: the longest is a `rigor.areas.N.<member>` spelling. */
+const MAX_SETTING_KEY_LENGTH = 120
+
+/**
+ * SETTINGS_KEY_RE is a key's shape: dot-separated segments of lowercase
+ * letters, digits and `_`, with `*` allowed for the registry's one wildcard row
+ * (`stages.*.claude_account`), and no leading or trailing dot.
+ *
+ * **`*` is admitted anywhere a letter is, on purpose.** A standalone segment is
+ * the spelling the registry uses, but `stages.rev*iew.x` passes this grammar
+ * too, and that is the honest shape of the claim: this expression bounds the
+ * **word** a key can be, and `internal/cli/settings_set.go:305` refuses any key
+ * carrying a `*` with its own sentence -- "varies with a name this command does
+ * not take" -- before the allow-list is consulted. Tightening the segment here
+ * would move that refusal from the CLI's words to a schema refusal of this
+ * console's, for a key the CLI was always going to refuse.
+ *
+ * **It is a shape and not the allow-list.** Whether the generic write path owns
+ * a key is `settingsGenericKeys`/`settingsGenericPrefixes`
+ * (`internal/cli/settings_set.go:68`, `:92`) -- the CLI's own list, which the
+ * console keeps no copy of (D1102). What this grammar does is keep the argv
+ * word a key can be: no space, no dash, no `=`, nothing that could be read as a
+ * flag or quoted by a shell, so the key never needs the terminator the value
+ * does.
+ */
+const SETTINGS_KEY_RE = /^[a-z0-9_*]+(\.[a-z0-9_*]+)*$/
 
 /** PROTOTYPE_KEYS are the three names a payload may never carry. They are not
  * arguments of any operation, so the closed-schema check would refuse them
@@ -1775,6 +2311,15 @@ function validateValue(
     }
     return { ok: true, value }
   }
+  if (spec.kind === 'runLimit') {
+    // The digits cobra's `IntVar` reads, and nothing else: `0` is the CLI's own
+    // "every row of the window", which is what omitting the argument already
+    // means here, and the cap is this surface's (`RUNS_LIST_MAX_LIMIT`).
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > RUNS_LIST_MAX_LIMIT) {
+      return refuse(`${spec.key} must be a page size between 1 and ${RUNS_LIST_MAX_LIMIT}`)
+    }
+    return { ok: true, value }
+  }
   if (typeof value !== 'string') return refuse(`${spec.key} must be a string`)
   const limit = kindLimit(spec.kind)
   if (value.length > limit) return refuse(`${spec.key} is longer than ${limit} characters`)
@@ -1805,6 +2350,14 @@ function validateValue(
       if (value.endsWith('.git')) return refuse(`${spec.key} must be the canonical repository, without .git`)
       return { ok: true, value }
     case 'runId':
+      if (!RUN_ID_RE.test(value)) return refuse(`${spec.key} must be a run id`)
+      return { ok: true, value }
+    case 'runAfter':
+      // The same grammar in a different position: the cursor is an id this same
+      // read printed, and a value that is not one (`--watch`, a path, a
+      // truncated id) is refused before a child exists. The `=` form the row
+      // emits is what makes a value's own leading dashes impossible to read as
+      // a flag, and this grammar is what makes them impossible to send.
       if (!RUN_ID_RE.test(value)) return refuse(`${spec.key} must be a run id`)
       return { ok: true, value }
     case 'day':
@@ -1841,6 +2394,18 @@ function validateValue(
         )
       }
       return { ok: true, value }
+    case 'summarySince':
+      // `runs summary --since`, and **the console's own set rather than the
+      // command's grammar**: the command reads `parseSince`'s forms the way
+      // `runs stats` does, and this surface admits exactly the windows the
+      // screens need (`SUMMARY_SINCE_WINDOWS`). A window outside it -- a longer
+      // one, a date, a Go duration, `0` -- is refused before a child exists, so
+      // the read the operation exists for cannot be turned into a whole-history
+      // read by another spelling of the same flag.
+      if (!SUMMARY_SINCE_WINDOWS.includes(value)) {
+        return refuse(`${spec.key} must be one of ${SUMMARY_SINCE_WINDOWS.join(', ')}`)
+      }
+      return { ok: true, value }
     case 'reportDimension':
       if (!REPORT_DIMENSIONS.includes(value)) return refuse(`${spec.key} must be one of ${REPORT_DIMENSIONS.join(', ')}`)
       return { ok: true, value }
@@ -1852,6 +2417,15 @@ function validateValue(
       if (!decision.ok) return refuse(`${spec.key} ${decision.reason}`)
       return { ok: true, value: decision.url }
     }
+    case 'gitProvider':
+      // A closed set of two words and nothing else: this is the value the
+      // *builder* keys its host table by, so a provider it does not know is a
+      // link that cannot be built and a refusal here rather than a `null` one
+      // step later.
+      if (!PULL_REQUEST_PROVIDERS.includes(value)) {
+        return refuse(`${spec.key} must be one of ${PULL_REQUEST_PROVIDERS.join(', ')}`)
+      }
+      return { ok: true, value }
     case 'installationName':
       // `isProjectName` (`src/main/installations.ts`), spelled here for the
       // reason the two bounds above give: the store's own rule, which is what
@@ -1886,6 +2460,30 @@ function validateValue(
       const decision = checkLaunchPlanTask(value)
       if (!decision.ok) return refuse(`${spec.key} ${decision.reason}`)
       return decision.value === null ? refuse(`${spec.key} must be a plan task`) : { ok: true, value: decision.value }
+    }
+    case 'settingOp': {
+      // The closed set of two, checked here as well as in `spawn.ts`'s own
+      // `settingOp` case: this is the renderer's gate and that one is the
+      // argv's, and the word decides which subcommand a child runs.
+      if (!SETTINGS_OP_WORDS.includes(value)) {
+        return refuse(`${spec.key} must be one of ${SETTINGS_OP_WORDS.join(', ')}`)
+      }
+      return { ok: true, value }
+    }
+    case 'settingKey': {
+      // The key's **shape** and not its membership: whether the generic path
+      // owns a key is the CLI's own allow-list (D1102), so a key outside it is
+      // refused by the child's own sentence, which the console shows verbatim.
+      if (!SETTINGS_KEY_RE.test(value)) return refuse(`${spec.key} must be a setting's key`)
+      return { ok: true, value }
+    }
+    case 'settingValue': {
+      // **An empty value is refused rather than written.** Clearing a key is
+      // `unset`, the other subcommand -- and the screen sends that one when the
+      // operator's box is empty -- so an empty string here would be a write of
+      // the empty value, which is a different thing a run would read.
+      if (value === '') return refuse(`${spec.key} must be a value: clearing a key is unset`)
+      return { ok: true, value }
     }
     default:
       return refuse(`${operation} does not take ${spec.key}`)
@@ -1940,6 +2538,7 @@ function kindLimit(kind: ArgumentKind): number {
     case 'repository':
       return MAX_REPOSITORY_LENGTH
     case 'runId':
+    case 'runAfter':
       return MAX_RUN_ID_LENGTH
     case 'day':
       return 10
@@ -1953,12 +2552,25 @@ function kindLimit(kind: ArgumentKind): number {
       // decided by `isRunsSince`, as `time.ParseDuration` and `strconv.Atoi`
       // decide it.
       return LONGEST_RUNS_SINCE.length
+    case 'summarySince':
+      // The longest window in the closed set, read off the set rather than
+      // spelled as a digit: membership is what decides, and a third window
+      // longer than these two cannot be refused by the bound before its own
+      // membership check sees it.
+      return Math.max(...SUMMARY_SINCE_WINDOWS.map((window) => window.length))
     case 'reportDimension':
       return 8
     case 'secretScope':
       return 12
     case 'link':
       return MAX_URL_LENGTH
+    case 'gitProvider':
+      // The longest word in the closed set, and a bound rather than a grammar:
+      // membership is what decides, so a hostile payload cannot make the check
+      // work on a long string. It is read off the set rather than spelled as a
+      // digit, so a third provider longer than these two cannot be refused by
+      // the bound before its own grammar sees it.
+      return MAX_PROVIDER_LENGTH
     case 'installationName':
       return MAX_INSTALLATION_NAME_LENGTH
     case 'installationCheckout':
@@ -1977,6 +2589,18 @@ function kindLimit(kind: ArgumentKind): number {
       return LAUNCH_TITLE_RAW_LIMIT
     case 'launchPlanTask':
       return LAUNCH_PLAN_TASK_RAW_LIMIT
+    // The settings write's three (C3). The subcommand's bound is the longest of
+    // the two words (`unset`); the key's is `MAX_SETTING_KEY_LENGTH`, checked
+    // before its grammar runs; the value's is the console's own
+    // `SETTINGS_VALUE_MAX_LENGTH`, which is the widest single argument this
+    // surface admits -- so a payload of several is bounded by the whole-payload
+    // check above this one and not by these.
+    case 'settingOp':
+      return 5
+    case 'settingKey':
+      return MAX_SETTING_KEY_LENGTH
+    case 'settingValue':
+      return SETTINGS_VALUE_MAX_LENGTH
     default:
       return 0
   }
@@ -2073,6 +2697,18 @@ export function validateArguments(name: OperationName, raw: unknown): ArgumentDe
   const reachesArgv = (key: string): boolean => args[key] !== undefined && args[key] !== false
   for (const [first, second, sentence] of REFUSED_PAIRS[operation.name] ?? []) {
     if (reachesArgv(first) && reachesArgv(second)) return refuse(sentence)
+  }
+
+  // The settings write's pairing (C3): a `set` is a value and an `unset` is no
+  // value at all. Both halves are refused here rather than by the child, because
+  // either one reaching an argv is a child spawned to answer a command that
+  // cannot mean anything -- and the screen's own rule is the same one, one box
+  // over: an empty box is the `unset` it sends (`renderer/entry.ts`).
+  if (operation.name === 'settings.edit') {
+    const op = args['op']
+    const value = args['value']
+    if (op === 'set' && value === undefined) return refuse('value is required to set a setting')
+    if (op === 'unset' && value !== undefined) return refuse('value goes with set: unset removes the key')
   }
 
   // The pairing the design states for the secret inventory: the command resolves
@@ -2230,6 +2866,41 @@ export function readStoredCompatibility(value: unknown): CliCompatibility {
  */
 export function startupCompatibility(read: () => unknown): ConsoleHandler {
   return () => readStoredCompatibility(read())
+}
+
+/**
+ * openPullRequestHandler is `link.openPullRequest`'s implementation, and it
+ * lives here for the same reason `startupCompatibility` does: it is not a read
+ * of the CLI, so it is not a row of `handlersFor`, and the entry point -- which
+ * cannot be imported under a test, because it loads Electron's runtime -- is
+ * not the place a rule this security-sensitive is written.
+ *
+ * The opener is an argument rather than a call to `shell.openExternal` so that
+ * what the handler does with a hostile triple is a thing a test can watch: the
+ * only way to reach the browser from here is to call `open`, and the handler
+ * calls it **only** with a URL `pullRequestUrl` built. A `null` build returns
+ * without calling it at all, which is the refusal D815 asks for -- nothing
+ * opens, and the number stays text.
+ *
+ * The three fields are narrowed to their types before the builder sees them,
+ * the way `openExternalFromShell` narrows its one argument: the validator has
+ * already refused anything that is not a string or a number, so this is a
+ * narrowing and not a second check, and a value that is somehow neither is a
+ * refusal rather than a build from something the schema did not describe.
+ */
+export function openPullRequestHandler(open: (url: string) => Promise<unknown>): ConsoleHandler {
+  return async (args) => {
+    const provider = args['provider']
+    const repo = args['repo']
+    const number = args['number']
+    if (typeof provider !== 'string' || typeof repo !== 'string' || typeof number !== 'number') {
+      return null
+    }
+    const url = pullRequestUrl(provider, repo, number)
+    if (url === null) return null
+    await open(url)
+    return null
+  }
 }
 
 /** ConsoleReply is what every operation answers with: the document, or the
@@ -2645,11 +3316,25 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
  * that can say which operation reads spend is this table. Three consequences a
  * reviewer should check:
  *
- *   - **`spend` names both of the Spend screen's reads.** `runs.stats` (the
- *     by-person panel, console L5b) publishes per-person `counted_usd` and
- *     `notional_usd` -- the same spend figures the reduced mode withholds (D7),
- *     under another name -- so withholding `spend.report` while answering it
- *     would put the withheld dollars on screen through the by-person panel;
+ *   - **`spend` names both of the Spend screen's reads, and the totals read
+ *     with them.** `runs.stats` (the by-person panel, console L5b) publishes
+ *     per-person `counted_usd` and `notional_usd` -- the same spend figures the
+ *     reduced mode withholds (D7), under another name -- so withholding
+ *     `spend.report` while answering it would put the withheld dollars on
+ *     screen through the by-person panel. `runs.summary` (console 0.119.0's
+ *     jobs-free totals read) carries the same two quantities again, as
+ *     `spent_micros` and `notional_micros` over the window and over each
+ *     repository, so it is withheld with them for the same reason: a totals
+ *     read answered in reduced mode is the withheld figure by another name;
+ *   - **`caps` names the Projects tab's reads, and the settings read with
+ *     `budget show`.** The tab's own `VIEWS` entry declares the view this list
+ *     is the other half of (`src/renderer/entry.ts`, `{ id: 'projects', … view:
+ *     'caps' }`), so the section is offered and drawn only where `budget.show`
+ *     may be read. `settings.read` (the settings-edit plan's C1) carries the
+ *     same kind of figure under a different name: the registry's `budget.*` and
+ *     `agent.max_budget_usd` rows are the project's configured caps, and the
+ *     reduced mode withholds caps -- a settings table answered here would put a
+ *     limit on screen through the third section that the caps panel is refused;
  *   - **`kill` is empty, and that is the answer rather than a gap.** There is no
  *     kill-switch operation in the surface: the controls live in the live feed's
  *     own fields (design C10, and `src/shared/version.ts`'s `HIDDEN_VIEW_WORDS`
@@ -2665,8 +3350,8 @@ export const NO_ACTIVE_INSTALLATION = 'no installation has been chosen'
  */
 export const REDUCED_VIEW_OPERATIONS: Readonly<Record<ReducedView, readonly OperationName[]>> =
   Object.freeze({
-    spend: Object.freeze(['spend.report', 'runs.stats'] as const),
-    caps: Object.freeze(['budget.show'] as const),
+    spend: Object.freeze(['spend.report', 'runs.stats', 'runs.summary'] as const),
+    caps: Object.freeze(['budget.show', 'settings.read'] as const),
     kill: Object.freeze([] as const),
   })
 

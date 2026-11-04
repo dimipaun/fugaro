@@ -49,6 +49,17 @@
             "max_budget_usd": { "type": "number", "minimum": 0 },
             "first_line_review": { "enum": ["auto", "on", "off"] },
             "first_line_rounds": { "type": "integer", "minimum": 1, "maximum": 3 },
+            "levels": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Each review level's own settings for every repository of this project (L1.3, D722; config.ReviewLevels), merged into a repository's own agent.levels one key at a time: a repository that pins level 2 keeps this block's level 1. `none: true` here is how the project turns a level off everywhere; a repository may not turn it back on against the owner's floor (L1.4). Fugaro before 0.16.0 refuses the key, in every repository of the project.",
+              "properties": {
+                "l1": { "$ref": "#/$defs/level" },
+                "l2": { "$ref": "#/$defs/level" },
+                "l3": { "$ref": "#/$defs/level" }
+              }
+            },
+            "adversarial_rounds": { "type": "integer", "minimum": 1, "maximum": 10, "description": "Review level 3's round count for every repository of the project (L1.3, D726): 1 to 10, and absent leaves the resolved rigor mode's own senior row (rigor.AdversarialDefault). A repository's own agent.adversarial_rounds replaces it. Needs fugaro 0.16.0." },
             "recipe": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" }
           }
         },
@@ -158,6 +169,30 @@
     }
   },
   "$defs": {
+    "level": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One review level's settings (config.LevelSetting). The keys are the Go field names except `none`, which is config.LevelSetting.Off: `none` is what an owner or a launcher writes to say a level does not run, where `off: true` would read as a value rather than as a level's absence. Three of the decoder's rules are not expressible here, and are refused by config.ReviewLevels.Validate instead: an effort outside `effort`'s five values (config.Efforts; Claude Code itself warns and sends the model's default for the flag, and drops the environment variable and the settings key in silence, so nothing downstream refuses one), a focus carrying a control character, a bidi or zero-width one, a line or paragraph separator, or invalid UTF-8 (the project layer's own rule for a value out of a file, internal/config's badRune, which is why the pattern here cannot carry it), and `none: true` beside any other key, which is refused rather than read — a level that is off has no settings. The bound is a byte count while maxLength counts characters, so this schema is the looser of the two for text outside ASCII: a focus of 500 ASCII characters is at both caps, and one of 500 characters outside ASCII is over the decoder's and under this one's.",
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "The exact model ID this level runs (config.LevelSetting.Model). Absent leaves the level on the model its own layer resolves — agent.models.reviewer for a senior level — and it is bounded by allowed_models as every other model setting is, which the runner checks rather than this schema."
+        },
+        "effort": {
+          "enum": ["low", "medium", "high", "xhigh", "max"],
+          "description": "The reasoning effort this level runs at (config.LevelSetting.Effort, config.Efforts): the five values the pinned Claude Code accepts, from the least to the most, as measured against Claude Code 2.1.283 (docs/multi-model.md). Absent asks for none, which is the model's own default — that is not the same as \"auto\" or \"unset\", which are not values here. The vocabulary is closed in both directions: a value outside it is refused by config.ReviewLevels.Validate, because Claude Code would take it without a word."
+        },
+        "none": {
+          "type": "boolean",
+          "description": "True turns this level off (config.LevelSetting.Off): the level's step is not run, and the three settings beside it are refused rather than read. False, and an absent key, both mean the level runs. A level that is off under the owner's floor is refused at launch (L3.1, L1.4), which is not this schema's rule: nothing here reads the floor."
+        },
+        "focus": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "What this level's reviewer is asked to look at, in the launcher's own words (config.LevelSetting.Focus). It is data and never a command: the runner puts it in the reviewer's prompt as quoted text, and it is never put through a shell or joined into a path. 500 is config.MaxLevelFocusBytes, which the decoder applies as a byte count as well."
+        }
+      }
+    },
     "stageFraction": {
       "type": ["number", "null"],
       "anyOf": [{ "const": 0 }, { "exclusiveMinimum": 0, "exclusiveMaximum": 1 }, { "type": "null" }],

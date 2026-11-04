@@ -59,6 +59,12 @@ type Secrets struct {
 	// FailListWith, when non-zero, makes secrets.list answer that HTTP
 	// status: what pins the degradation of a refused label read.
 	FailListWith int
+	// FailListWithFilter, when set, makes the secrets.list carrying exactly
+	// this filter answer 403 PERMISSION_DENIED and leaves every other listing
+	// alone: what pins the read doctor makes once its other listings have
+	// answered (the whole managed set), which FailListWith cannot single out
+	// because the same project is listed more than once in a run.
+	FailListWithFilter string
 	// FailPolicyWith, when non-zero, makes a container's getIamPolicy answer
 	// that HTTP status: what pins a reader sweep that must report a policy it
 	// could not read rather than count it as one that grants nothing.
@@ -372,6 +378,12 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	case r.Method == http.MethodGet && secretsPathRE.MatchString(p):
 		if f.FailListWith != 0 {
 			writeError(w, f.FailListWith, http.StatusText(f.FailListWith), "injected failure")
+			return
+		}
+		if filter := r.URL.Query().Get("filter"); f.FailListWithFilter != "" && filter == f.FailListWithFilter {
+			// 403, not 5xx: the client retries a 500 on its own, so the
+			// caller would never see it.
+			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "injected failure")
 			return
 		}
 		m := secretsPathRE.FindStringSubmatch(p)

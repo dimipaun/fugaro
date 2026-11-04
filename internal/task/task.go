@@ -34,6 +34,12 @@ var BatchRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 // branch a follow-up may continue.
 var BranchRE = regexp.MustCompile(`^fugaro/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`)
 
+// mutateTestRE is the form of the test a mutation check names (Mutate.Test):
+// a Go test name, which is what `go test -run` is given. The runner quotes it
+// with regexp.QuoteMeta before it does, so this is a shape rule about the
+// ask rather than the only thing between a test name and that flag.
+var mutateTestRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 // ValidRunID reports whether id has a run ID's form, as Validate requires
 // of run_id: check it before id names any object.
 func ValidRunID(id string) bool { return runIDRE.MatchString(id) }
@@ -154,12 +160,12 @@ type Spec struct {
 	ProjectLayer *ProjectLayer `json:"project_layer,omitempty"`
 	// OAuthToken is the named Claude account (config.ClaudeAccountNameRE,
 	// at most config.MaxClaudeAccountNameLen characters, never
-	// config.DefaultClaudeAccount itself — "" means that) this run's
-	// agent.auth: oauth workflow used (docs/design/named-oauth-tokens.md).
-	// A runner before namedTokensSince refuses the field, since it is new
-	// and this package's decoder disallows unknown fields; the launching
-	// CLI checks the job's build record first, the same way it already
-	// does for ProjectLayer.
+	// config.DefaultClaudeAccount itself — "" means that — and never the name
+	// the bundle reserves, config.ReservedClaudeAccountName) this run's
+	// agent.auth: oauth workflow used (docs/design/named-oauth-tokens.md). A
+	// runner before namedTokensSince refuses the field, since it is new and
+	// this package's decoder disallows unknown fields; the launching CLI
+	// checks the job's build record first, as it does for ProjectLayer.
 	OAuthToken string `json:"oauth_token,omitempty"`
 	// CompressionOff, when true, disables agent.compression for this run
 	// only, overriding fugaro.yaml (fugaro run --no-compression;
@@ -328,7 +334,102 @@ type Spec struct {
 	// shape (AuthorProblem): a launcher may write any address here, and git
 	// will write it into history.
 	Author *Person `json:"author,omitempty"`
+	// ReviewLevels is what the launch asks each review level to do
+	// (docs/review-levels-ab-jobmax, D724): which model runs it, at which
+	// effort, whether it runs at all, and what it is asked to focus on. Nil
+	// for every launch that asks nothing, which is every launch until the
+	// flag that writes it lands (L1.2), so a spec without the block is
+	// byte-identical to what the release before this field wrote.
+	//
+	// The block is written by the launcher and read here, so it is held to
+	// config.ReviewLevels.Validate's rules, applied by Validate below: an
+	// effort outside config.Efforts — the only refusal there is, since
+	// Claude Code warns and falls back to its default for the flag and
+	// drops the environment variable and the settings key in silence — a
+	// focus over its bound or carrying a control, bidi or other invisible
+	// character, and `none: true` beside another key. The decode above is
+	// strict about it too: DisallowUnknownFields reaches every nested
+	// object, so an unknown key inside a level refuses the whole spec.
+	//
+	// A runner before the release that reads this field refuses the whole
+	// spec (Parse decodes with DisallowUnknownFields), so the launcher gates
+	// a launch that would set it (reviewLevelsSince, L1.2) rather than let
+	// the run fail at bootstrap after the task was written.
+	ReviewLevels *config.ReviewLevels `json:"review_levels,omitempty"`
+	// Mutate is the mutation check the launch asked for (fugaro review
+	// --mutate <file:test>, docs/cloud-senior-review D885): the file in the
+	// reviewed head the reviewer would flip and the test that must kill it,
+	// run by the review job's own runner. At most one, and only for a review
+	// run of one pull request — the check runs repository code from the head
+	// in a subprocess of its own (D891(a)), which is a review job's business
+	// and no other stage's, and one worktree holds the whole review only when
+	// one pull request was resolved. Nil for every launch that asks nothing,
+	// which is every launch until the flag that writes it lands (CSR2).
+	//
+	// A runner before the release that reads this field refuses the whole
+	// spec (Parse decodes with DisallowUnknownFields). No launch writes the
+	// field yet: the command that would is CSR2's, and the launcher-side gate
+	// it needs — the `…Since` constant that refuses a job image whose runner
+	// predates the release, internal/cli/recipes_skew.go's shape — is CSR6's,
+	// so there is no such constant to name here yet and nothing today that
+	// could be gated. The gate lands with the flag, before any launch can
+	// write the field.
+	Mutate []Mutate `json:"mutate,omitempty"`
 }
+
+// Mutate is one mutation check a launch asked for: File is Go source in the
+// reviewed head, spelled relative and slash-separated, and Test is the name of
+// the test that must fail once the runner has flipped a boolean literal in it
+// (internal/runner's mutation check). Both are the launcher's text and are
+// shape-checked by Validate below: File is confined to the worktree, and Test
+// is a Go test name, since the runner hands it to `go test -run` as a pattern
+// it quotes rather than trusts.
+type Mutate struct {
+	File string `json:"file"`
+	Test string `json:"test"`
+}
+
+// mutateProblem is what is wrong with one mutation check's ask, "" when
+// nothing is: the file is Go source inside the worktree, spelled relative and
+// slash-separated, and the test is a Go test name. It is a shape rule and not
+// the confinement itself — the runner resolves the path against the worktree
+// root with an Lstat that refuses a symlink and never follows one out
+// (internal/runner's mutationFile) — but it is what refuses, at the boundary
+// the runner decodes at, a task.json that could never be a mutant at all.
+func mutateProblem(m Mutate) string {
+	file := strings.TrimSpace(m.File)
+	switch {
+	case file == "":
+		return "names no file to mutate"
+	case len(file) > MaxMutateBytes:
+		return fmt.Sprintf("file is longer than %d bytes", MaxMutateBytes)
+	case strings.HasPrefix(file, "/") || !strings.HasSuffix(file, ".go"):
+		return fmt.Sprintf("file %q must be Go source inside the worktree, spelled relative and slash-separated", file)
+	}
+	for _, seg := range strings.Split(file, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return fmt.Sprintf("file %q is not a path inside the worktree", file)
+		}
+	}
+	switch {
+	case m.Test == "":
+		return "names no test to run"
+	case len(m.Test) > MaxMutateBytes:
+		return fmt.Sprintf("test is longer than %d bytes", MaxMutateBytes)
+	case !mutateTestRE.MatchString(m.Test):
+		return fmt.Sprintf("test %q must be a Go test name, which is letters, digits and underscores starting with a letter or an underscore", m.Test)
+	}
+	return ""
+}
+
+// MaxMutateBytes bounds each half of a mutation check's ask (Mutate.File and
+// Mutate.Test): a path inside the reviewed worktree, and the name of a Go
+// test. The cap is the one MaxDeclaredPathBytes sets for a declared path, for
+// the same reason — a file the runner will refuse to open and a test name `go
+// test -run` will never match are both strings no launcher writes — and a
+// bound here is what keeps a hand-written task.json from carrying a megabyte
+// of either into a job that parses it.
+const MaxMutateBytes = 200
 
 // MaxDeclaredPaths bounds the paths one launch may declare (Spec.Paths,
 // fugaro run --path): every one of them is matched against every area rule
@@ -914,6 +1015,28 @@ func (s *Spec) Validate() error {
 	if !anyFollowUp && !anyReview && strings.TrimSpace(s.Task) == "" {
 		bad("task spec: task is required")
 	}
+	// The mutation check's own ask (Mutate, fugaro review --mutate): one
+	// mutant at most, and only for a review run of exactly one pull request.
+	// The check runs the head's own code in a subprocess of the runner's, so
+	// it is the review job's business and no other stage's (D885, D891(a));
+	// and one worktree holds the whole review only when one pull request was
+	// resolved. The runner refuses both again before it touches anything
+	// (internal/runner's runMutationCheck), so a hand-built task.json cannot
+	// reach the machinery by skipping this.
+	if len(s.Mutate) > 0 {
+		switch {
+		case !anyReview:
+			bad("task spec: mutate is a review run's check, and this launch reviews no pull request (review_prs)")
+		case len(s.Mutate) > 1:
+			bad("task spec: mutate asks for %d mutation checks, and one mutant is all a review runs", len(s.Mutate))
+		case len(s.ReviewPRs) != 1:
+			bad("task spec: mutate needs a review of one pull request, and this launch reviews %d", len(s.ReviewPRs))
+		default:
+			if p := mutateProblem(s.Mutate[0]); p != "" {
+				bad("task spec: mutate %s", p)
+			}
+		}
+	}
 	if s.Branch != "" && !BranchRE.MatchString(s.Branch) {
 		bad("task spec: branch %q must be fugaro/<run-id>", s.Branch)
 	}
@@ -960,11 +1083,17 @@ func (s *Spec) Validate() error {
 	// single source of truth for a named account's shape (internal/config/
 	// claude_accounts.go, Task 1): this package imports them rather than
 	// keeping its own copy, so the two can never silently drift apart the
-	// way an earlier version of this check did.
+	// way an earlier version of this check did. config's own reserved name
+	// comes with them, and its sentence with it: a launcher that accepts an
+	// account name the runner refuses writes a task the run then dies on
+	// after it was paid for, so the two refuse the same names in the same
+	// words (config.ReservedClaudeAccountName).
 	switch {
 	case s.OAuthToken == "":
 	case s.OAuthToken == config.DefaultClaudeAccount:
 		bad(`task spec: oauth_token must not be "default": the empty value already means the repository's default account`)
+	case config.ReservedClaudeAccountName(s.OAuthToken):
+		bad("task spec: oauth_token: %s", config.ReservedClaudeAccountNameMessage)
 	case len(s.OAuthToken) > config.MaxClaudeAccountNameLen:
 		bad("task spec: oauth_token %q must be at most %d characters", s.OAuthToken, config.MaxClaudeAccountNameLen)
 	case !config.ClaudeAccountNameRE.MatchString(s.OAuthToken):
@@ -1165,6 +1294,19 @@ func (s *Spec) Validate() error {
 			bad("task spec: digest_runs needs a recipe whose first step is digest")
 		case s.Recipe.Source != string(recipe.SourceRepo) && !RecipeUsesDigest(s.Recipe.YAML):
 			bad("task spec: digest_runs needs a recipe whose first step is digest, and recipe %s is not one", s.Recipe.Name)
+		}
+	}
+	// The level block's own rules, through the ONE set of them
+	// (config.ReviewLevels.Validate), because the same block is a
+	// configuration layer's agent.levels and both readers have to refuse the
+	// same documents. The launcher applies them before it writes anything,
+	// and this is the runner's own check: a hand-written task.json that
+	// names an unknown effort reaches no stage, since the effort is written
+	// into the agent's environment (L4.3) and Claude Code would take a value
+	// it does not know without a word.
+	if s.ReviewLevels != nil {
+		if err := s.ReviewLevels.Validate(); err != nil {
+			bad("task spec: review_levels: %v", err)
 		}
 	}
 	return errors.Join(errs...)

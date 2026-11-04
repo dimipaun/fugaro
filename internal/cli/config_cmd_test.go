@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // bareLayerCheckout is layerCheckout (layer_helpers_test.go) before main's
@@ -506,6 +507,26 @@ func TestConfigLayerPrintsThePublishedLayer(t *testing.T) {
 	out, _, err := execute(t, "config", "layer")
 	if err != nil || !strings.Contains(out, "default_profile: svc") || !strings.Contains(out, "generation") {
 		t.Fatalf("out %q, %v", out, err)
+	}
+}
+
+// Item 1: the published project layer is keyed by the project's own
+// project: and gcp_project:, and the selected project config names them.
+// A machine that holds no checkout of any repository can still read it from
+// the config alone — the layer lives in the installation, not in a working
+// tree.
+func TestConfigLayerOutsideACheckout(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	publishedLayer(t, f, testProjectLayer)
+	t.Chdir(t.TempDir())
+	out, _, err := execute(t, "config", "layer")
+	if err != nil || !strings.Contains(out, "default_profile: svc") || !strings.Contains(out, "generation") {
+		t.Fatalf("outside a checkout: out %q, err %v", out, err)
+	}
+	if _, _, err := execute(t, "config", "layer", "--json"); err != nil {
+		t.Fatalf("outside a checkout, --json: %v", err)
 	}
 }
 

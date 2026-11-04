@@ -17,7 +17,7 @@ generation. Repository names are placeholders (`owner/repo-a`, `owner/repo-b`); 
 
 `fugaro update` is the whole upgrade (`CLAUDE.md`, HARD RULE). So:
 
-- **There is one local layer file**, `~/.config/fugaro/projects/<project>-layer.yaml`, and **no flag
+- **There is one local layer file**, `~/.config/fugaro/projects/<project>.layer.yaml`, and **no flag
   and no config key names it** (D830, answered): the path is the project's own name under the
   config home's `projects/` directory, which is where the project's config already lives. `fugaro
   rigor set` and `unset` edit that file and read; neither writes the runs bucket, a job, a secret or
@@ -83,9 +83,11 @@ The output is four sections.
    comparison (README, "the rulings the rigor and settings designs share"). **One state, two causes,
    and the line says which.** Differing bytes are either a **local edit** — this machine's file was
    written from the generation the published object still has, so the owner's change is what to
-   publish — or a **stale copy from another machine** — the published object has moved past the
-   generation this file was written from (the record `layer_generation` on the local project config,
-   D854 answered), so publishing it reverts someone else's publish and the file is what to re-seed.
+   publish — or a **stale copy from another machine** — this file was written from a generation that
+   is not the published object's (older, after someone else's publish; newer, after the object was
+   deleted and re-created or the bucket was restored), the record being `layer_generation` on the
+   local project config (D854 answered), so publishing it replaces a layer this machine cannot
+   account for and the file is what to re-seed.
    The line names the cause and the remedy that fits it; the sha256 comparison alone cannot.
 2. **The area rules of both layers, as far as this machine can read them.** Every rule the project
    layer carries, and every rule carried by a repository of this project that has a **checkout
@@ -141,7 +143,7 @@ in prose as its `unpublished` line. It carries six members:
 | Member | What it is |
 | --- | --- |
 | `published` | the project layer this document was resolved against: `{"generation": N, "sha256": "..."}` — the same two values §2.1 prints in text. **Absent**, not `null`, when the project has never published one, the rule §2.3 already sets for `mode` and `from` |
-| `recorded` | `{"generation": N}` — the generation the local layer file's bytes are known to correspond to: the one an `update` seeded it from, or the one it was last published at (the local project config's `layer_generation`, D854 answered), which is what §2.1's line uses to name the cause. **Absent**, not `null`, when nothing is recorded (every installation before the first `update` records one). Every door that writes the file from a published object, or publishes it, records the generation it wrote at — R1's stage and `fugaro config publish` go through the existing `publishLayer`, which R0 makes record — so the member does not go stale behind the owner's back, and a file whose bytes equal the published object's never reads as a stale copy because a publish `show` cannot see forgot to record. With `published` and `unpublished: true` a consumer compares the two generations itself, because the console reads this document and never `~/.config/fugaro` (§8, D836): `recorded.generation` equal to `published.generation` is a **local edit** (the owner's change, to publish), and one **older** is a **stale copy from another machine** (the published object has moved past it, so publishing would revert someone else's publish and the file is what to re-seed). It is never a value from a newer CLI's document: a generation is an integer the reader may compare, and a consumer that does not recognise the member ignores it |
+| `recorded` | `{"generation": N}` — the generation the local layer file's bytes are known to correspond to: the one an `update` seeded it from, or the one it was last published at (the local project config's `layer_generation`, D854 answered), which is what §2.1's line uses to name the cause. **Absent**, not `null`, when nothing is recorded (every installation before the first `update` records one). Every door that writes the file from a published object, or publishes it, records the generation it wrote at — R1's stage and `fugaro config publish` go through the existing `publishLayer`, which R0 makes record — so the member does not go stale behind the owner's back, and a file whose bytes equal the published object's never reads as a stale copy because a publish `show` cannot see forgot to record. With `published` and `unpublished: true` a consumer compares the two generations itself, because the console reads this document and never `~/.config/fugaro` (§8, D836): `recorded.generation` equal to `published.generation` is a **local edit** (the owner's change, to publish), and any other value is a **stale copy from another machine** (the file was written from a generation the published object is not — older, after someone else's publish; newer, after the object was deleted and re-created or the bucket was restored — so publishing would replace a layer this machine cannot account for and the file is what to re-seed). It is never a value from a newer CLI's document: a generation is an integer the reader may compare, and a consumer that does not recognise the member ignores it |
 | `local` | §1's local layer file: `{"path": "...", "sha256": "..."}`. **Absent**, not `null`, when the file does not exist |
 | `source` | where `published` was read from: `"bucket"` or `"cache"` — the two the paragraph above names, the distinction §2.1 carries in text as the cache note |
 | `note` | the read's own warning, verbatim: the resolver's `foundLayer.Note` (`internal/cli/layer_resolve.go`), `""` when the bucket answered. On `"cache"` it is the sentence saying so and how old the copy is ("using the cached project layer of `<project>`, `<N>` days old"); when the value is unknown it is the reason, not a guess. It is the text §2.1 prints beside the value, so a consumer reading `"source": "cache"` can say **why** the bucket was not the source instead of reporting a bare enum |
@@ -172,7 +174,7 @@ becomes `<mode>`. In order:
    and writes nothing** — `--yes` included, since `--yes` answers a prompt and not this refusal.
    `show` runs anywhere, and §4's `--repo R` form writes a repository's own file and is allowed: an
    agent may edit the tree it was given.
-4. **Resolve the file.** It is §1's one path, `~/.config/fugaro/projects/<project>-layer.yaml`:
+4. **Resolve the file.** It is §1's one path, `~/.config/fugaro/projects/<project>.layer.yaml`:
    there is no `--layer` flag and no config key for it (D830, answered), so there is nothing to
    resolve and nothing to record **of the path** — D854's *generation* record is another question
    and a different one, answered by the owner on 2026-10-31 (the generation is recorded) and R1's to

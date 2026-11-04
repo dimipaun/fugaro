@@ -917,7 +917,15 @@ func TestInterpretTrailersIgnoresGlobalTrailerCommand(t *testing.T) {
 // all; unsetting GIT_CONFIG_SYSTEM only puts the machine's own back.
 //
 // Mutation (run interpret-trailers with the caller's GIT_CONFIG_SYSTEM in
-// place): the planted command runs and blanks the value.
+// place and no GIT_CONFIG_NOSYSTEM): the planted command runs and blanks the
+// value.
+//
+// Neither line's own removal is red here: git reads no file GIT_CONFIG_SYSTEM
+// names while GIT_CONFIG_NOSYSTEM is set, and the unset takes out the only
+// system file a hermetic test can plant. What GIT_CONFIG_NOSYSTEM alone still
+// holds git away from is the machine's own /etc/gitconfig, a file this test
+// cannot write — and one whose trailer command a run on a machine that let the
+// agent write it would otherwise carry into every commit the stamp makes.
 func TestInterpretTrailersIgnoresSystemConfig(t *testing.T) {
 	dir, _, stampEnv := newStampRepo(t, runStamp(), "")
 	script, marker := trailerCommandScript(t)
@@ -937,38 +945,59 @@ func TestInterpretTrailersIgnoresSystemConfig(t *testing.T) {
 
 // TestInterpretTrailersIgnoresEnvironmentConfig: configuration an environment
 // carries is configuration too, and the environment of a commit's hook is the
-// environment of the git the agent ran — an agent that sets GIT_CONFIG_COUNT
-// and its pairs, or GIT_CONFIG_PARAMETERS, on its own `git commit` sets them
-// for the trailer step that commit runs under. The global and system files are
-// not the only ways into it.
+// environment of the git the agent ran — an agent that sets
+// GIT_CONFIG_PARAMETERS on its own `git commit` sets it for the trailer step
+// that commit runs under. The global and system files are not the only ways
+// into it; the pairs a GIT_CONFIG_COUNT numbers are the third, and
+// TestInterpretTrailersIgnoresInjectedConfigPairs holds those.
 //
 // Mutation (leave the caller's environment configuration in the hook's
 // subshell): the planted command runs and blanks the value.
 func TestInterpretTrailersIgnoresEnvironmentConfig(t *testing.T) {
-	cases := map[string]func(script string) []string{
-		"count": func(script string) []string {
-			return []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=trailer.fugaro-run.command", "GIT_CONFIG_VALUE_0=" + script}
-		},
-		"parameters": func(script string) []string {
-			return []string{"GIT_CONFIG_PARAMETERS='trailer.fugaro-run.command=" + script + "'"}
-		},
+	dir, hooks, _ := newStampRepo(t, runStamp(), "")
+	script, marker := trailerCommandScript(t)
+	// GIT_CONFIG_NOSYSTEM for the same reason as the user's-file test: the
+	// machine's own file is neither the vector here nor this test's to depend
+	// on.
+	env := append(stampCommitEnv(t.TempDir(), "GIT_CONFIG_NOSYSTEM=1"),
+		"GIT_CONFIG_PARAMETERS='trailer.fugaro-run.command="+script+"'")
+	env = StampEnv(runStamp(), hooks, env)
+	msg := commitStampIsolated(t, dir, env, "subject")
+	if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the environment's trailer command ran: %v", err)
 	}
-	for name, vars := range cases {
-		t.Run(name, func(t *testing.T) {
-			dir, hooks, _ := newStampRepo(t, runStamp(), "")
-			script, marker := trailerCommandScript(t)
-			// GIT_CONFIG_NOSYSTEM for the same reason as the user's-file
-			// test: the machine's own file is neither the vector here nor
-			// this test's to depend on.
-			env := append(stampCommitEnv(t.TempDir(), "GIT_CONFIG_NOSYSTEM=1"), vars(script)...)
-			env = StampEnv(runStamp(), hooks, env)
-			msg := commitStampIsolated(t, dir, env, "subject")
-			if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
-				t.Errorf("the environment's trailer command ran: %v", err)
-			}
-			if got := trailersOf(msg)["fugaro-run"]; !slices.Equal(got, []string{"run-1"}) {
-				t.Errorf("fugaro-run = %v, want [run-1]: the environment configuration decided the trailer", got)
-			}
-		})
+	if got := trailersOf(msg)["fugaro-run"]; !slices.Equal(got, []string{"run-1"}) {
+		t.Errorf("fugaro-run = %v, want [run-1]: the environment configuration decided the trailer", got)
+	}
+}
+
+// TestInterpretTrailersIgnoresInjectedConfigPairs: the other environment
+// configuration is the pairs a GIT_CONFIG_COUNT numbers — GIT_CONFIG_KEY_n
+// with the GIT_CONFIG_VALUE_n of its n — and git reads a pair wherever it
+// reads a value, so a pair naming trailer.fugaro-run.command is a command the
+// trailer step of a commit runs. The hook's subshell takes the count out
+// before it calls git, which is what leaves the pairs nothing to be read
+// through; a count left in the environment is refused by git outright, which
+// would fail the commit rather than steer it.
+//
+// Mutation (leave the caller's GIT_CONFIG_COUNT and its pairs in the hook's
+// subshell): the planted command runs and blanks the value.
+func TestInterpretTrailersIgnoresInjectedConfigPairs(t *testing.T) {
+	dir, hooks, _ := newStampRepo(t, runStamp(), "")
+	script, marker := trailerCommandScript(t)
+	// GIT_CONFIG_NOSYSTEM for the same reason as the user's-file test: the
+	// machine's own file is neither the vector here nor this test's to depend
+	// on.
+	env := append(stampCommitEnv(t.TempDir(), "GIT_CONFIG_NOSYSTEM=1"),
+		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=trailer.fugaro-run.command",
+		"GIT_CONFIG_VALUE_0="+script)
+	env = StampEnv(runStamp(), hooks, env)
+	msg := commitStampIsolated(t, dir, env, "subject")
+	if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the injected pair's trailer command ran: %v", err)
+	}
+	if got := trailersOf(msg)["fugaro-run"]; !slices.Equal(got, []string{"run-1"}) {
+		t.Errorf("fugaro-run = %v, want [run-1]: the injected pair decided the trailer", got)
 	}
 }

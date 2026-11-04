@@ -116,18 +116,40 @@ func TestServiceForwardsWithSelectedCredential(t *testing.T) {
 // a service that buffered would hold the response HEADERS back with the body and
 // the client's own call would be what blocked.
 func TestServiceStreamsUnbuffered(t *testing.T) {
+	streamsUnbuffered(t, false)
+}
+
+// TestServiceStreamsUnbufferedOverH2C is the same pin over the protocol the
+// deployment speaks to the container (B1.0): Cloud Run's front end talks HTTP/2
+// cleartext to a service whose port is named h2c, so what the run reads has to
+// arrive event by event over that protocol too. HTTP/2 is a different answer
+// path in net/http -- frames, flow control and a write scheduler of its own --
+// and a service that streamed over one and buffered over the other would look
+// healthy in every test that used the first.
+func TestServiceStreamsUnbufferedOverH2C(t *testing.T) {
+	streamsUnbuffered(t, true)
+}
+
+func streamsUnbuffered(t *testing.T, overH2C bool) {
 	s := newSvc(t)
 	reply := anthropicfake.StreamOK(testModel, testUsage)
 	reply.EventDelay = time.Second
 	s.up.Script = []anthropicfake.Reply{reply}
 
+	post := s.post
+	if overH2C {
+		post = s.postH2C
+	}
 	start := time.Now()
-	resp := s.post(t, MessagesPath, callBody("stream"), func(r *http.Request) {
+	resp := post(t, MessagesPath, callBody("stream"), func(r *http.Request) {
 		r.Header.Set("Accept", "text/event-stream")
 	})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("the answer is %d, want 200", resp.StatusCode)
+	}
+	if overH2C && resp.ProtoMajor != 2 {
+		t.Fatalf("the answer arrived over HTTP/%d.%d: this is meant to be an h2c call", resp.ProtoMajor, resp.ProtoMinor)
 	}
 	if got := resp.Header.Get("Content-Type"); !strings.Contains(got, "text/event-stream") {
 		t.Fatalf("Content-Type = %q, want an event stream", got)
@@ -314,8 +336,11 @@ func TestForwardRefusesARunTokenOfAnotherRepository(t *testing.T) {
 
 // TestServiceHasNoAdminRoutes: D143's "no admin surface" is kept by there being
 // nothing to reach rather than by a check inside a handler. Every path but the
-// two Anthropic ones is a 404, including the ones an operator's CLI uses —
-// which is why those live in internal/cli and not here.
+// ones the service serves is a 404 — including the ones an operator's CLI uses,
+// which is why those live in internal/cli and not here — and the two review
+// routes are held to it the same way: a path is in the set only as the exact
+// string it is, so a trailing slash, a subpath and another method are all
+// nothing to reach.
 func TestServiceHasNoAdminRoutes(t *testing.T) {
 	paths := []struct{ method, path string }{
 		{http.MethodPost, "/admin/kill"},
@@ -330,6 +355,12 @@ func TestServiceHasNoAdminRoutes(t *testing.T) {
 		{http.MethodPost, MessagesPath + "/"},
 		{http.MethodPost, CountTokensPath + "/x"},
 		{http.MethodPost, MessagesPath + "/../admin"},
+		{http.MethodGet, SignPath},
+		{http.MethodPost, SignPath + "/"},
+		{http.MethodPost, SignPath + "/x"},
+		{http.MethodGet, VerifyPath},
+		{http.MethodPost, VerifyPath + "/"},
+		{http.MethodPost, VerifyPath + "/x"},
 	}
 	for _, tc := range paths {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
@@ -340,7 +371,7 @@ func TestServiceHasNoAdminRoutes(t *testing.T) {
 				r.Header.Set(HeaderRunJob, s.job)
 			})
 			if resp.StatusCode != http.StatusNotFound {
-				t.Fatalf("the answer is %d, want 404: this service serves two paths", resp.StatusCode)
+				t.Fatalf("the answer is %d, want 404: this service serves no other path", resp.StatusCode)
 			}
 			if got := refusal(t, resp.StatusCode, body); got.Error != "not_found" {
 				t.Errorf("the refusal is %q, want not_found", got.Error)

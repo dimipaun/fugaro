@@ -248,6 +248,28 @@ test('`leased_usd` is accepted on total and repo, and produces nothing', () => {
   assert.throws(() => digest(doc({ repos: [repo({ leased_usd: -1 })] })), refusal(ERROR.RANGE));
 });
 
+test('`max_parallel` is accepted on total alone, and produces nothing', () => {
+  // `max_parallel` -- the concurrent-run cap a launch is checked against -- is
+  // on `watch --json`'s `total` object now, written by the CLI. The digest
+  // accepts it -- a document carrying it is not an unknown field -- and reads
+  // nothing from it, as it reads nothing from `leased_usd`.
+  const withCap = digest(doc({ total: total({ max_parallel: 4 }) }));
+  assert.deepEqual(withCap, digest(doc()));
+  assert.equal(Object.hasOwn(withCap.total, 'max_parallel'), false);
+  // A `null` is the contract's own "no cap could be read", so it is accepted.
+  assert.doesNotThrow(() => digest(doc({ total: total({ max_parallel: null }) })));
+
+  // It is a total's key and not a repository's: a cap bounds the project's
+  // concurrent launches, so a `repos[]` entry carrying it is a document no CLI
+  // writes and stays an unknown field.
+  assert.throws(() => digest(doc({ repos: [repo({ max_parallel: 4 })] })), refusal(ERROR.UNKNOWN_FIELD));
+
+  // And the key is fail-closed about what it carries, like every other NUMBER
+  // in these tables.
+  assert.throws(() => digest(doc({ total: total({ max_parallel: '4' }) })), refusal(ERROR.TYPE));
+  assert.throws(() => digest(doc({ total: total({ max_parallel: -1 }) })), refusal(ERROR.RANGE));
+});
+
 test('a kill with no reason says unavailable for it, not an empty alarm', () => {
   const got = digest(doc({ total: total({ kill: kill({ reason: undefined, by: undefined }) }) }));
   const item = got.items.find((i) => i.kind === 'kill');

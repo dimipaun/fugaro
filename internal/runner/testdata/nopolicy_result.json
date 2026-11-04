@@ -7,7 +7,7 @@
     ],
     "total": 1
   },
-  "config_sha256": "9ae1906394bf3a9bfbfb76ccd68bf53b41d106baae057a2b5006ee1a3f011048",
+  "config_sha256": "1b9a67b20512c304dc8c9bce91b65cbf2b7b9bb594aed769f5acad5854bc8de6",
   "cost": {
     "compute_estimated": false,
     "compute_usd": 0,
@@ -30,7 +30,7 @@
   "pushed_head": "<sha>",
   "recipe": {
     "name": "default",
-    "sha256": "a2cf31f5587b76d59a60b590d76425d3c14bed67c67d8323c320580e9b6614f9",
+    "sha256": "0c42726a0cc37a5415cfac83a74d25cfc041eb1d5a52a7d0533fcdcffb5202fc",
     "source": "catalog"
   },
   "repo": "acme/app",
@@ -46,6 +46,7 @@
   "reviews": [
     {
       "findings": 0,
+      "head": "<sha>",
       "round": 1,
       "verdict": "ship"
     }
