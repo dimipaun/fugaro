@@ -102,6 +102,27 @@ func TestMissingFugaroYAMLGetsTheGuidedSentence(t *testing.T) {
 	})
 }
 
+// The same sentence through the door it was reported from: setup --repo, run
+// on a checkout whose fugaro.yaml is not there yet.
+func TestSetupRepoMissingFugaroYAMLPrintsTheSentence(t *testing.T) {
+	const sentence = "this checkout has no fugaro.yaml yet: write it with /fugaro:setup in Claude Code (or start from fugaro config example), merge it, then run fugaro setup --repo again"
+	r := newInitRig(t)
+	r.stateBucket()
+	dir := repoCheckout(t, "https://github.com/acme/app.git", "")
+	t.Chdir(t.TempDir())
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--yes", "--github-app-id", "42", dir)
+	if err == nil {
+		t.Fatalf("setup --repo accepted a checkout with no fugaro.yaml:\n%s%s", out, errOut)
+	}
+	all := out + errOut + err.Error()
+	if !strings.Contains(all, sentence) {
+		t.Errorf("setup --repo printed no guided sentence:\n%s", all)
+	}
+	if strings.Contains(all, "lstat") || strings.Contains(all, "no such file") {
+		t.Errorf("setup --repo printed syscall text:\n%s", all)
+	}
+}
+
 // Every command that reads a checkout's fugaro.yaml goes through it: a
 // symlinked one is never followed, and nothing it points at is read.
 func TestCommandsNeverFollowAFugaroYAMLSymlink(t *testing.T) {
