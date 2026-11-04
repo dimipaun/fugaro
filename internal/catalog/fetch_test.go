@@ -200,3 +200,41 @@ func TestCatalogFetchIsBounded(t *testing.T) {
 		t.Fatal("an oversized inline definition was written from state")
 	}
 }
+
+// noReader is a provider of a kind that cannot read a file out of its
+// repository: an opener hands one back for a kind this package's list does
+// not admit, and the fetch must refuse the source rather than call a method
+// the provider has not got.
+type noReader struct{ gitprov.Provider }
+
+// TestCatalogReadableNamesTheKindsThatReadAFile: the list `fugaro image add`
+// and `fugaro validate` refuse on, offline and before anything is built, of
+// which fetchDockerfile's type assertion is the runtime half.
+func TestCatalogReadableNamesTheKindsThatReadAFile(t *testing.T) {
+	for _, kind := range []string{gitprov.KindGitHub, gitprov.KindBitbucket} {
+		if !Readable(kind) {
+			t.Errorf("Readable(%q) = false, want the adapter that reads a file", kind)
+		}
+	}
+	// A kind is the spelling the configs carry, and these are not ones.
+	for _, kind := range []string{"", "gitlab", "GitHub", "Bitbucket"} {
+		if Readable(kind) {
+			t.Errorf("Readable(%q) = true, want a kind no reader answers", kind)
+		}
+	}
+}
+
+// TestCatalogFetchRefusesAProviderWithoutAReader: the refusal is the one
+// sentence, so an operator who meets the limit at `fugaro image add` meets
+// the one the build itself would have given.
+func TestCatalogFetchRefusesAProviderWithoutAReader(t *testing.T) {
+	o := &fetchOpener{p: noReader{}, cred: fakeCredential(t)}
+	e := dockerfileEntry("agent", "docker/agent.Dockerfile", "main")
+	_, err := Fetch(context.Background(), o.open, "gitlab", e)
+	if err == nil {
+		t.Fatal("a provider with no reader was asked for a file")
+	}
+	if want := UnreadableRefusal(e, "gitlab").Error(); err.Error() != want {
+		t.Errorf("the refusal = %q, want %q", err, want)
+	}
+}

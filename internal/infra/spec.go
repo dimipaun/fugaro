@@ -306,6 +306,14 @@ type WorkflowSpec struct {
 	// is the sentence a caller prints to say so. They are json:"-" because
 	// nothing outside the process that built this spec reads them.
 	Warnings []string `json:"-"`
+	// CatalogEntry is the project image catalog's entry the job's image
+	// comes from, "" when the workflow runs no catalog entry. CatalogPrebuilt
+	// is whether that entry's source is a prebuilt reference
+	// (config.SourceImage): Image is then the entry's own reference, which no
+	// Fugaro build writes and no shape can recognise (isCatalogImage), so
+	// readiness asks this rather than the image.
+	CatalogEntry    string `json:"-"`
+	CatalogPrebuilt bool   `json:"-"`
 }
 
 // Registry is the repository's own image registry.
@@ -796,10 +804,10 @@ func (c *repoCtx) effectiveCatalog() *config.Catalog {
 // on (D1149), and today's only backend is Cloud Run — a config that names
 // cloud-batch is refused where it is read until the task that makes a Batch
 // run safe, which is also the point this line starts meaning something else.
-func (c *repoCtx) catalogJobImage(name string, w config.Workflow) (string, []string, bool, error) {
+func (c *repoCtx) catalogJobImage(name string, w config.Workflow) (config.Entry, []string, bool, error) {
 	cat := c.effectiveCatalog()
 	if cat == nil || !catalog.Applies(*cat, w) {
-		return "", nil, false, nil
+		return config.Entry{}, nil, false, nil
 	}
 	choice, err := catalog.Choose(catalog.Job{
 		Catalog: *cat,
@@ -807,13 +815,13 @@ func (c *repoCtx) catalogJobImage(name string, w config.Workflow) (string, []str
 		Backend: catalog.Backend(c.lc.Backend()),
 	})
 	if err != nil {
-		return "", nil, false, userErr("workflow %s: %w", name, err)
+		return config.Entry{}, nil, false, userErr("workflow %s: %w", name, err)
 	}
 	var warnings []string
 	if choice.Warn != "" {
 		warnings = append(warnings, choice.Warn)
 	}
-	return c.catalogImage(choice.Entry), warnings, true, nil
+	return choice.Entry, warnings, true, nil
 }
 
 // Workflow is the spec of one workflow of the repository, its default
@@ -1010,14 +1018,15 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// it runs; C8b1 owns replacing both.
 	image := gcp.ImageName(c.registryPath(), slug, name) + ":latest"
 	var warnings []string
+	var entry config.Entry
 	if w.Checkout == config.CheckoutClone {
 		image = lc.BaseImage(config.BaseKind)
-	} else if img, warns, chosen, err := c.catalogJobImage(name, w); err != nil {
+	} else if e, warns, chosen, err := c.catalogJobImage(name, w); err != nil {
 		// §3.3's refusals are raised here, before the job is deployed: a
 		// job whose image cannot do its work would die mid-run instead.
 		return WorkflowSpec{}, err
 	} else if chosen {
-		image, warnings = img, warns
+		image, warnings, entry = c.catalogImage(e), warns, e
 	}
 	ws := WorkflowSpec{
 		Job:            gcp.JobName(slug, variant),
@@ -1047,6 +1056,8 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 		SecretIDs:           map[string]string{},
 		GitSecret:           c.gitSecret,
 		Warnings:            warnings,
+		CatalogEntry:        entry.Name,
+		CatalogPrebuilt:     entry.Name != "" && entry.Source.Kind == config.SourceImage,
 	}
 	if lc.Registry != "" {
 		ws.LegacyImage = gcp.ImageName(lc.Registry, slug, name)
@@ -1261,6 +1272,11 @@ func Repo(in Inputs) (RepoSpec, error) {
 		// backstop of the allow-list, design §6b.3). Every other auth kind
 		// has exactly the default account, unchanged from before this field
 		// existed.
+		// catalogImage is what catalogJobImage answered for the workflow's
+		// job, read back from the spec it built rather than asked again:
+		// the check below and the job's own image must never disagree about
+		// which jobs are the catalog's.
+		catalogImage := false
 		for _, tok := range WorkflowAccounts(in.Cfg, lc, in.Repo) {
 			ws, err := c.workflow(name, tok)
 			if err != nil {
@@ -1270,13 +1286,20 @@ func Repo(in Inputs) (RepoSpec, error) {
 			rs.Workflows[key] = ws
 			maps.Copy(rs.Secrets, ws.SecretIDs)
 			rs.BuildSecrets = append(rs.BuildSecrets, ws.BuildSecrets...)
+			catalogImage = ws.CatalogEntry != ""
 		}
 		// The daily check covers the workflow's image, the same image
 		// across every token variant: once per logical workflow, not once
 		// per variant. A checkout: clone workflow has no derived image to
 		// rebuild, so the daily check never covers it, whatever its
-		// rebuild.check says.
-		if in.Cfg.Workflows[name].Checkout != config.CheckoutClone && in.Cfg.Workflows[name].Rebuild.Defaults().Check != "off" {
+		// rebuild.check says. Neither does a workflow a catalog entry gives
+		// its image to: the check rebuilds the repository's own derived
+		// tag, which that job never runs — a prebuilt entry's image is
+		// pushed by the operator, and a built one belongs to the catalog's
+		// own check — so a repository whose every workflow runs an entry
+		// needs no base image at all.
+		w := in.Cfg.Workflows[name]
+		if w.Checkout != config.CheckoutClone && !catalogImage && w.Rebuild.Defaults().Check != "off" {
 			checked = append(checked, name)
 		}
 	}

@@ -25,6 +25,16 @@ const (
 	// NotInstalled: head's fugaro.yaml and the installed check job
 	// disagree about the workflow (fugaro update fixes it).
 	NotInstalled = "not-installed"
+	// NeedsBuild: the catalog entry has no build record, so nothing has
+	// ever built it and there is no commit a rebuild could be pinned to.
+	// It is the catalog's counterpart of the workflow check's
+	// paused-until-a-record rule: the schedule stays paused until every
+	// entry has one, and a run that finds one missing says so without
+	// alarming — fugaro image build <entry>, from the entry's
+	// repository's checkout, builds it once and the schedule takes it
+	// from there. Only the catalog check job decides it: a workflow's job
+	// clones, so it always has the commit a first build needs.
+	NeedsBuild = "needs-build"
 )
 
 // The reasons a decision records. The triggers come first, in the order
@@ -51,6 +61,12 @@ const (
 	// ReasonLastBuildIneffective: the last build of these inputs ended
 	// without failing, but didn't clear the trigger.
 	ReasonLastBuildIneffective = "last-build-ineffective"
+	// ReasonBuildCap: a trigger fired, and the run's own build cap was
+	// already reached, so this entry's rebuild is left for the next run. It
+	// is the runner's note rather than the decision's — the decision is a
+	// rebuild either way — and the catalog check job is the one that appends
+	// it, since a workflow check submits at most one build.
+	ReasonBuildCap = "build-cap"
 )
 
 // FailedBuild reports whether a Cloud Build status is a failure the check
@@ -237,6 +253,26 @@ type CatalogRecordState struct {
 	ImageDigest          string    `json:"image_digest"`
 	BuildID              string    `json:"build_id"`
 	BuiltAt              time.Time `json:"built_at"`
+}
+
+// CatalogRecordVersion is the CatalogRecordState schema version the catalog
+// build's record step writes.
+const CatalogRecordVersion = 1
+
+// ParseCatalogRecordState decodes an entry's record, the way ParseRecord
+// decodes a workflow's. Unknown fields are ignored, and a version this
+// package does not know is an error rather than a record with a field
+// missing: the check reads the definition's sha256 and the commit a rebuild
+// is pinned to off it, and both must be there.
+func ParseCatalogRecordState(data []byte) (*CatalogRecordState, error) {
+	var s CatalogRecordState
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, fmt.Errorf("the catalog record: %w", err)
+	}
+	if s.Version != CatalogRecordVersion {
+		return nil, fmt.Errorf("the catalog record has version %d, which this fugaro does not know (it reads version %d)", s.Version, CatalogRecordVersion)
+	}
+	return &s, nil
 }
 
 // CatalogInputs are what one entry's decision is made from.

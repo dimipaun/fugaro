@@ -168,13 +168,12 @@ const catalogShipped = false
 // it does for catalogSince.
 const imageCatalogSince = "0.17.0"
 
-// imageCatalogShipped is false until the release named by imageCatalogSince
-// is actually tagged: no fugaro release reads the node's image_catalog key
-// yet, so no launcher of a release that can exist today refuses a node
-// carrying it. Flip this to true in the same commit that bumps
-// imageCatalogSince to the release that ships the key, and update
-// docs/release.md's checklist line for it in that commit too.
-const imageCatalogShipped = false
+// imageCatalogShipped is true as of 0.18.0, the first release that ships the
+// flip. 0.17.0 published and read the node's image_catalog key but was tagged
+// with the gate still false, so its readiness held back every job a catalog
+// entry gives its image to. infra's imageCatalogShipped (readiness.go) is the
+// same fact and moves with this one.
+const imageCatalogShipped = true
 
 // managedDeployerShipped is true as of 0.10.0, the release the owner's ruling
 // of 2026-10-22 ships the managed deployer in: managed projects ship enabled.

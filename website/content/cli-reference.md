@@ -2044,12 +2044,20 @@ spec from FUGARO_CHECK_SPEC, submits a Cloud Build rebuild when a trigger fires
 (not with --dry-run), writes builds/<slug>/<workflow>/check.json, and logs one
 JSON line per workflow. It exits 2 when the check itself failed.
 
+With --job --catalog it is the project's catalog check job instead (D1148): one
+run of the project's own job, reading its spec from FUGARO_CATALOG_CHECK_SPEC,
+deciding every entry of the project's image catalog and submitting at most one
+Cloud Build per entry that fires, as that entry's own repository's build account.
+It writes builds/<slug>/catalog/<entry>/check.json and logs one JSON line per
+entry it decides (an entry a prebuilt image answers has nothing to build).
+
 Usage: `fugaro image check`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--catalog` | bool | `false` | no | with --job: run as the project's catalog check job (reads FUGARO_CATALOG_CHECK_SPEC; submits one rebuild per changed entry) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dry-run` | bool | `false` | no | never submit a build (locally the check never does anyway) |
 | `--force` | bool | `false` | no | decide rebuild whatever the triggers say (with --job: a build is submitted) |
