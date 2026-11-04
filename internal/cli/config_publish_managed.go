@@ -103,7 +103,7 @@ func configPublishGate(ctx context.Context, env *cloudEnv, marker string) (*mana
 // The class is YesOrTyped: publishing a layer is an ordinary confirmed step and
 // never a Typed one, so the gate may judge it at all (D1026 — and a Typed step
 // could not be admitted by these rules however clean the document looked).
-func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte) managedmode.Converge {
+func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte, executable bool) managedmode.Converge {
 	rules := layerDocumentRules(data)
 	l, ps := projectLayerProblems(data, env.lc)
 	if len(ps) > 0 {
@@ -133,7 +133,7 @@ func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte) mana
 	if changes, cerr := executableChanges(prev, l); cerr != nil {
 		rules = append(rules, "this fugaro cannot compare the layer's executable keys ("+cerr.Error()+
 			"), so the change cannot be judged")
-	} else if len(changes) > 0 {
+	} else if len(changes) > 0 && !executable {
 		rules = append(rules, "the layer changes what runs as shell in every repository that takes a profile ("+
 			safetext.FieldListLine(changes)+"), which is a change the project's owner publishes from their own terminal")
 	}
@@ -302,10 +302,21 @@ func layerListOfBlocks(n *yaml.Node) bool {
 func layerPathKey(path []string) string { return "layer." + strings.Join(path, ".") }
 
 // layerRegistryExact reports whether the registry knows this exact path: the
-// row a `settings set` would write for the same key in the same file.
+// row a `settings set` would write for the same key in the same file. A row
+// whose key varies — `layer.profiles.*.commands.test` is the test command of any
+// profile — is matched by its pattern rather than by its spelling, through
+// internal/settings's own rule for that question.
 func layerRegistryExact(path []string) bool {
-	_, ok := settings.Lookup(layerPathKey(path))
-	return ok
+	key := layerPathKey(path)
+	if _, ok := settings.Lookup(key); ok {
+		return true
+	}
+	for _, row := range layerRegistryKeys {
+		if settingsPatternMatch(row, key) {
+			return true
+		}
+	}
+	return false
 }
 
 // layerRegistryExtends reports whether some registry key lies under this path,
