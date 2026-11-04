@@ -232,3 +232,12 @@ func TestReadinessHoldsBackACatalogJobNoReleasedFugaroCanRun(t *testing.T) {
 		}
 	}
 }
+
+// The shipped state itself is pinned here: every other readiness test sets the
+// gate through catalogReadiness, so none of them would notice the gate being
+// false in the code that ships (issue 1659: 0.17.0 was tagged that way).
+func TestImageCatalogGateIsShipped(t *testing.T) {
+	if !imageCatalogShipped {
+		t.Fatal("imageCatalogShipped is false: readiness holds back every job a catalog entry gives its image to, in every release")
+	}
+}

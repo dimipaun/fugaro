@@ -168,11 +168,11 @@ const catalogShipped = false
 // it does for catalogSince.
 const imageCatalogSince = "0.17.0"
 
-// imageCatalogShipped is true as of 0.17.0, the release that publishes and
-// reads the node's image_catalog key. 0.17.0 itself was tagged with the
-// gate still false, so its readiness held back every job a catalog entry
-// gives its image to; the release after it ships the flip. infra's
-// imageCatalogShipped (readiness.go) is the same fact and moves with this one.
+// imageCatalogShipped is true as of 0.18.0, the first release that ships the
+// flip. 0.17.0 published and read the node's image_catalog key but was tagged
+// with the gate still false, so its readiness held back every job a catalog
+// entry gives its image to. infra's imageCatalogShipped (readiness.go) is the
+// same fact and moves with this one.
 const imageCatalogShipped = true
 
 // managedDeployerShipped is true as of 0.10.0, the release the owner's ruling

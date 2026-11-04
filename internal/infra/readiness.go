@@ -756,9 +756,9 @@ func hasLatest(ctx context.Context, c *Clients, tg target, spec RepoSpec, image 
 // internal/cli's imageCatalogShipped (recipes_skew.go) is the same fact at
 // the CLI's own edges, and this package cannot read it — internal/cli imports
 // internal/infra, never the other way round. The release that flips one flips
-// both in the same commit. It is true as of 0.17.0, the release that ships
-// the key; 0.17.0 was tagged with it still false, and the release after it
-// ships the flip.
+// both in the same commit. It is true as of 0.18.0, the first release that
+// ships the flip: 0.17.0 published the key but was tagged with this still
+// false, so no job a catalog entry gives its image to could deploy on it.
 var imageCatalogShipped = true
 
 // workflowCatalogEntry is the catalog entry ws's job runs, "" when none: the

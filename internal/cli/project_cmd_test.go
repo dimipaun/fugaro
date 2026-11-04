@@ -237,6 +237,9 @@ func TestImageCatalogGateIsNotThePriceCatalogGate(t *testing.T) {
 	// moves for this work: a release that publishes image_catalog flips
 	// imageCatalogShipped and leaves catalogShipped where it is. What must not
 	// happen here is shipping this key by flipping the price catalog's instead.
+	if !imageCatalogShipped {
+		t.Errorf("imageCatalogShipped is false although imageCatalogSince names %q, a tagged release: readiness holds back every job a catalog entry gives its image to (issue 1659)", imageCatalogSince)
+	}
 	if catalogShipped {
 		t.Errorf("catalogShipped is true while catalogSince still names %q: the price catalog's gate moved with the image catalog's", catalogSince)
 	}
