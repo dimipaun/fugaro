@@ -62,13 +62,18 @@ const policyPublishClass = initflow.YesOrTyped
 // the record of a run they did not watch (D1014). Each names where it is
 // written down, so an owner comparing a refusal against the design finds the
 // table it came from.
+//
+// §4.2's first rule for this command — "a node under the deployed rules
+// generation" — is deliberately NOT one of them, because both its halves are
+// the command's own checks and both are asked before the gate is: the deployed
+// generation is requirePolicyRules (the runs database's rules marker against
+// this binary's, refused with the command's own sentence), and the read node's
+// generation is refuseNewerPolicy. A rule here over the node this build would
+// write could never fire — buildProjectPolicy states this binary's own
+// generation — and a rule that cannot fire is worse than an absent one: every
+// admission's record names the rules that ran, and an owner auditing it would
+// read a check that structurally cannot fail as one that just happened to pass.
 const (
-	// policyGenerationRule is §4.2's "a node under the deployed rules
-	// generation". The deployed half is requirePolicyRules, asked before the
-	// gate and unchanged today; what this rule adds is the node's OWN
-	// declaration, so a publish that would write a node of another generation
-	// is refused rather than judged by this one's rules.
-	policyGenerationRule = "the node states the generation this build writes (spec §4.2)"
 	// policyReposRule is §4.2's "repos unchanged or narrower".
 	policyReposRule = "repos is unchanged or narrower (spec §4.2)"
 	// policyProfileRule, policyAccountsRule and policyBitbucketRule are §4.1
@@ -121,7 +126,6 @@ func policyPublishVerdict(old, pol *projectpolicy.Policy, body []byte, seedRepos
 		}
 		refused = append(refused, refusal)
 	}
-	judge(policyGenerationRule, policyGenerationRefusal(pol))
 	judge(policyReposRule, policyReposRefusal(old, pol))
 	judge(policyProfileRule, policyProfileRefusal(old, pol))
 	judge(policyAccountsRule, policyAccountsRefusal(old, pol))
@@ -151,15 +155,6 @@ func policyDeleteVerdict(raw []byte) managedmode.Converge {
 	return managedmode.ConvergeRefused(raw, policyPublishClass, []string{
 		ruleSaid(policyDeleteRule, "the published node is what every run of the project is admitted by, so removing it is the owner's own decision and not one a plan can stand in for"),
 	})
-}
-
-// policyGenerationRefusal is the node's own generation, which is the half of
-// §4.2's rule this side can see.
-func policyGenerationRefusal(pol *projectpolicy.Policy) string {
-	if pol.Version == projectpolicy.Version {
-		return ""
-	}
-	return ruleSaid(policyGenerationRule, fmt.Sprintf("the node is version %d and this build writes version %d", pol.Version, projectpolicy.Version))
 }
 
 // policyReposRefusal is §4.2's rule over the node's own allow-list. A publish
