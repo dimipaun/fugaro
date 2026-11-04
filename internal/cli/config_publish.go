@@ -128,7 +128,7 @@ func newConfigPublishCmd() *cobra.Command {
 				// refuse is refused with the gate's sentence and its record,
 				// whatever the rest of this command would have said about it.
 				var conv managedmode.Converge
-				conv, at = configPublishConverge(ctx, env, data)
+				conv, at = configPublishConverge(ctx, env, data, rec.lc != nil)
 				m, aerr := gate.admit(ctx, initflow.YesOrTyped, conv)
 				if aerr != nil {
 					return aerr

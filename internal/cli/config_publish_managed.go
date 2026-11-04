@@ -121,7 +121,17 @@ func configPublishGate(ctx context.Context, env *cloudEnv, marker string) *manag
 // second read would be conditioned on a layer the rules never saw — the
 // widening they admitted could be measured against a document that landed in
 // between, and the audit record would name a plan nobody judged.
-func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte) (managedmode.Converge, *layerAt) {
+//
+// local says the bytes being published ARE this machine's own layer file, which
+// is the whole of D854's subject: the rule is about the file this machine reads
+// back and the generation it was written from. `fugaro config publish FILE`
+// publishes a layer kept somewhere else — the command's own record of that
+// difference is rec.lc — and the state of the unrelated local file says nothing
+// about the document under judgement: checking it there would refuse a publish
+// whose subject is a different file, and would put a rule in the record that
+// never ran. Every other rule is decided against the published object and runs
+// either way.
+func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte, local bool) (managedmode.Converge, *layerAt) {
 	rules := layerDocumentRules(data)
 	l, ps := projectLayerProblems(data, env.lc)
 	if len(ps) > 0 {
@@ -172,27 +182,38 @@ func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte) (man
 	}
 	rules = append(rules, layerWideningRules(prev, l)...)
 	rules = append(rules, layerRigorRules(prev, l)...)
-	if r := layerStaleRule(env.lc, prev, gen); r != "" {
-		rules = append(rules, r)
+	if local {
+		if r := layerStaleRule(env.lc, prev, gen); r != "" {
+			rules = append(rules, r)
+		}
 	}
 	if len(rules) > 0 {
 		return managedmode.ConvergeRefused(data, initflow.YesOrTyped, rules), at
 	}
-	return managedmode.ConvergeAdmitted(data, initflow.YesOrTyped, layerAdmittedRules), at
+	return managedmode.ConvergeAdmitted(data, initflow.YesOrTyped, layerAdmittedRules(local)), at
 }
 
 // layerAdmittedRules is what a record of an admission says was applied and
 // passed: the rules above, in the order the converge applies them. They are
 // written out rather than derived from the functions, because a record has to
-// be checkable by a person months later without reading this build's code.
-var layerAdmittedRules = []string{
-	"every key of the document is one the settings registry knows",
-	"the document names no reserved key",
-	"the document is one this program can publish",
-	"no key that runs as shell changes, whatever the command line says",
-	"the document widens no model claim, no A/B route and no cap",
-	"the document lowers no rigor floor and removes no rigor rule",
-	"this machine's local layer file was written from the published layer's generation",
+// be checkable by a person months later without reading this build's code —
+// which is also why D854's sentence is in the list only when D854 ran: a record
+// of a `config publish FILE` that claimed the local file's generation was
+// checked would name a rule about a file that was never the document under
+// judgement.
+func layerAdmittedRules(local bool) []string {
+	rules := []string{
+		"every key of the document is one the settings registry knows",
+		"the document names no reserved key",
+		"the document is one this program can publish",
+		"no key that runs as shell changes, whatever the command line says",
+		"the document widens no model claim, no A/B route and no cap",
+		"the document lowers no rigor floor and removes no rigor rule",
+	}
+	if local {
+		rules = append(rules, "this machine's local layer file was written from the published layer's generation")
+	}
+	return rules
 }
 
 // layerReservedRuns are the keys no coding agent's session writes, as the

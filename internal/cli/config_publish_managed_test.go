@@ -221,6 +221,39 @@ func TestConfigPublishManagedRefusesAStaleGeneration(t *testing.T) {
 	}
 }
 
+// The same stale local file, with FILE naming a layer kept somewhere else: the
+// document under judgement is not this machine's layer file, so D854 has no
+// subject here and the unrelated file's recorded generation cannot refuse a
+// publish it says nothing about. The admission's record does not claim the rule
+// either — a rule named among the ones that passed is a rule that ran (D1014),
+// and this one is about a file the command never read.
+func TestConfigPublishManagedAdmitsAFileWhileTheLocalLayerIsStale(t *testing.T) {
+	r := newManagedPublishRig(t)
+	agentSession(t)
+	publishedLayer(t, r.cloudFixture, minimalAnchored)
+	if err := os.WriteFile(localLayerPath(t), []byte(managedLayer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setConfigScalar(t, "layer_generation", `"7"`)
+	out, errOut, err := execute(t, "config", "publish", layerFile(t, managedLayer))
+	if err != nil {
+		t.Fatalf("a publish of a layer kept elsewhere was refused by the state of this machine's own file: %v\n%s", err, errOut)
+	}
+	if !strings.Contains(out, initflow.AgentProceeded("CLAUDECODE")) {
+		t.Errorf("the session does not read that the step proceeded: %q", out)
+	}
+	if got := bucketText(t, r.cloudFixture, config.LayerKey); got != managedLayer {
+		t.Fatalf("the bucket holds %q, want the published layer", got)
+	}
+	rec := r.audits(t)
+	if len(rec) != 1 || rec[0].Verdict != managedmode.AuditAdmitted {
+		t.Fatalf("the record is %v, want one admission", rec)
+	}
+	if rules := strings.Join(rec[0].Rules, " "); strings.Contains(rules, "generation") {
+		t.Errorf("the record claims the D854 rule ran for a file that was never the document under judgement: %q", rules)
+	}
+}
+
 // The other side: a layer every rule passes is admitted in a managed project's
 // coding agent's session, the session reads AgentProceeded, the object is
 // published, and the admission leaves its record.
