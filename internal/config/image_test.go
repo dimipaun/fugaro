@@ -56,13 +56,16 @@ func TestParseImageSkipBuildScripts(t *testing.T) {
 
 // imageFieldReasons is config.Image's fields that never run as shell and so
 // stay off ExecutableKeys, with why: Node and JDK were removed in 0.7.0 and
-// are refused unconditionally by validateImage, so neither ever reaches a
-// Dockerfile.
+// the other five in 0.18.0, and every one of them is refused unconditionally,
+// so none reaches a Dockerfile.
 var imageFieldReasons = map[string]string{
-	"Node": "removed in 0.7.0; refused unconditionally by validateImage, never run as shell",
-	"JDK":  "removed in 0.7.0; refused unconditionally by validateImage, never reaches a Dockerfile",
-	"KeyFiles": "repository paths the image checks out before the source layer, each written as one " +
-		"single-quoted word into the checkout loop; validateImage refuses anything but a clean relative path",
+	"Node":             "removed in 0.7.0; refused unconditionally by validateImage, never run as shell",
+	"JDK":              "removed in 0.7.0; refused unconditionally by validateImage, never reaches a Dockerfile",
+	"Apt":              "removed in 0.18.0; refused unconditionally by removedImageKeyProblems, never a command",
+	"Setup":            "removed in 0.18.0; refused unconditionally by removedImageKeyProblems, never a command",
+	"Tools":            "removed in 0.18.0; refused unconditionally by removedImageKeyProblems, never a command",
+	"SkipBuildScripts": "removed in 0.18.0; refused unconditionally by removedImageKeyProblems, never a command",
+	"KeyFiles":         "removed in 0.18.0; refused unconditionally by removedImageKeyProblems, never a command",
 }
 
 // TestImageFieldsAreClassified is decision L7's reflection-style guard: a

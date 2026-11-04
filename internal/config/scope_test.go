@@ -171,13 +171,7 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		"workflows.*.base":                      InProfile | InRepo,
 		"workflows.*.image.node":                InProfile | InRepo,
 		"workflows.*.image.jdk":                 InRepo,
-		"workflows.*.image.apt":                 InProfile | InRepo,
-		"workflows.*.image.setup":               InProfile | InRepo,
-		"workflows.*.image.skip_build_scripts":  InProfile | InRepo,
 		"workflows.*.checkout":                  InProfile | InRepo,
-		"workflows.*.image.tools":               InProfile | InRepo,
-		"workflows.*.image.key_files":           InRepo,
-		"workflows.*.dockerfile":                InRepo,
 		"workflows.*.commands.build":            InProfile | InRepo,
 		"workflows.*.commands.test":             InProfile | InRepo,
 		"workflows.*.commands.lint":             InProfile | InRepo,
@@ -195,11 +189,6 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		"workflows.*.timeouts.verify":           InProfile | InRepo,
 		"workflows.*.timeouts.render":           InProfile | InRepo,
 		"workflows.*.timeouts.finalize_reserve": InProfile | InRepo,
-		"workflows.*.rebuild.check":             InProfile | InRepo,
-		"workflows.*.rebuild.max_age":           InProfile | InRepo,
-		"workflows.*.rebuild.lockfiles":         InProfile | InRepo,
-		"workflows.*.rebuild.base":              InProfile | InRepo,
-		"workflows.*.rebuild.paths":             InProfile | InRepo,
 
 		"workflows.*.inputs.max_files":       InProfile | InRepo,
 		"workflows.*.inputs.max_bytes":       InProfile | InRepo,
@@ -242,10 +231,6 @@ func TestExecutableKeys(t *testing.T) {
 		"workflows.*.commands.render",
 		"workflows.*.commands.probe",
 		"workflows.*.commands.rerun_failed",
-		"workflows.*.image.apt",
-		"workflows.*.image.setup",
-		"workflows.*.image.skip_build_scripts",
-		"workflows.*.image.tools",
 	}
 	got := append([]string(nil), ExecutableKeys...)
 	sort.Strings(got)

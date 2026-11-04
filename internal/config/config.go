@@ -1189,6 +1189,11 @@ func AgentOf(data []byte) (Agent, bool) {
 // decodeRepo decodes a fugaro.yaml strictly, without defaults or
 // validation: the repository layer alone, with today's line-numbered
 // errors.
+//
+// It is also where a key the repository-image removal took out of a workflow
+// is refused: the refusal reads a rebuild key's value for whether the file
+// wrote it, and applyDefaults fills every one of them in, so this is the last
+// place the question can still be answered (removedImageKey).
 func decodeRepo(data []byte) (*Config, []Problem) {
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader(data))
@@ -1207,6 +1212,9 @@ func decodeRepo(data []byte) (*Config, []Problem) {
 	}
 	if _, err := GCPProjectOf(data); err != nil {
 		return nil, []Problem{problemFromYAML(err.Error())}
+	}
+	if ps := removedWorkflowProblems(&c); len(ps) > 0 {
+		return nil, ps
 	}
 	return &c, nil
 }

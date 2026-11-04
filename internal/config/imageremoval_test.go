@@ -64,9 +64,6 @@ func TestRemovedImageKeysAreRefusedByName(t *testing.T) {
 	// The project layer is the second door to the same build, so a profile
 	// that writes one of the keys is refused there too.
 	for _, tc := range removedImageTestCases {
-		if strings.HasPrefix(tc.key, "dockerfile") {
-			continue
-		}
 		t.Run("profiles."+tc.key, func(t *testing.T) {
 			_, problems := ParseProjectLayer([]byte(removedImageLayer(tc.body)), testAnchor)
 			want := "profiles.app." + tc.key
@@ -78,6 +75,27 @@ func TestRemovedImageKeysAreRefusedByName(t *testing.T) {
 				t.Errorf("the refusal of %s does not name `fugaro image add`: %q", tc.key, got)
 			}
 		})
+	}
+}
+
+// TestRemovedImageKeysIsTheRefusedTable: RemovedImageKeys is the list the
+// settings registry's completeness guard reads, so it has to be the same
+// eleven keys the decoder refuses and nothing else. A key in the list but not
+// refused would exempt a live key from that guard; a refused key missing from
+// it would fail the guard with no way to satisfy it.
+func TestRemovedImageKeysIsTheRefusedTable(t *testing.T) {
+	want := map[string]bool{}
+	for _, tc := range removedImageTestCases {
+		want["workflows.*."+tc.key] = true
+	}
+	got := RemovedImageKeys()
+	if len(got) != len(want) {
+		t.Fatalf("RemovedImageKeys() = %v, want the %d refused keys %v", got, len(want), want)
+	}
+	for _, key := range got {
+		if !want[key] {
+			t.Errorf("RemovedImageKeys() lists %s, which the removal does not refuse", key)
+		}
 	}
 }
 

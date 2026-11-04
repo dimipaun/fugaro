@@ -26,15 +26,13 @@ defaults:
 profiles:
   java-service:
     description: Gradle service
-    image:
-      apt: [graphviz]
     commands:
       build: ./gradlew assemble
       test: ./gradlew test
     resources: { cpu: 4, memory: 16Gi }
     timeouts: { total: 2h }
   node-web:
-    image: { tools: { node: "20" } }
+    resources: { cpu: 2 }
     commands: { build: npm run build, test: npm test }
 default_profile: java-service
 `
@@ -52,7 +50,7 @@ func mustLayer(t *testing.T, text string) *ProjectLayer {
 
 func TestParseProjectLayer(t *testing.T) {
 	l := mustLayer(t, testLayer)
-	if l.SHA256 != LayerSum([]byte(testLayer)) || l.DefaultProfile != "java-service" || l.Profiles["node-web"].Image.Tools["node"] != "20" {
+	if l.SHA256 != LayerSum([]byte(testLayer)) || l.DefaultProfile != "java-service" || l.Profiles["node-web"].Resources.CPU != 2 {
 		t.Fatalf("layer = %+v", l)
 	}
 	if !l.Profiles["java-service"].HasExecutable() {

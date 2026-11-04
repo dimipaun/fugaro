@@ -159,6 +159,132 @@ func validateImage(p string, w Workflow) []Problem {
 	return ps
 }
 
+// RemovedImageKeyDoc is where a person who meets a key the repository-image
+// removal took out of a workflow is sent: the catalog is what a repository
+// builds an image with now.
+const RemovedImageKeyDoc = "docs/project-image-catalog/README.md"
+
+// removedBuildKeyMessage and removedRebuildKeyMessage are the two sentences the
+// removal's refusals are made of. They are templates the caller fills with
+// RemovedImageKeyDoc, the shape legacyBaseMessage already has, so the guide a
+// person is sent to is named in one place.
+//
+// Both name `fugaro image add`, because that is the command that replaces the
+// key: a person who meets the refusal has to be told what to do next, and a
+// decoder's "field not found" tells them nothing (D1195).
+const (
+	removedBuildKeyMessage   = "was removed in 0.18.0: a job's image is a catalog entry now, and a repository adds one with `fugaro image add` and selects it with image_name (%s)"
+	removedRebuildKeyMessage = "was removed in 0.18.0: nothing rebuilds a repository's own image any more; `fugaro image add` records a catalog entry and `fugaro image build` builds it (%s)"
+)
+
+// removedImageKey is one key the repository-image removal took out of a
+// workflow, and how a workflow says that it wrote it.
+//
+// The write test is a value test and not a name test because the key has to
+// stay decodable for its refusal to be this sentence rather than the strict
+// decoder's "field not found in type config.Workflow" (D1195). It reads a
+// value that applyDefaults fills in — rebuild.max_age's Set bit, rebuild's two
+// pointers, rebuild.paths' nil — so removedImageKeyProblems MUST be called on a
+// config that has not been defaulted; every caller below is.
+type removedImageKey struct {
+	key    string
+	writes func(Workflow) bool
+}
+
+// removedImageKeys is the removal's own list, in the order a reader meets the
+// keys in fugaro.yaml. One list, because three surfaces have to agree about it:
+// the refusal below, RemovedImageKeys (which internal/settings' completeness
+// guard reads, so a removed key is not forced back into the registry as a
+// writable row), and this folder's own pin.
+var removedImageKeys = []removedImageKey{
+	{"image.apt", func(w Workflow) bool { return len(w.Image.Apt) > 0 }},
+	{"image.setup", func(w Workflow) bool { return len(w.Image.Setup) > 0 }},
+	{"image.skip_build_scripts", func(w Workflow) bool { return w.Image.SkipBuildScripts }},
+	{"image.tools", func(w Workflow) bool { return len(w.Image.Tools) > 0 }},
+	{"image.key_files", func(w Workflow) bool { return len(w.Image.KeyFiles) > 0 }},
+	{"dockerfile", func(w Workflow) bool { return w.Dockerfile != "" }},
+	{"rebuild.check", func(w Workflow) bool { return w.Rebuild.Check != "" }},
+	{"rebuild.max_age", func(w Workflow) bool { return w.Rebuild.MaxAge.Set }},
+	{"rebuild.lockfiles", func(w Workflow) bool { return w.Rebuild.Lockfiles != nil }},
+	{"rebuild.base", func(w Workflow) bool { return w.Rebuild.Base != nil }},
+	{"rebuild.paths", func(w Workflow) bool { return w.Rebuild.Paths != nil }},
+}
+
+// RemovedImageKeys is the removal's list as fugaro.yaml paths under
+// workflows.*: the keys no surface may offer as a setting. internal/settings
+// reads it to keep its registry — the table `fugaro settings set` and
+// `fugaro settings list` are built from — free of a key the config refuses,
+// while the struct fields the refusal needs stay in place (D1195, D1196).
+func RemovedImageKeys() []string {
+	out := make([]string, 0, len(removedImageKeys))
+	for _, k := range removedImageKeys {
+		out = append(out, "workflows.*."+k.key)
+	}
+	return out
+}
+
+// removedImageRefusal is the sentence refusing path, one of the removed keys
+// as a workflows.* path, or "" when path is not one of them. The project
+// layer's scope walk reads it (scope.go), so the two doors a workflow is
+// written through refuse a removed key in the same words.
+func removedImageRefusal(path string) string {
+	bare, ok := strings.CutPrefix(path, "workflows.*.")
+	if !ok {
+		return ""
+	}
+	for _, k := range removedImageKeys {
+		if k.key != bare {
+			continue
+		}
+		msg := removedBuildKeyMessage
+		if strings.HasPrefix(bare, "rebuild.") {
+			msg = removedRebuildKeyMessage
+		}
+		return fmt.Sprintf(msg, RemovedImageKeyDoc)
+	}
+	return ""
+}
+
+// removedImageBlock reports whether path, a workflows.* path, is a block whose
+// listed keys were all removed ("workflows.*.rebuild"). The scope table no
+// longer makes it a block (its rows are gone), so without this the project
+// layer would refuse the mapping as an unknown key instead of reaching its
+// leaves and refusing each one by name.
+func removedImageBlock(path string) bool {
+	for _, k := range removedImageKeys {
+		if strings.HasPrefix("workflows.*."+k.key, path+".") {
+			return true
+		}
+	}
+	return false
+}
+
+// removedImageKeyProblems reports every removed key p's workflow writes, each
+// under its own path, each with the sentence that names the command replacing
+// it. It is called before a config's defaults are filled in, for the reason
+// removedImageKey states: after applyDefaults every workflow writes every
+// rebuild key.
+func removedImageKeyProblems(p string, w Workflow) []Problem {
+	var ps []Problem
+	for _, k := range removedImageKeys {
+		if !k.writes(w) {
+			continue
+		}
+		ps = append(ps, Problem{Path: p + "." + k.key, Message: removedImageRefusal("workflows.*." + k.key)})
+	}
+	return ps
+}
+
+// removedWorkflowProblems is removedImageKeyProblems for every workflow of a
+// decoded fugaro.yaml, in the table's own order.
+func removedWorkflowProblems(c *Config) []Problem {
+	var ps []Problem
+	for _, name := range sortedKeys(c.Workflows) {
+		ps = append(ps, removedImageKeyProblems("workflows."+showKey(name), c.Workflows[name])...)
+	}
+	return ps
+}
+
 // validateCatalogRef checks a workflow's catalog reference (spec
 // project-image-catalog §Repo configuration, D1155): image_name: names one
 // entry of the project's catalog and needs: lists the tags the job needs.

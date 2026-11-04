@@ -202,12 +202,6 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `workflows.*.checkout` | profile, repo |  |
 | `workflows.*.image.node` | profile, repo |  |
 | `workflows.*.image.jdk` | repo | it is refused on every base |
-| `workflows.*.image.apt` | profile, repo |  |
-| `workflows.*.image.setup` | profile, repo |  |
-| `workflows.*.image.skip_build_scripts` | profile, repo |  |
-| `workflows.*.image.tools` | profile, repo |  |
-| `workflows.*.image.key_files` | repo | it names a file in the repository |
-| `workflows.*.dockerfile` | repo | it names a file in the repository |
 | `workflows.*.commands.build` | profile, repo |  |
 | `workflows.*.commands.test` | profile, repo |  |
 | `workflows.*.commands.lint` | profile, repo |  |
@@ -225,11 +219,6 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `workflows.*.timeouts.verify` | profile, repo |  |
 | `workflows.*.timeouts.render` | profile, repo |  |
 | `workflows.*.timeouts.finalize_reserve` | profile, repo |  |
-| `workflows.*.rebuild.check` | profile, repo |  |
-| `workflows.*.rebuild.max_age` | profile, repo |  |
-| `workflows.*.rebuild.lockfiles` | profile, repo |  |
-| `workflows.*.rebuild.base` | profile, repo |  |
-| `workflows.*.rebuild.paths` | profile, repo |  |
 | `workflows.*.inputs.max_files` | profile, repo |  |
 | `workflows.*.inputs.max_bytes` | profile, repo |  |
 | `workflows.*.inputs.max_total_bytes` | profile, repo |  |
@@ -344,13 +333,9 @@ One exception: a **managed** project, whose gate exists so that the same session
 - `workflows.*.commands.render`
 - `workflows.*.commands.probe`
 - `workflows.*.commands.rerun_failed`
-- `workflows.*.image.apt`
-- `workflows.*.image.setup`
-- `workflows.*.image.tools`
-- `workflows.*.image.skip_build_scripts`
 <!-- executable-keys:end -->
 
-— values that run as shell, or (`image.skip_build_scripts`) control whether shell a profile already describes runs, in the job or in the image build. `commands.render` and `commands.probe` are gated like `commands.build`: an artifact recipe's render and probe steps run the workflow's own text as shell in the job. `commands.reports` is not gated: it only lists paths to collect, and runs nothing. `inputs.*` is not gated either: the caps are numbers, and they bound what a launcher may attach, not anything a profile runs. `config publish` refuses a change to any of these keys, in either direction (`image.skip_build_scripts` going from `false` to `true` is reported too, not only the unsafe direction), unless `--executable-changes` is given, printing each one's before and after under an `EXECUTABLE CHANGES` banner first; changing `default_profile` itself is gated the same way, whenever either the old or the new default profile sets one of these keys.
+— values that run as shell in the job. `commands.render` and `commands.probe` are gated like `commands.build`: an artifact recipe's render and probe steps run the workflow's own text as shell in the job. `commands.reports` is not gated: it only lists paths to collect, and runs nothing. `inputs.*` is not gated either: the caps are numbers, and they bound what a launcher may attach, not anything a profile runs. `config publish` refuses a change to any of these keys, in either direction, unless `--executable-changes` is given, printing each one's before and after under an `EXECUTABLE CHANGES` banner first; changing `default_profile` itself is gated the same way, whenever either the old or the new default profile sets one of these keys.
 
 **The write.** It is made under a generation precondition, so a concurrent publisher is refused rather than overwritten, and a diff against the previous object is shown first. The exact bytes are then copied to `builds/<slug>/project-layer.yaml` for each repository the installation config lists. `fugaro doctor` reports a repository whose copy differs from the published object.
 

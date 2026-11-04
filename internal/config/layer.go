@@ -549,7 +549,14 @@ func scopeProblems(prefix, repoPrefix string, m map[string]any, layer Scope) []P
 		case isBlock(key):
 			ps = append(ps, Problem{Path: path, Message: "is a block of fugaro.yaml keys, so it must be a mapping of them"})
 		default:
-			ps = append(ps, Problem{Path: path, Message: "is not a fugaro.yaml key the project layer knows"})
+			msg := "is not a fugaro.yaml key the project layer knows"
+			// A profile is a workflow, so the removal's tombstones are the
+			// refusal here too: the row is gone, and the generic sentence
+			// would leave the writer with no command to turn to.
+			if r := removedImageRefusal(key); r != "" {
+				msg = r
+			}
+			ps = append(ps, Problem{Path: path, Message: msg})
 		}
 	}
 	return ps
