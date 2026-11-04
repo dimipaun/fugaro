@@ -444,6 +444,75 @@ func TestConfigPublishManagedRefusesACapRaised(t *testing.T) {
 	}
 }
 
+// The rigor floor: the one change the gate refuses for admitting LESS. A mode a
+// run is held to is not a session's to weaken (D20c, D1026) — the project's
+// floor lowered or dropped, and a rigor rule lowered or dropped, are all
+// refused, while a raise and a rule that was not there before are admitted.
+func TestConfigPublishManagedRefusesALoweredRigorFloor(t *testing.T) {
+	// A layer with the block the comparison is about: the default floor, and a
+	// rigor rule for db when areaMode is not empty.
+	rigorBlock := func(defaultMode, areaMode string) string {
+		out := minimalAnchored + "defaults:\n  rigor: { default: " + defaultMode + " }\n"
+		if areaMode != "" {
+			out = minimalAnchored + "defaults:\n  rigor:\n    default: " + defaultMode +
+				"\n    areas:\n      - { name: db, match: \"db/*\", mode: " + areaMode + " }\n"
+		}
+		return out
+	}
+	cases := []struct {
+		name      string
+		published string
+		next      string
+		names     string
+	}{
+		{"a lowered default", rigorBlock("critical", ""), rigorBlock("startup", ""), "defaults.rigor.default"},
+		{"a removed default", rigorBlock("critical", ""), managedLayer, "defaults.rigor.default"},
+		{"a lowered rigor rule", rigorBlock("pro", "critical"), rigorBlock("pro", "poc"), "db"},
+		{"a removed rigor rule", rigorBlock("pro", "critical"), rigorBlock("pro", ""), "db"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newManagedPublishRig(t)
+			agentSession(t)
+			publishedLayer(t, r.cloudFixture, tc.published)
+			_, _, err := execute(t, "config", "publish", layerFile(t, tc.next))
+			if err == nil {
+				t.Fatalf("%s was published in a coding agent's session", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.names) || !strings.Contains(err.Error(), "floor") {
+				t.Errorf("the refusal does not name %s as the floor that refused: %v", tc.names, err)
+			}
+			if got := bucketText(t, r.cloudFixture, config.LayerKey); got != tc.published {
+				t.Fatalf("the published layer moved: %q", got)
+			}
+			if n := len(r.auditKeys(t)); n != 1 {
+				t.Errorf("the refusal left %d audit records, want one (D1025)", n)
+			}
+		})
+	}
+
+	// The other side: a raise, and a rule the published layer did not have.
+	t.Run("a raised floor and a new rule", func(t *testing.T) {
+		r := newManagedPublishRig(t)
+		agentSession(t)
+		publishedLayer(t, r.cloudFixture, rigorBlock("pro", "startup"))
+		raised := minimalAnchored + "defaults:\n  rigor:\n    default: critical\n    areas:\n      - { name: db, match: \"db/*\", mode: critical }\n      - { name: web, match: \"web/*\", mode: pro }\n"
+		out, errOut, err := execute(t, "config", "publish", layerFile(t, raised))
+		if err != nil {
+			t.Fatalf("a layer raising every floor was refused: %v\n%s", err, errOut)
+		}
+		if !strings.Contains(out, initflow.AgentProceeded("CLAUDECODE")) {
+			t.Errorf("the session does not read that the step proceeded: %q", out)
+		}
+		if got := bucketText(t, r.cloudFixture, config.LayerKey); got != raised {
+			t.Fatalf("the bucket holds %q, want the raised layer", got)
+		}
+		if got := r.audits(t); len(got) != 1 || got[0].Verdict != managedmode.AuditAdmitted {
+			t.Errorf("the record is %v, want one admission", got)
+		}
+	})
+}
+
 // The write is conditioned on the read the gate judged the document against and
 // on no other: a publisher that lands in that window is refused as a conflict.
 // A second read taken after it — what publishLayer does with no layerAt — would

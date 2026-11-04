@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/settings"
 )
@@ -155,6 +157,7 @@ func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte) (man
 			safetext.FieldListLine(changes)+"), which is a change the project's owner publishes from their own terminal")
 	}
 	rules = append(rules, layerWideningRules(prev, l)...)
+	rules = append(rules, layerRigorRules(prev, l)...)
 	if r := layerStaleRule(env.lc, prev, gen); r != "" {
 		rules = append(rules, r)
 	}
@@ -174,6 +177,7 @@ var layerAdmittedRules = []string{
 	"the document is one this program can publish",
 	"no key that runs as shell changes, whatever the command line says",
 	"the document widens no model claim, no A/B route and no cap",
+	"the document lowers no rigor floor and removes no rigor rule",
 	"this machine's local layer file was written from the published layer's generation",
 }
 
@@ -390,6 +394,60 @@ func layerReservedRun(path []string) []string {
 		}
 	}
 	return nil
+}
+
+// layerRigorRules names every rigor floor the layer removes: a
+// defaults.rigor.default lowered or dropped, and a defaults.rigor.areas rule
+// lowered or dropped, both compared by rigor.Mode.Rank().
+//
+// This is the one place the gate judges a change that admits LESS rather than
+// more, and it is here because a floor is what the run's own rigor resolution
+// starts from (D20c): removing one does not make the project's runs cheaper or
+// smaller, it makes them weaker, and a mode a run is held to is exactly what a
+// session has no business deciding about itself. Owner-ratified by D1026: a
+// floor is removed at a person's own terminal, which is why a refusal here
+// reads like the widenings and not like the caps.
+//
+// Raising a floor, adding one, and adding a rigor rule are all admitted: they
+// take nothing away, and a run resolves the strictest of the floors it finds.
+func layerRigorRules(prev, next *config.ProjectLayer) []string {
+	if prev == nil || next == nil {
+		return nil
+	}
+	var rules []string
+	add := func(what string) {
+		rules = append(rules, "the layer "+what+", which is a floor no coding agent's session removes: the project's owner publishes it at their own terminal")
+	}
+	if was := prev.Defaults.Rigor.Default; was != "" {
+		now := next.Defaults.Rigor.Default
+		switch {
+		case now == "":
+			add("removes defaults.rigor.default, which was " + string(was))
+		case now.Rank() < was.Rank():
+			add("lowers defaults.rigor.default from " + string(was) + " to " + string(now))
+		}
+	}
+	was := make(map[string]rigor.Mode, len(prev.Defaults.Rigor.Areas))
+	for _, a := range prev.Defaults.Rigor.Areas {
+		was[a.Name] = a.Mode
+	}
+	for _, a := range next.Defaults.Rigor.Areas {
+		held, ok := was[a.Name]
+		if !ok {
+			continue
+		}
+		delete(was, a.Name)
+		switch {
+		case a.Mode == "":
+			add("removes the rigor rule " + safetext.Field(a.Name) + "'s mode, which was " + string(held))
+		case a.Mode.Rank() < held.Rank():
+			add("lowers the rigor rule " + safetext.Field(a.Name) + " from " + string(held) + " to " + string(a.Mode))
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(was)) {
+		add("removes the rigor rule " + safetext.Field(name) + ", which was " + string(was[name]))
+	}
+	return rules
 }
 
 // layerWideningRules names every change that admits more than the layer it
