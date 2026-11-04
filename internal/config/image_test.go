@@ -157,8 +157,9 @@ workflows:
       test: npm test
 `
 
-// TestCheckoutCloneAlone is the companion to TestCloneRefusesImageBuildKeys:
-// checkout: clone with no build keys set is valid.
+// TestCheckoutCloneAlone pins that checkout: clone is valid on its own: the
+// kind keeps both its values (D1191) and the build keys it used to be refused
+// beside are removed keys now, refused wherever they are written.
 func TestCheckoutCloneAlone(t *testing.T) {
 	cfg, problems := Parse([]byte(cloneYAML + "    checkout: clone\n"))
 	if len(problems) > 0 {
@@ -169,11 +170,13 @@ func TestCheckoutCloneAlone(t *testing.T) {
 	}
 }
 
-// TestCheckoutCloneAllowsEmptyBuildKeys pins that checkout: clone checks a
-// build key's value, not its mere presence: an empty image.apt, image.setup
-// or image.tools, or an empty dockerfile:, means nothing to refuse (schema
-// corpus: testdata/config/valid/checkout-clone-empty-apt.yaml exercises the
-// same boundary against fugaro.schema.json).
+// TestCheckoutCloneAllowsEmptyBuildKeys pins the shape of the removal's
+// refusals: each one is a write test (removedImageKeys), so an empty
+// image.apt, image.setup, image.tools or skip_build_scripts is not something
+// a workflow wrote and the decoder accepts it. The key stays decodable for the
+// value a workflow did write: that one is refused by name
+// (TestRemovedImageKeysAreRefusedByName) rather than with the strict decoder's
+// "field not found".
 func TestCheckoutCloneAllowsEmptyBuildKeys(t *testing.T) {
 	cfg, problems := Parse([]byte(cloneYAML + "    checkout: clone\n    image: { apt: [], setup: [], tools: {}, skip_build_scripts: false }\n"))
 	if len(problems) > 0 {
