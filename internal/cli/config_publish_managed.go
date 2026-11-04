@@ -107,19 +107,28 @@ func configPublishGate(ctx context.Context, env *cloudEnv, marker string) (*mana
 // The class is YesOrTyped: publishing a layer is an ordinary confirmed step and
 // never a Typed one, so the gate may judge it at all (D1026 — and a Typed step
 // could not be admitted by these rules however clean the document looked).
-func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte) managedmode.Converge {
+//
+// It also answers the object as IT read it, for the write to be conditioned on
+// that read and on no other (D1024's rule, one step further out): the rules
+// above judge the document against the published layer, and a write that took a
+// second read would be conditioned on a layer the rules never saw — the
+// widening they admitted could be measured against a document that landed in
+// between, and the audit record would name a plan nobody judged.
+func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte) (managedmode.Converge, *layerAt) {
 	rules := layerDocumentRules(data)
 	l, ps := projectLayerProblems(data, env.lc)
 	if len(ps) > 0 {
 		rules = append(rules, "the layer is not a document this program can publish ("+
 			pluginwire.Printable(layerProblemsText(ps))+
 			"), so the project's owner publishes one it can: fugaro config publish, at their own terminal")
-		return managedmode.ConvergeRefused(data, initflow.YesOrTyped, rules)
+		return managedmode.ConvergeRefused(data, initflow.YesOrTyped, rules), nil
 	}
 	old, gen, rerr := env.bucket.ReadMaxStrict(ctx, config.LayerKey, config.LayerMaxBytes)
 	var prev *config.ProjectLayer
+	var at *layerAt
 	switch {
 	case rerr == nil:
+		at = &layerAt{old: old, gen: gen, exists: true}
 		// nil when the published object is not a layer this build can read:
 		// every rule over the difference then counts its whole content as new,
 		// which is the fail-closed direction decision L7 already takes for the
@@ -129,10 +138,11 @@ func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte) mana
 		}
 	case errors.Is(rerr, blobx.ErrNotExist):
 		// nothing is published yet: the diff is the whole document
+		at = &layerAt{}
 	default:
 		rules = append(rules, "the published project layer could not be read ("+oneLineCLI(rerr.Error())+
 			"), so what this write replaces cannot be judged, and the project's owner publishes from their own terminal")
-		return managedmode.ConvergeRefused(data, initflow.YesOrTyped, rules)
+		return managedmode.ConvergeRefused(data, initflow.YesOrTyped, rules), nil
 	}
 	if changes, cerr := executableChanges(prev, l); cerr != nil {
 		rules = append(rules, "this fugaro cannot compare the layer's executable keys ("+cerr.Error()+
@@ -149,9 +159,9 @@ func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte) mana
 		rules = append(rules, r)
 	}
 	if len(rules) > 0 {
-		return managedmode.ConvergeRefused(data, initflow.YesOrTyped, rules)
+		return managedmode.ConvergeRefused(data, initflow.YesOrTyped, rules), at
 	}
-	return managedmode.ConvergeAdmitted(data, initflow.YesOrTyped, layerAdmittedRules)
+	return managedmode.ConvergeAdmitted(data, initflow.YesOrTyped, layerAdmittedRules), at
 }
 
 // layerAdmittedRules is what a record of an admission says was applied and

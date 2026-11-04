@@ -12,6 +12,7 @@ import (
 	storage "google.golang.org/api/storage/v1"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	managed "github.com/dimipaun/fugaro/internal/infra/managed"
@@ -440,6 +441,33 @@ func TestConfigPublishManagedRefusesACapRaised(t *testing.T) {
 	}
 	if got := bucketText(t, r.cloudFixture, config.LayerKey); got != lower {
 		t.Fatalf("the bucket holds %q, want the narrowing layer", got)
+	}
+}
+
+// The write is conditioned on the read the gate judged the document against and
+// on no other: a publisher that lands in that window is refused as a conflict.
+// A second read taken after it — what publishLayer does with no layerAt — would
+// have found the racer's layer, measured the document against a layer no rule
+// of this gate saw, and written over it.
+func TestConfigPublishManagedRefusesAWriteAgainstAChangedObject(t *testing.T) {
+	r := newManagedPublishRig(t)
+	agentSession(t)
+	publishedLayer(t, r.cloudFixture, minimalAnchored)
+	other := minimalAnchored + "defaults:\n  git: { provider: github }\n"
+	race := configPublishRace
+	t.Cleanup(func() { configPublishRace = race })
+	configPublishRace = func(context.Context, *blobx.Bucket) {
+		writeBucketFile(t, r.cloudFixture, config.LayerKey, other)
+	}
+	_, _, err := execute(t, "config", "publish", layerFile(t, managedLayer))
+	if err == nil {
+		t.Fatal("a layer was written over an object that changed after the gate judged it")
+	}
+	if !strings.Contains(err.Error(), "another publisher changed") {
+		t.Errorf("the refusal does not name the conflict the write met: %v", err)
+	}
+	if got := bucketText(t, r.cloudFixture, config.LayerKey); got != other {
+		t.Fatalf("the racer's layer was overwritten: the bucket holds %q", got)
 	}
 }
 

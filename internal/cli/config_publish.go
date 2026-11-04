@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/yamledit"
 )
@@ -118,12 +119,20 @@ func newConfigPublishCmd() *cobra.Command {
 			if local, lerr := localcfg.LayerFile(os.Getenv, env.lc.Name); lerr == nil && filepath.Clean(local) == filepath.Clean(file) {
 				rec = layerRecord{path: policyConfigPath(env.lc), lc: env.lc}
 			}
+			// at is the read the gate judged the layer document against, and the
+			// write below is conditioned on THAT read (the same rule D1024 gives
+			// the two mark reads, one step further out): a publisher that landed
+			// between the two is refused as a conflict rather than measured
+			// against a layer no rule of this gate saw.
+			var at *layerAt
 			if gate != nil {
 				// The gate's own rules run over the bytes this command is about
 				// to write, before anything else of the body: a document they
 				// refuse is refused with the gate's sentence and its record,
 				// whatever the rest of this command would have said about it.
-				m, aerr := gate.admit(ctx, initflow.YesOrTyped, configPublishConverge(ctx, env, data))
+				var conv managedmode.Converge
+				conv, at = configPublishConverge(ctx, env, data)
+				m, aerr := gate.admit(ctx, initflow.YesOrTyped, conv)
 				if aerr != nil {
 					return aerr
 				}
@@ -131,6 +140,7 @@ func newConfigPublishCmd() *cobra.Command {
 					return refuseAgent()
 				}
 				fmt.Fprintln(cmd.OutOrStdout(), initflow.AgentProceeded(marker))
+				configPublishRace(ctx, env.bucket)
 			}
 			if note := projectRecipesNote(env.lc); note != "" {
 				return userErr("nothing was published: %s", strings.Replace(note, "project recipes need", "the project layer needs", 1))
@@ -142,7 +152,7 @@ func newConfigPublishCmd() *cobra.Command {
 			if len(ps) > 0 {
 				return userErr("nothing was published: %s is invalid: %s", file, pluginwire.Printable(layerProblemsText(ps)))
 			}
-			gen, err := publishLayer(ctx, cmd.ErrOrStderr(), env.bucket, l, executable, nil, rec)
+			gen, err := publishLayer(ctx, cmd.ErrOrStderr(), env.bucket, l, executable, at, rec)
 			if err != nil {
 				return err
 			}
@@ -197,6 +207,11 @@ func projectLayerProblems(data []byte, lc *localcfg.Config) (*config.ProjectLaye
 // layerPublishRace is a test seam between publish's read of the existing
 // object and its conditional write.
 var layerPublishRace = func(ctx context.Context, b *blobx.Bucket) {}
+
+// configPublishRace is the same seam one read earlier: between the read the
+// managed gate judges the layer document against and the write conditioned on
+// it, which is the window a second read of that object would open.
+var configPublishRace = func(ctx context.Context, b *blobx.Bucket) {}
 
 // layerAt is config.LayerKey as a caller already read it: the bytes, and the
 // generation a write is conditional on. The update stage reads the object
