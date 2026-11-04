@@ -585,7 +585,7 @@ nothing a run reads needs the list.
   a repository not on the entry's list — which is the fact a run would want and the one the document
   cannot state per repository.
 
-### D1269. `fugaro init`'s secrets stage
+### D1269. The setup flow's secrets stage
 
 **Question.** Does the stage stop prompting for a workflow secret the project copy covers?
 
