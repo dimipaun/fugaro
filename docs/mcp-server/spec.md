@@ -1,11 +1,13 @@
 # The hosted MCP server: the spec
 
-**Status: design only.** Nothing here is approved and no line of it is implemented. The owner's spec
-of 2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is written to the
-**recommended** answer of each decision in [reconciliation.md](reconciliation.md) §4 (D920–D934), and
-**where the two disagree the reconciliation wins** — §0 is the record of what was asked, not of what
-this design proposes. Implementation is **not** approved: the owner decides, task by task, after
-[implementation-plan.md](implementation-plan.md) has been reviewed.
+**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
+approved.** The owner's spec of 2026-10-24 is §0, copied **verbatim**; the design that follows (§1
+onward) is written to the **answers the owner gave on 2026-11-04** to the fifteen decisions in
+[reconciliation.md](reconciliation.md) §4 (D920–D934) — fourteen of them the recommendation and
+**D922 not the recommendation**, which is why §6 and §8 state a read rule the recommendation did not
+propose. **Where §0 and this design disagree the reconciliation wins** — §0 is the record of what
+was asked, not of what this design proposes. Implementation is **not** approved: the owner decides,
+task by task, after [implementation-plan.md](implementation-plan.md) has been reviewed.
 
 Repository names in this folder are placeholders (`owner/repo-a`, `owner/repo-b`), people are
 `person-1`, and a workspace is `workspace-a`; [README.md](README.md) says which names in §0 are the
@@ -134,13 +136,17 @@ endpoint is a route on that service, so there is no second service to run, no se
 grant, and no second place a project's state is read from.
 
 That placement is also what makes the front door's authorization model arguable at all. §2 states
-the one part of it that departs from both the owner's spec and the coordinator's P8, and §8 is the
-threat model that has to hold if the departure is approved.
+the one part of it that departs from both the owner's spec and the coordinator's P8, and **the owner
+approved that departure on 2026-11-04** (D920); §8 is the threat model that has to hold, and the
+independent review of it is a precondition of every task in the plan.
 
 The service is `ee/coordinator`'s, on the licence boundary the repository already keeps: the
 coordinator is the subscription half of the product. This design adds **no** licence notice to any
 file and no licence text anywhere, because the folder it is written in is core documentation and the
-ruling that binds every 0.15.0 task says so.
+repository's own rule for a documentation folder says so. **The one licence this folder does turn
+on is a dependency's**: D921 was answered with `zitadel/oidc`'s licence **UNCONFIRMED**, so the owner
+or counsel must confirm it before any build, and that confirmation is the first owner check in
+[reconciliation.md](reconciliation.md) §6.
 
 ## 2. The front door: transport, endpoint, and who may reach it
 
@@ -149,7 +155,8 @@ the MCP authorization specification removed them, so every request carries its o
 the server holds no per-connection state. That is what lets the service scale to zero, which is what
 the coordinator's own §7 already required ("plain HTTP requests mean scale-to-zero is no problem").
 
-**The endpoint is public, and the bearer token is the gate** (D920). No token, no reachable path that
+**The endpoint is public, and the bearer token is the gate** (D920, **accepted by the owner on
+2026-11-04** — the public OAuth 2.1 endpoint is the answer). No token, no reachable path that
 does anything. What answers a caller who has not yet got one is the 401 that starts the flow, the
 two metadata documents the flow needs, and the authorization server's own four endpoints — all of
 them work nobody is charged for and none of them reaches the project's state.
@@ -159,10 +166,11 @@ authorization for the front door — a deliberate departure from the MCP specifi
 as **Q16 A / U1**. P8's choice predates this spec, and it cannot survive contact with it: an MCP
 client on a laptop or on a phone is a standard MCP client, and no standard MCP client can mint a
 Google ID token for the project, nor is it reasonable to ask a person to install `gcloud` and hold
-`roles/run.invoker` before a chat client may list their own tasks. The reconciliation records the
-cost of each side; the owner decides.
+`roles/run.invoker` before a chat client may list their own tasks. **The owner took the departure on
+2026-11-04**: the public endpoint is the answer, and §8 is the price it accepts.
 
-**The front door is off until the owner turns it on** (D934). An installation that never opted into
+**The front door is off until the owner turns it on** (D934, answered **OFF by default** on
+2026-11-04 — the recommendation). An installation that never opted into
 the coordinator has no service for anything to reach; one that did gets the endpoint **off** until a
 person turns it on, and a request to a front door that is off is refused before the handler reads a
 token. A project that asked for the coordinator's read-only view does not thereby acquire a public
@@ -188,14 +196,18 @@ audience — the coordinator's own URL — so a client's standard check works.
 
 ## 3. The authorization server
 
-**Library** (D921). The authorization server is built on **zitadel/oidc** — Apache 2.0, certified by
-the OpenID Foundation, the first option the owner listed — with the coordinator supplying two things
-the library does not: the storage over the project's database, and Dynamic Client Registration,
-which the owner's spec already expects to be a few hundred hand-written lines. The alternatives and
-their costs are in the reconciliation; the short version is that ory/fosite brings the same missing
-piece and a heavier plugin API for a flow this small, and a standalone third-party server is a
-second resident service in a self-hosted product whose whole point is one service per project, on a
-licence the owner has not confirmed.
+**Library** (D921, answered 2026-11-04). The authorization server is built on **zitadel/oidc** — the
+first option the owner listed, and the owner's answer — with the coordinator supplying two things the
+library does not: the storage over the project's database, and Dynamic Client Registration, which the
+owner's spec already expects to be a few hundred hand-written lines. **The library's licence is
+UNCONFIRMED**, and the owner said so in the answer: Apache 2.0 is the library's own claim and this
+container cannot check it, so **the owner or counsel must confirm the licence before any build**, and
+that confirmation is the first owner check in [reconciliation.md](reconciliation.md) §6 — M5 does not
+start until it is settled, and a licence that turns out to be unusable sends D921 back to its
+alternatives rather than to a workaround. The alternatives and their costs stay in the
+reconciliation; the short version is that ory/fosite brings the same missing piece and a heavier
+plugin API for a flow this small, and a standalone third-party server is a second resident service in
+a self-hosted product whose whole point is one service per project.
 
 **What the server is not.** It is not an OpenID provider for the project. It issues no ID token of
 its own, it holds no user directory, and it will never be the thing a project's other software
@@ -260,9 +272,25 @@ is that v1 does not invent one. The project already has two lists — the launch
 own spec §4 says "whoever can reach the project's coordinator is in the project; no extra permission
 model in v1", and that sentence was written when *reaching* the coordinator meant holding a Google
 identity with `roles/run.invoker`. Making the endpoint public (D920) removes the thing that sentence
-leaned on, so this design puts the project's own two lists in its place (D933). That is the one place
-the design adds an authorization rule the coordinator's spec does not have, and it adds it because
-D920 otherwise leaves a public endpoint with no rule at all.
+leaned on, so this design puts the project's own two lists in its place — and **the owner answered
+D933 on 2026-11-04 exactly that way: only the project's launcher and operator lists may call it.**
+That is the one place the design adds an authorization rule the coordinator's spec does not have, and
+it adds it because D920 otherwise leaves a public endpoint with no rule at all.
+
+**It is also the shape the repository already has**, which is why it is a list and not a new model:
+the credentials service admits the installation's **operators** by their verified Google ID token
+email, through the caller class its design calls the **person class** (BB4) —
+`internal/credsvc/auth.go:350` (`PersonAccounts`) and `:890` (`VerifyReadCaller`), with the class's
+own row at `docs/bitbucket-credentials/implementation-plan.md:131`. A person reaching a
+project-scoped service by a verified email, against a list the installation already maintains, is
+therefore the pattern here rather than an invention — and it is the same two lists `fugaro user`
+writes (`internal/cli/user.go:66`).
+
+**And it is a rule about the front door, not about the database** — §6 is where the two part company,
+because the token records' subtree is readable by a signed-in person under D922's answer while the
+audit *record* a tool returns is still the operator's under D933. A launcher therefore reads no audit
+through the API even though the raw subtree is not closed to them; the design states the tension
+rather than hiding it, and §9 says the tool surface is the one that gates it.
 
 ## 5. The tools
 
@@ -298,7 +326,8 @@ client it was issued to, the scopes, its expiry, and the limits below. The acces
 short-lived and is validated on every request; there is no session behind it, which is what the
 2026-07-28 revision requires.
 
-**Rigor limits** (D925, D926). A token carries an optional minimum rigor mode, an optional maximum
+**Rigor limits** (D925, D926; both answered as recommended on 2026-11-04). A token carries an
+optional minimum rigor mode, an optional maximum
 rigor mode, and a **separate Hotfix flag, off unless a person turned it on**. The window is read
 against the four on-axis modes; the Hotfix flag gates Hotfix by itself. That split is not a
 convenience: `internal/rigor` deliberately ranks Hotfix **0** — below every on-axis mode — precisely
@@ -309,7 +338,8 @@ an error **naming the limit** — the mode the token allows and the mode that wa
 the owner's spec asks for exactly that and because an agent that cannot see which limit it hit will
 retry the same request.
 
-**The spend limit narrows the run's ceiling** (D924). The token's spend limit is never sent to the
+**The spend limit narrows the run's ceiling** (D924, answered as recommended on 2026-11-04). The
+token's spend limit is never sent to the
 agent as its own budget figure. It is applied where the run's ceiling is applied: the run's ceiling
 is `min(the project's configured cap, the token's limit)`, the same "only tighten" merge the budget
 already does between a repository's cap and the installation's. Concretely, a submitted run starts
@@ -322,18 +352,32 @@ agent's own estimate of cost, and the repository's own dogfooding notes record t
 non-Anthropic models by roughly an order of magnitude. A limit enforced there would be a limit
 enforced by the wrong number.
 
-**What is stored, and where** (D922). Only **hashes** — never a token value, never a refresh token,
-never a client secret. The record lives in a subtree **no client of the project's database may
-read**: the coordinator's own subtree is readable by every signed-in person of the project, which is
-correct for the coordinator's shared view and wrong for token records, client registrations and the
-audit trail. So the design takes a separate top-level subtree with reads and writes refused to
-everyone but the coordinator's own service account. A database read — or a project operator who
-holds the database admin grant — therefore yields no usable token, and the one moment a value is
-readable is the moment it is minted.
+**What is stored, and where** (D922, answered 2026-11-04 — **not the recommendation**). Only
+**hashes** — never a token value, never a refresh token, never a client secret — and the record lives
+in a **separate top-level subtree of the project's database, not under `coordinator/`**. That much is
+the recommendation. **The read rule is the owner's and is the opposite of it: the subtree is readable
+by any signed-in user of the project.** Writes stay refused to every client: only the coordinator's
+own service account writes a record.
 
-**Rotation and revocation** (D930). The refresh token rotates on every use, and a replayed refresh
-token revokes the whole family: rotation is what makes a theft detectable rather than merely
-survivable. Revocation is a first-class endpoint, and it is also what an operator does in the console
+The consequence is stated rather than softened, because it is what the answer buys and what it costs.
+The separate subtree is right — the coordinator's shared view and the token records do not share a
+node, so a future change to `coordinator/` cannot widen this one by accident. But **the client list,
+the redirect URIs registered against them, the revocation state and the whole tool-call audit are
+readable by every person the installation admits** — the same readership `coordinator/` already has
+(`internal/budget/rules/rules.json.tmpl:10-13`, `USER`), in a subtree of its own. What the answer
+does **not** weaken is the thing "store only hashes" was for: a reader gets **no presentable value**.
+Only hashes are at rest, the value is shown once at mint and never again, and a project operator
+holding the database admin grant reads a list of clients and a list of when tokens were issued and
+revoked — never a token they could present. What is genuinely exposed is the **metadata**: who
+registered what, which redirect URIs exist, which tokens are revoked, and every tool call with its
+identity. A run's own identity cannot read it (the rules' `USER` claim is a signed-in, device-
+allow-listed person, `internal/budget/rules/rules.go:517`), and no caller outside the project can
+reach the database at all.
+
+**Rotation and revocation** (D930, answered on 2026-11-04 as **rotating refresh tokens and
+short-lived access tokens** — the recommendation). The refresh token rotates on every use, and a
+replayed refresh token revokes the whole family: rotation is what makes a theft detectable rather
+than merely survivable. Revocation is a first-class endpoint, and it is also what an operator does in the console
 or from the CLI; either way it is one delete, and the next call with the revoked token is refused.
 
 **Only narrowing** (the second rule of this folder). Scopes, the rigor window, the Hotfix flag and
@@ -365,7 +409,10 @@ give (§9).
 ## 8. Threat model
 
 This section is the one the owner's brief requires an independent review of, and the review is
-mandatory. It is written as the questions a reader should be able to answer from it.
+**mandatory before this pull request merges**: **the coordinator runs it**, and
+[README.md](README.md) records who runs it and what it must cover. **No task in
+[implementation-plan.md](implementation-plan.md) starts before it has been read and its findings
+answered.** It is written as the questions a reader should be able to answer from it.
 
 **Who can call the front door.** Everyone on the network (D920). There is no network gate, no VPN,
 no allowlist of sources and no mutual TLS; the platform's IAM is off by design, and the handler is
@@ -394,10 +441,21 @@ unexpired and only if its issuer and audience match the project. It is never a b
 endpoint, which is the whole reason the coordinator mints its own tokens, and it is why the design
 will not accept a Firebase token as an access token "just for convenience".
 
-**Token storage.** Only hashes, in a subtree no client of the database may read (D922). A reader of
-the database gets a list of clients and a list of when tokens were issued and revoked; it gets no
-value it can present. The values are shown once, at mint, and never again — there is no "show me my
-token again" path, because that path would need the value at rest.
+**Token storage.** Only hashes, in a separate subtree of the project's database, **readable by any
+signed-in user of the project and writable by nobody but the coordinator's service account** (D922,
+answered 2026-11-04 — **not the recommendation**). A reader of the database gets a list of clients,
+their redirect URIs, which tokens are revoked and when they were issued — and **no value it can
+present**. The values are shown once, at mint, and never again — there is no "show me my token
+again" path, because that path would need the value at rest. **The exposure the answer accepts is
+metadata, and it is stated here rather than left to be discovered:** every signed-in person of the
+project can read which clients are registered, which redirect URIs they carry, which tokens are
+revoked, and the whole tool-call audit with its identities — a list a person could act on socially
+even though every token in it is unreadable. What makes that the price of the answer rather than a
+hole in it is that nothing in the subtree is a secret: no token value, no refresh token, no client
+secret, and no credential of any kind is derivable from it (§9), and a run's own identity cannot read
+it at all (the `USER` claim is a signed-in, device-allow-listed person —
+`internal/budget/rules/rules.go:517`). §6 states the rule; [reconciliation.md](reconciliation.md) §4
+records the answer and the recommendation it departs from.
 
 **Redirect-URI abuse.** The registration endpoint is open, so an attacker can register a client with
 a redirect URI it controls — and gains nothing, because a code is delivered to that URI only after a
@@ -456,7 +514,9 @@ description. The coordinator:
 The reconciliation was asked to check the MCP front door against the console's dependency graph, and
 the finding is that the graph's **write** route is still blocked: the console's own plan has a
 roadmap write command waiting behind "the front door (coordinator P8, not started) or a new
-people-write grant on a roadmap node". This design **does not unblock it** (D927). The front door it
+people-write grant on a roadmap node". This design **does not unblock it** (D927, answered as
+recommended on 2026-11-04: `tasks:read` and `tasks:write` only, and `roadmap:write` is not in v1).
+The front door it
 builds is authenticated as a person, so a `roadmap:write` scope is *possible* here — but a scope is
 a wire contract, the console's own write design does not exist yet, and the roadmap's shape is
 exactly what that design has to decide. Adding the scope now would fix a name and a permission
@@ -465,13 +525,33 @@ and ask for it.
 
 ## 11. What this design leaves open
 
-- The three open items of the owner's spec are answered or narrowed: the library is §3's
-  recommendation (D921), the licence question is closed by not taking that option, and
+- The three open items of the owner's spec are answered or narrowed: the library is **zitadel/oidc**
+  (§3, D921, answered 2026-11-04 with **its licence UNCONFIRMED** — the owner or counsel confirms it
+  before any build, and that is the first owner check); the standalone-server option is not taken; and
   re-verification against the live MCP specification and the project's Identity Platform features is
-  an owner check before implementation, listed in [reconciliation.md](reconciliation.md) §6.
-- **Which of the fifteen decisions the owner declines.** The design is written to the recommended
-  answer everywhere, and every alternative is priced in the reconciliation, so a different answer is
-  a different document rather than an edit.
+  an owner check before implementation ([reconciliation.md](reconciliation.md) §6). **The
+  re-verification could not be done here**: the public specification is not reachable from this
+  container, which is the limitation `docs/coordinator/reconciliation.md:794` recorded as U1, so the
+  design stays written to the **2026-07-28** revision the owner named.
+- **Which of the fifteen decisions the owner answers differently later.** All fifteen were answered
+  on 2026-11-04 and the design is written to those answers — **D922 against the recommendation**, and
+  §6 and §8 carry what that costs. Every alternative stays priced in the reconciliation, so a later
+  change of mind is a priced edit rather than a rewrite, except for D920 and D923, where it is a
+  different document.
 - **The exact client-credentials shape for unattended callers** — one client per agent, or one per
   workspace — is a product question this design answers provisionally (one per agent, since the
   identity in the audit record is the point) and the plan carries as an owner check.
+- **Where the coordinator's own state tool group lives.** The **stateless-orchestrator spec** (open
+  as **#1682**, not on `main` when this was written) gives the coordinator a **state tool group**,
+  and **this MCP server is what hosts it**: D931 already serves the coordinator's own tools on the
+  same endpoint under their existing names, so the state group reaches MCP clients through the front
+  door rather than through a second surface. Which tool names that group carries, and whether any of
+  them needs a scope of its own (D927 keeps v1 to two), is that design's to say — this folder's job
+  is to state that it has a home here, so a reader of either document does not have to guess whether
+  the two are connected. If #1682 lands a tool the two scopes do not cover, the scope question comes
+  back as D927's.
+- **What D922's read rule does to the operator's audit view.** D933 keeps the audit *record* a tool
+  returns to an operator; D922 makes the raw subtree readable by any signed-in person. §4 and §9
+  state the tension and D922's answer is what created it, so whether the tool surface, the subtree's
+  read rule or both should move is a question the owner may want to revisit — it is recorded here
+  rather than settled, because settling it would be a decision this folder has already been given.
