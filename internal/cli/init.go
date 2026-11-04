@@ -521,6 +521,12 @@ type initRun struct {
 	// (init_review.go).
 	review *runReview
 
+	// gate is this run's read of the managed project's marks, made only in a
+	// coding agent's session and only by the door that has a gate
+	// (update_managed.go). A nil one is every run whose steps keep the
+	// confirmations they always had.
+	gate *initGate
+
 	// managed is true once this run read that the project it installs into
 	// is managed (managedProject): a guard refusal's text is then the managed
 	// one. Only true is remembered; false and an error are read again.
@@ -2130,6 +2136,8 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			what := fmt.Sprintf("removes project Viewers' read access to gs://%s, which holds the Terraform state (%s)", spec.StateBucket, strings.Join(grants, ", "))
 			if r.o.planOnly {
 				r.warn("--plan-only changes no IAM; without it, " + r.o.doorProgram() + " " + what)
+			} else if r.gateUnderway() {
+				r.warn(r.gateNamesAnIAMCall("gs://" + spec.StateBucket))
 			} else {
 				if err := r.confirmOrdinary(what, "nothing was applied", ""); err != nil {
 					return outs, false, err
@@ -2197,23 +2205,37 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// replace is allowed, and named (bucket-iam.md H5).
 		upgrade := infra.LauncherGrantUpgrade(plan, spec.RunsBucket, spec.Launchers, spec.Operators)
 		allowed := append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...)
-		if err := r.guard(ctx, c, plan, allowed); err != nil {
-			return outs, false, err
-		}
 		fmt.Fprint(r.w, infra.HardeningBanner(hardening))
 		fmt.Fprint(r.w, infra.LauncherGrantUpgradeBanner(upgrade))
 		counts := infra.CountPlan(plan)
 		r.res.Changes = &counts
-		if r.o.planOnly {
-			fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
-			return outs, true, nil
-		}
-		// 6. Confirm, 7. apply the plan shown.
-		if err := r.confirmOrdinary("applies "+counts.String()+r.installLabel, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
+		// The managed gate judges the plan BEFORE the guard and the
+		// confirmation, and replaces both when it admits it (D1016,
+		// update_managed.go): a session that may not confirm anything reads
+		// what the gate refused rather than the guard's advice, which is what
+		// a managed project's refusal is about.
+		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.notCovered))
+		if err != nil {
 			return outs, false, err
+		}
+		if !gated {
+			if err := r.guard(ctx, c, plan, allowed); err != nil {
+				return outs, false, err
+			}
+			if r.o.planOnly {
+				fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
+				return outs, true, nil
+			}
+			// 6. Confirm, 7. apply the plan shown.
+			if err := r.confirmOrdinary("applies "+counts.String()+r.installLabel, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
+				return outs, false, err
+			}
 		}
 		if err := t.Apply(ctx, infra.PlanFile); err != nil {
 			return outs, false, remote(err)
+		}
+		if err := r.gateApplied(ctx); err != nil {
+			return outs, false, err
 		}
 		r.res.Applied = true
 		if !im.AdoptsRunsBucket() {
@@ -2260,6 +2282,14 @@ func (r *initRun) runsBucketViewers(ctx context.Context, c *infra.Clients, spec 
 		return nil
 	case r.o.planOnly:
 		r.warn(fmt.Sprintf("--plan-only changes no IAM; without it, "+r.o.doorProgram()+" asks to remove project Viewers' read access to gs://%s (%s)", spec.RunsBucket, strings.Join(grants, ", ")))
+		return nil
+	case r.gateUnderway():
+		// This removal is a Storage IAM call of its own and not a Terraform
+		// plan, so it is the one cloud write of these stages the gate has no
+		// document to judge: it is left to the owner, whose rerun makes it,
+		// rather than made by a session the gate would have had to admit for a
+		// write no rule of its own read.
+		r.warn(r.gateNamesAnIAMCall("gs://" + spec.RunsBucket))
 		return nil
 	}
 	ok, err := r.askOrdinary(fmt.Sprintf("removes project Viewers' read access to gs://%s, which holds transcripts and caches (%s)", spec.RunsBucket, strings.Join(grants, ", ")), "")
@@ -3872,24 +3902,37 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	}
 	fmt.Fprint(r.w, tf.Summary(plan))
 	fmt.Fprintln(r.w, im.Bindings.String())
-	if err := r.guard(ctx, c, plan, r.o.allowDelete); err != nil {
-		return infra.RepoSpec{}, nil, err
-	}
 	counts := infra.CountPlan(plan)
 	r.res.Changes = &counts
-	if r.o.planOnly {
-		fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
-		return ready, missing, nil
-	}
-	what := "applies " + counts.String() + " to " + spec.Name
-	if !first {
-		what += ", deploying the images just built"
-	}
-	if err := r.confirmOrdinary(what, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
+	// The managed gate first, and the guard and the confirmation only when it
+	// does not admit this plan (D1016, update_managed.go). A repository root
+	// is one of Fugaro's own too, so it is judged by the same cover and the
+	// same guard the installation's roots are.
+	gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.notCovered))
+	if err != nil {
 		return infra.RepoSpec{}, nil, err
+	}
+	if !gated {
+		if err := r.guard(ctx, c, plan, r.o.allowDelete); err != nil {
+			return infra.RepoSpec{}, nil, err
+		}
+		if r.o.planOnly {
+			fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
+			return ready, missing, nil
+		}
+		what := "applies " + counts.String() + " to " + spec.Name
+		if !first {
+			what += ", deploying the images just built"
+		}
+		if err := r.confirmOrdinary(what, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
+			return infra.RepoSpec{}, nil, err
+		}
 	}
 	if err := t.Apply(ctx, infra.PlanFile); err != nil {
 		return infra.RepoSpec{}, nil, remote(err)
+	}
+	if err := r.gateApplied(ctx); err != nil {
+		return infra.RepoSpec{}, nil, err
 	}
 	r.res.Applied = true
 	return ready, missing, nil
