@@ -1232,15 +1232,79 @@ func coordinatorAppID(lc *localcfg.Config) func(repo string) string {
 
 // coordinatorGcloudBin is the binary a person's own Google ID token is minted
 // with, and coordinatorIdentityArgs is the argv it is run with: the account is
-// the person's own (no --account), and the audience is the credentials
-// service's URL, which is what the service verifies an ID token's aud against
-// (internal/cli's service passes its own URL as credsvc.AuthConfig.Audience, so
-// a token minted for anything else is refused there). --quiet is passed so that
-// nothing gcloud would ask can hold a read.
+// the person's own (no --account), and --quiet is passed so that nothing gcloud
+// would ask can hold a read.
+//
+// The audience is the one part that is not a constant, and it is a property of
+// the ACCOUNT rather than a preference. gcloud refuses --audiences outright for
+// a user account ("Invalid account type for --audiences. Requires valid service
+// account"), so a person's own login can only mint the plain token — the one
+// whose audience is gcloud's own client id, which is the second audience the
+// credentials service's person class admits (credsvc.GcloudAudience). A service
+// account, or an identity gcloud is impersonating, keeps the audience form:
+// that token names the credentials service's URL, which is what the service's
+// own audience check wants (credsvc.AuthConfig.Audience). Which of the two the
+// account is comes from gcloud's own listing (coordinatorGcloudAccount), never
+// from the refusal of an attempted audience mint — that would mean asking for a
+// credential the account cannot have.
 const coordinatorGcloudBin = "gcloud"
 
-func coordinatorIdentityArgs(url string) []string {
-	return []string{"auth", "print-identity-token", "--audiences=" + url, "--quiet"}
+func coordinatorIdentityArgs(url string, serviceAccount bool) []string {
+	args := []string{"auth", "print-identity-token"}
+	if serviceAccount {
+		args = append(args, "--audiences="+url)
+	}
+	return append(args, "--quiet")
+}
+
+// coordinatorGcloudConfigArgs reads the ACTIVE account out of gcloud's own
+// configuration. `config list` rather than `auth list` because one call answers
+// both halves of the question — which account is active, and whether gcloud
+// would mint as an account it is impersonating instead — and because it prints
+// an empty object rather than failing when nothing is configured, which is the
+// state the refusal below names the fix for.
+func coordinatorGcloudConfigArgs() []string {
+	return []string{"config", "list", "--format=json"}
+}
+
+// coordinatorGcloudConfig is the part of that listing this mint reads. Both
+// fields are gcloud's own statement about the credential it would mint with,
+// and it is the address that decides the argv: a user account is what cannot
+// take --audiences.
+type coordinatorGcloudConfig struct {
+	Core struct {
+		Account string `json:"account"`
+	} `json:"core"`
+	Auth struct {
+		ImpersonateServiceAccount string `json:"impersonate_service_account"`
+	} `json:"auth"`
+}
+
+// serviceAccount reports whether gcloud would mint as a service account:
+// either the active account is one or gcloud is impersonating one.
+func (c coordinatorGcloudConfig) serviceAccount() bool {
+	return c.Auth.ImpersonateServiceAccount != "" ||
+		strings.HasSuffix(strings.ToLower(c.Core.Account), ".gserviceaccount.com")
+}
+
+// loggedIn reports whether gcloud names a credential to mint with at all.
+func (c coordinatorGcloudConfig) loggedIn() bool {
+	return c.Core.Account != "" || c.Auth.ImpersonateServiceAccount != ""
+}
+
+// coordinatorGcloudAccount runs the listing. A listing that cannot be read is
+// not distinguished from one that names nothing: both mean this machine has no
+// credential to mint the person's token with, and both take the same refusal.
+func coordinatorGcloudAccount(ctx context.Context) (coordinatorGcloudConfig, error) {
+	out, err := coordinatorGcloudRun(ctx, coordinatorGcloudConfigArgs()...)
+	if err != nil {
+		return coordinatorGcloudConfig{}, err
+	}
+	var cfg coordinatorGcloudConfig
+	if err := json.Unmarshal(out, &cfg); err != nil {
+		return coordinatorGcloudConfig{}, err
+	}
+	return cfg, nil
 }
 
 // coordinatorIdentityTimeout bounds the whole mint: gcloud is a local process
@@ -1287,13 +1351,26 @@ var (
 // line or an output — the checks below are the ones the service applies to a
 // presented token (one clean header value, bounded), and the refusals are
 // sentences written here.
+//
+// The argv it runs depends on the account (coordinatorIdentityArgs): a person's
+// own user account mints the plain token, and a service account or an
+// impersonated identity the one for the service's URL. gcloud names neither
+// account, the refusal is the one that says what to do about it — `gcloud auth
+// login` — rather than a mint that fails for a reason the person cannot see.
 var coordinatorPersonIdentity = func(ctx context.Context, url string) (string, error) {
 	if _, err := coordinatorGcloudLookPath(coordinatorGcloudBin); err != nil {
 		return "", fcli.UserErr("a read through the installation's credentials service presents your own Google ID token, and the %s command that mints one is not on PATH: install the Google Cloud CLI (https://cloud.google.com/sdk/docs/install) and run `%s auth login`", coordinatorGcloudBin, coordinatorGcloudBin)
 	}
 	cctx, cancel := context.WithTimeout(ctx, coordinatorIdentityTimeout)
 	defer cancel()
-	out, err := coordinatorGcloudRun(cctx, coordinatorIdentityArgs(url)...)
+	cfg, err := coordinatorGcloudAccount(cctx)
+	if err == nil && !cfg.loggedIn() {
+		err = errors.New("gcloud names no active account")
+	}
+	if err != nil {
+		return "", fcli.UserErr("a read through the installation's credentials service presents your own Google ID token, and this machine has no Google account for %s to mint one with: run `%s auth login` and try again", coordinatorGcloudBin, coordinatorGcloudBin)
+	}
+	out, err := coordinatorGcloudRun(cctx, coordinatorIdentityArgs(url, cfg.serviceAccount())...)
 	if err != nil {
 		return "", fcli.UserErr("your own Google ID token could not be minted for the installation's credentials service: run `%s auth login`, or `%s auth application-default login`, and try again", coordinatorGcloudBin, coordinatorGcloudBin)
 	}

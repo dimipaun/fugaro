@@ -2158,3 +2158,156 @@ func TestCoordinatorSweepIsHidden(t *testing.T) {
 		}
 	}
 }
+
+// gcloudFixture drives coordinatorPersonIdentity's real body with no gcloud on
+// the machine and no credential anywhere: the two seams it runs through are
+// replaced, every argv it runs is recorded, and the listing and the mint answer
+// separately so a test can decide each.
+type gcloudFixture struct {
+	url        string
+	listing    string
+	listingErr error
+	mintErr    error
+	token      string
+	calls      [][]string
+}
+
+func newGcloudFixture(t *testing.T, url, listing string) *gcloudFixture {
+	t.Helper()
+	f := &gcloudFixture{url: url, listing: listing, token: "fixture-identity-token"}
+	prevLook, prevRun := coordinatorGcloudLookPath, coordinatorGcloudRun
+	t.Cleanup(func() { coordinatorGcloudLookPath, coordinatorGcloudRun = prevLook, prevRun })
+	coordinatorGcloudLookPath = func(string) (string, error) { return "/usr/bin/gcloud", nil }
+	coordinatorGcloudRun = func(_ context.Context, args ...string) ([]byte, error) {
+		f.calls = append(f.calls, slices.Clone(args))
+		if len(f.calls) == 1 {
+			if f.listingErr != nil {
+				return nil, f.listingErr
+			}
+			return []byte(f.listing), nil
+		}
+		if f.mintErr != nil {
+			return nil, f.mintErr
+		}
+		return []byte(f.token + "\n"), nil
+	}
+	return f
+}
+
+// A person whose gcloud login is a USER account mints the plain form: gcloud
+// refuses --audiences for such an account outright ("Invalid account type for
+// --audiences. Requires valid service account"), so a mint that asked for an
+// audience is one this account can never answer. The token it prints is the one
+// the service's person class admits beside its own audience.
+func TestCoordinatorPersonIdentityMintsThePlainFormForAUserAccount(t *testing.T) {
+	f := newGcloudFixture(t, "https://creds.example.invalid", `{"core":{"account":"someone@example.invalid"}}`)
+	tok, err := coordinatorPersonIdentity(context.Background(), f.url)
+	if err != nil {
+		t.Fatalf("minting a user account's identity token: %v", err)
+	}
+	if tok != f.token {
+		t.Errorf("the mint returned %q, want the token gcloud printed", tok)
+	}
+	if len(f.calls) != 2 {
+		t.Fatalf("gcloud was run %d times (%v), want the account listing and the mint", len(f.calls), f.calls)
+	}
+	if want := []string{"config", "list", "--format=json"}; !slices.Equal(f.calls[0], want) {
+		t.Errorf("the account was read with %v, want %v", f.calls[0], want)
+	}
+	for _, a := range f.calls[1] {
+		if strings.HasPrefix(a, "--audiences") {
+			t.Errorf("the user account's mint argv carries %q: a user account cannot take an audience", a)
+		}
+	}
+	if want := []string{"auth", "print-identity-token", "--quiet"}; !slices.Equal(f.calls[1], want) {
+		t.Errorf("the user account's mint argv is %v, want %v", f.calls[1], want)
+	}
+}
+
+// A service account, and an identity gcloud is impersonating, keep the audience
+// form: both mint a token for the credentials service's own URL, which is the
+// audience the service verifies for every class but the person's.
+func TestCoordinatorPersonIdentityKeepsTheAudienceForAServiceAccount(t *testing.T) {
+	const url = "https://creds.example.invalid"
+	for _, tc := range []struct {
+		name    string
+		listing string
+	}{
+		{name: "the active account is a service account",
+			listing: `{"core":{"account":"runner@project.iam.gserviceaccount.com"}}`},
+		{name: "gcloud impersonates a service account",
+			listing: `{"core":{"account":"someone@example.invalid"},"auth":{"impersonate_service_account":"runner@project.iam.gserviceaccount.com"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newGcloudFixture(t, url, tc.listing)
+			tok, err := coordinatorPersonIdentity(context.Background(), url)
+			if err != nil {
+				t.Fatalf("minting a service account's identity token: %v", err)
+			}
+			if tok != f.token {
+				t.Errorf("the mint returned %q, want the token gcloud printed", tok)
+			}
+			if len(f.calls) != 2 {
+				t.Fatalf("gcloud was run %d times (%v), want the account listing and the mint", len(f.calls), f.calls)
+			}
+			if want := []string{"auth", "print-identity-token", "--audiences=" + url, "--quiet"}; !slices.Equal(f.calls[1], want) {
+				t.Errorf("the service account's mint argv is %v, want %v", f.calls[1], want)
+			}
+		})
+	}
+}
+
+// A machine with no gcloud login is refused before any mint is attempted, and
+// the refusal names the command that fixes it: the person's own account is the
+// credential this read presents, and there is nothing else to present.
+func TestCoordinatorPersonIdentityWithNoAccountNamesTheLogin(t *testing.T) {
+	const url = "https://creds.example.invalid"
+	for _, tc := range []struct {
+		name       string
+		listing    string
+		listingErr error
+	}{
+		{name: "gcloud names no account", listing: `{}`},
+		{name: "gcloud names no account in its listing", listing: `{"core":{},"auth":{}}`},
+		{name: "the listing cannot be read", listingErr: errors.New("gcloud exited 1")},
+		{name: "the listing is not gcloud's own", listing: "not json at all"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newGcloudFixture(t, url, tc.listing)
+			f.listingErr = tc.listingErr
+			_, err := coordinatorPersonIdentity(context.Background(), url)
+			if err == nil {
+				t.Fatal("a machine with no gcloud account minted an identity token")
+			}
+			if !strings.Contains(err.Error(), "gcloud auth login") {
+				t.Errorf("the refusal is %q, want it to name `gcloud auth login`", err)
+			}
+			var ee *fcli.ExitError
+			if !errors.As(err, &ee) || ee.Code != fcli.ExitUserError {
+				t.Errorf("the refusal is %v, want a user error", err)
+			}
+			if len(f.calls) != 1 {
+				t.Errorf("gcloud was run %d times (%v), want the listing alone and no mint", len(f.calls), f.calls)
+			}
+		})
+	}
+}
+
+// A mint that fails after a readable listing is still the caller's error, and
+// it names the account's address nowhere: the sentence a person reads says what
+// to run, and the address gcloud holds is not this command's to print.
+func TestCoordinatorPersonIdentityMintFailureNamesTheLogin(t *testing.T) {
+	const url = "https://creds.example.invalid"
+	f := newGcloudFixture(t, url, `{"core":{"account":"someone@example.invalid"}}`)
+	f.mintErr = errors.New("gcloud exited 1")
+	_, err := coordinatorPersonIdentity(context.Background(), url)
+	if err == nil {
+		t.Fatal("a failed mint returned a token")
+	}
+	if !strings.Contains(err.Error(), "gcloud auth login") {
+		t.Errorf("the refusal is %q, want it to name `gcloud auth login`", err)
+	}
+	if strings.Contains(err.Error(), "someone@example.invalid") {
+		t.Errorf("the refusal carries the account address: %q", err)
+	}
+}
