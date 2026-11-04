@@ -53,9 +53,10 @@ var (
 const notInstalledReason = "run fugaro update --repo"
 
 type imageCheckOptions struct {
-	cloud                      cloudOptions
-	workflow                   string
-	job, force, dryRun, asJSON bool
+	cloud                 cloudOptions
+	workflow              string
+	job, catalog          bool
+	force, dryRun, asJSON bool
 }
 
 func newImageCheckCmd() *cobra.Command {
@@ -74,10 +75,28 @@ func newImageCheckCmd() *cobra.Command {
 			"in a coding agent's session; --dry-run is always allowed), it reads the job's\n" +
 			"spec from " + infra.CheckSpecEnv + ", submits a Cloud Build rebuild when a trigger fires\n" +
 			"(not with --dry-run), writes builds/<slug>/<workflow>/check.json, and logs one\n" +
-			"JSON line per workflow. It exits 2 when the check itself failed.",
+			"JSON line per workflow. It exits 2 when the check itself failed.\n\n" +
+			"With --job --catalog it is the project's catalog check job instead (D1148): one\n" +
+			"run of the project's own job, reading its spec from " + catalogCheckSpecEnv + ",\n" +
+			"deciding every entry of the project's image catalog and submitting at most one\n" +
+			"Cloud Build per entry that fires, as that entry's own repository's build account.\n" +
+			"It writes builds/<slug>/catalog/<entry>/check.json and logs one JSON line per\n" +
+			"entry.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if o.catalog && !o.job {
+				return userErr("--catalog decides the project's image catalog, which is the project's own check job's work (fugaro image check --job --catalog); from a checkout, fugaro image ls lists the entries and fugaro image build <entry> builds one")
+			}
+			if o.catalog {
+				if err := refuseJobSubmission(o, "the project's catalog"); err != nil {
+					return err
+				}
+				return runImageCheckCatalogJob(cmd, o)
+			}
 			if o.job {
+				if err := refuseJobSubmission(o, "the repository's"); err != nil {
+					return err
+				}
 				return runImageCheckJob(cmd, o)
 			}
 			return runImageCheckLocal(cmd, o)
@@ -85,6 +104,7 @@ func newImageCheckCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.BoolVar(&o.job, "job", false, "run as the repository's daily check job (reads "+infra.CheckSpecEnv+"; submits rebuilds)")
+	f.BoolVar(&o.catalog, "catalog", false, "with --job: run as the project's catalog check job (reads "+catalogCheckSpecEnv+"; submits one rebuild per changed entry)")
 	f.StringVar(&o.workflow, "workflow", "", "check only this workflow")
 	f.BoolVar(&o.force, "force", false, "decide rebuild whatever the triggers say (with --job: a build is submitted)")
 	f.BoolVar(&o.dryRun, "dry-run", false, "never submit a build (locally the check never does anyway)")
@@ -422,8 +442,18 @@ func writeState(ctx context.Context, b *blobx.Bucket, key string, s *imagecheck.
 	if err != nil {
 		return err
 	}
-	if ev.prevExists {
-		_, err = b.ReplaceIf(ctx, key, data, ev.prevGen, ev.prevRaw)
+	return writeStateAt(ctx, b, key, data, ev.prevExists, ev.prevGen, ev.prevRaw)
+}
+
+// writeStateAt is the write both check jobs make: data replaces the object at
+// key when the read that preceded it (exists, gen, raw) still holds, and is
+// created when there was none. A check state is read-modify-written so that a
+// concurrent check's decision is never lost under this one's, and the two jobs
+// share the rule rather than each spelling it.
+func writeStateAt(ctx context.Context, b *blobx.Bucket, key string, data []byte, exists bool, gen int64, raw []byte) error {
+	var err error
+	if exists {
+		_, err = b.ReplaceIf(ctx, key, data, gen, raw)
 	} else {
 		_, err = b.Create(ctx, key, data, "application/json")
 	}
@@ -555,22 +585,29 @@ func jobGitEnv(ctx context.Context, s infra.CheckJobSpec) ([]string, error) {
 	return gitops.WithVars(env, vars), nil
 }
 
+// refuseJobSubmission is the guard both check jobs answer to, before either
+// reads anything: they submit billable builds with no one to type, so they run
+// in Cloud Run, where CLOUD_RUN_JOB (or CLOUD_RUN_EXECUTION) is set and no
+// coding agent's marker is. Anywhere else, or in a session with an agent
+// marker, they submit nothing (--dry-run still decides). Not a barrier: an
+// environment can be set by hand. what names the job the refusal is about
+// ("the repository's" check job, "the project's catalog" one).
+func refuseJobSubmission(o imageCheckOptions, what string) error {
+	if o.dryRun {
+		return nil
+	}
+	if m := agentMarker(os.Getenv); m != "" {
+		return userErr("%s", initflow.AgentRefusal(m))
+	}
+	if os.Getenv("CLOUD_RUN_JOB") == "" && os.Getenv("CLOUD_RUN_EXECUTION") == "" {
+		return userErr("fugaro image check --job submits billable rebuilds and runs only as %s Cloud Run job (CLOUD_RUN_JOB is not set here); from a checkout, fugaro image check only prints the decision, and fugaro image build starts a rebuild, which you confirm by typing", what)
+	}
+	return nil
+}
+
 // runImageCheckJob is fugaro image check --job.
 func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 	ctx := cmd.Context()
-	// The job submits billable rebuilds with no one to type: it runs in Cloud
-	// Run, where CLOUD_RUN_JOB (or CLOUD_RUN_EXECUTION) is set and no coding
-	// agent's marker is. Anywhere else, or in a session with an agent marker,
-	// it submits nothing (--dry-run still decides). Not a barrier: an
-	// environment can be set by hand.
-	if !o.dryRun {
-		if m := agentMarker(os.Getenv); m != "" {
-			return userErr("%s", initflow.AgentRefusal(m))
-		}
-		if os.Getenv("CLOUD_RUN_JOB") == "" && os.Getenv("CLOUD_RUN_EXECUTION") == "" {
-			return userErr("fugaro image check --job submits billable rebuilds and runs only as the repository's Cloud Run job (CLOUD_RUN_JOB is not set here); from a checkout, fugaro image check only prints the decision, and fugaro image build starts a rebuild, which you confirm by typing")
-		}
-	}
 	now := time.Now().UTC().Truncate(time.Second)
 	lg := &checkLogger{w: cmd.OutOrStdout(), dryRun: o.dryRun}
 	e, err := readJobEnv()

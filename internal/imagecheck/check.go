@@ -51,6 +51,12 @@ const (
 	// ReasonLastBuildIneffective: the last build of these inputs ended
 	// without failing, but didn't clear the trigger.
 	ReasonLastBuildIneffective = "last-build-ineffective"
+	// ReasonBuildCap: a trigger fired, and the run's own build cap was
+	// already reached, so this entry's rebuild is left for the next run. It
+	// is the runner's note rather than the decision's — the decision is a
+	// rebuild either way — and the catalog check job is the one that appends
+	// it, since a workflow check submits at most one build.
+	ReasonBuildCap = "build-cap"
 )
 
 // FailedBuild reports whether a Cloud Build status is a failure the check
@@ -237,6 +243,26 @@ type CatalogRecordState struct {
 	ImageDigest          string    `json:"image_digest"`
 	BuildID              string    `json:"build_id"`
 	BuiltAt              time.Time `json:"built_at"`
+}
+
+// CatalogRecordVersion is the CatalogRecordState schema version the catalog
+// build's record step writes.
+const CatalogRecordVersion = 1
+
+// ParseCatalogRecordState decodes an entry's record, the way ParseRecord
+// decodes a workflow's. Unknown fields are ignored, and a version this
+// package does not know is an error rather than a record with a field
+// missing: the check reads the definition's sha256 and the commit a rebuild
+// is pinned to off it, and both must be there.
+func ParseCatalogRecordState(data []byte) (*CatalogRecordState, error) {
+	var s CatalogRecordState
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, fmt.Errorf("the catalog record: %w", err)
+	}
+	if s.Version < 1 {
+		return nil, errors.New("the catalog record has no version")
+	}
+	return &s, nil
 }
 
 // CatalogInputs are what one entry's decision is made from.

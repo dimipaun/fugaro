@@ -331,11 +331,8 @@ func catalogBuildEntries(cmd *cobra.Command, cat *config.Catalog, name, repo str
 		if !ok {
 			return nil, userErr("this project's image catalog has no entry %s: fugaro image ls lists the entries it has", pluginwire.Printable(name))
 		}
-		switch {
-		case e.Source.Kind == config.SourceImage:
-			return nil, userErr("the catalog entry %s is the prebuilt image %s: there is nothing to build", pluginwire.Printable(e.Name), pluginwire.Printable(e.Source.Image))
-		case e.Source.Kind == config.SourceDockerfile && !sameRepo(e.Source.Repo, repo):
-			return nil, catalogBuildWrongRepo(e, repo)
+		if err := catalogBuildEntryGuard(e, repo); err != nil {
+			return nil, err
 		}
 		return []config.Entry{e}, nil
 	}
@@ -356,6 +353,24 @@ func catalogBuildEntries(cmd *cobra.Command, cat *config.Catalog, name, repo str
 		return nil, userErr("every entry of this project's image catalog either is a prebuilt image or is built from another repository's Dockerfile: fugaro image ls lists them, and a build runs from the checkout of the repository a Dockerfile is in")
 	}
 	return buildable, nil
+}
+
+// catalogBuildEntryGuard is the one rule both paths that build a catalog entry
+// answer to: an entry a prebuilt image answers has nothing to build, and an
+// entry whose Dockerfile is another repository's is built by that repository's
+// build account or not at all. The manual path (catalogBuildEntries) refuses
+// it with the operator's own route — run from that repository's checkout — and
+// the scheduled catalog check refuses it for the entry's repository: it is the
+// same sentence either way, because it is the same rule, and the scheduled
+// path must not be the one place a build could run as the wrong account.
+func catalogBuildEntryGuard(e config.Entry, repo string) error {
+	switch {
+	case e.Source.Kind == config.SourceImage:
+		return userErr("the catalog entry %s is the prebuilt image %s: there is nothing to build", pluginwire.Printable(e.Name), pluginwire.Printable(e.Source.Image))
+	case e.Source.Kind == config.SourceDockerfile && !sameRepo(e.Source.Repo, repo):
+		return catalogBuildWrongRepo(e, repo)
+	}
+	return nil
 }
 
 // catalogBuildWrongRepo is the refusal of one entry that this checkout cannot
