@@ -10,9 +10,18 @@ read before trusting any finding above it. Every citation is a path and a line a
 finding is classified **Exists**, **Missing** or **Conflicts**, and states its consequence. §4 is the
 decisions **D1290–D1305**, each with the recommended option first, the cost of the alternative and
 **the owner's answer of 2026-11-04**; §5 is the number block and how it was read; §6 is the owner
-checks no hermetic test can stand in for; and **§8 is what this round found and did not decide** —
-the two owner decisions [spec.md](spec.md) §5 and §10 point at rather than take. **Where this file
+checks no hermetic test can stand in for; and **§8 is the two owner decisions this folder reported
+rather than took, both answered on 2026-11-04** — the ones [spec.md](spec.md) §5 pointed at. **Where
+this file
 disagrees with [spec.md](spec.md), this file wins.**
+
+**One round has run since.** The design merged as **#1492**, and the independent SECURITY review of
+[spec.md](spec.md) §8 that the owner's brief requires — **the coordinator runs it** — ran afterwards
+and returned **seven findings**. The owner answered all seven on 2026-11-04. **Two of the answers
+amend a decision** (D1299 and D1301, with D1300 as it depends on them), so those three answer
+paragraphs carry a dated amendment under them and §4's "every one as recommended" is qualified
+there; §2f's **F33** records the seven findings; and §8 becomes the record of two decided questions
+rather than two open ones. **No decision number moved and none was added**: §5 says so.
 
 ## 1. What the code has, in one paragraph
 
@@ -405,8 +414,58 @@ folder and not the rest.**
   and is the member's owner's to run. §6 now names **two** cloud writes and says which one the gate
   admits.
 
-Nothing above changes a decision: **D1290–D1305 stand as answered**, and O1 and O2 remain the only
-two questions this folder reports rather than takes.
+**F33 — The security review of 2026-11-04, run after the design merged, and the owner's answers. —
+Exists (new), and it amends two decisions.** The independent SECURITY review of [spec.md](spec.md) §8
+that the owner's brief requires ran on the merged design (**#1492**) and returned **seven findings**.
+The owner answered all seven on **2026-11-04**, and every answer is applied in [spec.md](spec.md) and
+[implementation-plan.md](implementation-plan.md). The findings, and what each answer did:
+
+- **1 — a member accepted the workspace's Firebase token itself.** What a member verifies is now a
+  **member-bound assertion**: the workspace's own signer endpoint verifies the Firebase token and
+  signs a short-lived JWT whose `aud` is **that member's exchange URL** and whose `jti` is
+  **single-use**, and the member verifies it against a **workspace key it pins in its own config**
+  (spec §2, §3). **Adopted**; W4 and W5 own the single-use and replay-at-another-member tests.
+- **2 — the exchange was placed at a token endpoint rather than at the sign-in step.** It happens at
+  the member's **`/oauth/authorize`**, as the sign-in proof, keeping PKCE, consent and the member's
+  paired-device approval (the MCP design's D923, `docs/mobile-auth`'s D221); **no token-exchange grant
+  is added at `/oauth/token`**. And [spec.md](spec.md)'s claim that members "already support (Google,
+  email)" sign-in was **false** — a member's Identity Platform is initialized with no provider and
+  refuses a public sign-up path (`refusePublicSignUp`, `internal/cli/init_firebase.go`:720) — so the
+  corrected text says the workspace's Firebase is the one that carries providers. **Adopted.**
+- **3 — "the service holds no grant on a member's policy" was false.** The policy is at
+  `config/policy` in the member's own database (`internal/budget/rules/rules.json.tmpl`:20-23,
+  `internal/projectpolicy/paths.go`:20-21), and the role's own comment says `get` reads "the policy"
+  (`deploy/terraform/gcp/modules/installation/credentials.tf`:245). Section §5 is corrected, and it
+  now lists **every node a whole-database write would have reached** — `config/policy`,
+  `config/caps` (including `config/caps/global`), `config/kill`, `config/limits`, `config/mode` and
+  `config/admin/devices` — as the reason for the answer recorded as **O1** (§8). **Corrected.**
+- **4 — the rollup basis failed open.** Enforcement read the *last good* rollup, so spend between two
+  rollups was invisible. Fixed by the answer recorded as **O2** (§8): the service reserves before each
+  call it pays for. **Amended** — D1301, and D1299 and D1300 as they depend on it.
+- **5 — the cross-check was defeated.** The rollup compared each member's ledger with its own runs
+  bucket, and the member's operator controls both. Fixed by the same answer: what is compared is the
+  service's own count against the member's ledger, and the bucket read is not bound any more.
+  **Amended**, with O2.
+- **6 — an owner could splice one member's accounts onto another member's database.** The service
+  read each member's policy and outcomes from a database URL the owner declares. It is now **derived
+  from the Firebase project the verified `iss` names**, and `checkLive`
+  (`internal/credsvc/auth.go`:1196) and its outcomes reader (`RTDBOutcomes`, `:217`) are **per member**,
+  chosen by the member the call resolved to. **Adopted**; W6 owns the splice test.
+- **7 — residual risk 6 was understated.** It is not only "a Firebase Auth administrator": anyone who
+  can mint a **custom token** for the workspace's project — `signBlob` or `TokenCreator` on **any**
+  service account there — can set `email` and `email_verified`, and the **anonymous** provider is
+  another path. The exchange therefore accepts only a **pinned `firebase.sign_in_provider` set**
+  (`google.com`, `password`) and refuses `custom` and `anonymous`. **Adopted**; W5 owns the test.
+
+Two things the review named are **not** settled and are recorded as open in [spec.md](spec.md) §10:
+the refusal's **timing** claim has no hermetic test (§6's **U3**), and **which of two credentials a
+member's run picks** when the member holds its own and the workspace holds one too (§7's **V5**). A
+third — that the first exchange had **no single-use identifier** — is closed by finding 1's answer and
+is named in §10 only so a reader of an earlier release knows what that release shipped.
+
+**Nothing above but the two amendments changes a decision**: **D1290–D1305 stand as answered**, with
+D1299, D1300 and D1301 carrying the dated amendments §4 records, and §8's two questions are answered
+rather than open.
 
 ## 3. What the reconciliation refuses to accept
 
@@ -563,6 +622,17 @@ shared-credential call, so its outage stops work; the advisory headroom and the 
 member's gateway. Why: a member cannot be the fence over its own spend (F12), and the service is the
 only hop that sees the total.
 
+**Amended 2026-11-04, after the security review** (F33, finding 3 and O1). The answer stands —
+enforcement is at the workspace service — but **the advisory headroom is not published into a member's
+database**, and the service therefore holds **no write on a member at all**. The original answer
+implied a node in the member's database for the headroom, which is why the service held
+`firebasedatabase.instances.update` on every member; the review showed what that whole-database write
+reached (the member's policy, caps, kill switches, limits, mode and paired devices), and the owner
+dropped it: the headroom is delivered **by the workspace service itself**, as a header on the calls it
+already proxies or from a route answering only the calling member's job service account. A member's
+gateway reads that, not a node of its own database the service wrote. The service's grant on a member
+is exactly `firebasedatabase.instances.get`. Spec §5 and §9 carry it.
+
 **D1300 — What the workspace cap bounds.**
 - **(A, recommended) The spend of the workspace's own credentials**, and, for a member that routes
   every call through the workspace, that member's whole spend. The design refuses to call it a bound
@@ -578,6 +648,10 @@ cap covers what the workspace pays for", which the console must show and spec §
 credentials. Why: a member may hold credentials of its own whose calls never pass the workspace, so
 calling it a bound on a member's total spend would be false.
 
+**Amended 2026-11-04, after the security review**, only as it depends on D1301's amendment and **O1**:
+what the cap bounds is unchanged, and what changed is **where the number comes from** (the proxy's
+meter, D1301) and that the service holds no write on a member (O1). Spec §5 carries both.
+
 **D1301 — The workspace ledger.**
 - **(A, recommended) A rollup recomputed by the workspace service from each member's own run
   ledger**, on the history job's schedule, with the enforcement reading the last good rollup.
@@ -589,6 +663,26 @@ rather than merely go unrolled. (A) costs the headroom being as fresh as the rol
 **Answered 2026-11-04: (A), as recommended** — a rollup recomputed from each member's own ledger,
 with an unreadable member recorded `stale` rather than zero. Why: a member nobody can read must
 never look like a free one.
+
+**Amended 2026-11-04, after the security review, and it is the one deviation this folder records**
+(F33, findings 4 and 5; **O2**, recorded in §8). The owner crossed from (A) to the option this
+reconciliation had **not** recommended: **the workspace's spend is metered at the proxy**. The service
+**reserves** before each call it pays for and **settles** on the response's usage, atomically in the
+workspace's own database, so the figure is taken where the money is spent rather than reconstructed
+afterwards. Two failures the review found in (A) go with it: the old basis read the *last good*
+rollup, so a member's spend between two rollups was invisible and the cap could be passed in the gap
+(finding 4, fail-open); and the old cross-check compared each member's ledger with its **own** runs
+bucket, which the member's operator controls (finding 5, defeated). What replaced the cross-check is
+the service's own count compared against the member's ledger, and the **rollup becomes a reconciliation
+alarm** rather than the basis. The two failures and the answers: spec §5, the plan's W7.
+
+**What is not as it was read.** The member's ledger stays **authoritative for the member's own caps** —
+the member's gateway keeps enforcing the member's own budget from `runs/<slug>/<run>` under the rules
+that already constrain it. Two different quantities, each governing its own cap; neither is renamed
+into the other. The overshoot is now bounded by **the reservation in flight**, and a **failed settle
+refuses** rather than serving a call whose cost cannot be recorded. "An unreadable member must never
+look free" survives as a rule, though the `stale` marker's original job does not: what fails closed
+now is a member the service's table cannot bind, whose calls are refused.
 
 **D1302 — The stop.**
 - **(A, recommended) `fugaro budget kill` gains a workspace scope**, one command that stops every
@@ -664,6 +758,15 @@ Read by hand at `origin/main` `c2ca0aee` on 2026-11-04:
 | Reserved, unused | **D1306–D1309** |
 | The next task that needs one | takes **D1310**, and re-checks the facts above rather than this conclusion |
 
+**The security review of 2026-11-04 moved no number.** F33 records seven findings and the owner's
+answers to all of them, and **not one of them took a new decision number**: two of them **amend**
+decisions the block already holds — **D1299** (no write on a member; the advisory headroom comes from
+the service) and **D1301** (the cap is metered at the proxy, and the rollup becomes a reconciliation
+alarm), with **D1300** amended only as it depends on D1301 — and the rest correct design statements
+and the plan rather than deciding anything. An amended decision keeps its number and its original
+answer, with the amendment dated beside it in §4; a **new** meaning never takes an old number. So
+**D1306–D1309 stay reserved and unused**, exactly as the row above says.
+
 `grep -rhoE 'D[0-9]{3,4}' docs` is not enough on its own, for the two reasons the MCP design records
 and this reading confirms: it returns `D1000`, which is not a decision at all but the test name
 `TestSelftestManagedSettingsDirUID1000` in
@@ -683,9 +786,9 @@ names them without numbering them.
 | --- | --- | --- |
 | U1 | Whether a member's job service account is **admitted by the workspace's credentials service** in a real deployment: the ID-token `email` claim is what admits it, and the claim is minted by the platform, not by a fixture | The hermetic test proves the *comparison* against a fixture set; that the platform mints the claim the comparison expects is a fact about a deployed service |
 | U2 | Whether the workspace's Firebase project can be created and converged by `fugaro update` without an operator step | It needs a real GCP project, a real billing account and a real apply |
-| U3 | Whether the exchange's refusals are **timing-indistinguishable** for "a member you are not in" and "a member that does not exist" (spec §8) | A timing claim is a property of a running server under a real network, not of a table test |
+| U3 | Whether the exchange's refusals are **timing-indistinguishable** for "a member you are not in" and "a member that does not exist" (spec §8) | A timing claim is a property of a running server under a real network, not of a table test. The security review of 2026-11-04 re-raised it and it stays unclosed: W4's table test holds the *shape* of the refusals and no hermetic test can hold their timing, so the check remains the owner's |
 | U4 | Whether `fugaro budget kill --workspace` actually stops a run in flight in another project | It needs two real installations and a running job |
-| U5 | Whether the workspace's rollup stays `stale` rather than reading zero when a member's database is unreachable | It needs a real database made unreachable, which no hermetic fixture reproduces honestly |
+| U5 | Whether a member the service's table cannot bind is **refused** rather than counted as zero, and whether the reconciliation alarm fires when the service's own count and the member's ledger disagree beyond the stated bound | It needs a real database made unreachable and a real disagreement between two live figures, which no hermetic fixture reproduces honestly. The question changed shape with D1301's amendment (O2): the meter no longer reads the ledger to enforce, so what fails closed is an unbound member and what the alarm compares is the service's count against the member's ledger |
 
 ## 7. UNVERIFIED
 
@@ -698,14 +801,19 @@ names them without numbering them.
 | V5 | Whether a member may keep a credential the workspace also holds, and how the two are chosen between at a run | The design says a member's own credentials keep working (§4) and does not say which of two is picked; the plan's W6 owns the rule and this document does not guess it |
 | V6 | Whether the credentials service's **person class** (F24) is stable enough to build a workspace's person admission on | It landed on 2026-11-03/04 (#1669 and #1646) and the owner's ruling that dates it is the **same day** as this design's answers; a class that is still moving is a dependency W6 must re-read rather than assume |
 
-## 8. Owner decisions this round did not take
+## 8. Owner decisions this round reported, and the answers of 2026-11-04
 
-**These are reported rather than decided.** Each is a question a security review of
-[spec.md](spec.md) §5 and §8 raised, each is answerable by the owner and by nobody else, and each
-would change a design statement rather than fill a gap in one. Nothing here is open in the sense §4
-was open: the design as written is coherent and buildable, and these are the two places where a
-different answer is also coherent. **They are not tasks and not blockers**, and no task in
-[implementation-plan.md](implementation-plan.md) waits on them.
+**These were reported rather than decided, and the owner answered both on 2026-11-04, after the
+security review** (F33). Each was a question a security review of [spec.md](spec.md) §5 and §8 raised,
+each was answerable by the owner and by nobody else, and each changed a design statement rather than
+filling a gap in one. Nothing here was open in the sense §4 was open — the design as written was
+coherent and buildable, and these were the two places where a different answer was also coherent — and
+**neither was a task and neither was a blocker**: no task in
+[implementation-plan.md](implementation-plan.md) waited on them. Each now has an owner answer, and
+each answer **amends a decision**: O1 amends D1299, and O2 amends D1301 (with D1300's statement about
+what the cap bounds unchanged but for where its number comes from). Both amendments are applied in
+[spec.md](spec.md) §5 and §9 and in [implementation-plan.md](implementation-plan.md) W4–W7, and both
+are dated in [README.md](README.md).
 
 **O1 — Where the advisory headroom lives.** The design keeps it in **the member's** database, which
 is why the workspace's service needs `firebasedatabase.instances.update` on every member, and why
@@ -717,8 +825,23 @@ database is the alternative. It would let the service's grant on each member dro
 property of IAM — and the cost is the other direction: each member's gateway would then need a read
 of the workspace's database, that read is whole-database too, and every member would read the
 workspace's member list and its rollup. **The question for the owner is which data each side sees**,
-and it is why this is not a task's to settle. The design's own reading is stated in
-[spec.md](spec.md) §5 and it stands until the owner says otherwise.
+and it is why this was not a task's to settle. The design's own reading was stated in
+[spec.md](spec.md) §5.
+
+**Answered 2026-11-04, after the security review: (A), the headroom moves out of the member's
+database — adopted.** The owner answered that the first framing was a **false choice**: the headroom
+is neither written into the member's database nor read by the member from the workspace's. It is
+**delivered by the workspace service itself** — as a response header on every call it already proxies,
+or from a small route answering only the calling member's job service account — so neither side reads
+the other's database, and the service's grant on a member drops to
+`firebasedatabase.instances.get` alone. **This amends D1299** (§4): a member's gateway reads the
+workspace's advisory number **from the service**, not from a node the service wrote into the member's
+database, and the service holds **no write on a member** at all. Why: the review's finding 3 showed
+that a whole-database write reaches the member's `config/policy`, `config/caps` (including
+`config/caps/global`), `config/kill`, `config/limits`, `config/mode` and `config/admin/devices` — the
+nodes that decide what that member may do — and "the member reads the workspace's database" was the
+only alternative the first framing offered, which the grant's whole-database read makes expensive. §8's
+spec residual risk 5 is **withdrawn** with the write.
 
 **O2 — Whether the workspace's cap is metered at the proxy instead of rolled up.** D1301 (answered
 2026-11-04, §4) makes the basis the **rollup** of each member's own run ledger, with an unreadable
@@ -726,20 +849,54 @@ member recorded as `stale` and refused. The alternative is the service counting 
 for, at its own proxy, which is the only place that sees the call itself rather than a number about
 it. It is a real alternative and it has a real cost: it gives one spend **two** measurements — the
 member's ledger and the service's counter — with no rule for which wins, and it would make the
-workspace's number authoritative over the member's own record of its spend. **Taking it means
-changing D1301's answer**, so it is reported here rather than taken, and D1301 stands as answered.
-The design states one basis and only one ([spec.md](spec.md) §5); a reader who wants the other
-should read this entry rather than assume the design left the question unasked.
+workspace's number authoritative over the member's own record of its spend. **Taking it meant
+changing D1301's answer**, so it was reported here rather than taken, and D1301 stood as answered.
 
-**What a review of these two would also settle.** [spec.md](spec.md) §8's residual risks 5 and 6 are
-the two that a `stale`-and-refuse design does not close: a compromised workspace service can lift a
-member's cap (O1's exposure, unchanged by O2), and a Firebase Auth admin of the workspace's project
-can mint a verified token for any address in its member list, in every member. **The exchange's
+**Answered 2026-11-04, after the security review: the owner took it — the cap is metered at the
+proxy, and D1301 is amended.** This is **not the option this reconciliation had recommended**, and it
+is the one deviation this folder records. The compromise the paragraph above named as the cost — two
+measurements with no rule for which wins — is answered by giving each quantity its **own** cap and its
+own governor: the **service's meter** governs the **workspace's** cap (a reservation taken before each
+call it pays for, settled on the response's usage, atomically in the workspace's own database), and
+the **member's ledger** stays **authoritative for the member's own caps**, which its gateway keeps
+enforcing under the rules that already constrain it. Neither is renamed into the other and neither
+replaces the other. The rollup is not the basis any more; it **becomes a reconciliation alarm** — on
+the history job's schedule the service compares **its own count** against the **member's ledger**, and
+a disagreement beyond a stated bound is **reported**, never silently trusted in either direction. The
+overshoot is bounded by **the reservation in flight** and the bound is stated as that number rather
+than as an adjective, and a **failed settle refuses** rather than serving a call whose cost cannot be
+recorded. Two findings the review raised are closed by it: the old basis read the *last good* rollup,
+so a member's spend between two rollups was invisible and the cap could be passed in the gap; and the
+old cross-check compared each member's ledger with its **own** runs bucket, which the member's
+operator controls. Both are findings 4 and 5 of F33. **This amends D1301, D1299 and D1300** as they
+depend on it.
+
+**What the answers did to [spec.md](spec.md) §8's residual risks 5 and 6.** The owner's answer to O1
+**withdrew residual risk 5**: with no write on a member, a compromised workspace service cannot lift a
+member's cap by writing `config/caps`, so that exposure is gone and the number is not reused — the
+section says "Withdrawn on 2026-11-04" rather than renumbering. The answer's second half addressed
+residual risk 6, which the review found **understated**: it is not only "a Firebase Auth administrator"
+of the workspace's project — anyone who can mint a **custom token** there (`signBlob` or
+`TokenCreator` on **any** service account in it) can set `email` and `email_verified`, and the
+**anonymous** provider is another path — so the exchange now accepts only a **pinned
+`firebase.sign_in_provider` set** (`google.com`, `password`) and refuses `custom` and `anonymous`
+(finding 7; spec §3's *the provider pin*). **The exchange's
 `email_verified` requirement (`internal/credsvc/auth.go`:1018) is not a mitigation against that
 administrator** — an Auth administrator can set that flag, so citing it as the answer would be the
 one misreading this paragraph exists to prevent; it is required for the reason §3 gives, that an
 unverified address is one nobody proved they own. What does bound the administrator is that the
 member's own lists remain the whole of the admission, and that **the member pins the project and the
 issuer it trusts in its own config** (§2, §3; the pin's fields are W1's interface, and W4 is the
-exchange that requires them) rather than taking either from the workspace's record. Neither risk is a defect in the design; both are what the design costs, and they are written
-down here so that a release does not ship them unstated.
+exchange that requires them) rather than taking either from the workspace's record. What **does** bound
+the custom-token path is the provider pin above, which is why it is a requirement and not a note.
+Residual risk 6 remains — a design that shares credentials must state it — and residual risk 5 is
+gone; what is left is written down here so that a release does not ship it unstated.
+
+**And one more finding the answers did not settle.** The review also found that the **first exchange
+carried no single-use identifier**, so an assertion minted once could be presented twice. That is
+**fixed** rather than open (finding 1: the assertion carries a single-use `jti`, in a subtree no
+client of the member's database may read, with W4 and W5 owning the tests), and it is named in
+[spec.md](spec.md) §10 only so a reader of a release before this amendment knows what that release
+shipped. The two things that **are** still open are the refusal's **timing** claim, which no hermetic
+test can hold (§6's **U3**), and **which of two credentials a member's run picks** when the member
+holds its own and the workspace holds one too (§7's **V5**).
