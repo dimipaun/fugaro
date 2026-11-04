@@ -37,6 +37,12 @@ const VertexBudgetRefusal = "Vertex budgets are not supported yet: use budget.mo
 // the run's policy refuses (shadow_test.go).
 const coderPinPath = "agent.models.coder"
 
+// reviewerPinPath is where config's own checks point a problem with the
+// reviewer, restated for the same reason as coderPinPath: a review level's
+// own model is judged in the slot its stage pins, and the level checks below
+// have to tell that problem from the ones about the run's other pins.
+const reviewerPinPath = "agent.models.reviewer"
+
 // modelRefusal is the class of checkBudget failure the run's model policy
 // raises — a model this run may not run, or cannot price — rather than
 // infrastructure failing under it, and it carries whether the coder pin was
@@ -464,9 +470,21 @@ func vertexLocations(env []string) []string {
 
 // beginGatewayStage tells the gateway which models the stage may use.
 func (r *run) beginGatewayStage(name string) {
-	role := config.StageRole(name)
-	a := r.cfg.Agent
-	r.gw.BeginStage(gateway.Stage{Name: name, Model: a.ModelFor(role), Background: r.backgroundModel(), MaxOutputTokens: a.MaxOutputFor(role)})
+	r.gw.BeginStage(r.stageSpec(name))
+}
+
+// stageSpec is the set the gateway admits while a stage runs: the model the
+// stage's own pins name (stageModel — a review level's own model is its
+// stage's, L4.5), the background model, and the stage's output limit per call.
+// A set that named the role slot where the pins name a level's own model would
+// refuse every call of the stage as not pinned for it.
+func (r *run) stageSpec(name string) gateway.Stage {
+	return gateway.Stage{
+		Name:            name,
+		Model:           r.stageModel(name),
+		Background:      r.backgroundModel(),
+		MaxOutputTokens: r.cfg.Agent.MaxOutputFor(stageRole(name)),
+	}
 }
 
 // endGatewayStage closes the stage in the gateway, takes its figures into
@@ -705,14 +723,20 @@ func (r *run) checkBudget() error {
 	// The allow-list bounds the models whatever the credential or the mode. The
 	// switch and the routes are the run's own: a route ID is admitted only
 	// where the switch routes the model to it, which is the resolution
-	// applyRouting performed a step ago (resolvePolicy).
-	if ps := config.CheckAllowed(r.cfg.Agent, r.policy, r.ceilingAllowed(), r.routingSwitch(), r.modelProviders()); len(ps) > 0 {
+	// applyRouting performed a step ago (resolvePolicy). A review level's own
+	// model is judged here as the checks above judge it, and for the same
+	// reason: the list bounds the models a run may use, and a level model is a
+	// model the run would use.
+	if ps := r.checkLevels(func(a config.Agent) []config.Problem {
+		return config.CheckAllowed(a, r.policy, r.ceilingAllowed(), r.routingSwitch(), r.modelProviders())
+	}); len(ps) > 0 {
 		return refusal("the models are not all allowed", ps)
 	}
 	if !r.gatewayOn() {
 		return nil
 	}
-	if ps := config.CheckPins(r.cfg.Agent, s.Prices); len(ps) > 0 {
+	priced := func(a config.Agent) []config.Problem { return config.CheckPins(a, s.Prices) }
+	if ps := r.checkLevels(priced); len(ps) > 0 {
 		return refusal("the models can't be priced under the budget", ps)
 	}
 	for _, w := range config.PinWarnings(r.cfg.Agent, s.Prices) {
@@ -762,6 +786,67 @@ func (r *run) warnReportedGap() {
 // exceed the charge by before the run warns.
 const reportedGapPct = 10
 
+// levelAgent is one review level's own model as the model checks see it: a
+// copy of the run's agent whose role slot carries the level's model, plus the
+// two keys a problem about it is named by — the level's own, and the slot the
+// check read.
+type levelAgent struct {
+	agent config.Agent
+	path  string
+	slot  string
+}
+
+// levelAgents are the agents the model checks judge beyond the run's own: one
+// per review level whose own model is not already one of the run's pins. A
+// level that runs its role's model has nothing of its own to judge, and a
+// level model that is a pin is judged as that pin.
+func (r *run) levelAgents() []levelAgent {
+	a := r.cfg.Agent
+	pinned := a.PinnedModels()
+	var out []levelAgent
+	for _, s := range reviewStages {
+		m := r.levelModel(s.level)
+		if m == "" || slices.Contains(pinned, m) {
+			continue
+		}
+		la := levelAgent{agent: a, path: levelModelPath(s.level)}
+		if s.role == config.RoleReviewer {
+			la.agent.Models.Reviewer, la.slot = m, reviewerPinPath
+		} else {
+			la.agent.Models.Coder, la.slot = m, coderPinPath
+		}
+		out = append(out, la)
+	}
+	return out
+}
+
+// checkLevels runs one of the model checks over the run's own pins and then
+// over each review level's own model, renaming a problem about a level to the
+// key the owner wrote it under (agent.levels.l3.model) rather than the slot
+// the check read it from. A problem under any other path is the run's own,
+// which the first call has already reported: the level's copy of the agent
+// differs from the run's in that one slot and nothing else.
+func (r *run) checkLevels(check func(config.Agent) []config.Problem) []config.Problem {
+	ps := check(r.cfg.Agent)
+	for _, la := range r.levelAgents() {
+		for _, p := range check(la.agent) {
+			if p.Path != la.slot {
+				continue
+			}
+			p.Path = la.path
+			ps = append(ps, p)
+		}
+	}
+	return ps
+}
+
+// levelModelPath is the configuration key a level's own model is written
+// under, which a problem about it names: policy's level names (l1, l2, l3)
+// are that key's own middle word.
+func levelModelPath(level policy.Level) string {
+	return "agent.levels." + string(level) + ".model"
+}
+
 // checkProviderModels is the owner's data policy for provider models
 // (config.CheckProviderPolicy, config.CheckProviderAuth). The run's own
 // allowed_models layer is the file's here; the merged list is CheckAllowed's.
@@ -780,8 +865,19 @@ func (r *run) checkProviderModels() error {
 			return fmt.Errorf("pricing the models: %w", err)
 		}
 	}
-	ps := config.CheckProviderPolicy(r.cfg.Agent, allowed, r.spec.Repo, r.modelProviders(), prices)
-	ps = append(ps, config.CheckProviderAuth(r.cfg.Agent, r.modelProviders())...)
+	// The four checks below judge an Agent's pins, and a review level's own
+	// model is a pin of its stage: checkLevels runs each of them over the
+	// level models too, so a model a level 3 names passes the same data
+	// policy, the same auth rule, the same gateway rule and the same price
+	// rule the coder's does. Without it a provider whose allow_data_to does
+	// not name this repository could serve a level, and the repository's code
+	// would be sent there (L4.5).
+	ps := r.checkLevels(func(a config.Agent) []config.Problem {
+		return config.CheckProviderPolicy(a, allowed, r.spec.Repo, r.modelProviders(), prices)
+	})
+	ps = append(ps, r.checkLevels(func(a config.Agent) []config.Problem {
+		return config.CheckProviderAuth(a, r.modelProviders())
+	})...)
 	if len(ps) > 0 {
 		return refusal("the models are not approved for this repository", ps)
 	}
@@ -793,7 +889,9 @@ func (r *run) checkProviderModels() error {
 	if r.gatewayOn() {
 		mode = r.spend.Mode
 	}
-	if ps := config.CheckProviderGateway(r.cfg.Agent, bg, r.modelProviders(), mode); len(ps) > 0 {
+	if ps := r.checkLevels(func(a config.Agent) []config.Problem {
+		return config.CheckProviderGateway(a, bg, r.modelProviders(), mode)
+	}); len(ps) > 0 {
 		// The first problem's own sentence, as this check has always
 		// reported; the class is what the caller reads.
 		return &modelRefusal{msg: ps[0].Message, coderPin: namesCoderPin(ps)}

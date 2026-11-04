@@ -10,8 +10,11 @@ import (
 // already in the lock for a repository whose set it holds in full. It is
 // what stops a repository with one extra package paying for a build, and it
 // is deliberately narrow — an image is reused only when it holds the whole
-// set at the same versions, never when it holds a subset, and the toolchain
-// and the base have to be identical.
+// set at the same versions and the same integrities, never when it holds a
+// subset, and the toolchain and the base have to be identical. The packages
+// are compared as the facts the reduction wrote them — one package per literal
+// triple (§2.4) — so the comparison is over triples and not over a text two
+// different triples could share.
 //
 // The cost of a reuse is stated in the design and is the owner's answer
 // (O6): the repository's image then contains packages it does not depend
@@ -19,10 +22,10 @@ import (
 // repository's image.setup installed.
 
 // Superset returns the key of the lock's image that holds resolved's whole
-// package set at the same versions and may hold more, and whether there is
-// one. The base must be the identical ref and digest and the tools
-// identical, since an extra tool or a different base changes what the image
-// is, while an extra package only widens what is installed.
+// package set at the same versions and integrities and may hold more, and
+// whether there is one. The base must be the identical ref and digest and the
+// tools identical, since an extra tool or a different base changes what the
+// image is, while an extra package only widens what is installed.
 //
 // Of several that qualify the one with the fewest extra packages wins;
 // ties go to the most recent built_at, then to the lower key hex, so the

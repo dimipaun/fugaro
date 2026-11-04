@@ -128,15 +128,25 @@ func Validate(c *Config) []Problem {
 	if !KnownAgentAuth(c.Agent.Auth) {
 		add("agent.auth", "must be one of %s", strings.Join(AgentAuths, ", "))
 	}
-	if c.Agent.ReviewRounds < 1 || c.Agent.ReviewRounds > 10 {
-		add("agent.review_rounds", "must be between 1 and 10")
+	// 0 is unset, and an unset knob takes the rigor mode's own default
+	// (internal/rigor's DefaultRounds): the value is resolved where the mode
+	// is, which this package does not read. Unset is not "fall through to the
+	// layer below": a layer's scalars replace whole (resolve.go), so a
+	// repository's written 0 replaces the project layer's number, and the
+	// mode's row is what supplies the gap.
+	if c.Agent.ReviewRounds < 0 || c.Agent.ReviewRounds > 10 {
+		add("agent.review_rounds", "must be between 1 and 10, or 0 (unset: the mode's default supplies it)")
 	}
 	if !slices.Contains([]string{FirstLineAuto, FirstLineOn, FirstLineOff}, c.Agent.FirstLineReview) {
 		add("agent.first_line_review", "must be one of auto, on, off")
 	}
-	if c.Agent.FirstLineRounds < 1 || c.Agent.FirstLineRounds > MaxFirstLineRounds {
-		add("agent.first_line_rounds", "must be between 1 and %d", MaxFirstLineRounds)
+	if c.Agent.FirstLineRounds < 0 || c.Agent.FirstLineRounds > MaxFirstLineRounds {
+		add("agent.first_line_rounds", "must be between 1 and %d, or 0 (unset: the mode's default supplies it)", MaxFirstLineRounds)
 	}
+	if c.Agent.AdversarialRounds < 0 || c.Agent.AdversarialRounds > 10 {
+		add("agent.adversarial_rounds", "must be between 1 and 10, or 0 (unset: the mode's default supplies it)")
+	}
+	ps = append(ps, levelProblems("agent.levels", &c.Agent.Levels)...)
 	if c.Agent.Recipe != "" && !recipe.NameRE.MatchString(c.Agent.Recipe) {
 		add("agent.recipe", "must be a recipe name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
 	}
@@ -149,10 +159,18 @@ func Validate(c *Config) []Problem {
 	// check. Whether the name is one this repository may actually use
 	// (config.AllowedClaudeAccounts) depends on the local config, which this
 	// function never sees; fugaro run checks that at launch.
+	//
+	// The reserved name is the one rule here that is not about its shape: it
+	// matches ClaudeAccountNameRE and is well inside the length cap, and what
+	// refuses it is the platform already holding a credential under it
+	// (reservedClaudeAccountName), the same refusal claude_accounts' own keys
+	// and a profile's claude_accounts entry get.
 	switch {
 	case c.Agent.OAuthToken == "":
 	case c.Agent.OAuthToken == DefaultClaudeAccount:
 		add("agent.oauth_token", `must not be "default": the empty value already means the repository's default account`)
+	case ReservedClaudeAccountName(c.Agent.OAuthToken):
+		add("agent.oauth_token", "%s", ReservedClaudeAccountNameMessage)
 	case len(c.Agent.OAuthToken) > MaxClaudeAccountNameLen:
 		add("agent.oauth_token", "must be at most %d characters", MaxClaudeAccountNameLen)
 	case !ClaudeAccountNameRE.MatchString(c.Agent.OAuthToken):
@@ -762,6 +780,28 @@ func badUSD(v float64) bool { return v < 0 || math.IsNaN(v) || math.IsInf(v, 0) 
 // set: the most any current model produces.
 const MaxOutputTokensLimit = 128000
 
+// levelProblems are a review-level block's own rules (LevelSetting.validate,
+// the one set of them, which ReviewLevels.Validate applies to a task's
+// review_levels) as problems under path, one per level: a reader is told which
+// level of which file is wrong, and the three blocks that carry the type —
+// fugaro.yaml's agent.levels, the project layer's defaults.agent.levels and the
+// task's review_levels — refuse the same documents.
+func levelProblems(path string, r *ReviewLevels) []Problem {
+	var ps []Problem
+	for _, l := range []struct {
+		name string
+		set  *LevelSetting
+	}{{"l1", r.L1}, {"l2", r.L2}, {"l3", r.L3}} {
+		if l.set == nil {
+			continue
+		}
+		if err := l.set.validate(l.name); err != nil {
+			ps = append(ps, Problem{Path: path + "." + l.name, Message: err.Error()})
+		}
+	}
+	return ps
+}
+
 // validateAgentModels checks agent.models and the token limits, which hold
 // whether or not a budget is on (the pin rules are CheckPins).
 func validateAgentModels(a Agent) []Problem {
@@ -869,3 +909,25 @@ func CheckModelID(m string) string {
 	}
 	return ""
 }
+
+// ReservedClaudeAccountName reports whether name is the one account name the
+// credentials bundle reserves for a credential of the platform's own
+// (reservedClaudeAccountName, claude_accounts.go): an account spoken by it
+// would leave one name meaning two credentials.
+//
+// It is exported for the surfaces outside this package that carry an account
+// name — a task spec's oauth_token (internal/task) — so each of them asks the
+// same predicate instead of keeping a copy of the name. The surfaces inside
+// this package (claude_accounts' own keys, a profile's claude_accounts entry)
+// call reservedClaudeAccountName directly.
+//
+// It is declared at the end of this file rather than beside the Validate
+// switch it serves, so that adding it moves no line above it: several docs
+// cite this file by line.
+func ReservedClaudeAccountName(name string) bool { return reservedClaudeAccountName(name) }
+
+// ReservedClaudeAccountNameMessage is the one sentence every surface refuses
+// the reserved name with (reservedAccountNameMessage): an operator reads the
+// same words whichever file they wrote the name in, and the sentence never
+// echoes the name, which is untrusted text printed to a terminal.
+const ReservedClaudeAccountNameMessage = reservedAccountNameMessage

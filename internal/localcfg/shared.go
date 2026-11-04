@@ -108,6 +108,23 @@ func (c *Config) Shared() *Config {
 	// its own floor — and ParseShared refuses the key besides, because a
 	// shared config carrying it was not written by the converge.
 	s.ReviewFloor = nil
+	// VerifierAccounts is the owner's policy and travels the floor's way, into
+	// the policy node — and it is dropped here for a sharper reason than the
+	// floor's: it is the list the credentials service admits to its verify
+	// route, so a launcher who could write it into the runs bucket's shared
+	// file could admit its own address there. ParseShared refuses the key
+	// besides, because a shared config carrying it was not written by the
+	// converge.
+	s.VerifierAccounts = nil
+	// ImageCatalog travels the verifier list's way and is dropped here for a
+	// sharper reason than the floor's: the catalog decides which image a run's
+	// job executes in and which Dockerfile is fetched to build it, so a
+	// launcher who could write it into the runs bucket's shared file would be
+	// choosing what code every teammate's runs run (D1140). It is published
+	// through the policy node instead, which the runner reads and fails closed
+	// on, and ParseShared refuses the key besides — a shared config carrying
+	// it was not written by the converge.
+	s.ImageCatalog = nil
 	s.Repos = withoutBaseBranches(c.Repos)
 	return &s
 }

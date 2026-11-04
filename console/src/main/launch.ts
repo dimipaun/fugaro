@@ -29,6 +29,7 @@ import type { ChildSpawner, SpawnPlan, Timers } from './spawn'
 import { cliSentence, planFor, privateWorkingDirectory, runToCompletion, spawnedArgv } from './spawn'
 import type { SpawnLogWriter } from './spawnlog'
 import type { LaunchRecords, LaunchResult } from './launchrules'
+import type { SettingsView } from './settingsview'
 import {
   checkLaunchBranch,
   checkLaunchPlanTask,
@@ -289,6 +290,11 @@ export interface LaunchOutcome {
  * the operator should see rather than infer.
  */
 export interface ConfirmView {
+  /** the union's discriminant, and the reason it is here rather than inferred:
+   * the confirmation window is one implementation for two questions (D1115),
+   * and the document it serves has to know which of the two it is drawing
+   * without guessing from the fields it can see. */
+  readonly kind: 'launch'
   readonly runId: string
   readonly installation: string
   readonly recordedRepository: string
@@ -311,6 +317,7 @@ export interface ConfirmView {
  * spelling of these fields would be a second thing to keep in step. */
 export function confirmView(launch: FrozenLaunch): ConfirmView {
   return Object.freeze({
+    kind: 'launch',
     runId: launch.runId,
     installation: launch.project,
     recordedRepository: launch.recordedRepository,
@@ -325,6 +332,37 @@ export function confirmView(launch: FrozenLaunch): ConfirmView {
 }
 
 /**
+ * SettingsConfirmView is the **second** question the confirmation window asks
+ * (the settings-edit plan's C3, D1115): C2's `SettingsView` -- the six fields of
+ * one edit, the dry run's own sentence for a widening, and the exact argv the
+ * confirmed edit spawns -- with the two facts the *window* needs rather than the
+ * edit: the union's discriminant, and the project the window belongs to.
+ *
+ * It is an extension of C2's view rather than a second spelling of it because
+ * the six fields are one decision made in one place: `settingsView` builds them
+ * from the dry run and the read's row, and this type adds nothing to them. The
+ * project is here for identity and not for drawing: which installation is being
+ * edited is already the `--project` word of the argv the window shows, so a
+ * second row saying it would be a field D1108 does not name.
+ */
+export interface SettingsConfirmView extends SettingsView {
+  readonly kind: 'settings'
+  /** the installation whose layers this edit writes. It is the read document's
+   * own `project`, so the window closes as a cancel when that installation is
+   * re-chosen or removed while it is open (`cancelFor`). */
+  readonly project: string
+}
+
+/** ConfirmSubject is what one confirmation window is opened for, and there are
+ * exactly two: a launch (`ConfirmView`, rule 11's window) and a settings edit
+ * (`SettingsConfirmView`, rule 12's). The union is a discriminant rather than a
+ * guess, so neither the window nor the document it serves can mistake one for
+ * the other -- which is the property that matters, because the two questions
+ * have different gates: a launch's yes spawns a run, and a widening's yes needs
+ * the tick as well (`CONFIRM_TICK_NEEDED`). */
+export type ConfirmSubject = ConfirmView | SettingsConfirmView
+
+/**
  * LaunchConfirmer is the seam the confirmation window fills: `confirm.ts`'s
  * `createConfirmWindow` is the shipped implementation, and `index.ts` builds one
  * in `main()` and hands it to `createLaunchRunner`. `open` is handed the
@@ -332,6 +370,13 @@ export function confirmView(launch: FrozenLaunch): ConfirmView {
  * operator answers -- the main process's own path, which is what `answer(runId,
  * yes)` reaches from the window's preload; the renderer asks for the window and
  * **cannot answer for the operator**.
+ *
+ * **It is the settings edit's seam too** (the settings-edit plan's C3): the
+ * window is one implementation for both questions (D1115), so `open` takes
+ * either member of `ConfirmSubject` and the second caller is
+ * `createSettingsEdit`. The name is the launch's because the launch's window
+ * came first; what the two callers share is the window, and what they do not
+ * share is everything above it.
  *
  * `decide`'s second parameter is **the confirmer's own sentence for a decline**,
  * and it exists for exactly one reason: the sentence the operator is shown for a
@@ -350,10 +395,16 @@ export function confirmView(launch: FrozenLaunch): ConfirmView {
  * that follows is the ordinary decline -- nothing is spawned, and the frozen
  * launch the run id holds is not touched. A run whose window is not open is
  * nothing here to close, and nothing here decides.
+ *
+ * Its argument is the window's **subject identity** rather than a run id
+ * (`confirmSubjectID` in `confirm.ts`): a launch's is its run id, which is what
+ * every existing caller passes, and a settings edit's is derived from the
+ * project it writes -- so `close(runId)` is unchanged for the launch and the
+ * settings editor closes its own window the same way.
  */
 export interface LaunchConfirmer {
-  open(view: ConfirmView, decide: (yes: boolean, reason?: string) => void): void
-  close(runId: string): void
+  open(subject: ConfirmSubject, decide: (yes: boolean, reason?: string) => void): void
+  close(id: string): void
 }
 
 /** DECLINING_CONFIRMER is the fail-closed default `index.ts` starts the process
@@ -361,7 +412,7 @@ export interface LaunchConfirmer {
  * ask, so every launch is declined by name (`DECLINED_UNBUILT`) and nothing
  * reaches `spawn`. `main` replaces it with the window's own confirmer. */
 export const DECLINING_CONFIRMER: LaunchConfirmer = Object.freeze({
-  open: (_view: ConfirmView, decide: (yes: boolean, reason?: string) => void): void => {
+  open: (_subject: ConfirmSubject, decide: (yes: boolean, reason?: string) => void): void => {
     decide(false, DECLINED_UNBUILT)
   },
   // No window is ever opened, so none is ever open to close: `open` has already

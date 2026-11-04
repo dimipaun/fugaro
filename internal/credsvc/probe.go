@@ -748,8 +748,12 @@ func (l *BundleLoader) Scrub(s string) string {
 		// guarantees for them.
 		return s
 	}
-	for _, e := range b.entries {
-		if v := e.Value(); v != "" && strings.Contains(s, v) {
+	// Every string the bundle holds that is a credential, not every entry's
+	// value: the read consumer's key is credential material that is no entry's
+	// value (Bundle.Secrets), and it is the one such string this service would
+	// otherwise write out in full.
+	for _, v := range b.Secrets() {
+		if strings.Contains(s, v) {
 			s = strings.ReplaceAll(s, v, redactedValue)
 		}
 	}

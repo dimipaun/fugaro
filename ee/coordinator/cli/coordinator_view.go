@@ -141,6 +141,11 @@ func coordinatorStoredView(ctx context.Context, env *fcli.Cloud, store *coordina
 	if err != nil {
 		return coordinator.RepoView{}, coordinatorStoredErr(env.Config(), err)
 	}
+	// The provider is the caller's answer and not the read's: the node is
+	// keyed by a slug of it, so the node cannot give it back, and a reader
+	// that needed one for a pull request's URL would otherwise have to take
+	// it from the URL the sweep stored.
+	view.Provider = env.RepoProvider(repo, fcli.CheckoutOf(ctx, repo)())
 	if view.Stored {
 		return view, nil
 	}

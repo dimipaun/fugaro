@@ -115,10 +115,29 @@ func Render(in RenderInput) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// PlainSecretFile is where a mounted workflow secret is readable inside a
+// RUN: the path composeSecretMount's mount target and the read prefix share.
+func PlainSecretFile(env string) string { return "/run/secrets/" + env }
+
+// SecretMountOption is the BuildKit mount option that exposes a workflow
+// secret to a RUN as PlainSecretFile(env), readable only by fugaro: the
+// spelling the derived template's RUN lines carry and the one a catalog
+// entry's build mounts its secrets with (D1150). A catalog build renders no
+// Dockerfile of its own — the entry's definition is the operator's — so the
+// id is the secret's variable name on both sides: a Dockerfile that reads
+// /run/secrets/<VAR> and a build that passes the secret as id=<VAR> agree
+// without either side spelling the convention again.
+// It is one secret's option, not a list: its callers compose it.
+// required=false, so a secret the build was not given leaves the path
+// absent rather than failing the step.
+func SecretMountOption(env string) string {
+	return fmt.Sprintf(" --mount=type=secret,id=%s,uid=1000,mode=0400,required=false", env)
+}
+
 // secretMounts returns the RUN flags that mount each workflow secret and the
 // shell prefix that exports it, for the warm-up and setup steps.
 //
-// Each secret is mounted as a file, /run/secrets/<VAR>, readable only by
+// Each secret is mounted as a file, PlainSecretFile's path, readable only by
 // fugaro (uid 1000, which those steps run as), and the prefix reads it into
 // <VAR> inside the RUN's own shell, so the value is on no command line and
 // in no layer, ENV, build argument or log. A secret the build lacks is not
@@ -131,8 +150,8 @@ func Render(in RenderInput) ([]byte, error) {
 // need no quoting.
 func secretMounts(vars []string) (mounts, prefix string) {
 	for _, v := range vars {
-		mounts += fmt.Sprintf(" --mount=type=secret,id=%s,uid=1000,mode=0400,required=false", v)
-		prefix += fmt.Sprintf(`if test -e /run/secrets/%[1]s; then %[1]s="$(cat /run/secrets/%[1]s)" || exit 1; export %[1]s; fi; `, v)
+		mounts += SecretMountOption(v)
+		prefix += fmt.Sprintf(`if test -e %[1]s; then %[2]s="$(cat %[1]s)" || exit 1; export %[2]s; fi; `, PlainSecretFile(v), v)
 	}
 	return mounts, prefix
 }

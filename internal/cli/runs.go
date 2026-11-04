@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/pool"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/runcache"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -47,9 +48,25 @@ const maxNameCellRunes = 64
 type lsOptions struct {
 	cloud                    cloudOptions
 	repo, since, batch       string
+	state                    string
 	all, mine, watch, asJSON bool
 	interval                 time.Duration
-	pr                       int // only the runs on this pull request, when set
+	pr                       int    // only the runs on this pull request, when set
+	limit                    int    // print the newest N rows of the window, when > 0
+	after                    string // start the listing after this run, when set
+	noCache                  bool   // read every object from the bucket, as before the cache existed
+}
+
+// lsStates are the run states --state accepts, sorted: runstore's own states
+// and the ones runview derives for a run that has not recorded an outcome yet.
+// They are the vocabulary a row's `status` carries, never the decorated cell
+// statusCell prints -- `failed (preempted)` is --state failed, as a reader
+// switching on status has always seen it.
+var lsStates = []string{
+	string(runstore.StatusCancelled), runview.StatusError, string(runstore.StatusFailed),
+	string(runstore.StatusHalted), string(runstore.StatusInfraError), runview.StatusLaunching,
+	runview.StatusPending, string(runstore.StatusRunning), string(runstore.StatusSucceeded),
+	runview.StatusUnlaunched,
 }
 
 // prLookback is runs ls --pr's default --since: run --pr's window
@@ -83,9 +100,114 @@ type lsFilter struct {
 	since  time.Time // zero means no bound
 	mine   string    // keep runs requested by this identity, when set
 	batch  string    // keep runs of this batch, when set
+	state  string    // keep runs in this state, when set
 	pr     int       // keep runs on this pull request (task or record), when set
 	runRef string    // "<slug>/<run-id>": only this run (diagnose)
 	warn   io.Writer // where non-fatal problems go; nil discards them
+	// noCache reads every object from the bucket, as every listing did
+	// before the run cache existed. A listing reads through the cache by
+	// default -- runs ls, and the report command through api.LoadRows, the
+	// one helper both go through -- because that is what the cache is for:
+	// the same window listed again and again.
+	//
+	// It is set where a cached object would answer more than a display
+	// number. resolvePR asks whether this pull request allows a follow-up,
+	// which is a launch, and the budget's own facts pass (what the rollover
+	// records for a day, internal/budget/rollover_facts.go) is a budget
+	// check that never goes through this loader at all. A cached object is
+	// what a listing saw, and a decision has to see the bucket.
+	//
+	// runs ls --no-cache sets it too: the whole cache is an optimisation,
+	// so ignoring it must cost nothing but time.
+	noCache bool
+}
+
+// lsRef names one run a listing means to read.
+type lsRef struct{ slug, id string }
+
+// lsReaders builds the reader of every run a listing is about to read: one
+// index per repository, from one listing of it, and the runs that index can
+// answer for share it.
+//
+// Nothing is built for a listing that asked not to be cached (lsFilter's
+// noCache), and that is how a decision and --no-cache read the bucket
+// exactly as they did before the cache existed: the reader of every run is
+// then the zero Reader, which reads the bucket. runcache.Open and
+// runcache.List answer nil for a cache the CLI cannot place and for a bucket
+// that reports no generation per object, and a nil cache or a nil index falls
+// back to the same thing.
+func lsReaders(ctx context.Context, env *cloudEnv, cached bool, refs []lsRef) map[lsRef]runcache.Reader {
+	if !cached {
+		return nil
+	}
+	c, err := runcache.Open(os.Getenv, env.lc.Name, cacheBucketID(env))
+	if err != nil {
+		return nil
+	}
+	// The listing starts at the oldest run this one means to read, so a
+	// repository whose runs are mostly older than the window costs nothing
+	// to skip there (runstore.ListRunIDs's own offset rule).
+	oldest := map[string]string{}
+	for _, r := range refs {
+		if from, ok := oldest[r.slug]; !ok || r.id < from {
+			oldest[r.slug] = r.id
+		}
+	}
+	readers := make(map[lsRef]runcache.Reader, len(refs))
+	for slug, from := range oldest {
+		index := runcache.List(ctx, env.bucket, slug, from)
+		named := indexRuns(index, slug)
+		for _, r := range refs {
+			if r.slug != slug {
+				continue
+			}
+			// A run the index names not one object of is a run it cannot
+			// answer for (indexRuns): its objects are read from the bucket.
+			if index != nil && !named[r.id] {
+				readers[r] = runcache.Reader{}
+				continue
+			}
+			readers[r] = runcache.Reader{Cache: c, Index: index}
+		}
+	}
+	return readers
+}
+
+// indexRuns is the runs whose prefix the index names at least one object of,
+// by run ID.
+//
+// The run IDs of a window and the generations the cache keys its entries by
+// come from two listings, and a run written between them is named by the
+// earlier one and by no object of the later one. On a bucket that is strongly
+// consistent only one order of the two is possible -- the flat listing is the
+// later, so it sees at least what the delimited listing saw -- but an index
+// that names no object of a run cannot answer for it either way: an unlisted
+// key reads as absent, and the run would be drawn with no task and no record
+// rather than as the run the bucket holds.
+func indexRuns(index map[string]int64, slug string) map[string]bool {
+	named := make(map[string]bool, len(index))
+	prefix := "runs/" + slug + "/"
+	for key := range index {
+		rest, ok := strings.CutPrefix(key, prefix)
+		if !ok {
+			continue
+		}
+		if id, _, ok := strings.Cut(rest, "/"); ok && id != "" {
+			named[id] = true
+		}
+	}
+	return named
+}
+
+// cacheBucketID is what the run cache keys a bucket by: the GCS bucket's
+// name, so two installations of one project never share entries, and the
+// configured URL for the buckets that are not GCS (a local file:// runs
+// bucket, which reports no generations and so caches nothing anyway).
+func cacheBucketID(env *cloudEnv) string {
+	if env.bucket.GCSName != "" {
+		return env.bucket.GCSName
+	}
+	return env.lc.BucketURL()
 }
 
 // lsDoc is ls --json's document.
@@ -107,7 +229,7 @@ func newRunsCmd() *cobra.Command {
 		Use:   "runs",
 		Short: "List and inspect runs",
 	}
-	cmd.AddCommand(newLsCmd(), newRunsStatsCmd(), newRunsDigestCmd())
+	cmd.AddCommand(newLsCmd(), newRunsStatsCmd(), newRunsSummaryCmd(), newRunsDigestCmd())
 	return cmd
 }
 
@@ -116,11 +238,25 @@ func newLsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ls",
 		Short: "List runs with their status, stage, cost and PR",
-		Long: "List runs, newest first, joining the runs bucket with what the backend knows.\n\n" +
+		Long: "List runs, newest first -- created descending, then run descending --\n" +
+			"joining the runs bucket with what the backend knows.\n\n" +
 			"By default ls shows the last " + strconv.Itoa(lsDefaultDays) + " days of the local config's repositories (every\n" +
 			"repository in the bucket when the config lists none). A run shows as succeeded\n" +
 			"only when its result.json says so; an execution that ended without finalizing\n" +
 			"is an infra_error.\n\n" +
+			"--limit N prints the newest N rows of the listing and shortens nothing else:\n" +
+			"the window is still read, and the totals line, in the text listing and in\n" +
+			"--json's totals, is the whole window's, because a page is not a total. 0,\n" +
+			"the default, prints every row of the window.\n\n" +
+			"--after RUN-ID starts the listing after that run: the rows strictly after it\n" +
+			"in the listing's order, so the same argv with the last id of a page is the\n" +
+			"next page. The id is the run_id --json carries; one the listing does not\n" +
+			"hold is refused rather than answered with an empty page, which reads as no\n" +
+			"more runs. Neither flag goes with --watch, which redraws the whole listing.\n\n" +
+			"--state STATE lists only runs in that state, matched against the status --json\n" +
+			"carries: the `halted (run_cap)` cell is --state halted, and --help lists the\n" +
+			"states the flag takes. A run's state is in its result.json, so this filter\n" +
+			"reads every run it filters -- it narrows the listing, never the reads.\n\n" +
 			"--pr N lists the runs on pull request N of one repository (the first run and\n" +
 			"its follow-ups), over the last " + prLookback + " unless --since says otherwise; the totals\n" +
 			"line is then the PR's total cost.",
@@ -133,10 +269,15 @@ func newLsCmd() *cobra.Command {
 	f.BoolVar(&o.mine, "mine", false, "only runs you requested")
 	f.StringVar(&o.since, "since", lsDefaultSince, "only runs started within this long ("+lsDefaultSince+", 36h, 90m; 0 for all)")
 	f.StringVar(&o.batch, "batch", "", "only runs of this batch")
+	f.StringVar(&o.state, "state", "", "only runs in this state ("+strings.Join(lsStates, ", ")+")")
+	f.IntVar(&o.limit, "limit", 0, "print only the newest N rows (0, the default, is every row of the window; the totals stay the window's)")
+	f.StringVar(&o.after, "after", "", "print only the rows after this run id in the listing")
 	f.IntVar(&o.pr, "pr", 0, "only runs on this pull request (needs one repository; --since defaults to "+prLookback+")")
 	f.BoolVar(&o.watch, "watch", false, "redraw until every run has settled")
 	f.DurationVar(&o.interval, "interval", 10*time.Second, "--watch's redraw interval")
 	_ = f.MarkHidden("interval")
+	f.BoolVar(&o.noCache, "no-cache", false, "read every run object from the bucket instead of the local run cache")
+	_ = f.MarkHidden("no-cache")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
@@ -164,13 +305,25 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	if o.watch && o.interval <= 0 {
 		return userErr("--interval must be positive")
 	}
+	if o.limit < 0 {
+		return userErr("--limit %d: use a count, or 0 for every run of the window", o.limit)
+	}
+	// The flags are read as typed rather than by value, the way --pr is: a
+	// reader who wrote either beside --watch asked for a page of a listing
+	// that redraws, and that is the combination being refused.
+	if o.watch && (cmd.Flags().Changed("limit") || cmd.Flags().Changed("after")) {
+		return userErr("--watch redraws the whole listing until every run has settled: --limit and --after don't go with it")
+	}
+	if o.state != "" && !slices.Contains(lsStates, o.state) {
+		return userErr("--state %q: use one of %s", o.state, strings.Join(lsStates, ", "))
+	}
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {
 		return err
 	}
 	defer env.Close()
 
-	f := lsFilter{batch: o.batch, pr: o.pr, warn: cmd.ErrOrStderr()}
+	f := lsFilter{batch: o.batch, state: o.state, pr: o.pr, warn: cmd.ErrOrStderr(), noCache: o.noCache}
 	if prSet && o.repo == "" && len(env.lc.Repos) != 1 {
 		return userErr("runs ls --pr needs --repo: the local config lists %d repositories", len(env.lc.Repos))
 	}
@@ -199,10 +352,14 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 		if err != nil {
 			return err
 		}
+		page, err := pageRows(rows, o.after, o.limit)
+		if err != nil {
+			return err
+		}
 		if clear {
 			fmt.Fprint(out, "\x1b[H\x1b[2J")
 		}
-		if err := printRows(out, env.lc.Name, rows, warnings, now, o.asJSON); err != nil {
+		if err := printRowsWithTotals(out, env.lc.Name, page, runview.Sum(rows), warnings, now, o.asJSON); err != nil {
 			return err
 		}
 		if !o.watch || allSettled(rows) {
@@ -252,10 +409,12 @@ func lsSlugs(ctx context.Context, env *cloudEnv, o *lsOptions, warn io.Writer) (
 	return slugs, nil
 }
 
-// loadRows reads every run f selects, joins it with its execution, and
-// returns the rows newest first. A run whose launch.json or result.json is
-// corrupt, or names an execution that isn't the run's, is an error row
-// with a warning. Any other failed read but absence fails the whole
+// loadRows reads the runs f selects, joins each with its execution, and
+// returns the rows newest first. It reads the whole window whatever the
+// listing goes on to print: the totals cover every row it read, so a page is
+// never the sum beside it (D818). A run whose launch.json or
+// result.json is corrupt, or names an execution that isn't the run's, is an
+// error row with a warning. Any other failed read but absence fails the whole
 // listing: ls never shows a status guessed from a partial read.
 //
 // It reads every run's objects first, keeps the runs f.pr selects, and
@@ -266,14 +425,13 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	if warn == nil {
 		warn = io.Discard
 	}
-	type ref struct{ slug, id string }
-	var refs []ref
+	var refs []lsRef
 	if f.runRef != "" {
 		slug, id, err := parseRunRef(f.runRef)
 		if err != nil {
 			return nil, err
 		}
-		refs = append(refs, ref{slug, id})
+		refs = append(refs, lsRef{slug, id})
 	} else {
 		for _, slug := range f.slugs {
 			ids, err := runstore.ListRunIDs(ctx, env.bucket.Bucket, slug, f.since)
@@ -281,16 +439,21 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 				return nil, remote(err)
 			}
 			for _, id := range ids {
-				refs = append(refs, ref{slug, id})
+				refs = append(refs, lsRef{slug, id})
 			}
 		}
 	}
 
-	// The bucket's objects, for every run.
+	// The bucket's objects, for every run, through the run cache when this
+	// listing asked for it. One flat listing per repository carries every
+	// run's three objects' generations, so the runs the previous listing
+	// already read are answered locally and the reads that leave the machine
+	// are the objects that changed.
+	readers := lsReaders(ctx, env, !f.noCache, refs)
 	runs := make([]runObjects, len(refs))
 	errs := make([]error, len(refs))
 	parallel(len(refs), func(i int) {
-		runs[i], errs[i] = readRun(ctx, env, refs[i].slug, refs[i].id)
+		runs[i], errs[i] = readRunVia(ctx, env, readers[refs[i]], refs[i].slug, refs[i].id)
 	})
 	if err := errors.Join(errs...); err != nil {
 		return nil, remote(err)
@@ -352,14 +515,44 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	}
 
 	rows = slices.DeleteFunc(rows, func(r runview.Row) bool {
-		return (f.mine != "" && r.RequestedBy != f.mine) || (f.batch != "" && r.Batch != f.batch)
+		return (f.mine != "" && r.RequestedBy != f.mine) || (f.batch != "" && r.Batch != f.batch) ||
+			(f.state != "" && string(r.Status) != f.state)
 	})
+	// The listing's order, which --after's cursor is defined by: created
+	// descending, then the run reference descending. Two runs minted in the
+	// same second -- which is what the reference's own mint time leaves
+	// unordered -- are ordered by that reference, so the order is total and
+	// the row a cursor stops at is the row a reader sees.
 	slices.SortStableFunc(rows, func(a, b runview.Row) int {
 		if c := b.Created.Compare(a.Created); c != 0 {
 			return c
 		}
-		return strings.Compare(a.Run, b.Run)
+		return strings.Compare(b.Run, a.Run)
 	})
+	return rows, nil
+}
+
+// pageRows is the page a listing prints out of the rows it read: the rows
+// strictly after the cursor in the listing's own order, then the newest limit
+// of them. The totals are the caller's to take over the whole window, never
+// over what this returns.
+//
+// A cursor the window does not hold is refused rather than answered with an
+// empty page. The two are not the same answer: an empty page reads as "no more
+// runs", and a caller that walked off the end of the window by mistake -- a
+// filter that dropped the cursor's run, a --since that cut it off -- would
+// page nothing for ever.
+func pageRows(rows []runview.Row, after string, limit int) ([]runview.Row, error) {
+	if after != "" {
+		i := slices.IndexFunc(rows, func(r runview.Row) bool { return r.RunID == after })
+		if i < 0 {
+			return nil, userErr("--after %s: no run in this listing has that id", after)
+		}
+		rows = rows[i+1:]
+	}
+	if limit > 0 && limit < len(rows) {
+		rows = rows[:limit]
+	}
 	return rows, nil
 }
 
@@ -405,8 +598,17 @@ type runObjects struct {
 }
 
 // readRun reads what the bucket knows about one run; it makes no backend
-// call.
+// call. Every object comes from the bucket: a caller that wants the run
+// cache passes its own reader to readRunVia.
 func readRun(ctx context.Context, env *cloudEnv, slug, id string) (runObjects, error) {
+	return readRunVia(ctx, env, runcache.Reader{}, slug, id)
+}
+
+// readRunVia is readRun through rd, which may answer an object from the
+// local run cache. rd's index decides absence as well as content, so a
+// reader built from a listing reads nothing for a run whose objects the
+// listing did not see.
+func readRunVia(ctx context.Context, env *cloudEnv, rd runcache.Reader, slug, id string) (runObjects, error) {
 	s := runstore.Open(env.bucket.Bucket, slug, id)
 	r := runObjects{in: runview.Input{Slug: slug, RunID: id}, store: s}
 	in := &r.in
@@ -414,12 +616,12 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string) (runObjects, e
 		in.Problem = p
 		r.warning = fmt.Sprintf("warning: run %s/%s: %s\n", slug, id, p)
 	}
-	raw, err := s.ReadFile(ctx, "task.json")
+	raw, err := rd.Read(ctx, s, "task.json")
 	switch {
-	case err == nil:
-		in.Task, _ = task.Parse(raw) // unparseable: the row says task.json unreadable
-	case !errors.Is(err, runstore.ErrNotFound):
+	case err != nil:
 		return r, err
+	case raw != nil:
+		in.Task, _ = task.Parse(raw) // unparseable: the row says task.json unreadable
 	}
 	// A corrupt object is this run's error row, with a warning; a read that
 	// fails otherwise (the bucket, the network) still fails the listing.
@@ -427,8 +629,8 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string) (runObjects, e
 		name string
 		do   func() error
 	}{
-		{"launch.json", func() (err error) { in.Launch, err = absent(s.ReadLaunch(ctx)); return err }},
-		{"result.json", func() (err error) { in.Record, err = absent(s.ReadRecord(ctx)); return err }},
+		{"launch.json", func() (err error) { in.Launch, err = readLaunch(ctx, s, rd); return err }},
+		{"result.json", func() (err error) { in.Record, err = readRecord(ctx, s, rd); return err }},
 	} {
 		if err := read.do(); corruptObject(err) {
 			problem(read.name + " is unreadable: " + err.Error())
@@ -458,6 +660,36 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string) (runObjects, e
 		r.execution = in.Launch.Execution
 	}
 	return r, nil
+}
+
+// readLaunch reads a run's launch.json through rd: the bytes, decoded
+// exactly as runstore.ReadLaunch decodes them, so an object the bucket made
+// unreadable is the same error either way. A nil launch and no error means
+// the run was never launched.
+func readLaunch(ctx context.Context, s *runstore.Store, rd runcache.Reader) (*runstore.Launch, error) {
+	raw, err := rd.Read(ctx, s, "launch.json")
+	if err != nil || raw == nil {
+		return nil, err
+	}
+	var l runstore.Launch
+	if err := json.Unmarshal(raw, &l); err != nil {
+		return nil, fmt.Errorf("decoding launch.json: %w", err)
+	}
+	return &l, nil
+}
+
+// readRecord reads a run's result.json through rd, as runstore.ReadRecord
+// decodes it. A nil record and no error means the run has not finalized.
+func readRecord(ctx context.Context, s *runstore.Store, rd runcache.Reader) (*runstore.Record, error) {
+	raw, err := rd.Read(ctx, s, "result.json")
+	if err != nil || raw == nil {
+		return nil, err
+	}
+	var rec runstore.Record
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return nil, fmt.Errorf("decoding result.json: %w", err)
+	}
+	return &rec, nil
 }
 
 // followExecution joins r with its execution, from execs (the listing)
@@ -552,9 +784,17 @@ func allSettled(rows []runview.Row) bool {
 }
 
 // printRows prints rows as a table with a totals line, or as one JSON
-// document. The warnings come before the table, or go into the document.
+// document. The warnings come before the table, or go into the document. The
+// totals are the rows' own; a caller printing a page of a wider listing hands
+// that listing's totals to printRowsWithTotals instead.
 func printRows(w io.Writer, project string, rows []runview.Row, warnings []string, now time.Time, asJSON bool) error {
-	tot := runview.Sum(rows)
+	return printRowsWithTotals(w, project, rows, runview.Sum(rows), warnings, now, asJSON)
+}
+
+// printRowsWithTotals is printRows with the totals given rather than summed
+// from the rows: a listing that printed a page still totals the window it read
+// (D818), so the number beside a page is never the page's own.
+func printRowsWithTotals(w io.Writer, project string, rows []runview.Row, tot runview.Totals, warnings []string, now time.Time, asJSON bool) error {
 	if asJSON {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")

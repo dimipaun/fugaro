@@ -51,12 +51,14 @@ import {
   resolveBinary,
   resolveInstalledBinary,
   runToCompletion,
+  sameArgv,
   startSidecar,
 } from '../main/spawn'
 import type {
   ChildSpawner,
   JSONObject,
   Notice,
+  SettingsEditPhase,
   Sidecar,
   SpawnPlan,
   SpawnTarget,
@@ -65,13 +67,14 @@ import { createSpawnLog } from '../main/spawnlog'
 import type { SpawnLogWriter } from '../main/spawnlog'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
 import { MAX_TEXT_INPUT_LENGTH } from '../shared/sanitize'
-import { SourceRefusal, refusalFrom, NO_PLAN_CHECKOUT } from './source'
+import { SourceRefusal, refusalFrom, NO_PLAN_CHECKOUT, SETTINGS_EDIT_MOVED } from './source'
 import type {
   FeedEnd,
   FugaroSource,
   InstallationRef,
   JSONDoc,
   LiveFeed,
+  SettingsEditSpawn,
   Snapshot,
   TextSnapshot,
   Unsubscribe,
@@ -354,12 +357,17 @@ export class CliSource implements FugaroSource {
     })
   }
 
-  #plan(operation: OperationName, args: ValidatedArguments): SpawnPlan {
+  #plan(
+    operation: OperationName,
+    args: ValidatedArguments,
+    settingsEdit?: { readonly phase: SettingsEditPhase; readonly layer: string },
+  ): SpawnPlan {
     return planFor(operation, args, {
       target: this.#options.target,
       binaryPath: this.#binaryPath,
       directory: this.#directory,
       appEnv: this.#env,
+      ...(settingsEdit === undefined ? {} : { settingsEdit }),
     })
   }
 
@@ -476,6 +484,16 @@ export class CliSource implements FugaroSource {
     return this.#readDocument('runs.stats', args)
   }
 
+  /** summaryRuns reads `runs summary --json`: the one read whose child touches
+   * neither a run object nor the runs bucket, since the command counts the
+   * budget database's day nodes and the spend history's daily documents. Its
+   * window is the console's own closed set, so the only argv this method can
+   * build is `runs summary --json` with at most one `--since=<window>` word
+   * (`src/main/spawn.ts`). */
+  summaryRuns(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('runs.summary', args)
+  }
+
   /** planStatus reads `plan status --json`, which is the one read whose answer
    * depends on **where** the child runs: the CLI walks `docs/` from its working
    * directory (`internal/cli/plan_status.go`), and that directory is this
@@ -496,6 +514,32 @@ export class CliSource implements FugaroSource {
    * spawn row, so no caller can turn either off. */
   coordinatorStatus(args: ValidatedArguments): Promise<Snapshot> {
     return this.#readDocument('coordinator.status', args)
+  }
+
+  /** coordinatorShow reads `coordinator show --json --repo <owner/name> --pr
+   * <n>`: one pull request as the host has it, the description included (C3,
+   * D816). It is the second read here whose child mints a credential of the
+   * host's: `run.launch` is the first, and its child is a run whose token can
+   * write. This one's is the coordinator's own read-only installation token,
+   * which the CLI resolves from the repository's provider, exactly as it does
+   * for the stored view above -- and no credential of the host's passes through
+   * this process:
+   * the argv carries the repository and the number, and the reply carries the
+   * host's own document. */
+  coordinatorShow(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('coordinator.show', args)
+  }
+
+  /** coordinatorIntents reads `coordinator intents --all --json`: what the
+   * fleet's writers have declared, newest first (C4, D827). It takes no
+   * argument at all -- the whole argv is the spawn row's, `--all --json` -- and
+   * like the stored view above its child asks nothing of the host: the
+   * declarations are the caller's own database node, read through the same
+   * store and the same ADC, so this read succeeds with
+   * `FUGARO_CREDENTIALS_SERVICE_URL` set where `coordinatorShow`'s host read
+   * refuses. */
+  coordinatorIntents(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('coordinator.intents', args)
   }
 
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot> {
@@ -537,6 +581,88 @@ export class CliSource implements FugaroSource {
 
   listAccounts(args: ValidatedArguments): Promise<Snapshot> {
     return this.#readDocument('accounts.inventory', args)
+  }
+
+  /** listModels reads `models ls --json`: the project's routes, the models a run
+   * can name and each repository's pins (console 0.119.0, the owner's ruling of
+   * 2026-11-02; contract §6.18). The argv is the spawn row's own words -- the
+   * command, `--json` and the installation's `--project` -- because the
+   * operation takes no argument at all, and the read is offline: the CLI's own
+   * comment says it reaches no bucket, no database and no host, so this child
+   * mints nothing of the host's. */
+  listModels(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('models.list', args)
+  }
+
+  /** readSettings reads `settings --json`: the project's settings, each with
+   * the value a run gets, the layer that decided it, its default, its state and
+   * the three writability facts the row set draws its pencils from (the
+   * settings-edit plan's C1, D1102; contract §6.19). The argv is the spawn
+   * row's own two words and the installation's `--project`, because the
+   * operation takes no argument at all -- and `--offline` is deliberately not
+   * among them: the layers the read could not reach come back as
+   * `state: unread: …`, which is the answer the section draws. It writes
+   * nothing and mints nothing of the host's. */
+  readSettings(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('settings.read', args)
+  }
+
+  /** settingsEditArgv is `settings.edit`'s plan for one phase, and it is the
+   * plan `settingsEdit` below spawns: both go through `#plan`, so the argv the
+   * confirmation window shows and the argv the child is started with cannot be
+   * two spellings of one edit (`argvFor` is the only producer of either, and
+   * `#plan` is the only caller that adds this binary, this directory and this
+   * environment to it). */
+  settingsEditArgv(args: ValidatedArguments, phase: SettingsEditPhase, layer: string): Promise<readonly string[]> {
+    return Promise.resolve(this.#plan('settings.edit', args, { phase, layer }).argv)
+  }
+
+  /**
+   * settingsEdit runs one phase of the settings write (the settings-edit plan's
+   * C3): the dry run, which classifies the edit and writes nothing (D1106), or
+   * the write itself, which carries `--yes` (D1107).
+   *
+   * **A non-zero exit is a returned refusal and not a thrown one**, unlike every
+   * read beside it: a dry run the CLI refuses is a sentence the settings window
+   * shows with a re-read control rather than a failed read of a screen
+   * (D1112), and a write the CLI refuses -- the compare-and-swap, a coding
+   * agent's session, a managed layer -- is the same sentence in the same place.
+   * What is thrown stays thrown: a spawn that could not start at all
+   * (`runToCompletion` rejects) reaches the caller as the console's own
+   * failure, because there is no CLI sentence to show.
+   *
+   * **The document is parsed the way a read's is** (`parseStdout`), so a dry
+   * run's JSON is read whole and a write's sentence is its `text`. Nothing is
+   * decoded here: `settingsview.ts` reads the dry run's members strictly and
+   * the caller reads the write's sentence.
+   *
+   * **`shown` is checked before anything is spawned.** The plan is built first
+   * and its argv compared with the one the confirmation window drew; a
+   * difference is `SETTINGS_EDIT_MOVED` and no child at all. Comparing the
+   * plans rather than the phase and the layer is deliberate: the binding's own
+   * words (`--project`, `--config`, the working directory) are part of what the
+   * operator read, so a project re-chosen between the window and the write is a
+   * refusal here even though the phase and the layer are unchanged.
+   */
+  async settingsEdit(
+    args: ValidatedArguments,
+    phase: SettingsEditPhase,
+    layer: string,
+    shown: readonly string[],
+  ): Promise<SettingsEditSpawn> {
+    const plan = this.#plan('settings.edit', args, { phase, layer })
+    if (!sameArgv(plan.argv, shown)) {
+      return { refusal: SETTINGS_EDIT_MOVED, document: null, text: '' }
+    }
+    const result = await runToCompletion(plan, {
+      log: this.#log,
+      ...(this.#options.spawner === undefined ? {} : { spawner: this.#options.spawner }),
+    })
+    if (result.code !== 0) {
+      return { refusal: cliSentence(result.stderr) ?? `${plan.operation} failed`, document: null, text: '' }
+    }
+    const read = parseStdout(result.stdout, this.#stamp())
+    return { refusal: null, document: read.document, text: result.stdout.trim() }
   }
 
   environmentReport(args: ValidatedArguments): Promise<Snapshot> {
@@ -967,6 +1093,7 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     runReport: (args) => read('spend.report', (source) => source.runReport(args)),
     listRuns: (args) => read('runs.list', (source) => source.listRuns(args)),
     statsRuns: (args) => read('runs.stats', (source) => source.statsRuns(args)),
+    summaryRuns: (args) => read('runs.summary', (source) => source.summaryRuns(args)),
     /**
      * planStatus is the surface's one read with a precondition and a cadence.
      *
@@ -1013,11 +1140,53 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * directory to refuse for and nothing to be gained by holding a floor
      * between two calls. */
     coordinatorStatus: (args) => read('coordinator.status', (source) => source.coordinatorStatus(args)),
+    /** coordinatorShow has no precondition and no cadence of its own: the
+     * repository and the number in the argv are the whole question, the CLI
+     * resolves the repository's provider and mints the coordinator's own
+     * read-only installation token for it, and there is nothing on this machine
+     * for this process to refuse a read for. Two calls with the same arguments
+     * are two host reads, which is what the caller asked for. */
+    coordinatorShow: (args) => read('coordinator.show', (source) => source.coordinatorShow(args)),
+    /** coordinatorIntents has no precondition and no cadence, for
+     * coordinatorStatus's reason: the read is the caller's own database node,
+     * so there is no directory on this machine to refuse for, and the store
+     * replaces the records in place as declarations arrive, so holding a floor
+     * between two calls would hide the newest one for no gain. */
+    coordinatorIntents: (args) => read('coordinator.intents', (source) => source.coordinatorIntents(args)),
     diagnoseRun: (args) => read('run.diagnose', (source) => source.diagnoseRun(args)),
     readRunLogs: (args) => read('run.logs', (source) => source.readRunLogs(args)),
     runLogLink: (args) => read('run.logLink', (source) => source.runLogLink(args)),
     listSecrets: (args) => read('secrets.inventory', (source) => source.listSecrets(args)),
     listAccounts: (args) => read('accounts.inventory', (source) => source.listAccounts(args)),
+    /** listModels has no precondition and no cadence, for coordinatorIntents's
+     * reason: the read is the installation's own project config and the price
+     * catalog it already has, with no bucket, no database and no host behind it,
+     * so there is no directory on this machine to refuse for and nothing to be
+     * gained by holding a floor between two calls. */
+    listModels: (args) => read('models.list', (source) => source.listModels(args)),
+    /** readSettings has no precondition and no cadence either: the read is the
+     * registry, the project layer's cache, the local config and the checkouts
+     * this machine remembers, with no bucket, no database and no host behind
+     * it. It is the read an edit is decided against (`writable`, `owner`,
+     * `target_layer`), and a screen that had to wait a minute between the write
+     * and the re-read would draw a table it knows is out of date. */
+    readSettings: (args) => read('settings.read', (source) => source.readSettings(args)),
+    /**
+     * settingsEditArgv and settingsEdit are the settings write's two halves (the
+     * settings-edit plan's C3), and neither is a read: the first answers the
+     * exact argv one phase spawns, which the confirmation window shows, and the
+     * second spawns that phase.
+     *
+     * They go through `read`'s resolution for the reason every other method
+     * does -- a console with no installation must refuse rather than plan over
+     * nothing -- and **not** through any cadence or precondition: each call is
+     * one edit the operator asked for, and a dry run cached from a minute ago
+     * would be a classification the file may have moved under.
+     */
+    settingsEditArgv: (args, phase, layer) =>
+      read('settings.edit', async (source) => source.settingsEditArgv(args, phase, layer)),
+    settingsEdit: (args, phase, layer, shown) =>
+      read('settings.edit', (source) => source.settingsEdit(args, phase, layer, shown)),
     environmentReport: (args) => read('environment.report', (source) => source.environmentReport(args)),
     forget: drop,
     close: drop,

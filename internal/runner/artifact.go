@@ -1465,7 +1465,7 @@ func fmtBytes(n int64) string {
 // is already cancelled by the time it is reached — so a write on the live ctx
 // would refuse exactly the report that explains the cancel.
 func (r *run) storeArtifactEnded(ctx context.Context) {
-	report := agent.Redact(followUpReport(r.rec, r.d.Store.Prefix(), r.tail, nil, nil, ""), r.secretList())
+	report := agent.Redact(followUpReport(r.rec, r.d.Store.Prefix(), r.tail, nil, nil), r.secretList())
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
 	defer cancel()
 	r.storeReport(wctx, report, nil)

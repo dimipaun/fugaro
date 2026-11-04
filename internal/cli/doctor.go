@@ -454,6 +454,12 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		o.Checks = append(o.Checks, fromPreflight(c))
 	}
 	o.Checks = append(o.Checks, doctorRunsBucketIAM(ctx, lc, crmSvc)...)
+	// The last managed agent apply (M7, D1014), beside the runs-bucket sweep
+	// for the same reason: both read the installation's own bucket, and this
+	// one reads it through the audit family's parser alone.
+	if c := doctorManagedAudit(ctx, lc, crmSvc); c != nil {
+		o.Checks = append(o.Checks, *c)
+	}
 	o.Checks = append(o.Checks, doctorLauncherReach(ctx, lc)...)
 	// The secrets-brokering checks that read the installation rather than this
 	// checkout (plan B1.9): the credentials service and its callers' invoker
@@ -665,6 +671,12 @@ func doctorProviderZDR(lc *localcfg.Config) *doctorCheck {
 // so every pin that already exists was verified when it was written, and
 // only the next one needs the binary.
 //
+// The credentials service's image is resolved the same way and through the
+// same binary, and since 0.15.0 an ordinary `fugaro update` re-pins it
+// (init_stages.go's pinCredentialsImage): an installation that opted in needs
+// cosign on PATH for an upgrade that names no flag, which is why the message
+// names that path as well.
+//
 // Informational, like doctorOpenProvidersCheck and the tool-availability
 // branches of doctorCLIVersion: an absent binary is not a wrong state and
 // not this repository's business to fail CI over (--strict is the GitHub
@@ -677,10 +689,10 @@ func doctorCosign(lc *localcfg.Config) doctorCheck {
 	if basepin.CosignPath() != "" {
 		return doctorCheck{ID: id, OK: true}
 	}
-	problem := "cosign is not on PATH (looked for " + basepin.CosignBin + "): a base image is pinned at the digest its cosign signature was verified for, so fugaro update --base and fugaro image refresh refuse without it"
+	problem := "cosign is not on PATH (looked for " + basepin.CosignBin + "): a base image and the credentials service's image are pinned at the digest their cosign signature was verified for, so fugaro update --base, fugaro image refresh, and an ordinary fugaro update of an installation that opted in with --provision-credentials all refuse without it"
 	fix := "install cosign (https://docs.sigstore.dev/cosign/installation/), or name a base image explicitly with --base-image KIND=IMAGE"
 	if lc.BaseImage(config.BaseKind) == "" {
-		problem = "no Fugaro base is recorded, and cosign is not on PATH (looked for " + basepin.CosignBin + "): recording one with fugaro image refresh needs it"
+		problem = "no Fugaro base is recorded, and cosign is not on PATH (looked for " + basepin.CosignBin + "): recording one with fugaro image refresh needs it, and so does an ordinary fugaro update of an installation that opted in with --provision-credentials"
 	}
 	return doctorCheck{ID: id, OK: false, Severity: "info", Problem: problem, Fix: fix}
 }
@@ -2081,7 +2093,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 		// the operator printed, and the two cannot drift.
 		checks = append(checks, doctorCheck{ID: "policy-unknown-keys", Severity: "warning",
 			Problem: "no run is bounded by the policy node: " + err.Error(),
-			Fix:     "remove the unknown key from the node by hand (fugaro project policy show prints it), or upgrade Fugaro (fugaro upgrade) if a newer release writes it; 'fugaro project policy publish' refuses this node too, so publishing is not the fix"})
+			Fix:     "remove the unknown key from the node by hand (fugaro project policy show prints it), or upgrade Fugaro (brew upgrade dimipaun/tap/fugaro, then fugaro update) if a newer release writes it; 'fugaro project policy publish' refuses this node too, so publishing is not the fix"})
 	}
 	if len(p.AllowRepos) == 0 {
 		// Empty inside a *published* policy is deny-all (design §5), which is a
@@ -2961,7 +2973,7 @@ func doctorCredsUnknownState(marks map[string]creds.Mark) []doctorCheck {
 	}
 	return []doctorCheck{{ID: "creds-unknown-state", Severity: "warning",
 		Problem: fmt.Sprintf("%d credential mark(s) carry a state this Fugaro does not read, so the cascade routes no work to them and nothing this release offers clears them: %s. A newer release wrote them, or they were written by hand; this one refuses to read such a state as 'no hold', which is why they are held rather than available", len(held), strings.Join(held, ", ")),
-		Fix:     "upgrade Fugaro to the release that wrote the state ('fugaro upgrade'), which is what knows how to clear it; 'fugaro accounts ls' prints each mark's state word as it is stored"}}
+		Fix:     "upgrade Fugaro to the release that wrote the state (brew upgrade dimipaun/tap/fugaro), which is what knows how to clear it; 'fugaro accounts ls' prints each mark's state word as it is stored"}}
 }
 
 // doctorCredsRules reads the credentials family's marker beside the policy
@@ -3011,7 +3023,7 @@ func doctorCredsRules(ctx context.Context, db *rtdb.Client, p *projectpolicy.Pol
 	if gen > rules.CredsRulesVersion {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("%s records generation %d, above the generation %d this Fugaro's credentials rules carry: a newer Fugaro deployed them, so the deployed document is not the one this binary generates and a cascade run's writes are the newer release's to define", marker, gen, rules.CredsRulesVersion),
-			Fix:     "upgrade Fugaro ('fugaro upgrade') and re-run init with the newer binary; this release refuses to deploy its own rules over a newer marker"}}
+			Fix:     "upgrade Fugaro (brew upgrade dimipaun/tap/fugaro) and re-run init with the newer binary; this release refuses to deploy its own rules over a newer marker"}}
 	}
 	if gen < rules.CredsRulesVersion {
 		return []doctorCheck{{ID: id, Severity: "warning",

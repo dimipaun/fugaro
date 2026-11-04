@@ -19,6 +19,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
@@ -299,6 +300,20 @@ type WorkflowSpec struct {
 	// clones the repository's own source at launch (design
 	// forge-authorship-images/shared-images.md §6, route A).
 	Checkout string `json:"-"`
+	// Warnings are what the image selection has to say about this
+	// workflow's job without refusing it (D1146): a pinned catalog entry
+	// that does not cover the tags the job needs is used anyway, and this
+	// is the sentence a caller prints to say so. They are json:"-" because
+	// nothing outside the process that built this spec reads them.
+	Warnings []string `json:"-"`
+	// CatalogEntry is the project image catalog's entry the job's image
+	// comes from, "" when the workflow runs no catalog entry. CatalogPrebuilt
+	// is whether that entry's source is a prebuilt reference
+	// (config.SourceImage): Image is then the entry's own reference, which no
+	// Fugaro build writes and no shape can recognise (isCatalogImage), so
+	// readiness asks this rather than the image.
+	CatalogEntry    string `json:"-"`
+	CatalogPrebuilt bool   `json:"-"`
 }
 
 // Registry is the repository's own image registry.
@@ -677,7 +692,7 @@ func registryHost(lc *localcfg.Config, output string) (string, error) {
 // package's: the deployer and the runner (a project job's clone URL, plan task
 // 3.3 step 3) must give the same answer, so a URL one of them refuses cannot
 // be one the other accepts. A per-repository job's FUGARO_REMOTE is written
-// from here (cloneShapedJobEnv) and a project job's URL is computed there.
+// from here (jobCheckoutEnv) and a project job's URL is computed there.
 func repoURL(provider, repo, given string) (string, error) {
 	u, err := repourl.CloneURL(provider, repo, given)
 	if err != nil {
@@ -740,6 +755,74 @@ func (c *repoCtx) platformEnv() map[string]string {
 }
 
 func (c *repoCtx) registryPath() string { return c.registryHost + "/" + gcp.RegistryRepoID(c.slug) }
+
+// catalogImage is where a catalog entry's image is (D1152): the
+// installation's one shared registry, one image per entry, named
+// catalog-<entry> with the moving :latest tag the job spec names. An entry
+// whose source is an image the project builds elsewhere is not built by the
+// catalog at all and is used exactly as it is written.
+//
+// It is built here rather than read from the build half of this package
+// (PIC4), which does not exist yet; when it lands, this is the reader the two
+// halves must agree through, so the name is written once.
+func (c *repoCtx) catalogImage(e config.Entry) string {
+	if e.Source.Kind == config.SourceImage {
+		return e.Source.Image
+	}
+	return c.registryHost + "/" + c.inst.SharedRegistry + "/" + catalogImagePrefix + e.Name + ":latest"
+}
+
+// effectiveCatalog is the catalog the repository's specs are computed from:
+// the local configuration's when it states one, the published project node's
+// otherwise (localcfg's keep rule, D1140), and nil when the project has
+// neither.
+func (c *repoCtx) effectiveCatalog() *config.Catalog {
+	var published *config.Catalog
+	if c.in.Policy != nil {
+		published = c.in.Policy.ImageCatalog
+	}
+	return c.lc.ImageCatalogEffective(published)
+}
+
+// catalogJobImage is the image a checkout: baked workflow's job runs, chosen
+// through the tag-cover rule (reconciliation §3.1, D1146, D1155), with the
+// D1146 warning a pin may carry. It is called where the job spec is built —
+// deploy time — because the job's image is fixed once the job exists (F7): a
+// job that started on an image that cannot do its work would die mid-run
+// instead of being refused, and the two refusals of §3.3 are conditions of
+// the project's configuration rather than of one run.
+//
+// The repository's own image: or dockerfile: block is the override and never
+// reaches the catalog (D1155 item 1): its job runs the per-repository image
+// this spec builds, exactly as it did before the catalog existed, which is
+// what catalog.Applies decides for it — and what the same predicate decides
+// for the launcher, so the two cannot disagree about which jobs are the
+// catalog's.
+//
+// The backend is the installation's own, read from the config and not written
+// as a constant: the docker rule is a rule about the backend the job will run
+// on (D1149), and today's only backend is Cloud Run — a config that names
+// cloud-batch is refused where it is read until the task that makes a Batch
+// run safe, which is also the point this line starts meaning something else.
+func (c *repoCtx) catalogJobImage(name string, w config.Workflow) (config.Entry, []string, bool, error) {
+	cat := c.effectiveCatalog()
+	if cat == nil || !catalog.Applies(*cat, w) {
+		return config.Entry{}, nil, false, nil
+	}
+	choice, err := catalog.Choose(catalog.Job{
+		Catalog: *cat,
+		Repos:   []catalog.Repo{{Slug: c.slug, Pin: w.ImageName, Needs: w.Needs}},
+		Backend: catalog.Backend(c.lc.Backend()),
+	})
+	if err != nil {
+		return config.Entry{}, nil, false, userErr("workflow %s: %w", name, err)
+	}
+	var warnings []string
+	if choice.Warn != "" {
+		warnings = append(warnings, choice.Warn)
+	}
+	return choice.Entry, warnings, true, nil
+}
 
 // Workflow is the spec of one workflow of the repository, its default
 // Claude account (config.DefaultClaudeAccount). Repo builds one WorkflowSpec
@@ -934,8 +1017,16 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// readiness.go's non-clone branch asks the operator to build — is what
 	// it runs; C8b1 owns replacing both.
 	image := gcp.ImageName(c.registryPath(), slug, name) + ":latest"
+	var warnings []string
+	var entry config.Entry
 	if w.Checkout == config.CheckoutClone {
 		image = lc.BaseImage(config.BaseKind)
+	} else if e, warns, chosen, err := c.catalogJobImage(name, w); err != nil {
+		// §3.3's refusals are raised here, before the job is deployed: a
+		// job whose image cannot do its work would die mid-run instead.
+		return WorkflowSpec{}, err
+	} else if chosen {
+		image, warnings, entry = c.catalogImage(e), warns, e
 	}
 	ws := WorkflowSpec{
 		Job:            gcp.JobName(slug, variant),
@@ -964,6 +1055,9 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 		Labels:              map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: c.label, gcp.LabelWorkflow: variant},
 		SecretIDs:           map[string]string{},
 		GitSecret:           c.gitSecret,
+		Warnings:            warnings,
+		CatalogEntry:        entry.Name,
+		CatalogPrebuilt:     entry.Name != "" && entry.Source.Kind == config.SourceImage,
 	}
 	if lc.Registry != "" {
 		ws.LegacyImage = gcp.ImageName(lc.Registry, slug, name)
@@ -1467,10 +1561,14 @@ func (rs RepoSpec) Addresses() []string {
 	}
 	// The installation's shared image registry (design
 	// docs/forge-authorship-images/shared-images.md §2.6, §11): this
-	// repository's build account writes it, and each of its job accounts
-	// reads it. Both grants are declared without a gate, so they are
-	// addresses of every repository root.
+	// repository's build account writes it and holds the installation's tag
+	// mover on it — moving a tag needs artifactregistry.tags.delete, which
+	// the writer role lacks, and a catalog build (D1152) moves both latest
+	// and its content tag there — and each of its job accounts reads it.
+	// Every grant is declared without a gate, so all three are addresses of
+	// every repository root.
 	add(root + "google_artifact_registry_repository_iam_member.build_shared")
+	add(root + "google_artifact_registry_repository_iam_member.build_shared_tag_mover")
 	for _, key := range slices.Sorted(maps.Keys(rs.Workflows)) {
 		add(root + "google_artifact_registry_repository_iam_member.job_shared[" + q(key) + "]")
 	}
@@ -1493,6 +1591,10 @@ func (rs RepoSpec) Addresses() []string {
 		add(root + "google_service_account_iam_member.operator_build[" + q(member) + "]")
 	}
 	add(root + "google_storage_bucket_iam_member.build")
+	// The build account's read of the copied catalog definitions (PIC4,
+	// gcp.CatalogReadCondition): declared without a gate, so an address of
+	// every repository root, like the build account's own grant above.
+	add(root + "google_storage_bucket_iam_member.catalog_read")
 	// modules/repo/check.tf
 	if rs.Check != nil && rs.Check.DeployJob {
 		add(root + "google_cloud_run_v2_job.check[0]")

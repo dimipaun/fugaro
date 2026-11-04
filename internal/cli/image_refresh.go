@@ -51,6 +51,14 @@ type refreshOptions struct {
 	// step 1, so a caller must take the final state from the error runImageRefresh
 	// returns, never from the hook alone.
 	onPlan func(*refreshPlan)
+	// managed is the gate this run is under: the value openRefreshManaged
+	// returned, set by runImageRefresh and nil for every run that is not a
+	// coding agent's session in a managed project. It travels with the options
+	// rather than as another parameter because it is not a flag and because it
+	// is the same value at every step of the run: the plan carries it to step 4
+	// (refreshPlan.managed), and preflight uses the installation the gate
+	// already read instead of selecting one a second time.
+	managed *refreshManaged
 	// in is the reader the calling run already reads stdin through, when a run
 	// drives this refresh rather than the fugaro image refresh command: the
 	// checkout stage of the converge (init_checkout_upgrade.go). A second
@@ -132,6 +140,11 @@ type refreshPlan struct {
 	builds []string
 	ver    string // the release version this run targets
 	yes    bool   // --yes: builds are confirmed without a prompt
+	// managed is the gate this run is under, and nil for every run that is
+	// not a coding agent's session in a managed project (openRefreshManaged):
+	// each build is admitted through it, one at a time, and a nil one leaves
+	// every build with the confirmation it has today.
+	managed *refreshManaged
 }
 
 // snapshot is the copy onPlan sees: every slice and map is cloned, and the
@@ -210,8 +223,17 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 			return nil, userErr("--repo %s is not %s's origin (%s): run it in a checkout of %s", pluginwire.Printable(o.repo), o.checkoutName(root), pluginwire.Printable(repo), pluginwire.Printable(o.repo))
 		}
 	}
-	lc, lcPath, old, err := loadRepoConfig(ctx, iopts, root)
-	if err != nil {
+	// The gate's own read already selected this installation, and it is the
+	// same selection this command acts on: it is used rather than made twice so
+	// that the header, the --region override and the config file read are one
+	// read, and so that no second selection can answer with another project
+	// than the one the plan was judged against.
+	var lc *localcfg.Config
+	var lcPath string
+	var old []byte
+	if m := o.managed; m != nil {
+		lc, lcPath, old = m.lc, m.lcPath, m.lcOld
+	} else if lc, lcPath, old, err = loadRepoConfig(ctx, iopts, root); err != nil {
 		return nil, err
 	}
 	for _, c := range preflight.Environment(os.Getenv, lc.GCPProject) {
@@ -261,7 +283,7 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 		return nil, userErr("%v", err)
 	}
 	p := &refreshPlan{root: root, repo: repo, slug: slug, lc: lc, lcPath: lcPath, lcOld: old, cfg: cfg,
-		workflows: wfs, kinds: kinds, want: map[string]string{}, atPin: map[string]bool{}, why: map[string]string{}, ver: ver, yes: o.yes}
+		workflows: wfs, kinds: kinds, want: map[string]string{}, atPin: map[string]bool{}, why: map[string]string{}, ver: ver, yes: o.yes, managed: o.managed}
 	for _, k := range kinds {
 		var ref string
 		if ref, p.atPin[k], err = refreshBase(lc, k, ver); err != nil {
@@ -380,14 +402,23 @@ func newImageRefreshCmd() *cobra.Command {
 }
 
 // refuseRefreshHere is decision D2, as reversed in part by the owner's
-// 2026-10-08 decision: it still runs before anything else (the local
-// config, git, credentials, the network). A coding agent's session applies
-// nothing, --yes included: that check is never bypassed. Without yes,
-// anything but a real terminal still cannot type the confirmations every
-// step needs, exactly as before; with yes, no terminal is required (it may
-// run from CI or a script). There is still no --json or --plan-only.
-func refuseRefreshHere(cmd *cobra.Command, yes bool) error {
+// 2026-10-08 decision and in part by the managed gate (M4, D1011): it still
+// runs before anything else (git, the credentials, the network — the gate's
+// own read is the one exception, and it is made only in the session refused
+// here). A coding agent's session applies nothing, --yes included, UNLESS the
+// project is managed and the gate admitted every step it reaches: g is that
+// gate, and it is nil for every other session, so the sentence below is
+// exactly the one this command has always printed — a project that is not
+// managed, a mark that could not be read and a session with no installation to
+// read about all arrive here as nil. Without yes, anything but a real terminal
+// still cannot type the confirmations every step needs, exactly as before;
+// with yes, no terminal is required (it may run from CI or a script). There is
+// still no --json or --plan-only.
+func refuseRefreshHere(cmd *cobra.Command, yes bool, g *refreshManaged) error {
 	if m := agentMarker(os.Getenv); m != "" {
+		if g != nil {
+			return nil
+		}
 		return userErr("fugaro image refresh applies cloud changes: %s", initflow.AgentRefusal(m))
 	}
 	if yes {
@@ -456,15 +487,21 @@ func refreshAnchorNote(ctx context.Context, w io.Writer, root, here string, lc *
 
 func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	ctx := cmd.Context()
-	if err := refuseRefreshHere(cmd, o.yes); err != nil {
-		return err
-	}
+	// A leak first, before anything opens the cloud: GODEBUG is read before
+	// main runs and cannot be unset in time, and the gate's own read below is a
+	// cloud call carrying the operator's credentials, so a session that would
+	// make Go print those requests is refused before any of them is made. It is
+	// the order `fugaro managed` and `fugaro credentials serve` already use.
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
 	}
 	// yes carries --yes to r.confirm/r.ask (steps 2 and 3) and to
 	// refreshBuilds (step 4, which keeps its own rule: see askBuild).
 	iopts := &initOptions{cloud: o.cloud, imageSource: o.imageSource, expectDigests: o.expectDigests, yes: o.yes}
+	o.managed = openRefreshManaged(ctx, o, iopts)
+	if err := refuseRefreshHere(cmd, o.yes, o.managed); err != nil {
+		return err
+	}
 	r := newInitRun(cmd, iopts)
 	if o.in != nil {
 		// The caller's reader, not a second one over the same stdin: see

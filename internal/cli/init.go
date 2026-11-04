@@ -109,7 +109,7 @@ type initOptions struct {
 	// spelling of the command): the monthly budget amount is required, with
 	// no default (D64), and it is written into the project's creation fact
 	// so a later run and a restore can read what was chosen
-	// (internal/infra/managed, MarkerVersionBudget). It goes with
+	// (internal/infra/managed, MarkerVersionBuilds). It goes with
 	// --create-project and nothing else — a project that already exists is
 	// made managed by the owner's own command instead, `fugaro managed flag`
 	// (D58; Task 6.1), never by init — and it removes no confirmation: a
@@ -396,7 +396,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// readers to switch commands for nothing
 	// (TestNoDoorsFlagHelpNamesTheOtherDoor).
 	covers := "a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it)"
-	never := "creating a project, linking a billing account, the Firestore database's location, or a secret value"
+	never := "creating a project, linking a billing account, the Firestore database's location, a secret value, or a policy publish that would loosen the published node"
 	if d.takes("forget") {
 		// update is also the door that runs the checkout's own steps, whose
 		// cloud half is the image refresh: every one of its billable builds —
@@ -409,7 +409,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 		// this door's never list; the two that cannot arise here at all are
 		// still true of --yes wherever they can (they are the other door's
 		// flags, refused by name here).
-		never = "creating a project, linking a billing account, or a secret value"
+		never = "creating a project, linking a billing account, a secret value, or a policy publish that would loosen the published node"
 	}
 	// The agent clause is about what leaves this machine, and about how far
 	// such a session actually gets: the writes on this machine's own files are
@@ -931,9 +931,12 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// --managed is the one flag that says this creation is managed, and its
 	// own check refuses a run that passed it without the trio
 	// (init_project.go), so a non-nil budget here is one this run was given
-	// and the installation's Terraform budget carries the same figures. A
-	// creation that is not managed passes nil and writes the object it
-	// always wrote, byte for byte (Task 4.2: the change reaches nobody else).
+	// and the installation's Terraform budget carries the same figures. The
+	// bound on billable image builds is not passed and not asked for: it is the
+	// marker's own default, recorded by the same write (managed.WriteMarker,
+	// D1013), so a creation that is not managed passes nil and writes the
+	// object it always wrote, byte for byte (Task 4.2: the change reaches
+	// nobody else).
 	var budget *managed.Budget
 	if r.o.managed {
 		budget = &managed.Budget{Amount: r.o.budget, Currency: r.o.budgetCurrency}
@@ -1549,6 +1552,25 @@ func initErr(err error) error {
 func (r *initRun) warn(msg string) {
 	r.res.Warnings = append(r.res.Warnings, msg)
 	fmt.Fprintln(r.w, "warning: "+msg)
+}
+
+// printWorkflowWarnings prints what the workflows' deploy-time specs carry
+// for a person: D1146's pin warning, which only the job's own spec can
+// compute — a repository pinning a catalog entry its needs have outgrown is
+// told in the run that moves the job, which is this one. The spec's text is
+// printed as it is, and once: every account a workflow may choose among gets
+// its own WorkflowSpec, and the same warning in each.
+func printWorkflowWarnings(r *initRun, spec infra.RepoSpec) {
+	printed := map[string]bool{}
+	for _, key := range slices.Sorted(maps.Keys(spec.Workflows)) {
+		for _, w := range spec.Workflows[key].Warnings {
+			if printed[w] {
+				continue
+			}
+			printed[w] = true
+			r.warn(w)
+		}
+	}
 }
 
 // canConfirmTyped is initflow.CanConfirm, the one rule of who may give a
@@ -3263,6 +3285,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}
+	printWorkflowWarnings(r, spec)
 	if err := t.Init(ctx, backend); err != nil {
 		return remote(err)
 	}

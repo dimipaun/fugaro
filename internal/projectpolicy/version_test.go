@@ -67,6 +67,15 @@ func TestTheCLISkewRemediesStayApart(t *testing.T) {
 	if !strings.Contains(CLISkew, "upgrade Fugaro") {
 		t.Errorf("CLISkew = %q, want the upgrade remedy for the older binary", CLISkew)
 	}
+	// The reader here is on the older side, and `fugaro upgrade` never
+	// replaces the binary it runs: the remedy names the package manager's
+	// command, and the update that follows it.
+	if !strings.Contains(CLISkew, "brew upgrade dimipaun/tap/fugaro") || !strings.Contains(CLISkew, "fugaro update") {
+		t.Errorf("CLISkew = %q, want the binary upgrade and the update behind it", CLISkew)
+	}
+	if strings.Contains(CLISkew, "(fugaro upgrade)") {
+		t.Errorf("CLISkew = %q: fugaro upgrade never upgrades fugaro itself", CLISkew)
+	}
 	if !strings.Contains(CLISkewNewer, "fugaro project policy publish --delete") || !strings.Contains(CLISkewNewer, "publish it again") {
 		t.Errorf("CLISkewNewer = %q, want the delete-then-publish remedy for the older node", CLISkewNewer)
 	}

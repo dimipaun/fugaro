@@ -26,7 +26,7 @@
 //      forced-colors pass and not a stylesheet pretending.
 //   4. **the keyboard walks the graph.** A roving `tabindex` is a claim about
 //      the *tab order*, which a fake DOM cannot have: Tab has to reach the
-//      tablist and a task (a group whose every door is out of the tab order is a
+//      stream filter and a task (a group whose every door is out of the tab order is a
 //      picture no keyboard can enter), the arrows have to move the tab, and a
 //      redraw has to put the focus back in the tree it drew rather than on
 //      `<body>`.
@@ -99,6 +99,7 @@ import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
+import { GRAPH_BUSY } from '../../src/renderer/entry'
 import { GRAPH_THEMES } from '../../src/renderer/screens/graph'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
@@ -159,9 +160,12 @@ const SKIP_GOLDENS = process.env['FUGARO_CONSOLE_GOLDENS'] === 'skip'
 const SPEC = 'graph.spec.ts'
 
 /** The compiled modules the screen is made of, in dependency order: the screen,
- * the three modules of the picture (the model, the cache and the worker client)
- * and the three shared modules those reach. `shared/schema.js` is here because
- * the fixture is decoded in the window rather than in this file: the screen is
+ * the three modules of the picture (the model, the cache and the worker client),
+ * the section helper the screen's refresh and its stream tabs answer through
+ * (`renderer/section.js`, with the reading words and skeleton shapes it
+ * requires), and the three shared modules those reach. `shared/schema.js` is
+ * here because the fixture is decoded in the window rather than in this file:
+ * the screen is
  * handed a document the console's own decoder admitted, which is the shape the
  * entry hands it. Nothing else may be reachable -- the registry below refuses a
  * specifier that is not a relative path, so a bundle that grew an import of
@@ -174,6 +178,10 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/graph/model.js',
   'renderer/graph/layout-client.js',
   'renderer/graph/layout.js',
+  'renderer/skeleton.js',
+  'renderer/screens/reading.js',
+  'renderer/section.js',
+  'renderer/writes.js',
   'renderer/screens/graph.js',
 ])
 
@@ -378,7 +386,7 @@ async function active(
   return page.evaluate(() => {
     const element = document.activeElement
     const attributes: Record<string, string> = {}
-    for (const name of ['data-tab', 'data-key', 'data-selected', 'aria-selected']) {
+    for (const name of ['data-tab', 'data-key', 'data-selected', 'aria-pressed']) {
       const value = element?.getAttribute(name)
       if (value !== null && value !== undefined) attributes[name] = value
     }
@@ -472,7 +480,7 @@ test.describe('the graph view in a window', () => {
     expect(reached.attributes['data-selected']).toBe('false')
 
     // One door in the tab order, and it is the first the drawing draws: the
-    // roving rule is the tablist's own, one stop and not a second walk through
+    // roving rule is the stream filter's own, one stop and not a second walk through
     // every card.
     const stops = await page.evaluate(() =>
       [...document.querySelectorAll('g.graph-node, li.graph-row')].filter(
@@ -800,13 +808,13 @@ test.describe('the graph view in a window', () => {
   })
 
   test('walks the graph from the keyboard, and the focus comes back after a redraw', async () => {
-    // The tablist's roving `tabindex` is a claim about the tab order, so this
-    // walks it: one tab of the graph's tablist is in the order, and Tab reaches
-    // it from wherever the keyboard is.
-    expect(await pressTabUntil(page, 'graph-tab'), 'the tab order never reached the graph’s tablist').toBe(true)
+    // The stream filter's roving `tabindex` is a claim about the tab order, so
+    // this walks it: one segment of the graph's filter is in the order, and Tab
+    // reaches it from wherever the keyboard is.
+    expect(await pressTabUntil(page, 'graph-tab'), 'the tab order never reached the graph’s stream filter').toBe(true)
     const first = await active(page)
     expect(first.classes).toContain('graph-tab')
-    expect(first.attributes['aria-selected']).toBe('true')
+    expect(first.attributes['aria-pressed']).toBe('true')
     const firstTab = first.attributes['data-tab'] ?? ''
     expect(firstTab, 'the first tab carries no data-tab: the polls below would be vacuous').not.toBe('')
 
@@ -814,7 +822,7 @@ test.describe('the graph view in a window', () => {
     // it lands on is the one the screen drew as selected: a tab is a different
     // graph, so the redraw lands a worker's answer later. The poll answers a
     // value only while a **focused** tab other than the first is showing, so the
-    // old tab's `aria-selected` (which is still `true` until the redraw lands)
+    // old segment's `aria-pressed` (which is still `true` until the redraw lands)
     // and `<body>` both keep it waiting rather than passing it.
     await page.keyboard.press('ArrowRight')
     await expect
@@ -826,7 +834,7 @@ test.describe('the graph view in a window', () => {
       .not.toBe('')
     const moved = await active(page)
     expect(moved.classes).toContain('graph-tab')
-    expect(moved.attributes['aria-selected']).toBe('true')
+    expect(moved.attributes['aria-pressed']).toBe('true')
     expect(moved.attributes['data-tab'] ?? '').not.toBe(firstTab)
 
     // And a redraw puts the focus back in the tree it drew. A click selects the
@@ -1040,5 +1048,100 @@ test.describe('the Graph screen', () => {
       GRAPH_THEMES.map((theme) => `${theme}-${process.platform}.png`).sort(),
     )
     for (const file of present) expect(file).toMatch(new RegExp(`^(${GRAPH_THEMES.join('|')})-(darwin|linux)\\.png$`))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The Graph view's stream filter, in the dashboard.
+// ---------------------------------------------------------------------------
+
+/** THE_PANEL is the dashboard's own panel, which is where the view is drawn: the
+ * describe above mounts a screen of its own into `#graph-mount`, so a bare
+ * `section.graph` would be ambiguous between the two. */
+const THE_PANEL = 'div.console-panel'
+
+/** THE_GRAPH is the dashboard's Graph view, and the scope every reading below is
+ * taken in. */
+const THE_GRAPH = `${THE_PANEL} section.graph`
+
+/** SELECTED_TAB is the segment the screen drew as the chosen one. The chosen
+ * segment carries no listener (the entry wires the segments it does not draw as
+ * pressed), so what a case about presses can read is which one it is. */
+const SELECTED_TAB = `${THE_GRAPH} div.graph-filter button.graph-tab[aria-pressed="true"]`
+
+test.describe('the Graph view’s stream filter', () => {
+  test.describe.configure({ mode: 'serial' })
+
+  let app: ElectronApplication
+  let page: Page
+  let cli: CliStub
+
+  test.beforeAll(async () => {
+    // A window of its own, opened on the Graph for the first time: the tab the
+    // console opens on is All, which is the state the two presses below are
+    // made from.
+    cli = inRangeCliStub()
+    cli.seedActiveInstallation()
+    // The checkout `plan.status` is read against: the CLI resolves `docs/` from
+    // its working directory, so an installation that records none is refused
+    // before any child runs and the view would draw that refusal instead of a
+    // canvas.
+    cli.seedActiveCheckout()
+    app = await launchConsole({ args: cli.launchArgs(consoleDir), env: cli.env })
+    page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+    await page.locator(NAV_GRAPH).click()
+    await page.locator(CANVAS).waitFor()
+  })
+
+  test.afterAll(async () => {
+    await app?.close()
+    cli.remove()
+  })
+
+  test('keeps the stream the operator pressed last when two presses land in one frame', async () => {
+    // The committed document carries three tabs: the catalogue's stream, the
+    // column its second plan makes by naming no stream, and All. Two of them can
+    // be pressed from here, which is what this case needs -- the third is the one
+    // showing.
+    await expect(page.locator(SELECTED_TAB)).toHaveAttribute('data-tab', 'all')
+    await expect(page.locator(`${THE_GRAPH} div.graph-filter button.graph-tab`)).toHaveCount(3)
+
+    // **Two presses in one turn of the event loop.** Each is a layout of its own
+    // graph rather than a redraw of the same picture, and the answer that must
+    // be on screen is the second one's, whatever order the two come back in.
+    const inTheFrame = await page.evaluate((scope) => {
+      const root = (): Element | null => document.querySelector(scope)
+      const press = (key: string): void => {
+        const button = root()?.querySelector<HTMLElement>(`div.graph-filter button.graph-tab[data-tab="${key}"]`)
+        button?.click()
+      }
+      press('stream:example')
+      press('stream:')
+      const section = root()
+      return {
+        // The mark is up in the frame the press happened in, over the picture the
+        // operator was already looking at.
+        busy: section?.getAttribute('aria-busy') ?? null,
+        marked: section?.hasAttribute('data-busy') ?? null,
+        label: section?.querySelector('.console-busy-label')?.textContent ?? null,
+        canvas: section?.querySelector('svg.graph-canvas') !== null,
+      }
+    }, THE_GRAPH)
+    expect(inTheFrame).toEqual({
+      busy: 'true',
+      marked: true,
+      label: GRAPH_BUSY,
+      canvas: true,
+    })
+
+    // The second press's graph is the one that stays. The tab is the strongest
+    // reading -- it is what the press chose -- and the picture behind it is
+    // independent evidence: the first plan is the only one with releases, so a
+    // canvas that came back for the first press would still carry its headings,
+    // and a dropped answer draws none of them.
+    await expect(page.locator(SELECTED_TAB)).toHaveAttribute('data-tab', 'stream:')
+    await expect(page.locator(`${THE_GRAPH} ${HEADING}`)).toHaveCount(0)
+    await expect(page.locator(`${THE_GRAPH} g.graph-node`)).toHaveCount(1)
   })
 })

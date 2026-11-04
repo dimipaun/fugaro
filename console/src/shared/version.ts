@@ -220,8 +220,112 @@ export function budgetComputeSupported(version: string): boolean {
 }
 
 /**
- * meetsCliFloor is the one patch-level comparison both floors above are asked
- * by, so a rule learned on one of them cannot be missing from the other.
+ * RUNS_LIST_PAGE_CLI_FLOOR is the oldest CLI the Coordinator's job list may ask
+ * for a page from, by passing `runs ls --limit=N` and `--after=RUN-ID`.
+ *
+ * Both words are newer than the operation, and **one of them changed meaning**:
+ * `0.16.0` is the release that carries #1545, where `--limit` cuts what is
+ * *printed* after the sort, and `--after` becomes a cursor on the row's own
+ * `run_id`. In the 0.15 line `--after` is an unknown flag the command refuses
+ * outright, and `--limit` means "read only the newest N" -- so its document's
+ * `totals` are the page's and not the window's, and a screen that drew them
+ * under "the window holds" would draw the page's count as the window's. That is
+ * the one wrong number this section could draw, which is why the floor is asked
+ * before either word goes out rather than after a refusal comes back.
+ *
+ * It is a patch-level floor rather than a range membership for the reason the
+ * two above are: `0.15.2` is inside a minor this console reads and is below this
+ * one, so `SUPPORTED_CLI_MINORS` and `classifyCliVersion` cannot answer it.
+ */
+export const RUNS_LIST_PAGE_CLI_FLOOR = '0.16.0'
+
+/**
+ * runsListPageSupported answers whether one version line may be asked for a page
+ * of the run list, by comparing it against `RUNS_LIST_PAGE_CLI_FLOOR` at the
+ * patch level. The caller is `showCoordinator`'s job list in
+ * `src/renderer/entry.ts`: below the floor the section draws the console's own
+ * sentence naming the version it needs and spawns nothing, because a `--after`
+ * the CLI refuses is a read whose failure the operator cannot act on and a
+ * `--limit` whose `totals` are the page's is a figure this screen must not draw.
+ */
+export function runsListPageSupported(version: string): boolean {
+  return meetsCliFloor(version, RUNS_LIST_PAGE_CLI_FLOOR)
+}
+
+/**
+ * RUNS_SUMMARY_CLI_FLOOR is the oldest CLI that has the jobs-free totals read at
+ * all, `runs summary --json` (contract §6.17).
+ *
+ * **It is not a flag's floor, it is the command's.** `runs summary` landed after
+ * v0.15.0, so a 0.15.x CLI has no such verb and answers `unknown command "summary"`
+ * -- a failure the operator can do nothing about and one a screen would draw as a
+ * broken project. The floor is therefore asked before the read is offered at all,
+ * the way each of the three floors above it is asked before what it gates goes
+ * out -- a launch for `LAUNCH_CLI_FLOOR`, a flag for the other two -- and a
+ * console below it draws the section as unavailable with the version it needs
+ * rather than spawning a child that cannot answer.
+ *
+ * It is a patch-level floor rather than a range membership for the reason the
+ * three floors above it are: `0.15.2` is inside a minor this console reads and
+ * is below this one, so `SUPPORTED_CLI_MINORS` and `classifyCliVersion` cannot
+ * answer it.
+ */
+export const RUNS_SUMMARY_CLI_FLOOR = '0.16.0'
+
+/**
+ * runsSummarySupported answers whether one version line may be asked for the
+ * jobs-free totals read, by comparing it against `RUNS_SUMMARY_CLI_FLOOR` at the
+ * patch level.
+ *
+ * **Its caller is the Coordinator's fleet strip.** `showCoordinator` in
+ * `src/renderer/entry.ts` asks it before the window's read goes out, below the
+ * floor the strip draws the console's own sentence naming the version it needs
+ * and spawns nothing -- the same shape `runsListPageSupported`'s job list has
+ * one panel lower. It is asked once per visit, with the tab's other gates, so no
+ * `runs summary` this console makes is made against a CLI that cannot answer it.
+ */
+export function runsSummarySupported(version: string): boolean {
+  return meetsCliFloor(version, RUNS_SUMMARY_CLI_FLOOR)
+}
+
+/**
+ * MODELS_LIST_CLI_FLOOR is the oldest CLI that has the models read at all,
+ * `models ls --json` (contract §6.18).
+ *
+ * **It is the command's floor and not a flag's**, exactly as
+ * `RUNS_SUMMARY_CLI_FLOOR` above is: `models ls` landed after v0.15.0 (#1553),
+ * so a 0.15.x CLI has no such word at all and answers `unknown command "ls"`
+ * for it -- a failure the operator can do nothing about and one a screen would
+ * draw as a broken project. The floor is therefore asked before the read is
+ * offered, and a console below it draws the section as unavailable with the
+ * version it needs rather than spawning a child that cannot answer.
+ *
+ * It is a patch-level floor rather than a range membership for the reason the
+ * four floors above it are: `0.15.2` is inside a minor this console reads and
+ * is below this one, so `SUPPORTED_CLI_MINORS` and `classifyCliVersion` cannot
+ * answer it.
+ */
+export const MODELS_LIST_CLI_FLOOR = '0.16.0'
+
+/**
+ * modelsListSupported answers whether one version line may be asked for the
+ * project's models read, by comparing it against `MODELS_LIST_CLI_FLOOR` at the
+ * patch level.
+ *
+ * **Its caller is the Project tab's models panel.** `showProjects` in
+ * `src/renderer/entry.ts` asks it before the panel's read goes out, below the
+ * floor the panel draws the console's own sentence naming the version it needs
+ * and spawns nothing -- the same shape `runsSummarySupported`'s fleet strip has
+ * one tab over. It is asked once per visit, with the tab's other gates, so no
+ * `models ls` this console makes is made against a CLI that cannot answer it.
+ */
+export function modelsListSupported(version: string): boolean {
+  return meetsCliFloor(version, MODELS_LIST_CLI_FLOOR)
+}
+
+/**
+ * meetsCliFloor is the one patch-level comparison all five floors above are
+ * asked by, so a rule learned on one of them cannot be missing from the others.
  *
  * The order of the tests is the rule, and each refusal is on the safe side of a
  * spend. An unreadable line, a `dev` build and a prerelease are all `false`: the

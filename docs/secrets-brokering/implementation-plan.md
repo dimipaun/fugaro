@@ -50,9 +50,9 @@ spec, the reconciliation wins.
   files, Terraform commands and register-recording tasks, and listed cross-repository fetches as a
   consequence (O6).
 - **Review round 3 (2026-10-27, the last)** found that `fugaro update --provision-credentials`
-  refuses a development build (`internal/cli/init_credentials.go` `resolveImage`), so Checks 191 and
-  192 can run only against a **released** release carrying the proxy — 0.15.0 since the 2026-10-30
-  move, not 0.14.0 — so the flip moves after that release (O7). It also
+  refuses a development build (`internal/cli/init_credentials.go` `resolveCredentialsImage`), so
+  Checks 191 and 192 can run only against a **released** release carrying the proxy — 0.15.0 since
+  the 2026-10-30 move, not 0.14.0 — so the flip moves after that release (O7). It also
   made the published node the one source of whether a repository is proxied, put doctor's bundle
   read behind a flag, refused proxied runs on the Batch backend, added the h2c fallback task, the
   Terraform plumbing, the missing tests, and moved the exceptions table into the guard test as D499
@@ -566,8 +566,8 @@ plan; this table says what happens to each task, and the levels below include th
 #### B1.12: Check 191 — OWNER-RUN
 
 - **The build:** the **released 0.15.0** (`brew upgrade dimipaun/tap/fugaro`): the credentials
-  stage refuses a development build (`init_credentials.go` `resolveImage`), so this check runs after
-  the release carrying the proxy ships — 0.15.0 under the 2026-10-30 move (O7).
+  stage refuses a development build (`init_credentials.go` `resolveCredentialsImage`), so this check
+  runs after the release carrying the proxy ships — 0.15.0 under the 2026-10-30 move (O7).
 - **What the owner types,** installation `fugaro` only, never `belong`:
   1. `fugaro update --provision-credentials` (installation-wide; at a real terminal; on an
      installation already opted in it re-applies the installation root, so the service runs the S1

@@ -545,8 +545,8 @@ operation and a new ruling. → **Q8**.
 `docs/design/desktop-console.md` §5.1 rule 7 — *"Job-written text is text"* — and the code
 follows it: `console/src/renderer/app.ts` writes through `element.textContent`
 (`:124,138,159,174`), never `innerHTML`; the sanitizers are
-`console/src/shared/sanitize.ts` (`sanitizeText:2387`, `sanitizeRefusal:2624`,
-`safeUrl:2656`); navigation and window-open are denied
+`console/src/shared/sanitize.ts` (`sanitizeText:2445`, `sanitizeRefusal:2682`,
+`safeUrl:2714`); navigation and window-open are denied
 (`console/src/main/window.ts:231 denyNavigation`, `:242 denyWindowOpen`), and there is
 exactly one validated `shell.openExternal`.
 A coordinator answering *"what's holding up the payments release?"* produces free text that
@@ -746,6 +746,8 @@ rewritten to it rather than to the answer above.
 *Consequence:* under (A), the coordinator's own refusals become part of its design, in the way `fugaro validate` already refuses things with a named reason.
 
 **Answered 2026-10-19: option (A)** — GitHub only, with a Bitbucket project refused in a line that names the reason.
+
+**Amended 2026-11-01: option (B), for the coordinator's reads, and only for a single-workspace project.** The owner ruled on the `bitbucket-credentials` work's question B5 that Bitbucket comes into the coordinator: `coordinator show` first, then `coordinator status` and the sweep. The credential is not the one (A) refused. It is not a per-repository access token held by the coordinator job: it is one **read-scoped OAuth consumer** in the credentials service's bundle, minted to a person through a **person caller class** (`coordinator show`, and a person's own local `coordinator status`) or to the coordinator account through a **coordinator class** (the sweep, and nothing a person runs), never to a run and never a write token — Q3's "no write anywhere" is unchanged. Two limits stay, and they are why this is an amendment and not a reversal. A repository whose workspace is not the read consumer's is refused with a named reason, so a project spanning two workspaces still meets (A)'s refusal. And with no credentials service deployed, every Bitbucket path behaves exactly as (A) describes. What is not avoided is the reach: the token the service mints is workspace-wide, so the read reaches everything the installing person can read there, which the plan's SECURITY.md task states plainly. The design is the `bitbucket-credentials` work's plan, whose S2 is retargeted at this, and its BB4 and BB5 are the tasks: `docs/bitbucket-credentials/implementation-plan.md`.
 
 ### Q13 — What is v0?
 **Changes spec §2, §5, §7, §8, §10.**

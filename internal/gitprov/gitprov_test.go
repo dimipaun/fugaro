@@ -313,6 +313,62 @@ func TestSplitRepo(t *testing.T) {
 	}
 }
 
+// TestValidRepoPath is ValidRepoPath's own rule, the shared boundary for a
+// ContentsReader path: it is what the GitHub adapter and catalog/fetch.go
+// both call, so it is tested here and not only through a caller's rejection
+// of a bad path — a rule that started refusing a valid path would otherwise
+// pass every test that only ever feeds it something it must refuse.
+func TestValidRepoPath(t *testing.T) {
+	for _, ok := range []string{
+		"Dockerfile",
+		"docker/agent.Dockerfile",
+		"a/b/c",
+		"docker/agent-v1.2_test.Dockerfile",
+		"docker/agent v1.Dockerfile",
+		// A segment that merely starts with dots is not "..", and a name
+		// holding a "?" or a "#" is the file's own (the adapter escapes it
+		// per segment rather than reading it as the API's path or query).
+		"..foo/agent.Dockerfile",
+		"...",
+		"docker/agent.Dockerfile?v=1",
+		"docker/agent#1.Dockerfile",
+		"döcker/agent.Dockerfile",
+		// A bidi override is a formatting character, not a control one, so
+		// this rule accepts it: what keeps it out of a log is the escape at
+		// print time (pluginwire.Printable), not this check, and a test here
+		// pins that the two are not confused.
+		"docker/‮agent.Dockerfile",
+	} {
+		if !ValidRepoPath(ok) {
+			t.Errorf("ValidRepoPath(%q) = false", ok)
+		}
+	}
+	for _, bad := range []string{
+		"",
+		"/etc/agent.Dockerfile",
+		"/",
+		".",
+		"..",
+		"../docker/agent.Dockerfile",
+		"docker/../../etc/agent.Dockerfile",
+		"./docker/agent.Dockerfile",
+		"docker/./agent.Dockerfile",
+		"docker//agent.Dockerfile",
+		"docker/",
+		// Any control character, a NUL and DEL among them: a path reaches an
+		// HTTP request and a log, and neither reads one.
+		"docker/agent.Dockerfile\n",
+		"docker/agent.Dockerfile\r",
+		"docker/agent\x00.Dockerfile",
+		"docker/agent\x7f.Dockerfile",
+		"docker/\tagent.Dockerfile",
+	} {
+		if ValidRepoPath(bad) {
+			t.Errorf("ValidRepoPath(%q) = true", bad)
+		}
+	}
+}
+
 func TestPartialErrorUnwraps(t *testing.T) {
 	inner := errors.New("labels: HTTP 403")
 	err := fmt.Errorf("ensure: %w", &PartialError{Err: inner})

@@ -40,6 +40,71 @@ func TestNeedsAnthropicKey(t *testing.T) {
 	}
 }
 
+// TestNeedsAnthropicKeyReadsALevelModel: a review level's own model is a pin
+// of its own (agent.levels.lN.model, config.ResolveLevels L3.1), and it is the
+// model its stage runs in place of the role slot it sits in (stageModel,
+// L4.5). The three role models alone therefore under-report the run: with
+// every pin a provider may serve and level 3 on a Claude model, the run does
+// call Anthropic at L3, and this rule has to ask for the key (L4.5b).
+func TestNeedsAnthropicKeyReadsALevelModel(t *testing.T) {
+	open := map[string]ModelProvider{
+		"openrouter": {Kind: ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+			Secret: "openrouter-api-key", Models: []string{"deepseek/*"}, AllowDataTo: []string{"acme/app"}},
+	}
+	pins := Agent{Model: "deepseek/deepseek-v4-flash"}
+	for _, tc := range []struct {
+		name   string
+		levels ReviewLevels
+		want   bool
+	}{
+		{"no level names a model", ReviewLevels{}, false},
+		{"l1 runs a Claude model", ReviewLevels{L1: &LevelSetting{Model: "claude-haiku-4-5"}}, true},
+		{"l2 runs a Claude model", ReviewLevels{L2: &LevelSetting{Model: "claude-sonnet-5-5"}}, true},
+		{"l3 runs a Claude model", ReviewLevels{L3: &LevelSetting{Model: "claude-opus-5-5"}}, true},
+		{"l3 runs a Claude model beside an effort on it", ReviewLevels{L3: &LevelSetting{Model: "claude-opus-5-5", Effort: "xhigh"}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ag := pins
+			ag.Levels = tc.levels
+			if got := NeedsAnthropicKey(ag, open, "acme/app"); got != tc.want {
+				t.Errorf("NeedsAnthropicKey = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestNeedsAnthropicKeyLevelModelServedByAProvider is the other half, and it
+// is why the rule reads the level's model rather than counting every level:
+// only a model no allowed provider claims goes direct. A level model the
+// route serving this repository takes needs no key, and the same model on a
+// route that may not see this repository does (design
+// docs/design/project-centric.md §6.1).
+func TestNeedsAnthropicKeyLevelModelServedByAProvider(t *testing.T) {
+	open := map[string]ModelProvider{
+		"openrouter": {Kind: ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+			Secret: "openrouter-api-key", Models: []string{"deepseek/*"}, AllowDataTo: []string{"acme/app"}},
+	}
+	for _, tc := range []struct {
+		name   string
+		levels ReviewLevels
+		repo   string
+		want   bool
+	}{
+		{"l3 on a model the route serves", ReviewLevels{L3: &LevelSetting{Model: "deepseek/deepseek-v4-pro"}}, "acme/app", false},
+		{"l2 on a model the route serves", ReviewLevels{L2: &LevelSetting{Model: "deepseek/deepseek-v4-pro"}}, "acme/app", false},
+		{"l1 on a model the route serves", ReviewLevels{L1: &LevelSetting{Model: "deepseek/deepseek-v4-pro"}}, "acme/app", false},
+		{"l3 on a model the route may not serve this repository", ReviewLevels{L3: &LevelSetting{Model: "deepseek/deepseek-v4-pro"}}, "acme/other", true},
+		{"l3 on a model no provider claims", ReviewLevels{L3: &LevelSetting{Model: "openai/gpt-9"}}, "acme/app", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ag := Agent{Model: "deepseek/deepseek-v4-flash", Levels: tc.levels}
+			if got := NeedsAnthropicKey(ag, open, tc.repo); got != tc.want {
+				t.Errorf("NeedsAnthropicKey(repo %q) = %v, want %v", tc.repo, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestAnthropicKeyNeeded: the mode decides whether the gateway exists at all
 // (only enforce builds one), so without it every call goes direct to Anthropic
 // however the pins read, and with it the pins decide -- NeedsAnthropicKey's

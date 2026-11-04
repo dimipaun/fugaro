@@ -211,10 +211,20 @@ func builtSoFar(err error, built []string) error {
 // cap, superseding D2's "no --yes" for this command only; askTyped's own
 // Typed class, used elsewhere, still never takes --yes). A coding agent's
 // session is refused here too, before the --yes shortcut, even though
-// refuseRefreshHere already refused before any step ran (defence in depth).
-func (r *initRun) askBuild(what string) (confirmed, reachable bool, err error) {
-	if m := agentMarker(os.Getenv); m != "" {
-		return false, false, &initflow.AgentError{Marker: m}
+// refuseRefreshHere already refused before any step ran (defence in depth)
+// — unless g is the admission the managed gate gave THIS build, in which
+// case the session proceeds on the gate's answer and the line it prints says
+// so (initflow.AgentProceeded, the one sentence for it). A zero Managed is
+// every session this command has ever had: the refusal above is what
+// CanConfirmManaged answers for one.
+func (r *initRun) askBuild(what string, g initflow.Managed) (confirmed, reachable bool, err error) {
+	if marker := agentMarker(os.Getenv); marker != "" {
+		if !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, g) {
+			return false, false, &initflow.AgentError{Marker: marker}
+		}
+		fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+		fmt.Fprintf(r.w, "  %s\n", initflow.AgentProceeded(marker))
+		return true, true, nil
 	}
 	if r.o.yes {
 		fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
@@ -374,7 +384,19 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 	}
 	var built []string
 	for _, wf := range todo {
-		ok, reachable, err := r.askBuild(cloudBuildBanner(t.spec.Name, wf, t.lc.Build.MachineType, t.spec.BuildServiceAccountEmail, t.spec.RegistryPath))
+		// The gate's own answer about THIS build, re-read and judged here
+		// rather than once per command (D1013, D1024): p.managed is nil for
+		// every run that is not a coding agent's session in a managed project,
+		// and a nil one leaves this build's confirmation exactly what it has
+		// always been.
+		g := initflow.Managed{}
+		if p.managed != nil {
+			var err error
+			if g, err = p.managed.admitBuild(ctx, p, t, wf, host); err != nil {
+				return builtSoFar(err, built)
+			}
+		}
+		ok, reachable, err := r.askBuild(cloudBuildBanner(t.spec.Name, wf, t.lc.Build.MachineType, t.spec.BuildServiceAccountEmail, t.spec.RegistryPath), g)
 		if err != nil {
 			return err
 		}
@@ -386,7 +408,20 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 			notes()
 			return builtSoFar(userErr("the build of %s/%s was not confirmed (the project's name was not typed), so it and the builds after it were not submitted", t.spec.Name, wf), built)
 		}
-		if id, err := r.submitAndWait(ctx, b, t.lc, t.cfg, t.spec, wf, t.lc.BaseImage(t.cfg.Workflows[wf].BaseKind()), gitID); err != nil {
+		id, err := r.submitAndWait(ctx, b, t.lc, t.cfg, t.spec, wf, t.lc.BaseImage(t.cfg.Workflows[wf].BaseKind()), gitID)
+		if p.managed != nil && (id != "" || err == nil) {
+			// The submission IS the write this build's record is about: once
+			// it is out, the build happened and keeps billing, so its record
+			// is written whatever the wait after it did — and a record that
+			// could not be written fails the command (D1014). The count moves
+			// with it, so the next build is judged against the bound with this
+			// one in it.
+			p.managed.started++
+			if werr := p.managed.gate.recorded(ctx); werr != nil {
+				err = errors.Join(err, werr)
+			}
+		}
+		if err != nil {
 			notes()
 			if id != "" {
 				// Submitted, then the wait failed (Ctrl-C included): the

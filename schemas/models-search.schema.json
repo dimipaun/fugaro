@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/models-search.schema.json",
+  "title": "Fugaro models search",
+  "description": "The document `fugaro models search <text> --json` prints: the hits of an offline search of this binary's built-in provider price catalog and its embedded Claude table, by a substring of the model ID, beside the models the owner's own model_prices prices. One object per row the read prints, in the same order, with a price carried as the range the row is charged over rather than as the cell the read formats. The search reaches nothing: what it says is what this binary's own tables and the selected project config already say. Members are only ever added within a version (D784), so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which D784 promises to keep readable under the same version.",
+  "type": "object",
+  "required": [
+    "v",
+    "query",
+    "models"
+  ],
+  "properties": {
+    "v": {
+      "const": 1,
+      "$comment": "modelsSearchDocVersion in internal/cli/models_search.go."
+    },
+    "query": {
+      "type": "string",
+      "description": "The term the search was given, as the caller wrote it. It is data: a control character in it is escaped by the JSON encoding rather than the terminal's own escaping."
+    },
+    "models": {
+      "type": "array",
+      "description": "One object per hit, in the order the read prints them: the catalog's tiers, the embedded Claude table's rows, then the models the owner's own model_prices prices, each set in ID order. Empty on a miss, never absent.",
+      "items": {
+        "$ref": "#/$defs/hit"
+      }
+    }
+  },
+  "$defs": {
+    "hit": {
+      "type": "object",
+      "required": [
+        "id",
+        "source",
+        "route"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The model ID, as the table that carries the row spells it. It is data: a control character in it is escaped by the JSON encoding and read back as the bytes the table holds."
+        },
+        "source": {
+          "enum": [
+            "embedded",
+            "catalog",
+            "local"
+          ],
+          "description": "Where the row's price comes from: this binary's Claude table, the built-in provider price catalog, or the owner's model_prices. Nothing else is a hit: a model with no price is a miss, which the read answers with the one way to price it."
+        },
+        "tier": {
+          "enum": [
+            "zdr",
+            "all"
+          ],
+          "description": "The catalog tier the price is over: the ZDR-eligible endpoints, or every endpoint the model is served by. Absent on a row that has no tier — the embedded table's and the owner's own."
+        },
+        "input_per_m": {
+          "$ref": "#/$defs/price",
+          "description": "The input price range, US dollars per million tokens. Absent on a dimension the tier prices no endpoint for, and never written as a zero (D7(a)); the two ends are equal on a row that has a single price."
+        },
+        "output_per_m": {
+          "$ref": "#/$defs/price",
+          "description": "The output price range, US dollars per million tokens. Absent on a dimension the tier prices no endpoint for."
+        },
+        "endpoints": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many endpoints the model is served by. Absent on a row the catalog does not price, which is every row whose source is not catalog."
+        },
+        "zdr_endpoints": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many of those endpoints are ZDR-eligible, and the read's ENDPOINTS column shows `N of M endpoints` out of this and endpoints. Written even where the count is 0 — a model whose endpoints are none of them ZDR-eligible carries a real 0 — and absent only on a row the catalog does not price, which is a different thing."
+        },
+        "route": {
+          "type": "string",
+          "description": "The route of the selected project that claims the model — the provider whose models claim it, or `direct` for a Claude ID nothing routes. Empty is a model no route of this project serves, which a launch refuses and the read prints as `no route`."
+        },
+        "context_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The context the model accepts, as the catalog or the embedded table reports it. Absent when the row's table reports none."
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The output the model accepts, as the catalog or the embedded table reports it. Absent when the row's table reports none."
+        }
+      }
+    },
+    "price": {
+      "type": "object",
+      "required": [
+        "min",
+        "max"
+      ],
+      "properties": {
+        "min": {
+          "type": "number",
+          "minimum": 0,
+          "description": "The cheapest end of the range: one endpoint of the row's tier prices it."
+        },
+        "max": {
+          "type": "number",
+          "minimum": 0,
+          "description": "The dearest end of the range. Equal to min on a row that has a single price, and never above it: the catalog's loader refuses a max below its min."
+        }
+      }
+    }
+  }
+}

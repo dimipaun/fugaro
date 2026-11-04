@@ -36,10 +36,17 @@ const (
 	maxProfileDescription = 200
 )
 
+// buildsPrefix is where everything a build reads out of the runs bucket
+// lives, one directory per writer: the per-repository copies
+// (LayerCopyKey) and the catalog's Dockerfiles (CatalogDockerfileKey). The
+// build and check accounts hold their grants conditioned on it, so a key
+// outside it is one they cannot read.
+const buildsPrefix = "builds/"
+
 // LayerCopyKey is the per-repository copy of the project layer, under the
 // build account's own prefix, which the daily image check and Cloud Build
 // read (decision L4).
-func LayerCopyKey(slug string) string { return "builds/" + slug + "/project-layer.yaml" }
+func LayerCopyKey(slug string) string { return buildsPrefix + slug + "/project-layer.yaml" }
 
 // LayerAnchor is what a project layer must name: the project and GCP
 // project of the repository (or local config) it is read for. An empty
@@ -127,6 +134,55 @@ func (l *ProjectLayer) SetsGovernance() bool {
 	return ok
 }
 
+// SetsDefault reports whether the layer's text writes a fugaro.yaml key under
+// defaults:, at any value — its own, or the nearest ancestor the text writes,
+// because a list is one key (Resolution.Sources' own rule: rigor.areas is set
+// by its list, not by each rule's mode).
+//
+// The text answers it, not LayerDefaults: the decoded fields cannot tell an
+// unset key from one written with the type's zero value — agent.review_rounds:
+// 0 and agent.model: "" decode to the same fields as keys the layer never
+// wrote — so a reader that took the zero for a value would print a 0 or a
+// blank for a key the layer does not set.
+func (l *ProjectLayer) SetsDefault(key string) bool {
+	if l == nil {
+		return false
+	}
+	cur, ok := l.tree["defaults"]
+	if !ok || cur == nil {
+		return false
+	}
+	for _, part := range strings.Split(key, ".") {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			// The text writes a leaf here and the path goes on, so the answer
+			// is whether a list sits at it: a list is one key, and a scalar has
+			// no keys under it.
+			return listUnderLeaf(cur)
+		}
+		next, ok := m[part]
+		if !ok || next == nil {
+			return false
+		}
+		cur = next
+	}
+	return true
+}
+
+// listUnderLeaf answers the walk's leaf case: the path reached a value that is
+// not a mapping and goes on past it, which only a list survives — a list is one
+// key, so `defaults.rigor.areas.name` is set by the list `areas` writes
+// (Resolution.Sources' own rule), where a scalar has no keys under it at all.
+//
+// The value is a *yaml.Node and not a decoded Go value, because that is what
+// nodeTree keeps every non-mapping as — a copy of the node, so marshalling
+// writes back the text and tag it was written with. A null is nil there and
+// never reaches this, so the kind is what tells a list from a scalar.
+func listUnderLeaf(v any) bool {
+	n, ok := v.(*yaml.Node)
+	return ok && n.Kind != yaml.ScalarNode
+}
+
 // LayerRigor is defaults.rigor: the same two keys the repository's own
 // rigor: block carries, because either layer may set either of them
 // (docs/project-layer.md §5).
@@ -157,7 +213,16 @@ type LayerAgent struct {
 	MaxBudgetUSD    float64    `yaml:"max_budget_usd"`
 	FirstLineReview string     `yaml:"first_line_review"`
 	FirstLineRounds int        `yaml:"first_line_rounds"`
-	Recipe          string     `yaml:"recipe"`
+	// Levels is the project-wide per-level review block (L1.3, D722): the
+	// same config.ReviewLevels a repository's agent.levels and a task's
+	// review_levels carry. The merge is per key (resolve.go's overlay), so
+	// the project's l1 survives a repository that pins l2, and neither is
+	// replaced whole by the other.
+	Levels ReviewLevels `yaml:"levels"`
+	// AdversarialRounds is the project's review level 3 round count; a
+	// repository's own value replaces it.
+	AdversarialRounds int    `yaml:"adversarial_rounds"`
+	Recipe            string `yaml:"recipe"`
 }
 
 // Profile is a named workflow template (scope profile).
@@ -609,6 +674,10 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 	if ag.FirstLineRounds != 0 && (ag.FirstLineRounds < 1 || ag.FirstLineRounds > MaxFirstLineRounds) {
 		add("defaults.agent.first_line_rounds", "must be between 1 and %d", MaxFirstLineRounds)
 	}
+	if ag.AdversarialRounds != 0 && (ag.AdversarialRounds < 1 || ag.AdversarialRounds > 10) {
+		add("defaults.agent.adversarial_rounds", "must be between 1 and 10")
+	}
+	ps = append(ps, levelProblems("defaults.agent.levels", &ag.Levels)...)
 	if ag.Recipe != "" && !recipe.NameRE.MatchString(ag.Recipe) {
 		add("defaults.agent.recipe", "must be a recipe name")
 	}

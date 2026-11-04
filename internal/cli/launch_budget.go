@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -159,7 +160,7 @@ func projectPolicyRead(ctx context.Context, lc *localcfg.Config) (*projectpolicy
 		// unknownPolicyKeysText does. The launch gate reads this policy and
 		// shows the operator this sentence, so an unescaped name here would
 		// rewrite the terminal line of a `fugaro run` refusal.
-		return nil, false, userErr("%s lists %s, which this Fugaro does not know: a key nobody reads is a policy that never takes effect; fix the policy, or upgrade Fugaro (fugaro upgrade)",
+		return nil, false, userErr("%s lists %s, which this Fugaro does not know: a key nobody reads is a policy that never takes effect; fix the policy, or upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run 'fugaro update'",
 			projectpolicy.PathShared(), unknownPolicyKeysText(p.UnknownKeys))
 	}
 	return p, found, nil
@@ -223,6 +224,10 @@ func policyReadErr(err error) error {
 // differently: the launch gate names the release a policy's version is from
 // (policySkewRefusal), and every other caller wants policyReadErr.
 type policyReadOnce struct {
+	// mu makes the memo safe for the goroutines a batch of launches shares one
+	// cloudEnv with (a best-of-N launch, or the concurrent same-run-ID test):
+	// the first caller reads, the others wait for that one answer.
+	mu    sync.Mutex
 	done  bool
 	p     *projectpolicy.Policy
 	found bool
@@ -232,6 +237,8 @@ type policyReadOnce struct {
 // read is the memoized projectPolicyRead: the policy, whether one was
 // published, and the read's own error.
 func (p *policyReadOnce) read(ctx context.Context, lc *localcfg.Config) (*projectpolicy.Policy, bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if !p.done {
 		p.done = true
 		p.p, p.found, p.err = projectPolicyRead(ctx, lc)

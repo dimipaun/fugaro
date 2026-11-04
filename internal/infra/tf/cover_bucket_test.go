@@ -12,6 +12,8 @@ const (
 	cbPerson  = "user:launcher@example.com"
 	cbJobSAID = "fugaro-acme-web-1a2b3c4d"
 	cbJobSA   = "serviceAccount:" + cbJobSAID + "@proj-1234.iam.gserviceaccount.com"
+	cbBuildID = "fugaro-b-acme-web-1a2b3c4d"
+	cbBuildSA = "serviceAccount:" + cbBuildID + "@proj-1234.iam.gserviceaccount.com"
 )
 
 func bucketGrant(member, role string, cond map[string]any) *Plan {
@@ -52,6 +54,7 @@ func TestCoverBucketConditions(t *testing.T) {
 	launcher := cond(gcp.LauncherBucketConditionTitle, gcp.LauncherBucketCondition(cbBucket))
 	job := cond("fugaro-x", gcp.BucketCondition(cbBucket, gcp.JobBucketPrefixes, "acme-web-0123456789abcdef"))
 	tokens := cond(gcp.TokenBucketConditionTitle(cbJobSAID), gcp.TokenBucketCondition(cbBucket, "acme-web-0123456789abcdef"))
+	catalog := cond(gcp.CatalogReadConditionTitle(cbBuildID), gcp.CatalogReadCondition(cbBucket))
 	for _, tc := range []struct {
 		name          string
 		member, role  string
@@ -94,6 +97,35 @@ func TestCoverBucketConditions(t *testing.T) {
 		{"job account reads another repository's tokens/<slug>/", cbJobSA, "roles/storage.objectViewer",
 			cond(gcp.TokenBucketConditionTitle(cbJobSAID), gcp.TokenBucketCondition(cbBucket, "some-other-repo-0123456789abcdef")), cbJobSAID, true, ""},
 		{"a person reads tokens/<slug>/ under a condition", cbPerson, "roles/storage.objectViewer", tokens, "", false, "condition"},
+		// A build account reads the copied catalog definitions (PIC4,
+		// gcp.CatalogReadCondition): objectViewer on exactly builds/catalog/,
+		// under the condition title built from the account the grant's module
+		// holds. The title is what says whose grant it is, so a grant carrying
+		// the catalog expression under another account's title — or a stranger
+		// carrying it under a Fugaro account's — is not the module's own.
+		{"build account reads the copied catalog definitions", cbBuildSA, "roles/storage.objectViewer", catalog, cbBuildID, true, ""},
+		{"build account reads builds/catalog/ under another account's title", cbBuildSA, "roles/storage.objectViewer",
+			cond(gcp.CatalogReadConditionTitle("fugaro-b-other-web-1a2b3c4d"), gcp.CatalogReadCondition(cbBucket)), cbBuildID, false, "not the build account"},
+		{"an account the grant's module does not hold reads builds/catalog/", cbBuildSA, "roles/storage.objectViewer", catalog, "fugaro-b-other-web-1a2b3c4d", false, "not the build account"},
+		{"the history account reads builds/catalog/ under the build's title",
+			"serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com", "roles/storage.objectViewer", catalog, "", false, "not the build account"},
+		{"build account reads builds/catalog/ of another bucket", cbBuildSA, "roles/storage.objectViewer",
+			cond(gcp.CatalogReadConditionTitle(cbBuildID), gcp.CatalogReadCondition("fugaro-runs-other")), cbBuildID, false, "condition"},
+		{"build account reads builds/catalog/ widened past it", cbBuildSA, "roles/storage.objectViewer",
+			cond(gcp.CatalogReadConditionTitle(cbBuildID), `resource.name.startsWith("projects/_/buckets/`+cbBucket+`/objects/builds/")`), cbBuildID, false, "condition"},
+		{"build account reads builds/catalog/ with a second clause", cbBuildSA, "roles/storage.objectViewer",
+			cond(gcp.CatalogReadConditionTitle(cbBuildID), gcp.CatalogReadCondition(cbBucket)+" || "+gcp.BucketCondition(cbBucket, []string{"runs"}, "acme-web-0123456789abcdef")), cbBuildID, false, "condition"},
+		{"build account reads builds/catalog/ with trailing text", cbBuildSA, "roles/storage.objectViewer",
+			cond(gcp.CatalogReadConditionTitle(cbBuildID), gcp.CatalogReadCondition(cbBucket)+" && true"), cbBuildID, false, "condition"},
+		// The one builds/catalog/ case that is not a refusal, deliberately:
+		// builds/catalog/ is also the accountClause shape of a repository whose
+		// slug is "catalog", so objectUser on it is the grant that repository's
+		// own build account holds on its own prefix. Whether a repository may be
+		// called "catalog" is PIC3's key choice, not this rule's.
+		{"a repository whose slug is catalog writes builds/catalog/", cbBuildSA, "roles/storage.objectUser", catalog, cbBuildID, true, ""},
+		{"a person reads builds/catalog/ under a condition", cbPerson, "roles/storage.objectViewer", catalog, "", false, "condition"},
+		{"build account reads builds/catalog/ with a description", cbBuildSA, "roles/storage.objectViewer",
+			map[string]any{"title": gcp.CatalogReadConditionTitle(cbBuildID), "expression": gcp.CatalogReadCondition(cbBucket), "description": "x"}, cbBuildID, false, "description"},
 		{"job account reads tokens/ with a description", cbJobSA, "roles/storage.objectViewer",
 			map[string]any{"title": "t", "expression": gcp.TokenBucketCondition(cbBucket, "s"), "description": "x"}, "", false, "description"},
 		{"launcher's pre-seal runs/-only condition", cbPerson, "roles/storage.objectUser",
@@ -175,6 +207,35 @@ func TestCoverBucketTokenGrantComputedMember(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			got := c.NotCovered(p, nil)
 			if len(got) != 1 || !strings.Contains(got[0], "not the job account") {
+				t.Fatalf("got %v, want one problem naming the account rule", got)
+			}
+		})
+	}
+}
+
+// A build account's read of the copied catalog definitions whose member the
+// module computes is covered only for the account its title names, and only
+// when the same module creates that account in this plan: the title is built
+// from the account (gcp.CatalogReadConditionTitle), so a grant whose title
+// names an account the module does not create is not the module's own grant.
+func TestCoverBucketCatalogReadGrantComputedMember(t *testing.T) {
+	c := Cover{Projects: []string{"proj-1234"}, Buckets: []string{cbBucket}, Listed: []string{cbPerson}}
+	expr := gcp.CatalogReadCondition(cbBucket)
+	computed := func(title, sa string) *Plan {
+		p := bucketGrantHeld("", "roles/storage.objectViewer", cond(title, expr), sa)
+		p.ResourceChanges[0].Change.AfterUnknown = map[string]any{"member": true, "condition": []any{map[string]any{}}}
+		return p
+	}
+	if got := c.NotCovered(computed(gcp.CatalogReadConditionTitle(cbBuildID), cbBuildID), nil); len(got) != 0 {
+		t.Fatalf("a computed member naming the account the module creates is not covered: %v", got)
+	}
+	for name, p := range map[string]*Plan{
+		"the title names an account the module does not create": computed(gcp.CatalogReadConditionTitle("fugaro-b-other-web-1a2b3c4d"), cbBuildID),
+		"the title is not an account's":                         computed(gcp.CatalogReadConditionTitlePrefix, cbBuildID),
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := c.NotCovered(p, nil)
+			if len(got) != 1 || !strings.Contains(got[0], "not the build account") {
 				t.Fatalf("got %v, want one problem naming the account rule", got)
 			}
 		})

@@ -110,9 +110,21 @@ func TestRecordCheckoutDoesNotTouchAProjectConfig(t *testing.T) {
 // TestRecordCheckoutKeepsAnAlreadyKnownPath: a command in a checkout this
 // machine already knows writes nothing at all (the file's own mtime is the
 // proof), so the steady state of running fugaro in a checkout is a read.
+//
+// The path is a directory that is there, which is the only kind a command
+// records — it records the toplevel it is running in — and the one the pruning
+// leaves alone. A path that is gone is stamped as gone on the first write that
+// sees it, and that stamp is a change like any other; the roots are the test's
+// own list of the machine's temporary directories, which is where t.TempDir()
+// lives.
 func TestRecordCheckoutKeepsAnAlreadyKnownPath(t *testing.T) {
 	getenv := checkoutsEnv(t)
-	if err := RecordCheckout(getenv, "aurora", checkoutID("github", "acme/app"), "/src/app", at(0)); err != nil {
+	dir := filepath.Join(t.TempDir(), "app")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	roots := []string{filepath.Join(t.TempDir(), "not-a-temp-root")}
+	if err := RecordCheckout(getenv, "aurora", checkoutID("github", "acme/app"), dir, at(0), roots); err != nil {
 		t.Fatal(err)
 	}
 	path, err := CheckoutsPath(getenv)
@@ -123,7 +135,7 @@ func TestRecordCheckoutKeepsAnAlreadyKnownPath(t *testing.T) {
 	if err := os.Chtimes(path, old, old); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordCheckout(getenv, "aurora", checkoutID("github", "acme/app"), "/src/app", at(5)); err != nil {
+	if err := RecordCheckout(getenv, "aurora", checkoutID("github", "acme/app"), dir, at(5), roots); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(path)
@@ -244,6 +256,294 @@ func TestRecordCheckoutRefusesWhatIsNotAnIdentity(t *testing.T) {
 				t.Errorf("a refused record wrote %s (err = %v)", path, err)
 			}
 		})
+	}
+}
+
+// TestRecordCheckoutSkipsTempDir: a checkout under the machine's temporary
+// directory is not remembered at all. The scratchpad worktrees a coding agent
+// makes live there, and a remembered path is what the console offers as a
+// working directory, so the row is not state this machine wants.
+//
+// The second half is the symlink the rule turns on: the path is judged after
+// resolving symlinks, because a temporary directory is reached through one on
+// macOS (/tmp is /private/tmp and /var/folders is /private/var/folders), and a
+// comparison of the strings alone would remember a path under a temporary
+// directory reached the other way. The link is built in the test rather than
+// taken from the platform, so the test means the same thing on every one.
+func TestRecordCheckoutSkipsTempDir(t *testing.T) {
+	getenv := checkoutsEnv(t)
+	// The machine's own temporary directory, as the writer reads it: every
+	// directory a test can make is inside it.
+	if err := RecordCheckout(getenv, "aurora", checkoutID("github", "acme/app"), t.TempDir(), at(0)); err != nil {
+		t.Fatal(err)
+	}
+	// And the same rule through a link, which is how macOS reaches its own:
+	// the link is one the test makes, and the root it resolves into is the
+	// only temporary directory this half names.
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	if err := os.MkdirAll(filepath.Join(real, "app"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordCheckout(getenv, "aurora", checkoutID("github", "acme/other"), filepath.Join(link, "app"), at(1), []string{real}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadCheckouts(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Projects["aurora"]) != 0 {
+		t.Errorf("aurora's checkouts = %+v, want none: a temporary directory is never remembered", c.Projects["aurora"])
+	}
+}
+
+// TestRecordCheckoutSkipsATempRootReachedThroughALink: the rule is judged in
+// both spellings of both sides. A temporary directory is reached through a
+// link on macOS — os.TempDir() is /var/folders/... and the same directory
+// through its own link is /private/var/folders/... — so a root named as the
+// link and a path spelled as what it resolves to are the same directory, and
+// the writer says so whichever way round the two come.
+func TestRecordCheckoutSkipsATempRootReachedThroughALink(t *testing.T) {
+	getenv := checkoutsEnv(t)
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	if err := os.MkdirAll(filepath.Join(real, "app"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	// The root as the link, the path as what the link resolves to.
+	if err := RecordCheckout(getenv, "aurora", checkoutID("github", "acme/app"), filepath.Join(real, "app"), at(0), []string{link}); err != nil {
+		t.Fatal(err)
+	}
+	// And the root as what the link resolves to, the path through the link.
+	if err := RecordCheckout(getenv, "aurora", checkoutID("github", "acme/other"), filepath.Join(link, "app"), at(1), []string{real}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadCheckouts(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Projects["aurora"]) != 0 {
+		t.Errorf("aurora's checkouts = %+v, want none: the root and the path name the same directory", c.Projects["aurora"])
+	}
+}
+
+// TestRecordCheckoutSkipsALinkOutOfATempRoot: a path under a temporary
+// directory is temporary whatever the link resolves to. An agent's scratchpad
+// is a directory in the temporary directory, and the path this machine
+// remembers is the one the console is offered as a working directory: judged
+// by what the link points at today, a link the agent can re-point after the
+// row is written would be offered, and the target it is pointed at then is
+// whatever the agent likes.
+func TestRecordCheckoutSkipsALinkOutOfATempRoot(t *testing.T) {
+	getenv := checkoutsEnv(t)
+	root := filepath.Join(t.TempDir(), "scratch")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "work", "app")
+	if err := os.MkdirAll(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "app")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordCheckout(getenv, "aurora", checkoutID("github", "acme/app"), link, at(0), []string{root}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadCheckouts(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Projects["aurora"]) != 0 {
+		t.Errorf("aurora's checkouts = %+v, want none: the path is under the temporary directory, whatever it points at", c.Projects["aurora"])
+	}
+}
+
+// TestRecordCheckoutKeepsNormalCheckout: the rule is about temporary
+// directories and nothing else. A checkout that is not under one is recorded
+// as it always was, and the roots are the test's own list because every
+// directory a test can make is inside the machine's temporary directory.
+func TestRecordCheckoutKeepsNormalCheckout(t *testing.T) {
+	getenv := checkoutsEnv(t)
+	dir := filepath.Join(t.TempDir(), "work", "app")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	roots := []string{filepath.Join(t.TempDir(), "scratch")}
+	if err := RecordCheckout(getenv, "aurora", checkoutID("github", "acme/app"), dir, at(0), roots); err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadCheckouts(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := c.Projects["aurora"]["github/acme/app"]
+	if len(r.Paths) != 1 || r.Paths[0].Path != dir {
+		t.Fatalf("aurora's checkouts = %+v, want the one path %q", c.Projects["aurora"], dir)
+	}
+	if r.Paths[0].MissingSince != nil {
+		t.Errorf("the recorded row = %+v, want no missing clock: the path is there", r.Paths[0])
+	}
+}
+
+// TestPruneDropsTempRows: a row under a temporary directory is dropped by the
+// next write, whatever its age and whether or not it is still there — the
+// scratchpad a coding agent left behind is a live checkout, and it is exactly
+// the row the console would otherwise offer as a working directory. The
+// project it emptied goes with it. A row whose path is a link out of the
+// temporary directory goes too: the row is what the console is offered, and a
+// link can be re-pointed after it is written.
+func TestPruneDropsTempRows(t *testing.T) {
+	getenv := checkoutsEnv(t)
+	path, err := CheckoutsPath(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scratch := filepath.Join(t.TempDir(), "scratch")
+	if err := os.MkdirAll(scratch, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	kept := filepath.Join(t.TempDir(), "work", "app")
+	if err := os.MkdirAll(kept, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "work", "linked")
+	if err := os.MkdirAll(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(scratch, "linked")
+	if err := os.Symlink(outside, linked); err != nil {
+		t.Fatal(err)
+	}
+	writeHandWritten(t, path, &Checkouts{Version: CheckoutsVersion, Projects: map[string]map[string]CheckoutRepo{
+		"aurora": {
+			"github/acme/app": {Provider: "github", Repo: "acme/app", RecordedAt: at(0),
+				Paths: []CheckoutPath{{Path: kept, RecordedAt: at(0)}}},
+			"github/acme/scratch": {Provider: "github", Repo: "acme/scratch", RecordedAt: at(1),
+				Paths: []CheckoutPath{{Path: scratch, RecordedAt: at(1)}}},
+			"github/acme/linked": {Provider: "github", Repo: "acme/linked", RecordedAt: at(1),
+				Paths: []CheckoutPath{{Path: linked, RecordedAt: at(1)}}},
+		},
+		"bramble": {
+			"github/acme/other": {Provider: "github", Repo: "acme/other", RecordedAt: at(2),
+				Paths: []CheckoutPath{{Path: scratch, RecordedAt: at(2)}}},
+		},
+	}})
+	roots := []string{scratch}
+	if err := RecordCheckout(getenv, "aurora", checkoutID("github", "acme/app"), kept, at(5), roots); err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadCheckouts(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.Projects["aurora"]["github/acme/scratch"]; ok {
+		t.Errorf("aurora's checkouts = %+v, want no row for the scratchpad", c.Projects["aurora"])
+	}
+	if _, ok := c.Projects["aurora"]["github/acme/linked"]; ok {
+		t.Errorf("aurora's checkouts = %+v, want no row for the link out of the scratchpad", c.Projects["aurora"])
+	}
+	if _, ok := c.Projects["bramble"]; ok {
+		t.Errorf("bramble = %+v, want the project gone: its only row was the scratchpad", c.Projects["bramble"])
+	}
+	if r := c.Projects["aurora"]["github/acme/app"]; len(r.Paths) != 1 || r.Paths[0].Path != kept {
+		t.Errorf("the kept row = %+v, want %q", r, kept)
+	}
+}
+
+// TestPruneDropsLongMissingRows: a row whose path has been gone for longer
+// than the grace is dropped by the next write, and one gone for less than that
+// is kept with its clock. A row that is there again has its clock cleared, so
+// a directory that comes back is not dropped for the time it was away.
+func TestPruneDropsLongMissingRows(t *testing.T) {
+	getenv := checkoutsEnv(t)
+	path, err := CheckoutsPath(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := filepath.Join(t.TempDir(), "gone")
+	back := filepath.Join(t.TempDir(), "back")
+	if err := os.MkdirAll(back, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := at(0).Add(-checkoutMissingGrace - time.Hour)
+	recent := at(0).Add(-time.Hour)
+	writeHandWritten(t, path, &Checkouts{Version: CheckoutsVersion, Projects: map[string]map[string]CheckoutRepo{
+		"aurora": {
+			"github/acme/old": {Provider: "github", Repo: "acme/old", RecordedAt: at(0),
+				Paths: []CheckoutPath{{Path: gone + "-old", RecordedAt: at(0), MissingSince: &old}}},
+			"github/acme/recent": {Provider: "github", Repo: "acme/recent", RecordedAt: at(0),
+				Paths: []CheckoutPath{{Path: gone + "-recent", RecordedAt: at(0), MissingSince: &recent}}},
+			"github/acme/back": {Provider: "github", Repo: "acme/back", RecordedAt: at(0),
+				Paths: []CheckoutPath{{Path: back, RecordedAt: at(0), MissingSince: &old}}},
+		},
+	}})
+	if err := RecordCheckout(getenv, "aurora", checkoutID("github", "acme/new"), filepath.Join(t.TempDir(), "new"), at(5), []string{}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadCheckouts(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.Projects["aurora"]["github/acme/old"]; ok {
+		t.Errorf("aurora's checkouts = %+v, want no row gone for longer than the grace", c.Projects["aurora"])
+	}
+	r, ok := c.Projects["aurora"]["github/acme/recent"]
+	if !ok {
+		t.Fatalf("aurora's checkouts = %+v, want the row gone for an hour kept", c.Projects["aurora"])
+	}
+	if r.Paths[0].MissingSince == nil || !r.Paths[0].MissingSince.Equal(recent) {
+		t.Errorf("the kept row = %+v, want its clock %v kept", r.Paths[0], recent)
+	}
+	b, ok := c.Projects["aurora"]["github/acme/back"]
+	if !ok {
+		t.Fatalf("aurora's checkouts = %+v, want the path that came back kept", c.Projects["aurora"])
+	}
+	if b.Paths[0].MissingSince != nil {
+		t.Errorf("the row that came back = %+v, want no missing clock", b.Paths[0])
+	}
+}
+
+// TestPruneStampsTheFirstMissingObservation: a document written before the
+// clock existed carries rows with no missing_since, and the first write that
+// sees such a path gone stamps it with that moment — the clock starts at the
+// first observation rather than at a moment nothing recorded — so the row is
+// not dropped at once for a time this machine never saw.
+func TestPruneStampsTheFirstMissingObservation(t *testing.T) {
+	getenv := checkoutsEnv(t)
+	path, err := CheckoutsPath(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := filepath.Join(t.TempDir(), "gone")
+	writeHandWritten(t, path, &Checkouts{Version: CheckoutsVersion, Projects: map[string]map[string]CheckoutRepo{
+		"aurora": {
+			"github/acme/app": {Provider: "github", Repo: "acme/app", RecordedAt: at(0),
+				Paths: []CheckoutPath{{Path: gone, RecordedAt: at(0)}}},
+		},
+	}})
+	if err := RecordCheckout(getenv, "aurora", checkoutID("github", "acme/new"), filepath.Join(t.TempDir(), "new"), at(5), []string{}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadCheckouts(getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, ok := c.Projects["aurora"]["github/acme/app"]
+	if !ok {
+		t.Fatalf("aurora's checkouts = %+v, want the row kept: it was seen gone for the first time", c.Projects["aurora"])
+	}
+	if r.Paths[0].MissingSince == nil || !r.Paths[0].MissingSince.Equal(at(5)) {
+		t.Errorf("the row = %+v, want it stamped with the moment it was first seen gone", r.Paths[0])
 	}
 }
 
