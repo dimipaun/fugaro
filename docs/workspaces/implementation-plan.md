@@ -182,7 +182,7 @@ the other for the rest of the installation's life.
 The new `fugaro workspace` family (D1303) with `ls`, `show`, `add`, `rm`, `member add`, `member rm`,
 `cap set` — every write a local config edit through the same check, diff, backup and atomic write
 the `models` commands use, and every one ending with `next: fugaro update`. `workspace add` writes
-the membership key **and the pin** — the three values it is given, which is the one place a member
+the membership key **and the pin** — the four values it is given, which is the one place a member
 decides what it trusts — firebase project, issuer, assertion key and service account — and
 `workspace rm` removes both. `workspace member add` is the owner's side: it writes the member entry
 **and the four values the service's per-member table is built from** (the member's **job service

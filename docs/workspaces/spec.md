@@ -618,8 +618,9 @@ already share: `config publish`, `project policy publish`, `image refresh` and `
 leave the machine. **Two writes** do go to the cloud, and both are stages of `fugaro update`, which
 already reads the gate directly for its own stages (`internal/cli/update_managed.go`:217 calls
 `readManagedGate`), so neither needs a path of its own: **W2's publish of `workspaces/<name>`**, on
-the owner's side, which runs under the gate `update` already opens; and **W7's two grants on a
-member**, which the gate **refuses** in a managed project — an IAM binding is a loosening, and the
+the owner's side, which runs under the gate `update` already opens; and **W7's one grant on a
+member** (the read-only database role; the write and the bucket read are gone — O1), which the gate
+**refuses** in a managed project — an IAM binding is a loosening, and the
 cover never admits one (`internal/infra/tf/cover.go`:860-867) — so that stage falls back to its own
 typed confirmation and is run by the member's owner at their own terminal (W7). The distinction is
 the whole reason the two are stated apart: a plan can be read for a document, and it cannot be read
