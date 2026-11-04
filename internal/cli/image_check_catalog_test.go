@@ -160,20 +160,41 @@ func (f *catalogCheckFixture) seed(t *testing.T, entry, repo, definition, baseDi
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(data)
+	f.putRecord(t, entry, repo, gen, hex.EncodeToString(sum[:]), baseDigest)
+	return gen, hex.EncodeToString(sum[:])
+}
+
+// putRecord writes the record a build of entry would have left, built FROM
+// baseDigest, without copying a definition: the state a build of a definition
+// the bucket no longer has leaves behind.
+func (f *catalogCheckFixture) putRecord(t *testing.T, entry, repo string, gen int64, sum, baseDigest string) {
+	t.Helper()
 	recKey, err := gcp.CatalogRecordKey(f.slugs[repo], entry)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec, err := json.Marshal(imagecheck.CatalogRecordState{
 		Version: imagecheck.CatalogRecordVersion, Entry: entry, SourceCommit: catalogCheckCommit,
-		DefinitionGeneration: gen, DefinitionSHA256: hex.EncodeToString(sum[:]),
+		DefinitionGeneration: gen, DefinitionSHA256: sum,
 		BaseRef: checkBase, BaseDigest: baseDigest, BuiltAt: time.Now().Add(-time.Hour).UTC(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.gcs.Put(catalogBuildBucket, recKey, rec)
-	return gen, hex.EncodeToString(sum[:])
+}
+
+// raw is the bytes of the object at key, false when there is none.
+func (f *catalogCheckFixture) raw(t *testing.T, key string) ([]byte, bool) {
+	t.Helper()
+	data, _, err := f.gcs.Bucket(t, catalogBuildBucket).Read(context.Background(), key)
+	if errors.Is(err, blobx.ErrNotExist) {
+		return nil, false
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data, true
 }
 
 // put stores data as the object a build or a check would have written at key.
@@ -209,6 +230,7 @@ type catalogCheckLine struct {
 	BuildID         *string  `json:"build_id"`
 	LastBuildStatus string   `json:"last_build_status"`
 	Error           string   `json:"error"`
+	DryRun          bool     `json:"dry_run"`
 	Message         string   `json:"message"`
 }
 
@@ -347,12 +369,16 @@ func TestCatalogCheckJobRebuildsTheChangedEntryAsItsOwnRepositorysAccount(t *tes
 func TestCatalogCheckJobBuildsNothingFromAnUnreadableRecord(t *testing.T) {
 	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("tools", "runtime"), 5))
 	f.seed(t, "tools", "acme/app", catalogCheckAppDef, checkBaseDigest)
-	gen, sum := f.seed(t, "runtime", "acme/other", catalogCheckOtherDef, checkBaseDigest)
 	// A record with no version: the shape ParseCatalogRecordState refuses.
 	key, err := gcp.CatalogRecordKey(f.slugs["acme/other"], "runtime")
 	if err != nil {
 		t.Fatal(err)
 	}
+	defKey, err := config.CatalogDockerfileKey("runtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.put(t, defKey, []byte(catalogCheckOtherDef))
 	f.put(t, key, []byte(`{"entry":"runtime","source_commit":"`+catalogCheckCommit+`"}`))
 
 	lines, err := runCatalogCheck(t)
@@ -372,8 +398,160 @@ func TestCatalogCheckJobBuildsNothingFromAnUnreadableRecord(t *testing.T) {
 	if st := f.state(t, "runtime", "acme/other"); st == nil || st.Decision != imagecheck.CheckFailed || !strings.Contains(st.Error, "unreadable") {
 		t.Fatalf("runtime check.json = %+v", st)
 	}
-	_ = gen
-	_ = sum
+}
+
+// TestCatalogCheckJobLeavesAnUnreadableCheckStateAlone: the check state holds
+// the back-off, so one that cannot be read is refused rather than treated as
+// absent (a build known to fail would be paid for again) — and it is left on
+// disk as it is, for a human, rather than overwritten with this run's decision.
+func TestCatalogCheckJobLeavesAnUnreadableCheckStateAlone(t *testing.T) {
+	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("runtime"), 5))
+	f.seed(t, "runtime", "acme/other", catalogCheckOtherDef, "sha256:"+strings.Repeat("9", 64))
+	key := imagecheck.CatalogCheckKey(f.slugs["acme/other"], "runtime")
+	f.put(t, key, []byte(`{"version":1,"decision":"nonsense"`))
+
+	lines, err := runCatalogCheck(t)
+	if err == nil {
+		t.Fatal("the catalog check reported no failure for an unreadable check state")
+	}
+	if got := buildPosts(f.fb); got != 0 {
+		t.Fatalf("builds submitted = %d, want 0", got)
+	}
+	l := lineFor(t, lines, "runtime")
+	if l.Decision != imagecheck.CheckFailed || l.Severity != "ERROR" || !strings.Contains(l.Error, "unreadable") || !strings.Contains(l.Error, key) {
+		t.Fatalf("runtime line = %+v", l)
+	}
+	if data, ok := f.raw(t, key); !ok || string(data) != `{"version":1,"decision":"nonsense"` {
+		t.Fatalf("check.json = %q, want it left as it was", data)
+	}
+}
+
+// TestCatalogCheckJobBuildsNothingWithoutACopiedDefinition: a build submitted
+// now would have nothing to build FROM, so a missing copy is an error for that
+// entry — not a rebuild — and the message names the command that writes it.
+func TestCatalogCheckJobBuildsNothingWithoutACopiedDefinition(t *testing.T) {
+	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("runtime"), 5))
+	f.putRecord(t, "runtime", "acme/other", 0, strings.Repeat("a", 64), "sha256:"+strings.Repeat("9", 64))
+
+	lines, err := runCatalogCheck(t)
+	if err == nil {
+		t.Fatal("the catalog check reported no failure for an entry with no copied definition")
+	}
+	if got := buildPosts(f.fb); got != 0 {
+		t.Fatalf("builds submitted = %d, want 0", got)
+	}
+	l := lineFor(t, lines, "runtime")
+	if l.Decision != imagecheck.CheckFailed || l.Severity != "ERROR" ||
+		!strings.Contains(l.Error, "has no copied definition") || !strings.Contains(l.Error, "fugaro image build runtime") {
+		t.Fatalf("runtime line = %+v", l)
+	}
+	if st := f.state(t, "runtime", "acme/other"); st == nil || st.Decision != imagecheck.CheckFailed {
+		t.Fatalf("runtime check.json = %+v", st)
+	}
+}
+
+// TestCatalogCheckJobDryRunSubmitsAndRecordsNothing: --dry-run decides the
+// whole catalog and writes nothing at all — no build, and no check.json, so a
+// dry run cannot become the back-off the next real run reads.
+func TestCatalogCheckJobDryRunSubmitsAndRecordsNothing(t *testing.T) {
+	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("runtime"), 5))
+	f.seed(t, "runtime", "acme/other", catalogCheckOtherDef, "sha256:"+strings.Repeat("9", 64))
+
+	lines, err := runCatalogCheck(t, "--dry-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := buildPosts(f.fb); got != 0 {
+		t.Fatalf("builds submitted = %d, want 0", got)
+	}
+	l := lineFor(t, lines, "runtime")
+	if l.Decision != imagecheck.Rebuild || !l.DryRun || *l.BuildID != "" || !slices.Equal(l.Reasons, []string{imagecheck.ReasonBase}) {
+		t.Fatalf("runtime line = %+v", l)
+	}
+	if st := f.state(t, "runtime", "acme/other"); st != nil {
+		t.Fatalf("runtime check.json = %+v, want none", st)
+	}
+}
+
+// TestCatalogCheckJobForceRebuildsAnUnchangedEntry: --force decides a rebuild
+// whatever the triggers say, and the entry whose base did not move is the one
+// that is built.
+func TestCatalogCheckJobForceRebuildsAnUnchangedEntry(t *testing.T) {
+	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("runtime"), 5))
+	f.seed(t, "runtime", "acme/other", catalogCheckOtherDef, checkBaseDigest)
+
+	if _, err := runCatalogCheck(t); err != nil {
+		t.Fatal(err)
+	}
+	if got := buildPosts(f.fb); got != 0 {
+		t.Fatalf("builds submitted = %d, want 0 without --force", got)
+	}
+
+	lines, err := runCatalogCheck(t, "--force")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := buildPosts(f.fb); got != 1 {
+		t.Fatalf("builds submitted = %d, want 1 with --force", got)
+	}
+	if l := lineFor(t, lines, "runtime"); l.Decision != imagecheck.Rebuild || !slices.Equal(l.Reasons, []string{imagecheck.ReasonForce}) {
+		t.Fatalf("runtime line = %+v", l)
+	}
+}
+
+// TestCatalogCheckJobDecidesWithoutABaseDigest: a base image whose digest
+// cannot be read is not a rebuild and not a failure — the base trigger is
+// skipped for every entry, and the decision says so.
+func TestCatalogCheckJobDecidesWithoutABaseDigest(t *testing.T) {
+	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("runtime"), 5))
+	f.seed(t, "runtime", "acme/other", catalogCheckOtherDef, checkBaseDigest)
+	f.reg.DeleteManifest("proj-1234/fugaro-base/fugaro-base", "dev-abc")
+
+	lines, err := runCatalogCheck(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := buildPosts(f.fb); got != 0 {
+		t.Fatalf("builds submitted = %d, want 0", got)
+	}
+	l := lineFor(t, lines, "runtime")
+	if l.Decision != imagecheck.Skip || !slices.Equal(l.Reasons, []string{imagecheck.ReasonBaseUnknown}) || l.Severity != "INFO" {
+		t.Fatalf("runtime line = %+v", l)
+	}
+	if st := f.state(t, "runtime", "acme/other"); st == nil || st.Decision != imagecheck.Skip || !slices.Equal(st.Reasons, []string{imagecheck.ReasonBaseUnknown}) {
+		t.Fatalf("runtime check.json = %+v", st)
+	}
+}
+
+// TestCatalogCheckJobFailsEveryAssignedEntryWhenItsBaseIsMissing: a job that
+// cannot tell what every entry is built FROM decides nothing — every entry the
+// spec assigns is check-failed, its check.json says the same, and no build is
+// submitted for any of them.
+func TestCatalogCheckJobFailsEveryAssignedEntryWhenItsBaseIsMissing(t *testing.T) {
+	spec := catalogCheckSpecFor(t, catalogCheckCatalog("tools", "runtime"), 5)
+	spec.BaseImages = map[string]string{"legacy": checkBase}
+	f := newCatalogCheckJob(t, spec)
+	old := "sha256:" + strings.Repeat("9", 64)
+	f.seed(t, "tools", "acme/app", catalogCheckAppDef, old)
+	f.seed(t, "runtime", "acme/other", catalogCheckOtherDef, old)
+
+	lines, err := runCatalogCheck(t)
+	if err == nil {
+		t.Fatal("the catalog check reported no failure for a spec with no base image")
+	}
+	if got := buildPosts(f.fb); got != 0 {
+		t.Fatalf("builds submitted = %d, want 0", got)
+	}
+	for _, entry := range []struct{ name, repo string }{{"tools", "acme/app"}, {"runtime", "acme/other"}} {
+		l := lineFor(t, lines, entry.name)
+		if l.Decision != imagecheck.CheckFailed || l.Severity != "ERROR" || !strings.Contains(l.Error, catalogNotInstalledReason) {
+			t.Fatalf("%s line = %+v", entry.name, l)
+		}
+		st := f.state(t, entry.name, entry.repo)
+		if st == nil || st.Decision != imagecheck.CheckFailed || !strings.Contains(st.Error, catalogNotInstalledReason) {
+			t.Fatalf("%s check.json = %+v", entry.name, st)
+		}
+	}
 }
 
 // TestCatalogCheckJobLeavesAnEntryWithNoRecordToItsOwnBuild: an entry the
@@ -523,7 +701,7 @@ func TestCatalogCheckJobRefusesAnEntryAssignedToAnotherRepository(t *testing.T) 
 	}
 	l := lineFor(t, lines, "runtime")
 	if l.Decision != imagecheck.CheckFailed || l.Severity != "ERROR" ||
-		!strings.Contains(l.Error, "is built from acme/other's Dockerfile") {
+		!strings.Contains(l.Error, "is built from acme/other's Dockerfile") || !strings.Contains(l.Error, catalogNotInstalledReason) {
 		t.Fatalf("runtime line = %+v", l)
 	}
 	// The entries of the catalog this spec assigns to no repository are named
