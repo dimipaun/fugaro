@@ -25,7 +25,7 @@ agent:
   max_budget_usd: 500  # Claude Code prices a non-Anthropic model at Sonnet-like rates, about 25 times what the gateway charges for DeepSeek, so this per-stage limit is set high on purpose; the gateway's per-run cap (budget set --repo) is the real hard stop
   models:
     coder: deepseek/deepseek-v4.1-flash
-    reviewer: claude-opus-5-5
+    reviewer: deepseek/deepseek-v4-pro
   # deepseek-v4-pro answers at most 16384 tokens a call; the review stage asks for 32000 unless limited,
   # and the gateway refuses that request.
   max_output_tokens:

@@ -96,12 +96,12 @@ landed.
 
 ## G0. The generic writer's wildcard rows and the two budget keys (D1160, D1161, D1179). **SEC**
 
-- **Interface.** `settingsGenericKeys` (`internal/cli/settings_set.go:68`) gains the wildcard rows this
+- **Interface.** `settingsGenericKeys` (`internal/cli/settings_set.go:81`) gains the wildcard rows this
   design manages, **and the two budget keys D1179 gives the generic path** (`budget.mode`,
   `budget.per_day_usd`) — the two whose rows default to the generic owner while the allowlist refuses
-  them on purpose (F13), with the list's own comment (`:60`) rewritten beside them;
-  `settingsWriteLookup` (`:328`) and `settingsPatternMatch` (`:351`) are **reused unchanged**, and the
-  literal `*` refusal (`:306`) stays. A concrete key of a row the allowlist does not carry keeps today's
+  them on purpose (F13), with the list's own comment (`:65`) rewritten beside them;
+  `settingsWriteLookup` (`:430`) and `settingsPatternMatch` (`:453`) are **reused unchanged**, and the
+  literal `*` refusal (`:406`) stays. A concrete key of a row the allowlist does not carry keeps today's
   refusal, whose sentence names the nearest keys.
 - **Decided here, and tested:** writing one concrete key into a block the document does not hold
   **creates the block** (D1161's stated cost), and the created block is refused when its key may not be
@@ -118,16 +118,16 @@ landed.
 
 ## G1. `--add-entry` and `--remove-entry` (D1162, D1163, D1167). **SEC**
 
-- **Interface.** Two flags on `settingsWriteOptions` (`internal/cli/settings_set.go:121`) beside `--add`
-  and `--remove`, dispatched in the same switch (`:1005`) to `yamledit.UpsertSeqItemByKey` /
+- **Interface.** Two flags on `settingsWriteOptions` (`internal/cli/settings_set.go:221`) beside `--add`
+  and `--remove`, dispatched in the same switch (`:1107`) to `yamledit.UpsertSeqItemByKey` /
   `RemoveSeqItemByKey` (`internal/yamledit/yamledit.go:294`, `:351`) for an object list, and to a
   map-member write for a map. **One entry per invocation** (D1167); the entry's key field is the row's
   own, decided per block in this task's table and pinned by its tests.
 - **The classification.** An entry write goes through `settingsTypedWrite`
-  (`internal/cli/settings_set.go:886`) unchanged, so adding a `secrets` member or an `allow_data_to`
+  (`internal/cli/settings_set.go:988`) unchanged, so adding a `secrets` member or an `allow_data_to`
   value is a widening and takes the typed name (D1165).
 - **Red step.** `TestSettingsSetAddEntryMapMember` and `TestSettingsSetAddEntryObjectListEntry` — each
-  fails today with the *a key with a `*` is a map entry* refusal (`:306`). Then
+  fails today with the *a key with a `*` is a map entry* refusal (`:406`). Then
   `TestSettingsSetRemoveEntryTakesOneOfADuplicateKey`, `TestSettingsSetAddEntryRefusesTwoEntries` and
   `TestSettingsSetAddEntrySecretsMemberIsATypedWidening`.
 - **Files (≤6).** `internal/cli/settings_set.go`, `internal/cli/settings_write.go` (the entry's
@@ -137,7 +137,7 @@ landed.
 
 ## G2. The settings-write document's entry members (D1164, D1166)
 
-- **Interface.** `settingsWriteDocVersion` (`internal/cli/settings_set.go:1197`) and the schema's const
+- **Interface.** `settingsWriteDocVersion` (`internal/cli/settings_set.go:1299`) and the schema's const
   (`schemas/settings-write.schema.json:20`) **stay at `1`**, and the entry write's members are **added as
   optional ones**: `operation`, the entry's key field and the members the entry carries. Every version-1
   member keeps its name and its meaning, so the console's edit — which pins version 1
@@ -177,7 +177,7 @@ landed.
   written through G0 and G1 against `layerRows` (`internal/settings/registry.go:411`), with
   `config publish`'s reserved-key and executable-key refusals (`internal/cli/config_publish.go:309`)
   applied to the edit's own document. The layer's `--layer project` write keeps ending with
-  `next: fugaro update` (`internal/cli/settings_set.go:1070`).
+  `next: fugaro update` (`internal/cli/settings_set.go:1172`).
 - **Red step.** `TestSettingsSetLayerProfileEntryWritesTheLayerFile` and
   `TestSettingsSetLayerAbEntryWritesTheLayerFile` — each fails today with a refusal naming the generic
   allowlist. Then `TestSettingsSetLayerRefusesAReservedKey` and

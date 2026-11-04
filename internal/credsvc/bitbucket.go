@@ -11,10 +11,13 @@ package credsvc
 //
 //   - The caller is one of two classes — the installation's people, and its
 //     coordinator (BB5) — and either is C3.9f's mechanism rather than a second
-//     way to be one (BB4, B2): VerifyReadCaller is the same token check as the
-//     verifier class with a different list, and the route is answered ahead of
-//     RequestFromHTTP for the same reason the verify route is — neither class
-//     holds a run identity, and the shared parse refuses a call that has none.
+//     way to be one (BB4, B2): VerifyReadCaller is the verifier class's token
+//     check with a different list, and with this route's own audience table
+//     beside it, because the person class admits gcloud's own client id where
+//     the verifier admits this service's URL alone (GcloudAudience). The route
+//     is answered ahead of RequestFromHTTP for the same reason the verify route
+//     is — neither class holds a run identity, and the shared parse refuses a
+//     call that has none.
 //     A caller that presents one anyway is refused by name: the route takes no
 //     run identity, so a whole identity beside the token is a call of a shape
 //     this route does not have.

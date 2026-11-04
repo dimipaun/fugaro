@@ -66,6 +66,16 @@ type settingsEdit struct {
 	// Yes is --yes. It answers the y/N confirmation, and the typed one too
 	// wherever the caller says a flag may (D1107).
 	Yes bool
+	// Managed is the managed gate's answer for the step this edit is (D1012): a
+	// caller that read the gate passes what it answered, and every caller that
+	// did not passes the zero value, whose meaning is "not managed" — the
+	// refusal below exactly as it was before the gate existed. It can only ever
+	// lift that refusal, for a step of a class the gate covers, in a project the
+	// marks say is managed, whose document the gate admitted (D1026: a Typed
+	// edit is never admitted, whatever a plan looked like). A caller that hands
+	// in a value it did not read from a gate is lying about a read, which no
+	// field here can prevent — the tests that pin the wiring are what catch it.
+	Managed initflow.Managed
 	// DryRun, when it is not nil, is the classification the caller made: this
 	// edit is never confirmed, never backed up and never written, and what
 	// would have happened is printed as the dry run's document instead
@@ -100,7 +110,15 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	// it could edit anyway, except when the edit is the typed one — the
 	// owner's own hand, whose file decides the ceiling of every run the
 	// branch starts.
-	if marker := agentMarker(os.Getenv); marker != "" && (!e.insideRepo() || e.Typed) {
+	//
+	// The one thing that lifts the refusal is the managed gate's answer
+	// (D1012): a caller that read the gate and was admitted for THIS edit's
+	// class passes it in e.Managed, and the step proceeds as it would for a
+	// person. Every other value — the zero value every other caller passes, a
+	// class the gate does not cover, an edit whose class is Typed — keeps the
+	// refusal exactly as it was, and a caller that passes nothing changes
+	// nothing.
+	if marker := agentMarker(os.Getenv); marker != "" && (!e.insideRepo() || e.Typed) && !initflow.CanConfirmManaged(e.editClass(), initflow.Conditions{Agent: marker}, e.Managed) {
 		fmt.Fprintf(out, "%s\n%s", e.Path, diff)
 		return userErr("refusing to write %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
 			e.Path, marker, e.What, e.Command)
@@ -165,6 +183,20 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 // insideRepo reports whether the edit lands in a repository's own fugaro.yaml
 // (`--layer repo`), the one document an agent session may write.
 func (e settingsEdit) insideRepo() bool { return e.Kind == settingsDocRepo }
+
+// editClass is the confirmation class of this edit, which is the class the
+// managed gate reads: Typed is D846's widening form — a loosened ceiling, a
+// floor removed — and everything else is the ordinary y/N. It is derived here
+// and not passed beside Managed, because the two facts a confirmation is
+// decided under have to agree: a caller that could name a class of its own
+// could name the one the gate covers for an edit that is Typed, and D1026's
+// rule is exactly that no plan gate admits one.
+func (e settingsEdit) editClass() initflow.ConfirmClass {
+	if e.Typed {
+		return initflow.Typed
+	}
+	return initflow.YesOrTyped
+}
 
 // readSettingsCurrent re-reads the file one edit is about to overwrite, for
 // the comparison that refuses an edit built on bytes that have moved. It reads
