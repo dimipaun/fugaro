@@ -19,6 +19,18 @@ package cli
 // removed keys settable -- and the two orders the folder's whole value is: the
 // dogfood before the removal, and D1148 before both.
 //
+// The four figures are the tree of **the design's own commit**: they are what a
+// repository can set today, and the removal is what takes them away. So the task
+// that moves a figure re-points this file in the same commit -- the plan's §4
+// names which (R2 the three settable surfaces, R3 the fixture figure) -- and a
+// task that lands without it fails a test nothing else in the tree names. The
+// Terraform half is written the same way, against the guards that **survive** the
+// removal: the workflow job's `deletion_protection`, the registry's
+// `prevent_destroy`, and the retirement flow's own typed confirmation. It does
+// not pin the check job's protection line, because a planned task deletes that
+// line with the job, and a pin on a line a task is going to delete is a pin that
+// breaks on the task rather than on a mistake.
+//
 //  * TestDocsRepoImageRemovalIsWritten -- the four files exist, the index
 //    carries the status line and the owner's ruling verbatim, the spec carries
 //    the order that orders every task, and the plan carries its own signature.
@@ -156,6 +168,22 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 		// The ceiling, and the one subject that exceeds it: a reader checking
 		// the plan against the brief's twelve-file rule has to find the reason.
 		"**The ceiling of twelve files is per commit.**",
+		// The arithmetic, because a sweep written as "four commits" was wrong
+		// twice over: 50 files do not fit in four commits of twelve, and the
+		// biggest directory is 27 files, which is over the ceiling in one
+		// commit whatever the commit count is.
+		"**Files (51, in five commits of ≤12).**",
+		"**27 files, twice the ceiling on its own**",
+		// Four commands go whole, and the plan says so in the words the spec's
+		// §1.2 table uses: a plan that keeps an arm of one of them is a plan
+		// whose own red step asserts a command the spec removes.
+		"**Four commands go whole**",
+		"the derived build's two steps `gate` and `record` (`internal/cli/image_record.go:60`, `:145`)",
+		// This folder's own pin is a file the removal moves, and §4 has to name
+		// the tasks that move it: a pin left asserting the pre-removal tree is
+		// the first removal task's failing test, and no other test names it.
+		"| `internal/cli/docs_repo_image_removal_test.go` | **R2**, **R3**, R4 (and R10 reads it) |",
+		"**R2 moves `Config scope rows` (93 → 82)**",
 		"## R0. The dogfood repository's entry, its build and its pin",
 		"## R10. The owner-run live check, and the 0.18.0 tag (the final task)",
 	} {
@@ -527,14 +555,24 @@ func TestDocsRepoImageRemovalKeepsTheRetirementOwnerRun(t *testing.T) {
 		why  string
 	}{
 		{
-			"deploy/terraform/gcp/modules/repo/check.tf",
+			"deploy/terraform/gcp/modules/workflow/job.tf",
 			"deletion_protection = !var.allow_job_delete",
-			"the check job is protected from an ordinary converge, which is why its removal is a retirement and not a plan",
+			"the workflow job carries the guard the check job carries today, so the flag's meaning outlives the job the removal takes out of the configuration; the check job's own line leaves with the job and is not pinned here, because pinning a line a planned task deletes is a pin that breaks on the task",
 		},
 		{
 			"deploy/terraform/gcp/modules/repo/registry.tf",
 			"prevent_destroy = true",
 			"the repository's Artifact Registry repository holds the images a rollback needs, and the design leaves the guard on it",
+		},
+		{
+			"internal/infra/retire.go",
+			`"check job"`,
+			"the retirement flow already knows the check job as a kind of its own, which is what makes the removal from the configuration a retirement the owner consents to rather than an ordinary delete",
+		},
+		{
+			"internal/cli/init_retire.go",
+			"askTyped",
+			"the retirement is the one flow that deletes a cloud object, and its confirmation is a typed one --askTyped, which --yes, --json, a pipe, --non-interactive and a coding agent's session all fail",
 		},
 	} {
 		body, err := os.ReadFile("../../" + c.path)

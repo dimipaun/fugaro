@@ -42,7 +42,7 @@ code. A `:line` is a **declaration** line at `aa034db1`; the symbol is what to s
 
 - **F6: Exists. The catalog's deploy-time selection is built**, with the tag-cover rule and the two
   refusals: `internal/infra/spec.go:799`, and the config-side references
-  (`image_name`, `needs`) at `internal/config/config.go:619`, `:621`.
+  (`image_name`, `needs`) at `internal/config/config.go:619`, `:626`.
 
 - **F7: Exists. The catalog's scheduled check has its decision layer and not its schedule.**
   `internal/imagecheck/catalog.go:20` (`CheckCatalog`) landed; the Terraform piece the D1148 answer

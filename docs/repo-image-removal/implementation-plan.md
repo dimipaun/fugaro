@@ -23,9 +23,9 @@ run.
 - **A new dependency.** `go.mod` is unchanged by every task.
 - **The ceiling of twelve files is per commit.** Every task lands as commits of at most twelve files,
   which is what review sees. One task — **R3**, the fixture sweep — is one subject whose files are the
-  **50** `testdata/` fixtures the removal invalidates (`reconciliation.md` D1197), so it lands as four
-  commits, one per directory, and not as four tasks: splitting it would give four tasks one red step and
-  four chances to leave the tree half-migrated.
+  **50** `testdata/` fixtures the removal invalidates (`reconciliation.md` D1197), so it lands as
+  **five** commits of at most twelve files and not as five tasks: splitting it would give five tasks one
+  red step and five chances to leave the tree half-migrated.
 
 ## 2. Order, and what forces it
 
@@ -60,6 +60,12 @@ are the reason it is not a preference:
   `internal/infra/tf/cover.go:22`'s `allowedTypes` — R4 to drop the check job's and the Scheduler's
   types, D1148 to add its own. **The table is never widened to make a plan pass**; each task adds or
   removes exactly the types its own `plan` prints.
+- **D1148's driver is not built on `fugaro image check`.** The per-repository check is the command R6
+  removes whole (§1.2, §6), and the catalog's pass is a **library** (`internal/imagecheck/catalog.go:20`,
+  `CheckCatalog`, the decision layer already landed). So the project-level schedule D1148 adds owns its
+  own entry point and its own `knownCommands` row (`internal/infra/tf/cover.go:794`), and reads the
+  catalog through `internal/imagecheck` rather than through a CLI command this plan deletes. A driver
+  written as an arm of `image check --job` is a driver rewritten in R6.
 
 ## 3. Gates (every task)
 
@@ -95,7 +101,8 @@ adds its edit only after that task has merged**, and never re-derives what the o
 | `schemas/settings.schema.json` | **G2**, **G8**, **G9**, R2 | They add member rows for the writes they add; R2 removes the members of the keys it removes (`schemas/settings.schema.json:1130`, `:1181`). **R2 does not move the document's version** — the rule G2 states |
 | `internal/cli/image_refresh*.go` | **M-series** (`image_refresh_steps.go`, `image_refresh_rules.go`), R6 | The managed build's M-series changes what `image refresh` converges; R6 removes its derived-image arm. **The M-series lands first**, or R6 rewrites lines it is about to be handed back |
 | `internal/cli/init.go`, `internal/cli/update.go` | **M-series** (`update.go`, `init.go`), R7 | R7 changes `setup`'s first-build offer (`offerBuilds`, `internal/cli/init.go:3415`) and the retirement door is left alone (`:444`); the M-series adds the converge stages. **Different functions, one file, M-series first** |
-| `docs/rigor-modes/reconciliation.md` | none after the design | The census row this folder moves is moved **in the design's own commit** (`docs_repo_image_removal_test.go`'s own pin moves it, 93 → 94) |
+| `docs/rigor-modes/reconciliation.md` | the design's own commit, **R2** | The design's commit moves the **pins** row (93 → 94, with its amendment sentence). **R2 moves `Config scope rows` (93 → 82)**, which is the eleven rows of spec §1.1 leaving `internal/config/scope.go`, and `TestDocsRigorModesCensusStatesItsCommands` re-runs that row's own command — so the row and the removal land together or the removal fails a test no task names. The rows R2 does **not** move, checked rather than assumed: the two top-level-key rows (a **workflow** key is not a top-level property), the skew-constant row (no `Since` constant leaves with the removal) and the pins row (no pin is deleted, one is rewritten) |
+| `internal/cli/docs_repo_image_removal_test.go` | **R2**, **R3**, R4 (and R10 reads it) | It pins this folder's facts **against the tree of the design's own commit**, so every task that moves a figure it states re-points it in the same commit: **R2** the three settable surfaces (11 scope rows, 21 registry rows, 21 schema members) and the sentences that state them — re-counted after the removal, which is 0 for each, the two tombstone rows that stay never having been among them; **R3** the fixture figure, since the invalid fixtures that become the new refusal's keep their keys and the count is therefore not 0; and **R4** nothing, once the retirement half reads the guard that stays (`deploy/terraform/gcp/modules/workflow/job.tf:15`) rather than the check job's. A pin left asserting the pre-removal tree is the first removal task's failing test, and it is a file no other test in the tree names |
 | `docs/gcp-live-checklist.md` | **R10 only** | The file is the owner's register; a coding agent's session does not edit it. **R10 is the one task this plan lifts that rule for**, it adds a register row and one section and edits nothing else, and no other task touches the file |
 
 ## 5. What the plan owes the gate, and what the gate owes the plan
@@ -184,19 +191,30 @@ readiness branches that decide between them.
 
 - **Interface.** Each removed key becomes a tombstone that refuses by name and names the catalog command
   — the mechanism `image.node`/`image.jdk` already are (`internal/config/image.go:119`, `:122`), whose
-  sentence is built from `MigrationDoc`. `internal/config/scope.go:106` loses the eleven rows of the
-  removed keys (`:108`, `:113`, `:131`, `:179`, `:189`), `internal/settings/registry.go:229` its
+  sentence is built from `MigrationDoc`. `internal/config/scope.go:108` loses the eleven rows of the
+  removed keys (`:113`, `:131`, `:135`, `:179`, `:189`), `internal/settings/registry.go:229` its
   twenty-one (`:454`, `:477`), and the three schemas their members
   (`schemas/fugaro.schema.json:358`, `:396`, `:511`; `schemas/project-layer.schema.json:265`, `:338`;
   `schemas/settings.schema.json:1130`, `:1181`).
   `image_name`, `needs` and `image_catalog.*` keep every member they have, and no version moves.
+  **The two tombstones stay**: `internal/config/scope.go:106` and `:107` are `image.node` and
+  `image.jdk`, the 0.7.0 keys the removal keeps refusing, so they are **not** among the eleven and its
+  first removed row is `:108`.
+  **This task also moves the two documents the removal's figures live in**: the `Config scope rows` row
+  of `docs/rigor-modes/reconciliation.md` (93 → **82**, the eleven rows) and this folder's own pin
+  (`internal/cli/docs_repo_image_removal_test.go`, whose three surface counts and whose sentences about
+  them become the post-removal truth) — §4.
 - **Red step.** `TestRemovedImageKeysAreRefusedByName` — a table of the removed paths, each asserted to
   fail with a message naming `fugaro image add`: today each fails, or is accepted, with the decoder's
   own words. `TestRemovedImageKeysLeaveTheScopeTable` and
   `TestRemovedImageKeysLeaveTheSettingsRegistry` are the two the surface can lie without: a scope row
-  and a registry row are what make a key *settable* after the config stopped accepting it.
-- **Files (≤8).** `internal/config/config.go`, `internal/config/image.go`, `internal/config/scope.go`,
-  `internal/settings/registry.go`, the three schemas, and the tests.
+  and a registry row are what make a key *settable* after the config stopped accepting it. Both, and
+  this folder's pin, are what the docs' own tests read back: `TestDocsRigorModesCensusStatesItsCommands`
+  re-runs the census row, so a task that emptied the scope table without moving the row fails a test
+  that names neither.
+- **Files (≤10).** `internal/config/config.go`, `internal/config/image.go`, `internal/config/scope.go`,
+  `internal/settings/registry.go`, the three schemas, the tests,
+  `internal/cli/docs_repo_image_removal_test.go` and `docs/rigor-modes/reconciliation.md`.
 - **Order note.** R2 is the task that makes the removal **observable**: after it, a repository still
   carrying `image:` is refused at validation, so R0 has to have landed (§2).
 
@@ -210,9 +228,12 @@ readiness branches that decide between them.
 - **Red step.** R2's refusal message is the red step; this task is what proves the **fixtures** agree
   with it: `go test ./internal/config/ -run 'TestLoad|TestValidate' -count=1` fails on every
   fixture R2 did not sweep, and the golden test fails until it is regenerated.
-- **Files (50, in four commits of ≤12).** `testdata/config/valid/`, `testdata/config/invalid/`,
-  `testdata/project-layer/valid/`, `testdata/project-layer/invalid/`, one commit each, plus the golden.
-  **One subject, four commits** (§1).
+- **Files (51, in five commits of ≤12).** ⌈51/12⌉ is **five** and the biggest directory is 27 files of
+  the 50, so the split is by *what a fixture asserts* and never one commit per directory: the 10
+  `testdata/config/valid/` fixtures in one commit, the 10 `testdata/project-layer/invalid/` ones in a
+  second, and `testdata/config/invalid/` — **27 files, twice the ceiling on its own** — across three
+  (12 + 12 + 3), the last of which carries `testdata/project-layer/valid/` (3) and the regenerated
+  `internal/cli/testdata/init_retire.golden`. **One subject, five commits** (§1).
 
 ## R4. The deploy path: the derived name, the check job, the Scheduler and the registry. **SEC**
 
@@ -222,19 +243,25 @@ readiness branches that decide between them.
   `registryPath` (`internal/infra/spec.go:749`) go from the job's image; `catalogJobImage` (`:799`)
   becomes the only producer.
   The repository's Artifact Registry repository stays **in the configuration** and its object is
-  destroyed only by the owner's `--retire` run (D1194) — so `deletion_protection`
-  (`deploy/terraform/gcp/modules/repo/check.tf:27`) and `prevent_destroy`
-  (`deploy/terraform/gcp/modules/repo/registry.tf:10`) are **not** touched. The build account
+  destroyed only by the owner's `--retire` run (D1194): its `prevent_destroy`
+  (`deploy/terraform/gcp/modules/repo/registry.tf:10`) is **not** touched. The check job's own
+  `deletion_protection` (`deploy/terraform/gcp/modules/repo/check.tf:27`) leaves with the job, and the
+  guard's meaning does not: the workflow job that stays carries the same one
+  (`deploy/terraform/gcp/modules/workflow/job.tf:15`, `!var.allow_job_delete`), so an ordinary converge
+  still cannot delete a job. The build account
   (`deploy/terraform/gcp/modules/repo/build.tf:5`) stays, with its grants narrowed to the shared
   registry, the base registry and ghcr, and **the catalog grants D1148's schedule runs on are kept**
-  (§2).
+  (§2). `knownCommands` (`internal/infra/tf/cover.go:794`) loses its `image check --job` row with the
+  job it describes; D1148's schedule adds its own.
 - **Red step.** `TestDerivedImageNameIsGoneFromTheSpec` — the spec of a repository whose workflow names
   an entry carries the shared registry's name and nothing of the repository's own; today it carries
   `gcp.ImageName(c.registryPath(), slug, name) + ":latest"`. Then the Terraform half:
   `scripts/gen-golden-plans.sh` regenerates the goldens, and the plan shows the check job and the
   Scheduler leaving and **nothing else**.
-- **Files (≤9).** `internal/infra/spec.go`, `deploy/terraform/gcp/modules/repo/{check,registry,build}.tf`
-  and `outputs.tf`, `internal/infra/tf/cover.go`, the spec test, and the regenerated goldens.
+- **Files (≤10).** `internal/infra/spec.go`, `deploy/terraform/gcp/modules/repo/{check,registry,build}.tf`
+  and `outputs.tf`, `internal/infra/tf/cover.go`, the spec test, the regenerated goldens, and
+  `internal/cli/docs_repo_image_removal_test.go` where its retirement assertion still names the check
+  job (§4).
 - **SEC.** It is a Terraform deployment: an independent reviewer reads the plan's destroy list line by
   line, and `terraform plan` on the `installation` and `repo` roots is the evidence — never a widened
   cover table.
@@ -256,18 +283,25 @@ readiness branches that decide between them.
 
 - **Interface.** `fugaro image build` (`internal/cli/image.go:78`) keeps its catalog arm
   (`fugaro image build <entry>`, `internal/cli/image_build_catalog.go`) and loses the derived one — the
-  `--local` arm, the render step and the repository-registry submit. `fugaro image render`
-  (`internal/cli/image.go:513`) goes, `fugaro image check` (`internal/cli/imagecheck.go:64`) keeps the
-  catalog pass and loses the per-repository one, `checkedWorkflows` (`:221`) goes, and `fugaro image
-  status` (`:952`) reports catalog entries instead of per-workflow derived images. `image refresh`'s
-  derived steps (`internal/cli/image_refresh_steps.go`) go. **`rebuild.*` is read by nothing after
-  this** (D1200) — the trigger set is `internal/imagecheck/catalog.go`'s and D1148's.
-- **Red step.** `TestImageRefreshNoDerivedSteps` and `TestImageCheckChecksOnlyCatalogEntries` — the two
-  commands' own lists, asserted to name no repository image. `TestImageRenderIsGone` asserts the command
-  is not registered, so a half-removed command cannot be reached by its old name.
-- **Files (≤12).** `internal/cli/image.go`, `internal/cli/imagecheck.go`, `internal/cli/image_refresh.go`,
-  `internal/cli/image_refresh_steps.go`, `internal/cli/image_refresh_rules.go`, and the tests that name
-  them.
+  `--local` arm, the render step and the repository-registry submit. **Four commands go whole**, as §1.2
+  and §6 say they do — `render` (`internal/cli/image.go:513`), `check` (`internal/cli/imagecheck.go:64`)
+  and `status` (`:952`), and the derived build's two steps `gate` and `record`
+  (`internal/cli/image_record.go:60`, `:145`). They are **removed, not narrowed**: the check a
+  workflow's image needed is the one D1148's project-level schedule makes over catalog entries, and it
+  is that schedule's own driver and not this command (§2), so nothing here keeps a per-workflow check
+  for it to read. `internal/infra/tf/cover.go:794`'s `image check --job` row goes with the job in R4.
+  `checkedWorkflows` (`internal/cli/imagecheck.go:221`) goes, and `image refresh`'s derived steps
+  (`internal/cli/image_refresh_steps.go`) go. **`rebuild.*` is read by nothing after this** (D1200) —
+  the trigger set is `internal/imagecheck/catalog.go`'s and D1148's.
+- **Red step.** `TestImageRefreshNoDerivedSteps` — the command's own list, asserted to name no
+  repository image. `TestImageRenderIsGone`, `TestImageCheckIsGone`, `TestImageStatusIsGone`,
+  `TestImageGateIsGone` and `TestImageRecordIsGone` assert each command is not registered, so a
+  half-removed command cannot be reached by its old name — and the gate's own §6 row ("no row: the
+  commands do not exist", R9) is only true once these pass.
+- **Files (≤12).** `internal/cli/image.go`, `internal/cli/imagecheck.go`, `internal/cli/image_record.go`,
+  `internal/cli/image_refresh.go`, `internal/cli/image_refresh_steps.go`,
+  `internal/cli/image_refresh_rules.go`, and the tests that name them — including the test files of the
+  removed commands, which are deleted with them.
 
 ## R7. `promote` goes, the refusal names the forward path, and `setup` offers a catalog build (D1192, D1207)
 

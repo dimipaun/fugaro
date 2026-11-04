@@ -23,7 +23,7 @@ Gone from `fugaro.yaml`, from a workflow:
 
 | Key | What it is today | Declaration |
 | --- | --- | --- |
-| `image.*` (`apt`, `setup`, `tools`, `skip_build_scripts`, `key_files`, and the `node`/`jdk` tombstones) | the generated Dockerfile's build instructions | `internal/config/config.go:752` |
+| `image.*` (`apt`, `setup`, `tools`, `skip_build_scripts`, `key_files`) | the generated Dockerfile's build instructions | `internal/config/config.go:752` |
 | `dockerfile` | the repository's own Dockerfile, one repository-relative path | `internal/config/config.go:604` |
 | `rebuild.*` (`check`, `max_age`, `lockfiles`, `base`, `paths`) | the daily check's triggers for this repository's image | `internal/config/config.go:714` |
 
@@ -32,12 +32,16 @@ Gone from the **project layer file** too: the same `image.*` keys and `rebuild.*
 from `fugaro.yaml` alone would leave a second door to the same build.
 
 **What is not removed, and why it is named here:** `image_name` and `needs`
-(`internal/config/config.go:619`, `:621`) are the catalog's own selectors and stay; `checkout`
-(`internal/config/config.go:657`) keeps both its values (§2.2).
+(`internal/config/config.go:619`, `:626`) are the catalog's own selectors and stay; `checkout`
+(`internal/config/config.go:657`) keeps both its values (§2.2), and the `image.node`/`image.jdk`
+tombstones stay with them — they are not settings but refusals with a migration sentence
+(`internal/config/image.go:119`, `:122`), which is the mechanism the keys above reuse (C4, D1195).
 
 The eleven scope rows that make the removed keys settable
-(`internal/config/scope.go:106`, `:108`, `:113`, `:131`) go with them, and so do their entries in
-`ExecutableKeys` and `NonExecutableImageKeys` (`internal/config/scope.go:179`, `:189`). A key that is
+(`internal/config/scope.go:108`, `:113`, `:131`, `:135`) go with them, and so do their entries in
+`ExecutableKeys` and `NonExecutableImageKeys` (`internal/config/scope.go:179`, `:189`). **Not every
+`image.*` row goes**: `internal/config/scope.go:106` and `:107` are `image.node` and `image.jdk`, the
+two tombstones that stay, so the removal's first scope row is `:108` and its last `:135`. A key that is
 gone from the scope table is a key no settings command may write, which is the second half of the
 removal and not a separate one.
 
@@ -233,7 +237,11 @@ They are destroyed by the flow the tree already has and by nothing else:
 - **`deletion_protection` stays.** The check job keeps `deletion_protection = true`
   (`deploy/terraform/gcp/modules/repo/check.tf:27`) and the repository's registry keeps
   `prevent_destroy = true` (`deploy/terraform/gcp/modules/repo/registry.tf:10`), so an ordinary
-  converge **cannot** delete either one, whatever the configuration says.
+  converge **cannot** delete either one, whatever the configuration says. The guard is the **object's**,
+  not the file's: R4 takes the check job out of the configuration, and the job that is still running
+  carries the flag that makes a plan's destroy refuse, which is why this is a retirement and not a
+  delete. What the flag means for a job is not lost either — a repository's workflow jobs, which stay,
+  carry the same `!var.allow_job_delete` (`deploy/terraform/gcp/modules/workflow/job.tf:15`).
 - **Retirement is owner-run: `fugaro update --repo <r> --retire`**, with the two typed confirmations
   `--yes` cannot cover (`internal/cli/init.go:444`; the flow is `internal/cli/init_retire.go:22` and
   the set it acts on is `internal/infra/retire.go:26`). A coding agent's session, a pipe, `--json` and
