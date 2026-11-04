@@ -1938,9 +1938,11 @@ Add an image catalog entry to this machine's project config
 Add a named image to the project's image catalog, in this machine's project
 config: the copy fugaro update publishes to the project's policy node
 (image_catalog). The entry's source is a Dockerfile in one of the project's
-repositories (--dockerfile owner/name:path, with --branch) or a Dockerfile
-written out here (--inline <file>), and its tags are what a repository's
-needs: is matched against.
+repositories (--dockerfile owner/name:path, with --branch), a Dockerfile
+written out here (--inline <file>), or an image that already exists
+(--image <ref>), and its tags are what a repository's needs: is matched
+against. The three are one entry's alternatives and are refused together
+rather than resolved.
 
 Nothing is built and nothing is published here: fugaro image build <name>
 builds the entry's image, and fugaro update publishes the catalog. --default
@@ -1960,6 +1962,7 @@ Flags:
 | `--dockerfile` | string | "" | no | a Dockerfile in one of the project's repositories, as owner/name:path |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for add |
+| `--image` | string | "" | no | a prebuilt image reference, such as ghcr.io/owner/image:1.2: nothing is built and the image is used as it is |
 | `--inline` | string | "" | no | a file whose contents are the entry's Dockerfile |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
