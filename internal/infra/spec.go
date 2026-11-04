@@ -762,12 +762,22 @@ func serviceAccountEmail(id, project string) string {
 
 // platformEnv is the M4 env every job and the check job get.
 func (c *repoCtx) platformEnv() map[string]string {
+	return platformEnvFor(c.lc, c.inst.ProjectName, c.bucket)
+}
+
+// platformEnvFor is platformEnv's five variables for the jobs that have no
+// repoCtx: the installation's own names, its Fugaro project's name and the
+// runs bucket its record lives in. The project's catalog check job gets these
+// too (CatalogCheckSpec.Env), and they have to be the same bytes the
+// repository check job's env carries — the module's own preconditions compare
+// two of them against its variables.
+func platformEnvFor(lc *localcfg.Config, projectName, bucket string) map[string]string {
 	return map[string]string{
-		BucketEnv:     "gs://" + c.bucket,
+		BucketEnv:     "gs://" + bucket,
 		BackendEnv:    backend.CloudRun,
-		GCPProjectEnv: c.lc.GCPProject,
-		ProjectEnv:    c.inst.ProjectName,
-		RegionEnv:     c.lc.Region,
+		GCPProjectEnv: lc.GCPProject,
+		ProjectEnv:    projectName,
+		RegionEnv:     lc.Region,
 	}
 }
 

@@ -629,6 +629,19 @@ func CatalogRecordsCondition(bucket, slug string) string {
 	return projectBucketPrefixClause(bucket, "builds/"+slug+"/catalog")
 }
 
+// CatalogRecordsConditionTitlePrefix is the fixed part of
+// CatalogRecordsConditionTitle, for the reason CatalogReadConditionTitlePrefix
+// gives: a caller that must recognise the title rather than build it
+// (internal/infra/tf reads a plan's condition titles) takes it from here, so
+// the two spellings cannot drift apart.
+const CatalogRecordsConditionTitlePrefix = "fugaro-catalog-records-"
+
+// CatalogRecordsConditionTitle is the title of the catalog check job's records
+// grant on the repository slug, as internal/infra writes it (D1148).
+func CatalogRecordsConditionTitle(slug string) string {
+	return CatalogRecordsConditionTitlePrefix + slug
+}
+
 // TokenBucketPrefix is the runs bucket prefix the budget token objects live
 // under (internal/budget/token's ObjectPrefix, pinned equal by a test): out of
 // runs/, so that a job account, which may write runs/, may only read it
