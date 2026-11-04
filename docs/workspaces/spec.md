@@ -289,21 +289,21 @@ exactly three things, and the design grants exactly those:
 
 | On | Grant | What it reaches |
 | --- | --- | --- |
-| Each member's Firebase project | A **custom role holding exactly `firebasedatabase.instances.get` and `firebasedatabase.instances.update`** — the shape `fugaroCredentialsDatabase` already uses (`deploy/terraform/gcp/modules/installation/credentials.tf`:241) | `get` reads the member's run ledger; `update` writes the advisory headroom node |
+| Each member's Firebase project | A **custom role holding exactly `firebasedatabase.instances.get` and `firebasedatabase.instances.update`** — the shape `fugaroCredentialsDatabase` already uses (`deploy/terraform/gcp/modules/installation/credentials.tf`:242-246) | `get` reads the member's run ledger; `update` writes the advisory headroom node |
 | Each member's runs bucket | `roles/storage.objectViewer` | The rollup's second read, which is what catches a member whose ledger and its bucket disagree |
 | The workspace's own project | The bundle secret's `secretAccessor`, and nothing else | §4 |
 
 **Those two permissions reach the whole database, and this design will not pretend otherwise.**
-`credentials.tf`:204-210 is the authoritative statement: Realtime Database IAM has **no path-level
+`credentials.tf`:201-210 is the authoritative statement: Realtime Database IAM has **no path-level
 scope**, so a binding is per instance and reaches the whole database — `instances.get` is "read any
 node of the instance", the only read permission there is, and `instances.update` is "write any node
 of the instance", the only write permission. A condition cannot fence it either: RTDB "cannot express
-a path prefix in IAM" (`credentials.tf`:254). So the grant is **whole-database read and whole-database
+a path prefix in IAM" (`credentials.tf`:251). So the grant is **whole-database read and whole-database
 write on every member**, and "the ledger and the headroom" is what the service's **code** does with
 it.
 
 **That has a consequence for rule 1, and it is the sharpest thing in this section.** A write to any
-node includes a write to `config/caps/global` — `credentials.tf`:207-208 says so in as many words:
+node includes a write to `config/caps/global` — `credentials.tf`:209-213 says so in as many words:
 `instances.update` "is what `roles/firebasedatabase.admin` carries for the budget admins who 'write
 /config over IAM'". So **the workspace service's grant can lift a member's cap**, and rule 1's "a
 workspace never widens a member" is therefore a property of the **service's code**, exactly as
@@ -313,7 +313,7 @@ leaving it to be discovered, and it is residual risk 5 in §8.
 
 **What `admin` would add is worse, and the narrow role is still the right one.**
 `roles/firebasedatabase.admin` carries `instances.list` and the instance **lifecycle** —
-`create`, `delete`, `disable`, `reenable` and `undelete` (`credentials.tf`:212-217, and
+`create`, `delete`, `disable`, `reenable` and `undelete` (`credentials.tf`:215-219, and
 `deploy/terraform/testdata/custom-role-permissions.txt` is the whole set a custom role may hold). A
 component that holds every model credential must not be able to **delete or disable a member's
 database**. The narrow role buys that, and it does not buy the cap-lifting back — nothing does, short
@@ -482,16 +482,17 @@ honest statement of what that means is this:
 
 - **IAM on a Realtime Database is whole-database, and it bypasses the rules.** `iam.tf`:52 says of the
   admin grant that it "writes /config over IAM, which bypasses the rules", and
-  `credentials.tf`:254 says why the shape cannot be narrowed: RTDB "cannot express a path prefix in
+  `credentials.tf`:251 says why the shape cannot be narrowed: RTDB "cannot express a path prefix in
   IAM". So the custom role's `firebasedatabase.instances.get` reads **every node** of a member's
   database, and its `instances.update` writes **every node**. "Only the ledger and the headroom" is a
   property of the service's **code**, not of its grant, and no IAM policy enforces it.
 - **A compromised workspace service therefore reads a member's whole database** — its policy, its
   budget and caps, its run records, its outcomes — and reads the member's runs bucket, which is where
   the run's own artifacts and logs live. It learns each member's *spend* **and a great deal more**,
-  and it can write anything into a member's database that the member's own rules admit.
+  and it can write **any node** of a member's database — the member's rules do not stand in its way,
+  because IAM is what the account is subject to and the rules are what a *client* is.
 - **It can lift a member's cap**, and the design says so rather than claiming IAM stops it: a write
-  to any node is a write to `config/caps/global` (`credentials.tf`:207-208), so rule 1's "a workspace
+  to any node is a write to `config/caps/global` (`credentials.tf`:209-213), so rule 1's "a workspace
   never widens a member" is a property of the service's **code** and not of its grant. Residual risk
   5 below.
 - **What it still cannot do** is what the service's code and the members' own projects keep out of
@@ -504,7 +505,9 @@ honest statement of what that means is this:
 
 This is the design's largest accepted exposure, it is stated rather than argued away, and it is
 carried in the residual risks below. The mitigation that is real is the one in §5: the narrow custom
-role instead of `admin`, and a member's own rules, which the service's writes cannot exceed.
+role instead of `admin`, which keeps the instance lifecycle — deleting or disabling a member's
+database — out of the service's reach, and a reviewable, small service. A member's own database rules
+are **not** a mitigation against this account: IAM bypasses them.
 
 **Injection into the workspace service.** The service parses untrusted text on every call: a member
 name, a run identifier, a bearer token. The rules are the ones the MCP design already states — a

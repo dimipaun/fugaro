@@ -50,11 +50,12 @@ Three dependencies force the order, and none of them is a preference:
 1. **The record comes before everything** (W0, W1, W2). A member cannot join a workspace whose record
    has no shape, and the shape is what the later tasks validate against.
 2. **The exchange is the MCP design's authorization server** (W4). `docs/mcp-server/` §3 puts one
-   inside a member's coordinator, and it is in **open pull request #1487**, not on `main` — re-read
-   on 2026-11-04 at `origin/main` `b41709ea`, and the directory does not exist there. W4 is written
-   to that design's interface; **if that design changes its library (its D921) or its flow, W4
-   changes with it**, and if the owner declines the MCP design, W4 has no host and this plan's SSO
-   half does not start. That dependency is the whole reason §5 recommends the slot it does.
+   inside a member's coordinator, and that folder is **on `main`** now — merged as #1487 on
+   2026-11-04 — though none of its code is written: it is a design folder with the same status line
+   this one carries. W4 is written to that design's interface; **if that design changes its library
+   (its D921) or its flow, W4 changes with it**, and if the owner declines the MCP design, W4 has no
+   host and this plan's SSO half does not start. That dependency is the whole reason §5 recommends
+   the slot it does.
 3. **The shared pool comes before the cap** (W6 before W7). The cap is enforced where the calls are
    paid for (D1299), and until there is one place that pays for them there is no such place. A cap
    built first would be the member-gateway-only version D1299 rejects.
@@ -147,9 +148,29 @@ of fields, not a marshalled `localcfg.Config`),
 
 ### W2 — the workspace node, and `fugaro update`'s publish stage
 
-**Interface.** `fugaro update` gains the stage that writes `workspaces/<name>` in the workspace's own
-database from the member configs it can read, behind its own confirmation, migrating an older node in
-place (never "delete and publish again"), on the policy stage's pattern.
+**Interface.** The **workspace owner's** `fugaro update` gains the stage that writes
+`workspaces/<name>` in the workspace's own database from the workspace's local record, behind its own
+confirmation, migrating an older node in place (never "delete and publish again"), on the policy
+stage's pattern. **A member's `fugaro update` writes nothing there** — a member holds no grant on the
+workspace's project (§5 of [spec.md](spec.md)) — so the stage is the owner's and the member's run of
+the same command converges only the member's own installation.
+
+**Who writes it, and why that is the whole of the rule.** Only the workspace owner's installation
+holds a credential for the workspace's project, so only it can write `workspaces/<name>`. The
+consequences are the design, not an accident:
+
+- **Membership takes both sides.** A member is in the workspace when **the owner's record lists it**
+  *and* **the member's own project config names the workspace**. Either alone is not membership: an
+  owner that lists a project which has not named the workspace has published a claim about a machine
+  it does not control, and a member that names a workspace whose record does not list it is asking to
+  be admitted by a group that never admitted it. Both commands are local edits by different people,
+  so the two sides converge on the next `fugaro update` on each side, and `workspace show`'s drift
+  report is what names a half-done membership rather than either half silently winning.
+- **Each member pins the issuer it trusts, in its own config.** A member's config records the
+  workspace's Firebase project id and the workspace's issuer, and its exchange verifies **that**
+  issuer — never one the workspace's own record supplies. A workspace record that could name an
+  issuer would be a record that could point every member at an identity provider of its choosing,
+  which is the one direction rule 1 does not survive.
 
 **Files (5):** `internal/projectpolicy/workspace.go`, `internal/projectpolicy/workspace_test.go`,
 `internal/cli/update_workspace.go`, `internal/cli/update_workspace_test.go`, `internal/cli/update.go`.
@@ -166,9 +187,16 @@ workspace node from an older release must converge, not be asked to publish agai
 **Tests.** `TestUpdatePublishesTheWorkspaceNodeAndMigratesAnOlderOneInPlace`,
 `TestUpdateRefusesToPublishAWorkspaceWithNoMembers`,
 `TestUpdateNamesTheOneCommandAndNoOther` (no `workspace publish` anywhere in the output),
-`TestUpdateLeavesAMemberWithNoWorkspaceAlone`.
+`TestUpdateLeavesAMemberWithNoWorkspaceAlone`,
+`TestUpdateOnAMemberNeverWritesTheWorkspaceNode` (the member holds no grant; a stage that tried would
+be refused by IAM, and a task that reached for it is the defect this test names),
+`TestMembershipNeedsBothSides` (listed but not naming the workspace, and naming it but not listed,
+are both not membership and both are reported as drift).
 
-**SEC:** no. It publishes a member list; it publishes no credential and no address.
+**SEC:** **yes.** It is the write that decides who is in the group, and the record it publishes is the
+one every member's exchange reads for the member list. A publish stage that admitted a member on one
+side's word, or that let the record name the issuer, would be the workspace widening a member — the
+one thing rule 1 forbids.
 
 ### W3 — the workspace's own Firebase project and its rules
 
@@ -222,9 +250,12 @@ rule, applied to the new endpoint),
 
 ### W5 — the member's admission, from the member's own lists
 
-**Interface.** The exchange admits the person only when the member's launchers/operators lists
-(`fugaro user`) name their address, compared with `mobileauth.NormalizeEmail`'s one rule. It reads
-the lists and never writes them.
+**Interface.** The exchange admits the person only when **two** things hold: the workspace token's
+`email_verified` is true, and the member's launchers/operators lists (`fugaro user`) name their
+address, compared with `mobileauth.NormalizeEmail`'s one rule. It reads the lists and never writes
+them. The verified-address half is the credentials service's own rule for every class of caller
+(`internal/credsvc/auth.go`:1018, `checkCallerToken`), and it is required here for the same reason:
+an unverified address is one nobody proved they own.
 
 **Files (5):** `ee/coordinator/oauth/admit.go`, `ee/coordinator/oauth/admit_test.go`,
 `internal/projectpolicy/members.go`, `internal/projectpolicy/members_test.go`,
@@ -235,6 +266,9 @@ the lists and never writes them.
 make someone a launcher, so a test that only proved the refusal would not be the test.
 
 **Tests.** `TestAdmitRefusesAnAddressTheMembersListsDoNotName`,
+`TestAdmitRefusesAnUnverifiedAddress` (a token whose `email_verified` is absent, false or not a
+bool is refused, and the refusal names the claim and never the address — the `credsvc` rule at
+`internal/credsvc/auth.go`:1018, applied to the exchange),
 `TestAdmitDoesNotWidenAMembersLists`, `TestAdmitIsCaseFoldedOnTheDomainOnly` (the `mobileauth`
 rule), `TestAdmitRefusesADisplayNameForm` (a name is not an admission).
 
@@ -246,6 +280,18 @@ rule), `TestAdmitRefusesADisplayNameForm` (a name is not an admission).
 workspace's project. Its front door's admitted set becomes the **workspace's** member job service
 accounts; its bundle is the workspace's one secret; every shared credential carries a per-project
 allow-list, and the effective set is that list intersected with the member's own policy.
+
+**The caller's member is the verified service account, and the token's pins have to admit it.** The
+service resolves a caller by folding the token's `email` and looking it up in its own account table
+(`internal/credsvc/auth.go`:727), and it returns the configured spelling of what it found (`:738`) —
+that, and nothing in a request body, header or query, is what names the member. `verifyRun`
+(`:1047`) additionally refuses a token whose `aud` is not this service's Firebase project (`:1069`),
+whose `iss` is not that project's securetoken issuer (`:1072`), or whose `fp` is not this service's
+Fugaro project (`:1105`), so the workspace deployment accepts **each member's** Firebase project as
+the issuer and **each member's** Fugaro project as `fp` and holds all three to the same member: the
+account's, the issuer's and the `fp`'s must name one member, or the call is refused. This is a change
+to `verifyRun`'s pinning and not only to the list it looks the account up in, and it is the half of
+this task that a reader is most likely to miss.
 
 **Files (9):** `internal/credsvc/workspace.go`, `internal/credsvc/workspace_test.go`,
 `internal/credsvc/bundle_workspace.go`, `internal/credsvc/bundle_workspace_test.go`,
@@ -260,6 +306,9 @@ served a credential a member's policy excluded would be a policy bypass.
 **Tests.** `TestWorkspaceCredentialIsRefusedWhenTheMembersPolicyExcludesIt`,
 `TestWorkspaceCredentialIsRefusedForAMemberOutsideItsAllowList`,
 `TestWorkspaceServiceRefusesAJobServiceAccountOutsideTheWorkspace`,
+`TestWorkspaceServiceRefusesATokenWhoseIssuerAndAccountDisagree` (the account names `owner/repo-a`
+and the token's `aud`/`iss`/`fp` name `owner/repo-b`: the call is refused, because the member is
+the account and the pins have to agree with it),
 `TestWorkspaceServiceNeverReturnsACredentialValue` (the package's rule 2),
 `TestWorkspaceBundleIsOneSecretWithOneGrant` (the Q6 shape, applied to the workspace).
 
@@ -267,10 +316,33 @@ served a credential a member's policy excluded would be a policy bypass.
 
 ### W7 — the workspace cap: the rollup and the enforcement
 
-**Interface.** The workspace service counts what the calls it pays for cost, against the cap; it
-recomputes the rollup from each member's own run ledger on the history job's schedule, recording a
-member it cannot read as `stale`; and it publishes the advisory headroom to each member's database.
-The member's gateway reads the headroom and stops a run early; it never decides the cap.
+**Interface.** The workspace service recomputes **one** basis for the cap — the rollup (D1301) — from
+each member's own run ledger on the history job's schedule, recording a member it cannot read as
+`stale`, and publishes the advisory headroom to each member's database. The member's gateway reads
+the headroom and stops a run early; it never decides the cap.
+
+**One basis, and it is the rollup.** The service keeps no count of its own: the cap is measured
+against the sum of the members' ledgers, and a task that added a second measurement — metering the
+calls the service pays for at its own proxy — would be a change to D1301, which this round did not
+make and [reconciliation.md](reconciliation.md) §8 records as an owner decision. What the service
+enforces at the shared credential's front door is a **refusal** and not a count, and the case that
+matters is the unreadable member: a `stale` member's shared-credential calls are refused, failing
+closed, because a member nobody can read is a member whose spend nobody can bound — the same reason
+the rollup records it as `stale` rather than zero.
+
+**The grant it needs, and what that grant also reaches.** The rollup's read of a member's ledger and
+its write of the advisory headroom are one IAM grant on the member's database, and it is the
+credentials service's own custom role: exactly `firebasedatabase.instances.get` and
+`firebasedatabase.instances.update` (`deploy/terraform/gcp/modules/installation/credentials.tf`:242-246).
+The task does not invent a narrower one, because there is no narrower one: Realtime Database has no
+path-level scope, `get` reads **any** node of the database and `update` writes **any** node of it
+(`credentials.tf`:201-210), a condition cannot fence a path (`credentials.tf`:251-253), and IAM is
+what the service account is subject to rather than the rules
+(`deploy/terraform/gcp/modules/firebase/iam.tf`:52). So this task's grant is a whole-database read
+and a whole-database write on every member, and what it buys is bounded by the code that holds it and
+by nothing else — which is why spec §5's rule 1 is a property of the code, and why the service's own
+role never grows to `firebasedatabase.admin` (`credentials.tf`:215-219). Stated here rather than in
+spec §5 alone because it is this task, and not W6, that first needs the write.
 
 **Files (8):** `internal/credsvc/workspace_cap.go`, `internal/credsvc/workspace_cap_test.go`,
 `internal/budget/workspace.go`, `internal/budget/workspace_test.go`,
@@ -282,6 +354,9 @@ exists for: an unreadable member that read as zero would look free, and the work
 its whole cap in the member nobody could see.
 
 **Tests.** `TestRollupRecordsAnUnreadableMemberAsStaleNotZero`,
+`TestStaleMembersSharedCredentialCallsAreRefused` (the fail-closed half: a member the rollup could
+not read is refused at the front door rather than served and counted, so an unreadable member can
+neither spend the cap nor spend around it),
 `TestWorkspaceCapRefusesTheCallThatWouldExceedIt`,
 `TestWorkspaceCapIsNotWidenedByAMembersOwnCap` (the merge is min, and the workspace can only
 tighten), `TestHeadroomIsAdvisoryAndTheGatewayNeverDecidesTheCap`,
@@ -294,7 +369,12 @@ from it).
 
 **Interface.** `fugaro budget kill` gains a workspace scope (D1302), which is the workspace service's
 own stop flag; `fugaro workspace cap set --workspace <name> --monthly <amount>` records the cap
-locally and `fugaro update` publishes it.
+locally and `fugaro update` publishes it. **The stop's scope is stated and not implied**, because a
+stop is the one control whose over-reach would be a workspace reaching into a member (spec §9): it
+stops the runs of every member of the workspace and makes the workspace's credentials service refuse
+every shared-credential call, and it touches nothing else — not a member's own credentials, not a
+member's own budget or caps, not a member's sign-in, not a member's runs that never touch the
+workspace.
 
 **Files (5):** `internal/cli/budget_kill_workspace.go`, `internal/cli/budget_kill_workspace_test.go`,
 `internal/cli/workspace_cap.go`, `internal/cli/workspace_cap_test.go`,
@@ -350,7 +430,8 @@ wherever two tasks would edit the same file; the second waits for the first to m
 
 **Recommended: 0.20.0 or later.** Re-slotted on 2026-11-04: the slot this section used to recommend
 — design in 0.15.0, code in 0.17.0 — has **shipped** (0.15.0, 0.16.0 and 0.17.0 are all released
-files in `docs/releases/`, and 0.17.0 is the newest CLI release on `origin/main` at `b41709ea`), so
+files in `docs/releases/`, and 0.17.0 is still the newest CLI release on `origin/main` at
+`c2ca0aee`), so
 the recommendation is remade rather than kept. The design is still only documentation and costs a
 release nothing; the code does not belong in the next release either, for the reasons below.
 
@@ -370,9 +451,9 @@ and approved one on 2026-10-31, and it changes no behaviour.
    and a shared credential pool before that review's findings have had a release to settle in would
    put a security feature on the release's schedule rather than the review's.
 3. **The exchange has no host until the MCP server exists.** W4 is written to the MCP design's
-   authorization server, which is **open pull request #1487** and not on `main` (re-read 2026-11-04),
-   and that design recommends a slot of its own for its code. A workspace cannot mint a member token
-   before there is a server that mints member tokens.
+   authorization server. That design is **on `main`** (merged as #1487 on 2026-11-04) but **none of
+   its code is written** — it is a design folder, and it recommends a slot of its own for its code —
+   so a workspace cannot mint a member token before there is a server that mints member tokens.
 4. **The shared pool has no host until the credentials service's later slice.** The service's Slice 1
    is still its first product slice and the rest are unscheduled
    (`docs/credentials-service/implementation-plan.md`), and W6 is a *second* deployment of it, not a
