@@ -518,6 +518,14 @@ func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 				pluginwire.Printable(r.Repo), pluginwire.Printable(r.BuildServiceAccount), pluginwire.Printable(r.Repo), want, catalogNotInstalledReason), now, o.dryRun)
 		}
 		for _, name := range r.Entries {
+			// An entry built twice in one run would submit two builds of the same
+			// inputs, and the second one's check.json write would lose its
+			// precondition: a spec that assigns a name twice is as wrong as one
+			// that names the wrong account, so nothing is submitted.
+			if assigned[name] {
+				return catalogFailAll(cmd, ctx, lg, e, nil, fmt.Errorf("the installed catalog check job assigns the entry %s more than once: %s",
+					pluginwire.Printable(name), catalogNotInstalledReason), now, o.dryRun)
+			}
 			entry, found := catalogEntryNamed(s.Catalog, name)
 			work = append(work, catalogAssignment{name: name, entry: entry, found: found, repo: r, slug: slug})
 			assigned[name] = true

@@ -269,8 +269,8 @@ func ParseCatalogRecordState(data []byte) (*CatalogRecordState, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("the catalog record: %w", err)
 	}
-	if s.Version < 1 {
-		return nil, errors.New("the catalog record has no version")
+	if s.Version != CatalogRecordVersion {
+		return nil, fmt.Errorf("the catalog record has version %d, which this fugaro does not know (it reads version %d)", s.Version, CatalogRecordVersion)
 	}
 	return &s, nil
 }

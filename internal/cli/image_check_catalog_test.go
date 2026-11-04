@@ -711,6 +711,26 @@ func TestCatalogCheckJobRefusesAnEntryAssignedToAnotherRepository(t *testing.T) 
 	}
 }
 
+// TestCatalogCheckJobRefusesAnEntryAssignedTwice: a spec that lists one entry
+// twice (in one repository's entries, or under two repositories) would submit
+// two builds of the same inputs in one run, so the whole run is refused and
+// nothing is built.
+func TestCatalogCheckJobRefusesAnEntryAssignedTwice(t *testing.T) {
+	spec := catalogCheckSpecFor(t, catalogCheckCatalog("tools"), 5)
+	spec.Repositories = spec.Repositories[:1]
+	spec.Repositories[0].Entries = []string{"tools", "tools"}
+	f := newCatalogCheckJob(t, spec)
+	f.seed(t, "tools", spec.Repositories[0].Repo, catalogCheckOtherDef, "sha256:"+strings.Repeat("9", 64))
+
+	_, err := runCatalogCheck(t)
+	if got := buildPosts(f.fb); got != 0 {
+		t.Fatalf("builds submitted = %d, want 0: the entry is assigned twice", got)
+	}
+	if err == nil || !strings.Contains(err.Error(), "more than once") {
+		t.Fatalf("err = %v, want the duplicate assignment named", err)
+	}
+}
+
 // TestCatalogCheckJobNeedsItsSpec: a job that cannot read what to check says
 // so, and submits nothing.
 func TestCatalogCheckJobNeedsItsSpec(t *testing.T) {
