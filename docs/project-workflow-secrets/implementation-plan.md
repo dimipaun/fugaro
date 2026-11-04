@@ -159,11 +159,14 @@ The one function every reader of the decision shares (F3), plus the container th
   failing against the predicate as it stands. Then
   `TestWorkflowSecretHasNoProjectScopeDefault` (a workflow secret with **no** entry is not eligible,
   which is the assertion that keeps D1262 from being quietly reversed later), and
-  `TestProjectSecretContainerIsDerivedFromTheEntry`.
-- **Files (≤5).** `internal/infra/spec.go`, `internal/infra/tfvars.go`, `internal/infra/spec_test.go`,
-  `internal/infra/tfvars_test.go`, and — only if the container's labels need a test of their own —
-  a case in `internal/infra/discover_test.go` holding the adoption of a container the store path
-  created first (F16).
+  `TestProjectSecretContainerIsDerivedFromTheEntry`. The issue's own guarantee already has a home at
+  the layer a run reads: `projectsecret_coverage_test.go`'s
+  `TestProjectSecretCoverageUnlistedRepoIsNotCovered` gains the workflow-secret case, so the listing
+  and `Readiness` cannot drift on it either.
+- **Files (≤6).** `internal/infra/spec.go`, `internal/infra/tfvars.go`, `internal/infra/spec_test.go`,
+  `internal/infra/secretmounts_test.go`, `internal/infra/projectsecret_coverage_test.go`, and — only
+  if the container's labels need a test of their own — a case in `internal/infra/discover_test.go`
+  holding the adoption of a container the store path created first (F16).
 - **Not in this task:** the repository's own copy winning (D1264) is `resolveSecretID`'s existing
   behaviour; the task adds the test that holds it for a workflow secret and no line of code.
 
