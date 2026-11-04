@@ -19,8 +19,13 @@ left out of the candidates unless `docker` is needed, and if it is needed Cloud 
 **D1150** (build secrets go through the existing workflow-secret path; the credentials service is
 unchanged), **D1152** (the shared registry, with the existing retention), **D1155** (an override and a
 catalog reference used together are refused, and the error names both keys) and **D1158** (the build
-tasks start in 0.17.0, after the 0.16.0 scope cut). **D1148 stays OPEN** — this folder's first round marked it answered by
-mistake — with its recommendation: reuse the daily image check's `base`/`max-age` triggers. The other
+tasks start in 0.17.0, after the 0.16.0 scope cut) — and **D1148** (scheduled security rebuilds, on
+**2026-11-03**: build them, in 0.18.0). **The owner answered D1148 on 2026-11-03: build the
+scheduled catalog rebuilds, in 0.18.0** — one project-level scheduled check over every catalog entry,
+reusing the daily image check's code, one catalog build per entry that fires, as the same build
+account and over the same BuildKit-secret path the entry's own `fugaro image build` uses, through a
+new Terraform piece. That is a **ruling**, not this folder's first round's mistake coming back: that
+round marked D1148 answered with nothing behind it. The other
 decisions of D1140–D1159 are **open**: they are this plan's to write and the owner's to answer.
 **Answering a decision is not approving a task**, and **no task here is approved to build until the
 owner approves the plan** (the owner's ruling, [spec.md](spec.md)).
@@ -89,7 +94,7 @@ also states the fact in words.
 
 | Block | Use |
 | --- | --- |
-| **D1140–D1159** | this work's block. **D1140** (where the catalog definitions live — **open question 1**), **D1149** (the `docker` tag's backend — **open question 3**), **D1146**, **D1150**, **D1152**, **D1155** and **D1158** are **answered by the owner on 2026-11-02**, each as the recommendation; **D1148** (scheduled security rebuilds — **open question 2**) **stays open**, and so do the rest. Taken above every number either the merged tree or an open pull request holds: the highest **written** on `main` is **D1139** ([docs/console-settings-edit/reconciliation.md](../console-settings-edit/reconciliation.md), that work's block D1100–D1139), and the highest any open pull request writes is **D1066** ([PR #1602](https://github.com/dimipaun/fugaro/pull/1602)) and **D1040** ([PR #1496](https://github.com/dimipaun/fugaro/pull/1496)). No `D114x`/`D115x` appears anywhere in `docs/` on this tree or in an open pull request's. That is the launcher's **2026-11-02 reading**, taken by grepping every open pull request's head and `docs/` for the numbers they write; **a merger re-reads it** |
+| **D1140–D1159** | this work's block. **D1140** (where the catalog definitions live — **open question 1**), **D1149** (the `docker` tag's backend — **open question 3**), **D1146**, **D1150**, **D1152**, **D1155** and **D1158** are **answered by the owner on 2026-11-02**, each as the recommendation; **D1148** (scheduled security rebuilds — **open question 2**) is **answered by the owner on 2026-11-03** (build them, in 0.18.0), and the rest are **open**. Taken above every number either the merged tree or an open pull request holds: the highest **written** on `main` is **D1139** ([docs/console-settings-edit/reconciliation.md](../console-settings-edit/reconciliation.md), that work's block D1100–D1139), and the highest any open pull request writes is **D1066** ([PR #1602](https://github.com/dimipaun/fugaro/pull/1602)) and **D1040** ([PR #1496](https://github.com/dimipaun/fugaro/pull/1496)). No `D114x`/`D115x` appears anywhere in `docs/` on this tree or in an open pull request's. That is the launcher's **2026-11-02 reading**, taken by grepping every open pull request's head and `docs/` for the numbers they write; **a merger re-reads it** |
 | **Findings** | **F1–F16** are this folder's own and start at F1, the way [docs/forge-authorship-images/](../forge-authorship-images/)'s and [docs/c39-review-identity/](../c39-review-identity/)'s do; those folders' F1–Fn are different sets over different trees |
 | **Checks** | **none taken, and the live checks are named rather than numbered.** The register's highest **written** section on `main` is **Check 190**, and open pull requests claim above it; the register's own rule is that a claim above the highest written section is settled at its merge and that whichever of two open claims merges second renumbers itself ([docs/gcp-live-checklist.md](../gcp-live-checklist.md)). So the task that writes a check takes the number free at **its** merge, and [implementation-plan.md](implementation-plan.md) writes each under a name |
 
@@ -97,8 +102,8 @@ also states the fact in words.
 
 **At merge**, two things:
 
-1. **Re-check the D-block.** The seven answers (D1140, D1146, D1149, D1150, D1152, D1155, D1158)
-   stand and **D1148 stays open**; what a merger re-reads is the
+1. **Re-check the D-block.** The eight answers (D1140, D1146, D1148, D1149, D1150, D1152, D1155,
+   D1158) stand; what a merger re-reads is the
    **inventory they sit in** — the open pull requests and the merged tree — and renumbers to the first
    free block if D1140 has moved, in every file here that names a number.
 2. **Re-read the `:line` citations** against the tree being merged, under the convention above.

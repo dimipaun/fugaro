@@ -1,0 +1,193 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"os"
+	"strings"
+
+	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
+)
+
+// This file is `fugaro accounts add`'s call of the managed gate: M6's ONE
+// helper, read and called from here, with the rules this command's own document
+// is judged by (the managed plan's §2 accounts handoff row, D1012).
+//
+// Why the command needs it at all. What this command writes is the file that
+// decides where a named account's token may be sent (`allow_data_to`) and which
+// profile serves it, and a coding agent's session has always been refused it —
+// --yes included, spec §2.4 — because that file is exactly the one a session
+// must not choose. In a managed project the project's own gate answers that
+// question per step instead: the DECLARATION is a document a plan gate can read
+// (the name, the repositories, the profile's coverage), so a session that
+// declares a bounded account is admitted to write it, and the owner gets a
+// record of what was declared and by which rules.
+//
+// What the gate never admits here, and where each refusal is made:
+//
+//   - A widening (`--repos` naming a repository beyond the checkout this
+//     command runs in, D868). The rule is the command's own — the sentence the
+//     owner's confirmation carries — and the gate is asked whether the step may
+//     pass WITHOUT that person. A session cannot answer for a widening on the
+//     owner's behalf, so the gate refuses it: the token of an account declared
+//     here may be sent to a repository the run cannot see, which is the one
+//     thing `allow_data_to` exists to bound.
+//   - A token entry. `--claude` runs a login and then reads a token, and a
+//     secret entering the project is the class no plan gate admits (D1026): no
+//     plan is a token, so a run carrying one is refused before the login is
+//     screened. The value itself is refused at the step that would read it —
+//     accountsAddTokenStep below — so a session that pipes one at the hidden
+//     prompt reads nothing, stores nothing, and is told which command to run at
+//     its own terminal.
+//   - The reserved names, the profile's coverage and the subset rule. These are
+//     not restated here and must not be: they are config.ValidateClaudeAccounts'
+//     and accountsAddSubsetRule's own decisions, made before this command has a
+//     document to judge, in the words the loader prints for the same file. What
+//     the gate adds is that the whole of what the step would write was judged
+//     and by which rules, which is what the record holds.
+//
+// Why the read happens only in a coding agent's session (D1015). A person at
+// their own terminal skips no confirmation, so there is nothing for the gate to
+// answer there and no mark is read at all: a project whose marks are stale,
+// unreadable or on another machine cannot slow down or stop the person's own
+// command, and no record of their own decisions is written (D1025). Everywhere
+// else a read that does not answer fails closed: readManagedGate's own error,
+// a client that cannot be built and a budget database that cannot be opened all
+// leave the zero Managed behind, which is this command's refusal exactly as it
+// was before this row landed.
+
+// accountsAddGate is the whole of this command's call of the gate: read, judge,
+// admit. It answers the value the step's confirmation is decided under (the
+// zero value is "not managed", which keeps today's refusal), the gate itself —
+// whose recorded call the caller makes after its write, and whose zero value
+// records nothing — and the gate's own refusal, in the gate's own words, when
+// the gate refused the document.
+//
+// doc is the file as this command would write it, and it is the same bytes the
+// rules above were read from and the same bytes the caller applies: the digest
+// the record carries is taken from here (D1022), so the document judged and the
+// document applied are one artifact and not two that happened to agree.
+func accountsAddGate(ctx context.Context, lc *localcfg.Config, o accountsAddOptions, name, profile string, beyond []string, doc []byte) (initflow.Managed, managedGate, error) {
+	marker := agentMarker(os.Getenv)
+	if marker == "" {
+		return initflow.Managed{}, managedGate{}, nil
+	}
+	clients, err := newInitClients(ctx, lc)
+	if err != nil {
+		return initflow.Managed{}, managedGate{}, nil
+	}
+	_, db, err := budgetDBFor(ctx, lc)
+	if err != nil {
+		return initflow.Managed{}, managedGate{}, nil
+	}
+	gate, err := readManagedGate(ctx, managedGateEnv{lc: lc, s: clients.Storage, crm: clients.CRM, db: db}, managedGateFacts{
+		Subcommand: "accounts add",
+		Argv:       os.Args[1:],
+		// What this command would have written, for the ownership question
+		// D1017 asks with the database it is about to write: an account's
+		// declaration is a policy the project's own database carries, and a
+		// database this installation may not write has no business clearing
+		// anything.
+		Declined:    "nothing was declared",
+		AgentMarker: marker,
+		// The whole-project inventory (D59) is `fugaro managed apply`'s read and
+		// is not consulted on this path: a command that has none passes false,
+		// which is the documented answer for it (managedGateFacts).
+		InventoryFallback: false,
+	})
+	if err != nil {
+		// No installation to read, a mark that did not answer, or the ownership
+		// question's own refusal: the project is not one this program can prove
+		// is managed, so the session keeps this command's refusal — the same
+		// sentence it read before this row landed — and nothing is recorded.
+		return initflow.Managed{}, managedGate{}, nil
+	}
+	applied, refused := accountsAddRules(name, profile, beyond, o.claude)
+	conv := managedmode.ConvergeAdmitted(doc, initflow.YesOrTyped, applied)
+	if len(refused) > 0 {
+		conv = managedmode.ConvergeRefused(doc, initflow.YesOrTyped, refused)
+	}
+	// YesOrTyped is the class of the confirmation this step is: the ordinary
+	// y/N the diff above is answered with. It is not a Typed step — the widening
+	// directions D846 reserves the typed name for are money and permanent
+	// changes, and what is written here is neither — and D1026's class rule
+	// reads this value rather than trusting the class to be one a plan judges.
+	m, err := gate.admit(ctx, initflow.YesOrTyped, conv)
+	if err == nil {
+		return m, gate, nil
+	}
+	if errors.Is(err, managedmode.ErrNotConverged) {
+		// The gate's own sentence, whole and unwrapped: the session reads which
+		// rule refused, and errors.Is still finds the gate's refusal inside it.
+		// It is a user error and not a failure of this program — the session
+		// asked for a step the project's gate does not admit — and the record of
+		// the refusal was written by admit, before it returned.
+		return m, gate, &ExitError{Code: ExitUserError, Err: err}
+	}
+	// The second read did not answer, immediately before the write: a mark that
+	// cannot be read is not a permission, and the session keeps this command's
+	// own refusal.
+	return initflow.Managed{}, managedGate{}, nil
+}
+
+// accountsAddRules are the rules the gate judges this command's document by, in
+// the words the record and the refusal carry: the rules that were applied and
+// passed, and the ones that refused. They are this command's own and they live
+// here rather than in internal/managed, where the SHAPE of a verdict and the
+// one class rule are (D1021): a rule about account names and repositories is
+// this command's to state, and the gate's job is to hold the verdict they reach
+// and the class they are judged under.
+//
+// The repository rules are the ones accountsAddBeyond and accountsAddSubsetRule
+// already decided, read back rather than re-derived: beyond is the widening the
+// confirmation names, and the profile's coverage was refused before this
+// command had a document at all. What the gate adds is the answer an agent's
+// session needs — that this step's own rules are the whole of what was judged
+// — and a rule that passed is written into the record beside the ones that did.
+func accountsAddRules(name, profile string, beyond []string, claude bool) (applied, refused []string) {
+	// The name: config.ValidateClaudeAccounts refused a reserved one and
+	// "default" before this point, in the loader's own words, so a name that
+	// reaches the gate is one that passed that rule. It is named here because a
+	// record that says which rules were applied is what makes the admission
+	// checkable later.
+	applied = append(applied, "claude_accounts."+pluginwire.Printable(name)+" is not a reserved name and is not the name \"default\"")
+	if profile != "" {
+		applied = append(applied, "every account profiles."+pluginwire.Printable(profile)+".claude_accounts lists covers every repository its allow_repos admits")
+	}
+	if len(beyond) > 0 {
+		refused = append(refused, "the declaration names "+strings.Join(beyond, ", ")+" beyond the checkout this command runs in, so the token of "+pluginwire.Printable(name)+" may be sent by a job on a repository this run cannot see: a launcher that may start such a run can have it print that token, and only the owner can answer for that (D868)")
+	} else {
+		applied = append(applied, "claude_accounts."+pluginwire.Printable(name)+".allow_data_to widens no repository beyond this checkout")
+	}
+	if claude {
+		refused = append(refused, "--claude runs Anthropic's login and then reads a token: a secret entering the project is the class of step no plan gate admits (D1026), and no plan is a token")
+	} else {
+		applied = append(applied, "the step carries no token entry: --claude is absent, and the token this command reads is read from a terminal")
+	}
+	return applied, refused
+}
+
+// accountsAddTokenStep is the one step of this command no gate admits: the
+// secret. Storing the account's token project-wide is a Typed step by design
+// (a secret is money or permanent, D1026), and a plan gate judges a plan — so
+// the value is read by nobody in a coding agent's session, which is the half of
+// spec §4.2's "no token value is ever written by either" that the declaration
+// alone cannot give.
+//
+// It is returned rather than skipped, because a session that piped a value at
+// the hidden prompt has to be told that it was not stored: a run that went
+// quietly on would leave the session believing the account was ready when the
+// one thing that makes it usable was never read.
+//
+// Why it is not conditional on the gate's answer: it is the same answer for
+// every session, and it is unreachable without one. The two fences above — the
+// one in applySettingsEdit and the one on the no-change path — are what put an
+// agent's session here, and both of them are lifted only by an admission from a
+// project the gate read as managed (initflow.CanConfirmManaged).
+func accountsAddTokenStep(marker, name, command string) error {
+	return userErr("refusing to read %s's token in a coding agent's session (%s is set): a token is a secret, and a secret is the class of step a managed project's gate never admits — no plan is a token — so this command stops here, nothing is read off this session's stdin and no token was stored; the declaration above is the whole of what this session may write; run this yourself at your own terminal: %s",
+		pluginwire.Printable(name), marker, command)
+}

@@ -401,3 +401,166 @@ func TestCheckRebuildsACatalogImageOnABaseChange(t *testing.T) {
 		t.Fatalf("a changed definition and a moved base: %s %v", got.Decision, got.Reasons)
 	}
 }
+
+// TestCheckRebuildsACatalogImageWhenABakedRepositoriesLockfilesMoved: the
+// fourth trigger an entry reuses (reconciliation §4). A baked entry's
+// dependency files are what the workflow check's lockfiles trigger watches,
+// and an entry has no checkout of its own: the caller reads them from the
+// baked repository's tree and says so here, so a moved lockfile is a rebuild
+// and a night when nothing moved is not.
+func TestCheckRebuildsACatalogImageWhenABakedRepositoriesLockfilesMoved(t *testing.T) {
+	now := time.Date(2026, 11, 3, 5, 30, 0, 0, time.UTC)
+	in := catalogInputs(now)
+	in.Lockfiles = true
+	if got := DecideCatalog(in); got.Decision != Rebuild || !slices.Equal(got.Reasons, []string{ReasonLockfiles}) {
+		t.Fatalf("moved lockfiles: %s %v", got.Decision, got.Reasons)
+	}
+	in = catalogInputs(now)
+	in.Lockfiles = true
+	in.DefinitionSHA256 = strings.Repeat("b", 64)
+	if got := DecideCatalog(in); got.Decision != Rebuild || !slices.Equal(got.Reasons, []string{ReasonCatalogDefinition, ReasonLockfiles}) {
+		t.Fatalf("a changed definition and moved lockfiles: %s %v", got.Decision, got.Reasons)
+	}
+}
+
+// catalogLastCheck records on in the last check the scheduled run wrote for
+// these inputs: the build it submitted, what that build ran with, and — as
+// the caller reads it from Cloud Build — the status of that build.
+func catalogLastCheck(in *CatalogInputs, status string) {
+	inputs := *in
+	inputs.Record = nil
+	fp := DecideCatalog(inputs).Inputs
+	in.LastCheck = &CatalogCheckState{
+		Version: CatalogCheckVersion, Decision: Rebuild,
+		BuildID: "b1", BuildInputs: &fp, LastBuildStatus: status,
+	}
+	in.LastBuildStatus = status
+}
+
+// TestCheckCatalogEntryIsBackedOffAfterAFailedBuild: the back-off the
+// scheduled catalog check reuses from the daily check (D1148). An entry whose
+// last build of these very inputs failed is rebuild-failed-last, not a
+// rebuild: without this, an entry whose Dockerfile cannot build would be paid
+// for on every scheduled run, because a failed build writes no record and the
+// max-age trigger keeps firing. A build that is still running leaves it a
+// skip, and a build of *other* inputs is no back-off at all.
+func TestCheckCatalogEntryIsBackedOffAfterAFailedBuild(t *testing.T) {
+	now := time.Date(2026, 11, 3, 5, 30, 0, 0, time.UTC)
+
+	// A failed build of tonight's inputs, with no record since: the entry is
+	// paused rather than rebuilt.
+	in := catalogInputs(now)
+	in.Record = nil
+	catalogLastCheck(&in, "FAILURE")
+	if got := DecideCatalog(in); got.Decision != RebuildFailedLast || !slices.Equal(got.Reasons, []string{ReasonNoRecord}) {
+		t.Fatalf("a failed last build: %s %v, want %s", got.Decision, got.Reasons, RebuildFailedLast)
+	}
+
+	// The same, on an entry that has a record: the max-age trigger fires, and
+	// the back-off holds it back.
+	in = catalogInputs(now)
+	in.Record.BuiltAt = now.Add(-25 * time.Hour)
+	catalogLastCheck(&in, "TIMEOUT")
+	if got := DecideCatalog(in); got.Decision != RebuildFailedLast || !slices.Equal(got.Reasons, []string{ReasonMaxAge}) {
+		t.Fatalf("a failed last build past max-age: %s %v", got.Decision, got.Reasons)
+	}
+
+	// Still running: a skip, so two runs never build the same entry at once.
+	in = catalogInputs(now)
+	in.Record.BuiltAt = now.Add(-25 * time.Hour)
+	catalogLastCheck(&in, "WORKING")
+	if got := DecideCatalog(in); got.Decision != Skip || !slices.Equal(got.Reasons, []string{ReasonMaxAge, ReasonBuildRunning}) {
+		t.Fatalf("a running last build: %s %v", got.Decision, got.Reasons)
+	}
+
+	// A final build that did not fail and did not clear the trigger: the
+	// entry is backed off too, and the note says why.
+	in = catalogInputs(now)
+	in.Record.BuiltAt = now.Add(-25 * time.Hour)
+	catalogLastCheck(&in, "SUCCESS")
+	if got := DecideCatalog(in); got.Decision != RebuildFailedLast || !slices.Equal(got.Reasons, []string{ReasonMaxAge, ReasonLastBuildIneffective}) {
+		t.Fatalf("an ineffective last build: %s %v", got.Decision, got.Reasons)
+	}
+
+	// The inputs moved: the back-off no longer applies, and the entry is
+	// rebuilt.
+	in = catalogInputs(now)
+	in.Record.BuiltAt = now.Add(-25 * time.Hour)
+	catalogLastCheck(&in, "FAILURE")
+	in.BaseDigest = digestB
+	if got := DecideCatalog(in); got.Decision != Rebuild {
+		t.Fatalf("a failed build of other inputs: %s %v", got.Decision, got.Reasons)
+	}
+
+	// A forced run ignores the back-off, as the workflow check's does.
+	in = catalogInputs(now)
+	in.Record = nil
+	in.Force = true
+	catalogLastCheck(&in, "FAILURE")
+	if got := DecideCatalog(in); got.Decision != Rebuild {
+		t.Fatalf("a forced run: %s %v", got.Decision, got.Reasons)
+	}
+}
+
+// TestCheckCatalogDecidesEveryEntryOfTheCatalog: the scheduled check's one
+// pass (CheckCatalog, D1148). It decides every entry the catalog holds, in
+// the catalog's own order, and an entry that is a prebuilt image has nothing
+// to build and is passed over — so a project with one catalog gets one
+// scheduled check, not one scheduler per entry.
+func TestCheckCatalogDecidesEveryEntryOfTheCatalog(t *testing.T) {
+	now := time.Date(2026, 11, 3, 5, 30, 0, 0, time.UTC)
+	cat := &config.Catalog{Entries: []config.Entry{
+		{Name: "agent", Source: config.Source{Kind: config.SourceDockerfile, Repo: "o/r", Path: "Dockerfile"}},
+		{Name: "tools", Source: config.Source{Kind: config.SourceDockerfile, Repo: "o/r", Path: "tools/Dockerfile"}},
+		{Name: "pinned", Source: config.Source{Kind: config.SourceImage, Image: "ghcr.io/o/image:1"}},
+	}}
+	unchanged := catalogInputs(now)
+	unchanged.Entry = "agent"
+	moved := catalogInputs(now)
+	moved.Entry, moved.BaseDigest = "tools", digestB
+	got, err := CheckCatalog(cat, map[string]CatalogInputs{"agent": unchanged, "tools": moved})
+	if err != nil {
+		t.Fatalf("CheckCatalog: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("decided %d entries, want 2 (the prebuilt image is passed over): %+v", len(got), got)
+	}
+	if got[0].Entry != "agent" || got[0].Decision != Skip {
+		t.Errorf("agent: %s %v, want %s", got[0].Decision, got[0].Reasons, Skip)
+	}
+	if got[1].Entry != "tools" || got[1].Decision != Rebuild || !slices.Equal(got[1].Reasons, []string{ReasonBase}) {
+		t.Errorf("tools: %s %v, want %s (%s)", got[1].Decision, got[1].Reasons, Rebuild, ReasonBase)
+	}
+	// An entry with no inputs read for it is a failure to decide, not a
+	// silent skip: the check never guesses what an entry's definition is.
+	if _, err := CheckCatalog(cat, map[string]CatalogInputs{"agent": unchanged}); err == nil {
+		t.Fatal("CheckCatalog decided an entry it had no inputs for")
+	}
+}
+
+// TestCatalogCheckStateRoundTrips: the entry's check.json is what the next
+// run's back-off reads, so it round-trips through the same bytes the bucket
+// holds, and a document with no version is refused rather than read as one.
+func TestCatalogCheckStateRoundTrips(t *testing.T) {
+	now := time.Date(2026, 11, 3, 5, 30, 0, 0, time.UTC)
+	at := now.Add(-time.Hour)
+	s := &CatalogCheckState{
+		Version: CatalogCheckVersion, CheckedAt: now, Decision: RebuildFailedLast,
+		Reasons: []string{ReasonBase}, BuildID: "b1", LastBuildStatus: "FAILURE", LastBuildAt: &at,
+		BuildInputs: &CatalogInputsFingerprint{DefinitionSHA256: strings.Repeat("a", 64), BaseRef: "base:1", BaseDigest: digestA},
+	}
+	data, err := s.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	back, err := ParseCatalogCheckState(data)
+	if err != nil || back.BuildID != "b1" || back.LastBuildStatus != "FAILURE" || back.BuildInputs == nil || !back.BuildInputs.Equal(*s.BuildInputs) {
+		t.Fatalf("round trip = %+v, %v", back, err)
+	}
+	if _, err := ParseCatalogCheckState([]byte(`{"decision":"skip"}`)); err == nil {
+		t.Fatal("a check state with no version parsed")
+	}
+	if got, want := CatalogCheckKey("s", "agent"), "builds/s/catalog/agent/check.json"; got != want {
+		t.Errorf("CatalogCheckKey = %q, want %q", got, want)
+	}
+}

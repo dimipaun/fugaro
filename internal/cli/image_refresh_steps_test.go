@@ -1017,7 +1017,9 @@ func TestAskBuild(t *testing.T) {
 	r := newInitRig(t)
 	e := rigEngine(t, r, &initOptions{})
 	out := atNoTerminal(e)
-	ok, reachable, err := e.r.askBuild("do the thing")
+	// A zero initflow.Managed is every session this command had before the
+	// managed gate: the confirmation below is the one it has always had.
+	ok, reachable, err := e.r.askBuild("do the thing", initflow.Managed{})
 	if err != nil || ok || reachable {
 		t.Fatalf("no --yes, no terminal: ok=%v reachable=%v err=%v", ok, reachable, err)
 	}
@@ -1027,7 +1029,7 @@ func TestAskBuild(t *testing.T) {
 
 	e = rigEngine(t, r, &initOptions{yes: true})
 	out = atNoTerminal(e)
-	ok, reachable, err = e.r.askBuild("do the thing")
+	ok, reachable, err = e.r.askBuild("do the thing", initflow.Managed{})
 	if err != nil || !ok || !reachable {
 		t.Fatalf("--yes, no terminal: ok=%v reachable=%v err=%v", ok, reachable, err)
 	}
@@ -1051,7 +1053,7 @@ func TestAskBuildRefusesAnAgentSession(t *testing.T) {
 			r := newInitRig(t)
 			e := rigEngine(t, r, &initOptions{yes: true})
 			out := atNoTerminal(e)
-			ok, _, err := e.r.askBuild("do the thing")
+			ok, _, err := e.r.askBuild("do the thing", initflow.Managed{})
 			var ae *initflow.AgentError
 			if !errors.As(err, &ae) || ae.Marker != marker || ok {
 				t.Fatalf("ok=%v err=%v", ok, err)

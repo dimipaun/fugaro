@@ -567,18 +567,20 @@ func TestSettingsGetRefusesAnUnknownKeyWithTheNearest(t *testing.T) {
 }
 
 // TestSettingsSetUnknownKeyHintNamesOnlyKeysItCouldWrite: the refusal's nearest
-// names come from the keys `set` writes, not from the whole registry. Two rows
-// the read prints — budget.per_day_usd and budget.mode — are refused by name
-// here, and a hint that answered a misspelling of one with it would send the
-// person from this refusal to the next one.
+// names come from the keys `set` writes, not from the whole registry — and the
+// two budget rows this test used to name as refused are two of the keys it
+// writes (D1179), so a misspelling of one is now answered with the key itself
+// rather than with a neighbour the person did not mean.
 func TestSettingsSetUnknownKeyHintNamesOnlyKeysItCouldWrite(t *testing.T) {
 	settingsWriteHome(t)
 	for _, c := range []struct{ key, want string }{
-		// The misspelling of a refused key is answered with a key this command
-		// writes, which is the nearest of those.
-		{"budget.per_day_uds", "budget.per_run_usd"},
-		{"budget.per_dy_usd", "budget.per_run_usd"},
-		{"budget.mod", ""},
+		{"budget.per_day_uds", "budget.per_day_usd"},
+		{"budget.per_dy_usd", "budget.per_day_usd"},
+		{"budget.mod", "budget.mode"},
+		// A row the models family owns is not the answer: agent.model is the
+		// family's, and the nearest names this command writes are the agent
+		// block's own.
+		{"agent.modl", "agent.auth"},
 	} {
 		t.Run(c.key, func(t *testing.T) {
 			_, _, err := execute(t, "settings", "set", c.key, "1", "--layer", "local", "--yes")
@@ -589,11 +591,7 @@ func TestSettingsSetUnknownKeyHintNamesOnlyKeysItCouldWrite(t *testing.T) {
 			if !ok {
 				t.Fatalf("the refusal names no nearest keys: %v", err)
 			}
-			for _, refused := range []string{"budget.mode", "budget.per_day_usd"} {
-				if strings.Contains(hint, refused) {
-					t.Errorf("the hint names %s, which this command refuses:\n%s", refused, hint)
-				}
-			}
+			settingsHintNeverNames(t, hint)
 			if c.want != "" && !strings.Contains(hint, c.want) {
 				t.Errorf("the hint does not name %s:\n%s", c.want, hint)
 			}
@@ -625,17 +623,18 @@ func settingsHintNames(hint string) []string {
 }
 
 // settingsHintNeverNames pins the keys a write's hint must never name: the
-// registry rows this command refuses although the read prints them — budget.mode
-// and budget.per_day_usd are other writers' keys, and every endpoints.* name is
-// the installation's own plumbing — and the rows the registry marks Sensitive,
-// whose value the diff a write shows would print. A name is matched whole, the
-// way the hint prints it, so a key that merely contains a refused one is not
-// read as it.
+// registry rows another command family writes — the hint's whole point is the
+// keys this path writes, and a name it cannot write sends the person from this
+// refusal to the next one — every endpoints.* name, which is the installation's
+// own plumbing, and the rows the registry marks Sensitive, whose value the diff
+// a write shows would print. A name is matched whole, the way the hint prints
+// it, so a key that merely contains a refused one is not read as it.
 func settingsHintNeverNames(t *testing.T, hint string) {
 	t.Helper()
-	refused := map[string]bool{"budget.per_day_usd": true, "budget.mode": true}
+	refused := map[string]bool{}
 	for _, row := range settings.Rows() {
-		if strings.HasPrefix(row.Key, "endpoints.") || row.Sensitive {
+		_, family := settingsFamilyCommands[row.Owner]
+		if family || strings.HasPrefix(row.Key, "endpoints.") || row.Sensitive {
 			refused[row.Key] = true
 		}
 	}
@@ -802,15 +801,15 @@ func settingsWriteLayerFile(t *testing.T, extra string) string {
 }
 
 // TestSettingsGenericKeyIsSpec44sAllowlist: the generic path writes spec §4.4's
-// names and nothing else, and the list is an allowlist — a name the spec does
-// not hand it is refused whatever the registry holds. The names are spelled the
-// way the registry spells them: the project layer's own block carries the
-// `layer.` prefix (SD14), so §4.4's `default_profile` and `defaults.git.*` are
-// `layer.default_profile` and `layer.defaults.git.*` here.
+// names and the two decisions that widened the list, and nothing else. The
+// names are spelled the way the registry spells them: the project layer's own
+// block carries the `layer.` prefix (SD14), so §4.4's `default_profile` and
+// `defaults.git.*` are `layer.default_profile` and `layer.defaults.git.*` here,
+// and a wildcard block is spelled by its pattern (D1161).
 //
 // The list is the first of the refusals, not the only one: a name it holds is
 // still refused when a family owns it (layer.defaults.agent.model) or when it
-// has a varying segment (workflows.*.commands.test).
+// has a varying segment (the literal `workflows.*.commands.test`).
 func TestSettingsGenericKeyIsSpec44sAllowlist(t *testing.T) {
 	allowed := []string{
 		// §4.4: "budget.{per_run_usd,max_run_tokens,allowed_models,unreachable_grace}".
@@ -823,10 +822,16 @@ func TestSettingsGenericKeyIsSpec44sAllowlist(t *testing.T) {
 		"governance.review_ratio", "governance.stage_budget", "layer.governance.review_ratio",
 		"layer.default_profile", "layer.defaults.git.provider", "layer.defaults.agent.review_rounds",
 		"credentials.fallback", "clone_urls.github",
+		// D1179: the four rows of a repository's own budget block are one set.
+		"budget.mode", "budget.per_day_usd",
+		// D1161: the wildcard blocks this design manages, in the registry's
+		// spelling — the pattern, not a concrete spelling of it.
+		"workflows.*.commands.test", "workflows.*.image.apt", "workflows.*.secrets",
+		"layer.profiles.*.image.apt", "layer.profiles.*.cache.*.key", "layer.ab.rate",
 	}
 	for _, key := range allowed {
 		if !settingsGenericKey(key) {
-			t.Errorf("settingsGenericKey(%q) = false, and spec §4.4 hands it to the generic path", key)
+			t.Errorf("settingsGenericKey(%q) = false, and a decision hands it to the generic path", key)
 		}
 	}
 	refused := []string{
@@ -834,13 +839,14 @@ func TestSettingsGenericKeyIsSpec44sAllowlist(t *testing.T) {
 		"credentials_service.url", "budget.rtdb_url", "budget.firebase_api_key",
 		"name", "runs_bucket", "bucket_url", "repos.*.base_branch",
 		"providers.*.base_url", "bitbucket_api_roots", "model_prices", "routing.claude",
-		// Registry rows the spec's §4.4 list does not name, so the generic path
-		// refuses them however the audit or the local config classifies them.
-		"budget.mode", "budget.per_day_usd",
+		// The registry's other wildcard rows, and the blocks the layer's own
+		// file holds that this design hands to no command of this path.
+		"claude_accounts.*.allow_data_to", "project_secrets.*.proxy",
+		"model_prices.*.input_per_m", "layer.claude_models", "layer.gcp_project",
 	}
 	for _, key := range refused {
 		if settingsGenericKey(key) {
-			t.Errorf("settingsGenericKey(%q) = true, and spec §4.4 does not hand it to the generic path", key)
+			t.Errorf("settingsGenericKey(%q) = true, and no decision hands it to the generic path", key)
 		}
 	}
 }
@@ -855,10 +861,6 @@ func TestSettingsSetRefusesEveryKeyOutsideSpec44(t *testing.T) {
 	for _, key := range []string{
 		"endpoints.compute", "terraform.state_bucket", "policy_generation", "layer_generation",
 		"credentials_service.url", "budget.rtdb_url", "name", "runs_bucket", "bucket_url",
-		// The two registry rows §4.4 leaves out: they are read by `settings`
-		// and written by `fugaro setup` and the local config, and the generic
-		// path does not write them.
-		"budget.mode", "budget.per_day_usd",
 	} {
 		t.Run(key, func(t *testing.T) {
 			out, _, err := execute(t, "settings", "set", key, "x", "--yes")
@@ -1205,16 +1207,212 @@ func TestSettingsSetRefusesAMapKey(t *testing.T) {
 	}
 }
 
+// TestSettingsSetConcreteWildcardKeyWrites: a concrete spelling of a wildcard
+// registry row is a key a person writes, and the row it resolves to is the row
+// the run reads — the key stays as written in the document and the diff, and
+// the write lands in the layer the row's own Layers name (D1161). The dry run
+// is asked first, because it prints the document the console draws its
+// confirmation from and writes nothing, and the write then lands in the
+// checkout's fugaro.yaml.
+func TestSettingsSetConcreteWildcardKeyWrites(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML(""))
+	before := readFileString(t, path)
+	noTerminal(t)
+
+	doc := settingsDryRunDoc(t, "settings", "set", "workflows.web.commands.test", "go test -race ./...", "--layer", "repo")
+	if doc.Key != "workflows.web.commands.test" || doc.Layer != "repo" {
+		t.Errorf("the document names %s at layer %s, and the edit was workflows.web.commands.test at layer repo", doc.Key, doc.Layer)
+	}
+	if !doc.Changed {
+		t.Error("the document says the edit changes nothing, and the file holds a test command")
+	}
+	if doc.Old != "go test ./..." || doc.New != "go test -race ./..." {
+		t.Errorf("the document says %q -> %q, and the file holds the workflow's own test command", doc.Old, doc.New)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the dry run changed fugaro.yaml")
+	}
+	settingsNoBackup(t, path)
+
+	if _, _, err := execute(t, "settings", "set", "workflows.web.commands.test", "go test -race ./...", "--layer", "repo", "--yes"); err != nil {
+		t.Fatalf("writing a concrete spelling of a wildcard row was refused: %v", err)
+	}
+	cfg, ps := config.Parse([]byte(readFileString(t, path)))
+	if len(ps) > 0 {
+		t.Fatalf("the file the write produced does not read back: %s", ps[0].String())
+	}
+	if got := cfg.Workflows["web"].Commands.Test; got != "go test -race ./..." {
+		t.Errorf("the workflow's test command is %q, want the value the write named", got)
+	}
+	if got := cfg.Workflows["web"].Commands.Build; got != "go build ./..." {
+		t.Errorf("the write moved the key beside it: web's build command is %q", got)
+	}
+}
+
+// TestSettingsSetConcreteWildcardKeyCreatesTheBlock: D1161's stated cost, and
+// the property the plan decides here: nothing enumerates a wildcard block's
+// concrete spellings, so writing one key of a block the document does not hold
+// **creates the block** rather than refusing an unknown name. The layer file
+// carries no profile of its own, so the write to it is the case.
+func TestSettingsSetConcreteWildcardKeyCreatesTheBlock(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteLayerFile(t, "")
+	before := readFileString(t, path)
+	noTerminal(t)
+
+	out, _, err := execute(t, "settings", "set", "layer.profiles.svc.description", "the service profile", "--layer", "project", "--yes")
+	if err != nil {
+		t.Fatalf("writing one key of a block the layer file does not hold was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "next: fugaro update") {
+		t.Errorf("a layer write does not close with the command that publishes it:\n%s", out)
+	}
+	layer, ps := config.ParseProjectLayer([]byte(readFileString(t, path)), config.LayerAnchor{Project: "aurora", GCPProject: "aurora-gcp"})
+	if len(ps) > 0 {
+		t.Fatalf("the layer file the write produced does not read back: %s", ps[0].String())
+	}
+	if got := layer.Profiles["svc"].Description; got != "the service profile" {
+		t.Errorf("the created block's description is %q, want the value the write named", got)
+	}
+	if !strings.Contains(readFileString(t, path), "version: 1") || !strings.Contains(readFileString(t, path), "project: aurora") {
+		t.Errorf("creating the block rewrote the layer file's own anchors:\n%s", readFileString(t, path))
+	}
+	if before == readFileString(t, path) {
+		t.Error("the write the command reported left the layer file as it was")
+	}
+}
+
+// TestSettingsSetConcreteWildcardKeyRefusesALayerTheRowMayNotBeSetIn: the row a
+// concrete spelling resolves to is the registry's own, so a block a write would
+// create is still refused where the row's own Layers do not include the layer
+// (D1161): nothing is written, and the refusal names the layer the key may be
+// set in rather than the name of the block.
+func TestSettingsSetConcreteWildcardKeyRefusesALayerTheRowMayNotBeSetIn(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML(""))
+	before := readFileString(t, path)
+
+	// workflows.*.dockerfile is a repository-only row (config.Scopes), so the
+	// project layer is a layer it may not be set in.
+	_, _, err := execute(t, "settings", "set", "workflows.api.dockerfile", "Dockerfile", "--layer", "project", "--yes")
+	if err == nil {
+		t.Fatal("settings set wrote a repository-only row at --layer project")
+	}
+	if !strings.Contains(err.Error(), "repo") {
+		t.Errorf("the refusal does not name the layers the key may be set in: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed fugaro.yaml")
+	}
+}
+
+// TestSettingsSetWritesBudgetModeAndPerDayUsd: the four rows of a repository's
+// own budget block are one answer (D1179), and these two were the ones the
+// allowlist refused on purpose — a key `fugaro settings` prints, the local
+// config and `fugaro setup` write, and no command owned (F13). Both are
+// written here, in the layer their own rows name, and both are read back by the
+// document's own loader.
+func TestSettingsSetWritesBudgetModeAndPerDayUsd(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML(""))
+	for _, c := range []struct{ key, value string }{
+		{"budget.mode", "enforce"},
+		{"budget.per_day_usd", "25"},
+	} {
+		t.Run(c.key, func(t *testing.T) {
+			if _, _, err := execute(t, "settings", "set", c.key, c.value, "--layer", "repo", "--yes"); err != nil {
+				t.Fatalf("settings set refused %s, which D1179 gives the generic path: %v", c.key, err)
+			}
+			cfg, ps := config.Parse([]byte(readFileString(t, path)))
+			if len(ps) > 0 {
+				t.Fatalf("the file the write produced does not read back: %s", ps[0].String())
+			}
+			switch c.key {
+			case "budget.mode":
+				if cfg.Budget.Mode != "enforce" {
+					t.Errorf("budget.mode is %q, want the value the write named", cfg.Budget.Mode)
+				}
+			case "budget.per_day_usd":
+				if cfg.Budget.PerDayUSD != 25 {
+					t.Errorf("budget.per_day_usd is %v, want the value the write named", cfg.Budget.PerDayUSD)
+				}
+			}
+		})
+	}
+	// The two keys of the same block the allowlist already carried are still
+	// written: the four rows of a repository's budget are one set.
+	for _, key := range []string{"budget.per_run_usd", "budget.max_run_tokens"} {
+		if !settingsGenericKey(key) {
+			t.Errorf("settingsGenericKey(%q) = false, and it is a row of the same block", key)
+		}
+	}
+}
+
+// TestSettingsSetLiteralStarIsStillRefused: the widening of the allowlist does
+// not make the literal `*` a spelling a person writes. `workflows.*.commands.test`
+// is the row the concrete key resolves through, and it is refused as the map
+// entry it is: the write lands on a path, and a path with a `*` in it is a path
+// no file holds (spec §4.2 step 1).
+func TestSettingsSetLiteralStarIsStillRefused(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML(""))
+	before := readFileString(t, path)
+
+	out, _, err := execute(t, "settings", "set", "workflows.*.commands.test", "go test ./...", "--layer", "repo", "--yes")
+	if err == nil {
+		t.Fatalf("settings set wrote the literal * spelling of a wildcard row:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d (a user error: nothing was attempted)", ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(err.Error(), "* is a map entry") && !strings.Contains(err.Error(), "a key with a *") {
+		t.Errorf("the refusal does not say the key is a map entry: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed fugaro.yaml")
+	}
+}
+
+// TestSettingsSetConcreteKeyOfAnUnlistedRowIsRefused: a concrete key addresses
+// a wildcard row only where the allowlist carries that row, and the rest of the
+// registry's wildcard rows are other paths' keys. Such a key keeps the refusal
+// an unknown name gets — the nearest keys this command writes — rather than a
+// row that was never its own, and nothing is written.
+func TestSettingsSetConcreteKeyOfAnUnlistedRowIsRefused(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML(""))
+	before := readFileString(t, path)
+
+	for _, key := range []string{"repos.web.base_branch", "providers.corp.base_url", "claude_accounts.corp.allow_data_to"} {
+		t.Run(key, func(t *testing.T) {
+			if _, _, ok := settingsWriteLookup(key); ok {
+				t.Errorf("settingsWriteLookup(%q) resolved a wildcard row the allowlist does not carry", key)
+			}
+			out, _, err := execute(t, "settings", "set", key, "x", "--layer", "repo", "--yes")
+			if err == nil {
+				t.Fatalf("settings set wrote %s:\n%s", key, out)
+			}
+			hint := settingsRefusalHint(t, err)
+			if len(settingsHintNames(hint)) == 0 {
+				t.Errorf("the refusal names no nearest key at all: %v", err)
+			}
+			if readFileString(t, path) != before {
+				t.Error("the refused write changed fugaro.yaml")
+			}
+		})
+	}
+}
+
 // TestSettingsSetRefusesAWildcardRowOutsideTheGenericKeys: the pattern lookup
 // resolves a wildcard registry row only for a spelling settingsGenericKeys
-// carries by name, and `stages.*.claude_account` is the only one it does. A
-// concrete spelling of the project layer's `workflows.*.*` or the project
-// family's `repos.*.*` is refused like any other key the generic path does not
-// write, and nothing is written.
+// carries, so a concrete spelling of the project family's `repos.*.*` or the
+// models family's `providers.*.*` is refused like any other key the generic
+// path does not write, and nothing is written.
 func TestSettingsSetRefusesAWildcardRowOutsideTheGenericKeys(t *testing.T) {
 	_, localPath := settingsWriteHome(t)
 	before := readFileString(t, localPath)
-	for _, key := range []string{"workflows.build.commands.test", "repos.web.base_branch"} {
+	for _, key := range []string{"repos.web.base_branch", "providers.corp.base_url"} {
 		t.Run(key, func(t *testing.T) {
 			// The rule itself, so the test says which of the two reasons the
 			// refusal has: this key resolves no row here at all.
