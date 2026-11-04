@@ -1,17 +1,28 @@
 # Periodic run reviews: implementation plan
 
-**Nothing here is approved.** Every task is written to the recommended answer of a decision the owner
-has not answered (D960–D971, [reconciliation.md](reconciliation.md) §3). Each task touches at most 12
-files, names its tests, starts with a red step and ends at the gates below.
+**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
+approved.**
+
+Every task is written to the owner's answers of 2026-11-04 (D960–D971,
+[reconciliation.md](reconciliation.md) §3). **The plan does not change for them**: the three answers
+the owner gave — **D965**, **D968** and **D969** — are the recommendations the tasks were already
+written to, so no task's content moves; the other nine decisions were not singled out and the
+recommendation stands for each. What the 2026-11-04 refresh *does* change is in
+[reconciliation.md](reconciliation.md) §4: a class for R2's check (M9), a sentence in the spec's §9
+(M1, M2), the sequencing behind `plugin/**` (M6) and the release slot (M8). Each task touches at most
+12 files, names its tests, starts with a red step and ends at the gates below.
 
 ## Order, and what this plan does not own
 
 - **The loop itself is shipped** (F1–F13). No task here rewrites the digest, the recipe, the runner's
   step, the layout, the flags, the draft or the issue form.
-- **`plugin/**` is owned** by another 0.15.0 work stream (the `docs/plugin-user-scope` design, PR
-  #1488, moves the skills to user scope and rewrites the setup skill's session-start behaviour).
-  R3 touches three skill files and their tests; it waits for the owner's go on that directory, and
-  R4 waits for R3 because the skill's §3 lists the rules.
+- **`plugin/**` is owned, and it is being renamed** by the `docs/plugin-user-scope` design (PR
+  #1488, which moves the skills to user scope and rewrites the setup skill's session-start
+  behaviour). **R3, R4's rule list and R6's §7 sentence touch it, so all three are sequenced after
+  #1488 lands**: the same file has to be edited once, at the path it will have. R4 also waits for R3,
+  because the skill's §3 lists the rules, and #1488's rename is what R3's own citations follow.
+  `fugaro upgrade`'s `pin` step is what keeps the skill and the flag in one release
+  ([reconciliation.md](reconciliation.md) §4, M6).
 - **`website/**` is owned**, including `website/data/typical-costs.yaml`. R5 names the one line its
   provenance needs and changes nothing there.
 - **`internal/runner/runner.go`, `internal/cli/root.go`, `internal/cli/api.go` and everything under
@@ -23,8 +34,8 @@ files, names its tests, starts with a red step and ends at the gates below.
 | 0 | R0 | nothing |
 | 1 | R1 | R0 |
 | 2 | R2, R4 | R1 (R4 also R3) |
-| 3 | R3 | R1, and the owner's go on `plugin/**` |
-| 4 | R6 | R1–R4 |
+| 3 | R3 | R1, and #1488 landed (`plugin/**` is renamed there) |
+| 4 | R6 | R1–R4, and #1488 |
 | — | R5 | the owner, at their terminal; no agent step |
 
 ## Gates (every task)
@@ -56,8 +67,9 @@ same weekday and month-boundary rules, the same refusal of a period the layout c
   catch-up window `DueCatchUpDays = 7` — the same value `internal/runner`'s `digestCatchUpDays`
   holds today (F6), moved rather than duplicated.
 - **Files (4):** `internal/digest/due.go` (new), `internal/digest/due_test.go` (new),
-  `internal/runner/digest.go` (the call site; the constant and the function go),
-  `internal/runner/digest_test.go` (its existing due-period test moves and keeps its cases).
+  `internal/runner/digest.go` (the call site; the constant and the function go — `digestCatchUpDays`
+  `:70`, `digestDuePeriods` `:425`), `internal/runner/digest_test.go` (its existing due-period test
+  moves and keeps its cases).
 - **Red step:** `TestDuePeriodsIsTheClosedWindow` fails while `digest.DuePeriods` does not exist; the
   runner's own test is red until the call site moves, which is the point — one implementation.
 - **Tests:** `TestDuePeriodsIsTheClosedWindow` (seven closed days, in order),
@@ -98,27 +110,39 @@ name; `--dir` and `--json` are accepted. It writes nothing and it prints no repo
 `reviews-due`, from the same reading as R1: an info line when the newest report the checkout holds is
 more than one period old, a warning line when a period has closed and has no report at all, and
 silence when the checkout holds no report folder and no report is due (a repository that has never
-reviewed is told once, not on every run). Offline. It belongs to neither the update group nor the
-security group (`internal/cli/doctor_render.go:100`, `:118`), so it needs no change there.
+reviewed is told once, not on every run). Offline.
 
-- **Files (3):** `internal/cli/doctor_reviews.go` (new: the check and its one-line fix),
+**The check names its class, and that is part of the task** ([reconciliation.md](reconciliation.md)
+§4, M9). `doctor` prints the `actionable`, `update`, `decision` and `security` classes, counts the
+measurements without printing them, and files every unclassified info check under `audit` — written,
+counted in the pointer line and never shown. So the warning is `doctorClassActionable` and the info
+line is `doctorClassDecision` (`internal/cli/doctor_render.go:29-60`), and a task that stops at "it
+prints a line" ships a line nobody sees. Neither class is the update group or the security group, so
+`doctor_render.go` itself is unchanged.
+
+- **Files (3):** `internal/cli/doctor_reviews.go` (new: the check, its class and its one-line fix),
   `internal/cli/doctor_reviews_test.go` (new), `internal/cli/runs_digest.go` (only if the reading
   needs a second entry point to be callable from doctor; search before writing one).
 - **Red step:** `TestDoctorReviewsDueWarnsWhenAClosedPeriodHasNoReport` fails while the check does
   not exist, and it fails for the reason the task exists: today a user runs `doctor`, sees a clean
-  screen and never learns that the cadence lapsed.
+  screen and never learns that the cadence lapsed. `TestDoctorReviewsDueIsInTheDefaultView` is the
+  second red: a check with no class is in `audit`, so the line is written, counted and not printed.
 - **Tests:** `TestDoctorReviewsDueWarnsWhenAClosedPeriodHasNoReport`,
   `TestDoctorReviewsDueIsInfoWhenTheNewestIsOld`, `TestDoctorReviewsDueIsSilentWhenNothingIsDue`,
-  `TestDoctorReviewsDueIsOffline`, `TestDoctorReviewsDueNamesTheCommand`.
+  `TestDoctorReviewsDueIsInTheDefaultView`, `TestDoctorReviewsDueIsOffline`,
+  `TestDoctorReviewsDueNamesTheCommand`.
 - **SEC:** none.
 
-## R3. The skills carry the signal and the schedule (D965). **Owned elsewhere**
+## R3. The skills carry the signal and the schedule (D965). **Owned elsewhere, and renamed by #1488**
 
-The `setup` skill gains one step: it prints the three ways to schedule the reviews — a cron job or CI
-workflow of the repository, an agent routine, a scheduled report run — with the exact command for
-each, and writes nothing without the user's word. The `working` skill's reference gains the due
-signal (R1) where it describes the cadence, and keeps the sentence that an agent never sets up a
-schedule on the user's behalf.
+D965 is **answered by the owner on 2026-11-04 as recommended: the user installs the cadence, and
+Fugaro writes no workflow and no crontab.** The `setup` skill gains one step: it prints the three
+ways to schedule the reviews — a cron job or CI workflow of the repository, an agent routine, a
+scheduled report run — with the exact command for each, and writes nothing without the user's word.
+The `working` skill's reference gains the due signal (R1) where it describes the cadence, and keeps
+the sentence that an agent never sets up a schedule on the user's behalf — which §2 of that
+reference already states in full ("Fugaro schedules nothing. The cadence is the user's own"), so
+**this task adds the signal and the setup step, not a new rule.**
 
 - **Files (4):** `plugin/skills/setup/SKILL.md`, `plugin/skills/working/SKILL.md`,
   `plugin/skills/working/reference/periodic-reviews.md`, `plugin/periodic_reviews_skill_test.go`
@@ -131,7 +155,7 @@ schedule on the user's behalf.
   what keeps `--due` and the skill's sentence from drifting apart.
 - **SEC:** none.
 
-## R4. The fifth pattern rule (D968)
+## R4. The fifth pattern rule (D968, answered by the owner 2026-11-04 as recommended: yes)
 
 `cost_per_run_rising`: the billed cost per run rose in each of the last five committed monthly
 reports. Same shape as the four (`RuleNames` order, period keys read oldest first, one figure per
@@ -153,9 +177,10 @@ it read — a signal to look, never a verdict.
 ## R5. Fugaro's own reports (D961). **The owner's, at their terminal**
 
 No agent step and no test: this is the one thing the design asks the owner to do, and it is the
-registered Check 136, which is **NOT RUN** (`docs/gcp-live-checklist.md:764`, `:10612`). Run once
-against a release carrying the finalize guard, on a sandbox repository first (`fugaro run --recipe
-run-digest "periodic run review"`), then against this repository under D323's rules. What follows
+registered Check 136, which is **NOT RUN** (`docs/gcp-live-checklist.md:764`, its section `:10621`).
+Run once against a release carrying the finalize guard, on a sandbox repository first
+(`fugaro run --recipe run-digest "periodic run review"`), then against this repository under D323's
+rules. What follows
 from it is a pull request adding `docs/fugaro-reviews/` here, and — separately, owned by whoever
 holds `website/**` — the one-line change to `website/data/typical-costs.yaml` naming the committed
 reports as the figures' source, which D324 claims and which is not yet true (F14).
@@ -182,11 +207,19 @@ release notes name it.
 
 ## Release slot
 
-**CLI 0.15.0, not earlier.** Why: R1 adds a flag and a versioned JSON document, R2 adds a doctor
-line, and R4 adds a pattern name — three additions to surfaces a release notes, none of them a fix;
-0.14.2 is the follow-up tag for the 0.14.x line. Nothing here needs a cloud change, a policy
-migration, a new image or a new secret, so **no `### For operators` entry and no `fugaro update`
-step**: the HARD RULE's "one command" is untouched, and an installation that upgrades to 0.15.0 gets
-the due signal and the doctor line from `brew upgrade` alone. R3 rides with the release that carries
-`plugin/**`'s own 0.15.0 change, because the plugin pin and the skills must ship together; R5 is the
-owner's whenever they run it, and it is not gated by a release.
+**CLI 0.19.0.** 0.15.0, 0.16.0 and 0.17.0 have all shipped since this design was written, and
+`docs/config-management`'s own plan is 0.18.0, so **0.19.0 is the first release this work can ride**
+([reconciliation.md](reconciliation.md) §4, M8). It is the smaller of the two slots the launcher
+allows, and the design is small: R1 adds a flag and a versioned JSON document, R2 adds a doctor line
+and R4 a pattern name — three additions to surfaces a release notes, none of them a fix — while R3
+and R6 are skill sentences and documentation. **0.20.0 would cost a cycle and buy nothing**: no part
+of this design needs a cloud change, a policy migration, a new image or a new secret, so a later
+slot delays the cadence signal for a release that carries nothing else this work needs.
+
+**No `### For operators` entry and no `fugaro update` step.** The HARD RULE's one command is
+untouched: an installation that takes the new binary gets the due signal and the doctor line from it.
+The plugin pin — `fugaro upgrade`'s `pin` step — is what puts the matching plugin and skills into a
+checkout (`internal/cli/upgrade.go:80`, `:86`). That is exactly why **R1 and R3 ship in one
+release**: a skill that names `--due` must not reach a CLI without it, and the pin is what decides
+that. R3, R4's rule list and R6's §7 sentence are also sequenced behind #1488's rename of
+`plugin/**`. R5 is the owner's whenever they run it, and it is not gated by a release.

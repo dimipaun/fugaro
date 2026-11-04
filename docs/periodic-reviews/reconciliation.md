@@ -1,13 +1,19 @@
 # Periodic run reviews: reconciliation against the code
 
-Read against `origin/main` at `3d6ed04d` and the 23 pull requests open on 2026-11-01. Line numbers
-are that commit's. Each finding is **Exists**, **Missing** or **Conflicts**, with its consequence for
-the spec or the plan.
+**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
+approved.**
+
+Read against `origin/main` at `b41709ea` on 2026-11-04, and **refreshed against that tree** the same
+day: line numbers are that commit's, and §4 lists what `main` has overtaken since the design was
+first written. The 2026-11-01 reading this file first carried — the block census taken from the 23
+pull requests open then — is kept only where it is still checkable. Each finding is **Exists**,
+**Missing** or **Conflicts**, with its consequence for the spec or the plan.
 
 The headline: **the loop the owner asked for on 2026-10-25 was designed the next day (D320–D328,
-`docs/task-governance`) and has shipped**, through 0.13.0's recipe and digest step and 0.14.x. What
-this design owns is the part that makes a user who is not asking keep the cadence, and four smaller
-gaps. Every finding below is therefore about a claim of the request, not about the request's core.
+`docs/task-governance`) and has shipped**, through 0.13.0's recipe and digest step, carried by every
+release since (0.17.0 is the current one). What this design owns is the part that makes a user who is
+not asking keep the cadence, and four smaller gaps. Every finding below is therefore about a claim of
+the request, not about the request's core.
 
 ## 1. What exists
 
@@ -28,23 +34,23 @@ must agree byte for byte (`:10`). *Consequence:* the trend view the owner asks f
 home: **the index's table** (F19).
 
 **F3: Exists. The report's content and its flags.** `internal/digest/digest.go` builds the report:
-the 8 KiB cap (`:49`, `capTo` `:325`) and six flags — `review_calls`, `subagents`, `halt`,
-`fix_rounds`, `repeated_command`, `review_scope_drift` (`:79-97`). *Consequence:* the "watch patterns
+the 8 KiB cap (`:49`, `capTo` `:565`) and six flags — `review_calls`, `subagents`, `halt`,
+`fix_rounds`, `repeated_command`, `review_scope_drift` (`:79-97`, `FlagNames` `:97`). *Consequence:* the "watch patterns
 over time and report them" half has a closed vocabulary to report in.
 
 **F4: Exists. The pattern detector, with fixed rules and thresholds.** `Patterns`
 (`internal/digest/patterns.go:91`) reads the summaries of the committed reports plus this one; the
-four rules are named at `:24-33` and their thresholds are constants at `:42-53` (3 of 4 weekly
+four rules are named at `:22-37` and their thresholds are constants at `:39-56` (3 of 4 weekly
 reports; 3 months of rises; +50% on last month's median; halts above a tenth for 2 weeks). Each
 pattern carries the period keys it read and one figure per period. *Consequence:* the detector is
 not something this design has to invent (F19, F20).
 
 **F5: Exists. The report run, end to end.** The catalog recipe `run-digest` is `digest: {}` then one
 `review` (`internal/recipe/catalog/run-digest.yaml`); the runner's step (`internal/runner/digest.go:101`)
-writes every due period the tree does not hold (`writeDueReports`, `:299`), regenerates the index
-(`:353`), commits under the runner's own identity (`:360`) and leaves the pull request to one senior
+writes every due period the tree does not hold (`writeDueReports`, `:301`), regenerates the index
+(`:353`), commits under the runner's own identity (`:359`) and leaves the pull request to one senior
 review; the finalize guard (`:168`) makes the run's diff against its base exactly the generated
-files. `--retry` and `--pr` are refused for a report run, and a launch with no runs in the window is
+files — and `stray.go` has since made that guard stronger, not weaker (§4, M7). `--retry` and `--pr` are refused for a report run, and a launch with no runs in the window is
 refused before anything starts (`internal/cli/run_digest_manifest.go:86`). *Consequence:* a user who
 wants the cadence automated has one command to schedule, and it is already documented
 (`plugin/skills/working/reference/periodic-reviews.md` §2, §6).
@@ -98,7 +104,7 @@ rules (D326), the redacted draft and the issue form (D327), and the maintainer's
 new number (F21, F23).
 
 **F13: Exists. The register's half of the live check.** Check 136 — a report run's pull request — has
-its row (`docs/gcp-live-checklist.md:764`) and its section (`:10612`), pinned as a pair by
+its row (`docs/gcp-live-checklist.md:764`) and its section (`:10621`), pinned as a pair by
 `internal/cli/docs_task_governance_checks_test.go:75`. The row and the section both say it is
 **NOT RUN** and is the owner's, and no agent runs any step of it. *Consequence:* this design takes
 **no check number** (README, "Numbers this work holds"); what it wants from the owner is that check,
@@ -116,7 +122,7 @@ that file (`docs/task-governance/reconciliation.md:300`) — is not yet true. *C
 5, and task R5, which is the owner's to run.
 
 **F15: Missing. Nothing commits what the CLI writes.** `fugaro runs digest` writes the report and the
-index with `os.WriteFile` and prints the two paths (`internal/cli/runs_digest.go:262-272`); it has no
+index with `os.WriteFile` and prints the two paths (`internal/cli/runs_digest.go:266-274`); it has no
 commit, no push and no pull request. Only a report run commits (F5). *Consequence:* the owner's "each
 saved and committed to the tree" holds only for the run path, and a cron or a person must add the
 second half themselves; the spec fixes this as the CLI's deliberate boundary (§3), because a CLI that
@@ -138,13 +144,16 @@ implementation read by both — and the runner keeps only its own use of it (D96
 to schedule a report are in `plugin/skills/working/reference/periodic-reviews.md` §2, and nothing
 carries them to a user at the one moment they are cheapest to decide — `fugaro setup`. The `setup`
 skill mentions neither the digest nor the reviews. *Consequence:* spec §6, D965: the setup skill
-prints the three ways and the exact command for each, and writes nothing without the user's word.
+prints the three ways and the exact command for each, and writes nothing without the user's word —
+**answered by the owner on 2026-11-04: the user installs the cadence, and Fugaro writes no workflow
+and no crontab.**
 
 **F19: Missing. The pattern rules cannot see far.** The longest windows are four weekly reports and
-three months (`internal/digest/patterns.go:42-53`); nothing reads the daily reports as a series and
+three months (`internal/digest/patterns.go:39-56`); nothing reads the daily reports as a series and
 nothing reads the yearly ones, which are the only documents that can survive the 90-day retention.
 A user who reviews every day for a quarter gets no rule that spans that quarter. *Consequence:*
-spec §5, D968 adds one rule with a longer window; D966 refuses a separate trend file.
+spec §5, D968 adds one rule with a longer window — **answered by the owner on 2026-11-04: yes, one
+longer window, `cost_per_run_rising` over five months**; D966 refuses a separate trend file.
 
 **F20: Missing, deliberately. The thresholds are not configurable — and there is a real tension.**
 The thresholds are constants (F4). They are also the one part of a report a repository might want to
@@ -152,7 +161,9 @@ loosen, and this design keeps them fixed (D967): a `fugaro.yaml` key that lowers
 that silences a signal about the repository's own cost, and the policy merge's "only tightening wins"
 does not apply to a threshold, because a bigger number here is not a wider permission anywhere else.
 *Consequence:* a user who disagrees with a threshold gets a report that says so, not a key; if the
-owner wants the key later, it takes a new decision.
+owner wants the key later, it takes a new decision — and there is now a command that would carry it,
+`fugaro settings` (D1160–D1183, `docs/config-management/`), which writes only the rows its own
+registry declares (§4, M2).
 
 **F21: Missing. A learning that is not a wording change has no home between the issue and a
 release.** The backlog's `filed-in` vocabulary is `run`, `pr` and `hand` (`internal/backlog/backlog.go:56`),
@@ -179,15 +190,20 @@ touches `ee/` and `internal/cli/reportcore.go` in no task, and the spec says so 
 **F24: Exists. A report carries no address and no task text, and a test holds it.** The closed
 vocabulary is `internal/digest`'s own (`internal/digest/patterns.go:58-69` states the rule for a
 pattern's fields), the folder's files are checked by the live check for addresses
-(`docs/gcp-live-checklist.md:10695`), and the draft's renumbering is tested
+(`docs/gcp-live-checklist.md:10710`), and the draft's renumbering is tested
 (`internal/cli/runs_digest_submit_test.go`). *Consequence:* spec §4 is a statement of what holds, and
 the one thing it decides is the opposite temptation — that the **committed** report keeps its run IDs
-(D969), because the daily sweep needs them and the report is the repository's own document.
+(D969, **answered by the owner on 2026-11-04 as recommended**), because the daily sweep needs them
+and the report is the repository's own document. §4, M3: the person-class reads have since landed,
+so this boundary now has live surfaces on the other side of it.
 
-## 3. Decisions D960–D971
+## 3. Decisions D960–D971, and the owner's answers of 2026-11-04
 
-**Every one is open: the owner has answered none of them.** The recommendation comes first, with the
-cost of the alternative; the plan is written to the recommendations.
+**The owner answered the design on 2026-11-04.** Three decisions were named in words — **D965**,
+**D968** and **D969** — and **each is as recommended, so no answer here is "not the
+recommendation"**; the other nine were not singled out, and the recommendation in the table stands
+for each of them, which is what the plan is written to. The recommendation comes first, with the
+cost of the alternative.
 
 | D | Question | Recommendation | The alternative, and its cost |
 | --- | --- | --- | --- |
@@ -196,10 +212,79 @@ cost of the alternative; the plan is written to the recommendations.
 | **D962** | What tells a user a report is due? | **`fugaro runs digest --due [--json]`: read-only, offline, no cloud, reading the committed folder in the checkout** (F16), with the due computation moved into `internal/digest` so the CLI and a report run cannot disagree (F17). | Nothing, and the cadence stays honour-system prose: a user who is not asking never learns the reports exist, which is exactly the gap the owner's request is about. **Or** a cloud-side read of the runs bucket: it would make the signal need credentials, a project and a network, and it would fail in the one place the skill runs it — an agent's session in a checkout |
 | **D963** | Does the installation report it too? | **Yes: one `doctor` line, `reviews-due`, from the same reading** — an info line when the newest report is more than a period old, a warning line when a closed period has no report at all (F18). Offline, like the other checkout checks. | A separate command only: a user runs `doctor` far more often than they think about reviews, and the nudge is worth one line. A `--security`-style gate instead: it would hide a finding that is not a security one |
 | **D964** | Does the CLI commit, push or open the pull request? | **No. It writes the tree and prints the paths; the commit is the person's or their automation's** (F15). The report run already commits and opens the pull request for a user who wants that (F5). | `--commit`/`--pr` on the CLI: a second identity that pushes to the user's repository, on whatever branch they happen to be on, with a message the tool chose; and a second implementation of what the runner's digest step already does correctly, including its finalize guard |
-| **D965** | Who installs the cadence? | **The user, with the setup skill printing the three ways and the exact command for each, once, and writing nothing without their word** (F18). Fugaro schedules nothing for a repository it does not own. | Fugaro writes a workflow or a crontab: a file that commits into the user's repository under their identity, unasked, which no skill may do; and it would need repository write credentials in a place that has none |
+| **D965** *(answered 2026-11-04, as recommended)* | Who installs the cadence? | **The user, with the setup skill printing the three ways and the exact command for each, once, and writing nothing without their word** (F18). Fugaro schedules nothing for a repository it does not own. | Fugaro writes a workflow or a crontab: a file that commits into the user's repository under their identity, unasked, which no skill may do; and it would need repository write credentials in a place that has none |
 | **D966** | Is there a trend file? | **No. The committed period reports are the history and the index's table is the trend view** (F2, F19). One document fewer, one generator fewer, and no question of which of two files to grep. | A generated `trends.md` or a `docs/fugaro-reviews/trends.json`: a second copy of figures that are already in the reports and the index, regenerated byte for byte by both writers, and a reader who finds the two disagreeing has no way to know which is current |
 | **D967** | Do the patterns' thresholds move into config? | **No: they stay constants in `internal/digest`** (F20). A threshold is not a limit that only tightening can merge safely, and a repository that lowered one would be silencing a signal about its own cost. | `fugaro.yaml` keys, or a project-layer override: a repository can raise a threshold until its own recurring problem stops being reported, and "the report says nothing" reads as "nothing is wrong" |
-| **D968** | Do the rules gain a longer window? | **Yes, one: `cost_per_run_rising` — the billed cost per run rising five months running** (F19), beside the four, with the same shape (period keys read, one figure per period) and no verdict. | Keep the four windows: a user who reviews daily for a quarter still gets no rule that spans the quarter, and the monthly reports — the only documents that outlive the 90-day retention (F10) — are read by two rules that each compare one month with the one before it |
-| **D969** | What does a **committed** report carry, and what does the draft redact? | **The committed report keeps its run IDs, stage names, recipes and figures, and carries no person, address, task text or log line; the draft that leaves renumbers the runs and drops the repository name** (F24). | Redact the run IDs in the committed report too: the report's whole purpose is to send the reader to `fugaro diagnose RUN` and `fugaro logs RUN` for the flagged runs, and a report whose rows cannot be looked up is a table of numbers nobody can act on |
+| **D968** *(answered 2026-11-04, as recommended)* | Do the rules gain a longer window? | **Yes, one: `cost_per_run_rising` — the billed cost per run rising five months running** (F19), beside the four, with the same shape (period keys read, one figure per period) and no verdict. | Keep the four windows: a user who reviews daily for a quarter still gets no rule that spans the quarter, and the monthly reports — the only documents that outlive the 90-day retention (F10) — are read by two rules that each compare one month with the one before it |
+| **D969** *(answered 2026-11-04, as recommended)* | What does a **committed** report carry, and what does the draft redact? | **The committed report keeps its run IDs, stage names, recipes and figures, and carries no person, address, task text or log line; the draft that leaves renumbers the runs and drops the repository name** (F24). | Redact the run IDs in the committed report too: the report's whole purpose is to send the reader to `fugaro diagnose RUN` and `fugaro logs RUN` for the flagged runs, and a report whose rows cannot be looked up is a table of numbers nobody can act on |
 | **D970** | What happens to a submitted learning that needs work? | **A maintainer files it by hand in this repository's `docs/backlog/`** (`filed-in: hand`, the issue under `## Links`), so it has a place to live and a status a reader can see (F21). No new `filed-in` kind and no automatic filing. | Nothing, and the learning lives only in an issue thread: the same lesson is submitted again next quarter, and a reader of the backlog cannot see what the product already knows |
 | **D971** | How does a learning enter the official skills? | **A maintainer rewrites it into their own words and lands it as a pull request against `plugin/skills/` in the same release; the release notes name it** (F22). | A generated "learnings" file the skill reads, or pasting the issue text: unreviewed user text entering a prompt, which is the injection surface the current rule exists to close, and a CLA and a licence question the form's grants do not settle for code |
+
+## 4. What `main` has overtaken (2026-11-04)
+
+The design was written against `3d6ed04d` on 2026-11-01. This section is the refresh: what landed
+since, in the order it changes this design. **Nothing here overturns a finding or a decision** — the
+loop still ships, the gaps are the same, and the three answers of 2026-11-04 confirm the plan — but
+five of them change a sentence in the spec or the plan (**M1**, **M2**, **M6**, **M8**, **M9**) and
+the rest are context the design now rests on.
+
+**M1: The managed gate landed, and it is the same principle D965 states.** `readManagedGate`
+(`internal/cli/managed_gate.go:181`) admits or refuses a cloud write in a coding agent's session,
+and it now covers `update`, `config publish`, `image refresh`, `accounts add`,
+`project policy publish` and `settings`. *Consequence:* the two surfaces this design adds write
+nothing — the due signal reads a folder, the doctor line reports what it read — so **neither is gated
+and neither needs a row**: spec §9 says so. D965's "Fugaro writes no workflow and no crontab" is the
+same rule one level out: the tool does not write into a place it does not own.
+
+**M2: `fugaro settings` is a command now, so the threshold question has a concrete home.**
+D1160–D1183 built the one path that writes `fugaro.yaml` without a hand edit
+(`docs/config-management/README.md:72`). *Consequence:* D967 still gives the patterns' thresholds no
+key, and now the reason is sharper: `settings` writes the rows its registry declares, so a threshold
+key is a row somebody adds deliberately, not a shape a report may invent. Spec §9 gains the sentence;
+no task changes.
+
+**M3: The person-class reads landed.** GitHub's arrived in #1646 and #1669, Bitbucket's is designed
+in `docs/bitbucket-credentials/reconciliation.md:557`, and the spend history's own "person" is the
+stored requester address (`ee/report/cli/report.go:88`). *Consequence:* F24's boundary — a committed
+report carries no person and no address — now separates two live surfaces rather than stating a rule
+with nothing on the other side. D969's answer is what keeps the boundary where it is.
+
+**M4: The command set grew: `settings`, `rigor` and `accounts` are on `main`.** *Consequence:* none
+of it changes a task. The due signal is a flag on an existing subcommand (`fugaro runs digest --due`)
+and the doctor line is a check in an existing command, so `internal/cli/root.go` — the file another
+work stream owns — is still not touched (R1, R2).
+
+**M5: The project image catalog shipped.** `imageCatalogShipped` is `true` as of 0.18.0
+(`docs/release.md:152`), the catalog's design folder is `docs/project-image-catalog/`, and the
+launcher names **#1676** as the repo-image removal design. *Consequence:* the plan's "no new image"
+still holds — a report run deploys whatever image a run deploys, and R5's report run needs no image
+of its own. The release slot moves for other reasons (M8).
+
+**M6: `fugaro upgrade` still exists, and it is what pins a checkout to a release.**
+`internal/cli/upgrade.go:80` is `upgrade [PATH...]`; its `pin` step pins the Fugaro plugin in the
+checkout's `.claude/settings.json` (`internal/cli/upgrade.go:86`). *Consequence:* this is the
+mechanism that ties R3's sentence to R1's flag: the pin gives a checkout the skills of the CLI's own
+release, so **a skill that names `--due` cannot reach a CLI without it** — which is why R1 and R3
+ship in one release and the skill's sentence waits for the flag.
+
+**M7: `internal/runner/stray.go` landed (#1476), and it makes F5's guard stronger.** Finalize
+refuses to commit an untracked file that is not text (`internal/runner/stray.go:24`, the NUL test at
+`:19`) and holds those files back from the leftover commit (`internal/runner/runner.go:3731`,
+`internal/runner/shadow.go:329`). *Consequence:* a report run's commit holds the generated files and
+nothing else, so the finalize guard's reading — the diff against the base is exactly the generated
+files — is unchanged. No task changes.
+
+**M8: 0.15.0, 0.16.0 and 0.17.0 have all shipped, so every release slot in this design moved.**
+*Consequence:* the plan's slot is re-cut to **0.19.0** ([implementation-plan.md](implementation-plan.md),
+"Release slot"); nothing else in the plan names a version.
+
+**M9: `doctor` classifies its checks now, and an unclassified check is not printed.** The classes
+are `actionable`, `update`, `decision`, `measure`, `audit` and `security`
+(`internal/cli/doctor_render.go:29-60`): the default view prints the first, the second, the third and
+the security half, counts the measurements without printing them, and **`audit` is where every info
+check that has not been classified lands** — "a check added later is never hidden by omission"
+(`:47-53`). *Consequence:* **R2 is not finished until it names a class**, or the new line is written,
+counted in the pointer and never shown, which is the exact failure the task exists to fix. The
+warning — a closed period with no report — is `doctorClassActionable`; the info line — the newest
+report is more than a period old — is `doctorClassDecision`, since the state is valid and the line
+names the command for each choice. R2 says so.
