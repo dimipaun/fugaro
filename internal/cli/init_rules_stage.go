@@ -425,13 +425,29 @@ func (s *rulesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outc
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
 	s.show(s.e.r.w, acts)
-	if err := s.e.r.confirmOrdinary(
-		"deploys the security rules listed, as you (project owner, editor or budget admin), and records which generation is deployed: they are what every project policy is read under",
-		"the database was not written", s.e.r.firebaseReason()); err != nil {
+	// The managed gate judges the generation this step deploys BEFORE the
+	// confirmation, and replaces it when it admits it (D1016, update_managed.go):
+	// the document is the generation this binary carries, and the ownership and
+	// generation questions this step has just answered are the verdict M6's
+	// helper records. A step it does not admit keeps the confirmation it has
+	// always had, which in a coding agent's session is the refusal it always
+	// was.
+	gated, err := s.gateStep(ctx)
+	if err != nil {
 		return initflow.Outcome{}, err
+	}
+	if !gated {
+		if err := s.e.r.confirmOrdinary(
+			"deploys the security rules listed, as you (project owner, editor or budget admin), and records which generation is deployed: they are what every project policy is read under",
+			"the database was not written", s.e.r.firebaseReason()); err != nil {
+			return initflow.Outcome{}, err
+		}
 	}
 	if err := db.Apply(ctx); err != nil {
 		return initflow.Outcome{}, initErr(err)
+	}
+	if err := s.e.r.gateApplied(ctx); err != nil {
+		return initflow.Outcome{}, err
 	}
 	// The policy stage ran its check in the read-only preview pass, before this
 	// deploy, and its write is gated on the marker this apply just wrote: what

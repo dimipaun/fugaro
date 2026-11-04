@@ -271,6 +271,22 @@ func TestCheckWarningsSkipConditions(t *testing.T) {
 	})
 }
 
+// TestCheckWarningsSkipsACatalogEntry: a workflow that names a catalog entry
+// (image_name) runs the catalog's image, whose own runtimes are not the
+// repository's to install: the "installs no language runtime" warning is
+// about the image a workflow's own definition builds, so it must not fire for
+// a workflow the catalog gives its image to (issue 1661 item 1).
+func TestCheckWarningsSkipsACatalogEntry(t *testing.T) {
+	y := strings.Replace(baseYAML, "    commands:", "    image_name: minimal\n    commands:", 1)
+	c, problems := Parse([]byte(y))
+	if len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	if ws := CheckWarnings(c, t.TempDir()); len(ws) != 0 {
+		t.Fatalf("CheckWarnings = %v, want none: the workflow runs a catalog entry", ws)
+	}
+}
+
 func TestSkipBuildScriptsOnTheBaseNeedsANodeWarmUp(t *testing.T) {
 	y := strings.Replace(baseYAML, "    commands:", "    image: { skip_build_scripts: true }\n    commands:", 1)
 	c, problems := Parse([]byte(y))

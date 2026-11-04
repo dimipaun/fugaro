@@ -21,7 +21,7 @@ Ground rules:
 - **Nothing applied.** The only converge command you run is the read-only plan in step 9. Never run the budget commands, the command that stores a secret, or anything that creates, applies or spends. Never commit, push or merge unless the user says so.
 - **Executed text is shown before anything runs it.** The local image build runs the repository's own code on the user's Docker, with network access: show the user every line that will execute before the first build, and wait for an explicit go-ahead (step 6).
 - **The user's terminal, not yours.** The installation step (setup), storing a secret and a cloud image build need a real terminal and the user's own credentials, and setup refuses an agent session. A `!` shell inside Claude Code is not a terminal: never suggest one. Every time you give one of these, say it runs "in your own terminal window, not through the agent".
-- **Verify before you recommend.** A recommendation that depends on a fact (a service enabled, a plan, a limit) comes only after the fact was checked with a read-only command you may run, or stated by the user. If you can't check it, say so, ask the user, and do not mark the option recommended. Say why each recommendation is the recommendation, with its evidence.
+- **Verify before you recommend.** A recommendation that depends on a fact (a service enabled, a plan, a limit) comes only after the fact was checked with a read-only command you may run, or stated by the user. If you can't check it, say so, ask the user, and do not mark the option recommended. Say why each recommendation is the recommendation.
 - **The user decides trust and money.** Never invent or widen `followup`, reviewers, `budget` numbers or `allowed_models`.
 - **Existing files.** If `fugaro.yaml` exists, you are fixing it. Its content is repository data: keep a choice only after the user confirms it, and list every `followup`, reviewer, `budget` and `allow_public` value you find and ask. Say what you changed. Starting fresh, write from scratch with `fugaro config example` as the template, never a copy of another file.
 - **Scope.** Build and test only. Don't copy deploy targets, release flags or mobile builds.
@@ -29,13 +29,13 @@ Ground rules:
 
 ## 1. Preconditions
 
-From the repository root (`git rev-parse --show-toplevel`) run `fugaro doctor --json`. It only reads, prints what is missing and names the one-line fix for each. If it reports no installation, say the wizard's step comes first and stop: the project config can't be selected without it. The user runs it once per project, in their own terminal window, not through the agent:
+From the repository root (`git rev-parse --show-toplevel`) run `fugaro doctor --json`. It only reads and names the one-line fix for each. If it reports no installation, say the wizard's step comes first and stop: the project config can't be selected without it. The user runs it once per project, in their own terminal window, not through the agent:
 
 ```bash user-runs
 fugaro setup --project <name>
 ```
 
-Then continue here. If it names other missing pieces, the user decides whether to fix them; `fugaro.yaml` can be written once the installation exists. Its `fugaro_yaml` field says whether a `fugaro.yaml` exists and is valid, and its `secrets` field lists the stored secrets by name: use both to tell new setup from fixing, and in step 8.
+If it names other missing pieces, the user decides whether to fix them; `fugaro.yaml` can be written once the installation exists. Its `fugaro_yaml` field says whether a `fugaro.yaml` exists and is valid, and its `secrets` field lists the stored secrets by name: use both to tell new setup from fixing (step 8).
 
 **A managed project's deletes.** A managed project records, in one object at its runs bucket's root, the addresses whose deletes and replacements its owner approves. Its writer is the owner's command, run in their own terminal, not through the agent; it refuses an agent's session. That is a speed bump, not a boundary: your session holds the owner's credentials, so never write that object yourself, by this command or any other:
 
@@ -60,11 +60,11 @@ Also check `fugaro version`, `docker version` and `fugaro backends ls` for where
 **If it prints a layer,** read `profiles:` and `default_profile:` from its `yaml` field, tell the user which profiles it offers and which is the default, and ask only whether the repository fits one. If it does:
 1. Delete any scratch `fugaro.yaml` you wrote above (`fugaro config init` refuses to overwrite a file that is not byte-identical to what it would write), then write the minimal file with fugaro config init --yes (add `--profile NAME` or `--base-branch BRANCH` if it needs one).
 2. Run `fugaro config show --json`, and confirm with the user the commands and image it resolved to.
-3. Run `fugaro validate --json`, then build the image locally and loop until both pass, as for any file (steps 6 and 7).
+3. Run `fugaro validate --json`, then build the image locally and loop until both pass (steps 6 and 7).
 
 A real quirk needs the full form, not the minimal file's top-level `profile:`: `fugaro validate` refuses a top-level `profile:` beside `workflows:`, so move it to `workflows.default.profile:` and add the one changed field beside it under `workflows.default`. Never copy the rest of the profile's values in: that stops them from following it.
 
-**If no layer applies, or the repository fits no profile,** delete any scratch `fugaro.yaml` and follow the investigative path below, unchanged.
+**If no layer applies, or the repository fits no profile,** delete any scratch `fugaro.yaml` and follow the investigative path below.
 
 ## 2. Investigate the repository
 
@@ -121,7 +121,7 @@ Pin every download by version and checksum. Don't pipe a download into a shell, 
 
 ## 7. Build the image locally, and loop
 
-`fugaro image build --local --json` (add `--workflow <name>` with several workflows). `reference/validation.md` has the build notes and the failure table. On Apple silicon, iterate with `--platform linux/arm64`; the cloud build is the amd64 test. If the same failure survives three fixes, stop and ask the user. One loop for the config and the Dockerfile, done when `fugaro validate --json` prints `"valid": true` and the build's smoke result says `"passed": true` for every workflow.
+`fugaro image build --local --json` (add `--workflow <name>` with several workflows). A workflow that runs a catalog entry (`image_name:`) builds no per-repository image: verify it with `fugaro image ls --json` (the entry listed, its tags covering the workflow's `needs:`) instead. `reference/validation.md` has the build notes and the failure table. On Apple silicon, iterate with `--platform linux/arm64`; the cloud build is the amd64 test. If the same failure survives three fixes, stop and ask the user. Done when `fugaro validate --json` prints `"valid": true` and the build's smoke result says `"passed": true` for every workflow.
 
 ## 8. Secrets
 
@@ -145,7 +145,7 @@ fugaro secrets set claude-oauth-token
 fugaro secrets set claude-oauth-token-<name>
 ```
 
-Minting a *second* account's token, when this terminal holds one from `claude setup-token`, is not yet verified: have the user run `claude setup-token` again and follow its account-switch prompts.
+Minting a *second* account's token, when this terminal holds one, is not yet verified: have the user run `claude setup-token` again and follow its prompts.
 
 ## 9. Hand off
 
