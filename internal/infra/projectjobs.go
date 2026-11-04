@@ -351,7 +351,6 @@ func reviewVariant(lc *localcfg.Config, j ProjectJob) ProjectJob {
 }
 
 // addProjectJob adds j to the job set, refusing a job whose name or service
-
 // account another (profile, provider, account) already holds. Both are derived
 // with a short hash (gcp.ProjectJobName, gcp.ProjectServiceAccountID), so a
 // collision is improbable rather than impossible, and a silent replacement in
