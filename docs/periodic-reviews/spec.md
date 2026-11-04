@@ -1,7 +1,13 @@
 # Periodic run reviews: the spec
 
-This is the behaviour written to the recommended answer of each decision (D960–D971,
-[reconciliation.md](reconciliation.md) §3, all open). A decision answered the other way changes the
+**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
+approved.**
+
+This is the behaviour written to the owner's answers of 2026-11-04 (D960–D971,
+[reconciliation.md](reconciliation.md) §3). The owner named three decisions in words — **D965**,
+**D968** and **D969** — and **every one is as recommended**, so no answer here is "not the
+recommendation"; the other nine were not singled out, and the recommendation in the table stands for
+each of them, which is what the plan is written to. A decision answered the other way changes the
 paragraph that names it. Repository names are placeholders (`owner/fugaro`, `owner/repo-a`); §1 is
 the owner's recorded request copied as the spec, and the README says the verbatim original was not
 recovered.
@@ -18,6 +24,12 @@ recovered.
   redacted** (no real names, no secrets, costs and people redacted as the design decides); the
   central submission is **opt-in and human-approved**, never automatic (an issue template or a
   documented `gh` flow); **users schedule it themselves** (their own cron or routine).
+- **Owner 2026-11-04, the answers:** **D965 as recommended** — the user installs the cadence, and
+  Fugaro writes no workflow and no crontab; **D968 as recommended** — yes, one longer window,
+  `cost_per_run_rising` over five months; **D969 as recommended** — the committed report keeps run
+  IDs, stages, recipes and figures and carries no person, address, task text or log line, and the
+  outgoing draft renumbers the runs and drops the repository name. **No answer deviates from the
+  recommendation**, and the other nine decisions were not singled out.
 
 ## 2. What a periodic run review is
 
@@ -51,7 +63,7 @@ central store is unreviewed, invisible to an agent reading the default branch, a
 can disagree with the tree (D960).
 
 Three writers can put a report there, and they must produce byte-identical files for the same
-records (the two-writer rule the layout package exists for, `internal/digest/layout.go:10`):
+records (the two-writer rule the layout package exists for, `internal/digest/layout.go:15`):
 
 1. **A person**, with `fugaro runs digest`, which writes the report and the index into the working
    tree and prints the two paths. It **never commits, pushes or opens a pull request** (D964): the
@@ -59,7 +71,8 @@ records (the two-writer rule the layout package exists for, `internal/digest/lay
 2. **A report run** — `fugaro run --recipe run-digest TEXT` — whose first step is the runner's own
    `digest` step: it writes every **due** period the tree does not hold, commits them under the
    runner's identity and opens the pull request, whose diff against its base is exactly the generated
-   files, byte for byte (`internal/runner/digest.go:299`, the finalize guard). The periods a launch
+   files, byte for byte: `writeDueReports` writes them (`internal/runner/digest.go:301`) and
+   `digestFinalize` is the guard that says so (`:168`). The periods a launch
    may write are listed in its own manifest, and a launch with no runs in the window is refused
    before anything starts.
 3. **The user's own CI or cron**, running (1) and committing what it wrote.
@@ -109,7 +122,8 @@ the code (D967); no `fugaro.yaml` key retunes them, because a repository that co
 threshold could silence a signal about its own cost, and a threshold is not a limit that "only
 tightening" could merge safely.
 
-This design adds **one rule** (D968): `cost_per_run_rising`, the billed cost per run rising five
+This design adds **one rule** (D968, answered by the owner on 2026-11-04 as recommended: yes, one
+longer window, five months): `cost_per_run_rising`, the billed cost per run rising five
 months running, which is the long view the four rules cannot give — two of them read weeks and two
 read one month against the one before it. Like the others it is a signal to look, never a verdict.
 
@@ -131,11 +145,14 @@ are missing for "every user" to mean anything:
   warning line when a closed period has no report. Offline, like the rest of the checkout checks;
   never a cloud read, so it runs in a coding agent's session.
 
-The cadence itself stays the user's (D965). Fugaro schedules nothing for a repository it does not
-own: the **setup** skill prints the three ways — a cron job or CI workflow of the repository, an
-agent routine, or a scheduled report run — and the exact command for each, and writes nothing without
-the user's word. The working skill's reference keeps the sentence that an agent never sets up a cron
-job, a workflow or a routine on the user's behalf.
+The cadence itself stays the user's (D965, answered by the owner on 2026-11-04 as recommended: **the
+user installs the cadence, and Fugaro writes no workflow and no crontab**). Fugaro schedules nothing
+for a repository it does not own: the **setup** skill prints the three ways — a cron job or CI
+workflow of the repository, an agent routine, or a scheduled report run — and the exact command for
+each, and writes nothing without the user's word. The working skill's reference keeps the sentence
+that an agent never sets up a cron job, a workflow or a routine on the user's behalf
+(`plugin/skills/working/reference/periodic-reviews.md` §2, which already reads "Fugaro schedules
+nothing. The cadence is the user's own").
 
 ## 7. The central learnings
 
@@ -182,5 +199,14 @@ This design adds the two ends that were left implicit (D970, D971):
   model, person and rigor mode, over the project's Firestore spend history — it is a business-licensed
   command under `ee/`, it is not committed into a repository, and it is not the periodic run review.
   Its MIT half (`internal/cli/reportcore.go`, D444) is untouched by this design (F23).
-- **No new secret, no new cloud read and no new grant.** Every surface this design adds reads a
-  folder in the checkout.
+- **No new secret, no new cloud read, no new grant and no gate row.** Every surface this design adds
+  reads a folder in the checkout. The managed gate covers the commands that write to the cloud or to
+  a published file — `update`, `config publish`, `image refresh`, `accounts add`,
+  `project policy publish` and `settings` (`internal/cli/managed_gate.go:181`) — and neither the due
+  signal nor the doctor line writes anything, so neither has anything for the gate to judge and
+  neither changes the refusal a coding agent's session already meets.
+- **The threshold question has a command now, and still no key.** `fugaro settings` (D1160–D1183,
+  `docs/config-management/`) is the one path that writes `fugaro.yaml` without a hand edit, and the
+  patterns' thresholds get no row in it (F20, D967): a key that lowers a threshold silences a signal
+  about the repository's own cost, and `settings` writes what its own registry declares, not a shape
+  a report invents.
