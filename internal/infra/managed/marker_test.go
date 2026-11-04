@@ -797,6 +797,77 @@ func TestWriteManagedLabelKeepsTheProjectsDisplayName(t *testing.T) {
 	}
 }
 
+// TestRemoveManagedLabelSendsTheLabelsFieldWhenItEmpties is the other side of
+// the same request, and the case is the removal's own: it is the one write in
+// this package that can leave the label map EMPTY, and a projects.update whose
+// body carries no labels field leaves the project's labels as they are. The
+// client's own field is `Labels map[string]string`, tagged with omitempty, so
+// an empty map is dropped from the body unless the call names it in
+// ForceSendFields — and the failure that follows is silent exactly where it
+// matters: the object half is already gone by then, and the managed read
+// requires both halves, so a project still carrying the managed label reads
+// unmanaged while this function answered removed == true and the command says
+// the label was removed.
+//
+// The fake cannot catch it: gcpfake.CRM's update takes a body with no labels
+// field as an empty map and clears the project either way, where the API keeps
+// what the body did not name. So the assertion is the request's own body, and
+// the labels the project keeps are asserted beside it so that a fix which
+// emptied the field would not take the owner's other labels with it.
+func TestRemoveManagedLabelSendsTheLabelsFieldWhenItEmpties(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		labels map[string]string // what the project carries before the removal
+		want   map[string]any    // the labels field the update must carry
+	}{
+		"the managed label is the project's only label": {
+			labels: map[string]string{ProjectLabelKey: ProjectLabelValue},
+			want:   map[string]any{},
+		},
+		"the project carries a label of its own": {
+			labels: map[string]string{ProjectLabelKey: ProjectLabelValue, "environment": "prod"},
+			want:   map[string]any{"environment": "prod"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, cf := newCRM(t)
+			cf.AddProject(testProject, testProjectNumber)
+			cf.SetLabels(testProject, tc.labels)
+			removed, err := RemoveManagedLabelForFlag(ctx, c, testProject)
+			if err != nil || !removed {
+				t.Fatalf("RemoveManagedLabelForFlag = %v, %v, want the label removed", removed, err)
+			}
+			var body []byte
+			for _, r := range cf.Requests() {
+				if r.Method == http.MethodPut {
+					body = r.Body
+				}
+			}
+			if body == nil {
+				t.Fatal("the removal made no projects update")
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(body, &fields); err != nil {
+				t.Fatalf("the update's body is not JSON (%v): %s", err, body)
+			}
+			raw, ok := fields["labels"]
+			if !ok {
+				t.Fatalf("the update carries no labels field, so the API leaves the project's labels as they are and the managed label stays on it: %s", body)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatalf("the update's labels field is not an object (%v): %s", err, raw)
+			}
+			if !maps.Equal(got, tc.want) {
+				t.Errorf("the update carries labels %v, want %v: %s", got, tc.want, body)
+			}
+			if _, still := cf.Labels(testProject)[ProjectLabelKey]; still {
+				t.Errorf("the project still carries %s after the removal", ProjectLabelKey)
+			}
+		})
+	}
+}
+
 // The write half of Global Constraint 4 (design D57): no credential a run
 // holds may have a write path to the marker. The agent of a run holds a job
 // account and a build holds a build account, and the grant each is given on

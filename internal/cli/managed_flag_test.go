@@ -210,8 +210,8 @@ func TestManagedFlagWritesTheLabelToo(t *testing.T) {
 		t.Fatalf("the command prints no undo for what it just wrote:\n%s", out)
 	}
 	for _, want := range []string{
-		"delete the object gs://" + initRunsBucket + "/" + managed.MarkerObject,
-		"no command of ours removes the marker in this release",
+		"fugaro managed unflag " + initProject,
+		"gs://" + initRunsBucket + "/" + managed.MarkerObject,
 		"gcloud projects update " + initProject + " --remove-labels=" + managed.ProjectLabelKey,
 		"UNVERIFIED",
 	} {

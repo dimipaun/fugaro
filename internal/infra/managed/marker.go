@@ -698,3 +698,143 @@ func alreadyFlagged(bucket, project string, cur []byte) error {
 	return fmt.Errorf("%w: gs://%s/%s %s, so %s was not flagged and nothing was written. This command adds the budget to a project whose marker records none, once; to read what is there, use `gcloud storage cat gs://%s/%s` as the operator",
 		ErrAlreadyMarked, bucket, MarkerObject, what, project, bucket, MarkerObject)
 }
+
+// RemoveMarker removes the creation fact from a project's runs bucket: the
+// object half of the revocation `fugaro managed unflag` makes (D1020, spec
+// §10), and the write the two marker writers above are undone by.
+//
+// It is WriteFlag's discipline in the reverse direction, and it is the same
+// two steps: the bucket is proved to be gcpProject's own (proveRunsBucket)
+// before anything in it is looked at, and the object is read before it is
+// removed — an object this call cannot look at is a refusal rather than one it
+// deletes blind. The delete is conditioned on the generation that read saw, so
+// a writer that replaced the object in between is not clobbered and what is
+// removed is the object this call judged.
+//
+// Whatever the key holds is removed, and that is deliberate: the read refuses
+// any object that is not this project's marker (readFactObject), and a
+// malformed or foreign object left at this key is a state nothing else clears
+// — WriteFlag refuses to replace one, so a project whose object is garbage
+// could never be flagged again. The key is the project's own, in the project's
+// own bucket, and the gate for removing it is the owner's typed project ID in
+// the command, not the object's shape.
+//
+// removed is false when nothing is there, which is a half already gone and not
+// a failure: either mark alone leaves the project unmanaged, so a
+// half-removed project converges rather than needing a second command. A
+// bucket that is not gcpProject's own and an object the caller may not read
+// are ErrRefused — neither of them is "nothing is there", and treating one as
+// absent would report a removal this call could not make.
+//
+// The error is one bounded field (safetext.FieldErr), as the writers' are: it
+// carries the project, the bucket's name and an API's words, and the owner-run
+// command prints it. The bound is on the message alone, so ErrRefused,
+// ErrAlreadyMarked and a *googleapi.Error inside it are still matched.
+func RemoveMarker(ctx context.Context, s *storage.Service, bucket, project string, number uint64) (removed bool, err error) {
+	removed, err = removeMarker(ctx, s, bucket, project, number)
+	return removed, safetext.FieldErr(err)
+}
+
+func removeMarker(ctx context.Context, s *storage.Service, bucket, project string, number uint64) (bool, error) {
+	switch {
+	case bucket == "" || number == 0:
+		return false, refusedf("to remove %s for %s: no runs bucket, or no project number to check it against", MarkerObject, project)
+	case s == nil:
+		return false, refusedf("to remove %s for %s: no storage client", MarkerObject, project)
+	}
+	if err := proveRunsBucket(ctx, s, bucket, project, MarkerObject, number); err != nil {
+		return false, err
+	}
+	_, gen, ok, err := markerAt(ctx, s, bucket, project)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, nil
+	}
+	if err := s.Objects.Delete(bucket, MarkerObject).IfGenerationMatch(gen).Context(ctx).Do(); err != nil {
+		var ge *googleapi.Error
+		if errors.As(err, &ge) && ge.Code == http.StatusPreconditionFailed {
+			// The object changed between the read above and this delete, so
+			// what is there is not what was judged — and the same sentinel the
+			// writers use for the same race, because it is the same answer: a
+			// later writer's object is not this command's to remove.
+			return false, fmt.Errorf("%w: gs://%s/%s was written by someone else between this command's read and its write, so nothing was removed and what is there is not what this command judged", ErrAlreadyMarked, bucket, MarkerObject)
+		}
+		return false, fmt.Errorf("removing gs://%s/%s: %w", bucket, MarkerObject, err)
+	}
+	return true, nil
+}
+
+// RemoveManagedLabelForFlag removes the other half of what makes a project
+// managed: the ProjectLabelKey=ProjectLabelValue label on the GCP project
+// itself, the one WriteManagedLabelForFlag writes (D1020, spec §10).
+//
+// written is the one label it removes and no other: only the key carrying
+// exactly ProjectLabelValue, this package's own mark, is taken off. A project
+// with no such label — the key absent, or carrying a value someone else put
+// there — is left exactly as it is and answered as removed == false, because
+// the read treats any value but ProjectLabelValue as "not managed" already,
+// the revocation is complete without touching it, and a statement this
+// package did not write is not this package's to edit (writeManagedLabel
+// refuses the same value from the other side, so both commands agree about
+// it).
+//
+// The project's other labels and its display name are kept, and by the same
+// mechanism the writer keeps them: Resource Manager's update replaces the
+// project's editable state with the request's, so the object read here goes
+// back with just this one key taken out of its label map.
+//
+// Like WriteManagedLabelForFlag, the gate is the command's own and not this
+// function's: managed_unflag.go refuses a coding agent's session and any
+// Fugaro run's process before this is reached, and the confirmation is the
+// project's exact GCP project ID typed at the owner's own terminal. Nothing
+// but that command may call this.
+//
+// The error is one bounded field (safetext.FieldErr), exactly as the writer's
+// is: the project name is the operator's own argument and the rest is a
+// Resource Manager answer, and the owner-run command prints it.
+func RemoveManagedLabelForFlag(ctx context.Context, c *crm.Service, project string) (removed bool, err error) {
+	removed, err = removeManagedLabelForFlag(ctx, c, project)
+	return removed, safetext.FieldErr(err)
+}
+
+func removeManagedLabelForFlag(ctx context.Context, c *crm.Service, project string) (bool, error) {
+	if project == "" {
+		return false, refusedf("to remove the %s label: no project name", ProjectLabelKey)
+	}
+	if c == nil {
+		return false, refusedf("to remove the %s label from %s: no Resource Manager client", ProjectLabelKey, project)
+	}
+	p, err := c.Projects.Get(project).Context(ctx).Do()
+	if err != nil {
+		return false, fmt.Errorf("reading project %s before removing its %s label: %w", project, ProjectLabelKey, err)
+	}
+	if p.Labels[ProjectLabelKey] != ProjectLabelValue {
+		return false, nil
+	}
+	labels := make(map[string]string, len(p.Labels))
+	for k, v := range p.Labels {
+		if k == ProjectLabelKey {
+			continue
+		}
+		labels[k] = v
+	}
+	p.Labels = labels
+	// An update whose body carries no labels field leaves the project's labels
+	// as they are, and this is the one write in this package that can leave the
+	// map EMPTY: when the managed label is the project's only label, taking it
+	// out leaves nothing to send. `Labels` is tagged omitempty, so an empty map
+	// is dropped from the body and the managed label would stay on the project
+	// while this function answered removed == true — and the read would not
+	// catch it either, because the object half is already gone by then and the
+	// managed read requires both halves. ForceSendFields is what puts an empty
+	// `"labels": {}` in the body, which is the request that empties the map.
+	if len(labels) == 0 {
+		p.ForceSendFields = []string{"Labels"}
+	}
+	if _, err := c.Projects.Update(project, p).Context(ctx).Do(); err != nil {
+		return false, fmt.Errorf("removing the %s label from project %s: %w", ProjectLabelKey, project, err)
+	}
+	return true, nil
+}
