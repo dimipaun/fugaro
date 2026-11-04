@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -151,36 +152,76 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 }
 
 // openProjectBudget is openBudget that keeps the selection: the publisher
-// reads the operator's own config file (its providers block), and the
-// selection is what names that file.
-func openProjectBudget(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.Client, error) {
+// reads the operator's own config file (its providers block), the selection is
+// what names that file, and the path comes back with it because the generation
+// a publish records goes into that file rather than into the one this package
+// would derive from the project's name alone (a `--config` run's file is not the
+// project's own, and a baseline recorded in the other file is one that file's
+// business, not this run's).
+func openProjectBudget(ctx context.Context, o cloudOptions, declined string) (*localcfg.Config, *rtdb.Client, string, error) {
 	sel, lc, err := selectProject(ctx, o)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	// The shared config has no file, so it carries no providers: a publish
 	// from it would write a policy with none.
 	if err := refuseSharedWrite(sel); err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	lc, db, err := budgetDBFor(ctx, lc)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
+	}
+	// Every command that comes through here writes the published policy node,
+	// so all of them ask the one ownership question first (declined is the
+	// caller's word for what it did not write).
+	if err := requireOwnBudgetDB(ctx, lc, db, declined); err != nil {
+		return nil, nil, "", err
 	}
 	if err := checkDBProject(ctx, db, lc); err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
-	return lc, db, nil
+	return lc, db, sel.Path, nil
 }
 
 func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions) error {
 	ctx := cmd.Context()
-	lc, db, err := openProjectBudget(ctx, o.cloud)
+	// SD8: this command writes the node every run of the project is admitted by
+	// — and, beside it, the per-repository admissions — so it is a person's write
+	// and not a coding agent's, the same refusal `fugaro config publish`,
+	// `fugaro recipes publish` and the credential commands carry. It holds for
+	// --delete too: taking the policy away changes what every run is admitted by
+	// exactly as much as publishing one does, and it is not an agent's to do on
+	// its own.
+	//
+	// A MANAGED project is the one exception the design makes (M3, D1012): there
+	// a coding agent's session reaches the deterministic gate instead, and the
+	// rules of project_policy_managed.go decide. That gate refuses a widening of
+	// any allow list, a raised cap, this command's three flags whatever the
+	// session's arguments are — and, because those rules judge a handful of the
+	// node's members and the node carries many, any change at all to a member no
+	// rule of them reads (policyUnjudgedRule). So what the exception admits is a
+	// publish whose every changed member is one a rule read and judged not to be
+	// a widening: a node that narrows, or one that does not move.
+	agent := agentMarker(os.Getenv)
+	lc, db, configPath, err := openProjectBudget(ctx, o.cloud, "nothing was published")
 	if err != nil {
 		return err
 	}
 	if err := requirePolicyRules(ctx, db, lc); err != nil {
 		return err
+	}
+	// The gate is read here, before the node is, and only in a coding agent's
+	// session: a person's own publish reads no mark and pays for no call
+	// (project_policy_managed.go says why). A project the read does not prove is
+	// managed keeps today's refusal, byte for byte, and reaches nothing else in
+	// this function.
+	gate, err := policyPublishGate(ctx, lc, db, agent)
+	if err != nil {
+		return err
+	}
+	if agent != "" && !gate.managed {
+		return publishAgentRefusal(agent)
 	}
 	out := cmd.OutOrStdout()
 	// narrowedSoFar is what the tightening phase has already written when a
@@ -202,26 +243,58 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		if o.delete {
 			// The ETag and the version this read is what the deletion is made
 			// against: see deleteProjectPolicy.
-			return deleteProjectPolicy(cmd, lc, db, out, exists, etag, o)
+			//
+			// And the gate, before a single child is touched: a removal is never
+			// admitted (spec §4.2), so the verdict is built refused over the node
+			// as it was read, and a coding agent's session reads why with the
+			// record of that refusal behind it. In every other session the zero
+			// gate answers here and the deletion proceeds exactly as it did.
+			m, gerr := gate.admit(ctx, policyPublishClass, policyDeleteVerdict(raw))
+			if gerr != nil {
+				return gerr
+			}
+			if err := policyPublishProceed(agent, out, m); err != nil {
+				return err
+			}
+			if err := deleteProjectPolicy(cmd, lc, db, out, exists, etag, o); err != nil {
+				return err
+			}
+			// The record of an admitted removal, where a removal that was ever
+			// admitted would have one: policyDeleteVerdict refuses by construction,
+			// so today this call is answered by the gate that admitted nothing and
+			// writes nothing. It is here rather than nowhere because the two halves
+			// of the gate's contract are one rule — an admission is recorded AFTER
+			// the write (spec §6, D1014) — and a door whose verdict changed would
+			// otherwise remove the node every run is admitted by and leave no trail
+			// of it, which is the one thing a record exists to prevent.
+			return gate.recorded(ctx)
 		}
 		old, err := publishedPolicyOf(raw, exists)
 		if err != nil {
 			return publishFailure(err, narrowedSoFar)
 		}
-		allow, sources, err := publishAllowRepos(ctx, lc, old, o.seedRepos)
+		// The one build both doors take (policyNodeForPublish): `fugaro update`'s
+		// policy stage writes the node the local config states from the same
+		// flags, and two builds of one node from one config is a node that
+		// depends on which door the operator came through
+		// (TestUpdateStageAndTheExplicitDoorBuildTheSameNode).
+		body, pol, sources, err := policyNodeForPublish(ctx, lc, old, raw, exists, o.seedRepos, o.removeRouting)
 		if err != nil {
 			return publishFailure(err, narrowedSoFar)
 		}
-		pol, keepRouting, err := buildProjectPolicy(lc, allow, old, o.removeRouting)
+		// The gate, over the exact bytes this publish would write (D1022) and
+		// before the first write of this attempt — before the per-repository
+		// children are narrowed, and before any argument of a write is built
+		// (D1021). It is asked per attempt, so a retry after a precondition
+		// failure re-reads the marks and re-judges the node it would now write
+		// (D1024). A refusal is the gate's own sentence and the record of it is
+		// written before this returns.
+		m, err := gate.admit(ctx, policyPublishClass, policyPublishVerdict(old, pol, body, o.seedRepos, o.removeRouting))
 		if err != nil {
-			return publishFailure(err, narrowedSoFar)
+			return err
 		}
-		body, err := policyNodeBytes(pol, raw, exists, keepRouting)
-		if err != nil {
-			return publishFailure(err, narrowedSoFar)
-		}
-		if err := checkPolicyBytes(body); err != nil {
-			return publishFailure(err, narrowedSoFar)
+		if err := policyPublishProceed(agent, out, m); err != nil {
+			return err
 		}
 		// The per-repository admissions (O4) and the shared node are two writes,
 		// not one transaction (the children are a multi-path patch, the node is
@@ -261,6 +334,18 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		err = db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, json.RawMessage(body))
 		switch {
 		case err == nil:
+			// The record of the gate's admission, filed as soon as the node it
+			// judged has landed and before the widening below: the node is the
+			// write the gate admitted, and a trail filed at the end of the
+			// command would be missing exactly where an owner needs it most —
+			// this publish does end in failure after this point (the widening
+			// can) and the node it wrote is real. A failed record is the
+			// command's own failure (spec §6, D1014), and a write that failed
+			// records nothing at all: there is no application of an admitted
+			// step to file, and the node is as it was.
+			if err := gate.recorded(ctx); err != nil {
+				return err
+			}
 			admissions, err := widenAdmissions(ctx, db, lc, desired, desiredBytes, now)
 			if err != nil {
 				return fmt.Errorf("%w; %s was set, but the admissions at %s are not as the config asks: they were narrowed first and never widened, so the repositories that lost an account stay admitted to the accounts they kept; run the publish again",
@@ -277,6 +362,16 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 			// operator reading a change that did not happen.
 			printPolicyDiff(out, old, pol, sources)
 			fmt.Fprintf(out, "set %s\n", projectpolicy.PathShared())
+			// The generation this write moved the node to is recorded in the file
+			// it was built from, the same record the policy stage keeps (D854): the
+			// two doors write one node, so both of them have to leave the file
+			// saying which generation it is written from. A door that recorded
+			// nothing would leave the operator's next config edit refused against
+			// the node this very command just wrote, with a re-seed offered as the
+			// way out that would revert the edit.
+			if err := recordPublishedGeneration(ctx, out, db, lc, configPath, body); err != nil {
+				return err
+			}
 			return nil
 		case errors.Is(err, rtdb.ErrPrecondition):
 			fmt.Fprintln(out, "changed by someone else meanwhile; reading it again")
@@ -478,7 +573,7 @@ func publishedPolicyOf(raw []byte, exists bool) (*projectpolicy.Policy, error) {
 		// that works, and for the owner's rule of 2026-10-30 it is two
 		// commands: a newer Fugaro knows the keys, and `fugaro update` is
 		// what carries the node over without a deletion.
-		return nil, userErr("%s lists %d key(s) this Fugaro does not know (%s): publishing would drop them; upgrade Fugaro (fugaro upgrade), then run 'fugaro update' to migrate the node in place, or fix the node by hand",
+		return nil, userErr("%s lists %d key(s) this Fugaro does not know (%s): publishing would drop them; upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run 'fugaro update' to migrate the node in place, or fix the node by hand",
 			projectpolicy.PathShared(), len(p.UnknownKeys), unknownPolicyKeysText(p.UnknownKeys))
 	}
 	return p, nil
@@ -756,7 +851,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	//
 	// bitbucket_api_roots is the operator's own allow-list (D474) and the node
 	// is where the run reads it. It is copied rather than derived, and it is
-	// held to the node's rule (projectpolicy.validBitbucketAPIRoots, applied by
+	// held to the node's rule (projectpolicy.ValidBitbucketAPIRoots, applied by
 	// that same decode) rather than to a copy of it here: one rule, at the one
 	// point a root can be written.
 	token, err := projectpolicy.DeriveBitbucketToken(profiles, lc.ProjectSecrets)
@@ -790,6 +885,32 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	if keepReviewFloor {
 		floor = old.ReviewFloor
 	}
+	// The verifier list is kept the same way, by the one rule localcfg states
+	// for both its writers (C3.9g3, D1075): the file's list when it writes one,
+	// the node's otherwise. The cost of the other reading is higher here than
+	// for the floor — the list is what the credentials service admits to its
+	// verify route, and the publish that dropped it would leave a service that
+	// refuses every verifier the owner named, from a machine whose config
+	// merely predates the key.
+	var publishedVerifiers []string
+	if old != nil {
+		publishedVerifiers = old.VerifierAccounts
+	}
+	verifierAccounts := lc.VerifierAccountsEffective(publishedVerifiers)
+	// The image catalog is kept by the same rule (D1140, D1156), and the cost
+	// of the other reading is the floor's and the verifier list's: a machine
+	// whose config predates the key — a teammate's, a CI box's, an operator's
+	// second laptop — would publish a node without the catalog and leave every
+	// repository that names an entry with nothing to run. A config that writes
+	// a catalog replaces what the node holds, and one that writes an empty
+	// catalog takes it away, which is how a published catalog is removed on
+	// purpose; a node with no catalog carries no member at all, so a project
+	// that names none is byte for byte what it was before the key existed.
+	var publishedCatalog *config.Catalog
+	if old != nil {
+		publishedCatalog = old.ImageCatalog
+	}
+	imageCatalog := lc.ImageCatalogEffective(publishedCatalog)
 	pol := &projectpolicy.Policy{
 		Version:           projectpolicy.Version,
 		Budget:            projectpolicy.Budget{Mode: lc.Budget.Mode, PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
@@ -802,6 +923,8 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		BitbucketToken:    token,
 		BitbucketAPIRoots: lc.BitbucketAPIRoots,
 		ReviewFloor:       floor,
+		VerifierAccounts:  verifierAccounts,
+		ImageCatalog:      imageCatalog,
 	}
 	switch {
 	case !silent:
@@ -2798,7 +2921,7 @@ func refuseUnknownPolicyKeys(p *projectpolicy.Policy) error {
 	if p == nil || len(p.UnknownKeys) == 0 {
 		return nil
 	}
-	return userErr("%s lists %s, which this Fugaro does not know: a key nobody reads is a policy that never takes effect; fix the policy, or upgrade Fugaro (fugaro upgrade)",
+	return userErr("%s lists %s, which this Fugaro does not know: a key nobody reads is a policy that never takes effect; fix the policy, or upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run 'fugaro update'",
 		projectpolicy.PathShared(), unknownPolicyKeysText(p.UnknownKeys))
 }
 

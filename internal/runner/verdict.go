@@ -12,6 +12,14 @@ import (
 // read only for a pick run (reviewmode.go): the pull request number to
 // keep, among the ones the prompt listed.
 //
+// It is NOT the independent review job's schema: that job's result is the
+// artifact (reviewartifact.go, review.schema.json), whose own three-word
+// verdict this reader refuses and whose reader would refuse this pair. A
+// review stage's request carries one of the two and never both
+// (reviewStageSchema, D890/F23), and this one is every review stage the
+// coding run runs -- its own in-loop rounds and `fugaro run --pr N --recipe
+// review-only` alike.
+//
 // A finding's score is three anchored 1–5 axes and a class (D1, D3). All four
 // are optional, so a verdict written before them still validates and still
 // parses, and severity stays the free-form label it is (D2).
@@ -50,6 +58,12 @@ var fencedJSONRE = regexp.MustCompile("(?s)```json\\s*\\n(.*?)\\n```")
 // round needs — a score written as a word ("likelihood": "high") is the case
 // this is for, and a finding that says only "no parseable verdict" leaves
 // that reader searching the transcript by hand.
+//
+// The run's own review rounds do not read a verdict this way: a round with
+// nothing to read is retried once and then let through, so no reviewer that
+// answers nothing can fail a run (seniorLoop, TryVerdict). What is left here
+// is the caller that must have an answer — a pick run choosing the pull
+// request out of the list it was given, and diagnose's account of a round.
 func ParseVerdict(res agent.Result) Verdict {
 	v, why := readVerdict(res)
 	if why == "" {

@@ -95,6 +95,16 @@ const (
 	// runs are admitted by, and it is the one stage whose change is a
 	// document rather than an installation.
 	Policy = "policy"
+	// Layer is the published project layer and the one local layer file the
+	// owner edits (internal/cli/init_layer_stage.go, D830/D831): the stage
+	// seeds the file from the published object when it is absent, publishes
+	// the file when it differs, and records the generation the file was
+	// written from (D854). It comes after the policy stage and BEFORE the
+	// checkout stage, and Checkout needs it: the checkout stage refreshes
+	// the checkout's images off the project layer, so a layer that changed
+	// commands or image settings has to be published before that refresh, or
+	// the run builds from the layer the owner just replaced.
+	Layer = "layer"
 	// Checkout is what `fugaro upgrade` does for the checkout `fugaro update`
 	// is run in, as a stage of the converge itself (internal/cli/
 	// init_checkout_upgrade.go, the owner's rule of 2026-10-30: fugaro update
@@ -152,11 +162,17 @@ var order = []slot{
 	// the repository stage is the last writer of the installation those runs
 	// read it against.
 	{name: Policy, needs: []string{Repository, Rules}},
+	// The layer is what the checkout's images are built from, so it is
+	// published before the refresh that reads it: the checkout stage's cloud
+	// step builds this checkout's images off the layer that applies, and a
+	// layer published after it would leave the run building from the one the
+	// owner just replaced.
+	{name: Layer, needs: []string{Repository}},
 	// The checkout's own steps (fugaro upgrade's pin, plugin and cloud steps)
 	// run after the repository stage: the images the cloud step refreshes are
 	// that repository's, and the onboarding the repository stage does is what
 	// the refresh builds for.
-	{name: Checkout, needs: []string{Repository}},
+	{name: Checkout, needs: []string{Repository, Layer}},
 	// The compute backend's provisioning is money, permanent and owner-run,
 	// so --yes never covers it; it comes last, after every stage that
 	// builds the identity, the registry and the installation it reads.

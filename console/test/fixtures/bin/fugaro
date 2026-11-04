@@ -81,6 +81,47 @@
 #     row's own words, because the screen has no control that turns either off,
 #     so the stub holds all three flags exactly rather than answering a question
 #     this console should never have been able to ask.
+#   * `models ls --json --project P` -- the document in `models-ls.json` beside
+#     it, which `cliStub.ts`'s `seedModels` writes. This is the read the
+#     **Project** tab's models panel makes (console 0.119.0, contract section
+#     6.18), and it takes no argument beyond the installation's own `--project`
+#     and `--config`: `ls` is a cobra `NoArgs` verb, so a positional word or a
+#     filter here is refused as an unsupported command rather than answered.
+#   * `settings --json --project P` -- the document in `settings.json` beside
+#     it, which a spec writes there from the committed
+#     `test/fixtures/settings.json`. This is the read the **Project** tab's
+#     third section makes (the settings-edit plan's C1, contract section 6.19),
+#     and it is the one this console draws a pencil from: the rows' own
+#     `writable`, `owner` and `target_layer` are the whole of what decides
+#     whether a row may be edited (D1102).
+#   * `settings set|unset KEY --layer <L> --dry-run --json|--yes --project P
+#     [--config C] [-- VALUE]` -- the console's **second write** (the
+#     settings-edit plan's C3, design section 5.1 rule 12). It answers two
+#     phases and writes nothing either way: the dry run prints the document
+#     seeded for the key it names (`settings-dryrun-<KEY>.json` beside this
+#     script), and the write prints the sentence a write ends with --
+#     `wrote <path> (backup at <backup>)` and `next: fugaro update`. There is no
+#     file to edit here and none is written: what a spec reads is the child's
+#     answer and the argv below.
+#
+#     Every invocation of the write appends **its whole command line** to
+#     `reads.log` beside this script, `$0` included, because the property the
+#     spec exists for is "the argv the stub recorded equals the argv the
+#     confirmation window showed" (plan C4): the window draws the command line
+#     word for word, `argv[0]` among them, so the record is that same list.
+#
+#   * `runs summary --json [--since=<window>] --project P` -- one document per
+#     `--since`, in `runs-summary-<window>.json` beside this script, which a
+#     spec writes there itself (the stub's directory is `CliStub.dir`), with
+#     `runs-summary-<window>-delay.txt` holding the seconds to sleep first when
+#     the spec is about the order the answers land in. This is the read the
+#     **Coordinator** view's fleet strip makes (console 0.119.0, contract
+#     section 6.17), and the window is written the `=` way (`--since=7d`)
+#     because the console's own allow-list emits it as one word. A window with
+#     no document seeded is refused (exit 2) rather than answered with a
+#     document for another window: the strip's figures are a claim about a
+#     window, and a stub that answered the wrong one would make them wrong
+#     without saying so.
 #   * `run --task-file - --json --run-id <id> --repo <owner/name> [--title=<T>]
 #     [--plan-task=<P>] --project <name> [--config <path>]` -- the console's one
 #     **write** (design section 5.1 rule 11, V2.5.1a; `src/main/spawn.ts`'s
@@ -128,11 +169,28 @@ refuse() {
   exit 2
 }
 
+# refuse_allowlist is the refusal for a command -- or a verb of a command -- this
+# stub does not answer. It names **every** answer it does give, because a
+# failing spec's message is the only place a reader learns what it would have
+# answered.
+refuse_allowlist() {
+  echo "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'coordinator status --from-store --all --json', 'doctor --json', 'watch --json', 'report --json', 'budget show --json', 'models ls --json', 'settings --json', 'settings set|unset --dry-run --json|--yes', 'runs summary --json' and 'run --task-file - --json', and was asked for '$1'" >&2
+  exit 2
+}
+
+# log appends one line to `reads.log` beside this script: the one place an answer
+# this stub gave -- or an argv it was handed -- leaves a trace a spec can wait
+# on. `print_seeded` writes the read it answered with; the settings write below
+# writes the command line it was handed.
+log() {
+  printf '%s\n' "$1" >> "${here}/reads.log"
+}
+
 # print_seeded prints the document a read answers with, after sleeping the
 # seconds a spec asked that read to take, and appends one line to `reads.log`
-# beside this script naming the read it answered. `document` is the file the
-# answer is printed from, `delay` the optional file holding the seconds to wait
-# first, `label` the line the log gets.
+# beside this script naming the read it answered (through `log`). `document` is
+# the file the answer is printed from, `delay` the optional file holding the
+# seconds to wait first, `label` the line the log gets.
 #
 # The delay exists so a spec can make one window's read answer after another's,
 # which is what the Spend fix's own specs are about: the console must keep the
@@ -152,7 +210,7 @@ print_seeded() {
     sleep "$(cat "$delay")"
   fi
   cat "$document"
-  printf '%s\n' "$label" >> "${here}/reads.log"
+  log "$label"
 }
 
 command=${1:-}
@@ -366,6 +424,221 @@ case "$command" in
     fi
     cat "${here}/coordinator-status.json"
     ;;
+  models)
+    # The Project tab's read-only models panel (console 0.119.0, contract
+    # section 6.18): the routes, the models a run can name and the catalog's
+    # age, in the one document `cliStub.ts`'s `seedModels` writes to
+    # `models-ls.json` beside this script. `ls` is the verb and `--json` the
+    # row's fixed flag -- anything else is refused -- and there is **no other
+    # argument**: the console's own allow-list has the row taking none
+    # (`src/main/ipc.ts`'s `models.list`), so a `--repo`, a `--since` or a
+    # positional word here is a console asking a question it should never have
+    # been able to ask, and this branch refuses it rather than answering it.
+    if [ "${1:-}" != 'ls' ]; then
+      # `add`, `rm` and `use` are writes and `search` takes a positional word;
+      # none of them is on the surface, so the refusal is the whole list's.
+      refuse_allowlist 'models'
+    fi
+    if [ "${2:-}" != '--json' ]; then
+      refuse "the stub fugaro answers 'models ls --json' and was asked for 'models $*'"
+    fi
+    shift 2
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --project | --config)
+          if [ $# -lt 2 ]; then
+            refuse "'models ls --json' was given '$1' with no value"
+          fi
+          shift 2
+          ;;
+        *)
+          refuse "'models ls --json' was asked for '$1'"
+          ;;
+      esac
+    done
+    if ! print_seeded "${here}/models-ls.json" "${here}/models-ls-delay.txt" 'models ls'; then
+      refuse 'no models document is seeded beside this stub'
+    fi
+    ;;
+  settings)
+    # The Project tab's third read and the console's second write (the
+    # settings-edit plan's C1 and C3, contract section 6.19, D1118).
+    #
+    # `settings --json` is the read: the rows in `settings.json` beside this
+    # script. Unseeded it is refused (exit 2) rather than answered with an empty
+    # document -- `{"settings":[]}` would say "this project sets nothing", which
+    # is a claim no answer made, and the tab's pencils are drawn from these rows.
+    #
+    # `set`/`unset` is the write, and the two arms below are its two phases. It
+    # writes nothing: there is no document here to edit. What it produces is the
+    # answer -- the seeded dry-run document, or the sentence a write ends with --
+    # and one line in `reads.log` carrying the whole command line it was handed.
+    if [ "${1:-}" = '--json' ]; then
+      shift
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --project | --config)
+            if [ $# -lt 2 ]; then
+              refuse "'settings --json' was given '$1' with no value"
+            fi
+            shift 2
+            ;;
+          *)
+            refuse "'settings --json' was asked for '$1'"
+            ;;
+        esac
+      done
+      if ! print_seeded "${here}/settings.json" "${here}/settings-delay.txt" 'settings'; then
+        refuse 'no settings document is seeded beside this stub'
+      fi
+      exit 0
+    fi
+    # Every other word of the group is refused with the whole list in the
+    # sentence: the console's read is the command's own `--json`, and the only
+    # subcommands on the surface are the two writes the spawn row declares.
+    case "${1:-}" in
+      set | unset) ;;
+      *) refuse_allowlist 'settings' ;;
+    esac
+    # The whole invocation as one string, for the refusals and for the log: the
+    # window draws this list word for word, and this is the record of it.
+    arguments="settings $*"
+    op=$1
+    if [ $# -lt 2 ]; then
+      refuse "'settings $op' takes a key, and was asked for '$arguments'"
+    fi
+    key=$2
+    shift 2
+    layer=''
+    phase=''
+    value=''
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --layer)
+          if [ $# -lt 2 ]; then
+            refuse "'settings $op' was given '--layer' with no value"
+          fi
+          layer=$2
+          shift 2
+          ;;
+        --dry-run)
+          phase='dry-run'
+          shift
+          ;;
+        --json)
+          # `--json` belongs to the dry run and to nothing else: the write's
+          # answer is the CLI's own sentence, and the console reads it as text.
+          if [ "$phase" != 'dry-run' ]; then
+            refuse "'settings $op' was asked for '--json' with no --dry-run"
+          fi
+          shift
+          ;;
+        --yes)
+          phase='write'
+          shift
+          ;;
+        --project | --config)
+          if [ $# -lt 2 ]; then
+            refuse "'settings $op' was given '$1' with no value"
+          fi
+          shift 2
+          ;;
+        --)
+          # The value, and the last word of a `set`: pflag stops reading flags
+          # here, which is why the installation's own two flags are in front of
+          # it. An `unset` has no value and so no terminator either.
+          shift
+          if [ $# -lt 1 ]; then
+            refuse "'settings $op' was asked for '--' with no value"
+          fi
+          value=$1
+          shift
+          if [ $# -gt 0 ]; then
+            refuse "'settings $op' was asked for '$1' after the value"
+          fi
+          ;;
+        *)
+          refuse "'settings $op' was asked for '$1'"
+          ;;
+      esac
+    done
+    if [ -z "$layer" ]; then
+      refuse "'settings $op' was asked for no --layer, and the layer is the read's own row"
+    fi
+    if [ -z "$phase" ]; then
+      refuse "'settings $op' was asked for neither '--dry-run --json' nor '--yes'"
+    fi
+    if [ "$op" = 'unset' ] && [ -n "$value" ]; then
+      refuse "an unset carries no value, and 'settings unset $key' was asked for '$value' behind --"
+    fi
+    if [ "$op" = 'set' ] && [ -z "$value" ]; then
+      refuse "a set carries one behind --, and 'settings set $key' was asked for none"
+    fi
+    if [ "$phase" = 'write' ]; then
+      # The write's answer, as `applySettingsEdit` prints it on a `--yes`: the
+      # line naming the file it wrote and the one every settings write ends
+      # with. The diff and the two confirmation lines above them are the CLI's
+      # own and are not restated here -- a spec reads this answer for the fact
+      # that a write happened, and the screen draws the whole sentence.
+      path='/home/owner/.config/fugaro/projects/example.yaml'
+      printf 'wrote %s (backup at %s.bak-20261103T090000Z)\n' "$path" "$path"
+      printf 'next: fugaro update\n'
+      log "$0 $arguments"
+      exit 0
+    fi
+    if [ ! -f "${here}/settings-dryrun-${key}.json" ]; then
+      refuse "no dry run document is seeded for '${key}' beside this stub"
+    fi
+    cat "${here}/settings-dryrun-${key}.json"
+    log "$0 $arguments"
+    ;;
+  runs)
+    # The Coordinator view's fleet strip (console 0.119.0): the window's run
+    # counts and its spend, without a bucket listing. `summary` is the verb and
+    # `--json` the row's fixed flag -- anything else is refused -- and `--since`
+    # is the window, which the console's allow-list emits as one word
+    # (`--since=7d`, `src/main/spawn.ts`'s `summarySince` kind), so this branch
+    # reads it in the `=` form and no other.
+    if [ "${1:-}" != 'summary' ]; then
+      # Any other verb of `runs` is outside the allow-list, so it is refused the
+      # way every such command is -- with the whole list in the sentence.
+      refuse_allowlist 'runs'
+    fi
+    if [ "${2:-}" != '--json' ]; then
+      refuse "the stub fugaro answers 'runs summary --json' and was asked for 'runs $*'"
+    fi
+    shift 2
+    since=''
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --since=*)
+          since=${1#*=}
+          if [ "$since" = '' ]; then
+            refuse "'runs summary --json' was given '--since=' with no window"
+          fi
+          shift
+          ;;
+        --project | --config)
+          if [ $# -lt 2 ]; then
+            refuse "'runs summary --json' was given '$1' with no value"
+          fi
+          shift 2
+          ;;
+        *)
+          refuse "'runs summary --json' was asked for '$1'"
+          ;;
+      esac
+    done
+    if [ -z "$since" ]; then
+      # The window is not defaulted here, for the reason `report` does not
+      # default it: the document is a claim about a window, and the console
+      # always names one.
+      refuse "'runs summary --json' was asked for no --since, and this stub answers one document per window"
+    fi
+    if ! print_seeded "${here}/runs-summary-${since}.json" "${here}/runs-summary-${since}-delay.txt" "runs summary ${since}"; then
+      refuse "no runs summary document is seeded for '${since}' beside this stub"
+    fi
+    ;;
   run)
     # The launch (design section 5.1 rule 11): the row's argv word for word, and
     # the task on stdin. `arguments` is the whole invocation as one string, for
@@ -419,6 +692,6 @@ case "$command" in
       "$project" "$run_id" "$repository" "$run_id"
     ;;
   *)
-    refuse "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'coordinator status --from-store --all --json', 'doctor --json', 'watch --json', 'report --json', 'budget show --json' and 'run --task-file - --json', and was asked for '$command'"
+    refuse_allowlist "$command"
     ;;
 esac

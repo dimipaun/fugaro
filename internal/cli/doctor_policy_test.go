@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/coordpath"
@@ -304,9 +305,10 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Problem, "model_costs") || !strings.Contains(c.Problem, projectpolicy.PathShared()) {
 			t.Errorf("the check does not name the key and the node: %+v", c)
 		}
-		if !strings.Contains(c.Fix, "fugaro upgrade") {
-			t.Errorf("the check does not name the upgrade the readers' refusal names: %+v", c)
-		}
+		// The move is a newer binary the operator installs, the same one the
+		// readers' refusal names: doctor cannot offer `fugaro upgrade`, which
+		// never upgrades the binary it runs.
+		assertNamesTheBinaryUpgrade(t, c.Fix)
 		// The other side: a node whose keys this Fugaro all knows is not
 		// warned about, so the check is about the keys and not about doctor
 		// always having something to say.
@@ -1577,6 +1579,7 @@ func TestDoctorReportsAMarkStateItDoesNotRead(t *testing.T) {
 	if c.Fix == "" {
 		t.Error("fix is empty: doctor's shape for a finding is a note with a remedy")
 	}
+	assertNamesTheBinaryUpgrade(t, c.Fix)
 	// The same read answers creds-broken, and the two must not be confused:
 	// quota_hold is not a 401, so the broken finding stays away.
 	if b, ok := checks["creds-broken"]; ok {
@@ -1621,7 +1624,24 @@ func TestDoctorReportsAMarkStateItDoesNotRead(t *testing.T) {
 // to end: doctor names it, the command its fix prescribes clears it, and the
 // finding goes away.
 func TestDoctorBrokenMarkFixRuns(t *testing.T) {
-	_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+	r, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+	// The installation this line is prescribed on is one `fugaro
+	// update --firebase-project` has run on: its config records the Firebase
+	// project the database is in beside the URL, and the database carries
+	// Fugaro's mark. Both are what the ownership question behind the command
+	// doctor prints now reads (requireOwnBudgetDB asks the same predicate the
+	// update stages do), so a rig without them is a state no installation is
+	// in and the prescribed fix could not run in it. The IAM endpoint keeps
+	// doctor's signers check — which a named Firebase project switches on —
+	// off the network.
+	iam := gcpfake.NewIAM(t)
+	cfg := strings.Replace(r.cfg, "endpoints: { ", "endpoints: { iam: "+iam.URL+"/, ", 1)
+	cfg = strings.Replace(cfg, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+db.URL+" }",
+		"budget: { mode: enforce, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: "+db.URL+" }", 1)
+	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db.Set(budget.PathMark, auroraMark())
 	db.Set(credsMarkPath("team-shared"), map[string]any{
 		"state": "broken", "since": time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)})
 
@@ -1685,6 +1705,7 @@ func TestDoctorReportsTheCascadeWithoutTheCredsMarker(t *testing.T) {
 	if !ok || !strings.Contains(c.Fix, "upgrade") {
 		t.Fatalf("a marker above this release's generation: %+v (ok=%v), want a warning whose fix is to upgrade", c, ok)
 	}
+	assertNamesTheBinaryUpgrade(t, c.Fix)
 
 	// A marker below this release's generation: the deployed document
 	// predates the credentials family, and the remedy is this Fugaro's own

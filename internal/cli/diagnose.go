@@ -43,6 +43,16 @@ const (
 	// unattributed entry miss row.cost.model_usd by the rounds it dropped. It
 	// guards against the record a hand can edit, not against the loop.
 	diagnoseStages = 128
+	// diagnoseReviews bounds the review rounds a diagnosis prints. It sits
+	// above the loop's own maximum -- F + R*(1+F) rounds on the senior level
+	// and as many again on the adversarial one, 77 at most under
+	// config.MaxFirstLineRounds and recipe.MaxReviewRounds -- so it guards
+	// against the record a hand can edit and never against the loop. A list
+	// longer than this prints the first diagnoseReviews rounds and then the
+	// line "… at most 96 review rounds are printed", which says the list is
+	// cut without claiming how many rounds it left out: the count is not one
+	// the reader of a cut list can know.
+	diagnoseReviews = 96
 )
 
 // Diagnosis is what diagnose gathers about one run. Every string in it
@@ -92,6 +102,16 @@ type Diagnosis struct {
 	// sum(stages[].model_usd) + model_by["unattributed"] ==
 	// row.cost.model_usd.
 	Stages []runstore.StageTiming `json:"stages,omitempty"`
+	// Reviews is the record's review rounds (runstore.ReviewSummary): the
+	// round, the tier, the verdict and the findings count, and what reviewed
+	// the round -- the model, the reasoning effort and the commit it read
+	// (CLI 0.16.0), which is the pair a reader needs to tell which model
+	// reviewed which head. In the record's own order, bounded at
+	// diagnoseReviews (the bound the record's own writer does not have) and
+	// with every string redacted, Model and Effort included: they are the
+	// record's bytes, which a hand can edit. Absent when the record has no
+	// reviews, and when there is no record at all.
+	Reviews []runstore.ReviewSummary `json:"reviews,omitempty"`
 	// Reported is what providers said the run's calls cost, beside Charge,
 	// what the run charged the provider routes' calls -- the table's price
 	// with the fee, or the report where it floors an unpriced tier's charge.
@@ -232,6 +252,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 			d.ArtifactPaths = append(d.ArtifactPaths, s.Prefix()+runstore.ArtifactPrefix+red(a.Name))
 		}
 		d.Stages, d.Tolerated = stageTimingsOf(rec.Stages, red), toleratedOf(rec.Tolerated, red)
+		d.Reviews = reviewsOf(rec.Reviews, red)
 		d.Checkpoint = checkpointOf(rec.Checkpoint, red)
 		d.Verify = rec.Verify
 		for i := range d.Verify {
@@ -300,6 +321,101 @@ func stageTimingsOf(stages []runstore.StageTiming, red func(string) string) []ru
 		}
 		s.Name, s.Model = red(s.Name), red(s.Model)
 		out = append(out, s)
+	}
+	return out
+}
+
+// validGitHead reports whether s is a git object id: 40 lowercase hex
+// characters, the SHA-1 a `git rev-parse` writes, or 64, the SHA-256 of a
+// repository created with --object-format=sha256. It is validSHA256's guard
+// with a second length, and it exists for the same reason (runs.go): the
+// record is launcher-writable and json.Unmarshal never checks it against the
+// schema, so a shortener must reject anything else before slicing, or a
+// multibyte rune cut mid-byte would corrupt the terminal output.
+func validGitHead(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// shortGitHead shortens a git head for display: 7 characters of a SHA-1 object
+// id and 12 of a SHA-256 one, git's own abbreviated length for each. It is not
+// shortSHA (runs.go), which shortens a sha256 digest a record states -- an
+// artifact's or a layer's -- and answers "(invalid)" for a 40-hex git head,
+// which is every head a run records. Anything that is not an object id shows
+// as "(invalid)" rather than as a slice of text that is not a head.
+func shortGitHead(s string) string {
+	if !validGitHead(s) {
+		return "(invalid)"
+	}
+	if len(s) == 40 {
+		return s[:7]
+	}
+	return s[:12]
+}
+
+// reviewLine is one review round as the diagnosis's Reviews block prints it:
+// the round, the tier that ran it, its verdict and its findings count, and what
+// reviewed it -- the model, the effort and the commit it read (CLI 0.16.0).
+// Each of the three is printed only when the round recorded it, so a record
+// written before the fields existed reads exactly as it always did.
+//
+// The verdict is the record's own word, but "none" is the one a reviewer's
+// missing answer is recorded as (seniorLoop, adversarialLoop), and printing it
+// as a verdict a reader could act on would be claiming an answer no model gave.
+func reviewLine(r runstore.ReviewSummary) string {
+	who := runstore.TierSenior
+	switch r.Tier {
+	case runstore.TierFirst, runstore.TierAdversarial:
+		who = r.Tier
+	}
+	verdict := r.Verdict
+	if verdict == "none" {
+		verdict = "no verdict"
+	}
+	line := fmt.Sprintf("round %d %s: %s, %s", r.Round, who, verdict, runner.Plural(r.Findings, "finding"))
+	parts := make([]string, 0, 3)
+	if r.Model != "" {
+		parts = append(parts, "model "+r.Model)
+	}
+	if r.Effort != "" {
+		parts = append(parts, "effort "+r.Effort)
+	}
+	if r.Head != "" {
+		parts = append(parts, "at "+shortGitHead(r.Head))
+	}
+	if len(parts) > 0 {
+		line += " (recorded: " + strings.Join(parts, ", ") + ")"
+	}
+	return line
+}
+
+// reviewsOf is the record's review rounds for the document: the record's own
+// order, bounded at diagnoseReviews, and redacted like every other string here
+// -- Model, Effort and Head included, and the tier and the verdict too, which
+// the write path validates to its own three words and a hand-edited record need
+// not: they are strings on the wire, and the block's own enums are redacted for
+// the same reason (toleratedOf). nil for a record with none, so the key is
+// absent rather than an empty list.
+func reviewsOf(reviews []runstore.ReviewSummary, red func(string) string) []runstore.ReviewSummary {
+	if len(reviews) == 0 {
+		return nil
+	}
+	out := make([]runstore.ReviewSummary, 0, min(len(reviews), diagnoseReviews))
+	for _, r := range reviews {
+		if len(out) == diagnoseReviews {
+			break
+		}
+		r.Tier, r.Verdict = red(r.Tier), red(r.Verdict)
+		r.Model, r.Effort, r.Head = red(r.Model), red(r.Effort), red(r.Head)
+		out = append(out, r)
 	}
 	return out
 }
@@ -728,6 +844,18 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		}
 		for _, n := range d.Flaky {
 			fmt.Fprintf(&b, "  flaky:  %s\n", oneLine(n))
+		}
+	}
+	if len(d.Reviews) > 0 {
+		fmt.Fprintf(&b, "\nReviews\n")
+		for _, rv := range d.Reviews {
+			fmt.Fprintf(&b, "  %s\n", oneLine(reviewLine(rv)))
+		}
+		// The list is bounded at diagnoseReviews, which sits above the loop's
+		// own maximum: a list that reaches the bound is cut, and saying so is
+		// the difference between a short list and a complete one (F19).
+		if len(d.Reviews) == diagnoseReviews {
+			fmt.Fprintf(&b, "  … at most %d review rounds are printed\n", diagnoseReviews)
 		}
 	}
 	if len(d.Findings) > 0 {

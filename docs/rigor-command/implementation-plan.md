@@ -260,9 +260,9 @@ installation that has never had one.
   (R3) and doctor's `local-layer-file` check (R0) print must say which reading it is, because the
   recorded generation is the only thing that tells them apart: a **local edit** (the bytes differ and
   the recorded generation is still the published one — the owner's change, to publish) or a **stale
-  copy from another machine** (the published generation has moved past the recorded one — someone
-  else's publish, which this file would revert). The two need different remedies, so one word for
-  both would send the owner to the wrong one.
+  copy from another machine** (the recorded generation is not the published one — the file was
+  written from an object the bucket no longer holds, which publishing would replace). The two need
+  different remedies, so one word for both would send the owner to the wrong one.
 - **Red step:** `TestUpdateSeedsTheLocalLayerFromThePublishedOne` fails while no stage writes a local
   layer file.
 - **Tests:** `TestStageOrderMatchesDependencies` (`internal/initflow/loop_test.go`: sixteen stages,
@@ -381,7 +381,7 @@ splice is a design, while two editors is a bug waiting for one of them to be fix
   `TestRigorShowReportsTheUnpublishedLocalLayer` (the state word: `unpublished`, with both sha256s,
   the same comparison `config layer` and doctor make, **and the cause** — the recorded
   `layer_generation` against the published generation: a local edit while the two are equal, a stale
-  copy from another machine once the published one has moved past it),
+  copy from another machine while they are not),
   `TestRigorShowResolvesThroughRigorResolve` (a mode `show` prints is `rigor.Resolve`'s answer for
   the same inputs — the resolver is called, not re-implemented),
   `TestRigorShowJSONLayerNamesWhatWasRead` (spec §2's `layer` member: `published` and `local`
@@ -508,10 +508,13 @@ neither is it, and no code reads one.
   is `overrideSecurity` in `internal/rigor/table.go`); `internal/rigor/filing.go` files one backlog
   item for what it deferred; its levels are **Pro's** (`internal/rigor/levels.go`, the other
   design's **O10** — `docs/review-levels-ab-jobmax/reconciliation.md` §4, the owner's ruling of
-  2026-10-30) and its rounds are **1**, the number it spends: **O3 is answered** (2026-10-31) — a mode
+  2026-10-30) and its default row is **1/1**, the two numbers it spends: **O3 is answered** (2026-10-31) — a mode
   **may** go below today's default of two — so hotfix is **1/1**, and the answer sets the per-mode loop
-  defaults to **POC 1/1, Startup 2/2, Pro 3/3, Critical 3/5, Hotfix 1/1**, each pair being the first-line (inner) rounds and the senior rounds the mode runs **by default** — a default, not a cap: a task override, the recipe, the repository or the project layer can set either number higher or lower within the recipe's bounds (inner 1–3, senior 1–10). The `minRoundCeiling` clamp to two goes with the answer, in the task that implements the loop-defaults ruling (which also renames the ceiling names in `internal/rigor/rounds.go`, because a field never changes meaning), whose `Depends on O3` line the answer unblocks (`docs/rigor-modes/implementation-plan.md`) — so until that task lands the code still
-  clamps, and this paragraph is the ruling rather than a reading of `main`. So a hand-written
+  defaults to **POC 1/1, Startup 2/2, Pro 3/3, Critical 3/5, Hotfix 1/1**, each pair being the first-line (inner) rounds and the senior rounds the mode runs **by default** — a default, not a cap: a task override, the recipe, the repository or the project layer can set either number higher or lower within the recipe's bounds (inner 1–3, senior 1–10). The `minRoundCeiling` clamp to two goes with the answer, in the task that implements the loop-defaults ruling (which also renames the ceiling names in `internal/rigor/rounds.go`, because a field never changes meaning), whose `Depends on O3` line the answer unblocked (`docs/rigor-modes/implementation-plan.md`, T3.2). **That
+  task has landed** (2026-11-01): `internal/rigor/rounds.go`'s table is `roundDefaults`/`DefaultRounds`,
+  nothing clamps a mode's row to two, and `AdversarialDefault` is the mode's own senior count — so a
+  task override, the recipe, the repository or the project layer sets either number up or down within
+  the recipe's bounds, which are the only ceiling there is. So a hand-written
   `rigor.default: hotfix` in a layer or in a `fugaro.yaml` already reaches a mode that tolerates
   almost everything with **no gate at all**, while `fugaro run --mode hotfix` cannot take effect
   (raise-only, D6) — the two doors disagree, and only one of them is closed.

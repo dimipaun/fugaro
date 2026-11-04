@@ -114,6 +114,25 @@ export function firstInstallationState(): OnboardingState {
 // ---------------------------------------------------------------------------
 
 /**
+ * InstallationsCheckoutChoice is one entry of the choosers' menu: the repository
+ * the path is a checkout of, the absolute path itself, and how many further
+ * directories this installation records for that same repository.
+ *
+ * `path` is the CLI's own string, verbatim, and it is what the screen sends back
+ * through `installation.checkout` -- the main process holds it to this
+ * installation's own validated list before anything is written, so a path that
+ * did not come from this document is refused rather than used. `more` is the
+ * count the label says out loud ("+2 more") and not a second list: the operator
+ * picks one directory per repository, and a menu of five paths of one repository
+ * would push the other repositories off the menu.
+ */
+export interface InstallationsCheckoutChoice {
+  readonly repository: string
+  readonly path: string
+  readonly more: number
+}
+
+/**
  * InstallationsListRow is one row the picker draws, and it is the merge of two
  * facts: what the CLI listed (`listed`, with the GCP project and region it read)
  * and what this console has recorded about that project (`saved`, `checkout`,
@@ -148,6 +167,25 @@ export interface InstallationsListRow {
   readonly mode: 'ok' | 'reduced' | 'refused' | 'unknown'
   readonly checkout?: string
   readonly checkouts: readonly string[]
+  /**
+   * **`checkoutChoices` is what the dashboard's and the Graph's checkout
+   * chooser offers**, one entry per repository the installation records a usable
+   * checkout of (owner's ask: "an installation can have multiple repos, I should
+   * be able to pick one with a dropdown").
+   *
+   * It is not `checkouts`: that list is the picker window's one `Use <dir>`
+   * button per entry, and it is unchanged. This one is built for a menu -- the
+   * rows the CLI re-validated **and** enrolled, with the tool-owned and
+   * temporary directories dropped (`offeredCheckouts`), collapsed to one entry
+   * per repository with `more` counting the paths that share it -- and the two
+   * lists therefore differ exactly where a menu would be wrong: an entry with no
+   * repository to label it by, and a repository with several directories to
+   * choose between.
+   *
+   * A stored-only row carries `[]`: the CLI listed nothing for it, so the
+   * console has nothing it may offer.
+   */
+  readonly checkoutChoices: readonly InstallationsCheckoutChoice[]
   /**
    * **`repositories` is what this installation records as its own**, in the
    * CLI's order and each one once: the `<provider>/<owner>/<name>` identity,

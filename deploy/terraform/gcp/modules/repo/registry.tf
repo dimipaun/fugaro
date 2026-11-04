@@ -76,13 +76,31 @@ resource "google_artifact_registry_repository_iam_member" "operator_images" {
 # own checkout, and pushed into the one repository every repository's shared
 # images live in (design docs/forge-authorship-images/shared-images.md §2.6,
 # §11). Writer and not admin, exactly as on this repository's own registry:
-# the build creates versions and moves tags, and deleting one is a permission
-# it does not hold.
+# the build creates versions and pushes them, and deleting one is a permission
+# it does not hold. Moving a tag is the grant below.
 resource "google_artifact_registry_repository_iam_member" "build_shared" {
   project    = var.project
   location   = var.region
   repository = var.installation.shared_registry
   role       = "roles/artifactregistry.writer"
+  member     = google_service_account.build.member
+}
+
+# The installation's tag mover role (artifactregistry.tags.delete and nothing
+# else), on the shared registry beside the writer above: writer lacks
+# tags.delete, and moving a tag there needs it — gcloud artifacts docker tags
+# add deletes the old tag before it creates the new one. A shared image's
+# promote moves latest, and a catalog image (D1152) moves latest and its
+# content tag, which is the definition's own sha256 and so is moved again by
+# every rebuild of an unchanged definition. It is the same grant the build
+# account holds on its own registry (modules/repo/build.tf's build_tag_mover),
+# on the one other repository it writes. No version or package delete: a build
+# can remove a tag there, never an image.
+resource "google_artifact_registry_repository_iam_member" "build_shared_tag_mover" {
+  project    = var.project
+  location   = var.region
+  repository = var.installation.shared_registry
+  role       = var.installation.role_ids.tag_mover
   member     = google_service_account.build.member
 }
 

@@ -30,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
 	"github.com/dimipaun/fugaro/internal/mirror"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -59,6 +60,29 @@ type Config struct {
 	// again, as on a first run). The config the installation's apply writes
 	// clears it.
 	SetupPending string `yaml:"setup_pending,omitempty"`
+	// PolicyGeneration is the published policy node's generation as of the last
+	// publish that wrote this file's policy keys, or the publish this file was
+	// seeded from: the ETag the node was read at, which is the same value the
+	// write is conditional on (rtdb.PutIfMatch). A file carrying none was never
+	// written from a published node — every installation before the first
+	// `fugaro update` of this release — and the next run ADOPTS the generation
+	// it reads rather than refusing (D854: refusing once would ask a question
+	// with no information in it, since the machine has no baseline to compare
+	// against). An installation that writes no policy node carries none.
+	PolicyGeneration string `yaml:"policy_generation,omitempty"`
+	// LayerGeneration is the published project layer's generation as of the
+	// last publish that wrote this file's layer, or the publish the local
+	// layer file was seeded from (D854): it is what tells the two readings of
+	// `unpublished` apart — a local edit (still the published generation,
+	// which is the owner's change to publish) from a stale copy of another
+	// machine's (the published generation has moved past it, so publishing
+	// would revert someone else's publish). A file carrying none was never
+	// written from a published object — every installation before the first
+	// `fugaro update` of this release — and the next run ADOPTS the
+	// generation it reads rather than refusing. It is the layer stage's
+	// record, beside the policy stage's PolicyGeneration: one record per
+	// stage that publishes, and neither is wire.
+	LayerGeneration string `yaml:"layer_generation,omitempty"`
 	// BaseImages are the base images the image builds and the daily image
 	// check start from, by base kind (config.Bases). A workflow builds from
 	// the image of its base kind, so a project needs an entry for each kind
@@ -134,6 +158,24 @@ type Config struct {
 	// choose among by name (design docs/design/named-oauth-tokens.md).
 	// Only the owner sets them, here, never in fugaro.yaml.
 	ClaudeAccounts map[string]config.ClaudeAccount `yaml:"claude_accounts,omitempty"`
+	// DefaultClaudeAccount is the account every stage of a run uses when
+	// nothing more specific does (spec §11.1, D873). It names an account of
+	// claude_accounts, or "default" for the unsuffixed secret, and only this
+	// document may hold it: a reviewed repository and a published layer are
+	// writable by someone other than the owner, and a key there would be a
+	// way around the account's own allow_data_to.
+	DefaultClaudeAccount string `yaml:"default_claude_account,omitempty"`
+	// ClaudeAccountStages is the account one stage uses instead of the
+	// default, keyed by the run's own stage name — stages.review.claude_account
+	// is "the reviewer uses another account". A stage is not a role: the
+	// roles fold every stage but review into the coder's, so a role-keyed
+	// block could not give review_first an account implement does not use.
+	ClaudeAccountStages map[string]StageChoice `yaml:"stages,omitempty"`
+	// ClaudeAccountAuto is whether Fugaro may choose an account for the owner
+	// (spec §11.3, D874). Off is explicit-only, and off is the default: the
+	// switch ships dormant until the owner rules that one project may spread
+	// across several accounts (D875).
+	ClaudeAccountAuto bool `yaml:"claude_account_auto,omitempty"`
 	// ProjectSecrets are the reserved secret names (config.ReservedSecrets)
 	// the owner has opted into project-wide storage for, by allow-listed
 	// repository (design docs/design/project-secrets.md §3). Only the owner
@@ -153,12 +195,45 @@ type Config struct {
 	// able to widen where a credential is sent.
 	//
 	// It is a copy and not a derivation, and it is held to the node's rule
-	// alone (projectpolicy.validBitbucketAPIRoots): an https root that reaches
+	// alone (projectpolicy.ValidBitbucketAPIRoots): an https root that reaches
 	// one host, without a query, a fragment or userinfo. There is no second
 	// copy of that rule here on purpose — a root that the node would refuse is
 	// refused by the publish that builds the node, before anything is written,
 	// with a sentence naming the entry.
 	BitbucketAPIRoots []string `yaml:"bitbucket_api_roots,omitempty"`
+	// VerifierAccounts are the identities that may ask the installation's
+	// credentials service whether a verdict's signature is its own (C3.9g3,
+	// D1068, D1075): the coordinator's own account once it exists, and the
+	// owner's for a manual check. Each entry is a bare address — the `email`
+	// claim a Google ID token carries — and never the user:/serviceAccount:
+	// member spelling the launcher and operator lists are written with, which
+	// is what the shape check below refuses.
+	//
+	// It travels to the policy node, the way bitbucket_api_roots does and for
+	// the same reason: the node is written only by the owner and the runner
+	// fails closed on it, while the shared config in the runs bucket is
+	// writable by any launcher — and a launcher who could write this list could
+	// admit its own address to the verify route, so Shared nils it and
+	// ParseShared refuses the key. Only the owner sets it, here, never in
+	// fugaro.yaml.
+	VerifierAccounts []string `yaml:"verifier_accounts,omitempty"`
+	// ImageCatalog is the project's image catalog (D1140): the named images
+	// the project's jobs are built from, each a Dockerfile definition or a
+	// reference to a prebuilt image, and the one a repository names with
+	// image: or the tags it needs. It is the owner's policy, written here and
+	// never in fugaro.yaml, and `fugaro update`'s policy stage copies it into
+	// the published policy node, where the runner reads it — the node is
+	// written only by the owner and the runner fails closed on it, while the
+	// shared config in the runs bucket is writable by any launcher, so a
+	// catalog there would let a launcher choose the image every teammate's
+	// runs execute in. Shared nils it and ParseShared refuses the key.
+	//
+	// It is a pointer because its emptiness is a statement: a written catalog
+	// is published, and a written catalog with no entry is how a published one
+	// is taken away on purpose (ImageCatalogEffective), while a config that
+	// does not write the key at all is a machine whose file has nothing to say
+	// about the catalog and must not empty the node's.
+	ImageCatalog *config.Catalog `yaml:"image_catalog,omitempty"`
 	// Profiles are the project's job profiles (design
 	// docs/design/project-centric.md §4.1), by name: what a Cloud Run job is
 	// deployed as, and what a repository's workflow selects with job_profile.
@@ -304,6 +379,34 @@ type Config struct {
 	// notes are warnings added after parsing (AddWarning), such as a
 	// published shared config's dropped legacy base_images entries.
 	notes []string
+}
+
+// StageChoice is one stage's own choice of Claude account, the entry under
+// ClaudeAccountStages: the stage's name is the key of the block and the
+// account it uses is the value inside it.
+type StageChoice struct {
+	ClaudeAccount string `yaml:"claude_account,omitempty"`
+}
+
+// choiceRefProblem is why name may not stand as the value of an account-choice
+// key here, or "" when it may: the name's own rule first, then whether this
+// file actually defines the account. An undefined name is refused in the
+// sentence config.ValidateProfileClaudeAccounts already gives the same name in
+// a profile, because the two are the same reference and a second wording for
+// one rule is a second rule; a name no run can use would leave the key silently
+// never applying, which is what the keys are specified to refuse.
+func (c *Config) choiceRefProblem(name string) string {
+	if msg := config.ValidClaudeAccountRef(name); msg != "" {
+		return msg
+	}
+	if name == config.DefaultClaudeAccount {
+		return ""
+	}
+	if _, ok := c.ClaudeAccounts[name]; ok {
+		return ""
+	}
+	return fmt.Sprintf("the account %q is not defined here: this key names an account of this file's claude_accounts block, where the account's own allow_data_to decides which repositories may use its token, or %q for the unsuffixed default account — define it as claude_accounts: {%s: {allow_data_to: [owner/name]}}, or drop the key",
+		pluginwire.Printable(name), config.DefaultClaudeAccount, pluginwire.Printable(name))
 }
 
 // Mailbox is the mailbox block: what the mailbox consumer needs from the
@@ -497,7 +600,10 @@ type LongContext struct {
 // UpdateCheckEnabled reports whether the daily update check and its stderr
 // nag run for this config: true unless update_check: false.
 func (c *Config) UpdateCheckEnabled() bool {
-	return c.UpdateCheck == nil || *c.UpdateCheck
+	if c.UpdateCheck == nil {
+		return config.DefaultUpdateCheck
+	}
+	return *c.UpdateCheck
 }
 
 // BudgetMode is the budget's mode: "off" when there is no budget block or
@@ -997,6 +1103,31 @@ func ProjectPath(getenv func(string) string, name string) (string, error) {
 	return filepath.Join(d, name+".yaml"), nil
 }
 
+// LayerFile is the local project layer file of project name: the project's
+// own name under the config home's projects/ directory, beside its project
+// config (D830). The path is a convention and nothing records it — there is no
+// --layer flag and no config key for it — so the file the owner edits and the
+// file `fugaro update` publishes are the same one by construction.
+//
+// The name is `<project>.layer.yaml`, and the dot is the whole of why: a
+// project name is a-z, 0-9 and '-' (config.ProjectNameRE), so a file this one
+// names can never be read back as a project config. `Projects()` lists every
+// projects/<name>.yaml whose <name> is a project name, and a `-layer.yaml` file
+// would be listed as a project of its own — a phantom second project for a
+// single-project installation, and a real collision for a project actually
+// named foo-layer, whose own layer file would then be project `foo`'s
+// (docs/rigor-command/reconciliation.md, D830 amendment of 2026-11-01).
+func LayerFile(getenv func(string) string, name string) (string, error) {
+	if !config.ProjectNameRE.MatchString(name) {
+		return "", fmt.Errorf("%q is not a project name (1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit)", name)
+	}
+	d, err := ProjectsDir(getenv)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, name+".layer.yaml"), nil
+}
+
 // legacyPath is where the local config lived before project configs; it
 // isn't read any more, only mentioned when there is no project config.
 func legacyPath(getenv func(string) string) string {
@@ -1162,6 +1293,15 @@ func oldMailboxKeychainItem(mailbox *yaml.Node) string {
 	return ""
 }
 
+// The local loader's own values, which Parse leaves in place for a file that
+// sets the key nowhere. They are named because the settings registry cites
+// them in the DEFAULT column (spec §2.4): the row for one of these keys is the
+// value a run gets, not an "unset means" sentence.
+const (
+	DefaultMaxParallel      = 20
+	DefaultBuildMachineType = "E2_HIGHCPU_8"
+)
+
 // Parse decodes the config strictly, applies defaults and validates it.
 func Parse(data []byte) (*Config, error) {
 	var top map[string]yaml.Node
@@ -1188,10 +1328,10 @@ func Parse(data []byte) (*Config, error) {
 		c.Version = 1
 	}
 	if c.MaxParallel == 0 {
-		c.MaxParallel = 20
+		c.MaxParallel = DefaultMaxParallel
 	}
 	if c.Build.MachineType == "" {
-		c.Build.MachineType = "E2_HIGHCPU_8"
+		c.Build.MachineType = DefaultBuildMachineType
 	}
 	if err := c.validate(); err != nil {
 		return &c, err
@@ -1234,6 +1374,49 @@ func profileNames(profiles map[string]config.JobProfile) []string {
 // never move.
 func (c *Config) ReviewFloorPolicy() (map[rigor.Mode][]policy.Level, error) {
 	return policy.ParseFloor(c.ReviewFloor)
+}
+
+// VerifierAccountsEffective is the one keep rule both writers of the verifier
+// list apply (C3.9g3, D1075): this file's list when it states one — a written
+// empty list included, which is how the route is turned off on purpose — and
+// the published node's otherwise.
+//
+// It is stated here, beside the field, because the two writers are in two
+// packages: the publisher that builds the policy node (`fugaro project policy
+// publish`, and the migration beside it) and C3.9g1's writer, which hands the
+// list to the service's own variable and would otherwise render that variable
+// null from a config that merely predates the key. Either, on its own, would
+// empty a verify route another machine set up, from a machine whose file says
+// nothing about the list at all.
+func (c *Config) VerifierAccountsEffective(published []string) []string {
+	if c.VerifierAccounts != nil {
+		return c.VerifierAccounts
+	}
+	return published
+}
+
+// ImageCatalogEffective is the keep rule for the image catalog, stated here
+// beside the field for the verifier list's reason (D1140, D1156): this file's
+// catalog when it writes one — a written catalog with no entry included, which
+// is how a published one is taken away on purpose — and the published node's
+// otherwise.
+//
+// A nil answer is the whole of the answer, and not an empty catalog: the
+// publisher omits the key when the effective catalog names no entry, so a
+// project with no catalog has a node byte for byte what it had before the key
+// existed and no launcher of an older CLI meets the key's skew (D1156). That
+// is why the two halves cannot be spelled as one field: "this file says
+// nothing" must keep the node's catalog, and "this file says nothing is in
+// it" must take it away.
+func (c *Config) ImageCatalogEffective(published *config.Catalog) *config.Catalog {
+	effective := published
+	if c.ImageCatalog != nil {
+		effective = c.ImageCatalog
+	}
+	if effective == nil || len(effective.Entries) == 0 {
+		return nil
+	}
+	return effective
 }
 
 func (c *Config) validate() error {
@@ -1393,6 +1576,32 @@ func (c *Config) validate() error {
 	for _, p := range config.ValidateClaudeAccounts(c.ClaudeAccounts) {
 		bad("%s: %s", p.Path, p.Message)
 	}
+	// The account-choice keys are checked against the REFERENCE rule and not
+	// the definition's: each one names an account a run may use, and "default"
+	// is a legal name for the unsuffixed secret and only here — the
+	// definition's rule belongs to claude_accounts, which refuses it. Whether
+	// the named account is admitted for a repository is decided at launch
+	// against the account's own allow_data_to, where the repository is known.
+	// A name this file does not define is refused too (choiceRefProblem): the
+	// key would otherwise name an account no run can use.
+	//
+	// The stage SEGMENT is not validated here: this package holds no closed
+	// vocabulary of run stages, so `stages.<anything>.claude_account` is
+	// accepted whatever the segment is and only the account reference above is
+	// judged. Refusing a segment that names no stage needs that vocabulary to
+	// exist first, and it does not.
+	if c.DefaultClaudeAccount != "" {
+		if msg := c.choiceRefProblem(c.DefaultClaudeAccount); msg != "" {
+			bad("default_claude_account: %s", msg)
+		}
+	}
+	for _, stage := range slices.Sorted(maps.Keys(c.ClaudeAccountStages)) {
+		if ref := c.ClaudeAccountStages[stage].ClaudeAccount; ref != "" {
+			if msg := c.choiceRefProblem(ref); msg != "" {
+				bad("stages.%s.claude_account: %s", pluginwire.Printable(stage), msg)
+			}
+		}
+	}
 	for _, p := range config.ValidateProjectSecrets(c.ProjectSecrets) {
 		bad("%s: %s", p.Path, p.Message)
 	}
@@ -1498,6 +1707,29 @@ func (c *Config) validate() error {
 	// misspelt mode from one the owner meant to leave alone.
 	if _, err := c.ReviewFloorPolicy(); err != nil {
 		bad("%v", err)
+	}
+	// The verifier list is held to the node's own rule here (C3.9g3), the way
+	// the floor is: the list is copied into the policy node, and an entry the
+	// service could never match — an IAM member spelling rather than the bare
+	// address an ID token's email claim carries — would be a list the operator
+	// believes names a verifier and that admits nobody. The publish holds the
+	// node to the same function, so the file and the node cannot disagree.
+	if err := policy.ValidVerifierAccounts(c.VerifierAccounts); err != nil {
+		bad("%v", err)
+	}
+	// The image catalog is held to the node's own rule here, the way the
+	// verifier list and the floor are: it is copied into the policy node, and
+	// a definition this file accepts and the node refuses would leave a
+	// repository naming an entry that never arrives — while a definition the
+	// node accepts and this file refuses would never reach it at all.
+	// config.ValidateCatalog is that one rule, the same function
+	// projectpolicy's decoder applies to the node's block, so the file the
+	// operator writes and the node a run reads cannot disagree about what an
+	// entry is.
+	if c.ImageCatalog != nil {
+		for _, p := range config.ValidateCatalog("image_catalog", *c.ImageCatalog) {
+			bad("%v", p)
+		}
 	}
 	for repo, r := range c.Repos {
 		if !repoRE.MatchString(repo) {

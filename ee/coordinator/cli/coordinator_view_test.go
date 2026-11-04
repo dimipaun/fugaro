@@ -4,6 +4,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,6 +40,12 @@ import (
 //   - TestCoordinatorStatusFromStoreNeedsNoKey: no App credential is in the
 //     environment and no provider is ever opened, and the view printed is the
 //     stored one — pull requests and all.
+//   - TestCoordinatorStatusFromStoreNamesTheProvider: the document says which
+//     host the repository is on, which is what a reader builds a pull request
+//     link from, and the human table gains no column for it.
+//   - TestCoordinatorStoredViewCarriesTheProviderKeyWhenThereIsNone: the key
+//     is written even with nothing to put in it, so a reader can tell a
+//     repository with no provider from a document older than the field.
 //   - TestCoordinatorStatusFromStoreWithService: the same read with the
 //     installation's credentials service in the environment, where the
 //     project-wide read refuses (coordinatorAppCredential). The fixture's runs
@@ -136,7 +143,7 @@ func storedView() coordinator.View {
 // with, and an opener that was reached is the read going somewhere it must not.
 func noStoreOpens(t *testing.T) {
 	t.Helper()
-	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
+	setCoordinatorHost(t, func([]string, func(string) string, func(string)) (coordinator.ProviderOpener, error) {
 		t.Error("--from-store opened a provider: this read holds no App credential and reads no host")
 		return nil, errors.New("no provider")
 	})
@@ -181,6 +188,57 @@ func TestCoordinatorStatusFromStoreNeedsNoKey(t *testing.T) {
 	}
 }
 
+// TestCoordinatorStatusFromStoreNamesTheProvider: the document answers which
+// host the repository is on (D814), because a reader that builds a pull
+// request's link needs one and this document is the only place it can come
+// from — the URL the sweep stored is a field a job wrote, not a fact about the
+// repository. The fixture's config records provider: github for acme/app.
+func TestCoordinatorStatusFromStoreNamesTheProvider(t *testing.T) {
+	f := newCoordinatorStoreFixture(t, coordinatorSeeds())
+	f.writeStoredView(t, storedView(), nil)
+	noStoreOpens(t)
+
+	got := storedJSON(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--since", "0", "--json")
+	if got.Provider != "github" {
+		t.Errorf("provider = %q, want github, which is what the fixture's repos entry records for acme/app", got.Provider)
+	}
+
+	// The provider is a reader's field and not a person's: the table the same
+	// read draws has the columns it always had, and no host is added to them.
+	out, errOut, err := execute(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--since", "0")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	if strings.Contains(out, "github") {
+		t.Errorf("the human table names the provider, and the field is one for readers:\n%s", out)
+	}
+}
+
+// TestCoordinatorStoredViewCarriesTheProviderKeyWhenThereIsNone: the key is
+// written even when there is no provider to put in it. A repository whose
+// config records no provider and which has no checkout is refused earlier, for
+// the slug's sake (repoSlug), so the empty answer is pinned where it is made:
+// the document the command writes carries "provider": "", and a reader can
+// therefore tell "no provider" from a document older than this field, which
+// would carry no key at all.
+func TestCoordinatorStoredViewCarriesTheProviderKeyWhenThereIsNone(t *testing.T) {
+	var buf bytes.Buffer
+	if err := writeCoordinatorJSON(&buf, coordinator.RepoView{Repo: "acme/app"}); err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+		t.Fatalf("%v: %s", err, buf.String())
+	}
+	raw, ok := doc["provider"]
+	if !ok {
+		t.Fatalf("the document drops the provider key when there is no provider, so a reader cannot tell that from an older CLI: %s", buf.String())
+	}
+	if string(raw) != `""` {
+		t.Errorf("provider = %s, want \"\"", raw)
+	}
+}
+
 func TestCoordinatorStatusFromStoreWithService(t *testing.T) {
 	// The opener a machine with the credentials service in its environment
 	// has: the fixture replaces it, and this test puts it back, because the
@@ -189,11 +247,12 @@ func TestCoordinatorStatusFromStoreWithService(t *testing.T) {
 	f := newCoordinatorStoreFixture(t, coordinatorSeeds())
 	openCoordinatorProvider = real
 	f.writeStoredView(t, storedView(), nil)
-	// The installation's credentials service holds the App's key (C2.2,
-	// D145), so the project-wide read refuses here rather than reaching for a
-	// key the platform withheld — and the fixture's runs name pull requests,
-	// so a read that delegated to coordinatorReader would reach that refusal
-	// rather than return before it.
+	// A person's read resolves its service from the project's own published
+	// block and from nothing else (the owner's ruling of 2026-11-03), so this
+	// variable is set to hold that: the fixture's project publishes no block,
+	// and the run's own name for the service cannot stand in for one. The
+	// fixture's runs name pull requests, so a read that delegated to
+	// coordinatorReader would reach the refusal rather than return before it.
 	t.Setenv(providers.EnvCredentialsServiceURL, "https://credentials.example.com/")
 
 	// --since 0 so that the whole fixture is in the window: a read that
@@ -207,11 +266,14 @@ func TestCoordinatorStatusFromStoreWithService(t *testing.T) {
 		t.Errorf("the view printed is not the stored one:\n%+v\nwant\n%+v", got.View, want)
 	}
 	// The other half of the same rule: without --from-store the command is
-	// still the one that refuses, so this is the flag that decides and not
-	// the environment.
-	if _, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0", "--json"); fcli.ExitCode(err) != fcli.ExitUserError ||
-		err == nil || !strings.Contains(err.Error(), providers.EnvCredentialsServiceURL) {
+	// still the one that refuses, and it refuses on the project's own
+	// configuration — so this is the flag that decides, and the environment
+	// decides nothing.
+	if _, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0", "--json"); err == nil ||
+		fcli.ExitCode(err) != fcli.ExitUserError || !strings.Contains(err.Error(), "credentials service") {
 		t.Errorf("status without --from-store: exit %d, err %v; want the credentials-service refusal", fcli.ExitCode(err), err)
+	} else if strings.Contains(err.Error(), providers.EnvCredentialsServiceURL) {
+		t.Errorf("the refusal names the run's own variable rather than the project's configuration: %v", err)
 	}
 }
 

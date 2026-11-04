@@ -325,3 +325,96 @@ func TestReadRepoView(t *testing.T) {
 		t.Error("a node that does not decode read as a view")
 	}
 }
+
+// TestReadRepoIntents: the declarations the report path wrote (P4), read back
+// as the typed records a console draws. Four things are the read's and not a
+// decoder's:
+//
+//   - An absent node is "no records": an empty list, and never a nil a reader
+//     would have to tell apart from a read that failed. The coordinator is off
+//     on most installations, so this is the ordinary answer.
+//   - A record carries the ID it is stored under (IntentID), read back rather
+//     than recomputed: the key is the node's, and a reader that derived its
+//     own would print a document the tree does not hold.
+//   - The records come back newest first, by the declaration's own clock,
+//     which is the order the console lists them in and the reverse of the
+//     order the sweep prunes in.
+//   - A record that does not decode is refused — as is one carrying a field
+//     this build does not know — rather than shown as a repository that
+//     declared nothing.
+func TestReadRepoIntents(t *testing.T) {
+	s := testStore(t)
+	ctx := testCtx(t)
+	const slug = "github-acme-webapp"
+
+	got, err := s.ReadRepoIntents(ctx, slug, "acme/webapp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Repo != "acme/webapp" {
+		t.Errorf("Repo = %q, want the repository the caller asked about", got.Repo)
+	}
+	if got.Intents == nil || len(got.Intents) != 0 {
+		t.Errorf("an absent node read as %#v, want an empty list", got.Intents)
+	}
+
+	older := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	newer := older.Add(time.Hour)
+	for _, rec := range []struct {
+		in Intent
+		at time.Time
+	}{
+		{Intent{DeclaredBy: "person-1@example.com", Branch: "topic/older", Release: "0.15.0",
+			Files: []string{"internal/cli/run.go"}, Services: []string{"internal/cli"}}, older},
+		{Intent{DeclaredBy: "person-2@example.com", Files: []string{"ee/coordinator/state.go"}, Services: []string{}}, newer},
+	} {
+		at, in := rec.at, rec.in
+		if _, _, err := (&Reporter{Store: s, Now: func() time.Time { return at }}).Report(ctx, slug, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err = s.ReadRepoIntents(ctx, slug, "acme/webapp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Intents) != 2 {
+		t.Fatalf("the node read as %d records, want the two reported: %+v", len(got.Intents), got.Intents)
+	}
+	if got.Intents[0].DeclaredBy != "person-2@example.com" || !got.Intents[0].At.Equal(newer) {
+		t.Errorf("the first record is %+v, want the declaration made at %s", got.Intents[0], newer)
+	}
+	if got.Intents[1].DeclaredBy != "person-1@example.com" || !got.Intents[1].At.Equal(older) {
+		t.Errorf("the second record is %+v, want the declaration made at %s", got.Intents[1], older)
+	}
+	for _, rec := range got.Intents {
+		if id := IntentID(rec.Intent); rec.ID != id {
+			t.Errorf("the record under %q derives %q: the ID read back is the node's key", rec.ID, id)
+		}
+		if rec.Files == nil || rec.Services == nil {
+			t.Errorf("record %+v read back a nil list where the node holds an empty one", rec)
+		}
+	}
+
+	// One repository's node is its own: a neighbour has no records, and this
+	// read does not fall back to the project's.
+	if other, err := s.ReadRepoIntents(ctx, "github-acme-other", "acme/other"); err != nil || len(other.Intents) != 0 {
+		t.Errorf("a neighbour's node read as %+v (err %v), want no records", other, err)
+	}
+
+	if err := s.Write(ctx, PathIntent("github-acme-broken", "deadbeef"), "not an intent"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReadRepoIntents(ctx, "github-acme-broken", "acme/broken"); err == nil {
+		t.Error("a node that does not decode read as no records")
+	}
+	if err := s.Write(ctx, PathIntent("github-acme-odd", "deadbeee"), map[string]any{
+		"declared_by": "person-1@example.com", "at": "2026-11-01T09:00:00Z",
+		"files": []string{}, "services": []string{}, "colour": "red",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReadRepoIntents(ctx, "github-acme-odd", "acme/odd"); err == nil {
+		t.Error("a record with a field this build does not know read as a declaration")
+	}
+}

@@ -140,7 +140,15 @@ func runHistoryRollover(ctx context.Context, cmd *cobra.Command, getenv func(str
 	r := &budget.Roller{
 		DB: db, FS: fs, Project: env[envProject], Now: now, MaxSkew: skew, Warn: warn,
 		StartLimit: limit,
-		Facts:      budget.BucketFacts{Bucket: bucket.Bucket, Warn: warn},
+		// The backend is left unnamed on purpose: this job runs in Terraform's
+		// environment, which carries no project config file to read the name
+		// from, and a pass that cannot name the backend takes the longest
+		// look-back any backend has (backend.MintSkewMargin). A shorter one
+		// would be right on the Cloud Run installations this job mostly serves
+		// and would drop a Batch run still in the region's queue when its day
+		// is written — a day whose compute and hours are missing, in the pass
+		// that writes the budget.
+		Facts: budget.BucketFacts{Bucket: bucket.Bucket, Warn: warn},
 	}
 	rep, err := r.Rollover(ctx, opt)
 	out := cmd.OutOrStdout()

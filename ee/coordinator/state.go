@@ -5,10 +5,13 @@ package coordinator
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/coordpath"
@@ -138,6 +141,16 @@ type RepoView struct {
 	// caller spelled it. The node's key is a slug — a hash of the provider
 	// and the name — so an absent node carries no name to read back.
 	Repo string `json:"repo"`
+	// Provider is the git provider kind the caller resolved for this
+	// repository, one of config.Providers' two words, or "" when the caller
+	// had none to give. It is the caller's answer and not the node's: the
+	// stored view names no host, and a reader that built a pull request's URL
+	// out of the URL the sweep stored would be reading a field a job wrote as
+	// if it were a fact about the repository.
+	//
+	// The key is written even when it is empty, so "" is a repository with no
+	// provider rather than a document older than this field.
+	Provider string `json:"provider"`
 	// Stored is whether the database held a view document.
 	Stored bool `json:"stored"`
 	// View is the stored view, and the zero view when Stored is false.
@@ -181,6 +194,88 @@ func (s *Store) ReadRepoView(ctx context.Context, slug, repo string) (RepoView, 
 			return RepoView{}, fmt.Errorf("coordinator: reading /%s: %w", PathStale(slug), err)
 		}
 		out.Stale = &stale
+	}
+	return out, nil
+}
+
+// StoredIntent is one intent record as the database holds it: the declaration
+// (Intent) and the ID it is stored under. The ID is the node's key and not a
+// field of the document (IntentID), so a reader that had to name one record —
+// the console's row, a person's own line — has nowhere else to read it from.
+type StoredIntent struct {
+	ID string `json:"id"`
+	Intent
+}
+
+// RepoIntents is one repository's stored intents: the repository the caller
+// asked about, the provider the caller resolved for it, and every declaration
+// the database holds under it, newest first.
+//
+// There is no "stored" flag beside RepoView's and there must not be: a view is
+// absent and a repository the sweep reconciled to nothing are two states a
+// reader cannot tell apart, which is what RepoView.Stored is for, while the
+// intents node is written by the report path alone and an absent one means
+// exactly what an empty one means — nothing has been declared. Asking a reader
+// to tell those apart would be asking it a question with one answer.
+//
+// Provider is the caller's answer and not the node's, like RepoView.Provider
+// and for the same reason: the node is keyed by a slug of it.
+type RepoIntents struct {
+	Repo     string         `json:"repo"`
+	Provider string         `json:"provider"`
+	Intents  []StoredIntent `json:"intents"`
+}
+
+// StoredProjectIntents is every repository's stored intents, in the order the
+// caller read them. Like StoredProjectView it compares nothing across
+// repositories: a branch or a path is a name in one tree.
+type StoredProjectIntents struct {
+	Repos []RepoIntents `json:"repos"`
+}
+
+// ReadRepoIntents reads every intent record stored under slug's repository
+// node, typed rather than raw: the read the console's read-only pane and a
+// person's own CLI make (D827), through the caller's own database credentials
+// and no key of the host's.
+//
+// It is the read the sweep's own prune makes of the same node, and it is strict
+// where that one is lenient: prune has to count a record it cannot decode, and
+// a reader has to refuse one, because a document this build cannot read is one
+// it must not pass off as a declaration with a field missing (ReadRepoView's
+// own rule). A node that is absent, or holds nothing, is an empty list and not
+// a failure — "no declarations" is a fact about the repository, and a read that
+// failed is not one, which is why the store's own error is returned as it is.
+//
+// The records come back newest first, by the record's own At and then by its
+// key, which is the sweep's order reversed: the pane's first line is the most
+// recent thing the fleet declared, and two declarations stamped in the same
+// instant keep the order their keys already give them rather than the order the
+// database happened to list them in.
+func (s *Store) ReadRepoIntents(ctx context.Context, slug, repo string) (RepoIntents, error) {
+	out := RepoIntents{Repo: repo, Intents: []StoredIntent{}}
+	var raw map[string]json.RawMessage
+	if _, found, err := s.Read(ctx, PathIntents(slug), &raw); err != nil {
+		return RepoIntents{}, err
+	} else if found {
+		out.Intents = make([]StoredIntent, 0, len(raw))
+		for _, id := range slices.Sorted(maps.Keys(raw)) {
+			var in Intent
+			if err := strictDecode(raw[id], &in); err != nil {
+				return RepoIntents{}, fmt.Errorf("coordinator: reading /%s: %w", PathIntent(slug, id), err)
+			}
+			// The record's own promise is that a list it declares nothing in is
+			// an empty list and never a null a reader has to interpret
+			// (Intent), so a document that omits one is read as the list it
+			// means rather than carried as the null it happened to spell.
+			in.Files, in.Services = cleanList(in.Files), cleanList(in.Services)
+			out.Intents = append(out.Intents, StoredIntent{ID: id, Intent: in})
+		}
+		slices.SortFunc(out.Intents, func(a, b StoredIntent) int {
+			if c := b.At.Compare(a.At); c != 0 {
+				return c
+			}
+			return cmp.Compare(a.ID, b.ID)
+		})
 	}
 	return out, nil
 }

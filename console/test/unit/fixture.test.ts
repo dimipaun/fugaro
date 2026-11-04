@@ -528,6 +528,13 @@ describe('the committed synthetic fixture', () => {
       'synthetic.ndjson',
       'degraded.ndjson',
       'bin',
+      // `crash-init` is the other directory of things a spec reads from disk: the
+      // Electron app `test/e2e/crash-init.spec.ts` launches, whose main process
+      // drives the console's built crash wiring against the spec's loopback sink
+      // (Task 2.1b fix round B). Like the stub under `bin/`, it is not a
+      // recording and not a case: the `.ndjson` sweep above never looks inside
+      // it, and what it is asserted at is the spec that runs it.
+      'crash-init',
       // The `.license` siblings carry the two-line SPDX notice for the types
       // that have no comment syntax of their own (`.ndjson` and `.json`;
       // `internal/eeboundary`'s notice rule, counsel's text of 2026-10-27).
@@ -566,6 +573,20 @@ describe('the committed synthetic fixture', () => {
       // (`test/support/cliStub.ts`) and `test/unit/cli-stub.test.ts` holds it to
       // the console's own decoder.
       'coordinator-status.json',
+      // `settings.json` is the third of those invented documents (the
+      // settings-edit plan's C4, D1118): one `settings --json` document, written
+      // from the structs (`internal/cli/settings_render.go`,
+      // `internal/settings/registry.go`) so the Project tab's settings section
+      // and the console's own rows have a document to run over -- the four rows
+      // are the four cases the section turns on (a narrowing pencil, a widening
+      // pencil, a key another writer owns, and a sensitive one that is never
+      // drawn). It is JSON and not `.ndjson`, so the sweep above never reads it,
+      // and the e2e stub answers that read with it
+      // (`test/fixtures/bin/fugaro`), which is where `test/unit/cli-stub.test.ts`
+      // holds it to the console's decoder. Its `.license` sibling is listed
+      // beside it, with the other `.json` ones.
+      'settings.json',
+      'settings.json.license',
       ...FIXTURE_CASES.map((name) => `${name}.ndjson`),
     ])
     const present = readdirSync(FIXTURE_DIRECTORY)

@@ -112,8 +112,19 @@ func GatewayRoute(name string, p config.ModelProvider, cred func() (string, erro
 // is not mounted fails the run (an infra_error) before the gateway starts.
 func (r *run) gatewayRoutes() ([]gateway.Route, error) {
 	a := r.cfg.Agent
+	// Every model a stage of this run runs: the three pins and each review
+	// level's own model, which is the model its stage runs (stageModel, L4.5)
+	// rather than the role slot the level sits in. A level's model is a pin of
+	// its own, so a provider serving one serves this run, and a run that left
+	// it out of this list would register no route for that provider at all:
+	// the level's call is admitted and charged, and it goes direct to
+	// Anthropic.
+	models := []string{a.ModelFor(config.RoleCoder), a.ModelFor(config.RoleReviewer), r.backgroundModel()}
+	for _, s := range reviewStages {
+		models = append(models, r.stageModel(s.stage))
+	}
 	used := map[string]bool{}
-	for _, m := range []string{a.ModelFor(config.RoleCoder), a.ModelFor(config.RoleReviewer), r.backgroundModel()} {
+	for _, m := range models {
 		if name, _, ok := config.ProviderFor(r.modelProviders(), m); ok {
 			used[name] = true
 		}

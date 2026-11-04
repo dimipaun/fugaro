@@ -114,7 +114,9 @@ func TestIgnoredOncePerKeyAcrossLayers(t *testing.T) {
 	g.deps.Project = "aurora"
 	pushBranch(t, g.harness, "feature", gwConfig(t, "")+"budget:\n  per_run_usd: 500\n")
 	setRef(t, g.harness, task.Spec{Ref: "feature"})
-	if rec, err := g.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
+	// Critical's row turns level 3 on, so the plan ends with the adversarial
+	// step: the run needs a step for it as well as for the senior review.
+	if rec, err := g.run(t, implement("feature"), review("ship", 0), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 	p := storedPolicy(t, g.harness)
@@ -301,7 +303,9 @@ func TestDefaultBranchOnlyIgnoredWording(t *testing.T) {
 	g.deps.Project = "aurora"
 	pushBranch(t, g.harness, "feature", gwConfig(t, ""))
 	setRef(t, g.harness, task.Spec{Ref: "feature"})
-	if rec, err := g.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
+	// Critical's row turns level 3 on: the plan ends with the adversarial step,
+	// and the run needs a step for it as well as for the senior review.
+	if rec, err := g.run(t, implement("feature"), review("ship", 0), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 	p := storedPolicy(t, g.harness)

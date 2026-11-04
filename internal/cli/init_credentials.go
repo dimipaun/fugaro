@@ -370,13 +370,20 @@ func (s *credentialsStage) requireCredsRules(ctx context.Context) error {
 	return nil
 }
 
-// resolveImage is the service's image, resolved and verified exactly as a
-// base kind's pin is: the release's "-pinned" tag, its cosign signature, and
-// the digest read back through the installation's remote repository with the
-// operator's own reader grant on it. What comes out is the reference the
-// tfvars carry, digest-pinned; a tag is never returned.
-func (s *credentialsStage) resolveImage(ctx context.Context) (string, error) {
-	e := s.e
+// resolveCredentialsImage is the service's image, resolved and verified
+// exactly as a base kind's pin is: the release's "-pinned" tag, its cosign
+// signature, and the digest read back through the installation's remote
+// repository with the operator's own reader grant on it. What comes out is the
+// reference the tfvars carry, digest-pinned; a tag is never returned.
+//
+// It takes the run's engine rather than the stage because two paths pin
+// through it and both must pin the same way: the credentials stage, when an
+// owner turns the service on, and the ordinary `fugaro update`, which re-pins
+// this release's image on an installation that opted in under an earlier one
+// (init_stages.go's pinCredentialsImage). Neither writes a digest this did not
+// return: the release's own signed "-pinned" image, read back through the
+// remote repository the job pulls by.
+func resolveCredentialsImage(ctx context.Context, e *initEngine) (string, error) {
 	ver := releaseVersion()
 	if ver == "" {
 		return "", userErr("this is a development build, so there is no released credentials service image to pin: the service runs the released image, resolved at its signed %q tag, and a build from a checkout has none; run this stage with a released fugaro", credentialsKind+"-pinned")
@@ -419,11 +426,35 @@ func (s *credentialsStage) prepare(ctx context.Context) error {
 	if err := e.setup(ctx); err != nil {
 		return err
 	}
-	image, err := s.resolveImage(ctx)
+	image, err := resolveCredentialsImage(ctx, e)
 	if err != nil {
 		return err
 	}
-	svc, err := infra.Credentials(e.lc, image)
+	// The verifier list is the one value this stage takes from the published
+	// node rather than from this machine's configuration (C3.9g2, D1075): a
+	// second operator's config states none, and the node is where the owner's
+	// list is. The read is fail-closed — publishedPolicyOf refuses a node this
+	// Fugaro cannot read, and the stage stops rather than writing a tfvars
+	// from a value it could not read. This stage runs BEFORE the policy stage
+	// (init_stages.go), so what it reads is the node the previous `fugaro
+	// update` published, which is exactly the case the keep rule is for.
+	lc, db, err := budgetDBFor(ctx, e.lc)
+	if err != nil {
+		return err
+	}
+	_, found, raw, err := readPolicyNode(ctx, db, lc)
+	if err != nil {
+		return err
+	}
+	published, err := publishedPolicyOf(raw, found)
+	if err != nil {
+		return err
+	}
+	var publishedVerifiers []string
+	if published != nil {
+		publishedVerifiers = published.VerifierAccounts
+	}
+	svc, err := infra.Credentials(e.lc, image, publishedVerifiers)
 	if err != nil {
 		return userErr("%v", err)
 	}

@@ -16,6 +16,11 @@
 // receives the frozen launch.** `ConfirmView` is a deep-frozen, strings-and-
 // numbers copy -- no `plan`, no `env`, no `cwd` and no `taskBytes`, which is a
 // `Uint8Array` `Object.freeze` cannot reach into.
+//
+// Since C3 the window asks a **second** question (D1115, rule 12), and the last
+// describe below drives it through this same window: the read, the dry run, the
+// window and the write of `settings.edit`, whose yes is the same message from
+// the same frame and whose argv is the real `argvFor`'s.
 
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -35,12 +40,14 @@ import {
   createLaunchRunner,
 } from '../../src/main/launch'
 import type {
+  ConfirmSubject,
   ConfirmView,
   FrozenLaunch,
   LaunchConfirmer,
   LaunchOutcome,
   LaunchRunner,
   LaunchTarget,
+  SettingsConfirmView,
 } from '../../src/main/launch'
 import {
   CONFIRM_ALREADY_ANSWERED,
@@ -50,14 +57,33 @@ import {
   CONFIRM_ENTRY_URL,
   CONFIRM_NOT_YET,
   CONFIRM_READY_DELAY_MS,
+  CONFIRM_TICK_NEEDED,
   CONFIRM_WINDOW_TITLE,
   confirmChannel,
   confirmPreloadPath,
   createConfirmWindow,
 } from '../../src/main/confirm'
 import { SENDER_REFUSAL } from '../../src/main/ipc'
-import type { ConsoleEventLike, IpcMainLike } from '../../src/main/ipc'
-import type { ChildSpawner, SpawnOptionsLike, SpawnedChildLike } from '../../src/main/spawn'
+import type { ConsoleEventLike, IpcMainLike, ValidatedArguments } from '../../src/main/ipc'
+import { SETTINGS_EDIT_OPERATION, argvFor } from '../../src/main/spawn'
+import type { ChildSpawner, SettingsEditPhase, SpawnOptionsLike, SpawnedChildLike } from '../../src/main/spawn'
+import {
+  DECLINING_SETTINGS_EDITOR,
+  SETTINGS_CONFIRM_PREFIX,
+  SETTINGS_EDIT_BUSY,
+  SETTINGS_EDIT_CANCELLED,
+  SETTINGS_EDIT_DISAGREES,
+  SETTINGS_EDIT_NO_ROW,
+  SETTINGS_EDIT_REFUSED,
+  SETTINGS_EDIT_NOT_WRITABLE,
+  SETTINGS_EDIT_SHAPE,
+  SETTINGS_EDIT_UNBUILT,
+  createSettingsEdit,
+  settingsConfirmID,
+} from '../../src/main/settingsedit'
+import type { SettingsEditDeps } from '../../src/main/settingsedit'
+import { SETTINGS_EDIT_MOVED } from '../../src/source/source'
+import type { SettingsEditSpawn } from '../../src/source/source'
 import { displayTaskText } from '../../src/main/launchrules'
 import { consoleWebPreferences } from '../../src/main/window'
 
@@ -1368,6 +1394,7 @@ describe('the view the window is shown', () => {
     expect(Object.keys(view).sort()).toStrictEqual([
       'argv',
       'installation',
+      'kind',
       'planTask',
       'recordedRepository',
       'ref',
@@ -1377,6 +1404,10 @@ describe('the view the window is shown', () => {
       'taskText',
       'title',
     ])
+    // `kind` is the union's tag (D1115): the launch's own view is the one the
+    // window draws a `run` argv for, and a subject drawn from the settings half
+    // would draw no task and no run id at all.
+    expect(view.kind).toBe('launch')
 
     // The frozen launch's own fields the window must never be shown: the plan,
     // the child's environment and working directory, and the task's bytes -- a
@@ -1469,6 +1500,548 @@ describe('the confirm channels', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The window's other question: the settings edit (the settings-edit plan's C3,
+// D1103-D1107, D1112, D1115; design section 5.1 rule 12).
+// ---------------------------------------------------------------------------
+//
+// One implementation, two questions, and this is the second one driven through
+// the **real** window: the read, the dry run, the window and the write. Each
+// case names the mutation it catches:
+//
+//   - a flow that **spawned the write before the yes** fails "writes only once
+//     the window's own top frame said yes": the child list is read while the
+//     window is open and is one dry run long;
+//   - a flow that **let a frame other than the window's own top frame answer**
+//     fails the sender case -- the gate `confirm.ts` holds for the launch,
+//     driven for the second view;
+//   - a flow that **passed `--yes` from a rule of its own** fails the widening
+//     case, and the argv it asserts is the one the **real** `argvFor` builds;
+//   - a flow that **wrote after the installation moved** fails both cancel
+//     cases, one with a window open and one while the dry run is in flight;
+//   - a flow that **retried a refusal** fails "answers a refused write with the
+//     CLI's sentence, and starts no second child" (D1112).
+
+describe('the settings edit behind the same window', () => {
+  it('reads, dry-runs, asks, and writes only once the window’s own top frame said yes', async () => {
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const source = settingsEditSource()
+    const runner = createSettingsEdit({ ...source.deps, confirmer })
+    const set = { op: 'set', key: SETTINGS_KEY, value: '30' } as const
+
+    const edited = runner.edit(set)
+    await untilSettled()
+
+    // Rule 12's order: the read named the layer, the dry run classified the
+    // edit, and **the write is not a child yet** -- the window is.
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
+    expect(source.spawns[0]?.layer).toBe('project')
+    expect(source.spawns[0]?.shown).toStrictEqual(settingsArgv('dry-run', set))
+    expect(windows).toHaveLength(1)
+    const window = windows[0] as FakeWindow
+
+    // The window is the settings question -- it says so with its own tag -- and
+    // it draws the write's argv, which is what the child is held to.
+    const shown = await settingsShownOf(ipcMain, window)
+    expect(shown.project).toBe(PROJECT)
+    expect(shown.key).toBe(SETTINGS_KEY)
+    expect(shown.widening).toBe(false)
+    expect(shown.argv).toStrictEqual(settingsArgv('narrowing', set))
+
+    ready(window, clock)
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+      ok: true,
+      data: { answered: true },
+    })
+    expect(await edited).toStrictEqual({ ok: true, sentence: SETTINGS_WRITE_TEXT })
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run', 'narrowing'])
+    // What the window showed is what is spawned: the source is handed the drawn
+    // argv, which is the one it refuses a plan for differing from.
+    expect(source.spawns[1]?.shown).toStrictEqual(shown.argv)
+  })
+
+  it('writes nothing for a no and for a close, and answers the console’s cancel sentence', async () => {
+    for (const way of ['no', 'closed'] as const) {
+      const clock = aClock()
+      const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+      const source = settingsEditSource()
+      const runner = createSettingsEdit({ ...source.deps, confirmer })
+      const edited = runner.edit({ op: 'set', key: SETTINGS_KEY, value: '30' })
+      await untilSettled()
+      const window = windows[0] as FakeWindow
+
+      if (way === 'no') {
+        ready(window, clock)
+        await ask(ipcMain, confirmChannel('answer'), fromWindow(window), false)
+      } else {
+        window.fire('closed')
+      }
+      expect(await edited, way).toStrictEqual({ ok: false, sentence: SETTINGS_EDIT_CANCELLED })
+      expect(source.spawns.map((call) => call.phase), way).toStrictEqual(['dry-run'])
+    }
+  })
+
+  it('writes nothing for an answer from any frame but the window’s own top frame', async () => {
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const source = settingsEditSource()
+    const runner = createSettingsEdit({ ...source.deps, confirmer })
+    const edited = runner.edit({ op: 'set', key: SETTINGS_KEY, value: '30' })
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+    ready(window, clock)
+
+    const dashboard = fakeContents(CONFIRM_ENTRY_URL)
+    expect(
+      await ask(ipcMain, confirmChannel('answer'), { sender: dashboard, senderFrame: dashboard.mainFrame }, true),
+    ).toStrictEqual({ ok: false, reason: SENDER_REFUSAL })
+    const subframe = { url: CONFIRM_ENTRY_URL }
+    expect(
+      await ask(ipcMain, confirmChannel('answer'), { sender: window.webContents, senderFrame: subframe }, true),
+    ).toStrictEqual({ ok: false, reason: SENDER_REFUSAL })
+
+    // Two yeses that were not answers decided nothing, and the window is still
+    // the one waiting: the operator's own click is what writes.
+    await untilSettled()
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
+    expect(window.closeRequested()).toBe(false)
+
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+      ok: true,
+      data: { answered: true },
+    })
+    expect(await edited).toStrictEqual({ ok: true, sentence: SETTINGS_WRITE_TEXT })
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run', 'narrowing'])
+  })
+
+  it('carries --yes for a widening and not before the tick, and for a narrowing the moment it is answered', async () => {
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const source = settingsEditSource({
+      dryRun: { refusal: null, document: settingsDryRun({ widening: true, why: 'this raises the cap' }), text: '' },
+    })
+    const runner = createSettingsEdit({ ...source.deps, confirmer })
+    const set = { op: 'set', key: SETTINGS_KEY, value: '30' } as const
+    const edited = runner.edit(set)
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+
+    const shown = await settingsShownOf(ipcMain, window)
+    expect(shown.widening).toBe(true)
+    expect(shown.confirmNeedsTick).toBe(true)
+    expect(shown.argv).toStrictEqual(settingsArgv('widening', set))
+    expect(shown.argv).toContain('--yes')
+
+    ready(window, clock)
+    // A yes without the tick is refused by the **main process** as well as
+    // disabled in the document: the tick is D1109's own answer to a stray click,
+    // and a document that failed to disable anything still cannot write a
+    // widening unticked.
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true, false)).toStrictEqual({
+      ok: false,
+      reason: CONFIRM_TICK_NEEDED,
+    })
+    await untilSettled()
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
+
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true, true)).toStrictEqual({
+      ok: true,
+      data: { answered: true },
+    })
+    expect(await edited).toStrictEqual({ ok: true, sentence: SETTINGS_WRITE_TEXT })
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run', 'widening'])
+    expect(source.spawns[1]?.shown).toStrictEqual(shown.argv)
+
+    // The same argv again for a narrowing: `--yes` is on the write whatever the
+    // dry run's `widening` field said. The field decides the console's own
+    // question -- the tick, which gates Confirm above -- and not a word of what
+    // the child is spawned with, because the child has no terminal to answer the
+    // CLI's ordinary y/N with.
+    const narrow = settingsEditSource()
+    const narrowing = createSettingsEdit({ ...narrow.deps, confirmer })
+    const lowered = narrowing.edit({ op: 'set', key: SETTINGS_KEY, value: '30' })
+    await untilSettled()
+    const lower = windows[1] as FakeWindow
+    ready(lower, clock)
+    expect((await settingsShownOf(ipcMain, lower)).confirmNeedsTick).toBe(false)
+
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(lower), true)).toStrictEqual({
+      ok: true,
+      data: { answered: true },
+    })
+    expect(await lowered).toStrictEqual({ ok: true, sentence: SETTINGS_WRITE_TEXT })
+    expect(narrow.spawns.map((call) => call.phase)).toStrictEqual(['dry-run', 'narrowing'])
+    expect(narrow.spawns[1]?.shown).toContain('--yes')
+  })
+
+  it('cancels the edit, and closes no other project’s window, when the installation moves', async () => {
+    const { confirmer, windows } = confirmOver()
+    const source = settingsEditSource()
+    const runner = createSettingsEdit({ ...source.deps, confirmer })
+    const edited = runner.edit({ op: 'set', key: SETTINGS_KEY, value: '30' })
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+
+    // Another installation's change is not this window's: `cancelFor` names a
+    // project, and the identity it becomes is the one the read named.
+    runner.cancelFor(OTHER_PROJECT)
+    expect(window.closeRequested()).toBe(false)
+
+    runner.cancelFor(PROJECT)
+    expect(window.closeRequested()).toBe(true)
+    expect(await edited).toStrictEqual({ ok: false, sentence: SETTINGS_EDIT_CANCELLED })
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
+
+    // Electron's own order: the decision closed the window, and the `closed`
+    // that follows decides nothing more.
+    window.fire('closed')
+  })
+
+  it('opens no window, and writes nothing, when the installation moves while the dry run is in flight', async () => {
+    const { confirmer, windows } = confirmOver()
+    const held = deferred<SettingsEditSpawn>()
+    const source = settingsEditSource({ dryRun: () => held.promise })
+    const runner = createSettingsEdit({ ...source.deps, confirmer })
+    const edited = runner.edit({ op: 'set', key: SETTINGS_KEY, value: '30' })
+    await untilSettled()
+
+    // The read and the dry run are in flight and no window exists yet: the mark
+    // `cancelFor` leaves is the whole of what can cancel this edit, because
+    // there is no window for a close to reach.
+    expect(windows).toStrictEqual([])
+    runner.cancelFor(PROJECT)
+    held.resolve({ refusal: null, document: settingsDryRun(), text: '' })
+
+    expect(await edited).toStrictEqual({ ok: false, sentence: SETTINGS_EDIT_CANCELLED })
+    expect(windows).toStrictEqual([])
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
+  })
+
+  it('answers a refused dry run with the CLI’s own sentence, and opens no window', async () => {
+    const { confirmer, windows } = confirmOver()
+    const source = settingsEditSource({ dryRun: { refusal: DRY_RUN_REFUSAL, document: null, text: '' } })
+    const runner = createSettingsEdit({ ...source.deps, confirmer })
+
+    expect(await runner.edit({ op: 'set', key: SETTINGS_KEY, value: '30' })).toStrictEqual({
+      ok: false,
+      sentence: DRY_RUN_REFUSAL,
+    })
+    expect(windows).toStrictEqual([])
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
+  })
+
+  it('answers a sentence, rather than rejecting, when a source throws', async () => {
+    // `edit` answers an outcome: the operation draws a sentence and has nothing
+    // to do with a rejected promise. Three of the four steps await a process --
+    // a plan built over an installation that can have moved, a child that can
+    // fail to start, time out or be killed with the console (`runToCompletion`
+    // rejects for all three) -- so a throw is the refusal a returned one is.
+    const cases: readonly (readonly [string, Partial<Omit<SettingsEditDeps, 'confirmer'>>])[] = [
+      [
+        'the argv could not be built',
+        { argvForEdit: (): Promise<readonly string[]> => Promise.reject(new Error(SETTINGS_PLAN_FAILED)) },
+      ],
+      [
+        'the child could not be started',
+        { spawnEdit: (): Promise<SettingsEditSpawn> => Promise.reject(new Error(SETTINGS_SPAWN_FAILED)) },
+      ],
+    ]
+    for (const [name, over] of cases) {
+      const { confirmer, windows } = confirmOver()
+      const source = settingsEditSource()
+      const runner = createSettingsEdit({ ...source.deps, ...over, confirmer })
+
+      expect(await runner.edit({ op: 'set', key: SETTINGS_KEY, value: '30' }), name).toStrictEqual({
+        ok: false,
+        sentence: name === 'the argv could not be built' ? SETTINGS_PLAN_FAILED : SETTINGS_SPAWN_FAILED,
+      })
+      expect(windows, name).toStrictEqual([])
+    }
+  })
+
+  it('reaches no window when an installation with no edit in flight moves', () => {
+    // The runner's own contract, and `launch.ts`'s shape for the same case: a
+    // cancel that arrives between two edits decides nothing and closes nothing,
+    // because there is no window of this flow's open. The no-op is the flow's
+    // own rather than the confirmer's -- an id the confirmer does not hold is a
+    // detail of one implementation of it.
+    const closes: string[] = []
+    const runner = createSettingsEdit({
+      ...settingsEditSource().deps,
+      confirmer: {
+        open: (): void => undefined,
+        close: (id: string): void => {
+          closes.push(id)
+        },
+      },
+    })
+
+    runner.cancelFor(PROJECT)
+
+    expect(closes).toStrictEqual([])
+  })
+
+  it('refuses a dry run that answered for another key, and writes nothing', async () => {
+    // The window's key is the **dry run's** and the layer written is the
+    // **row's**, so a document about another key would be drawn as this edit's
+    // and then written against this key's row. A dry run that answers for an
+    // edit the operator did not ask for is refused before the window exists.
+    const { confirmer, windows } = confirmOver()
+    const source = settingsEditSource({
+      dryRun: { refusal: null, document: settingsDryRun({ key: 'budget.other' }), text: '' },
+    })
+    const runner = createSettingsEdit({ ...source.deps, confirmer })
+
+    expect(await runner.edit({ op: 'set', key: SETTINGS_KEY, value: '30' })).toStrictEqual({
+      ok: false,
+      sentence: SETTINGS_EDIT_DISAGREES,
+    })
+    expect(windows).toStrictEqual([])
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
+  })
+
+  it('refuses a dry run that answered for another layer, and writes nothing', async () => {
+    // The write's `--layer` is the read's row and the document's `layer` is the
+    // dry run's own answer about where it would land: a document naming another
+    // layer is a classification of a different write, and the console must not
+    // read its `widening` as if it were this one's.
+    const { confirmer, windows } = confirmOver()
+    const source = settingsEditSource({
+      dryRun: { refusal: null, document: settingsDryRun({ layer: 'local' }), text: '' },
+    })
+    const runner = createSettingsEdit({ ...source.deps, confirmer })
+
+    expect(await runner.edit({ op: 'set', key: SETTINGS_KEY, value: '30' })).toStrictEqual({
+      ok: false,
+      sentence: SETTINGS_EDIT_DISAGREES,
+    })
+    expect(windows).toStrictEqual([])
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
+  })
+
+  it('refuses a dry run whose document carries a refusal, and writes nothing', async () => {
+    // The CLI prints `refusal` empty in every document it prints
+    // (`settingsWriteDoc`, internal/cli/settings_set.go): a refusal is its own
+    // sentence with a non-zero exit and no document. A zero-exit document that
+    // carries one is a state this CLI never produces, so it is refused rather
+    // than read as a classification and written over.
+    const { confirmer, windows } = confirmOver()
+    const source = settingsEditSource({
+      dryRun: { refusal: null, document: settingsDryRun({ refusal: DRY_RUN_MEMBER_REFUSAL }), text: '' },
+    })
+    const runner = createSettingsEdit({ ...source.deps, confirmer })
+
+    expect(await runner.edit({ op: 'set', key: SETTINGS_KEY, value: '30' })).toStrictEqual({
+      ok: false,
+      sentence: SETTINGS_EDIT_REFUSED,
+    })
+    expect(windows).toStrictEqual([])
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
+  })
+
+  it('answers a refused write with the CLI’s sentence, and starts no second child', async () => {
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const source = settingsEditSource({ write: { refusal: STALE_WRITE_REFUSAL, document: null, text: '' } })
+    const runner = createSettingsEdit({ ...source.deps, confirmer })
+    const edited = runner.edit({ op: 'set', key: SETTINGS_KEY, value: '30' })
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+
+    ready(window, clock)
+    await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)
+    expect(await edited).toStrictEqual({ ok: false, sentence: STALE_WRITE_REFUSAL })
+    // D1112: the compare-and-swap refusal exists because another writer won, so
+    // it is shown and never retried -- a third child here would be this console
+    // deciding an edit it was told not to make. The operator's way back is a
+    // **read** (`Read again`), which is the renderer's control and a new flow.
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run', 'narrowing'])
+    expect(windows).toHaveLength(1)
+  })
+
+  it('answers the source’s own moved sentence when the argv it would spawn is not the one shown', async () => {
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const source = settingsEditSource({ write: { refusal: SETTINGS_EDIT_MOVED, document: null, text: '' } })
+    const runner = createSettingsEdit({ ...source.deps, confirmer })
+    const edited = runner.edit({ op: 'set', key: SETTINGS_KEY, value: '30' })
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+
+    ready(window, clock)
+    await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)
+    expect(await edited).toStrictEqual({ ok: false, sentence: SETTINGS_EDIT_MOVED })
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run', 'narrowing'])
+  })
+
+  it('refuses a key the read does not carry, and one the CLI says this console may not write', async () => {
+    // D1111 and D1102: a row the CLI prints no value for is one the screen never
+    // shows and never edits, so it is a key this edit has no row for at all --
+    // and a row the CLI says may not be written (or names no layer for) is a
+    // re-read's refusal rather than a key that is not there.
+    const cases: readonly (readonly [string, unknown, string])[] = [
+      ['no row at all', settingsReadDocument([settingsRow({ key: 'budget.other' })]), SETTINGS_EDIT_NO_ROW],
+      ['a row the CLI prints no value for', settingsReadDocument([settingsRow({ sensitive: true })]), SETTINGS_EDIT_NO_ROW],
+      ['a row the console may not write', settingsReadDocument([settingsRow({ writable: false })]), SETTINGS_EDIT_NOT_WRITABLE],
+      ['a row with no layer named', settingsReadDocument([settingsRow({ target_layer: '' })]), SETTINGS_EDIT_NOT_WRITABLE],
+    ]
+    for (const [name, document, sentence] of cases) {
+      const { confirmer, windows } = confirmOver()
+      const source = settingsEditSource({ read: () => Promise.resolve({ document }) })
+      const runner = createSettingsEdit({ ...source.deps, confirmer })
+
+      expect(await runner.edit({ op: 'set', key: SETTINGS_KEY, value: '30' }), name).toStrictEqual({
+        ok: false,
+        sentence,
+      })
+      expect(windows, name).toStrictEqual([])
+      expect(source.spawns, name).toStrictEqual([])
+    }
+  })
+
+  it('refuses a read document this build cannot read, rather than opening a window on it', async () => {
+    const cases: readonly (readonly [string, unknown])[] = [
+      ['another version', { ...settingsReadDocument([settingsRow()]), version: 2 }],
+      ['no document at all', null],
+      ['a row of the wrong type', settingsReadDocument([settingsRow({ writable: 'true' })])],
+      ['a read that is not an object', ['settings']],
+    ]
+    for (const [name, document] of cases) {
+      const { confirmer, windows } = confirmOver()
+      const source = settingsEditSource({ read: () => Promise.resolve({ document }) })
+      const runner = createSettingsEdit({ ...source.deps, confirmer })
+      const outcome = await runner.edit({ op: 'set', key: SETTINGS_KEY, value: '30' })
+
+      expect(outcome.ok, name).toBe(false)
+      expect(outcome.sentence, name).toMatch(/version 2|does not read/)
+      expect(windows, name).toStrictEqual([])
+      expect(source.spawns, name).toStrictEqual([])
+    }
+  })
+
+  it('shows the CLI’s own sentence for a read that refused, and this console’s for one it could not make', async () => {
+    const cli = { sentence: 'no installation named sandbox' }
+    const failing = settingsEditSource({ read: () => Promise.reject(cli) })
+    const refused = await createSettingsEdit({ ...failing.deps, confirmer: confirmOver().confirmer }).edit({
+      op: 'set',
+      key: SETTINGS_KEY,
+      value: '30',
+    })
+    expect(refused).toStrictEqual({ ok: false, sentence: cli.sentence })
+
+    const broken = settingsEditSource({ read: () => Promise.reject(new Error('the child never started')) })
+    const failed = await createSettingsEdit({ ...broken.deps, confirmer: confirmOver().confirmer }).edit({
+      op: 'set',
+      key: SETTINGS_KEY,
+      value: '30',
+    })
+    expect(failed).toStrictEqual({ ok: false, sentence: 'the child never started' })
+  })
+
+  it('refuses a second edit of the same project while the first is open, and no other project’s', async () => {
+    const { confirmer, windows } = confirmOver()
+    const source = settingsEditSource()
+    const runner = createSettingsEdit({ ...source.deps, confirmer })
+    const first = runner.edit({ op: 'set', key: SETTINGS_KEY, value: '30' })
+    await untilSettled()
+
+    expect(await runner.edit({ op: 'unset', key: SETTINGS_KEY })).toStrictEqual({
+      ok: false,
+      sentence: SETTINGS_EDIT_BUSY,
+    })
+    expect(windows).toHaveLength(1)
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
+
+    // Once the first is answered the project is free again: the reservation is
+    // the edit's, not the installation's for ever.
+    ;(windows[0] as FakeWindow).fire('closed')
+    expect(await first).toStrictEqual({ ok: false, sentence: SETTINGS_EDIT_CANCELLED })
+    const second = runner.edit({ op: 'unset', key: SETTINGS_KEY })
+    await untilSettled()
+    expect(windows).toHaveLength(2)
+    ;(windows[1] as FakeWindow).fire('closed')
+    expect(await second).toStrictEqual({ ok: false, sentence: SETTINGS_EDIT_CANCELLED })
+  })
+
+  it('refuses a request that is not a subcommand, a key and a value', async () => {
+    const { confirmer, windows } = confirmOver()
+    const source = settingsEditSource()
+    const runner = createSettingsEdit({ ...source.deps, confirmer })
+
+    const shapes: readonly ValidatedArguments[] = [
+      { op: 'add', key: SETTINGS_KEY, value: '30' },
+      { op: 'set', key: SETTINGS_KEY },
+      { op: 'set', key: '', value: '30' },
+      { op: 'unset', key: SETTINGS_KEY, value: '30' },
+    ]
+    for (const args of shapes) {
+      expect(await runner.edit(args), JSON.stringify(args)).toStrictEqual({
+        ok: false,
+        sentence: SETTINGS_EDIT_SHAPE,
+      })
+    }
+    expect(windows).toStrictEqual([])
+    expect(source.spawns).toStrictEqual([])
+  })
+
+  it('spawns an unset with no value and no terminator', async () => {
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    // An unset's dry run carries no new value, which is the CLI's own answer for
+    // "the key is gone": the window draws an empty `New value` rather than one
+    // this console invented.
+    const source = settingsEditSource({ dryRun: { refusal: null, document: settingsDryRun({ new: '' }), text: '' } })
+    const runner = createSettingsEdit({ ...source.deps, confirmer })
+    const edited = runner.edit({ op: 'unset', key: SETTINGS_KEY })
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+
+    const shown = await settingsShownOf(ipcMain, window)
+    expect(shown.newValue).toBe('')
+    expect(shown.argv).toStrictEqual(settingsArgv('narrowing', { op: 'unset', key: SETTINGS_KEY }))
+    expect(shown.argv).not.toContain('--')
+
+    ready(window, clock)
+    await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)
+    expect(await edited).toStrictEqual({ ok: true, sentence: SETTINGS_WRITE_TEXT })
+    expect(source.spawns[1]?.shown).toStrictEqual(shown.argv)
+  })
+
+  it('declines every edit before main has built the window, and cancels nothing', async () => {
+    expect(await DECLINING_SETTINGS_EDITOR.edit({ op: 'set', key: SETTINGS_KEY, value: '30' })).toStrictEqual({
+      ok: false,
+      sentence: SETTINGS_EDIT_UNBUILT,
+    })
+    expect(() => DECLINING_SETTINGS_EDITOR.cancelFor(PROJECT)).not.toThrow()
+  })
+
+  it('names a settings window by its project, a launch’s by its run id, and closes only the one named', async () => {
+    // The two questions are told apart by identity (D1115), which is what lets
+    // one map of open windows hold both: a run id is `\d{8}-\d{6}-[0-9a-f]{4}`
+    // and a project name cannot be one, so a close reaches the right window
+    // whichever question it is.
+    expect(settingsConfirmID(PROJECT)).toBe(`${SETTINGS_CONFIRM_PREFIX}${PROJECT}`)
+    expect(settingsConfirmID(PROJECT)).not.toBe(RUN_ID)
+
+    const { confirmer, ipcMain, windows } = confirmOver()
+    const launch = viewFixture()
+    confirmer.open(launch, recordingDecider().decide)
+    confirmer.open(settingsSubject(), recordingDecider().decide)
+    expect(windows).toHaveLength(2)
+
+    // Both windows are open at once, and each is shown its own subject: the
+    // settings half is not a second window implementation, so this is the same
+    // `fields` gate answering the same two questions it does for a launch.
+    expect(await subjectOf(ipcMain, windows[0] as FakeWindow)).toStrictEqual(launch)
+    expect((await subjectOf(ipcMain, windows[1] as FakeWindow)).kind).toBe('settings')
+
+    confirmer.close(settingsConfirmID(PROJECT))
+    expect((windows[0] as FakeWindow).closeRequested()).toBe(false)
+    expect((windows[1] as FakeWindow).closeRequested()).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // The fixtures.
 // ---------------------------------------------------------------------------
 
@@ -1529,4 +2102,192 @@ function frozenLaunch(
  * than about the conversion. */
 function viewFixture(overrides: { readonly runId?: string } = {}): ConfirmView {
   return confirmView(frozenLaunch(overrides))
+}
+
+// ---------------------------------------------------------------------------
+// The fixtures the settings edit is driven over (rule 12).
+// ---------------------------------------------------------------------------
+
+/** SETTINGS_KEY is the one key this file's read document carries a writable row
+ * for, and SETTINGS_WRITE_TEXT is what a successful write prints: the CLI's own
+ * `wrote <path> (backup at <path>)`, which is the whole of what it prints. */
+const SETTINGS_KEY = 'budget.cap_usd'
+const SETTINGS_WRITE_TEXT = 'wrote layer.yaml (backup at layer.yaml.bak)'
+
+/** DRY_RUN_REFUSAL and STALE_WRITE_REFUSAL are the CLI's own sentences for the
+ * two refusals rule 12 turns on: a dry run the CLI would not classify, and the
+ * compare-and-swap of a file that moved between the read and the write (the
+ * shape `internal/cli/settings_write.go` prints, over this file's own path). */
+const DRY_RUN_REFUSAL = 'budget.cap_usd is not a key this project may write'
+const STALE_WRITE_REFUSAL =
+  'layer.yaml changed since it was read: nothing was written; read it again and repeat the edit'
+
+/** SETTINGS_PLAN_FAILED and SETTINGS_SPAWN_FAILED are the two errors a source
+ * throws rather than answers with: a plan it could not build, and a child it
+ * could not start (`runToCompletion` rejects for a spawn that never began, a
+ * timeout and a shutdown alike). `sentenceOf` shows an error's own message when
+ * it has one, so these are the sentences the screen would draw. */
+const SETTINGS_PLAN_FAILED = 'the installation moved while the plan was being built'
+const SETTINGS_SPAWN_FAILED = 'the settings write could not be started'
+
+/** DRY_RUN_MEMBER_REFUSAL is the impossible state rule 12 fails closed on: a
+ * **zero-exit** dry run document whose `refusal` member is not empty. The CLI
+ * prints that member empty in every document it prints, so any text will do --
+ * what is asserted is that the text is not read as a classification. */
+const DRY_RUN_MEMBER_REFUSAL = 'the layer is managed by the installation'
+
+/** settingsReadDocument is `settings --json`'s document (`settingsDocVersion`,
+ * `internal/cli/settings_render.go`): the settings read's own contract, which
+ * `decodeRead` reads strictly. */
+function settingsReadDocument(rows: readonly unknown[]): Record<string, unknown> {
+  return { version: 1, project: PROJECT, settings: rows }
+}
+
+/** settingsRow is one row of that document. `writable` is the CLI's own answer
+ * to "may this console write this key" (D1102) and `target_layer` is the layer
+ * the edit is written to (D1105); both are read by the flow and only the second
+ * reaches the window. */
+function settingsRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    key: SETTINGS_KEY,
+    value: '25',
+    wins: 'project',
+    target_layer: 'project',
+    writable: true,
+    ...overrides,
+  }
+}
+
+/** settingsDryRun is `settings set|unset --dry-run --json`'s document: what the
+ * window is drawn from, and the classification (`widening`) that decides the
+ * window's own shape -- the tick -- rather than a word of the write's argv
+ * (D1106, D1109). */
+function settingsDryRun(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    version: 1,
+    key: SETTINGS_KEY,
+    layer: 'project',
+    path: 'layer.yaml',
+    changed: true,
+    widening: false,
+    why: '',
+    old: '25',
+    new: '30',
+    refusal: '',
+    ...overrides,
+  }
+}
+
+/** settingsArgv is the exact argv the **shipped** console builds for one phase
+ * of one edit: the real table (`argvFor`, `settings.edit`), with the layer and
+ * the phase the main process decided. A test that spelled the words out itself
+ * could pass while the table emitted a different order. */
+function settingsArgv(
+  phase: SettingsEditPhase,
+  args: ValidatedArguments = { op: 'set', key: SETTINGS_KEY, value: '30' },
+  layer = 'project',
+): readonly string[] {
+  return argvFor(SETTINGS_EDIT_OPERATION, args, {
+    target: { project: PROJECT },
+    directory: undefined,
+    settingsEdit: { phase, layer },
+  })
+}
+
+/** SettingsSpawnCall is one phase the flow asked its source to run. */
+interface SettingsSpawnCall {
+  readonly phase: SettingsEditPhase
+  readonly layer: string
+  readonly shown: readonly string[]
+}
+
+/** settingsEditSource is the three deps `createSettingsEdit` takes, over
+ * documents a case chooses, plus the record of every phase it spawned. Every
+ * edit's argv comes from the real `argvFor`, so what these cases assert is what
+ * the shipped console builds. */
+function settingsEditSource(
+  options: {
+    readonly read?: () => Promise<{ readonly document: unknown }>
+    readonly dryRun?: SettingsEditSpawn | (() => Promise<SettingsEditSpawn>)
+    readonly write?: SettingsEditSpawn | (() => Promise<SettingsEditSpawn>)
+  } = {},
+): { readonly deps: Omit<SettingsEditDeps, 'confirmer'>; readonly spawns: readonly SettingsSpawnCall[] } {
+  const spawns: SettingsSpawnCall[] = []
+  const answer = (
+    chosen: SettingsEditSpawn | (() => Promise<SettingsEditSpawn>) | undefined,
+    otherwise: () => SettingsEditSpawn,
+  ): Promise<SettingsEditSpawn> =>
+    typeof chosen === 'function' ? chosen() : Promise.resolve(chosen ?? otherwise())
+  return {
+    spawns,
+    deps: {
+      readSettings:
+        options.read ?? ((): Promise<{ readonly document: unknown }> => Promise.resolve({ document: settingsReadDocument([settingsRow()]) })),
+      argvForEdit: (args, phase, layer) => Promise.resolve(settingsArgv(phase, args, layer)),
+      spawnEdit: (args, phase, layer, shown) => {
+        spawns.push({ phase, layer, shown })
+        return phase === 'dry-run'
+          ? answer(options.dryRun, () => ({ refusal: null, document: settingsDryRun(), text: '' }))
+          : answer(options.write, () => ({ refusal: null, document: null, text: SETTINGS_WRITE_TEXT }))
+      },
+    },
+  }
+}
+
+/** settingsSubject is the view a settings window is opened with, for the cases
+ * that are about the window rather than about the flow: C2's fields, the argv
+ * the confirmed edit spawns, and the union's own two members. */
+function settingsSubject(overrides: Partial<SettingsConfirmView> = {}): SettingsConfirmView {
+  return {
+    kind: 'settings',
+    project: PROJECT,
+    key: SETTINGS_KEY,
+    oldValue: '25',
+    newValue: '30',
+    layer: 'project',
+    wins: 'project',
+    sentence: '',
+    widening: false,
+    why: '',
+    argv: settingsArgv('narrowing'),
+    defaultButton: 'confirm',
+    tick: '',
+    confirmNeedsTick: false,
+    ...overrides,
+  }
+}
+
+/** subjectOf reads one window's own `fields()`: the subject it was opened with,
+ * which is the whole of what it is shown. */
+async function subjectOf(ipcMain: ReturnType<typeof fakeIpcMain>, window: FakeWindow): Promise<ConfirmSubject> {
+  const reply = (await ask(ipcMain, confirmChannel('fields'), fromWindow(window))) as {
+    readonly ok: boolean
+    readonly data?: ConfirmSubject
+  }
+  expect(reply.ok).toBe(true)
+  if (reply.data === undefined) throw new Error('the window answered with no subject')
+  return reply.data
+}
+
+/** settingsShownOf is `subjectOf` for the settings window, asserting the tag on
+ * the way: the union is a discriminant, so a case that read the launch's half
+ * here would be a case about the wrong question. */
+async function settingsShownOf(
+  ipcMain: ReturnType<typeof fakeIpcMain>,
+  window: FakeWindow,
+): Promise<SettingsConfirmView> {
+  const subject = await subjectOf(ipcMain, window)
+  expect(subject.kind).toBe('settings')
+  if (subject.kind !== 'settings') throw new Error('the window was asked the launch’s question')
+  return subject
+}
+
+/** deferred is a promise a case settles by hand, for the states that exist only
+ * while a child is in flight. */
+function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value: T) => void } {
+  let settle: (value: T) => void = () => undefined
+  const promise = new Promise<T>((resolve) => {
+    settle = resolve
+  })
+  return { promise, resolve: (value: T): void => settle(value) }
 }

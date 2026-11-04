@@ -72,9 +72,9 @@ Check 38 of [gcp-live-checklist.md](gcp-live-checklist.md) is the option's live 
 
 Its FACT lines are the record of both, in the checklist section. `clone` is still the newer of the two options: `baked` is what every workflow existing before it, the setup skill and `fugaro image refresh`'s rebuild path assume.
 
-## `checkout: shared` arrives in 0.15.0
+## `checkout: shared` has no released image yet
 
-A third kind, `checkout: shared`, is in `fugaro.yaml`'s schema and in the config format: the workflow's job runs a shared dependency-layer image — one image per resolved dependency set, holding no repository's own source — and the run clones your repository at launch, exactly as `clone` does. **No release builds or refreshes such an image before fugaro 0.15.0**, so `fugaro validate` refuses the key until then (`shared images arrive in 0.15.0`, at `workflows.<name>.checkout`) and a run of such a workflow does not start. If you have already written it, use `checkout: baked` or `checkout: clone` for now: a 0.14.0 CLI stops your runs, and 0.15.0 is the release that lifts the refusal and runs the kind.
+A third kind, `checkout: shared`, is in `fugaro.yaml`'s schema and in the config format: the workflow's job runs a shared dependency-layer image — one image per resolved dependency set, holding no repository's own source — and the run clones your repository at launch, exactly as `clone` does. **No released fugaro builds or refreshes such an image yet** — 0.15.0 was the release it was to arrive in, and it shipped without it — so `fugaro validate` refuses the key (`no released fugaro builds or refreshes a shared dependency-layer image yet`, at `workflows.<name>.checkout`) and a run of such a workflow does not start: use `checkout: baked` or `checkout: clone` meanwhile.
 
 ## Known gaps
 
