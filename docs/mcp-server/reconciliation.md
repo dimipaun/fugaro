@@ -229,11 +229,11 @@ transitive dependencies**, and **the M5 gate file is the owner's to create**, so
 file a person writes rather than something this folder can assert is settled.
 
 The review also found that **the library's defaults are the opposite of this design's rules**, and
-named them: PKCE is **optional** (`op/token_request.go:168`) and an empty challenge method reads as
-`plain` (`auth_request.go:471-480`); **an unknown scope is silently dropped**
-(`auth_request.go:310`) against D927; extra grants (jwt-bearer, token-exchange, device code,
+named them: PKCE is **optional** (`op/token_request.go` line 168) and an empty challenge method reads
+as `plain` (`auth_request.go` lines 471-480); **an unknown scope is silently dropped**
+(`auth_request.go` line 310) against D927; extra grants (jwt-bearer, token-exchange, device code,
 implicit) are on by default where this design wants two; the library needs a `SigningKey`
-(`op/storage.go:67`) that the design gave **no home**; and its discovery document is
+(`op/storage.go` line 67) that the design gave **no home**; and its discovery document is
 `openid-configuration`, not the RFC 8414 shape §2 names. **The version the review read is
 3.51.17.** The amended answer is a **thin constraint layer ahead of the library**, stated in §3 and
 §6 and built in M5:

@@ -46,8 +46,8 @@ and PKCE and the project's own Firebase as the identity provider, so that MCP cl
 manage tasks without the CLI. The owner approved a design PR on 2026-10-31 and **answered the fifteen
 decisions on 2026-11-04** — D920's public endpoint, D923's paired-device sign-in and its `user:`-only
 lists, D930's rotating tokens, D931's single launch path, D934's off-by-default front door, D921's
-library **with its licence still UNCONFIRMED**, and D922's separate **`mcpauth`** subtree, closed to
-every client.
+library **with its licence then UNCONFIRMED** (the review of the same day confirmed **Apache-2.0**),
+and D922's separate **`mcpauth`** subtree, closed to every client.
 
 **Reconciled against.** `origin/main` at `3d6ed04d`, read on 2026-11-01, **re-read on 2026-11-04 at
 `b41709ea`**, and **re-verified again on 2026-11-04 at `5998d67c`** for the amendment round — every
