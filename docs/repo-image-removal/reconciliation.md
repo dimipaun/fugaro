@@ -1,0 +1,426 @@
+# Repository image removal: reconciliation against the code
+
+**Status: a design, and every decision in it is open.** The owner's ruling of 2026-11-04 —
+*"Completely disable repo-level images for now to make things simpler."* — is reconciled here against
+the tree at `aa034db1`, and **where this file disagrees with [spec.md](spec.md), this file wins**. Each
+decision **D1190–D1207** carries its recommendation, the cost of the alternative and the cost of the
+recommendation; the block and how it was read are §3.
+
+---
+
+## 1. The audit, against the tree
+
+Each finding is **Exists**, **Missing** or **Conflicts**: what the brief assumed, read against the
+code. A `:line` is a **declaration** line at `aa034db1`; the symbol is what to search for.
+
+- **F1: Exists. A job's image is per `(repository, workflow)`, a `:latest` tag in the repository's own
+  registry.** `internal/infra/spec.go:1011` computes
+  `gcp.ImageName(c.registryPath(), slug, name) + ":latest"`, `internal/backend/gcp/names.go:233` is the
+  name function, and `internal/infra/spec.go:749` (`registryPath`) is the registry it lands in. Nothing
+  about the image is project-level except the catalog's newer path.
+
+- **F2: Exists. `image:` is the repository's build input and it has no name.**
+  `internal/config/config.go:603` is the field, `internal/config/config.go:752` the block it holds
+  (`apt`, `setup`, `tools`, `skip_build_scripts`, `key_files`, and the `node`/`jdk` tombstones
+  `internal/config/image.go:119`, `:122`). The block is rendered into a Dockerfile by
+  `internal/image/render.go:163`; nothing in it is addressable from outside the repository.
+
+- **F3: Exists. `dockerfile:` is one repository-relative path, and only the repository's own.**
+  `internal/config/config.go:604`, validated inside `validateImage` (`internal/config/image.go:109`),
+  which refuses a path outside the repository. It is the escape hatch for exactly the repository that
+  commits it.
+
+- **F4: Exists. The catalog is the *other* path, and one predicate turns it off.**
+  `internal/catalog/select.go:318` (`Applies`) returns false as soon as the workflow sets `image:` or
+  `dockerfile:`, which is why `internal/infra/spec.go:799` (`catalogJobImage`) is reached for every
+  workflow *except* the ones this design is about. The tree carries two image paths today, and that is
+  finding F4's whole point.
+
+- **F5: Exists. The catalog's definitions live in the project's configuration and are published.**
+  `internal/config/catalog.go:25` (the type), `internal/localcfg/localcfg.go:236` (the
+  `image_catalog` key), `internal/projectpolicy/policy.go:1131` (its validation where it is published).
+
+- **F6: Exists. The catalog's deploy-time selection is built**, with the tag-cover rule and the two
+  refusals: `internal/infra/spec.go:799`, and the config-side references
+  (`image_name`, `needs`) at `internal/config/config.go:619`, `:621`.
+
+- **F7: Exists. The catalog's scheduled check has its decision layer and not its schedule.**
+  `internal/imagecheck/catalog.go:20` (`CheckCatalog`) landed; the Terraform piece the D1148 answer
+  calls for has not, and `internal/cli/imagecheck.go:221` (`checkedWorkflows`) still decides what the
+  **per-repository** check looks at.
+
+- **F8: Exists, and it matters for the order. The catalog is not yet the deployed path on `main`:**
+  `internal/cli/recipes_skew.go:177` holds `imageCatalogShipped = false` beside
+  `imageCatalogSince = "0.17.0"` (`:169`), and the open pull request #1665 flips it. So the removal is
+  sequenced behind a flip that has not merged, and a plan that removed the per-repository path first
+  would leave the tree with **no** deployed image path at all.
+
+- **F9: Exists. One Cloud Run job per repository, one Scheduler, one name function.**
+  `deploy/terraform/gcp/modules/repo/check.tf:16` (`google_cloud_run_v2_job "check"`), `:116`
+  (`google_cloud_scheduler_job "check"`), `internal/backend/gcp/names.go:280` (`CheckJobName` →
+  `fugarochk-<slug>`). It is per repository, not per project and not per workflow.
+
+- **F10: Exists. The per-repository build path: the repository's own Artifact Registry repository, its
+  build account, and the API-submitted Cloud Build.** `deploy/terraform/gcp/modules/repo/registry.tf:10`
+  (`google_artifact_registry_repository "images"`), `deploy/terraform/gcp/modules/repo/build.tf:5`
+  (`google_service_account "build"`), `internal/backend/gcp/build.go:169` (`BuildRequest`). There is no
+  Cloud Build **trigger** anywhere in `deploy/terraform`, so "the per-repository build path" is code
+  plus IAM, not a Terraform trigger.
+
+- **F11: Exists. The repository's registry and its check job are protected from an ordinary converge.**
+  `deploy/terraform/gcp/modules/repo/registry.tf:10` sets `prevent_destroy = true`, and
+  `deploy/terraform/gcp/modules/repo/check.tf:27` sets `deletion_protection = !var.allow_job_delete`.
+  This is what makes the retirement in §4 of [spec.md](spec.md) a separate, explicit act.
+
+- **F12: Exists. Readiness asks for a repository image, by tag, in the repository's own registry.**
+  `internal/infra/readiness.go:30` (`MissingImage`), `:723` (`hasLatest`), and the per-workflow
+  decision at `internal/infra/readiness.go:445`. The catalog branch is already beside it
+  (`catalogImageEntry`), which is what lets the removal **replace** the check rather than delete it.
+
+- **F13: Exists. `repoCtx.check` is the one producer of the check spec.**
+  `internal/infra/spec.go:1440` builds the `CheckSpec` (`internal/infra/spec.go:318`) that the module
+  turns into the job and the Scheduler, from the head's workflows and the repository's registry.
+
+- **F14: Exists. The image is fixed at deploy time, so every choice here is a deploy-time choice.**
+  `internal/infra/spec.go:799`'s comment states it and `internal/infra/spec.go:1011` implements it: the
+  job's image is written into the job, and a run cannot change it. A refusal for a bad image therefore
+  has to happen where the spec is built, not where the run starts.
+
+- **F15: Missing. There is no `fugaro image migrate`.** The only converter is
+  `fugaro image promote` (`internal/cli/image_promote.go:19`), which reads the repository's definition
+  and writes a catalog entry. The brief's example command does not exist, and the one that does is the
+  one this design proposes to remove.
+
+- **F16: Exists. Exactly two writers touch a workflow's image keys today, and neither is `fugaro
+  config init`.** `internal/cli/image_promote.go:179` (`setWorkflowImageName`) removes `image:` and
+  `dockerfile:` and writes `image_name`; the **setup skill** writes the keys by hand
+  (`plugin/skills/setup/SKILL.md:84`, `:91`). `internal/cli/config_init.go:21` (`minimalFugaroYAML`)
+  writes `version`, `project`, `gcp_project` and at most `git.base_branch` and `profile` — **no image
+  key at all**, so the brief's "`config init`" is not a writer to remove.
+
+- **F17: Exists. Retirement exists, and it is owner-run behind two typed confirmations.**
+  `internal/cli/init.go:444` is the `--retire` flag on the `init`/`update --repo` door,
+  `internal/cli/init_retire.go:22` the flow, `internal/infra/retire.go:26` the set it acts on, with
+  `Protected` and `ProtectedRead` as the reading of `deletion_protection`. Nothing in the managed gate
+  admits it.
+
+- **F18: Exists. The scope table is what makes a key settable, and the image keys are in it.**
+  `internal/config/scope.go:106`, `:108`, `:113`, `:131` are the rows, `:179` (`ExecutableKeys`) and
+  `:189` (`NonExecutableImageKeys`) the classifications. Removing a key from `fugaro.yaml` and leaving
+  its scope row would leave the settings commands able to write a key the config refuses.
+
+- **F19: Missing. `internal/infra/cover.go` does not exist.** The brief names it; the cover logic is
+  `internal/infra/tf/cover.go:22` (`allowedTypes`), whose test fails if a module plans a resource type
+  the list does not carry, plus `internal/infra/tf/managed_cover.go:124` for the managed set. A removal
+  that deletes resource types from a module must edit **that** file or its test fails.
+
+- **F20: Exists. `fugaro image refresh` is one of the seven commands the managed gate covers**, and
+  its row is written as "derived images" and "the per-build list"
+  ([docs/managed-agent-converge/spec.md](../managed-agent-converge/spec.md) §3.1). The removal changes
+  what the command does, so its row changes with it.
+
+- **F21: Exists. The console and the website pin the command set.**
+  `console/src/main/ipc.ts:1764`–`:1788` is the console's never-reachable table
+  (`console/test/unit/ipc.test.ts:681` classifies each), and `ee/clidoc/cliref_test.go:26`
+  (`TestCliReferenceIsCurrent`) regenerates-and-compares `website/content/cli-reference.md`, beside
+  `internal/cli/docs_website_cliref_test.go:186`. Removing a command without moving these fails a test.
+
+- **F22: Conflicts. `checkout: baked`'s image *is* the per-repository tag, so removing the tag changes
+  what `baked` resolves to.** `internal/infra/spec.go:1011` computes it and `:1014` gives `clone` the
+  base image instead. `checkout` keeps both its values, but what `baked` points at is no longer built by
+  the engine — a decision, not an implementation detail (D1191).
+
+- **F23: Exists. The project layer can set the same keys.** `schemas/project-layer.schema.json:265`
+  (`image`) and `:338` (`rebuild`), validated through `internal/config/layer.go:305`
+  (`ParseProjectLayer`, which refuses a key outside its scope). A profile is therefore a **second door**
+  to the removed build, so the removal has two schemas and two validators to move, not one.
+
+- **F24: Exists. Two dogfood repositories carry the keys.** This repository's `go` workflow sets
+  `image.setup` (`fugaro.yaml:43`), and the sandbox repository's workflows are what the live checks run.
+  Nothing in the tree enumerates a third, which is §5's residual.
+
+---
+
+## 2. Where the brief's own reading was wrong
+
+Six corrections, each a fact of the tree rather than an opinion:
+
+- **C1.** **`internal/infra/cover.go` does not exist** (F19). The file is
+  `internal/infra/tf/cover.go:22`, and its `allowedTypes` list plus
+  `internal/infra/tf/managed_cover.go:124` are what a Terraform removal must satisfy.
+- **C2.** **The migration command the brief offers as an example already exists under another name**
+  (F15). `fugaro image promote` is exactly "write the catalog entry from the repository's current
+  definition, as `fugaro image promote` does" — so the decision is not "add a migrate command" but
+  "does the tree keep a reader of removed keys at all" (D1192).
+- **C3.** **Readiness is not deleted, it is re-pointed** (F12). The catalog branch already exists beside
+  the repository one; after the removal readiness asks the shared registry instead of the repository's
+  (D1203).
+- **C4.** **`image.*` includes two tombstones, and they are not settings.** `image.node` and
+  `image.jdk` were removed in 0.7.0 and their fields exist only to refuse with a migration sentence
+  (`internal/config/image.go:119`, `:122`). The removal takes the block and **keeps the tombstone
+  mechanism**, because it is the mechanism the removed keys need (D1195).
+- **C5.** **`fugaro config init` writes no image key and `fugaro setup` does not write them either**
+  (F16). The writers to move are the setup skill's instructions and the catalog commands; `setup`
+  *builds* images (`internal/cli/init.go:3415`), which is a different task (D1207).
+- **C6.** **The `rebuild:` block's fate is a consequence, not a separate question.** It is this
+  repository's triggers for *its own* image; with the repository-level check gone there is nothing for
+  it to describe, and a per-entry age cap is the catalog's or D1148's (D1200).
+
+---
+
+## 3. The number block
+
+The decision block is taken **above every `D<number>` on `main` and in every open work stream**, read on
+**2026-11-04** by fetching each **branch** and reading it rather than by trusting a neighbour's table.
+
+- **On `main`**, at the head this branch was cut from (`aa034db1`), the highest **written** decision is
+  **D1183** (`docs/config-management/reconciliation.md`, that work's block D1160–D1183) and the highest
+  number **named** is **D1189**, its reserved tail. No `D119x` or `D12xx` appears anywhere in `docs/`.
+- **In the open work streams**, re-checked in this run by fetching each branch and reading it — the
+  branch is the evidence. The highest number any of them names is again **D1189**, from the same
+  configuration-management folder `main` carries; `docs/workspaces` (#1492), `docs/binary-allow-rule`
+  (#1491), `docs/periodic-reviews` (#1490), `docs/mcp-server` (#1487), `docs/plugin-user-scope`
+  (#1488) and `docs/run-without-checkout` (#1481) all sit below D1027, and the managed-mode, settings
+  and catalog **code** branches (#1663, #1665, #1666–#1673) write no new decision. **D1190 is therefore
+  free.**
+- **This work takes D1190–D1219: D1190–D1207 are written here, and D1208–D1219 are reserved and
+  unused** — the thirty-wide width `docs/ee-reorg` took for D520–D549. A later task that needs a number
+  re-checks this section's facts rather than its conclusion.
+
+---
+
+## 4. The decisions
+
+- **D1190 (what exactly is removed, and in how many pieces) — OPEN, recommended.**
+  Recommendation: the four places of [spec.md](spec.md) §1 — the **configuration** (the `image.*`
+  block, `dockerfile:`, `rebuild.*`, the scope rows and both schemas), the **commands**
+  (`image build`'s derived arm, `image refresh`'s derived steps, `check`, `status`, `render`, `gate`,
+  `record`, `promote`), the **deploy path** (the derived image name, the per-repository check job and
+  its Scheduler, the repository's registry, readiness) and the **writers** (the setup skill, the
+  plugin, the console, the website) — in one release, in the order [spec.md](spec.md) §3.1 gives:
+  configuration, deploy path, commands.
+  Cost of the alternative: leaving the commands alive while the configuration refuses produces a
+  command that can never succeed, and the refusal would then be the only thing telling two stories.
+  Cost of the recommendation: 0.18.0 carries a Terraform change, a CLI change and two schema changes
+  at once, and the Terraform one is a **SEC** task that a reviewer reads line by line.
+
+- **D1191 (`checkout: baked` after the removal, and the one rule the catalog gains) — OPEN,
+  recommended.**
+  Recommendation: `checkout` **keeps both values** (`internal/config/config.go:657`) and both their
+  meanings; a `baked` workflow's image is the **catalog's** choice, and a `baked` workflow whose chosen
+  entry's source is a **prebuilt image** (`SourceImage`, `internal/config/catalog.go:71`) is **refused
+  at deploy time**, where the spec is built (F14), the way the `docker` tag is refused on Cloud Run
+  today.
+  Cost of the alternative: collapsing `checkout` to one kind changes a wire field's meaning — which
+  `CLAUDE.md`'s rule forbids outright — and a repository that loses its preinstalled toolchain also
+  loses the reason its runs are fast, so every dogfood run would install its dependencies again.
+  Cost of the recommendation: a new refusal to write and test, and it has to be **complete**, because
+  a prebuilt entry that passes it deploys a job whose first minute fails.
+
+- **D1192 (how an existing repository migrates) — OPEN, recommended.**
+  Recommendation: **no migration command.** The migration is the two dogfood repositories' steps of
+  [spec.md](spec.md) §3.1, run with the binary that still has `fugaro image promote`
+  (`internal/cli/image_promote.go:19`) **before** the removal lands, and `promote` is removed in the
+  same release as the keys it reads. The refusal a person meets names the forward path:
+  `fugaro image add --dockerfile <path> --tags <tags>` (or `--inline` with the block the old `image:`
+  held) plus `image_name: <name>`.
+  Cost of the alternative: a `fugaro image migrate` — or a `promote` kept for one release — is a
+  **reader of removed keys** living in the tree, which is the compatibility shim the ruling forbids; it
+  has to be deleted again later, so the removal costs two releases instead of one, and the second
+  release's removal has no fixture of its own.
+  Cost of the recommendation: a repository nobody migrated by hand has no automatic path — its owner
+  reads the old `image:` block out of git history and passes it to `fugaro image add --inline`, which
+  is a hand conversion, not a lost image.
+
+- **D1193 (the order, so the dogfood pipeline never loses its image) — OPEN, recommended.**
+  Recommendation: for this repository and the sandbox repository, **the entry, its build, the
+  `image_name` pin and one confirmed run come first** — a task for this repository, an owner-run live
+  step for the sandbox ([spec.md](spec.md) §3.1) — and every removal task is sequenced behind them and
+  behind **D1148's two tasks**, which change the same Terraform, `internal/infra/spec.go`,
+  `internal/infra/tf/cover.go` and `internal/imagecheck`.
+  Cost of the alternative: landing the removal first and migrating afterwards is the failure the brief
+  names — a dogfood run whose job points at an image that does not exist — and every later task would
+  be tested against a pipeline that is already broken.
+  Cost of the recommendation: the first task of the series changes no engine code (it is a Dockerfile
+  and a pin), so the series opens with a commit whose review value is its ordering.
+
+- **D1194 (retirement) — OPEN, recommended.**
+  Recommendation: retirement stays **owner-run only** — `fugaro update --repo <r> --retire` with the
+  two typed confirmations (`internal/cli/init.go:444`) — it is **never automatic**, **never** admitted
+  by the managed gate, and `deletion_protection` (`check.tf:27`) and `prevent_destroy`
+  (`registry.tf:10`) are unchanged. The plan shows the destroy and refuses it without the flag.
+  Cost of the alternative: an ordinary converge destroying them removes an Artifact Registry
+  repository that may hold a live job's image and the versions a rollback needs, with no confirmation
+  and no record — which is why the two protections exist.
+  Cost of the recommendation: an installation keeps an idle check job, an idle Scheduler entry and an
+  empty registry until the owner runs one command, and that costs money in the meantime.
+
+- **D1195 (what a removed key says when it is read) — OPEN, recommended.**
+  Recommendation: each removed key becomes a **tombstone** in the config — the mechanism
+  `image.node`/`image.jdk` already use (`internal/config/image.go:119`, `:122`) — and its refusal names
+  the release and the catalog command that replaces it. Strict decoding
+  (`internal/config/config.go:1195`) is what makes a tombstone necessary: the field has to exist for
+  the refusal to be the message rather than the decoder's.
+  Cost of the alternative: deleting the fields makes every removed key read as *field image not found*,
+  which names no replacement, reads as a typo and gives a person nothing to do next.
+  Cost of the recommendation: the removed keys stay in the tree as names for at least one release, so
+  "removed" means "refused and named", not "absent from the source".
+
+- **D1196 (the schemas) — OPEN, recommended.**
+  Recommendation: `schemas/fugaro.schema.json` loses `image` (`:358`), `dockerfile` (`:396`) and
+  `rebuild` (`:511`) and its mutual-exclusion clauses (`:306`) shrink to `image_name` with `needs`;
+  `schemas/project-layer.schema.json` loses `:265` and `:338`;
+  `schemas/settings.schema.json` keeps `base_images` and the flattened `image_catalog.*` rows
+  (`:547`) untouched.
+  Cost of the alternative: a schema that still allows a removed key is the file a person's editor
+  validates against, so it would let a `fugaro.yaml` through that the CLI refuses — the schema would be
+  the one document that lies about the removal.
+  Cost of the recommendation: both schemas change in the same commit as the validators, so the removal
+  cannot be split across two tasks.
+
+- **D1197 (the fixtures and the golden) — OPEN, recommended.**
+  Recommendation: the **50** files under `testdata/` carrying one of the three keys
+  (`grep -rlE '^[[:space:]]*(image|dockerfile|rebuild):' testdata/`) are the task's own list. The
+  **invalid** fixtures that assert an old refusal — `image-and-dockerfile.yaml`, the `legacy-image-*`
+  pair, the `checkout-clone-*` set — are **replaced** by fixtures asserting the new refusal, and
+  `internal/cli/testdata/init_retire.golden` is regenerated.
+  Cost of the alternative: deleting the invalid fixtures leaves the new refusal as the one behaviour of
+  the removal with no fixture, and the removal's message is the only thing a person will read.
+  Cost of the recommendation: 50 fixture files move in one commit, which is a large but purely
+  mechanical diff, and every one of them is a file some test names.
+
+- **D1198 (skew) — OPEN, recommended.**
+  Recommendation: **no new skew pair.** `imageCatalogSince`/`imageCatalogShipped`
+  (`internal/cli/recipes_skew.go:169`, `:177`) keep their meaning and are not duplicated; the removed
+  keys are a **repository's own `fugaro.yaml`**, read and written by the same binary, so the removal's
+  skew is a launcher-and-checkout pairing, which the release's `### For operators` states in one
+  sentence. No wire shape is removed: `checkout`, `image_name` and `needs` are unchanged.
+  Cost of the alternative: a `repoImageSince`/`repoImageShipped` pair exists to keep an *older reader*
+  working against a *newer document*; here the older reader is the older binary, which the release's
+  pin and `fugaro update` already move together, so the pair would be a constant with no document to
+  guard.
+  Cost of the recommendation: an installation that upgrades the checkout before the CLI meets a refusal
+  that names an upgrade, which is the ordinary direction of every skew in this tree.
+
+- **D1199 (the per-repository check job and its Scheduler) — OPEN, recommended.**
+  Recommendation: **removed**, with the ruling it folds in — *no repo-level scheduled check unless
+  there is a repo-level image* — and `checkedWorkflows` (`internal/cli/imagecheck.go:221`) and
+  `repoCtx.check` (`internal/infra/spec.go:1440`) go with them. The catalog's rebuilds are the
+  project-level schedule D1148 answers, and nothing per repository survives.
+  Cost of the alternative: keeping one job per repository to check **catalog** entries makes N
+  repositories race over one shared registry and one build bound, and it is a second scheduler doing
+  the job the D1148 answer put at installation level — two schedules, one subject.
+  Cost of the recommendation: a project all of whose entries are prebuilt images gets a scheduled check
+  that fires nothing, which is D1148's subject and not a reason to keep a repository-level one.
+
+- **D1200 (`rebuild:`'s disposition) — OPEN, recommended.**
+  Recommendation: **removed entirely** with the repository-level check, and a per-entry age cap, if the
+  catalog wants one, is D1148's or a catalog key's — never a repository's.
+  Cost of the alternative: keeping `rebuild.max_age` as a repository key read by the project-level check
+  means an **entry** inherits the age cap of whichever repository happens to name it — one image,
+  several caps, decided by reading order — which is exactly the coupling the catalog exists to end.
+  Cost of the recommendation: a repository that wanted a shorter rebuild interval for its own toolchain
+  has no knob until the catalog gets one.
+
+- **D1201 (the repository's own Artifact Registry repository) — OPEN, recommended.**
+  Recommendation: it leaves the **Terraform configuration** (`registry.tf:10`) and the **object** is
+  destroyed only by the owner's `--retire` run (D1194). The installation's shared and base registries
+  (`deploy/terraform/gcp/modules/installation/registry.tf:93`) are untouched.
+  Cost of the alternative: keeping it keeps one empty registry per repository, with its cleanup policies
+  and its IAM, so the removal's promise "one image path" would be false in the bill even while it is
+  true in the configuration.
+  Cost of the recommendation: until the owner runs `--retire`, an installation pays for an empty
+  registry per repository — a real cost, named rather than hidden.
+
+- **D1202 (the build account) — OPEN, recommended.**
+  Recommendation: **the build accounts stay** (`deploy/terraform/gcp/modules/repo/build.tf:5`) with
+  their grants narrowed to the **shared** registry, the base registry and the ghcr pull-through. A
+  catalog entry whose source is a Dockerfile in repository X is built as **X's** build account with X's
+  credential and secrets, which is what the tree already enforces
+  (`internal/backend/gcp/catalog.go:79`, `internal/cli/image_build_catalog.go:366`).
+  Cost of the alternative: one installation-level build account for every catalog build would hold
+  **every** repository's provider credential and every workflow's secrets in one identity, which is the
+  segregation the per-repository account exists for.
+  Cost of the recommendation: a catalog entry stays **coupled to its source repository** — its build
+  account, its credential and its secrets — so a project-level schedule must build each entry as its
+  source repository's account, and a repository that is retired takes its entries' ability to rebuild
+  with it. This is handed to D1148 as a constraint, and §5 repeats it.
+
+- **D1203 (readiness for an image) — OPEN, recommended.**
+  Recommendation: **re-pointed, not deleted.** The repository-image probe (`MissingImage`,
+  `internal/infra/readiness.go:30`; `hasLatest`, `:723`) becomes "the chosen catalog entry has a
+  `:latest` in the **shared** registry", which is the catalog branch `internal/infra/readiness.go:449`
+  already reads.
+  Cost of the alternative: dropping readiness for images altogether deploys a job pointing at an entry
+  that has never been built, moving the failure from the operator's terminal to a run's first minute —
+  the failure readiness exists to prevent.
+  Cost of the recommendation: readiness now depends on the shared registry's contents rather than on a
+  registry the repository owns, so the probe and the build account's reader grant must agree.
+
+- **D1204 (the console and the website) — OPEN, recommended.**
+  Recommendation: the console's never-reachable table drops the commands that no longer exist and keeps
+  the two that stay (`console/src/main/ipc.ts:1764`; `console/test/unit/ipc.test.ts:681` moves with it),
+  and `website/content/cli-reference.md` is **regenerated in the same task**
+  (`ee/clidoc/cliref_test.go:26`, `internal/cli/docs_website_cliref_test.go:186`).
+  Cost of the alternative: leaving the console's table alone is survivable at run time — it is a list of
+  commands the console never runs — but the website's reference has a regenerate-and-compare test, so
+  "leave it" is not available, and a stale console row is a reason string naming a command that is not
+  there.
+  Cost of the recommendation: the console's command classification is regenerated by a person rather
+  than by a command, so the task has to run the console's own `npm run test:unit` to prove it.
+
+- **D1205 (the setup skill and the plugin) — OPEN, recommended.**
+  Recommendation: the skill writes a **catalog entry** instead of the removed keys
+  (`plugin/skills/setup/SKILL.md:84`, `:91`), its reference documents carry the new examples, and the
+  two tests that pin them are the task's red step (`plugin/setup_skill_test.go:154`,
+  `plugin/skills_lint_test.go:789`).
+  Cost of the alternative: leaving the skill teaching `image:`/`dockerfile:` makes it the one writer in
+  the tree that produces a `fugaro.yaml` the CLI refuses, and the person it happens to is the one
+  following the instructions.
+  Cost of the recommendation: the skill's decided shape — add an entry, point the workflow at it — is
+  more steps than "write a block", and the skill has to make that legible.
+
+- **D1206 (the managed gate's rows) — OPEN, recommended.**
+  Recommendation: the rows of [spec.md](spec.md) §6 — `fugaro image refresh` re-written to what it still
+  does, an `fugaro image build` row for the catalog arm and the D1013 bound, no row for a command that
+  no longer exists, and **`--retire` never admitted**. **A Typed step is never admitted (D1026)**, and a
+  retirement is never admitted, which the gate's own first rule (no deletes) already settles.
+  Cost of the alternative: leaving the `image refresh` row as it stands is a row that admits builds
+  which no longer exist, and the gate's promise — that a command's whole effect is visible in a document
+  it produces before it writes — becomes a promise about a command the gate can no longer read.
+  Cost of the recommendation: a row set changes in the same release as the commands, so the managed
+  build's own task order has to take the removal into account, which the plan's §5 states.
+
+- **D1207 (`fugaro setup` and its first-build offer) — OPEN, recommended.**
+  Recommendation: `setup` offers a **catalog** build where it offered a derived one — `fugaro image add`
+  then `fugaro image build <name>` — and `--no-build` keeps its meaning
+  (`internal/cli/init.go:3415`).
+  Cost of the alternative: leaving the first build to a separate command contradicts the HARD RULE that
+  the one documented command brings an installation to the new version with no other step.
+  Cost of the recommendation: `setup` now has to sequence a catalog write and a build around a project
+  whose catalog may be empty, which is more states than "submit the first derived image".
+
+---
+
+## 5. The residual this design refuses to hide
+
+- **The two removals are not the same size, and one of them is destructive.** Removing the *code* is
+  reversible and reviewed; destroying the check job, its Scheduler and a repository's registry is not,
+  and it is one command away for the owner. This design does not make that command safer — it only keeps
+  it owner-run, typed and out of the gate.
+- **A third repository may carry a per-repository image and nobody knows it.** The tree enumerates two
+  (F24); nothing enumerates the rest, because a per-repository image is invisible outside its own
+  repository. Everyone else meets the refusal at `fugaro.yaml` validation and converts by hand
+  (D1192). There is no inventory to check, and this design does not invent one.
+- **The catalog entry is coupled to its source repository (D1202).** A project-level entry whose source
+  is a Dockerfile in repository X is built as X's build account, with X's credential and secrets. Retire
+  X, or remove X's build account, and the entry can no longer be rebuilt — a project-level artifact with
+  a repository-level dependency. The D1148 schedule has to live with it, and this design hands it over
+  as a constraint rather than pretending the catalog is fully project-level.
+- **The `baked` refusal (D1191) is only as good as its completeness.** A prebuilt entry that passes it
+  deploys a job whose first minute fails. The refusal is a list of source kinds, and a source kind added
+  to the catalog later has to be added to it.
+- **Unit tests cannot show the deploy path.** The registry, the build account, the job and the run are
+  one artefact, and the hermetic fakes are written from the API documentation. That is why the 0.18.0
+  tag waits for the owner's live check rather than for a green suite, and why the check is a step of the
+  plan rather than a claim of this document.
