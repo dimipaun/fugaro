@@ -1643,8 +1643,8 @@ type settingsWriteDoc struct {
 	Refusal  string `json:"refusal"`
 	// The entry write's own members (D1164). They are optional and only an
 	// entry write produces them: version 1 may grow by members a document can
-	// leave out, because the console pins that version and reads the shape it
-	// has always read (console/src/main/settingsview.ts, D848).
+	// leave out, because the settings view the console draws its edit from pins
+	// that version and reads the shape it has always read (D848).
 	Operation   string            `json:"operation,omitempty"`
 	EntryKey    string            `json:"entry_key,omitempty"`
 	EntryValue  string            `json:"entry_value,omitempty"`
