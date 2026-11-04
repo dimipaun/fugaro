@@ -1,9 +1,10 @@
 # Removing the per-repository derived images: the project image catalog is the only image path
 
-**Status: a design, and nothing is built. The owner answered every decision on 2026-11-04.** The owner
+**Status: a design, and nothing is built. The owner answered every decision on 2026-11-04.** **Owner
+2026-11-04: moved to 0.19.0 because the live catalog check found #1701/#1703 first.** The owner
 gave the ruling this folder answers on **2026-11-04** — *"Completely disable repo-level images for now
 to make things simpler."* — and this folder reconciles it against the code on `main`, decides every
-ambiguity it opens, and plans the build for **0.18.0**. This is a **design-only** pull request: it
+ambiguity it opens, and plans the build for **0.19.0**. This is a **design-only** pull request: it
 writes four documents, no code, no schema, no Terraform, no `go.mod`. **All nineteen decisions
 D1190–D1208 are answered** — seven of them as recommended, the other twelve as the design's default
 that the owner did not object to, each with the date and the reason it rests on
@@ -14,9 +15,9 @@ converge. **No task starts before that is picked.**
 
 | File | Role |
 | --- | --- |
-| [spec.md](spec.md) | The design in full: what is removed, what stays, how a repository migrates and in what order so the dogfood pipeline never loses its image, the retirement of the surviving cloud objects, what each removal does to `fugaro.yaml` validation, the schemas and the goldens, the managed gate's rows, and the owner-run live check that gates the 0.18.0 tag. **Where it disagrees with [reconciliation.md](reconciliation.md), the reconciliation wins** |
+| [spec.md](spec.md) | The design in full: what is removed, what stays, how a repository migrates and in what order so the dogfood pipeline never loses its image, the retirement of the surviving cloud objects, what each removal does to `fugaro.yaml` validation, the schemas and the goldens, the managed gate's rows, and the owner-run live check that gates the 0.19.0 tag. **Where it disagrees with [reconciliation.md](reconciliation.md), the reconciliation wins** |
 | [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `main`: findings **F1–F25**, what exists and what is missing, the decisions **D1190–D1208** (§4) each with the owner's answer of 2026-11-04 and the reason it rests on, the recommendation and the cost of each alternative, the number block and how it was read (§3), and the residual this design refuses to hide (§5) |
-| [implementation-plan.md](implementation-plan.md) | Eleven tasks **R0–R10**, each with its files (at most twelve **per commit** — R3's 50-fixture sweep is the one subject that needs five), its interface, its **red step**, its named tests and its **SEC** flag; the shared-files table (§4) and the order (§2), which migrates the dogfood repositories **before** anything is removed and every removal task **after** D1148's two; and the recommended slot (§7), **0.18.0**, whose tag waits for the owner's live check |
+| [implementation-plan.md](implementation-plan.md) | Eleven tasks **R0–R10**, each with its files (at most twelve **per commit** — R3's 50-fixture sweep is the one subject that needs five), its interface, its **red step**, its named tests and its **SEC** flag; the shared-files table (§4) and the order (§2), which migrates the dogfood repositories **before** anything is removed and every removal task **after** D1148's two; and the recommended slot (§7), **0.19.0**, whose tag waits for the owner's live check |
 | `README.md` | This file: the status, the reading of the number block, what is being asked, and what a reader should not take from here |
 
 ## The owner's ruling (2026-11-04)
@@ -26,7 +27,7 @@ converge. **No task starts before that is picked.**
 Read against the tree, the ruling has three parts, and they are the design's requirements rather than
 its recommendations:
 
-1. **A per-repository derived image is removed in 0.18.0.** Not deprecated, not defaulted off: the
+1. **A per-repository derived image is removed in 0.19.0.** Not deprecated, not defaulted off: the
    workflow `image:` block, `dockerfile:`, the `rebuild:` block, the commands that build, refresh and
    check a repository's own image, the per-repository check job and its Scheduler, and the
    per-repository Artifact Registry repository it all writes into, all go.
@@ -34,7 +35,7 @@ its recommendations:
    **catalog entry** whose source is one of the three the catalog already has
    (`internal/config/catalog.go:59`): a **Dockerfile in a repository**, an **inline definition**, or a
    **prebuilt image**. Nothing else decides a job's image.
-3. **An owner-run live check gates the 0.18.0 tag.** It builds a catalog entry on the sandbox, launches
+3. **An owner-run live check gates the 0.19.0 tag.** It builds a catalog entry on the sandbox, launches
    a run on it, and confirms the run. The tag is not cut on a green unit-test suite alone.
 
 No production users exist and this is pre-1.0, so the removal **reshapes directly**: no compatibility
