@@ -282,9 +282,29 @@ func policyLoosening(old, new *projectpolicy.Policy) []policyCeiling {
 // is empty for every run that publishes nothing: Migrate moves a version and
 // derives the members the config states, and a member it derives is not a
 // ceiling the operator's config states.
+//
+// A FIRST publish is the one publish with no node to measure against, and it is
+// a widening by its own name rather than an empty comparison: the document it
+// writes is what every run of the project is admitted by, chosen where none was,
+// so its allow-list admits repositories nothing admitted before — M3's own
+// reading of a first node (`policyReposRefusal`), which is what makes the first
+// node the owner's to write. The comparison below cannot see that:
+// settingsLoosens reads a member the node did not carry as no loosening, which
+// is right when an operator edits a ceiling that is there and wrong when the
+// ceiling is created. The entry is named here for that reason, and its Member is
+// the node itself — looseningWhy words the first publish as the widening of the
+// whole node, so it never prints the two empty values.
+//
+// It is what gives a first publish the Typed class: the typed name rather than
+// --yes, and a coding agent's session refused by the gate's own D1026 rule
+// rather than admitted to the boundary every later run of the project is
+// admitted by.
 func (m *policyMigration) loosening() []policyCeiling {
 	if m.pub == nil {
 		return nil
+	}
+	if m.firstPublish {
+		return []policyCeiling{{Member: projectpolicy.PathShared()}}
 	}
 	return policyLoosening(m.node, m.pub.pol)
 }
@@ -295,7 +315,16 @@ func (m *policyMigration) loosening() []policyCeiling {
 // that does not stand in rather than passed over, because the operator reading
 // this from a script has just passed it and would otherwise take it for the
 // answer.
+//
+// The first publish has no member to compare and no value to name on either
+// side, so it says what it widens instead: a project with nothing published is
+// a project every run reaches through its job's environment, and the node
+// written now is the one every run of the project is admitted by from here on.
 func (m *policyMigration) looseningWhy(loosening []policyCeiling) string {
+	if m.firstPublish {
+		return fmt.Sprintf("the project has no published policy node at %s, and this run writes the one every run of the project is admitted by — its allow-list, its ceilings and its catalog are chosen here for the first time. The project's own name is what confirms it and --yes does not stand in; run this yourself at your own terminal: %s",
+			projectpolicy.PathShared(), selfCommand()+" update")
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "this publish loosens %s, which every run of the project is admitted by: ", projectpolicy.PathShared())
 	for i, c := range loosening {
@@ -317,6 +346,33 @@ func printPolicyPublishDiff(w io.Writer, drift []policyDrift, sources map[string
 	}
 	fmt.Fprintf(w, "%s: the local config states what the node does not carry\n", projectpolicy.PathShared())
 	printPolicyDrift(w, drift)
+	if len(sources) > 0 {
+		fmt.Fprintf(w, "  allow_repos is seeded from this machine's repositories: %s\n", entryListText(sources))
+	}
+}
+
+// printFirstPublishDiff is printPolicyPublishDiff for a project whose node does
+// not exist yet (#1656), and it is a renderer of its own because there is no
+// published side to render: the drift is measured against an empty document, so
+// every member's right-hand value is that document's zero rather than anything
+// the project ever published, and the arrow would point at it — "per_run_usd: 5
+// (this machine) -> 0 (published)" names a node nobody published, in the one
+// confirmation the operator cannot check against a node they do not have. What
+// is shown instead is what the node will carry, member by member; the members
+// the config is silent about carry nothing in this node, so naming them would
+// describe a write that does not happen.
+func printFirstPublishDiff(w io.Writer, drift []policyDrift, sources map[string]string) {
+	if len(drift) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "%s: this publish creates the node, carrying what the local config states\n", projectpolicy.PathShared())
+	for _, d := range drift {
+		if d.File == "" {
+			fmt.Fprintf(w, "  %s differs\n", d.Member)
+			continue
+		}
+		fmt.Fprintf(w, "  %s: %s\n", d.Member, d.File)
+	}
 	if len(sources) > 0 {
 		fmt.Fprintf(w, "  allow_repos is seeded from this machine's repositories: %s\n", entryListText(sources))
 	}
@@ -460,7 +516,15 @@ func recordPublishedGeneration(ctx context.Context, w io.Writer, db *rtdb.Client
 			projectpolicy.PathShared(), path)
 	}
 	if !sameNode(raw, payload) {
-		return userErr("the policy node at %s was written and then changed again before the generation could be recorded in %s: another writer published in between, so nothing was recorded there and the config still records the generation from before this write. Read what the node holds now with 'fugaro project policy show': the next %s refuses to publish from a file the node has moved past, and offers to re-seed the file from the node instead",
+		// The node holds a document other than the one this run wrote, so the
+		// generation to record is not this run's to claim. What the next run
+		// does with the record then depends on what the node carries against
+		// what the config states — it records the generation when the two
+		// agree, and offers the re-seed when they do not — and the sentence
+		// says both rather than promising the refusal: the state this one
+		// leaves is not always the state that refuses, and the operator who
+		// went looking for a re-seed that never came is who it cost.
+		return userErr("the policy node at %s was written and then changed again before the generation could be recorded in %s: another writer holds a different document there now, so nothing was recorded and the config still records the generation from before this write. The next %s compares this machine's config with the node it finds and records that node's generation when the node carries what the config states; when the node carries something else it refuses and offers to re-seed the file from the node instead. Read what the node holds now with 'fugaro project policy show'",
 			projectpolicy.PathShared(), path, selfCommand()+" update")
 	}
 	return policyGenerationRecord(w, path, lc, etag)
@@ -469,49 +533,100 @@ func recordPublishedGeneration(ctx context.Context, w io.Writer, db *rtdb.Client
 // sameNode is whether two documents are the same node: the values they hold
 // rather than the bytes they are spelled with, because the database is free to
 // hand an object back with its keys in another order, a number spelled another
-// way or a member written as null gone entirely — a member the database stores
-// no value for is not a member (the real database drops it, and this machine's
-// policy carries one: budget.allowed_models is written null when the file
-// names no models). Numbers are read into float64 on both sides
-// (json.Unmarshal's default), a null member is dropped, and objects are
-// marshalled with sorted keys, so the two sides are compared as the values they
-// are.
+// way or a member it stores no value for gone entirely. A member the database
+// stores no value for is not a member, and it stores none for three shapes: a
+// null one, an empty object, and an empty list — an RTDB list is an object with
+// numeric keys, so an empty list is an empty object and is pruned the same way.
+// This machine's policy carries all three: budget.allowed_models is written
+// null when the file names no models, and a publish from a config that lists no
+// repository writes allow_repos as an empty list the database keeps no member
+// for. Comparing the bytes would report every such publish as one another
+// writer had moved, and the generation would never be recorded (#1658). Numbers
+// are read into float64 on both sides (json.Unmarshal's default), those members
+// are dropped, and objects are marshalled with sorted keys, so the two sides
+// are compared as the values they are.
 func sameNode(a, b []byte) bool {
 	var x, y any
 	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
 		return false
 	}
-	ja, err := json.Marshal(dropNullMembers(x))
+	ja, err := json.Marshal(dropAbsentMembers(x))
 	if err != nil {
 		return false
 	}
-	jb, err := json.Marshal(dropNullMembers(y))
+	jb, err := json.Marshal(dropAbsentMembers(y))
 	return err == nil && string(ja) == string(jb)
 }
 
-// dropNullMembers is a document with every object member whose value is null
-// removed, recursively. A null inside a list is a value and is left alone: what
-// the database drops is a member, not a position.
-func dropNullMembers(v any) any {
+// dropAbsentMembers is a document with every object member the database stores
+// no value for removed, recursively: a null one, an empty object, and an empty
+// list (an RTDB list is an object with numeric keys, so an empty list is an
+// empty object). A null inside a list is a value and is left alone: what the
+// database drops is a member, not a position.
+func dropAbsentMembers(v any) any {
 	switch t := v.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(t))
 		for k, m := range t {
-			if m == nil {
+			folded := dropAbsentMembers(m)
+			if storesNoMember(folded) {
 				continue
 			}
-			out[k] = dropNullMembers(m)
+			out[k] = folded
 		}
 		return out
 	case []any:
 		out := make([]any, len(t))
 		for i, m := range t {
-			out[i] = dropNullMembers(m)
+			out[i] = dropAbsentMembers(m)
 		}
 		return out
 	default:
 		return v
 	}
+}
+
+// storesNoMember is whether the database keeps no value for a member holding v:
+// null, an empty object, or an empty list.
+func storesNoMember(v any) bool {
+	switch t := v.(type) {
+	case nil:
+		return true
+	case map[string]any:
+		return len(t) == 0
+	case []any:
+		return len(t) == 0
+	}
+	return false
+}
+
+// policyEmptyAllowListWarning is what a publish says before it writes a policy
+// whose allow-list admits no repository, in doctor's own words (the
+// allow-list-empty check): once that node is published, every run of the
+// project stops before it starts. It is one function so the policy stage of
+// `fugaro update` can say the same sentence when it makes the first publish
+// (#1656, #1674), and it names the command that enrolls a repository, because a
+// refusal that only said what was wrong would leave the operator to find the
+// fix.
+func policyEmptyAllowListWarning() string {
+	return "the published policy admits no repository, so every run stops before it starts; run `fugaro project repos add provider/owner/name` to enroll one"
+}
+
+// confirmEmptyAllowList is the confirmation every publish that would write an
+// allow-list admitting nothing takes before its first write: a person types the
+// project's name at a terminal, no flag stands in for it, and a session with no
+// terminal — a script's, or a coding agent's — is refused, so an empty
+// allow-list is never written on the operator's behalf by something that cannot
+// have read the consequence (#1674). The same wording is both the confirmation
+// and the refusal, so the two cannot drift.
+func confirmEmptyAllowList(cmd *cobra.Command, lc *localcfg.Config, agent string) error {
+	why := policyEmptyAllowListWarning()
+	// A coding agent's session is refused before any prompt: a terminal it can
+	// give itself (a pty wrapper) is not a person reading the consequence.
+	if agent != "" {
+		return userErr("%s", why)
+	}
+	return confirmTypedStrict(cmd, lc, why, why)
 }
 
 // reseedPolicyKeys writes the published node's policy values back into the local

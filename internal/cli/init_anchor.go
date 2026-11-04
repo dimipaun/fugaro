@@ -64,7 +64,7 @@ func (r *initRun) runAnchor(ctx context.Context) error {
 	// this project, and its origin is a repository the project lists.
 	path := filepath.Join(root, "fugaro.yaml")
 	res.Path = path
-	data, err := readFugaroYAML(path)
+	data, err := requireFugaroYAML(path)
 	if err != nil {
 		return userErr("%v", err)
 	}

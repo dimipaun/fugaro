@@ -237,6 +237,9 @@ func TestImageCatalogGateIsNotThePriceCatalogGate(t *testing.T) {
 	// moves for this work: a release that publishes image_catalog flips
 	// imageCatalogShipped and leaves catalogShipped where it is. What must not
 	// happen here is shipping this key by flipping the price catalog's instead.
+	if !imageCatalogShipped {
+		t.Errorf("imageCatalogShipped is false although imageCatalogSince names %q, a tagged release: readiness holds back every job a catalog entry gives its image to (issue 1659)", imageCatalogSince)
+	}
 	if catalogShipped {
 		t.Errorf("catalogShipped is true while catalogSince still names %q: the price catalog's gate moved with the image catalog's", catalogSince)
 	}
@@ -356,5 +359,68 @@ func TestImageCatalogIsDroppedOnAnExplicitEmptyCatalog(t *testing.T) {
 	}
 	if raw := nodeJSON(t, f, projectpolicy.PathShared()); strings.Contains(raw, "image_catalog") {
 		t.Errorf("the node still carries the member:\n%s", raw)
+	}
+}
+
+// TestPolicyShowAndPublishDiffPrintTheImageCatalog is #1657's red step: the
+// node carries the catalog, and both the publish diff and `policy show` printed
+// nothing of it — the publish run only to carry a catalog printed a diff with no
+// catalog line, which read as if the catalog had not been published at all, and
+// the text a person audits the node with could not show the definitions a run
+// executes in. One line per entry, naming it and the three things that decide
+// how it is used: its tags, whether it is the default, and its source.
+func TestPolicyShowAndPublishDiffPrintTheImageCatalog(t *testing.T) {
+	newProjectFixture(t, catalogConfigYAML)
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The publish was run only to carry the catalog: no prior node, so every
+	// line is an addition.
+	want := []string{
+		"+ image_catalog universal: tags node, default true, source image ghcr.io/acme/agent:1.2",
+		"+ image_catalog rust: tags cargo, default false, source dockerfile acme/other:docker/agent.Dockerfile",
+	}
+	for _, line := range want {
+		if !strings.Contains(out, line) {
+			t.Errorf("the publish diff does not print %q:\n%s", line, out)
+		}
+	}
+	show, _, err := execute(t, "project", "policy", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range want {
+		if !strings.Contains(show, strings.TrimPrefix(line, "+ ")) {
+			t.Errorf("`policy show` does not print %q:\n%s", strings.TrimPrefix(line, "+ "), show)
+		}
+	}
+}
+
+// TestPolicyShowAndPublishDiffPrintACatalogChange: the same lines for a second
+// publish, where the catalog is what changed — the entry's tags, its default
+// marker and its source are each a value a run reads, so the diff has to show
+// the one that moved rather than only the entries that appeared (#1657).
+func TestPolicyShowAndPublishDiffPrintACatalogChange(t *testing.T) {
+	f := newProjectFixture(t, catalogConfigYAML)
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	rewriteProjectConfig(t, f, `image_catalog:
+  entries:
+    - name: universal
+      tags: [node, postgres]
+      default: true
+      source: { kind: image, image: ghcr.io/acme/agent:1.3 }
+    - name: rust
+      tags: [cargo]
+      source: { kind: dockerfile, repo: acme/other, path: docker/agent.Dockerfile }
+`)
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "~ image_catalog universal: tags node, default true, source image ghcr.io/acme/agent:1.2 → tags node, postgres, default true, source image ghcr.io/acme/agent:1.3") {
+		t.Errorf("the diff does not show the catalog entry that changed:\n%s", out)
 	}
 }

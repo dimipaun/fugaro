@@ -757,6 +757,14 @@ var outsideAgentSites = map[string]string{
 	"initsecrets.go agentEnv":         "OUTSIDE: the definition of agentEnv itself (TestManagedAgentMarkersAreTheExpectedSix pins agentMarker)",
 	"initsecrets.go Check":            "OUTSIDE: the wording of the secrets stage's detail; whether it prompts is canPrompt (an inline site)",
 	"init_repo_gate.go convergeOptIn": "OUTSIDE: the wording of the repository gate's detail — it says whether --yes is named as a way in; whether the run may onboard at all is authState/onboardCovered (inline sites)",
+	// The marker only reaches the publisher's own empty-allow-list refusal
+	// (#1656): it is that function's decision, and a session holding it never
+	// reaches this line — the stage's Apply refuses the marker above every
+	// confirm (TestUpdatePolicyMigrationRefusedInAgentSession), and the managed
+	// gate refuses the first publish's strict class before it too
+	// (TestUpdateManagedRefusesTheFirstPolicyPublish). The argument is the
+	// refusal's second lock, so this entry names the line rather than a decision.
+	"init_policy_migrate.go policyMigrationConfirm": "OUTSIDE: the role is confirmEmptyAllowList's, reused by the stage's first publish; a marker session is refused above it and by the gate",
 }
 
 // Every inline decision refuses under each marker, and only under a marker:

@@ -199,6 +199,14 @@ type InstallationOutputs struct {
 	// stage. The repository roots read the same object from the tfvars'
 	// installation.credentials_service (RepoInstallation).
 	CredentialsService *CredentialsService `json:"credentials_service"`
+	// CatalogCheckServiceAccount is the project's catalog check job's account
+	// (D1148), its email, or "" on an installation whose project publishes no
+	// catalog: the value every repository root reads from its own tfvars
+	// (RepoInstallation.CatalogCheckServiceAccount) to grant that account
+	// actAs on its build account. Empty in the outputs of an installation
+	// applied before the job existed, which is what keeps those repository
+	// roots planning exactly what they planned.
+	CatalogCheckServiceAccount string `json:"catalog_check_service_account"`
 }
 
 // CredentialsService is the installation's credentials service (D146): the
@@ -306,6 +314,14 @@ type WorkflowSpec struct {
 	// is the sentence a caller prints to say so. They are json:"-" because
 	// nothing outside the process that built this spec reads them.
 	Warnings []string `json:"-"`
+	// CatalogEntry is the project image catalog's entry the job's image
+	// comes from, "" when the workflow runs no catalog entry. CatalogPrebuilt
+	// is whether that entry's source is a prebuilt reference
+	// (config.SourceImage): Image is then the entry's own reference, which no
+	// Fugaro build writes and no shape can recognise (isCatalogImage), so
+	// readiness asks this rather than the image.
+	CatalogEntry    string `json:"-"`
+	CatalogPrebuilt bool   `json:"-"`
 }
 
 // Registry is the repository's own image registry.
@@ -374,6 +390,15 @@ type RepoInstallation struct {
 	// job account roles/run.invoker on it and drops that job's model-secret
 	// accessors (D135, D145).
 	CredentialsService *CredentialsService `json:"credentials_service,omitempty"`
+	// CatalogCheckServiceAccount is the project's catalog check job's account
+	// (D1148), its email, from the installation's outputs, or "" on an
+	// installation whose project publishes no catalog. It is what
+	// modules/repo/catalogcheck.tf grants actAs on this repository's build
+	// account to, so a build of this repository's catalog entry runs as this
+	// repository. Omitted from the tfvars when empty, so a repository root
+	// planned against an installation with no job writes exactly what it
+	// wrote before the grant existed.
+	CatalogCheckServiceAccount string `json:"catalog_check_service_account,omitempty"`
 }
 
 // RepoRoleIDs are the custom roles a repository root grants.
@@ -737,12 +762,22 @@ func serviceAccountEmail(id, project string) string {
 
 // platformEnv is the M4 env every job and the check job get.
 func (c *repoCtx) platformEnv() map[string]string {
+	return platformEnvFor(c.lc, c.inst.ProjectName, c.bucket)
+}
+
+// platformEnvFor is platformEnv's five variables for the jobs that have no
+// repoCtx: the installation's own names, its Fugaro project's name and the
+// runs bucket its record lives in. The project's catalog check job gets these
+// too (CatalogCheckSpec.Env), and they have to be the same bytes the
+// repository check job's env carries — the module's own preconditions compare
+// two of them against its variables.
+func platformEnvFor(lc *localcfg.Config, projectName, bucket string) map[string]string {
 	return map[string]string{
-		BucketEnv:     "gs://" + c.bucket,
+		BucketEnv:     "gs://" + bucket,
 		BackendEnv:    backend.CloudRun,
-		GCPProjectEnv: c.lc.GCPProject,
-		ProjectEnv:    c.inst.ProjectName,
-		RegionEnv:     c.lc.Region,
+		GCPProjectEnv: lc.GCPProject,
+		ProjectEnv:    projectName,
+		RegionEnv:     lc.Region,
 	}
 }
 
@@ -796,10 +831,10 @@ func (c *repoCtx) effectiveCatalog() *config.Catalog {
 // on (D1149), and today's only backend is Cloud Run — a config that names
 // cloud-batch is refused where it is read until the task that makes a Batch
 // run safe, which is also the point this line starts meaning something else.
-func (c *repoCtx) catalogJobImage(name string, w config.Workflow) (string, []string, bool, error) {
+func (c *repoCtx) catalogJobImage(name string, w config.Workflow) (config.Entry, []string, bool, error) {
 	cat := c.effectiveCatalog()
 	if cat == nil || !catalog.Applies(*cat, w) {
-		return "", nil, false, nil
+		return config.Entry{}, nil, false, nil
 	}
 	choice, err := catalog.Choose(catalog.Job{
 		Catalog: *cat,
@@ -807,13 +842,13 @@ func (c *repoCtx) catalogJobImage(name string, w config.Workflow) (string, []str
 		Backend: catalog.Backend(c.lc.Backend()),
 	})
 	if err != nil {
-		return "", nil, false, userErr("workflow %s: %w", name, err)
+		return config.Entry{}, nil, false, userErr("workflow %s: %w", name, err)
 	}
 	var warnings []string
 	if choice.Warn != "" {
 		warnings = append(warnings, choice.Warn)
 	}
-	return c.catalogImage(choice.Entry), warnings, true, nil
+	return choice.Entry, warnings, true, nil
 }
 
 // Workflow is the spec of one workflow of the repository, its default
@@ -1010,14 +1045,15 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// it runs; C8b1 owns replacing both.
 	image := gcp.ImageName(c.registryPath(), slug, name) + ":latest"
 	var warnings []string
+	var entry config.Entry
 	if w.Checkout == config.CheckoutClone {
 		image = lc.BaseImage(config.BaseKind)
-	} else if img, warns, chosen, err := c.catalogJobImage(name, w); err != nil {
+	} else if e, warns, chosen, err := c.catalogJobImage(name, w); err != nil {
 		// §3.3's refusals are raised here, before the job is deployed: a
 		// job whose image cannot do its work would die mid-run instead.
 		return WorkflowSpec{}, err
 	} else if chosen {
-		image, warnings = img, warns
+		image, warnings, entry = c.catalogImage(e), warns, e
 	}
 	ws := WorkflowSpec{
 		Job:            gcp.JobName(slug, variant),
@@ -1047,6 +1083,8 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 		SecretIDs:           map[string]string{},
 		GitSecret:           c.gitSecret,
 		Warnings:            warnings,
+		CatalogEntry:        entry.Name,
+		CatalogPrebuilt:     entry.Name != "" && entry.Source.Kind == config.SourceImage,
 	}
 	if lc.Registry != "" {
 		ws.LegacyImage = gcp.ImageName(lc.Registry, slug, name)
@@ -1231,17 +1269,18 @@ func Repo(in Inputs) (RepoSpec, error) {
 		GCPProject: lc.GCPProject,
 		Region:     lc.Region,
 		Installation: RepoInstallation{
-			ProjectName:             c.inst.ProjectName,
-			RunsBucket:              c.bucket,
-			RegistryHost:            c.registryHost,
-			BaseRegistry:            c.inst.BaseRegistry,
-			GhcrRegistry:            c.inst.GhcrRegistry,
-			SharedRegistry:          c.inst.SharedRegistry,
-			SchedulerServiceAccount: c.inst.SchedulerServiceAccount,
-			RoleIDs:                 RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter, TagMover: c.inst.RoleIDs.TagMover},
-			Launchers:               c.inst.Launchers,
-			Operators:               c.inst.Operators,
-			CredentialsService:      repoCredentialsService(c.inst.CredentialsService),
+			ProjectName:                c.inst.ProjectName,
+			RunsBucket:                 c.bucket,
+			RegistryHost:               c.registryHost,
+			BaseRegistry:               c.inst.BaseRegistry,
+			GhcrRegistry:               c.inst.GhcrRegistry,
+			SharedRegistry:             c.inst.SharedRegistry,
+			SchedulerServiceAccount:    c.inst.SchedulerServiceAccount,
+			RoleIDs:                    RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter, TagMover: c.inst.RoleIDs.TagMover},
+			Launchers:                  c.inst.Launchers,
+			Operators:                  c.inst.Operators,
+			CredentialsService:         repoCredentialsService(c.inst.CredentialsService),
+			CatalogCheckServiceAccount: c.inst.CatalogCheckServiceAccount,
 		},
 		BitbucketProxied: c.bitbucketProxied,
 
@@ -1261,6 +1300,11 @@ func Repo(in Inputs) (RepoSpec, error) {
 		// backstop of the allow-list, design §6b.3). Every other auth kind
 		// has exactly the default account, unchanged from before this field
 		// existed.
+		// catalogImage is what catalogJobImage answered for the workflow's
+		// job, read back from the spec it built rather than asked again:
+		// the check below and the job's own image must never disagree about
+		// which jobs are the catalog's.
+		catalogImage := false
 		for _, tok := range WorkflowAccounts(in.Cfg, lc, in.Repo) {
 			ws, err := c.workflow(name, tok)
 			if err != nil {
@@ -1270,13 +1314,20 @@ func Repo(in Inputs) (RepoSpec, error) {
 			rs.Workflows[key] = ws
 			maps.Copy(rs.Secrets, ws.SecretIDs)
 			rs.BuildSecrets = append(rs.BuildSecrets, ws.BuildSecrets...)
+			catalogImage = ws.CatalogEntry != ""
 		}
 		// The daily check covers the workflow's image, the same image
 		// across every token variant: once per logical workflow, not once
 		// per variant. A checkout: clone workflow has no derived image to
 		// rebuild, so the daily check never covers it, whatever its
-		// rebuild.check says.
-		if in.Cfg.Workflows[name].Checkout != config.CheckoutClone && in.Cfg.Workflows[name].Rebuild.Defaults().Check != "off" {
+		// rebuild.check says. Neither does a workflow a catalog entry gives
+		// its image to: the check rebuilds the repository's own derived
+		// tag, which that job never runs — a prebuilt entry's image is
+		// pushed by the operator, and a built one belongs to the catalog's
+		// own check — so a repository whose every workflow runs an entry
+		// needs no base image at all.
+		w := in.Cfg.Workflows[name]
+		if w.Checkout != config.CheckoutClone && !catalogImage && w.Rebuild.Defaults().Check != "off" {
 			checked = append(checked, name)
 		}
 	}
@@ -1584,6 +1635,15 @@ func (rs RepoSpec) Addresses() []string {
 	// gcp.CatalogReadCondition): declared without a gate, so an address of
 	// every repository root, like the build account's own grant above.
 	add(root + "google_storage_bucket_iam_member.catalog_read")
+	// The project's catalog check job's actAs on this repository's build
+	// account (D1148, modules/repo/catalogcheck.tf), gated on the
+	// installation having such a job at all: its account arrives in this
+	// root's tfvars, and an installation that publishes no catalog sends
+	// none, so the resource is not planned and its address is not one this
+	// spec has.
+	if rs.Installation.CatalogCheckServiceAccount != "" {
+		add(root + "google_service_account_iam_member.catalog_check_build[0]")
+	}
 	// modules/repo/check.tf
 	if rs.Check != nil && rs.Check.DeployJob {
 		add(root + "google_cloud_run_v2_job.check[0]")

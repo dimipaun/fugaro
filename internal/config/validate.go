@@ -759,11 +759,17 @@ func checkBaseWorkflow(p, root string, w Workflow) []Problem {
 // CheckWarnings are what Check finds that doesn't make the config wrong, for
 // fugaro validate to print as warnings: a generated image on the Fugaro base
 // with no mise config and no image.tools installs no language runtime.
+//
+// A workflow that names a catalog entry (image_name) is not such an image:
+// its job runs the catalog's, whose runtimes the repository does not install
+// and whose mise config is not this checkout's to read (D1155), so the
+// warning would be about an image no job of it runs. The entry's own build is
+// what carries the runtimes, and nothing here can read that image.
 func CheckWarnings(c *Config, root string) []Problem {
 	var ps []Problem
 	for _, name := range sortedKeys(c.Workflows) {
 		w := c.Workflows[name]
-		if w.Dockerfile != "" || len(w.Image.Tools) > 0 {
+		if w.Dockerfile != "" || len(w.Image.Tools) > 0 || w.ImageName != "" {
 			continue
 		}
 		if files, err := MiseConfigFiles(root); err == nil && len(files) == 0 {

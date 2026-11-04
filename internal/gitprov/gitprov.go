@@ -264,10 +264,12 @@ type BotAccountReader interface {
 // project's existing one — no new access is added), and it returns no more
 // than MaxContentsBytes.
 //
-// It is not part of Provider: a host without a contents API (Bitbucket,
-// whose adapter would need a source-file read the catalog does not use) has
-// no way to answer it, and a caller that does not need it must keep working
-// there. The GitHub adapter and the file-backed test provider implement it.
+// It is not part of Provider: a host without a contents API has no way to
+// answer it, and a caller that does not need it must keep working there. The
+// GitHub and Bitbucket adapters and the file-backed test provider implement
+// it; catalog.Readable is the offline list of the kinds whose adapter does,
+// for a caller that must refuse a dockerfile source before a provider is
+// opened.
 type ContentsReader interface {
 	Contents(ctx context.Context, path, ref string) ([]byte, error)
 }

@@ -2306,6 +2306,11 @@ type repoRootFixture struct {
 	// credentialsService sets the fixture's Installation.CredentialsService,
 	// the installation output the repository root reads.
 	credentialsService bool
+	// catalogCheckServiceAccount sets the fixture's
+	// Installation.CatalogCheckServiceAccount, the second installation output
+	// a repository root reads: the project's catalog check job's account
+	// (D1148), which the root grants actAs on its own build account.
+	catalogCheckServiceAccount string
 }
 
 // repoRootFixtures are the fixture specs, keyed by the golden's name.
@@ -2332,6 +2337,11 @@ var repoRootFixtures = map[string]repoRootFixture{
 	"repo_root":             {agent: repoRootOAuthAgent},
 	"repo_root_vertex":      {agent: repoRootVertexAgent},
 	"repo_root_credentials": {agent: repoRootOAuthAgent, credentialsService: true},
+	// repo_root_catalog_check is the D1148 fixture: the same oauth spec with
+	// the installation's catalog check job account set, so the one address the
+	// mirror adds (the actAs on the build account, modules/repo/catalogcheck.tf)
+	// is compared with a real plan rather than trusted.
+	"repo_root_catalog_check": {agent: repoRootOAuthAgent, catalogCheckServiceAccount: "fugaro-catalog-check@proj-1234.iam.gserviceaccount.com"},
 }
 
 // repoRootFixtureSpec builds one fixture's spec by name, the opt-in
@@ -2345,6 +2355,9 @@ func repoRootFixtureSpec(t *testing.T, name string) RepoSpec {
 	in := repoRootInputs(t, f.agent)
 	if f.credentialsService {
 		in.Installation.CredentialsService = &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	}
+	if f.catalogCheckServiceAccount != "" {
+		in.Installation.CatalogCheckServiceAccount = f.catalogCheckServiceAccount
 	}
 	rs, err := Repo(in)
 	if err != nil {
@@ -3437,6 +3450,65 @@ func TestSpecCatalogIsTheProjectsOwnWhenTheLocalConfigWritesOne(t *testing.T) {
 	}
 	if got, want := rs.Workflows["api"].Image, shared+"/catalog-minimal:latest"; got != want {
 		t.Errorf("api's image = %q, want %q", got, want)
+	}
+}
+
+// prebuiltCatalogEntries are the same three entries with a prebuilt image
+// source: nothing in Fugaro builds them, so the daily check has nothing of
+// theirs to rebuild.
+func prebuiltCatalogEntries() []config.Entry {
+	return []config.Entry{
+		{Name: "minimal", Tags: []string{"postgres", "redis"}, Source: config.Source{Kind: config.SourceImage, Image: "example.invalid/catalog-minimal:1"}},
+		{Name: "standard", Default: true, Tags: []string{"node", "postgres", "redis"}, Source: config.Source{Kind: config.SourceImage, Image: "example.invalid/catalog-standard:1"}},
+		{Name: "universal", Tags: []string{"node", "postgres", "redis", "firebase-emulator"}, Source: config.Source{Kind: config.SourceImage, Image: "example.invalid/catalog-universal:1"}},
+	}
+}
+
+// TestSpecCatalogOnlyRepoNeedsNoBaseImage: the daily check rebuilds the
+// repository's own derived image, and a workflow a catalog entry gives its
+// image to never runs one — a prebuilt entry's image is pushed by the
+// operator, and a built one is the catalog's own project-level check's to
+// rebuild (D1148), never this repository's. Such a workflow is therefore
+// never checked here, so a repository whose every workflow runs a catalog
+// entry needs no base_images entry at all and fugaro update --repo must not
+// refuse it for one (issue 1661 item 3). Both entry sources are covered
+// because the reason is the same for both: what the check rebuilds is not
+// what the job runs.
+func TestSpecCatalogOnlyRepoNeedsNoBaseImage(t *testing.T) {
+	for name, entries := range map[string][]config.Entry{
+		"prebuilt":          prebuiltCatalogEntries(),
+		"built from a repo": catalogEntries(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := catalogInputs(t, &config.Catalog{Entries: entries})
+			delete(in.LC.BaseImages, config.BaseKind)
+			rs, err := Repo(in)
+			if err != nil {
+				t.Fatalf("Repo = %v, want no error: no workflow of this repository runs a per-repository image", err)
+			}
+			if rs.Check != nil {
+				t.Errorf("the repository has a daily image check job %s, want none: every workflow runs a catalog entry", rs.Check.Job)
+			}
+		})
+	}
+}
+
+// TestSpecCheckCoversTheWorkflowsWithoutACatalogImage: the exclusion is per
+// workflow, not per repository. A workflow that keeps its own image
+// definition is not the catalog's (catalog.Applies), so the repository keeps
+// its daily check and the check covers that workflow alone.
+func TestSpecCheckCoversTheWorkflowsWithoutACatalogImage(t *testing.T) {
+	in := catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()})
+	w := in.Cfg.Workflows["api"]
+	w.Needs = nil
+	w.Image = config.Image{Tools: config.MiseTools{"node": "24"}}
+	in.Cfg.Workflows["api"] = w
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Check == nil || !slices.Equal(rs.Check.Workflows, []string{"api"}) {
+		t.Fatalf("the daily check covers %v, want only the workflow that builds an image of its own", rs.Check)
 	}
 }
 

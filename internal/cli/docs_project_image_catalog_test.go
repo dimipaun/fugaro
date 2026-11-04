@@ -71,7 +71,7 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		"A user can pin an image for a job by hand; Fugaro warns if the pinned image doesn't cover the needed tags.",
 		// Where a Dockerfile lives, and why.
 		"Every Dockerfile is copied into the project's GCS bucket before it is built, and the build reads it from there.",
-		"Fugaro fetches the file with the project's existing GitHub credentials from the security service; no new access is needed.",
+		"Fugaro fetches the file with the project's existing git credentials from the security service, at the repository's own provider (GitHub or Bitbucket); no new access is needed.",
 		"The project repo is optional, so neither source depends on it.",
 		// Build secrets, in the owner's words.
 		"Build-time secrets, such as a private npm token, come from the project's security service.",

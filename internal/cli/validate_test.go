@@ -125,13 +125,17 @@ func TestValidateRefusesLeftoverAllowForks(t *testing.T) {
 	}
 }
 
-// TestValidateSkipsNoLanguageRuntimeWarning covers CheckWarnings' two skip
-// conditions through the CLI: image.tools set and dockerfile: set both
-// silence the warning that a plain Fugaro-base workflow gets.
+// TestValidateSkipsNoLanguageRuntimeWarning covers CheckWarnings' three skip
+// conditions through the CLI: image.tools set, dockerfile: set, or a catalog
+// entry named — each silences the warning that a plain Fugaro-base workflow
+// gets. The last is issue 1661 item 1's report: a workflow whose runtime
+// comes from the catalog image has no per-repository image for the warning to
+// be about.
 func TestValidateSkipsNoLanguageRuntimeWarning(t *testing.T) {
 	for name, body := range map[string]string{
 		"image.tools set": strings.Replace(cliBaseYAML, "{ commands:", "{ image: { tools: { node: \"24\" } }, commands:", 1),
 		"dockerfile set":  strings.Replace(cliBaseYAML, "{ commands:", "{ dockerfile: .fugaro/app.Dockerfile, commands:", 1),
+		"catalog entry":   strings.Replace(cliBaseYAML, "{ commands:", "{ image_name: minimal, commands:", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := writeConfig(t, body)
@@ -3113,5 +3117,35 @@ func TestReviewFloorUnpublishableWarns(t *testing.T) {
 	}
 	if got := floorWarnings(errOut); len(got) != 0 {
 		t.Fatalf("floor warnings = %q, want none for a floor this installation can publish (stderr %q)", got, errOut)
+	}
+}
+
+// TestValidateReportsACatalogEntryItsProviderCannotFetch: the catalog is this
+// installation's, and a dockerfile source on a provider with no reader is a
+// build that fails after the operator has confirmed a billable one, so it is
+// reported here instead — while the entry can still be changed. A repository
+// the config does not name has no kind on this machine and is not judged.
+func TestValidateReportsACatalogEntryItsProviderCannotFetch(t *testing.T) {
+	lc := &localcfg.Config{
+		Repos: map[string]localcfg.Repo{
+			"acme/old": {Provider: "gitlab"},
+			"acme/app": {Provider: "bitbucket"},
+		},
+		ImageCatalog: &config.Catalog{Entries: []config.Entry{
+			{Name: "tools", Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/old", Path: "docker/tools.Dockerfile"}},
+			{Name: "app", Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/app", Path: "docker/app.Dockerfile"}},
+			{Name: "unlisted", Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/other", Path: "docker/other.Dockerfile"}},
+			{Name: "inline", Source: config.Source{Kind: config.SourceInline, Inline: "FROM scratch\n"}},
+		}},
+	}
+	ps := catalogSourceProblems(lc)
+	if len(ps) != 1 {
+		t.Fatalf("catalogSourceProblems = %+v, want one problem", ps)
+	}
+	if ps[0].Path != "image_catalog.entries[0].source.repo" || !strings.Contains(ps[0].Message, "cannot read a file out of acme/old") {
+		t.Errorf("the problem = %+v, want the entry's repo and the build's own refusal", ps[0])
+	}
+	if ps := catalogSourceProblems(nil); len(ps) != 0 {
+		t.Errorf("catalogSourceProblems with no config = %+v, want none", ps)
 	}
 }
