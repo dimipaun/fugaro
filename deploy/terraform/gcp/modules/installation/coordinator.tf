@@ -381,13 +381,13 @@ resource "google_cloud_run_v2_service" "coordinator_front_door" {
     containers {
       image = var.mcp_server.image
 
-      # One CLI binary serves the sweep and the front door (internal/infra's
-      # Coordinator reads the same history image), so the front door names the
-      # command it runs rather than an image built for it. The command is the
-      # resident server M4's own file creates (ee/coordinator/service.go), and
-      # without it the image's default entry point would run `fugaro version`
-      # and exit — a revision that never becomes ready, and an apply that fails
-      # after the owner asked for a front door.
+      # One CLI binary serves the aggregation job and the front door
+      # (internal/infra's Coordinator reads the same history image), so the
+      # front door names the command it runs rather than an image built for
+      # it: the resident server, which answers on Cloud Run's PORT. Without
+      # the pair below the image's own default entry point would run
+      # `fugaro version` and exit — a revision that never becomes ready, and
+      # an apply that fails after the owner asked for a front door.
       command = ["/usr/local/bin/fugaro"]
       args    = ["coordinator", "serve"]
 
