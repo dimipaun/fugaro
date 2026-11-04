@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
@@ -273,5 +274,44 @@ func TestSecretsNoValueEverAppearsInADiff(t *testing.T) {
 	}
 	if got := sm.Latest(id); string(got) != tokenValue {
 		t.Fatalf("a dry run stored %q", got)
+	}
+}
+
+// TestSecretsSetValueWriteRefusesThePolicyFlags: the two runs are never the
+// same run (D1171). A value write refuses --dry-run and --yes — a document
+// carrying nothing would read as "the value is not stored" while the write
+// stores it, and a --yes accepted there would be a confirmation the person
+// believes they gave for a prompt that never came — and --json is not one of
+// them: the store's own result document is what that flag has always printed
+// on this path, and the console's store reads it.
+func TestSecretsSetValueWriteRefusesThePolicyFlags(t *testing.T) {
+	sm := secretsFixture(t)
+	secret := gcp.SecretID(appSlug, "claude-oauth-token")
+
+	for _, flag := range []string{"--dry-run", "--yes"} {
+		out, errOut, err := executeStdin(t, tokenValue+"\n", "secrets", "set", "claude-oauth-token", "--repo", "acme/app", flag)
+		if err == nil {
+			t.Fatalf("%s was accepted on a value write:\nstdout %s\nstderr %s", flag, out, errOut)
+		}
+		if !strings.Contains(err.Error(), "a value is not a setting") {
+			t.Errorf("%s: err = %v, want the value-is-not-a-setting refusal", flag, err)
+		}
+		if strings.Contains(out+errOut+err.Error(), tokenValue) {
+			t.Fatalf("%s printed the value: %q %q %v", flag, out, errOut, err)
+		}
+	}
+	if got := sm.Latest(secret); got != nil {
+		t.Fatalf("a refused run stored %q", got)
+	}
+
+	out, errOut, err := executeStdin(t, tokenValue+"\n", "secrets", "set", "claude-oauth-token", "--repo", "acme/app", "--json")
+	if err != nil {
+		t.Fatalf("secrets set --json: %v\nstdout %s\nstderr %s", err, out, errOut)
+	}
+	if got := string(sm.Latest(secret)); got != tokenValue {
+		t.Fatalf("--json stored %q", got)
+	}
+	if !strings.Contains(out, `"secret"`) || strings.Contains(out+errOut, tokenValue) {
+		t.Fatalf("--json did not print the store's result document: %q %q", out, errOut)
 	}
 }

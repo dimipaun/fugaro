@@ -103,7 +103,11 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 		return userErr("the secret NAME must be one of %s, or a workflow secret's name matching %s",
 			strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "), config.SecretNameRE)
 	}
-	if err := settingsDryRunFlags(settingsWriteOptions{dryRun: o.dryRun, jsonOut: o.asJSON}); err != nil {
+	// --yes is passed with the other two so the pair the settings write path
+	// refuses is refused here as well: a dry run and a confirmation answer
+	// different questions, and a --yes accepted beside --dry-run would be a
+	// confirmation the person believes they gave for a removal that never ran.
+	if err := settingsDryRunFlags(settingsWriteOptions{dryRun: o.dryRun, jsonOut: o.asJSON, yes: o.yes}); err != nil {
 		return err
 	}
 	// The whole family is refused in a coding agent's session (spec §5), and

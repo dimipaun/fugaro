@@ -156,6 +156,30 @@ func TestSecretsRmDryRunNamesBothHalves(t *testing.T) {
 	}
 }
 
+// TestSecretsRmRefusesDryRunWithYes: --dry-run and --yes answer different
+// questions — a dry run says what the removal would do and writes nothing,
+// --yes answers a write — and the family refuses the pair rather than reading
+// --yes as a confirmation the person gave for a run that removes nothing.
+func TestSecretsRmRefusesDryRunWithYes(t *testing.T) {
+	secretsRmFugaro(t)
+	sm, id, path := secretsRmFixture(t)
+	before := readFileString(t, path)
+
+	_, _, err := execute(t, "secrets", "rm", "bitbucket-token", "--dry-run", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "--dry-run and --yes") {
+		t.Fatalf("err = %v, want the dry-run/--yes refusal", err)
+	}
+	if got := sm.Deleted(); len(got) != 0 {
+		t.Fatalf("deleted %v", got)
+	}
+	if got := sm.Latest(id); got == nil {
+		t.Fatal("the container was taken away")
+	}
+	if after := readFileString(t, path); after != before {
+		t.Fatalf("the refusal wrote the config:\n%s", after)
+	}
+}
+
 // TestSecretsRmReportsNothingToRemove: a name this project never stored and
 // whose entry the config does not hold is a state to report, not an error to
 // hand back — and nothing is deleted, because a delete of a derived ID that
