@@ -536,12 +536,11 @@ ceiling is decided.
 4. The workspace service is on the critical path of every shared-credential call. Mitigation: the
    advisory headroom lets a run stop early, and the runbook's stop flag is one command.
 5. **A compromised workspace service can write any node of any member's database**, including
-   `config/caps/global`: its grant is whole-database write and IAM cannot scope it (§5). Rule 1 —
-   a workspace never widens a member — is therefore enforced by the service's code and by the
-   members' own rules where a write is data, not by the grant. Mitigation: the narrow custom role
-   instead of `admin`, so it cannot delete or disable a member's database; the service's code, which
-   writes one node; the member's own policy, which is the tighter side of every merge; and the
-   workspace kill. **Not elimination, and not a claim that IAM stops it.**
+   `config/caps/global`: its grant is whole-database write, IAM cannot scope it and IAM bypasses the
+   rules (§5, §8). Rule 1 — a workspace never widens a member — is therefore enforced by the
+   service's **code** and by nothing else. Mitigation: the narrow custom role instead of `admin`, so
+   it cannot delete or disable a member's database; the service's code, which writes one node; and
+   the workspace kill. **Not elimination, and not a claim that IAM or a member's rules stop it.**
 6. **A Firebase Auth administrator of the workspace's project can mint a verified token for any
    address a member's lists name**, and therefore reach that member as that person. That is not a
    widening this design introduces — it is what any identity provider is — but it is the trust the
