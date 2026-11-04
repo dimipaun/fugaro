@@ -1,6 +1,6 @@
 # Repository image removal: reconciliation against the code
 
-**Status: a design, and every decision in it is answered.** **Owner 2026-11-04: moved to 0.19.0
+**Status: a design, and every decision in it is answered.** **Owner 2026-11-04: moved to 0.20.0
 because the live catalog check found #1701/#1703 first.** The owner's ruling of 2026-11-04 —
 *"Completely disable repo-level images for now to make things simpler."* — is reconciled here against
 the tree of **`777b902d`** (the merge of `main` this round read, 2026-11-04), and **where this file
@@ -226,7 +226,7 @@ as the design's default and **is not a ruling** — a later reader may still rai
 its `Recommendation` and both costs, so the answer and the price of the other reading sit together.
 
 - **D1190 (what exactly is removed, and in how many pieces) — ANSWERED by the owner, 2026-11-04, as
-  recommended: all four places, in 0.19.0.** The reason, in the owner's own terms: this is a removal and
+  recommended: all four places, in 0.20.0.** The reason, in the owner's own terms: this is a removal and
   not a deprecation, so splitting it across releases would leave both image paths alive and the ruling's
   simplification unpaid.
   Recommendation: the four places of [spec.md](spec.md) §1 — the **configuration** (the `image.*`
@@ -239,7 +239,7 @@ its `Recommendation` and both costs, so the answer and the price of the other re
   configuration, deploy path, commands.
   Cost of the alternative: leaving the commands alive while the configuration refuses produces a
   command that can never succeed, and the refusal would then be the only thing telling two stories.
-  Cost of the recommendation: 0.19.0 carries a Terraform change, a CLI change and two schema changes
+  Cost of the recommendation: 0.20.0 carries a Terraform change, a CLI change and two schema changes
   at once, and the Terraform one is a **SEC** task that a reviewer reads line by line.
 
 - **D1191 (`checkout: baked` after the removal, and the one rule the catalog gains) — ANSWERED by the
@@ -519,6 +519,6 @@ its `Recommendation` and both costs, so the answer and the price of the other re
   between them is a new decision, not one of these nineteen**, and no task of the plan may land before
   it is picked.
 - **Unit tests cannot show the deploy path.** The registry, the build account, the job and the run are
-  one artefact, and the hermetic fakes are written from the API documentation. That is why the 0.19.0
+  one artefact, and the hermetic fakes are written from the API documentation. That is why the 0.20.0
   tag waits for the owner's live check rather than for a green suite, and why the check is a step of the
   plan rather than a claim of this document.
