@@ -310,7 +310,15 @@ variable "catalog_check" {
 
   validation {
     condition = var.catalog_check == null ? true : (
-      can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.catalog_check.account_id)) &&
+      # Pinned to the one ID the plan review knows as the catalog check's
+      # account (tf.CatalogCheckAccountID), rather than to the shape every
+      # service account ID has: an ID the review reads as one of the project's
+      # job accounts (fugaro-<readable>-<8 hex>, tf's jobAccount) would be a
+      # member every toAccounts row accepts, which covers the repository root's
+      # roles/iam.serviceAccountUser on a build account — the one grant of this
+      # account that IS in a repository, and the one the owner's typed
+      # confirmation exists to ask about.
+      var.catalog_check.account_id == "fugaro-catalog-check" &&
       can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.catalog_check.job)) &&
       startswith(var.catalog_check.job, "fugarochk-") &&
       can(regex("^[a-zA-Z][a-zA-Z0-9_-]{0,62}$", var.catalog_check.scheduler_job)) &&
@@ -325,7 +333,7 @@ variable "catalog_check" {
       length(var.catalog_check.definitions_condition.title) > 0 &&
       length(var.catalog_check.definitions_condition.expression) > 0
     )
-    error_message = "catalog_check needs a service account ID and an image, a job name that starts with fugarochk- (ls counts the fugaro- ones as workflow jobs, and the alert policies match ^fugarochk-), a Scheduler job name and region, and at least one repository with a slug and the two IAM conditions."
+    error_message = "catalog_check needs the service account ID fugaro-catalog-check — the one internal/infra/tf reads as this job's own kind of principal, so a job-account-shaped ID would be covered by the rows that accept those — an image, a job name that starts with fugarochk- (ls counts the fugaro- ones as workflow jobs, and the alert policies match ^fugarochk-), a Scheduler job name and region, and at least one repository with a slug and the two IAM conditions."
   }
 
   # The job's whole assignment arrives in its environment: internal/cli's mode

@@ -234,6 +234,49 @@ run "job_name_must_be_fugarochk" {
   expect_failures = [var.catalog_check]
 }
 
+run "account_id_must_be_the_one_the_cover_knows" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    catalog_check = {
+      # A job-account-shaped id, which is exactly the dangerous one: the
+      # cover's job-account pattern is fugaro-<readable>-<8 hex>, so an id in
+      # that shape would be read as one of the project's job accounts and
+      # every toAccounts row would accept the account — including the
+      # repository root's roles/iam.serviceAccountUser on the build account,
+      # which is a grant the owner's typed confirmation is supposed to ask
+      # about.
+      account_id       = "fugaro-catalog-check-01234567"
+      job              = "fugarochk-catalog-1a2b3c4d"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/base:0.18.0"
+      scheduler_job    = "fugarochk-catalog"
+      scheduler_region = "us-east5"
+      env = {
+        FUGARO_PROJECT            = "aurora"
+        FUGARO_GCP_PROJECT        = "proj-1234"
+        FUGARO_CATALOG_CHECK_SPEC = "{\"version\":1}"
+      }
+      definitions_condition = {
+        title      = "fugaro-catalog-read-fugaro-catalog-check"
+        expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/builds/catalog/\")"
+      }
+      repositories = [{
+        slug = "acme-app-0123456789abcdef"
+        records_condition = {
+          title      = "fugaro-catalog-records-acme-app-0123456789abcdef"
+          expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/builds/acme-app-0123456789abcdef/catalog/\")"
+        }
+      }]
+    }
+  }
+
+  expect_failures = [var.catalog_check]
+}
+
 run "env_must_carry_the_spec" {
   command = plan
 
