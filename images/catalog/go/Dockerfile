@@ -53,4 +53,16 @@ RUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise,uid=1000,g
 # them.
 RUN go mod download && go build ./...
 
+# The base ships sudo and su setuid-root and granting nothing; a rendered image
+# disarms both here, after image.setup (D1). fugaro needs neither, and su's
+# setuid bit is the empty-password route a setup step's `passwd -d root` would
+# otherwise open. The catalog build's own smoke step requires it as well: the
+# candidate's root selftest expects Debian's standard setuid binaries and
+# neither sudo nor su (internal/image/selftest.go), so an entry that kept them
+# would fail its build rather than run a weaker image.
+USER root
+RUN { [ ! -e /usr/bin/sudo ] || chmod u-s /usr/bin/sudo; } \
+ && { [ ! -e /usr/bin/su ] || chmod u-s /usr/bin/su; }
+USER fugaro
+
 RUN /usr/local/lib/fugaro/finalize-checkout /work/repo

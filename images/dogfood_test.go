@@ -21,11 +21,17 @@ import (
 // convention this repository's own entry follows -- images/catalog/<entry>/Dockerfile,
 // the path the owner's `fugaro image add --dockerfile <repo>:images/catalog/go/Dockerfile`
 // hands the catalog -- and fails unless its last instruction is
-// finalize-checkout. That call is the one step a hand-written Dockerfile can
-// omit with no other symptom (D1208): the image builds, the job runs, and the
-// baked checkout still holds a credential setting, which is the hazard the
-// script exists for. The renderer ended every derived image with it, and an
-// entry that replaces a rendered image has to as well.
+// finalize-checkout. That call is one of the two steps a hand-written
+// Dockerfile can omit with no other symptom (D1208): the image builds, the job
+// runs, and the baked checkout still holds a credential setting, which is the
+// hazard the script exists for. The other is the disarm of the setuid bits the
+// base image ships on sudo and su, which a rendered image strips after
+// image.setup (images/derived/Dockerfile.tmpl, D1): leave either set and the
+// image still builds, but the catalog build's own smoke step fails the
+// candidate's root selftest, whose expected set names neither binary
+// (internal/image/selftest.go, images/derived/cloudbuild.yaml). The renderer
+// did both for every derived image, and an entry that replaces a rendered image
+// has to as well.
 func TestDogfoodWorkflowPinsTheCatalogEntry(t *testing.T) {
 	const workflow = "go"
 	data, err := os.ReadFile("../fugaro.yaml")
@@ -60,6 +66,16 @@ func TestDogfoodWorkflowPinsTheCatalogEntry(t *testing.T) {
 	}
 	if last := lastInstruction(string(raw)); !strings.Contains(last, "/usr/local/lib/fugaro/finalize-checkout") {
 		t.Errorf("%s does not end with finalize-checkout: its last instruction is %q", path, last)
+	}
+	// The base image ships both of these setuid-root and granting nothing, and a
+	// rendered image strips both after image.setup. Leaving either set is not a
+	// weaker image but a build that fails: the catalog build's own smoke step
+	// runs the candidate's root selftest, whose expected setuid binaries are
+	// Debian's standard ones and neither of these (internal/image/selftest.go).
+	for _, bin := range []string{"/usr/bin/sudo", "/usr/bin/su"} {
+		if !strings.Contains(string(raw), "chmod u-s "+bin) {
+			t.Errorf("%s never runs `chmod u-s %s`: the image keeps that setuid bit, and the catalog build's own smoke step fails its root selftest for it", path, bin)
+		}
 	}
 }
 
