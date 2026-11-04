@@ -135,7 +135,7 @@ starts, which is why they are written here and not left to the merge.
 | `internal/cli/init_policy_migrate.go` | **#1656**, R10 | The policy-migration stream rides on **M1** (#1672), the stage of `fugaro update` that publishes the policy node, and it changes what an `update` run prints. It shares no file with a task here, but R10's check reads an `update` run back. **#1656 merges first**, so the check measures the tree it will ship in |
 | `internal/cli/project_cmd.go`, `internal/cli/init_policy_publish.go`, the setup stage's missing-file message | **the `project` family's two streams (A and B)**, R8, R9 | They collide with R8's setup skill and reference documents — whose example the missing-file message repeats — and with R9's gate rows, because `fugaro project policy publish` is one of the seven the gate covers. **They merge first** |
 | `internal/cli/settings_set.go`, `internal/cli/settings_write.go` | **M10**, R2 | M10 is the writer both halves of R2 pass through — the scope and registry rows R2 removes are the rows that file's allowlist admits. **M10 merges first**, and R2 re-reads the allowlist before removing a row from it |
-| the `workflows.*` writers (G3), the secrets family (G8), `internal/runner/accountchoice.go` (A7) | **0.19.0's slice** — G3+ of [docs/config-management](../config-management/implementation-plan.md) (G3–G13, **G8** among them) and **A7** of [docs/accounts-add](../accounts-add/implementation-plan.md) — and R2 | These are **after this release**, so 0.18.0 ships without them and none of them holds a task back. If one lands before the removal, it merges first by the same rule — and each re-reads the rows R2 removed instead of assuming the surface it writes into is the one it was designed against |
+| the `workflows.*` writers (G3), the secrets family (G8), `internal/runner/accountchoice.go` (A7) | **0.19.0's slice**, the removal's own release — G3+ of [docs/config-management](../config-management/implementation-plan.md) (G3–G13, **G8** among them) and **A7** of [docs/accounts-add](../accounts-add/implementation-plan.md) — and R2 | These ride the removal's release, so none of them holds a task back: one that lands first merges first by the same rule, and each re-reads the rows R2 removed instead of assuming the surface it writes into is the one it was designed against |
 
 ## 5. What the plan owes the gate, and what the gate owes the plan
 
@@ -166,13 +166,14 @@ Beyond each task's red step, two properties are cross-cutting and neither belong
 
 ## 7. The recommended slot
 
-**0.18.0 — the same release as D1148's two tasks, and the release whose `imageCatalogShipped` flip has
-already shipped in the source.** That is not a convenience: the removal's whole premise is that the
+**0.19.0 — one release after D1148's two tasks and the `imageCatalogShipped` flip, both of which are
+0.18.0's.** That is not a convenience: the removal's whole premise is that the
 catalog **is** the deployed image path, and shipping the removal in a release whose catalog the launcher
 does not yet read would leave the installation with the refusal in
 `internal/infra/readiness.go:462` and no image. The flip is in — both constants are `true` on `main`,
-#1665 merged — so the premise holds. What 0.18.0 still owes is D1148 (ii), open as **#1683**, and the
-ruling on the `--retire` step [reconciliation.md](reconciliation.md) §5 raises.
+#1665 merged — so the premise holds, and the extra release costs the premise nothing. What the removal
+still owes is D1148 (ii), open as **#1683** and owed by 0.18.0, and the ruling on the `--retire` step
+[reconciliation.md](reconciliation.md) §5 raises.
 
 **The tag waits for R10.** The registry, the build account, the job and the run are one artefact and the
 hermetic fakes are written from the API documentation, so a green suite cannot show that a job built
@@ -439,7 +440,7 @@ readiness branches that decide between them.
 - **SEC.** It is the gate: an independent reviewer reads the row set and the tree check together, and
   neither widens a covered set to make a test pass.
 
-## R10. The owner-run live check, and the 0.18.0 tag (the final task)
+## R10. The owner-run live check, and the 0.19.0 tag (the final task)
 
 - **Interface.** A new registered check in `docs/gcp-live-checklist.md` — **Check 191**, taken above the
   register's highest written section (190) at merge, as the register's own rule requires — plus its row
@@ -473,7 +474,7 @@ readiness branches that decide between them.
   (`internal/cli/docs_check96_test.go:221`) and the ordering pin that a check is written above the
   highest written section (`internal/cli/docs_checks_145_149_test.go:179`) fail until both are written,
   and `website/test/checklist.mjs` reads the file's sections. Nothing here is `go test`-provable beyond
-  that: **the check's own result is the owner's**, and the 0.18.0 tag follows it (§7).
+  that: **the check's own result is the owner's**, and the 0.19.0 tag follows it (§7).
 - **Files (≤3).** `docs/gcp-live-checklist.md`, the new pin test, and the release notes' `### For
   operators` line for the release it ships in.
 - **Note.** This is the one task this plan lifts the "no agent edits the checklist" rule for, and it

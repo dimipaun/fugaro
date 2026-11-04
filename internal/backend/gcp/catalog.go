@@ -407,6 +407,30 @@ gcloud artifacts docker tags add "$$IMAGE@$$digest" "$$IMAGE:$$TAG" --quiet`},
 // Cloud Build's own, the build time is the pin step's file, and the two
 // digests are checked here for shape because they come from files this step
 // did not write.
+//
+// It writes with one objects.create — the JSON API's media upload, which
+// names the object in its own URL — and never with `gcloud storage cp`: cp
+// lists the destination before it copies, which is a storage.objects.list on
+// the bucket, and the build account's write grant is an objectUser condition
+// on builds/<slug>/ (BucketCondition, modules/repo/build.tf), which covers an
+// object under that prefix and no bucket-level list. objects.create on that
+// same name is exactly what the grant covers, so the write needs no grant
+// change; asking for one instead would widen what a repository's build may
+// list in the installation's bucket, which every other object's record and
+// every run's task lives in.
+//
+// The upload carries no ifGenerationMatch, which is the step's own behaviour
+// preserved rather than a new choice: `gcloud storage cp` replaces an
+// existing object unless it is given --no-clobber, which this step never
+// gave it, and a rebuild of an entry has to replace the record of the build
+// it supersedes — same key, the newer build's digests and time. A create-only
+// upload (ifGenerationMatch=0) would instead fail every rebuild of an entry
+// with 412, from the second build of that entry on.
+//
+// The token is the build's own account's, through gcloud's ADC as every
+// sibling step's is, and the object's name is percent-encoded byte by byte
+// because the JSON API takes it as a query parameter, where a raw "/" would
+// end the name and any other reserved character could add or split one.
 func catalogRecordStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
 	key, _ := CatalogRecordKey(s.Slug, s.Entry) // checked before this is called
 	return &cloudbuild.BuildStep{
@@ -429,7 +453,23 @@ built_at=$$(cat /workspace/out/built-at)
 record=$$(mktemp)
 printf '{"version":1,"entry":"%s","source_commit":"%s","definition_generation":%s,"definition_sha256":"%s","base_ref":"%s","base_digest":"%s","image":"%s","content_tag":"%s","image_digest":"%s","build_id":"%s","built_at":"%s"}' \
   "$$ENTRY" "$$COMMIT" "$$GENERATION" "$$SHA256" "$$BASE" "$$base_digest" "$$IMAGE" "$$TAG" "$$image_digest" "$BUILD_ID" "$$built_at" > "$$record"
-gcloud storage cp --quiet "$$record" "$$BUCKET/$$KEY"
+case "$$BUCKET" in gs://*) ;; *) echo "the runs bucket must be a gs:// URL" >&2; exit 1 ;; esac
+export LC_ALL=C
+name=
+i=0
+while [ "$$i" -lt "$${#KEY}" ]; do
+  c=$${KEY:$$i:1}
+  case "$$c" in
+    [A-Za-z0-9._~-]) name="$$name$$c" ;;
+    *) name="$$name$$(printf '%%%02X' "'$$c")" ;;
+  esac
+  i=$$((i + 1))
+done
+url="https://storage.googleapis.com/upload/storage/v1/b/$${BUCKET#gs://}/o?uploadType=media&name=$$name"
+curl --fail -sS -X POST \
+  -H "Authorization: Bearer $$(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" \
+  --data-binary @"$$record" "$$url"
 rm -f "$$record"
 echo "recorded $$KEY"`},
 	}

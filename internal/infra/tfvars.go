@@ -89,6 +89,14 @@ type InstallOptions struct {
 	// or a local config that records the opt-in sets it, so an installation
 	// that never asked plans exactly what it planned before the job existed.
 	Coordinator bool
+	// ImageBuilds is M5's managed bound on image builds (the runs-bucket
+	// marker's max_image_builds), which the catalog check job's spec carries
+	// as one run's build cap: one setting, so a project that bounds a managed
+	// creation's image builds bounds the scheduled catalog check's too. Zero
+	// means the bound was not read, and the spec then writes none — the job
+	// applies M5's own default of one, which is what every installation
+	// records today (managed.WriteMarker writes it).
+	ImageBuilds int64
 }
 
 // Budget is an optional budget on the project, in whole units of currency.
@@ -169,6 +177,13 @@ type InstallationSpec struct {
 	// writes exactly the tfvars it wrote before the variable existed, and the
 	// module creates nothing for an absent one.
 	CredentialsService *CredentialsServiceSpec `json:"credentials_service,omitempty"`
+	// CatalogCheck is the project's catalog check job (D1148), left out on an
+	// installation whose project publishes no catalog and on one whose catalog
+	// names no entry a repository of it can build. The module creates the job,
+	// its account, its six grants and its schedule only for an installation
+	// that writes this, so leaving it out plans exactly what the installation
+	// planned before the job existed.
+	CatalogCheck *CatalogCheckSpec `json:"catalog_check,omitempty"`
 }
 
 // CredentialsServiceSpec is the installation root's var.credentials_service
@@ -808,6 +823,11 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 	}
 	s.ProjectReviewJobs = review
 	s.ManagedDeployerScoped = o.ManagedDeployerScoped
+	cc, err := CatalogCheck(lc, bucket, o.ImageBuilds)
+	if err != nil {
+		return InstallationSpec{}, err
+	}
+	s.CatalogCheck = cc
 	// CredentialsService is deliberately NOT set from the options: the opt-in
 	// is the credentials stage's alone (C1.20), and that stage never comes
 	// through here — it read-modify-writes the one key of the document the
