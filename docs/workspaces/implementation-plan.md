@@ -121,10 +121,40 @@ integer micro-dollars, and a `float64` field is the mistake this test exists to 
 
 ### W1 — the local layer, and the `fugaro workspace` reads and writes
 
-**Interface.** `localcfg.Config` gains `Workspace string \`yaml:"workspace,omitempty"\``; the new
+**Interface.** `localcfg.Config` gains the membership key and, beside it, the member's **pin**:
+
+```go
+type Config struct {
+    // ... the fields it has today
+    // Workspace is the membership, a scalar so a project is in at most one
+    // workspace (D1291).
+    Workspace string `yaml:"workspace,omitempty"`
+    // WorkspacePin is the member's own record of which workspace it trusts and
+    // which identity acts for it there. Nothing here is read from the workspace's
+    // own record (spec.md §2): a record that could supply any of the three would
+    // aim the member's exchange and the member's grants at a party of its choosing.
+    WorkspacePin WorkspacePin `yaml:"workspace_pin,omitempty"`
+}
+
+type WorkspacePin struct {
+    FirebaseProject string `yaml:"firebase_project"` // W4 verifies this project's published keys
+    Issuer          string `yaml:"issuer"`           // W4 requires exactly this issuer
+    ServiceAccount  string `yaml:"service_account"`  // W7 binds the member's two grants to this account
+}
+```
+
+The new
 `fugaro workspace` family (D1303) with `ls`, `show`, `add`, `rm`, `member add`, `member rm`, `cap set`
 — every write a local config edit through the same check, diff, backup and atomic write the `models`
-commands use, and every one ending with `next: fugaro update`.
+commands use, and every one ending with `next: fugaro update`. `workspace add` writes the membership
+key **and the pin** — the three values it is given, which is the one place a member decides what it
+trusts — and `workspace rm` removes both.
+
+**`workspace show` reads files and no cloud node**, and the two halves it can therefore see are not
+the same (spec.md §6). The **workspace owner's** machine holds the record it publishes, so its drift
+report is W2's two-sided membership check in full. A **member's** machine holds no grant on the
+workspace's project, so its `workspace show` reports the member's own half — the key and the pin it
+carries — and says the record cannot be read from here rather than printing an empty member list.
 
 **Files (7):** `internal/localcfg/localcfg.go`, `internal/localcfg/localcfg_test.go`,
 `internal/cli/workspace.go`, `internal/cli/workspace_test.go`, `internal/cli/workspace_json.go`,
@@ -142,7 +172,10 @@ make and the same one `yamledit` exists to keep.
 within it), `TestWorkspaceLsJSONCarriesNoCredentialShapedField` (the `config list` rule: a named set
 of fields, not a marshalled `localcfg.Config`),
 `TestWorkspaceWritesNothingUnderACodingAgentsMarker` (the `models` rule, `--yes` included),
-`TestLocalcfgRefusesASecondWorkspaceKey` (D1291 is a scalar).
+`TestLocalcfgRefusesASecondWorkspaceKey` (D1291 is a scalar),
+`TestWorkspaceAddWritesThePinTheMemberWasGiven` (spec §2: the project id, the issuer and the service
+account are the member's own values, and no code path reads them from the workspace's record —
+which is the field a later refactor would most plausibly "helpfully" fill in).
 
 **SEC:** no. Local file edits and offline reads.
 
@@ -151,9 +184,12 @@ of fields, not a marshalled `localcfg.Config`),
 **Interface.** The **workspace owner's** `fugaro update` gains the stage that writes
 `workspaces/<name>` in the workspace's own database from the workspace's local record, behind its own
 confirmation, migrating an older node in place (never "delete and publish again"), on the policy
-stage's pattern. **A member's `fugaro update` writes nothing there** — a member holds no grant on the
-workspace's project (§5 of [spec.md](spec.md)) — so the stage is the owner's and the member's run of
-the same command converges only the member's own installation.
+stage's pattern. **A member's `fugaro update` writes nothing there and reads nothing there** — a
+member holds no grant on the workspace's project (§5 of [spec.md](spec.md)) — so the stage is the
+owner's, and a member's run of the same command converges only the member's own installation. **The
+node's readers are the workspace's own service and the workspace owner's CLI, and no member is one of
+them**: a member's exchange verifies the pin in its own config and reads its own lists (W4, W5), and
+it never looks at the record.
 
 **Who writes it, and why that is the whole of the rule.** Only the workspace owner's installation
 holds a credential for the workspace's project, so only it can write `workspaces/<name>`. The
@@ -166,11 +202,18 @@ consequences are the design, not an accident:
   be admitted by a group that never admitted it. Both commands are local edits by different people,
   so the two sides converge on the next `fugaro update` on each side, and `workspace show`'s drift
   report is what names a half-done membership rather than either half silently winning.
-- **Each member pins the issuer it trusts, in its own config.** A member's config records the
-  workspace's Firebase project id and the workspace's issuer, and its exchange verifies **that**
-  issuer — never one the workspace's own record supplies. A workspace record that could name an
-  issuer would be a record that could point every member at an identity provider of its choosing,
-  which is the one direction rule 1 does not survive.
+- **Each member pins what it trusts, in its own config.** A member's config records the workspace's
+  Firebase project id, the issuer its exchange requires, and the workspace service account its own
+  `fugaro update` binds §5's grants to (W1's interface). Its exchange verifies **that** issuer and
+  reads **that** project's published keys — never values the workspace's own record supplies, which
+  is why the record carries neither. A record that could name an issuer or a service account would
+  be a record that could point every member's exchange, and aim every member's database grant, at a
+  party of its choosing, which is the one direction rule 1 does not survive.
+- **`workspace show` reports the halves each side can see.** The owner's machine holds the record it
+  publishes, so its drift report is the two-sided check above in full. A member's machine holds no
+  grant on the workspace's project, so its report is its own half — the key and the pin — plus the
+  plain statement that the record cannot be read from here (spec.md §6). A half-done membership is
+  named rather than papered over, and neither side ever invents the other's half.
 
 **Files (5):** `internal/projectpolicy/workspace.go`, `internal/projectpolicy/workspace_test.go`,
 `internal/cli/update_workspace.go`, `internal/cli/update_workspace_test.go`, `internal/cli/update.go`.
@@ -193,17 +236,22 @@ be refused by IAM, and a task that reached for it is the defect this test names)
 `TestMembershipNeedsBothSides` (listed but not naming the workspace, and naming it but not listed,
 are both not membership and both are reported as drift).
 
-**SEC:** **yes.** It is the write that decides who is in the group, and the record it publishes is the
-one every member's exchange reads for the member list. A publish stage that admitted a member on one
-side's word, or that let the record name the issuer, would be the workspace widening a member — the
-one thing rule 1 forbids.
+**SEC:** **yes.** It is the write that decides who is in the group — the record the workspace's own
+service reads for the member list it rolls up and admits against — on a project the publishing
+machine does not own. A publish stage that admitted a member on one
+side's word, or that let the record name the issuer or the service account a member binds its grants
+to, would be the workspace widening a member — the one thing rule 1 forbids. **No member reads this
+node** (spec.md §2): a member's exchange reads its own pin and its own lists, and a member's machine
+holds no grant on the workspace's project at all.
 
 ### W3 — the workspace's own Firebase project and its rules
 
 **Interface.** The workspace's Firebase project is created and converged by the installation path
 (`internal/infra` over the roots in `deploy/terraform/gcp`), and the workspace's database rules ship
-with it: `workspaces/<name>` is written by the workspace's own service account and read by **no
-client**.
+with it: `workspaces/<name>` is **published by the workspace owner's `fugaro update`** (W2) and
+**read by the workspace's own service**, and the rules keep it — and the token subtree with it — shut
+to every other client. **No member's client reads the workspace's database** (spec.md §2): a member
+holds no grant on the workspace's project at all (§5).
 
 **Files (8):** `internal/infra/tf/workspace.go`, `internal/infra/tf/workspace_test.go`,
 `internal/budget/rules/workspace.go`, `internal/budget/rules/workspace.json.tmpl`,
@@ -225,9 +273,12 @@ converges rather than half-applies).
 ### W4 — the exchange at a member
 
 **Interface.** A member's authorization server (the MCP design's §3) gains the token-exchange grant:
-it verifies a workspace token against the workspace's published keys, its issuer and its audience,
-and mints the member's own token. **It depends on the MCP design's implementation (its M3)**, and it
-adds no endpoint to the workspace.
+it verifies a workspace token against **the keys published by the Firebase project the member's own
+config pins, the issuer that same pin names, and the audience rule**, and mints the member's own
+token. **"Its issuer" means the member's pinned issuer and never a value the workspace's record
+supplies** (spec.md §2): the record carries no issuer (W2 publishes none), so the only issuer a
+member's exchange can be pointed at is the one the member wrote down itself. **It depends on the MCP
+design's implementation (its M3)**, and it adds no endpoint to the workspace.
 
 **Files (7):** `ee/coordinator/oauth/workspace.go`, `ee/coordinator/oauth/workspace_test.go`,
 `ee/coordinator/oauth/workspace_keys.go`, `ee/coordinator/oauth/workspace_keys_test.go`,
@@ -242,6 +293,10 @@ verified the signature without the issuer and the audience would accept any work
 **Tests.** `TestExchangeRefusesAWorkspaceTokenFromAnotherWorkspace`,
 `TestExchangeRefusesAnExpiredWorkspaceToken`, `TestExchangeNeverEchoesTheToken` (the `credsvc`
 rule, applied to the new endpoint),
+`TestExchangeVerifiesTheMembersPinnedIssuerNotTheRecords` (the fixture's record names one workspace
+Firebase project and the member's pin names another: the token from the **record's** project is
+refused, because the member trusts the pin in its own config and the record is not an input — the
+half of this task a "helpful" refactor would remove by reading the record instead),
 `TestExchangeRefusalIsIndistinguishableForAnUnknownMember` (spec §8: no member enumeration),
 `TestExchangeMintsAMemberTokenWithTheMembersOwnLimits`,
 `TestExchangeStoresOnlyHashes`.
@@ -293,6 +348,16 @@ account's, the issuer's and the `fp`'s must name one member, or the call is refu
 to `verifyRun`'s pinning and not only to the list it looks the account up in, and it is the half of
 this task that a reader is most likely to miss.
 
+**Whose people the person class holds, and what each route admits.** The deployment's person class is
+not one installation's people: it is the **members'** people, and a person is a person *of one
+member*, the member whose own lists name them (spec.md §3, §4, D1295). So the class is admitted
+**per route**, and each route names the classes it admits rather than the deployment carrying one
+person list a new route inherits an admission from. A route that answers about **one** member admits
+that member's people; a route that answers about the **workspace** — the member list, the cap, the
+rollup, which is every member's spend at once — admits **no member's person**, because one member's
+people must not be handed every other member's spend by joining a group. The workspace's own figures
+are the workspace owner's to read, and the member-side refusals are tests rather than a convention.
+
 **Files (9):** `internal/credsvc/workspace.go`, `internal/credsvc/workspace_test.go`,
 `internal/credsvc/bundle_workspace.go`, `internal/credsvc/bundle_workspace_test.go`,
 `internal/creds/workspace.go`, `internal/creds/workspace_test.go`,
@@ -309,6 +374,10 @@ served a credential a member's policy excluded would be a policy bypass.
 `TestWorkspaceServiceRefusesATokenWhoseIssuerAndAccountDisagree` (the account names `owner/repo-a`
 and the token's `aud`/`iss`/`fp` name `owner/repo-b`: the call is refused, because the member is
 the account and the pins have to agree with it),
+`TestWorkspaceServiceRefusesAMembersPersonTheWorkspaceWideRead` (one member's person asks for the
+workspace's own figures and is refused by the route's class list, while the same person is admitted
+on the route that answers about that member: the per-route half of the person class, and the refusal
+that stops one member's people seeing every other member's spend),
 `TestWorkspaceServiceNeverReturnsACredentialValue` (the package's rule 2),
 `TestWorkspaceBundleIsOneSecretWithOneGrant` (the Q6 shape, applied to the workspace).
 
@@ -344,10 +413,22 @@ by nothing else — which is why spec §5's rule 1 is a property of the code, an
 role never grows to `firebasedatabase.admin` (`credentials.tf`:215-219). Stated here rather than in
 spec §5 alone because it is this task, and not W6, that first needs the write.
 
-**Files (8):** `internal/credsvc/workspace_cap.go`, `internal/credsvc/workspace_cap_test.go`,
+**Who applies it, and to which identity — this task owns that half too.** The grant is applied by the
+**member's own `fugaro update`**, on the member's own installation root, and bound to the workspace
+service account **named in the member's own config**, beside the issuer it pins (spec.md §2, §5;
+W1's interface). The bucket half is the same binding: `roles/storage.objectViewer` on the member's
+runs bucket, applied by the same stage to the same account. The account is never read
+from the workspace's record — §2's record names no service account, for the same reason it names no
+issuer — so a member decides which identity is handed access to its own database and its own bucket.
+The Terraform half belongs to the **member's** root rather than the workspace's, which is why it is
+this task's and not W3's: W3 builds the workspace's project, and this is a binding on a member's.
+
+**Files (11):** `internal/credsvc/workspace_cap.go`, `internal/credsvc/workspace_cap_test.go`,
 `internal/budget/workspace.go`, `internal/budget/workspace_test.go`,
 `internal/budget/workspace_rollup.go`, `internal/budget/workspace_rollup_test.go`,
-`internal/gateway/workspace_headroom.go`, `internal/gateway/workspace_headroom_test.go`.
+`internal/gateway/workspace_headroom.go`, `internal/gateway/workspace_headroom_test.go`,
+`deploy/terraform/gcp/modules/firebase/workspace_access.tf`,
+`internal/infra/tf/workspace_access.go`, `internal/infra/tf/workspace_access_test.go`.
 
 **Red step.** `TestRollupRecordsAnUnreadableMemberAsStaleNotZero` fails. It is the test the task
 exists for: an unreadable member that read as zero would look free, and the workspace would spend
@@ -361,7 +442,11 @@ neither spend the cap nor spend around it),
 `TestWorkspaceCapIsNotWidenedByAMembersOwnCap` (the merge is min, and the workspace can only
 tighten), `TestHeadroomIsAdvisoryAndTheGatewayNeverDecidesTheCap`,
 `TestWorkspaceCapBoundsOnlyTheCredentialsItPaysFor` (D1300, stated as a test so the docs cannot drift
-from it).
+from it),
+`TestMemberUpdateBindsTheWorkspaceGrantsToThePinnedAccount` (the member's own `fugaro update` creates
+both bindings — the database role and the bucket read — and binds them to the service account its
+config pins; a config whose pin names no account creates neither, and a record naming a different
+account changes nothing, because the record is not an input here).
 
 **SEC:** **yes.** It is a spend ceiling and a cross-project read (spec §8).
 
@@ -423,6 +508,7 @@ wherever two tasks would edit the same file; the second waits for the first to m
 | `internal/cli/budget.go` | W8 | One writer for the kill scope; `fugaro budget set`'s own scopes are untouched |
 | `internal/budget/rules/*.json.tmpl` | W3, W7 | W3 owns the workspace's own template; W7 adds no rule to it. The member's template is untouched by both |
 | `internal/projectpolicy/*.go` | W2, W5, W6 | W2 owns `workspace.go`, W5 `members.go`, W6 `workspace_credentials.go`: three files, no overlap |
+| `internal/infra/tf/*.go` | W3, W7 | W3 owns `workspace.go` (the workspace's own root); W7 owns `workspace_access.go` (the member's bindings). Two files, no overlap |
 | `schemas/*.json` | W0, W1, W4 | One file each (`workspace`, `workspace-list`, `workspace-login`); the schema directory's own test checks every file is referenced by a decoder |
 | `ee/coordinator/oauth/*.go` | W4, W5 | W4 owns `workspace*.go`, W5 `admit.go`; W5 depends on W4's verified-identity type and takes it as given |
 

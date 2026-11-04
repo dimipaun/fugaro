@@ -5,7 +5,7 @@ package cli
 // docs/workspaces/ is a design-only folder: README.md (the index, the owner's
 // answers, the reading of the number block and what a reader should not take
 // from here), spec.md (the owner's spec recorded as §0, then the design written
-// to his answers), reconciliation.md (the findings F1-F30, the sixteen
+// to his answers), reconciliation.md (the findings F1-F31, the sixteen
 // decisions D1290-D1305 and the owner's answers of 2026-11-04) and
 // implementation-plan.md (the tasks W0-W9). It adds no code and no task in it is
 // approved, so nothing here pins a command, a flag or an option.
@@ -22,7 +22,10 @@ package cli
 //    deciding are in §8 rather than left as gaps.
 //  * TestDocsWorkspacesNamesWhatItDesigns -- the placeholders and the command
 //    family the design fixes are the names the documents use, and the security
-//    statements the review of 2026-11-04 corrected stay corrected.
+//    statements the reviews of 2026-11-04 corrected stay corrected: the grant
+//    that can lift a member's cap, the read the record's readers are limited
+//    to, the issuer pin that lives in the member's own config, and the
+//    per-route person class.
 //  * TestDocsWorkspacesCitationsResolve -- every `path:line` citation resolves to
 //    a file of this tree and a line inside it, measured against an independent
 //    census so a regexp that stopped matching fails rather than passing
@@ -181,11 +184,15 @@ func TestDocsWorkspacesAnswersAreTheOnesInForce(t *testing.T) {
 // the documents use, and the security statements the review corrected are the
 // corrected ones.
 //
-// The last two blocks are the ones this test exists for. The review of
-// 2026-11-04 found the design claiming the workspace's database grant could not
-// lift a member's cap -- the opposite of what the code says -- and claiming the
-// sign-in half's dependency was an open pull request after it had merged. Both
-// are statements a reader acts on, and both had a plausible-sounding wrong
+// The corrected-statement blocks are the ones this test exists for, and there
+// have been two review rounds of them. The first found the design claiming the
+// workspace's database grant could not lift a member's cap -- the opposite of
+// what the code says -- and claiming the sign-in half's dependency was an open
+// pull request after it had merged. The second found three statements the
+// folder's own sections contradicted: that a member reads the workspace's
+// record, that the issuer pin existed anywhere but in a plan's prose, and that
+// the member-side grants were applied by somebody. Every one of them is a
+// statement a reader acts on, and every one had a plausible-sounding wrong
 // version in the folder.
 func TestDocsWorkspacesNamesWhatItDesigns(t *testing.T) {
 	// The placeholders: a real organisation's example was not recovered, and a
@@ -224,16 +231,48 @@ func TestDocsWorkspacesNamesWhatItDesigns(t *testing.T) {
 		"**landed on `main` on 2026-11-04**",
 		`It is not true that "the only thing that changes is the admitted set"`,
 		"**A `stale` member fails closed.**",
+		// The three the security re-read of 2026-11-04 added, each of which a
+		// reader acts on and each of which the folder had a plausible wrong
+		// version of.
+		"`email_verified` is required to be true",
+		"**the issuer the member's own config pins**",
+		"**It is read by the workspace's own service and by the workspace owner's CLI, and by nothing else.**",
+		"admits **no member's person**",
 	} {
 		if !strings.Contains(spec, want) {
 			t.Errorf("%s does not state %q: the review of 2026-11-04 corrected this, and the wrong version is the one a reader would otherwise act on", wsSpec, want)
 		}
 	}
+
+	// The plan's own half: the two-sided membership and the tasks that own the
+	// pin and the member's grants. A pin that lives only in the spec is a pin no
+	// task builds, and a grant no task applies is a grant that was never made.
+	plan := flattenDoc(readDoc(t, wsPlan))
+	for _, want := range []string{
+		"**Membership takes both sides.**",
+		"TestExchangeVerifiesTheMembersPinnedIssuerNotTheRecords",
+		"TestMemberUpdateBindsTheWorkspaceGrantsToThePinnedAccount",
+		"TestWorkspaceServiceRefusesAMembersPersonTheWorkspaceWideRead",
+	} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("%s does not carry %q: the pin and the member-side grants are design statements until a task owns them, and this is where a task is named", wsPlan, want)
+		}
+	}
+
 	// The claim the review refused, which must not come back in any file.
 	for _, path := range wsDocs() {
 		flat := flattenDoc(readDoc(t, path))
-		if strings.Contains(flat, "The one thing that changes is that the admitted set") {
-			t.Errorf("%s still claims that the admitted set is the one thing that changes: verifyRun pins one Firebase project and one Fugaro project per caller, so the admitted set is not the only thing that changes", path)
+		for _, banned := range []string{
+			"The one thing that changes is that the admitted set",
+			// A member reading the workspace's own record: the section that
+			// said it and the sections that denied it cannot both stand, and
+			// the denial is the one the grants support.
+			"member reads when it needs to know who else is in the group",
+			"member's exchange reads for the member list",
+		} {
+			if strings.Contains(flat, banned) {
+				t.Errorf("%s still claims %q: the folder's own sections say a member holds no grant on the workspace's project and reads no node of its record", path, banned)
+			}
 		}
 	}
 }

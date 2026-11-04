@@ -324,6 +324,38 @@ code, and [implementation-plan.md](implementation-plan.md) §2 and §5 and §7's
 that rather than "still open". Nothing else moves: D921's licence is still unconfirmed there, and
 that design still recommends a slot of its own for its code.
 
+**F31 — The third security re-read, 2026-11-04, at `abc8e09c`. — Three statements the folder made
+were not consistent with its own sections, and each was the same kind of miss: a sentence that read
+as if a grant, a pin or a reader existed where the design beside it said it did not.**
+
+- **Who reads `workspaces/<name>`.** §2 called the record the copy a *second* member reads to learn
+  who else is in the group, and W2's SEC paragraph called it the record each member's exchange reads
+  — while §3, §5, W2's interface and W3 all said a member holds **no grant at all** on the
+  workspace's project. The record is read by the workspace's own service and the workspace owner's
+  CLI, and **by nothing else**: a member's exchange verifies the pin in its own config and reads its
+  own lists. Corrected in [spec.md](spec.md) §2, §3, §5 and §8 and in
+  [implementation-plan.md](implementation-plan.md) W2 and W3 in the same round.
+- **The issuer pin.** W2 said a member's config records the workspace's Firebase project id and its
+  issuer, and §2 gave the member's config one key and listed "the workspace's identity provider" as
+  part of the **published record** — i.e. the pin was designed but never reached the spec or a task.
+  §2 now states the three pinned values (project id, issuer, workspace service account), the record
+  carries no identity provider and no service account, W1's interface carries the fields, and W4 owns
+  `TestExchangeVerifiesTheMembersPinnedIssuerNotTheRecords`.
+- **Who applies the member-side grants.** §5 granted the workspace service a custom role on each
+  member's Firebase project and `objectViewer` on each member's runs bucket — the *rollup's* two
+  reads — but no task applied either and no identity was named for them, so the design's most
+  privileged binding had no owner. The **member's own `fugaro update`** applies both, to the service
+  account **its own config pins** and never to one the record supplies; W7 owns the file and the
+  test, because W7 is the task that first needs the write.
+- **One further statement, corrected in the same read.** §4's person paragraph had a person of any
+  member reading the workspace's own figures "through that same class", which would hand one
+  member's people every other member's spend. The class is admitted **per route**: a route about one
+  member admits that member's people, and the workspace-wide read admits no member's person (spec §4,
+  W6).
+
+Nothing above changes a decision: **D1290–D1305 stand as answered**, and O1 and O2 remain the only
+two questions this folder reports rather than takes.
+
 ## 3. What the reconciliation refuses to accept
 
 - **That a workspace is a new kind of project.** It is a grouping over projects that exist; it owns
@@ -648,7 +680,12 @@ should read this entry rather than assume the design left the question unasked.
 **What a review of these two would also settle.** [spec.md](spec.md) §8's residual risks 5 and 6 are
 the two that a `stale`-and-refuse design does not close: a compromised workspace service can lift a
 member's cap (O1's exposure, unchanged by O2), and a Firebase Auth admin of the workspace's project
-can mint a verified token for any address in its member list, in every member — which is why the
-exchange requires `email_verified` (`internal/credsvc/auth.go`:1018) and why the member's own lists
-remain the whole of the admission (§3, W5). Neither is a defect in the design; both are what the
-design costs, and they are written down here so that a release does not ship them unstated.
+can mint a verified token for any address in its member list, in every member. **The exchange's
+`email_verified` requirement (`internal/credsvc/auth.go`:1018) is not a mitigation against that
+administrator** — an Auth administrator can set that flag, so citing it as the answer would be the
+one misreading this paragraph exists to prevent; it is required for the reason §3 gives, that an
+unverified address is one nobody proved they own. What does bound the administrator is that the
+member's own lists remain the whole of the admission, and that **the member pins the project and the
+issuer it trusts in its own config** (§2, §3, W5) rather than taking either from the workspace's
+record. Neither risk is a defect in the design; both are what the design costs, and they are written
+down here so that a release does not ship them unstated.

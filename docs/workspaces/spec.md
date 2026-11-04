@@ -84,14 +84,25 @@ no runs bucket, no job, no image and no policy.
 A workspace is declared in **two** places, and the second is derived from the first:
 
 1. **In each member's own project config** (`~/.config/fugaro/projects/<name>.yaml`,
-   `internal/localcfg.Config`): one key, `workspace: <name>`. It is read by every command that reads
-   a project config, and it is what makes a project a member. A project with no key is not a member
-   of anything, which is the state of every installation today (D1291).
-2. **In the workspace's own database**, at `workspaces/<name>`, published by `fugaro update`: the
-   member list (each member's project name and its canonical `owner/repo` set), the workspace's
-   identity provider, and the workspace's cap. This is the copy a *second* member reads when it
-   needs to know who else is in the group, and it is the copy the workspace's own services read
-   (D1292).
+   `internal/localcfg.Config`): the membership key `workspace: <name>` (D1291), and beside it the
+   member's **pin** — the workspace's Firebase project id, the issuer the member's exchange requires,
+   and the workspace service account the member's own `fugaro update` binds §5's two grants to. The
+   membership is a scalar; the pin is the member's own record of *which* workspace it trusts and
+   *which* identity acts for it there. It is the member's and never the workspace's (W1 writes it,
+   W4 and W7 read it): a record that could supply the issuer or the service account would be a record
+   that could aim a member's exchange and a member's grants at a party of its choosing, which is the
+   direction rule 1 does not survive. The membership key is read by every command that reads a
+   project config, and it is what makes a project a member. A project with no key is not a member of
+   anything, which is the state of every installation today.
+2. **In the workspace's own database**, at `workspaces/<name>`, published by the workspace owner's
+   `fugaro update`: the member list (each member's project name and its canonical `owner/repo` set)
+   and the workspace's cap (D1292). **It holds no identity provider and names no service account** —
+   both are the member's pin, so which identity a member trusts is never something the workspace
+   states about a member. **It is read by the workspace's own service and by the workspace owner's
+   CLI, and by nothing else.** No member reads it: a member's machine holds no grant on the
+   workspace's project at all (§5), and a member's exchange verifies the pin **in its own config**
+   and reads **its own** launcher/operator lists (§3). The record is the workspace's own statement
+   about the group; it is not an input any member trusts.
 
 The workspace name reuses the project-name grammar (`config.ProjectNameRE`, F21) rather than a second
 one. A workspace's record is validated strictly and strictly decoded, like every other config and
@@ -146,8 +157,11 @@ a member, the person presents the workspace token to that member's own authoriza
 one the MCP design puts inside the coordinator (`docs/mcp-server/spec.md` §3; that design is **on
 `main`** now, merged as #1487 on 2026-11-04, though none of its code is written) — which:
 
-1. verifies the workspace token against the workspace's published keys, its issuer and its audience,
-   and requires `email_verified` (fact 2);
+1. verifies the workspace token against the keys the **pinned** Firebase project publishes, against
+   **the issuer the member's own config pins**, and against the audience rule of fact 1, and requires
+   `email_verified` (fact 2). Its issuer is the *member's* pin and never a value read from the
+   workspace's record: §2's record carries none, so a workspace cannot move a member's trust by
+   publishing a different one;
 2. maps the identity to the member's own permission lists (`internal/cli/user.go`: the launchers and
    operators `fugaro user` writes), and **refuses when the member's lists do not name the person**;
 3. mints **the member's own token**, short-lived, with the member's own scopes and limits, exactly as
@@ -168,10 +182,11 @@ about a node.
 
 **Revocation waits for the token to expire, and that is stated rather than implied.** "One delete at
 the workspace and the next exchange is refused" would hold only if **every member's exchange read the
-workspace's revocation state** on each call. It does not: the exchange verifies the workspace token's
-signature, its issuer and its audience and nothing else, because a member holds **no grant at all** on
-the workspace's project (§5 states the grants this design makes, and the reverse one is not among
-them). So the honest statement is that a workspace
+workspace's revocation state** on each call. It does not: the exchange checks the signature against
+the pinned project's keys, the issuer the member's own config pins and the audience rule, and nothing
+else, because a member holds **no grant at all** on
+the workspace's project and reads no node of it (§5 states the grants this design makes, and the
+reverse one is not among them). So the honest statement is that a workspace
 revocation — disabling the person in the workspace's Firebase — takes effect **when the workspace
 token they already hold expires** (fact 1), and that the member's own revocation is unchanged,
 independent, and bounded the same way. §8 carries it as a residual risk, and the mitigation is the
@@ -217,16 +232,23 @@ but the checks around it are pinned to one installation today, and they have to 
   refused. That is a change to the check, not only to the list it looks the account up in, and W6
   owns it.
 
-**The person class is the one the service already has, and it does not change here.** Main's
-credentials service admits a **person** as a class of its own beside the job classes —
+**The person class is the one the service already has, and who fills it is the one thing this
+deployment changes.** Main's credentials service admits a **person** as a class of its own beside
+the job classes —
 `PersonAccounts` (`internal/credsvc/auth.go`:375) with `VerifyPersonCaller` (`:968`) for the GitHub
 read mint and `VerifyReadCaller` (`:890`) for the Bitbucket read mint, both taking a token a plain
 `gcloud auth print-identity-token` may have minted (`GcloudAudience`, `:258`, the owner's ruling of
-2026-11-04). A person reaches the workspace's service to *read what the workspace holds* — the
-member list, the cap, the rollup — through that same class, and a person is never a way to a
-credential's value (rule 2). Nothing in this design adds a class to the service or widens one: the
-workspace's deployment populates the same lists the installation's does, and the class rule that a
-person may not also be a job (`NewAuthenticator`) holds unchanged.
+2026-11-04). **Whose people they are, and what a person may read, does change here.** The
+workspace's person list is not the installation's: a person is a person *of one member* — the member
+whose own lists name them (§3, D1295) — so the class is admitted **per route**
+rather than wholesale. A route that answers about **one** member admits that member's people; a route
+that answers about the **workspace** — the member list, the cap, the rollup, which is every member's
+spend at once — admits **no member's person**, because one member's people must not be handed every
+other member's spend by joining a group. The workspace's own figures are read by the workspace
+owner's installation, whose CLI holds a credential for the workspace's project (§2, W2), and by no
+member's person. A person is never a way to a credential's value (rule 2), the class rule that a
+person may not also be a job (`NewAuthenticator`) holds unchanged, and W6 states the per-route
+refusals as tests rather than leaving the deployment one person list.
 
 **Which credentials may be shared, and with whom** (D1298, **answered 2026-11-04** and **re-read
 against main on that date**: a workspace credential available to every member would be a policy
@@ -293,6 +315,16 @@ exactly three things, and the design grants exactly those:
 | Each member's runs bucket | `roles/storage.objectViewer` | The rollup's second read, which is what catches a member whose ledger and its bucket disagree |
 | The workspace's own project | The bundle secret's `secretAccessor`, and nothing else | §4 |
 
+**Who applies those two bindings, and to which identity.** The member's **own** `fugaro update`
+applies both — the custom role on the member's Firebase project and `objectViewer` on the member's
+runs bucket — and it binds them to the workspace service account **named in the member's own config**,
+beside the issuer it pins (§2). It is the member that decides which account is handed access to its
+own database and its own bucket, and it takes the account from no other place: §2's record names no
+service account (it names no issuer either), so a record that could name one would be a record that
+could aim a member's database access at a party of its choosing — the direction rule 1 does not
+survive. Nobody else can create the binding: the member owns the project and the bucket, and only its
+`fugaro update` reaches them. W7 owns the file and the test.
+
 **Those two permissions reach the whole database, and this design will not pretend otherwise.**
 `credentials.tf`:201-210 is the authoritative statement: Realtime Database IAM has **no path-level
 scope**, so a binding is per instance and reaches the whole database — `instances.get` is "read any
@@ -320,8 +352,10 @@ database**. The narrow role buys that, and it does not buy the cap-lifting back 
 of the alternative below.
 
 **The service holds no grant on a member's policy, a member's secrets, a member's job or a member's
-project IAM**, and **a member holds no grant at all on the workspace's project** — which is why §3's
-revocation is bounded by the token's lifetime rather than by a read of the workspace's state.
+project IAM**, and **a member holds no grant at all on the workspace's project and reads no node of
+its database** — which is why §3's revocation is bounded by the token's lifetime rather than by a
+read of the workspace's state, and why §2's record is read by the workspace's own service and the
+owner's CLI and by nobody else.
 
 **The headroom stays in the member's database, and moving it is an owner decision.**
 Writing the headroom is the only reason the service needs `instances.update` on a member at all. If
@@ -362,10 +396,19 @@ carries it, and D1301 stands as answered until the owner says otherwise.
 | Verb | What it does |
 | --- | --- |
 | `workspace ls [--json]` | Offline. Every workspace this machine's project configs name, with its members, and which of them this machine has a config for. Versioned JSON with a schema, like every other CLI document |
-| `workspace show <name> [--json]` | Offline. One workspace: its members, its identity provider, its cap as last published, and the drift between the local configs and the published record |
-| `workspace add <name>` / `workspace rm <name>` | Edits the **selected local project config** and nothing else: `workspace: <name>` on, or off. Prints the diff, backs up the file, writes atomically, and ends by printing `next: fugaro update` |
+| `workspace show <name> [--json]` | Offline. One workspace from **this machine's own files**: the configs on it and the pin each carries, its cap as last published here, and the drift between what this machine holds and what it last knew the record to say. It reads no cloud node (§2: a member holds no grant on the workspace's project), so on a member it shows the member's own half and says so rather than printing an empty member list; the workspace owner's machine, which holds the record it publishes, shows the whole of it |
+| `workspace add <name>` / `workspace rm <name>` | Edits the **selected local project config** and nothing else: the membership key `workspace: <name>` **and the pin beside it** — the three values of §2, which are the one place a member decides what it trusts — on, or off. Prints the diff, backs up the file, writes atomically, and ends by printing `next: fugaro update` |
 | `workspace member add <name> <project>` / `member rm …` | The same, for the member list of a workspace this machine holds a config for |
 | `workspace cap set --workspace <name> --monthly <amount>` | Records the workspace's cap in the local config; `fugaro update` publishes it |
+
+**`workspace show` reads files and never a cloud node**, and what "drift" means follows from that.
+On the **workspace owner's** machine, which holds the record it publishes, drift is W2's two-sided
+membership check in full: a project the record lists that does not name the workspace, and a project
+that names the workspace and is not listed — both printed, neither half silently winning. On a
+**member's** machine the record is not readable at all, so the drift it can report is exactly that:
+the member's config names the workspace and carries its pin, and `workspace show` says the group's own
+record cannot be read from here rather than printing an empty one or an invented one. A member's half
+is the only half a member holds, and the command says so instead of guessing.
 
 None of them writes the cloud. `workspace ls`, `workspace show`, the offline reads and the
 `--json` documents run anywhere, including under a coding agent's environment; the writes are local
@@ -416,7 +459,9 @@ section named only the first — which is the kind of omission a threat model ca
 
 It adds **no endpoint to a member's own API** and no endpoint to the workspace's project other than
 the credentials service's. The workspace's database holds the member list and whatever the rollup
-writes, and it is read by no client (D1296).
+writes; its readers are the workspace's own service and the workspace owner's CLI, **no member reads
+it** (§2), and D1296's rule keeps whatever a task stores in its token subtree shut to every client of
+the workspace's own database.
 
 **What a stolen workspace token reaches.** One thing: `POST <member>/oauth/token`, and only for a
 member whose lists name the person, and only while it is unexpired. It is never a bearer for a
@@ -424,13 +469,14 @@ member's API, which is the whole reason the exchange exists. Its blast radius is
 of members the person was already admitted to — a theft that grants nothing the thief did not
 already have, with one exception stated next.
 
-**What a stolen workspace token reaches that the person did not.** Nothing about a member, but
-something about the workspace: the **member list**, because the exchange endpoint must tell the
-holder which members it may reach. So the design's rule is that the workspace token carries **no
-member enumeration**: the client names the member it wants, and a member the person is not in is
-refused with a refusal that is identical in shape and timing to one for a member that does not
-exist. An endpoint that answered "which members are there?" would let any stolen token map the
-group.
+**What a stolen workspace token reaches that the person did not.** Nothing about a member, and
+nothing about the group: the **member list** is the one thing an exchange endpoint could be built to
+disclose, by answering "which members may I reach?" — and the design forbids it. The workspace token
+carries **no member enumeration**: the client names the member it wants, and a member the person is
+not in is refused with a refusal that is identical in shape and timing to one for a member that does
+not exist. An endpoint that answered "which members are there?" would let any stolen token map the
+group, and it would also be the one member-side reader of the workspace's own record, which §2 says
+no member has.
 
 **What a stolen member token reaches.** Unchanged from today: one member, its own scopes, its own
 caps, its own policy, until it expires. The workspace does not extend it, cannot mint a sibling from
@@ -446,9 +492,10 @@ nothing else, that the exchange refuses anyone a member's lists do not name, and
 short-lived.
 
 **Revocation at the workspace ends the person's ability to *exchange*, and nothing else**, and it is
-bounded by the token's lifetime rather than instantaneous: the exchange reads the workspace token's
-signature, issuer and audience and nothing else, because no member holds a grant on the workspace's
-project (§5). A member token already minted keeps working until it expires, which is why member
+bounded by the token's lifetime rather than instantaneous: the exchange checks the signature against
+the pinned project's keys, the issuer the member's own config pins and the audience rule, and nothing
+else, because no member holds a grant on the workspace's project (§5). A member token already minted
+keeps working until it expires, which is why member
 tokens stay short-lived. The honest statement is that **neither revocation is instantaneous across
 members**, and the design buys both back with token lifetime rather than with a callback into every
 member or a read of the workspace's revocation state on every exchange.
@@ -547,8 +594,12 @@ ceiling is decided.
    workspace's Firebase now carries for every member at once, and a member's own Firebase does not
    carry it for another member. Mitigation: the workspace's project is the workspace's own, with its
    own IAM, and the member's lists still decide who is admitted; a member that will not extend that
-   trust to a workspace's administrator should not join the workspace, and §2's record is where the
-   member's own config says which issuer it trusts.
+   trust to a workspace's administrator should not join the workspace, and it says which identity
+   provider it trusts in **the pin §2 puts in its own config** — the project id and the issuer there
+   are the member's, and the workspace's record carries neither. (The exchange's `email_verified`
+   requirement, §3 fact 2, is not a mitigation against this administrator: setting that flag is
+   exactly what an Auth administrator can do. It is there because an unverified address is one nobody
+   proved they own.)
 
 ## 9. What a workspace never does
 

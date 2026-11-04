@@ -34,7 +34,11 @@ trusting any finding above it.
   (Realtime Database has no path-level scope and IAM bypasses the rules), so a compromised service
   can read a member's whole database and **lift a member's cap** — rule 1 is a property of the
   service's code, not of its grant — and a Firebase Auth admin of the workspace's project can mint a
-  verified token for any listed address, in every member. **An independent SECURITY review of that
+  verified token for any listed address, in every member. **The member's own pin is what bounds that
+  last one**: §2 puts the workspace's Firebase project id, the issuer its exchange requires and the
+  service account its two grants are bound to in the **member's** config, so neither a member's
+  exchange nor a member's grant is ever aimed by a value the workspace's record supplies. **An
+  independent SECURITY review of that
   section is mandatory before this design merges**, and **the coordinator runs it** — it is not a
   task of the runs that implement anything, and no task in
   [implementation-plan.md](implementation-plan.md) starts before its findings are answered. (The
@@ -52,7 +56,7 @@ Four files, the shape the other design folders here use:
 | File | What it holds |
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec as recorded (§0), then the design written to every recommendation: what a workspace is (§1), the record (§2), the identity and the token exchange (§3), shared credentials (§4), the workspace cap (§5), the command surface (§6), the console and the mobile app (§7), **the threat model (§8)**, what a workspace never does (§9), and what this design leaves open (§10) |
-| [reconciliation.md](reconciliation.md) | Each claim of §0 against the code at the base: **what exists** (F1, F4, F7–F11, F13–F17, F19, F21), **what is missing** (F2, F5, F12, F18, F20, F22) and **what conflicts** (F3, F6), each with a path and a line; then the **sixteen decisions, D1290–D1305** (§4), the number block and how it was read (§5), the owner checks no hermetic test can stand in for (§6) and the UNVERIFIED table (§7). **Where it disagrees with [spec.md](spec.md), it wins** |
+| [reconciliation.md](reconciliation.md) | Each claim of §0 against the code at the base: **what exists** (F1, F4, F7–F11, F13–F17, F19, F21), **what is missing** (F2, F5, F12, F18, F20, F22) and **what conflicts** (F3, F6), each with a path and a line; §2f is what main has overtaken since, including the security re-reads F29–F31; then the **sixteen decisions, D1290–D1305** (§4), the number block and how it was read (§5), the owner checks no hermetic test can stand in for (§6), the UNVERIFIED table (§7) and **the two owner decisions this round reported instead of taking (§8)**. **Where it disagrees with [spec.md](spec.md), it wins** |
 | [implementation-plan.md](implementation-plan.md) | What the owner must answer first (§1), the order and the three dependencies that force it (§2), ten tasks **W0–W9** each with its files, its interface, its **red step**, its named tests and its **SEC** flag (§3), the **shared-files table** (§4), **the release slot** (§5), the test rules (§6) and what the plan does not own (§7) |
 | `README.md` | This file: the status, what was and was not recovered of the owner's spec, the reading of the number block, and what a reader should not take from here |
 
