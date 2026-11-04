@@ -610,6 +610,25 @@ const CatalogReadConditionTitlePrefix = "fugaro-catalog-read-"
 // the build account saID, as the repository module sets it.
 func CatalogReadConditionTitle(saID string) string { return CatalogReadConditionTitlePrefix + saID }
 
+// CatalogRecordsCondition is the condition of the read-write (objectUser)
+// grant the project's catalog check job holds on ONE repository's area of the
+// runs bucket: builds/<slug>/catalog/, where a catalog entry's build record
+// (CatalogRecordKey) and the check's own state (imagecheck.CatalogCheckKey)
+// live. It is not the repository's whole prefix: builds/<slug>/<workflow>/ is
+// the repository's daily check's, and a job that decides every entry of the
+// project's catalog has no business in it.
+//
+// The grant is per repository because the scope is: one repository's build
+// account can reach one repository's records, and an entry's build is
+// submitted as the account of the repository the entry belongs to. That is
+// what makes the entry's repository a fact rather than a label (D1148).
+func CatalogRecordsCondition(bucket, slug string) string {
+	if slug == "" {
+		panic(fmt.Sprintf("gcp.CatalogRecordsCondition: empty slug: without one the condition would name builds//catalog/, which is no repository's records"))
+	}
+	return projectBucketPrefixClause(bucket, "builds/"+slug+"/catalog")
+}
+
 // TokenBucketPrefix is the runs bucket prefix the budget token objects live
 // under (internal/budget/token's ObjectPrefix, pinned equal by a test): out of
 // runs/, so that a job account, which may write runs/, may only read it
