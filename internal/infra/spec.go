@@ -199,6 +199,14 @@ type InstallationOutputs struct {
 	// stage. The repository roots read the same object from the tfvars'
 	// installation.credentials_service (RepoInstallation).
 	CredentialsService *CredentialsService `json:"credentials_service"`
+	// CatalogCheckServiceAccount is the project's catalog check job's account
+	// (D1148), its email, or "" on an installation whose project publishes no
+	// catalog: the value every repository root reads from its own tfvars
+	// (RepoInstallation.CatalogCheckServiceAccount) to grant that account
+	// actAs on its build account. Empty in the outputs of an installation
+	// applied before the job existed, which is what keeps those repository
+	// roots planning exactly what they planned.
+	CatalogCheckServiceAccount string `json:"catalog_check_service_account"`
 }
 
 // CredentialsService is the installation's credentials service (D146): the
@@ -382,6 +390,15 @@ type RepoInstallation struct {
 	// job account roles/run.invoker on it and drops that job's model-secret
 	// accessors (D135, D145).
 	CredentialsService *CredentialsService `json:"credentials_service,omitempty"`
+	// CatalogCheckServiceAccount is the project's catalog check job's account
+	// (D1148), its email, from the installation's outputs, or "" on an
+	// installation whose project publishes no catalog. It is what
+	// modules/repo/catalogcheck.tf grants actAs on this repository's build
+	// account to, so a build of this repository's catalog entry runs as this
+	// repository. Omitted from the tfvars when empty, so a repository root
+	// planned against an installation with no job writes exactly what it
+	// wrote before the grant existed.
+	CatalogCheckServiceAccount string `json:"catalog_check_service_account,omitempty"`
 }
 
 // RepoRoleIDs are the custom roles a repository root grants.
@@ -1242,17 +1259,18 @@ func Repo(in Inputs) (RepoSpec, error) {
 		GCPProject: lc.GCPProject,
 		Region:     lc.Region,
 		Installation: RepoInstallation{
-			ProjectName:             c.inst.ProjectName,
-			RunsBucket:              c.bucket,
-			RegistryHost:            c.registryHost,
-			BaseRegistry:            c.inst.BaseRegistry,
-			GhcrRegistry:            c.inst.GhcrRegistry,
-			SharedRegistry:          c.inst.SharedRegistry,
-			SchedulerServiceAccount: c.inst.SchedulerServiceAccount,
-			RoleIDs:                 RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter, TagMover: c.inst.RoleIDs.TagMover},
-			Launchers:               c.inst.Launchers,
-			Operators:               c.inst.Operators,
-			CredentialsService:      repoCredentialsService(c.inst.CredentialsService),
+			ProjectName:                c.inst.ProjectName,
+			RunsBucket:                 c.bucket,
+			RegistryHost:               c.registryHost,
+			BaseRegistry:               c.inst.BaseRegistry,
+			GhcrRegistry:               c.inst.GhcrRegistry,
+			SharedRegistry:             c.inst.SharedRegistry,
+			SchedulerServiceAccount:    c.inst.SchedulerServiceAccount,
+			RoleIDs:                    RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter, TagMover: c.inst.RoleIDs.TagMover},
+			Launchers:                  c.inst.Launchers,
+			Operators:                  c.inst.Operators,
+			CredentialsService:         repoCredentialsService(c.inst.CredentialsService),
+			CatalogCheckServiceAccount: c.inst.CatalogCheckServiceAccount,
 		},
 		BitbucketProxied: c.bitbucketProxied,
 
@@ -1607,6 +1625,15 @@ func (rs RepoSpec) Addresses() []string {
 	// gcp.CatalogReadCondition): declared without a gate, so an address of
 	// every repository root, like the build account's own grant above.
 	add(root + "google_storage_bucket_iam_member.catalog_read")
+	// The project's catalog check job's actAs on this repository's build
+	// account (D1148, modules/repo/catalogcheck.tf), gated on the
+	// installation having such a job at all: its account arrives in this
+	// root's tfvars, and an installation that publishes no catalog sends
+	// none, so the resource is not planned and its address is not one this
+	// spec has.
+	if rs.Installation.CatalogCheckServiceAccount != "" {
+		add(root + "google_service_account_iam_member.catalog_check_build[0]")
+	}
 	// modules/repo/check.tf
 	if rs.Check != nil && rs.Check.DeployJob {
 		add(root + "google_cloud_run_v2_job.check[0]")

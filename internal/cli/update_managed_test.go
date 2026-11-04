@@ -781,6 +781,44 @@ func TestUpdateManagedPolicyStageRefusesTheTypedLoosening(t *testing.T) {
 	}
 }
 
+// TestUpdateManagedRefusesTheFirstPolicyPublish: the first node of a managed
+// project is the owner's to write, whichever door the session came through —
+// a first publish has no published list for its allow-list to be unchanged or
+// narrower than, so every repository it names would be admitted where none was
+// (M3, spec §4.1 rule 5). The policy stage's own publish makes one now (#1656),
+// and the gate refuses this one exactly as it refuses the explicit door's: no
+// admission, no record, and the node still absent when the run is over.
+func TestUpdateManagedRefusesTheFirstPolicyPublish(t *testing.T) {
+	r, db := updateBudgetRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	t.Setenv("CLAUDECODE", "1")
+	isolateGateCredentials(t)
+	updating(t, r)
+	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
+	// This machine's config states a catalog and nothing is published, which is
+	// the state the stage now leaves to do.
+	r.appendConfig(t, catalogConfigYAML)
+
+	got, err := updateRun(t, r, "update", "--yes")
+	if err == nil {
+		t.Fatalf("a managed project's agent session wrote the first policy node:\n%s", got)
+	}
+	head := "[needs you]  " + initflow.Policy
+	if !strings.Contains(got, head) {
+		t.Fatalf("the run did not stop at the policy stage, so nothing here was judged:\n%s", got)
+	}
+	if v := db.Value(projectpolicy.PathShared()); v != nil {
+		t.Fatalf("the refused first publish wrote the node: %v", v)
+	}
+	for _, rec := range audits(t, r) {
+		for _, rule := range rec.Rules {
+			if strings.Contains(rule, "not behind the published node") {
+				t.Errorf("a step the gate never admitted left a record: %+v", rec)
+			}
+		}
+	}
+}
+
 // The one failure this step has of its own: a node write with no bytes to write
 // is a step whose document does not exist, and a document nobody could read is
 // never applied (D1012's direction, the same one managed.Gate takes for a plan

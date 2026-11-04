@@ -36,6 +36,10 @@ variable "installation" {
       name   = string
       region = string
     }))
+    # The project's catalog check job account (D1148), its email, or "" on an
+    # installation whose project publishes no catalog. modules/repo grants it
+    # actAs on this repository's build account from here.
+    catalog_check_service_account = optional(string, "")
   })
 }
 
