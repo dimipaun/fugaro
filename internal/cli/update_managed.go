@@ -289,6 +289,14 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	if r.o.planOnly {
 		return false, nil
 	}
+	// The file is read twice: here for the document whose bytes are digested
+	// and recorded, and again inside the gate below, which parses the same path
+	// (tf.TF.Show is tf.TF.ShowJSON plus parsePlan). Two reads of one immutable
+	// saved plan, with nothing planning or applying between them, are one
+	// artifact — which is what D1022 requires of them. Handing the gate the
+	// document read here instead would mean a seam in managed.Spec for a plan
+	// the caller already holds, and that is M0's gate, not a swap this step
+	// leaves open.
 	doc, err := t.ShowJSON(ctx, infra.PlanFile)
 	if err != nil {
 		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err}
