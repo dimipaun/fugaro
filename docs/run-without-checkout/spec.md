@@ -150,12 +150,18 @@ recommendation was the App's key, read as `--check-github-app` reads it, and the
   (`internal/credsvc`'s `VerifyPersonCaller`, the class the read mints admit), and a caller who is not
   one of them is refused there, by name, before anything is signed.
 - **What the service does:** mints a **read-only** GitHub installation token for exactly one
-  repository, with the service's own permission set — `github.CoordinatorTokenPermissions`, `contents`
-  and `pull requests`, read — from the App key the service's bundle holds. **The launcher never holds
-  that key:** no secret is read, no key material enters the process, and the client has no field in
-  which to ask for another permission (`internal/gitprov/github/serviceread.go`). Every mint writes one
-  audit line the launcher cannot suppress (`internal/credsvc`'s `PurposeGitHubRead`: the person who
-  asked and the repository it was for).
+  repository, from the App key the service's bundle holds. **The launcher never holds that key:** no
+  secret is read, no key material enters the process, and the client has no field in which to ask for
+  another permission (`internal/gitprov/github/serviceread.go`). Every mint writes one audit line the
+  launcher cannot suppress (`internal/credsvc`'s `PurposeGitHubRead`: the person who asked and the
+  repository it was for). **The permission the read needs is not the one the route mints with today.**
+  The route asks with `github.CoordinatorTokenPermissions`, which is `pull requests` and `metadata`,
+  read — the coordinator reads no file, and its set is pinned by two tests so that it cannot quietly
+  grow one — so `GET .../contents/fugaro.yaml` is refused with today's token, before the permissions
+  question is answered at all (reconciliation F6). The set the read needs carries `contents: read`, and
+  it is the first task of the plan (A0; the choice between a set of its own and a route of its own is
+  D915). Until it lands, this section describes the read as it is meant to work and A0 is what makes it
+  work; the set **never** becomes the run's (`RunTokenPermissions`) and never widens the coordinator's.
 - **Which repository:** `spec.Repo`, and only it. The service resolves the name through the
   installation's own inventory and refuses a repository it does not hold, so a refusal to install the
   App on a repository is a refusal to read it.
@@ -167,19 +173,28 @@ recommendation was the App's key, read as `--check-github-app` reads it, and the
   the block the credentials stage writes and the shared config carries to every machine of the
   installation. An installation without that block has no read at all (§2, §7).
 - **One request:** `GET /repos/{owner}/{repo}/contents/fugaro.yaml?ref={spec.Ref}`, through the
-  replaceable `githubAPIURL`/`githubAPIClient` seams the package already has, so a test replays it
-  (`internal/gitprov/httpfixture`). The token is held for that call and stored nowhere. The mint's
-  client already exists (`github.ServiceReadTokens`, a `gitprov.TokenSource`); what does not exist is
-  the file-at-a-ref reader and the launcher's own person identity (reconciliation F6, F13).
+  replaceable seams the package already reads a base URL and an HTTP client from (`github.Options`'s
+  `BaseURL` and `HTTP`), so a test replays it (`internal/gitprov/httpfixture`).
+  The token is held for that call and stored nowhere. The mint's client already exists
+  (`github.ServiceReadTokens`, a `gitprov.TokenSource`), and so does the reader: `github.Provider`
+  implements `gitprov.ContentsReader` (`Contents(ctx, path, ref)`, `internal/gitprov/github/contents.go`),
+  and a provider is built to hold no key at all by `Options.ServiceHeldKey` plus `UseServiceTokens`,
+  which takes any `gitprov.TokenSource` — including the person's read mint. What does not exist is the
+  launcher's own person identity (reconciliation F13), and what does not cover the read is the
+  permission set the mint carries today (F6, §5's bullet above).
 - **Refused in a coding agent's session, before anything is read** — `refuseKeyReadInAgent`, with the
   launch named where the flag is named, exactly as `internal/cli/doctor_brokering.go` already refuses
   the credentials service's bundle. There, the launch refuses as the tree refuses it today, and an
   agent's way out is the right one: run it from the repository's checkout.
-- **No new secret, no new stored token, no new principal, no new IAM binding, no new operator step.**
-  The service, its people list, its bundle, its route and its audit line are all in the tree (the read
-  mint shipped in 0.18.0); the launcher is one more caller of a route that exists, and the person's own
-  identity is the credential every other command a person runs already reaches the project with. The
-  limit is where the service is not: see §2.
+- **No new secret, no new stored token, no new principal and no new IAM binding** — but **not no
+  credentials-service change and not no operator step.** The service, its people list, its bundle, its
+  route and its audit line are all in the tree (the read mint shipped in 0.18.0), and the launcher is
+  one more caller of a route that exists; the person's own identity is the credential every other
+  command a person runs already reaches the project with. What does change is the service's own mint:
+  the set it asks with has to cover a file read (A0, D915), and **the credentials service must be
+  redeployed for the installation to serve it** — an installation that has run the version carrying A0
+  but not redeployed the service still mints the old set, and the read is refused, so the launch keeps
+  the tree's refusal until it has (§7). The limit is also where the service is not: see §2.
 
 The rejected credentials, with their costs, are D902's alternatives, including the one this design
 recommended: the installation's **App key**, read as `--check-github-app` reads it (the launcher would
@@ -216,6 +231,7 @@ on a job the project's policy did not choose is worse than a refusal (D905).
 | --- | --- |
 | No checkout anywhere, provider is one a shared job serves, the installation has **no credentials service** (it has not opted in) | Refused. The message says so in one line and keeps the checkout as the way out: `cannot read owner/repo-a's fugaro.yaml at main as yourself: this installation has no credentials service, so the read that decides the run's job cannot be made. Run it from owner/repo-a's checkout` |
 | No checkout, the **caller is not one of the installation's people**, or the repository is **not one the installation holds** | Refused, the service's own refusal relayed (the service names both causes and never the caller's address), same way out |
+| No checkout, the service is there but its mint's set does not cover a file read — an installation whose credentials service was not redeployed after A0, or an App not granted `contents` | Refused: `cannot read owner/repo-a's fugaro.yaml at main: the installation's credentials service minted a token that cannot read a file; redeploy it with fugaro update`. The message names the service and the redeploy, never the token and never GitHub's own refusal text |
 | No checkout, **no network**, or the credentials service or the forge answers 5xx | Refused, `remote(...)`'s wording for an unreachable service, same way out |
 | No checkout, the ref does not exist at the forge | Refused, naming the ref: a deleted or never-pushed branch is not a reason to read another one |
 | No checkout, the file **is there but the workflow is not**, or has no `checkout:` kind we can read | Unchanged from today: `resolveWorkflow`'s "cannot tell which workflow of `%s` to run; pass `--workflow`", and the per-repository job for anything but `clone` |
@@ -317,6 +333,7 @@ own identity can make through the installation's credentials service, or with th
 | Anywhere, no checkout of `X`, Bitbucket, profiles published | refused | per-repository job — no shared Bitbucket job exists |
 | Anywhere, no checkout of `X`, GitHub, profiles published, human session, installation has a credentials service | refused | decided by the read through the service, at the ref |
 | The same, installation has **no** credentials service | refused | refused, unchanged, naming the checkout |
+| The same, the service is there but its mint cannot read a file (not redeployed after A0) | refused | refused, naming the service and the redeploy |
 | The same, coding agent's session | refused | refused, `refuseKeyReadInAgent`'s wording added |
 | Anywhere, no checkout, **no profiles published** | launch proceeds | unchanged |
 | The console's launch of the repository it is showing | refused (broken GUI) | decided by the read at the ref, where the installation has a service |
@@ -335,9 +352,12 @@ identity, on their machine, and it is a call to the installation's credentials s
 verifies that identity against the installation's own people list, resolves `spec.Repo` through the
 installation's inventory, mints a **read-only, repository-scoped** installation token from the key in
 its bundle, and writes one audit line for the act. So the launcher holds no App key, reads no secret
-and reads no environment variable; what it holds, for the duration of one API call, is a token that
-can only read one repository — never the run's write-capable set, never the repository's pushed
-credential. In a coding agent's session the read does not happen at all, so the token is never minted
+and reads no environment variable; what it holds, for the duration of one API call, is a read-only
+token scoped to one repository — never the run's write-capable set, never the repository's pushed
+credential. The reach that token carries is the one A0 defines (a file read at least, `contents: read`,
+and no write), and the set the service asks with has to be one that reaches a file at all: today's is
+`pull requests` and `metadata`, so the read is refused until A0 lands and the service is redeployed
+(§5, §7). In a coding agent's session the read does not happen at all, so the token is never minted
 for one — `refuseKeyReadInAgent`, the shape `internal/cli/doctor_brokering.go` already applies to the
 credentials service's bundle.
 
@@ -362,7 +382,10 @@ already was, in the service's bundle.
   material, no environment variable, and no path in which a key could reach the process the job
   decision runs in.
 - The launcher never uses the run's own token set for this read, and asks for no permission at all:
-  the mint's set is the service's.
+  the set the mint asks with is the service's constant, and A0 gives it one that carries
+  `contents: read` — **never a widened `CoordinatorTokenPermissions`**, which is the coordinator's own
+  credential's reach and is pinned by two tests that exist to catch exactly that, and never
+  `RunTokenPermissions`.
 - The launcher never fetches into a checkout: `checkoutFugaroYAMLAtRef` does not fetch today
   ("a fetch is a network write into a repository this command does not own"), and the forge read is
   an API call that does not touch the checkout either.

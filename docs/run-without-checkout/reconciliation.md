@@ -60,26 +60,43 @@ the repository's own file names the profile. Without that file the launcher can 
 and still not know which shared job it runs on, and the default (`standard`) is wrong exactly where
 this matters, since a project publishes profiles because its repositories name them.
 
-**F6. The credential the owner's answer names exists; the reader and the launcher's identity do
-not.** The **person-class read mint** shipped in 0.18.0 (GitHub: #1646, #1669; the Bitbucket twin
-beside it, BB4):
+**F6. The credential the owner's answer names exists; it cannot read a file, and the launcher's own
+identity does not exist.** The **person-class read mint** shipped in 0.18.0 (GitHub: #1646, #1669; the
+Bitbucket twin beside it, BB4):
 
 - `internal/credsvc/githubread.go` — the route `/v1/github/read-token`, `VerifyPersonCaller` against
-  the installation's own people list, the permission set `github.CoordinatorTokenPermissions`
-  (`contents` and `pull requests`, read), the signing key from the service's bundle and nowhere else,
-  the repository resolved through the installation's inventory and refused by name when it is not
-  held, one audit line per mint (`PurposeGitHubRead`).
+  the installation's own people list, the signing key from the service's bundle and nowhere else, the
+  repository resolved through the installation's inventory and refused by name when it is not held,
+  one audit line per mint (`PurposeGitHubRead`).
 - `internal/gitprov/github/serviceread.go` — its client, `ServiceReadTokens`, a `gitprov.TokenSource`
   with `URL`, `Repository`, `AppID` and `IDToken`, and two refusals (`ErrServiceRead`,
   `ErrServiceReadIdentity`). The App ID travels in the body and is not a secret (`localcfg.Repo`'s
   `repos.<repo>.github_app_id`, the same number the platform passes to a job).
 
-What does **not** exist: a file-at-a-ref reader — `gitprov.Provider` (`internal/gitprov/gitprov.go`)
-has **no** file-read method, by design, since a Bitbucket credential cannot be widened and the
-interface should not grow a capability one provider has — and the launcher's own person identity (F13).
-The `contents:read`-only set the recommendation asked for is no longer needed: the mint is the
-service's, it asks GitHub for its own read-only set, and its client has no field in which to ask for
-another.
+**The mint's permission set does not cover a file read, and the first reading of this finding said it
+did.** The route mints with `github.CoordinatorTokenPermissions()`, and that set is
+`{"pull_requests": "read", "metadata": "read"}` (`internal/gitprov/github/apptoken.go`, the constant's
+own comment: "contents and issues were asked for and never used: this reader opens no file"). The
+request body (`credsvc.GitHubReadRequest`) is two fields and carries no permission field, so nothing a
+caller sends can widen it — and nothing can narrow the gap either: `GET
+/repos/{owner}/{repo}/contents/fugaro.yaml` with the token this route mints today is **refused** by
+GitHub. Two tests already pin the set, and both are right: `TestAppTokenCoordinatorPermissionsHoldNoWrite`
+(`apptoken_test.go`, an equality against `testdata/coordinator_token.json`) and
+`TestGitHubReadAsksForNoWrite` (`githubread_test.go`, which reads the mint's own request body). The
+coordinator reads no file, so widening that constant would widen the coordinator's credential to serve
+the launcher; the permission this read needs is a set of its own (D915, task A0).
+
+What else does **not** exist: the launcher's own person identity (F13). What does exist, and the first
+reading missed it, is **the file-at-a-ref reader**. `gitprov.Provider` has no file-read method, by
+design — a Bitbucket credential cannot be widened and the interface should not grow a capability one
+provider has — but `gitprov.ContentsReader` (`internal/gitprov/gitprov.go:273`) is that capability
+beside it, and the GitHub adapter implements it: `Provider.Contents(ctx, path, ref)`
+(`internal/gitprov/github/contents.go`, #1686), a `GET /contents/{path}?ref=` that answers a regular
+file's bytes or an error — a directory, a symlink entry, a submodule, a non-base64 encoding and
+anything over `gitprov.MaxContentsBytes` are all refusals. It is reached with the provider's own token,
+and a provider can be built to hold no key at all (`Options.ServiceHeldKey`, then `UseServiceTokens`,
+which takes any `gitprov.TokenSource` — `ServiceReadTokens` is one), so the launcher's reader is a thin
+use of what is in the tree rather than a new HTTP client (A1).
 
 **F7. The recorded job needs no new storage.** `internal/runstore/launch.go` records `Job` in
 `launch.json`, and `existingLaunch` (`internal/cli/run.go`) already backfills that record from
@@ -97,8 +114,8 @@ in D905.
 
 **F9. Every console launch is from outside every checkout, so the refusal breaks the GUI on any
 migrated installation.** The `run.launch` child's working directory is the app's own private, empty
-directory (`console/src/main/launch.ts:828`; the directory is `privateWorkingDirectory`,
-`console/src/main/spawn.ts:1615`), deliberately — "a launch spawned in a checkout could take its ref
+directory (`console/src/main/launch.ts:884`; the directory is `privateWorkingDirectory`,
+`console/src/main/spawn.ts:2246`), deliberately — "a launch spawned in a checkout could take its ref
 from whatever the operator happens to have checked out, invisibly". So `checkoutRoot` is always
 empty for the child, `co` is always nil, and on an installation whose policy defines a profile every
 console launch of every repository is refused. `--ref` is on `NEVER_REACHABLE` in that schema, so a
@@ -135,8 +152,11 @@ retired port literal anywhere under `docs/`), the mobile-telemetry test (a decis
 be reserved by exactly one design and must be free on `main`), and `docs_live_init_census_test.go` (a
 retired command spelling may appear only in dated records and a named list). This design's files use no
 retired literal, no price, no secret-shaped value, no real name, and take the free block in §3. **And
-no test named this folder on 2026-11-04**, so this round adds the one that holds the answered state:
-`internal/cli/docs_run_without_checkout_test.go`, pinning the four status lines and D902's deviation.
+no test names this folder**, so nothing pins it. Adding one would mean a new
+`internal/cli/docs_*_test.go`, which moves the `docs_*_test.go` census row `docs/rigor-modes/reconciliation.md`
+states (`TestDocsRigorModesCensusStatesItsCommands`, `TestDocsRigorModesReconciliationCountsTheConfigManagementPin`)
+— that row is another design's pin, so this design adds no test and leaves the folder unpinned rather
+than edit a document that is not its own. Reported, not done.
 
 **F13. The launcher's person identity is not in the core, and the core may not import the one that
 exists.** The only code in the tree that mints an operator's own Google ID token is
@@ -185,10 +205,12 @@ operator the same thing.
 **"Which credential reads the repository's `fugaro.yaml`?"** The owner answered this one (D902): the
 installation's credentials service, person class. It is not the design's recommendation — the
 recommendation was the App's key read as `--check-github-app` reads it — and the answer's cost is
-stated in §3: the read is available only where the installation has opted into the service, and it
-gives the launcher a dependency on `gcloud` being installed and logged in (F13). What the answer buys
-over the recommendation is that the launcher holds no App key at all: an installation-wide credential
-that can mint for every repository the App serves never enters the process that decides the job.
+stated in §3: the read is available only where the installation has opted into the service, it gives
+the launcher a dependency on `gcloud` being installed and logged in (F13), and it is a change to the
+service's own mint rather than a route the launcher can use as it stands — the set it mints today
+carries no `contents` (F6, D915). What the answer buys over the recommendation is that the launcher
+holds no App key at all: an installation-wide credential that can mint for every repository the App
+serves never enters the process that decides the job.
 
 **"Does the read lift the refusal for `--retry` and `--pr`?"** It does, from the run's own
 record rather than from the forge (D907), which is also the only answer that keeps a continuation on
@@ -196,16 +218,18 @@ the job it continues.
 
 ## 3. Decisions
 
-The block **D901–D919** is held by this work; **D901–D914** are used below and D915–D919 are held for
+The block **D901–D919** is held by this work; **D901–D915** are used below and D916–D919 are held for
 the decisions implementing this design will need (a task that needs one takes the next number in the
-block). The block's census is in the README. Every decision was answered by the owner on
-**2026-11-04**; the answer column carries the date, the owner's reason in one line, and the words
-**not the recommendation** where the answer is not the one this file proposed.
+block). The block's census is in the README. Every decision but **D915** was answered by the owner on
+**2026-11-04**, the answer column carrying the date, the owner's reason in one line, and the words
+**not the recommendation** where the answer is not the one this file proposed. **D915 is open**: it is
+the question the mint's own permission set raised on 2026-11-04, when re-reading the code found that
+the person read mint reaches no file (F6), and the design states both options rather than picking one.
 
 | # | Question | Recommendation | The alternative, and what it costs | Answered 2026-11-04 |
 | --- | --- | --- | --- | --- |
 | **D901** | Is the read automatic, or behind an explicit act? | **Automatic, on the one path that would otherwise refuse**: no new flag, the console unchanged, and a launch that already works untouched | **A new `--config-from-forge` flag** (plus a sixth field in the console's launch contract): a console release must ship before the GUI can launch *anything* on a migrated installation, a new flag enters the CLI reference and three skills, and every operator re-types the command once. **A probe run** (launch a run that clones, reads the document, reports the job the real run should use): two executions and two claims per launch, a new job kind, and the same information is one API call away | **As recommended.** Automatic, on the one refusing path: a flag would need a console release before the GUI could launch anything, and the read happens only where the launch would otherwise stop |
-| **D902** | Which credential reads it | **The installation's existing App**, read exactly as `--check-github-app` reads it (Secret Manager, the operator's own credentials, a one-line notice, in memory only), minting a `contents:read`-only token for `spec.Repo`; refused by `refuseKeyReadInAgent` in a coding agent's session | **The credentials service**: a new principal, a second admission rule beside its `JobAccount` binding, an IAM binding on a dormant service, and nothing for Bitbucket. **The operator's ambient forge credential** (`gh`, a credential helper): Fugaro reads a person's credential out of a tool that may not exist, `docs/git-providers.md`'s statement stops being true in a new way, and Bitbucket has no equivalent. **A new stored launch token**: a new secret to create, store and rotate, duplicating the App | **Not the recommendation. Read through the credentials service's person class.** The launcher reads the file as the operator themselves (`github.ServiceReadTokens` against `/v1/github/read-token`), so **the CLI holds no App key and reads no environment variable**; the owner's reason is that the class shipped in 0.18.0, so a launcher need not hold an installation-wide key at all. The costs, stated: the read exists only where the installation has opted into the service (dormant otherwise: the launch refuses, D905), the launcher needs `gcloud auth print-identity-token` and so a `gcloud` on PATH and logged in (F13), the App ID comes from `repos.<repo>.github_app_id`, and every launch's read is one audited mint. The agent-session refusal stands as recommended, now for this value rather than for a key (`refuseKeyReadInAgent`, the shape `internal/cli/doctor_brokering.go` already uses for the service's bundle) |
+| **D902** | Which credential reads it | **The installation's existing App**, read exactly as `--check-github-app` reads it (Secret Manager, the operator's own credentials, a one-line notice, in memory only), minting a `contents:read`-only token for `spec.Repo`; refused by `refuseKeyReadInAgent` in a coding agent's session | **The credentials service**: a new principal, a second admission rule beside its `JobAccount` binding, an IAM binding on a dormant service, and nothing for Bitbucket. **The operator's ambient forge credential** (`gh`, a credential helper): Fugaro reads a person's credential out of a tool that may not exist, `docs/git-providers.md`'s statement stops being true in a new way, and Bitbucket has no equivalent. **A new stored launch token**: a new secret to create, store and rotate, duplicating the App | **Not the recommendation. Read through the credentials service's person class.** The launcher reads the file as the operator themselves (`github.ServiceReadTokens` against `/v1/github/read-token`), so **the CLI holds no App key and reads no environment variable**; the owner's reason is that the class shipped in 0.18.0, so a launcher need not hold an installation-wide key at all. The costs, stated: the read exists only where the installation has opted into the service (dormant otherwise: the launch refuses, D905), the launcher needs `gcloud auth print-identity-token` and so a `gcloud` on PATH and logged in (F13), the App ID comes from `repos.<repo>.github_app_id`, and every launch's read is one audited mint. The agent-session refusal stands as recommended, now for this value rather than for a key (`refuseKeyReadInAgent`, the shape `internal/cli/doctor_brokering.go` already uses for the service's bundle). **The limit the re-check of 2026-11-04 found:** the route mints with `pull requests` and `metadata`, read, and no `contents`, so the file read this path is for is refused until the service's own set changes — the answer's credential class stands, its permission does not (F6, D915, task A0) |
 | **D903** | At which ref | **`spec.Ref`** — the ref the run checks out and the runner re-reads | **The default branch**: a run at another ref is placed by a document it does not run under, and since the runner halts rather than widening, the operator pays a claim and a budget token for a decision the launcher could have made — on a `--ref` launch, at the moment someone is watching a branch | **As recommended.** `spec.Ref`, so the launcher and the runner read the same document; another ref turns the decision into a paid halt |
 | **D904** | Caching | **None**: at most one read per command, memoized in-command like `checkoutParseCache`, written nowhere | **A config-directory cache keyed by (repo, ref)**: a stale document places a run the ref no longer selects and the run halts after the claim; the invalidation story cannot be honest about a force-push | **As recommended.** No cache: a document the ref no longer carries must not be able to place a run |
 | **D905** | What a failed read does | **Refuse**, naming the cause and the two ways out (the checkout, or the permission) | **Fall back to the per-repository job** (what `main` did before #1477; the run usually works, since `internal/infra/spec.go` gives a clone workflow a per-repository job too): the project's policy chose a placement and the run silently does not use it — the profile's image, cpu, memory, secrets and admission list do not apply — and the only trace is a job name in `launch.json` | **As recommended.** Refuse. A read that fails means the job cannot be decided, and a run silently placed on a job the policy did not choose is worse than a refusal; the message names the cause and the ways out |
@@ -213,11 +237,12 @@ block). The block's census is in the README. Every decision was answered by the 
 | **D907** | `--retry` and `--pr` | **Reuse the job the run being continued recorded** (`Launch.Job`, backfilled by `existingLaunch`), falling through to the other sources only when there is no launch record | **Always read the document**: a follow-up can land on a different job than the run it follows when the ref's document changed in between — the one change a continuation must not make — and it spends a mint on a job already recorded. **Always refuse** from outside the checkout: a run launched by the console could never be retried from the console | **As recommended.** The recorded job: a continuation must stay on the job it continues, and the runner's own checks still judge it |
 | **D908** | A provider no shared job serves | **Proceed on the per-repository job with no read** (`infra.SharedJobProvider`): it is the same answer the checkout path gives for the same repository | **Refuse for every provider** (the merged refusal's shape): every Bitbucket console launch is refused for a question with one answer, and the operator's way out — a checkout — is not one the console can take | **As recommended.** Proceed on the per-repository job with no read and no credential: for a provider no shared job serves, it is the same answer the checkout path gives |
 | **D909** | A checkout whose working tree has no `fugaro.yaml` | **Read the ref's document from the checkout's objects** (`checkoutFugaroYAMLAtRef`, promoted from the auth axis to the whole document) | **Keep the refusal, fix only the message**: an operator standing in the checkout is told to run it from the checkout, when the local `git cat-file` that answers is the reader the same function already uses two gates later | **As recommended.** Read the ref's objects: the local `git cat-file` answers where the working tree does not, and the operator standing in the checkout is not sent back to it |
-| **D910** | Where the reader lives | **A CLI seam** (`readRepoConfigAtRef`) over a new `FileAt` in `internal/gitprov/github`, with the package's existing replaceable HTTP seams and `httpfixture` for replay | **`gitprov.Provider.FileAt`**: a method every provider must implement, the fake included, for a read only GitHub can serve — and a second place a caller could reach with the run's own credential instead of a narrow one | **As recommended**, with the launcher's person identity added beside it (F13): a core helper minting the operator's own ID token, because the core may not import `ee/`'s |
-| **D911** | Which permissions the minted token asks for | **A new `contents:read` + `metadata:read` set** in `internal/gitprov/github`, beside the two that exist | **`RunTokenPermissions`**: the launcher's process would hold a write-capable token for every repository the App serves, to read one file, enlarging the blast radius of the one process this design newly gives a provider credential | **As recommended, and moot as a choice:** the mint is the service's (D902), it asks GitHub for its own read-only set (`CoordinatorTokenPermissions`), and the client has no field in which to ask for another. The banned set is still banned: never `RunTokenPermissions` |
+| **D910** | Where the reader lives | **A CLI seam** (`readRepoConfigAtRef`) over a `FileAt` in `internal/gitprov/github`, with the package's existing replaceable HTTP seams and `httpfixture` for replay | **`gitprov.Provider.FileAt`**: a method every provider must implement, the fake included, for a read only GitHub can serve — and a second place a caller could reach with the run's own credential instead of a narrow one | **As recommended, and narrower than it looked:** the package already has `Contents`, one file at a ref with a provider's own token (`gitprov.ContentsReader`, F6), so A1 is the launcher-facing reader over it and not a second HTTP client — with the launcher's person identity added beside it (F13): a core helper minting the operator's own ID token, because the core may not import `ee/`'s |
+| **D911** | Which permissions the minted token asks for | **A new `contents:read` + `metadata:read` set** in `internal/gitprov/github`, beside the two that exist | **`RunTokenPermissions`**: the launcher's process would hold a write-capable token for every repository the App serves, to read one file, enlarging the blast radius of the one process this design newly gives a provider credential | **As recommended, and the recommendation is now a task rather than an assumption.** The mint is the service's (D902) and its client has no field in which to ask for another permission — but the set the route mints with today is `CoordinatorTokenPermissions`, `pull requests` and `metadata`, read, and it reaches no file: the read this design is for needs a set that carries `contents: read` (F6, D915, task A0), and A1 cannot pass its end-to-end test before that set exists. The banned set is still banned: never `RunTokenPermissions`, and never a widened `CoordinatorTokenPermissions` |
 | **D912** | The message an operator sees | **Two distinct refusals**: "outside `X`'s checkout" (no checkout anywhere) and "the ref's `fugaro.yaml` could not be read" (with the cause and both ways out); the merged text stays only for the coding-agent case, where it is true | **One message**: the operator in a checkout is told to run from the checkout, and the operator without the permission is told something that does not fix it | **As recommended.** Two messages for two causes, because they have two remedies; a third line names the installation's own credentials-service opt-in where that is why no read could be made |
 | **D913** | The documents this changes | **`docs/checkout.md`** loses the "Known gaps" bullet; **`docs/git-providers.md`** states the one exception in its own words; `docs/project-layer.md` is not touched; no `plugin/skills` change, since no flag is added (D901) | **No documentation change**: two pages keep describing a launcher that cannot read the file, and the next reader believes them | **As recommended**, with the exception now the service's read rather than a key read: `docs/git-providers.md` says the CLI holds no provider credential of its own, and a launch outside a checkout on an installation with a credentials service holds one read-only, repository-scoped token the service minted for the operator, for one file |
-| **D914** | The review this work needs | **Security-sensitive, like the credentials service**: the tasks that add the read (A1–A3 of the plan) merge only on an independent review, and the flag-refusal path is a named test, not a comment | **Ordinary review**: the first path that reads a repository's configuration outside a checkout, with a provider credential in the process, ships on one reviewer's judgement | **As recommended, and wider:** under `.claude/rules/credentials-service.md` the path is the service's, so the review covers the person class, the audited mint, the absence of a key in the launcher and the agent-session refusal |
+| **D914** | The review this work needs | **Security-sensitive, like the credentials service**: the tasks that add the read (A1–A3 of the plan) merge only on an independent review, and the flag-refusal path is a named test, not a comment | **Ordinary review**: the first path that reads a repository's configuration outside a checkout, with a provider credential in the process, ships on one reviewer's judgement | **As recommended, and wider than recommended:** with A0 the change is the **service's own** — its mint's permission set, or a route of its own (D915) — so it is a credentials-service change by rule (`.claude/rules/credentials-service.md`: independent review before merging, one audit line per refusal, no credential value in any line), and the review covers the person class, the audited mint, the permission set's two pins, the absence of a key in the launcher and the agent-session refusal. A0, A1 and A3 are one reviewed range |
+| **D915** | Which permission the person read mint carries, now that the read is a file read | **A set of its own beside the coordinator's** (`personReadTokenPermissions`, with the exported accessor every set here has, carrying the coordinator's two and `contents: read`), asked for by `githubRead` in place of `CoordinatorTokenPermissions` — one constant and one call site, and the coordinator's reach does not move | **A route of its own** (`/v1/github/read-file-token`): a second person route, a second client, a second audit purpose, a second set of refusals and a second thing to keep in step with the first — for a permission the existing route's set can carry. **Widening `CoordinatorTokenPermissions`**: refused outright, and it is the option the two existing pins exist to catch — the coordinator reads no file, and a permission asked for and never used is reach GitHub would give a stolen token for nothing | **Open — the one row with no answer, raised by the code on 2026-11-04.** The design recommends the set of its own: the person class, its route, its audit line and its refusals all stay as they are, and the only thing that moves is which constant the mint asks with. The alternative costs a route. Task A0 implements whichever the owner takes; A1 and A3 depend on it |
 
 ## 4. Open items
 

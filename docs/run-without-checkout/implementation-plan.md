@@ -2,11 +2,21 @@
 
 **Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task approved.**
 
-The decisions each task answers are named in its heading; they are **D901–D914** in
-[reconciliation.md §3](reconciliation.md), **all answered by the owner on 2026-11-04**, each with the
-reason for the answer beside it. **D902's answer is not the recommendation** — the read is made through
-the installation's credentials service, as the operator themselves, so the launcher holds no App key and
-reads no environment variable — and A1 and A3 below are written for that answer.
+The decisions each task answers are named in its heading; they are **D901–D915** in
+[reconciliation.md §3](reconciliation.md), answered by the owner on 2026-11-04, each with the reason for
+the answer beside it — **every one but D915**, the one question left open, which the code itself raised
+(reconciliation F6). **D902's answer is not the recommendation** — the read is made through the
+installation's credentials service, as the operator themselves, so the launcher holds no App key and
+reads no environment variable — and A0, A1 and A3 below are written for that answer.
+
+**A0 comes first, and A1 and A3 depend on it.** The answer names a credential class that exists; the
+credential's **permission** does not cover the read. The route mints with
+`github.CoordinatorTokenPermissions` — `pull requests` and `metadata`, read, and no `contents` — so
+`GET /repos/{owner}/{repo}/contents/fugaro.yaml` is refused with the token the service hands out today,
+and the refusal is correct: that constant is the coordinator's own reach, it reads no file, and two
+tests pin it so it cannot quietly grow one (reconciliation F6). A0 is that change, made on the service's
+own mint; it is the only **credentials-service change by rule** in this plan, and nothing below its line
+can be demonstrated end to end before it lands.
 
 **The tasks are written against `main` as it is now**, with **#1477 merged** (reconciliation F1): the
 refusal this design answers is in the tree, so every red step below is red against `main` itself.
@@ -18,26 +28,64 @@ Every task is at most 12 files, names its own red step, and is committed on its 
 are the ones the repository's own rules require: targeted `-run` filters, `GOFLAGS=-p=2`, never a
 whole `internal/cli` or `internal/runner` run.
 
-## A1. The file at a ref, read with a read-only token (D910, D911). **SEC**
+## A0. The person read mint has to reach a file (D915). **SEC**
+
+- **Files:** `internal/gitprov/github/apptoken.go`, `internal/gitprov/github/apptoken_test.go`,
+  `internal/credsvc/githubread.go`, `internal/credsvc/githubread_test.go`, and, if the route option is
+  taken, the new route's own files beside them. `testdata/coordinator_token.json` is **not** touched:
+  it holds the coordinator's mint body, and A0 must leave that body alone.
+- **Interfaces:** one of two, and the choice is the owner's (D915):
+  1. **A PERSON-class permission set of its own** — `personReadTokenPermissions`, unexported beside the
+     five sets that exist and exported through an accessor as every one of them is, carrying
+     `contents: read`, `pull_requests: read` and `metadata: read` — asked for by `githubRead` in place
+     of `github.CoordinatorTokenPermissions()`. It keeps the two the coordinator's set has because the
+     route is one route: the same mint is what a person's `coordinator show` reads a pull request with,
+     so the set has to reach that read as well as this one, and it is a set of its own rather than that
+     one widened. **It must never widen `CoordinatorTokenPermissions`:**
+     the coordinator mints with that same constant, it opens no file, and
+     `TestAppTokenCoordinatorPermissionsHoldNoWrite` pins the set as an equality against
+     `testdata/coordinator_token.json`. The mint asks for what the App holds; a set the App is not
+     granted fails at GitHub, which is a refusal the operator reads, not a silent narrowing.
+  2. **A route of its own** for the file read, with its own set, its own client and its own audit
+     purpose: a second person route, a second client and a second set of refusals to keep in step with
+     the first. The design does not recommend it (D915).
+- **Tests:** `TestPersonReadPermissionsCoverAFileRead` (the set asked for carries `contents: read` and
+  no write, asserted as an equality the way the other sets' are), plus the two pins that must **not**
+  move: `TestAppTokenCoordinatorPermissionsHoldNoWrite` and its fixture body on one side, and
+  `TestGitHubReadAsksForNoWrite` in `githubread_test.go` on the other — that test's `want` becomes the
+  new accessor, its "no write" loop and its read of the mint's real request body stay exactly as they
+  are. A read mint that asks with the new set and still hands a person a token is the same test's
+  subject.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/gitprov/github ./internal/credsvc -run 'Permissions|GitHubRead' -count=1`.
+- **Red step:** `TestPersonReadPermissionsCoverAFileRead` is red against `main`, where no set carrying
+  `contents: read` exists and `githubRead` mints with the coordinator's. The end-to-end half — a person's
+  mint actually reading `fugaro.yaml` — cannot be made green by anything in A1 or A3, which is why both
+  depend on this task.
+- **Commit:** `credsvc: the person read mint asks for the file read it is for`.
+
+## A1. The file at a ref, read with the person's read-only token (D910, D911). **SEC**
 
 - **Files:** `internal/gitprov/github/fileread.go` (new), `internal/gitprov/github/fileread_test.go`
-  (new), `internal/gitprov/github/testdata/fileread/*.json` (new, an `httpfixture` replay of one read).
-- **Interfaces:** `FileAt(ctx context.Context, o Options, repo, ref, path string) ([]byte, error)`,
-  which asks `GET /repos/{owner}/{repo}/contents/{path}?ref={ref}` through `Options.BaseURL`/`Options.HTTP`
-  with the token source the options carry — the person's read mint is one (`ServiceReadTokens`,
-  `internal/gitprov/github/serviceread.go`) — and decodes GitHub's contents response (base64 with
-  embedded newlines), refusing a directory, a symlink, a submodule and a body over a named size bound
-  rather than returning something else. A missing file is a typed distinction from a refused read,
-  because the launcher's messages differ for the two (spec.md §7). **No new permission set and no
-  permission parameter:** the mint is the service's and asks GitHub for its own read-only set
-  (D911 as answered), so this reader has no way to ask for more.
-- **Tests:** `TestFileAtAsksForTheRefItWasGiven`, `TestFileAtRefusesADirectoryAndASymlink`,
-  `TestFileAtDistinguishesMissingFromRefused`, `TestFileAtUsesTheTokenSourceItIsGiven` (a fake
-  `gitprov.TokenSource` observes one mint, and the request carries its token).
+  (new), `internal/gitprov/github/testdata/fileread/*.json` (new: an `httpfixture` replay of one file
+  read and of one missing file).
+- **Interfaces:** `FileAt(ctx context.Context, o Options, ts gitprov.TokenSource, repo, ref, path string) ([]byte, error)`,
+  built over what the package already has rather than over a second HTTP client (reconciliation F6): it
+  assembles `Options` for `repo` with `ServiceHeldKey: true`, installs `ts` (`UseServiceTokens` accepts
+  any `gitprov.TokenSource`, and the person's read mint `ServiceReadTokens` is one), and calls
+  `Provider.Contents(ctx, path, ref)` — `gitprov.ContentsReader`, which refuses a directory, a symlink
+  entry, a submodule, a non-base64 body and anything over `gitprov.MaxContentsBytes`. What A1 adds is
+  the one thing the launcher's messages need and `Contents` does not carry: a **typed not-found**, so a
+  file the repository does not hold at the ref is a different error from a read that was refused
+  (spec.md §7's rows differ for the two). **No permission is asked for, and there is no parameter to
+  ask with:** what the token reaches is the set the service mints (A0).
+- **Tests:** `TestFileAtAsksForTheRefItWasGiven`, `TestFileAtDistinguishesMissingFromRefused`,
+  `TestFileAtUsesTheTokenSourceItIsGiven` (a fake `gitprov.TokenSource` observes one mint and the
+  request carries its token). The kind, encoding and size refusals are `Contents`'s own and stay in
+  `contents_test.go`; A1 does not restate them.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/gitprov/github -run 'FileAt' -count=1`.
-- **Red step:** `TestFileAtAsksForTheRefItWasGiven` is red against a package with no such reader, and
-  the first implementation that reads the working tree or the default branch keeps it red.
-- **Commit:** `github: read one file at a ref with a read-only installation token`.
+- **Red step:** `TestFileAtAsksForTheRefItWasGiven` is red against a package with no such function, and
+  a first implementation that reads the working tree or the default branch keeps it red.
+- **Commit:** `github: read one file at a ref through the person's read mint`.
 
 ## A2. The narrowing that needs no credential (D905, D908, D909, D912)
 
@@ -71,7 +119,10 @@ whole `internal/cli` or `internal/runner` run.
   tests, that reads the installation's published `credentials_service.url` (`internal/localcfg`) and
   the App ID (`repos.<repo>.github_app_id`), builds
   `(&github.ServiceReadTokens{URL: ..., IDToken: personIDToken}).Repo(spec.Repo, appID)` and calls
-  `github.FileAt` with it. **It holds no App key and reads no environment variable** (D902's answer):
+  `github.FileAt` with it (A1's reader, over the `Contents` the package already has). **It depends on
+  A0**: until the service's mint asks with a set that reaches a file, every read on this path is refused
+  at GitHub and this task's end-to-end test cannot be made green by anything in this file. **It holds no
+  App key and reads no environment variable** (D902's answer):
   `personid.go` is the launcher's own copy of `ee/coordinator/cli`'s `coordinatorPersonIdentity` — a
   package variable running `gcloud auth print-identity-token`, whose argv is the plain mint for a person
   and the audience-scoped one for a service account — and the core cannot import that one
@@ -86,6 +137,9 @@ whole `internal/cli` or `internal/runner` run.
   `TestLaunchWithACheckoutNeverReadsTheService` (the read is not made where the tree answers),
   `TestLaunchWithoutCheckoutInAnAgentSessionIsRefusedBeforeAnyRead`,
   `TestLaunchWithoutCheckoutWithoutACredentialsServiceNamesTheCheckout`,
+  `TestLaunchWithoutCheckoutWhereTheMintCannotReadAFileNamesTheRedeploy` (spec.md §7's row: the service
+  answers, the mint reaches no file, and the message names the service and the redeploy rather than the
+  token),
   `TestLaunchWithoutCheckoutPresentsTheOperatorsOwnIdentity` (the identity helper is asked for the
   service's URL, and the mint carries the config's App ID),
   `TestReadRepoConfigAtRefIsMemoizedPerRepoAndRef`,
@@ -149,11 +203,13 @@ whole `internal/cli` or `internal/runner` run.
 
 - **Files:** the slot's notes file under `docs/releases/` (new), `website/data/release-summaries.yaml`.
 - **Interfaces:** the note states the behaviour change for an operator: launches of a repository from
-  outside its checkout work again where the installation has a credentials service, the agent-session
-  refusal is the same one, and where the installation has none the launch refuses exactly as it did
-  before — a limit, stated plainly, with the checkout as the way out. `### For operators` is "run
-  `fugaro update`" and nothing else: this design adds no secret, no IAM binding, no Terraform and no
-  operator step (D902's answer reuses a route the service already has).
+  outside its checkout work again where the installation has a credentials service and has redeployed it,
+  the agent-session refusal is the same one, and where the installation has none the launch refuses
+  exactly as it did before — a limit, stated plainly, with the checkout as the way out. Its
+  **`### For operators`** section is "run `fugaro update`", and it says what that update carries: this
+  release changes the credentials service's own mint, so **the credentials service must be redeployed
+  to serve the new permission set** — `fugaro update` redeploys it — and until it has, a launch outside
+  a checkout still reads nothing and keeps the refusal it has today.
 - **Tests:** `scripts/release.sh`'s own checks; the summary file's shape is pinned by
   `website/test/*.mjs`.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`, then `npm run check` in
@@ -165,14 +221,14 @@ whole `internal/cli` or `internal/runner` run.
 ## C1. The independent review (D914)
 
 - **Files:** none — this is the gate, not a change.
-- **Interfaces:** the review reads A1 and A3 against the threat model in spec.md §12 and answers one
-  question per item: the mint's permission set, the person the service verifies, the launcher's
-  freedom from the App key and from any environment variable, the agent-session refusal, the ref the
-  document is read at, the absence of a fallback, and the two message texts. It is a
-  **credentials-service change by rule** (`.claude/rules/credentials-service.md`: independent review
-  before merging, one audit line per refusal, no credential value in any line), even though it edits no
-  file under `internal/credsvc`. A finding that needs a new behaviour is a new decision in the
-  D901 block, not a fix inside the review round.
+- **Interfaces:** the review reads A0, A1 and A3 against the threat model in spec.md §12 and answers one
+  question per item: the permission set the mint asks with and the two pins it must not move, the person
+  the service verifies, the launcher's freedom from the App key and from any environment variable, the
+  agent-session refusal, the ref the document is read at, the absence of a fallback, and the two message
+  texts. It is a **credentials-service change by rule** (`.claude/rules/credentials-service.md`:
+  independent review before merging, one audit line per refusal, no credential value in any line), and
+  A0 is a change to `internal/credsvc` itself, not only a caller of it. A finding that needs a new
+  behaviour is a new decision in the D901 block, not a fix inside the review round.
 - **Tests:** the tasks' own suites, run on the reviewed commit.
 - **Command:** `fugaro verify test` on the final commit of the reviewed range.
 - **Red step:** none.
@@ -195,7 +251,9 @@ whole `internal/cli` or `internal/runner` run.
 - **No flag, so no skill change**: `plugin/skills` names every CLI flag and is checked against the
   CLI by `plugin/`'s tests; D901 adds none, so nothing there moves.
 - **No new dependency, no `go.mod` change, no Terraform, no `docs/pending-workflows/` file, no new
-  secret, no new IAM binding, and no operator step beyond `fugaro update`.**
+  secret and no new IAM binding.** It is not "no operator step", though: A0 changes the credentials
+  service's own mint, so the service has to be redeployed for an installation to serve the read, and
+  B2's note says so.
 
 ## The shared-files table
 
@@ -209,28 +267,40 @@ order they are edited in:
 | `internal/cli/run.go` | A4 | A4 only, and reviewed closely: this file holds the launch's ordering, and the reader A4 shares with `existingLaunch` must not move the claim |
 | `internal/cli/cloud.go` | A2 | A2 only |
 | `internal/cli/personid.go` | A3 | A3 only (new) |
+| `internal/gitprov/github/apptoken.go` | A0 | A0 only: a set beside the five, and `CoordinatorTokenPermissions` left exactly as it is |
+| `internal/gitprov/github/apptoken_test.go` | A0 | A0 only: the new set's own test, and its neighbour's pin moved nowhere |
+| `internal/credsvc/githubread.go` | A0 | A0 only: the constant `githubRead` asks with — and the route's own doc comment, which states the old set in prose |
+| `internal/credsvc/githubread_test.go` | A0 | A0 only: `TestGitHubReadAsksForNoWrite`'s `want` |
+| `internal/gitprov/github/contents.go` | none | Read by A1 and **not edited**: A1 wraps `Contents`, it does not widen it |
 | `docs/run-without-checkout/README.md` | B1 | The Status line moves when A3 lands, once |
 | `internal/gitprov/github/fileread.go` | A1 | A1 only (new) |
 
-Two tasks can run in parallel with nothing shared: **A1** (the reader) and **A4** (the recorded job),
-and then **A2** before **A3**. **B1** and **B2** wait for the code they describe.
+**A0 goes first and alone** — it is the service's own mint, and everything else that reads a file waits
+on it. Then **A1** (the reader) and **A4** (the recorded job) can run in parallel with nothing shared,
+and **A2** before **A3**. **B1** and **B2** wait for the code they describe.
 
 ## The slot
 
-**A2, A4, the documents and the notes are one CLI release — 0.19.0, the first after the one that
-carried the person-class read; A3 joins it, or takes 0.20.0 on its own.** (D901, D914.)
+**A2, A4, the documents for the narrowing and their notes are one CLI release — 0.19.0, the first after
+the one that carried the person-class read. A0 and A3 are the next — 0.20.0.** (D901, D914, D915.)
 
-- **0.15.0, 0.16.0 and 0.17.0 have shipped**, so the slot this design was first written against no
-  longer exists; what it must not do is ride in a release already spoken for.
+- **0.15.0, 0.16.0 and 0.17.0 have shipped** and 0.18.0 carried the person-class read, so the slot this
+  design was first written against no longer exists; what it must not do is ride in a release already
+  spoken for.
 - **A2 is the part that needs no credential and no decision**, and it is what restores the Bitbucket
   half of the console: every console launch is made from outside every checkout
   (`console/src/main/launch.ts`), so a release that keeps refusing them leaves the GUI unable to launch
   anything on an installation whose policy defines a profile (reconciliation F9).
 - **A3 is the SEC-flagged task** (D914) and the one D902's answer shapes: it gets its own pull request,
-  its own independent review under the credentials-service rule, and its own place in the notes. If the
-  branch that carries it grows past a reviewable size, 0.20.0 is the slot, and A2 must not wait for it:
-  the Bitbucket narrowing is free and independent.
-- **What the answer costs the operator, in the notes and not in a step:** on an installation that has
-  not opted into the credentials service there is nothing to read, and those launches keep the refusal
-  they have today, with the checkout as the way out (spec.md §2, §7). No console release is required by
-  any of this (D906), and no operator step ships with it: `### For operators` is "run `fugaro update`".
+  its own independent review under the credentials-service rule, and its own place in the notes. **A0
+  is the same release and the same review**, because it is the service's own change: a release that
+  shipped A0 without A3 would widen a mint nothing reads with, and one that shipped A3 without A0 would
+  ship a read that is refused — so the two ride together in **0.20.0**, and 0.19.0 must not wait for
+  them: the Bitbucket narrowing is free and independent.
+- **What the answer costs the operator, stated in the notes rather than hidden:** on an installation
+  that has not opted into the credentials service there is nothing to read, and those launches keep the
+  refusal they have today, with the checkout as the way out (spec.md §2, §7); on one that has opted in
+  but has not redeployed the service since 0.20.0, the mint reaches no file and those launches keep it
+  too (spec.md §7). No console release is required by any of this (D906), and the one operator step is
+  the one every release already asks for: `fugaro update`, whose `### For operators` says it redeploys
+  the credentials service (B2).
