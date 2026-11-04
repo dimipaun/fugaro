@@ -90,6 +90,14 @@ func routeAct(path string) (purpose, credential string) {
 		// read and after it alike, and an operator reading one can tell a read
 		// mint from the App key's mint without a second field.
 		return PurposeBitbucketRead, BitbucketReadConsumerSecret
+	case GitHubReadPath:
+		// The GitHub read mint issues from the SAME credential a mint does —
+		// the App key in the bundle — and names it here for the same reason: it
+		// is the endpoint's own name for what it signs with, known before the
+		// bundle is read and after it alike. The purpose is what tells the two
+		// acts apart, and it is the field an operator greps: a person's read is
+		// not a run's mint even though both are signed with the one key.
+		return PurposeGitHubRead, config.GitHubAppKeySecret
 	case SignPath:
 		// The sign route's credential is the account's review-signing key
 		// (verdict.go), and THAT NAME IS NOT IN THE PATH: it is the caller's
@@ -319,6 +327,12 @@ type Verifier interface {
 	// coordinator (BB5) — and the classes are told apart by the list their
 	// caller is in rather than by a flag on a route.
 	VerifyReadCaller(ctx context.Context, tok string) (string, error)
+	// VerifyPersonCaller admits the caller of the GitHub read mint
+	// (githubread.go). It is VerifyReadCaller's mechanism against ONE list —
+	// the installation's people — and that is the whole of the difference: the
+	// GitHub read is the person's alone, because the coordinator job holds the
+	// App credential itself and mints its own read-only token with it.
+	VerifyPersonCaller(ctx context.Context, tok string) (string, error)
 }
 
 // PolicyReader is the published policy as the service reads it: the project's
@@ -569,12 +583,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if r.Method != http.MethodPost || (r.URL.Path != MessagesPath && r.URL.Path != CountTokensPath &&
 		r.URL.Path != MintPath && r.URL.Path != SignPath && r.URL.Path != VerifyPath &&
-		r.URL.Path != BitbucketReadPath) {
+		r.URL.Path != BitbucketReadPath && r.URL.Path != GitHubReadPath) {
 		// There is no other route, and in particular no admin route: D143's
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+" and "+BitbucketReadPath)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+" and "+GitHubReadPath)
 		return
 	}
 	if r.URL.Path == VerifyPath {
@@ -593,6 +607,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// is this route's own read of the body (readReadRequest), and the
 		// run-identity headers are refused by name inside the handler.
 		s.bitbucketRead(ctx, w, r)
+		return
+	}
+	if r.URL.Path == GitHubReadPath {
+		// The third route answered before the shared parse, and for the same
+		// reason as the other two (BB4, B2): its caller is a person, who holds
+		// no run identity, so RequestFromHTTP would refuse the call before the
+		// person class ever read the token. Its own read of the body is
+		// readGitHubReadRequest, and the run-identity headers are refused by
+		// name inside the handler.
+		s.githubRead(ctx, w, r)
 		return
 	}
 	req, err := RequestFromHTTP(r)
