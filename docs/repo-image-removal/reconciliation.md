@@ -133,7 +133,8 @@ code. A `:line` is a **declaration** line at `aa034db1`; the symbol is what to s
 - **F23: Exists. The project layer can set the same keys.** `schemas/project-layer.schema.json:265`
   (`image`) and `:338` (`rebuild`), validated through `internal/config/layer.go:305`
   (`ParseProjectLayer`, which refuses a key outside its scope). A profile is therefore a **second door**
-  to the removed build, so the removal has two schemas and two validators to move, not one.
+  to the removed build, so the removal has four configuration surfaces to move — this repository's
+  schema, the project layer's, the settings document's and the registry's — and not one.
 
 - **F24: Exists. Two dogfood repositories carry the keys.** This repository's `go` workflow sets
   `image.setup` (`fugaro.yaml:43`), and the sandbox repository's workflows are what the live checks run.
@@ -193,7 +194,8 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
 
 - **D1190 (what exactly is removed, and in how many pieces) — OPEN, recommended.**
   Recommendation: the four places of [spec.md](spec.md) §1 — the **configuration** (the `image.*`
-  block, `dockerfile:`, `rebuild.*`, the scope rows and both schemas), the **commands**
+  block, `dockerfile:`, `rebuild.*`, the scope rows, the registry rows and the three schemas), the
+  **commands**
   (`image build`'s derived arm, `image refresh`'s derived steps, `check`, `status`, `render`, `gate`,
   `record`, `promote`), the **deploy path** (the derived image name, the per-repository check job and
   its Scheduler, the repository's registry, readiness) and the **writers** (the setup skill, the
@@ -266,17 +268,23 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   Cost of the recommendation: the removed keys stay in the tree as names for at least one release, so
   "removed" means "refused and named", not "absent from the source".
 
-- **D1196 (the schemas) — OPEN, recommended.**
+- **D1196 (the schemas, and the rows that make the keys writable) — OPEN, recommended.**
   Recommendation: `schemas/fugaro.schema.json` loses `image` (`:358`), `dockerfile` (`:396`) and
   `rebuild` (`:511`) and its mutual-exclusion clauses (`:306`) shrink to `image_name` with `needs`;
   `schemas/project-layer.schema.json` loses `:265` and `:338`;
-  `schemas/settings.schema.json` keeps `base_images` and the flattened `image_catalog.*` rows
-  (`:547`) untouched.
+  `internal/settings/registry.go:229` loses the twenty-one rows that make the keys writable (`:234`,
+  `:254`, `:258`, and the `layerRow`s at `internal/settings/registry.go:454`, `:458`, `:477`, `:481`),
+  and `schemas/settings.schema.json:1145` loses their twenty-five members (`:1130`, `:1181`) — a key
+  with no scope row and no registry row is a key `settings set` must not offer. `image_catalog.*`
+  (`schemas/settings.schema.json:547`), `base_images` and the catalog's own rows are untouched.
   Cost of the alternative: a schema that still allows a removed key is the file a person's editor
   validates against, so it would let a `fugaro.yaml` through that the CLI refuses — the schema would be
-  the one document that lies about the removal.
-  Cost of the recommendation: both schemas change in the same commit as the validators, so the removal
-  cannot be split across two tasks.
+  the one document that lies about the removal — and a surviving registry row would make
+  `fugaro settings set workflows.web.image.setup` a writer for a key the config refuses.
+  Cost of the recommendation: both schemas **and** the registry change in the same commit as the
+  validators, so the removal cannot be split across two tasks, and this is also where the removal
+  meets G0/G1 of [docs/config-management/implementation-plan.md](../config-management/implementation-plan.md)
+  in `internal/settings/registry.go` (§4).
 
 - **D1197 (the fixtures and the golden) — OPEN, recommended.**
   Recommendation: the **50** files under `testdata/` carrying one of the three keys

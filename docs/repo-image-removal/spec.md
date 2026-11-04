@@ -247,9 +247,12 @@ No compatibility, in the shape the tree already uses for a removed key.
 - **The schemas**: `schemas/fugaro.schema.json` loses `image` (`:358`), `dockerfile` (`:396`) and
   `rebuild` (`:511`), and its mutual-exclusion clauses (`:306`) shrink to the pairs that survive
   (`image_name` with `needs`); `schemas/project-layer.schema.json` loses the same keys at `:265` and
-  `:338`. **`schemas/settings.schema.json` keeps `base_images` and the flattened `image_catalog.*` rows
-  untouched** (`schemas/settings.schema.json:547`), and `image_name`/`needs` keep their members
-  (D1196).
+  `:338`. **`schemas/settings.schema.json` loses the removed keys' own member rows** — the twenty-five
+  at `schemas/settings.schema.json:1130` through `:1181`, `workflows.*.image.setup` among them
+  (`:1145`), beside their rows in `internal/settings/registry.go:229`, without which `fugaro settings
+  set` would still offer a key the config refuses — **and keeps `base_images` and the flattened
+  `image_catalog.*` rows untouched** (`schemas/settings.schema.json:547`), as `image_name`/`needs` keep
+  their members (D1196).
 - **The goldens and the fixtures**: the **50** files under `testdata/` that carry one of the three
   keys — `grep -rlE '^[[:space:]]*(image|dockerfile|rebuild):' testdata/` — are the removal's own
   list, in four directories (`testdata/config/{valid,invalid}`, `testdata/project-layer/{valid,invalid}`);
