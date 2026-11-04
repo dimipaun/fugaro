@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -63,6 +64,80 @@ func TestSecretsRmRemovesTheVersionAndTheEntry(t *testing.T) {
 	}
 }
 
+// TestSecretsRmPutsTheEntryBackWhenTheDeleteFails: the removal is one change
+// made of two halves, and the half this command writes first is the half it can
+// undo. A delete that fails — the refusal a member with secretVersionAdder and
+// viewer on the project's secrets gets, and what a dropped connection does —
+// must not leave the entry gone while the value is still stored: for a name D2
+// shares project-wide, no entry reads as every repository, so the run would
+// have widened the value at the next `fugaro update` and nobody would have
+// asked for it.
+func TestSecretsRmPutsTheEntryBackWhenTheDeleteFails(t *testing.T) {
+	secretsRmFugaro(t)
+	sm, id, path := secretsRmFixture(t)
+	before := readFileString(t, path)
+	sm.FailDeleteWith = http.StatusForbidden
+
+	out, errOut, err := execute(t, "secrets", "rm", "bitbucket-token", "--yes")
+	if err == nil {
+		t.Fatalf("a failed delete was reported as a removal:\nstdout %s\nstderr %s", out, errOut)
+	}
+	if after := readFileString(t, path); after != before {
+		t.Fatalf("the entry was not put back:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	if got := sm.Latest(id); got == nil {
+		t.Fatal("a delete that failed took the container away")
+	}
+	for _, want := range []string{"put back", "project_secrets.bitbucket-token"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not carry %q:\n%v", want, err)
+		}
+	}
+	if strings.Contains(out+errOut+err.Error(), tokenValue) {
+		t.Fatalf("the value leaked: %q %q %v", out, errOut, err)
+	}
+}
+
+// TestSecretsRmLeavesAChangedFileAloneWhenTheDeleteFails: the entry is put back
+// only when the file is still the bytes this run wrote. A file that moved in
+// between — another terminal, another tool, a person who saw the entry go and
+// wrote the policy they wanted — is theirs, and overwriting it with the bytes
+// this run read would discard that edit silently. The error says the entry was
+// not put back, and why.
+func TestSecretsRmLeavesAChangedFileAloneWhenTheDeleteFails(t *testing.T) {
+	secretsRmFugaro(t)
+	sm, id, path := secretsRmFixture(t)
+	before := readFileString(t, path)
+	sm.FailDeleteWith = http.StatusForbidden
+	moved := strings.Replace(before, `["acme/app"]`, `["acme/app", "acme/web"]`, 1)
+	if moved == before {
+		t.Fatalf("the fixture is not the shape this test moves:\n%s", before)
+	}
+	sm.OnDelete = func(string) {
+		// The fake calls this without its own lock, so writing here is the
+		// other writer's edit landing between the run's write and its undo.
+		if err := os.WriteFile(path, []byte(moved), 0o600); err != nil {
+			t.Errorf("moving the file under the run: %v", err)
+		}
+	}
+
+	_, _, err := execute(t, "secrets", "rm", "bitbucket-token", "--yes")
+	if err == nil {
+		t.Fatal("a failed delete was reported as a removal")
+	}
+	if after := readFileString(t, path); after != moved {
+		t.Fatalf("the undo overwrote what someone else wrote:\nwant:\n%s\ngot:\n%s", moved, after)
+	}
+	if got := sm.Latest(id); got == nil {
+		t.Fatal("a delete that failed took the container away")
+	}
+	for _, want := range []string{"not put back", path} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not carry %q:\n%v", want, err)
+		}
+	}
+}
+
 // TestSecretsRmRefusesAnAgentSession: the whole family is refused in a coding
 // agent's session, --yes included and whatever the managed gate would say
 // (spec §5, D1171). The refusal is the FIRST thing this command does — before
@@ -70,37 +145,64 @@ func TestSecretsRmRemovesTheVersionAndTheEntry(t *testing.T) {
 // deletion is not the settings write path's and its fence would arrive after
 // the value was already gone. Nothing is removed, and the container and the
 // entry both survive.
+//
+// The second state is the one where this refusal is the only guard: with an
+// entry to remove, the settings write path refuses the write as well, and with
+// nothing to change it returns at its "no change" line, before its own fence —
+// so a session would reach the deletion if this command did not refuse first.
 func TestSecretsRmRefusesAnAgentSession(t *testing.T) {
 	secretsRmFugaro(t)
-	sm, id, path := secretsRmFixture(t)
-	before := readFileString(t, path)
 	t.Setenv(accountsAddAgent, "1") // a coding agent's session
 
-	out, errOut, err := execute(t, "secrets", "rm", "bitbucket-token", "--yes")
-	if err == nil {
-		t.Fatalf("a coding agent's session removed a secret:\nstdout %s\nstderr %s", out, errOut)
+	cases := []struct {
+		what  string
+		entry string
+	}{
+		{"with an entry to remove", "project_secrets:\n  bitbucket-token: { allow_data_to: [\"acme/app\"] }\n"},
+		{"with no entry and the container present", ""},
 	}
-	for _, want := range []string{
-		accountsAddAgent,      // the marker that made it a session
-		"fugaro secrets rm",   // the command the person runs instead
-		"bitbucket-token",     // what it refused to remove
-		"nothing was removed", // that the refusal is total
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not carry %q:\n%v", want, err)
-		}
-	}
-	if got := sm.Deleted(); len(got) != 0 {
-		t.Fatalf("the session deleted %v", got)
-	}
-	if got := sm.Latest(id); got == nil {
-		t.Fatal("the session took the container away")
-	}
-	if after := readFileString(t, path); after != before {
-		t.Fatalf("the session wrote the config:\nbefore:\n%s\nafter:\n%s", before, after)
-	}
-	if strings.Contains(out+errOut, tokenValue) {
-		t.Fatalf("the value leaked: %q %q", out, errOut)
+	for _, tc := range cases {
+		t.Run(tc.what, func(t *testing.T) {
+			sm := secretsFixture(t)
+			if tc.entry != "" {
+				projectSecretFixture(t, tc.entry)
+			}
+			id := gcp.ProjectSecretID("aurora", "bitbucket-token")
+			sm.Seed(id, map[string]string{
+				gcp.LabelManaged: gcp.ManagedValue,
+				gcp.LabelProject: "aurora",
+				gcp.LabelSecret:  "bitbucket-token",
+			}, []byte(tokenValue))
+			path := os.Getenv("FUGARO_CONFIG")
+			before := readFileString(t, path)
+
+			out, errOut, err := execute(t, "secrets", "rm", "bitbucket-token", "--yes")
+			if err == nil {
+				t.Fatalf("a coding agent's session removed a secret:\nstdout %s\nstderr %s", out, errOut)
+			}
+			for _, want := range []string{
+				accountsAddAgent,      // the marker that made it a session
+				"fugaro secrets rm",   // the command the person runs instead
+				"bitbucket-token",     // what it refused to remove
+				"nothing was removed", // that the refusal is total
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not carry %q:\n%v", want, err)
+				}
+			}
+			if got := sm.Deleted(); len(got) != 0 {
+				t.Fatalf("the session deleted %v", got)
+			}
+			if got := sm.Latest(id); got == nil {
+				t.Fatal("the session took the container away")
+			}
+			if after := readFileString(t, path); after != before {
+				t.Fatalf("the session wrote the config:\nbefore:\n%s\nafter:\n%s", before, after)
+			}
+			if strings.Contains(out+errOut, tokenValue) {
+				t.Fatalf("the value leaked: %q %q", out, errOut)
+			}
+		})
 	}
 }
 

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"fmt"
 	"maps"
 	"os"
@@ -24,7 +25,10 @@ import (
 //
 // The config half is the settings commands' one write path (applySettingsEdit),
 // so the diff, the confirmation, the backup and the compare-and-swap are the
-// same ones every other settings write pays. The Secret Manager half is not
+// same ones every other settings write pays. The order is that half first
+// because it is the one that can be undone: a deletion that fails puts the entry
+// back where it was (secretsRmUndo), so the command cannot leave a policy
+// withdrawn and the value it named still stored. The Secret Manager half is not
 // something that path knows about, so the coding agent's session refusal is made
 // here, before either half runs: a session that reached the deletion and was
 // then refused the config write would have destroyed the value and left the
@@ -206,7 +210,7 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 	}
 	if held {
 		if err := sm.Delete(ctx, id); err != nil {
-			return remote(err)
+			return secretsRmUndo(id, sel.Path, name, old, next, changed, err)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "deleted %s\n", id)
 	}
@@ -223,6 +227,46 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 			pluginwire.Printable(name), pluginwire.Printable(strings.Join(repos, ", ")), selfCommand())
 	}
 	return nil
+}
+
+// secretsRmUndo puts the config entry back when the deletion fails. The removal
+// is one change made of two halves and this command writes the half it can undo
+// first, so a delete that fails — the permission refusal the operators an
+// installation grants secretVersionAdder and viewer on the project's secrets
+// get, a connection that drops — must not leave the entry gone with the value
+// still stored.
+// It matters most for the names D2 shares project-wide: there, no entry reads
+// as every repository, so a run that stopped here would have widened the value
+// at the next `fugaro update`, for a value whose owner asked to withdraw it.
+//
+// The restore pays the compare-and-swap the settings write path itself pays:
+// the file is read again and has to be the bytes this run wrote. A file that
+// moved in between is someone else's edit — another terminal, another tool, a
+// person who saw the entry go — and is not overwritten with the bytes this run
+// had read.
+func secretsRmUndo(id, path, name string, old, next []byte, changed bool, cause error) error {
+	if !changed {
+		// Nothing was written, so nothing is owed: this is the delete's own
+		// failure, reported as it was before this command wrote anything.
+		return remote(cause)
+	}
+	key := "project_secrets." + pluginwire.Printable(name)
+	failed := oneLine(cause.Error())
+	current, err := readSettingsCurrent(settingsEdit{Kind: settingsDocLocal, Path: path})
+	if err != nil {
+		return userErr("deleting %s failed: %s; %s was not put back either, so reading %s back: %v — a secret shared project-wide with no entry is one every repository may mount, so write the policy you want again; the value is still stored",
+			id, failed, key, path, err)
+	}
+	if !bytes.Equal(current, next) {
+		return userErr("deleting %s failed: %s; %s was not put back: %s changed since this run removed it, so what is there now is someone else's edit and it was left alone; the value is still stored",
+			id, failed, key, path)
+	}
+	if err := writeFileAtomic(path, old); err != nil {
+		return userErr("deleting %s failed: %s; %s was not put back, so writing %s: %v — a secret shared project-wide with no entry is one every repository may mount, so write the policy you want again; the value is still stored",
+			id, failed, key, path, err)
+	}
+	return userErr("deleting %s failed: %s; %s was put back exactly as it was, so nothing changed; the value is still stored — run this command again when the deletion can succeed",
+		id, failed, key)
 }
 
 // secretsRmWhat is the sentence the confirmation shows. It names both halves
