@@ -259,8 +259,13 @@ func TestDocsCloudSeniorReviewDecisionsAreAnswered(t *testing.T) {
 // The path character class carries `.` and `-` for the file names in this tree.
 // A backticked token with no extension (a package name, a symbol on its own) is
 // not a citation of a file and is left alone, which is why the extension is
-// part of the pattern rather than a later filter.
-var csrCitationRE = regexp.MustCompile("`([A-Za-z0-9_][A-Za-z0-9_./-]*\\.(?:go|md|json|tf|tmpl|yaml|yml))(:[0-9]+)`")
+// part of the pattern rather than a later filter. `ts` is here because these
+// folders cite the console's TypeScript (`installlist.ts`, whose
+// `DiscoveredInstallation` is the picker's wire type), and an alternation that
+// stopped at Go and Terraform let one such citation through the census unseen --
+// a citation inside a shape the pattern does not know is a citation the check
+// reports as passing.
+var csrCitationRE = regexp.MustCompile("`([A-Za-z0-9_][A-Za-z0-9_./-]*\\.(?:go|md|json|ts|tf|tmpl|yaml|yml))(:[0-9]+)`")
 
 // csrCensusRE is the independent count of how many path-looking tokens carry a
 // line number anywhere in them, deliberately looser than the citation regexp
@@ -268,7 +273,7 @@ var csrCitationRE = regexp.MustCompile("`([A-Za-z0-9_][A-Za-z0-9_./-]*\\.(?:go|m
 // the floor the citation check is measured against, so a regexp that has stopped
 // matching the documents' shapes fails the test instead of passing it vacuously
 // -- the failure mode that lets a drifted citation go on reading as checked.
-var csrCensusRE = regexp.MustCompile("`[^`\\n]*\\.(?:go|md|json|tf|tmpl|yaml|yml)[^`\\n]*:[0-9]+`")
+var csrCensusRE = regexp.MustCompile("`[^`\\n]*\\.(?:go|md|json|ts|tf|tmpl|yaml|yml)[^`\\n]*:[0-9]+`")
 
 // TestDocsCloudSeniorReviewCitationsResolve: every file and line these
 // documents cite exists. This is the test that keeps a reconciliation honest --

@@ -54,7 +54,7 @@ import (
 // closes the code span before the colon, writing the path in code and the line
 // beside it, so a pattern that demanded the two be backticked together would
 // still see none of the README's citations.
-var mcpPlainCitationRE = regexp.MustCompile("[A-Za-z0-9_][A-Za-z0-9_./-]*\\.(?:go|md|json|tf|tmpl|yaml|yml)`?:[0-9]+")
+var mcpPlainCitationRE = regexp.MustCompile("[A-Za-z0-9_][A-Za-z0-9_./-]*\\.(?:go|md|json|ts|tf|tmpl|yaml|yml)`?:[0-9]+")
 
 const (
 	mcpReadme     = "docs/mcp-server/README.md"
