@@ -485,6 +485,80 @@ func TestUpdateManagedLeavesCredentialsAndComputeOwnerRun(t *testing.T) {
 	}
 }
 
+// A run whose own arguments shape the installation is refused the gate, and it
+// is refused it for the reason §3.2 gives those arguments: the cover's Listed
+// members are read from THIS run's options (accessLists reads spec.Launchers,
+// spec.Operators and the budget admins into tf.Cover.Listed), so a session that
+// passed --launcher, --operator or --budget-admin would have the gate judge a
+// plan against the list it just wrote — §4.1's rules 4 and 5 refuse exactly the
+// grant such a plan makes, and the flag would walk around both by making it
+// covered. --budget with --billing-account sets the cover's Billing the same
+// way, and the rest of initOptions.installationFlags changes what the
+// installation is. The state bucket and the owner's delete list are the same
+// answer (`shapesTheInstallation`).
+//
+// Every row is therefore today's refusal, whole: the same plan that the
+// widening flag would have had admitted is refused in the session's own words,
+// nothing is applied, and — the property a flag asked beside the door has — the
+// gate read nothing and no record exists, because no verdict was ever made. The
+// plan grants a member the run's own --launcher would have listed, which is the
+// exact shape the hole was found with.
+func TestUpdateManagedRefusesASessionWideningFlag(t *testing.T) {
+	const outsider = "user:not-listed@example.com"
+	address := `module.installation.google_storage_bucket_iam_member.state["` + outsider + `"]`
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		// rig is the world the row runs in, when it is not the managed rig the
+		// rows share: --budget-admin is the one flag here that only exists
+		// beside another installation flag (--firebase-project, init.go's
+		// check) and only reaches a stage at all in an installation whose local
+		// config names its shared budget backend.
+		rig func(t *testing.T) *initRig
+	}{
+		{"launcher", []string{"--launcher", outsider}, nil},
+		{"operator", []string{"--operator", outsider}, nil},
+		{"budget-admin", []string{"--firebase-project", fpID, "--budget-admin", outsider}, func(t *testing.T) *initRig {
+			r := newFBRig(t)
+			r.managedRuns(t, initProjectName, initProject)
+			t.Setenv("CLAUDECODE", "1")
+			isolateGateCredentials(t)
+			return r.initRig
+		}},
+		{"budget and billing account", []string{"--budget", "1", "--budget-currency", "USD", "--billing-account", billingAcc}, nil},
+		{"state bucket", []string{"--state-bucket", initStateBucket}, nil},
+		{"the owner's delete list", []string{"--allow-delete", address}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := updateManagedRig(t)
+			if tc.rig != nil {
+				r = tc.rig(t)
+			}
+			updating(t, r)
+			r.setPlan(t, grantChange("state", outsider, "roles/storage.objectViewer", "create"))
+
+			got, err := updateRun(t, r, append([]string{"update", "--yes"}, tc.args...)...)
+			if err == nil {
+				t.Fatalf("a session that shaped the installation ran to the end:\n%s", got)
+			}
+			if n := len(r.ran(t, "apply")); n != 0 {
+				t.Errorf("%d terraform apply(s) ran under a flag no gate may open a stage for:\n%s", n, got)
+			}
+			if !strings.Contains(got, initflow.AgentRefusal("CLAUDECODE")) {
+				t.Errorf("the session did not read the refusal it has always read:\n%s", got)
+			}
+			if strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) ||
+				strings.Contains(got, managedmode.NotConverged) {
+				t.Errorf("a step was judged under a flag that shapes the installation:\n%s", got)
+			}
+			if recs := audits(t, r); len(recs) != 0 {
+				t.Errorf("a run no gate judged left %+v", recs)
+			}
+		})
+	}
+}
+
 // The rules stage is the one judged step of this command whose document is not
 // a Terraform plan (spec §4.2: "it is a document the binary carries, so the plan
 // IS the generation"). In a managed project with a coding agent's session, a

@@ -123,7 +123,8 @@ type initGate struct {
 // under the gate in this session (D1016). The loop asks it only in a coding
 // agent's session, and everything that is not a yes is today's refusal — an
 // unreadable mark, a project that is not managed, a stage this door does not
-// gate.
+// gate, and a run whose own arguments shape the installation rather than
+// converge it as it is.
 func (e *initEngine) managedStage(name string) bool {
 	r := e.r
 	// --plan-only applies nothing by its own definition, and the loop asks this
@@ -131,7 +132,7 @@ func (e *initEngine) managedStage(name string) bool {
 	// would be the one way an agent's plan-only run writes. The flag is asked
 	// FIRST, beside the door, so no read of a mark is paid for a run that
 	// cannot act on the answer.
-	if r.o.door != updateDoor.name || r.o.planOnly || !gatedStages[name] {
+	if r.o.door != updateDoor.name || r.o.planOnly || !gatedStages[name] || r.shapesTheInstallation() {
 		return false
 	}
 	if r.gate == nil {
@@ -141,6 +142,35 @@ func (e *initEngine) managedStage(name string) bool {
 		r.gate = readUpdateGate(e, r)
 	}
 	return r.gate.managed
+}
+
+// shapesTheInstallation reports whether this run's own arguments shape the
+// installation instead of converging it as it is: the flags that only mean
+// something for the installation (initOptions.installationFlags), the state
+// bucket, and the owner's delete list.
+//
+// Such a run is refused the gate and keeps today's coding-agent refusal, whole
+// and unmoved, and the reason is the same one §3.2 gives for the flags
+// themselves. --launcher, --operator and --budget-admin are the members the
+// run's own review lists (accessLists reads them from this run's options into
+// the cover's Listed), so a gate asked with one of them would be judging a
+// plan against the list that argument just wrote: a plan granting that member
+// a role is exactly what §4.1's rules 4 and 5 refuse — an added member — and
+// the flag would walk around both by making the addition covered. --budget
+// with --billing-account sets the cover's Billing the same way, and
+// --firebase-project puts another project in it, while --replace-image,
+// --expect-digest, --alert-email, the image and bucket and region flags and
+// the rest change what the installation IS, which is no converge of a
+// document. The state bucket is the same answer (the installation is the
+// state it names), and the delete list is the one §3.2 and D1011 give it: the
+// owner's own, never an argument of a command in the set.
+//
+// It is asked beside the door, before any mark is read, so a session that
+// shaped the installation pays for nothing and learns nothing: M6's read is
+// not made, no verdict exists, and no record is written — the same property
+// --plan-only has, and for the same reason.
+func (r *initRun) shapesTheInstallation() bool {
+	return len(r.o.installationFlags()) > 0 || r.o.stateBucket != "" || len(r.o.allowDelete) > 0
 }
 
 // readUpdateGate reads the two marks for this run, once, through M6's helper:
