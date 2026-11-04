@@ -1,0 +1,244 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See ee/LICENSE for the terms.
+
+package mcpauth_test
+
+import (
+	"errors"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/dimipaun/fugaro/ee/coordinator/mcpauth"
+	"github.com/dimipaun/fugaro/internal/rigor"
+)
+
+// check compares a narrowed Limits with the one the case expects, field by
+// field, so a failure names which field moved rather than printing two
+// structs. Scopes are compared by value and in order: the order is the
+// token's own, and a narrower that reordered them would be a second place
+// the vocabulary is decided.
+func check(t *testing.T, got, want mcpauth.Limits) {
+	t.Helper()
+	if got.MinRigor != want.MinRigor {
+		t.Errorf("MinRigor = %q; want %q", got.MinRigor, want.MinRigor)
+	}
+	if got.MaxRigor != want.MaxRigor {
+		t.Errorf("MaxRigor = %q; want %q", got.MaxRigor, want.MaxRigor)
+	}
+	if got.Hotfix != want.Hotfix {
+		t.Errorf("Hotfix = %v; want %v", got.Hotfix, want.Hotfix)
+	}
+	if got.SpendUSD != want.SpendUSD {
+		t.Errorf("SpendUSD = %v; want %v", got.SpendUSD, want.SpendUSD)
+	}
+	if !slices.Equal(got.Scopes, want.Scopes) {
+		t.Errorf("Scopes = %v; want %v", got.Scopes, want.Scopes)
+	}
+}
+
+// TestLimitsOnlyNarrow is the rule the whole front door rests on: a request
+// runs under the tighter of the token's limits and the project's, and nothing
+// a token carries can raise a cap, run a mode the project forbids or reach a
+// tool the project does not grant (spec.md §6).
+//
+// The first two cases are the plan's own M1 red step: a token asking for
+// critical under a project policy of pro resolves to pro, and a token whose
+// spend exceeds the run's ceiling resolves to the ceiling. The rest are the
+// other three fields, because "only narrows" is a claim about every one of
+// them or about none.
+//
+// The Hotfix flag is carried on both sides here, because it is the one field
+// whose type cannot say "unset": a bool that is false is false, so a project
+// whose policy does not turn Hotfix on has turned it off, and only a project
+// that says so lets the token's own flag stand.
+func TestLimitsOnlyNarrow(t *testing.T) {
+	token := mcpauth.Limits{
+		MinRigor: rigor.POC,
+		MaxRigor: rigor.Critical,
+		Hotfix:   true,
+		SpendUSD: 25,
+		Scopes:   []string{mcpauth.ScopeTasksRead, mcpauth.ScopeTasksWrite},
+	}
+
+	for _, tc := range []struct {
+		name    string
+		project mcpauth.Limits
+		want    mcpauth.Limits
+	}{
+		{
+			// A token may ask for the top of the axis; the project's own
+			// ceiling is the answer.
+			name:    "a token asking for critical under a project policy of pro resolves to pro",
+			project: mcpauth.Limits{MaxRigor: rigor.Pro, Hotfix: true},
+			want: mcpauth.Limits{MinRigor: rigor.POC, MaxRigor: rigor.Pro, Hotfix: true,
+				SpendUSD: 25, Scopes: []string{mcpauth.ScopeTasksRead, mcpauth.ScopeTasksWrite}},
+		},
+		{
+			// D924: the run's ceiling is the tighter of the two, so the
+			// gateway enforces the token's limit and not the token's wish.
+			name:    "a token whose spend exceeds the run's ceiling resolves to the ceiling",
+			project: mcpauth.Limits{SpendUSD: 5, Hotfix: true},
+			want: mcpauth.Limits{MinRigor: rigor.POC, MaxRigor: rigor.Critical, Hotfix: true,
+				SpendUSD: 5, Scopes: []string{mcpauth.ScopeTasksRead, mcpauth.ScopeTasksWrite}},
+		},
+		{
+			name:    "a token whose spend is under the ceiling keeps its own",
+			project: mcpauth.Limits{SpendUSD: 100, Hotfix: true},
+			want: mcpauth.Limits{MinRigor: rigor.POC, MaxRigor: rigor.Critical, Hotfix: true,
+				SpendUSD: 25, Scopes: []string{mcpauth.ScopeTasksRead, mcpauth.ScopeTasksWrite}},
+		},
+		{
+			// The floor is the stricter of the two, never the lower: a
+			// project that runs nothing below pro cannot be talked down.
+			name:    "a project floor raises the token's floor",
+			project: mcpauth.Limits{MinRigor: rigor.Startup, Hotfix: true},
+			want: mcpauth.Limits{MinRigor: rigor.Startup, MaxRigor: rigor.Critical, Hotfix: true,
+				SpendUSD: 25, Scopes: []string{mcpauth.ScopeTasksRead, mcpauth.ScopeTasksWrite}},
+		},
+		{
+			// D925: the flag is off by default and a token cannot turn it on
+			// — a project that does not carry it has refused Hotfix, which
+			// is the fail-closed reading of a flag that has no unset.
+			name:    "a project that does not carry the flag turns it off",
+			project: mcpauth.Limits{},
+			want: mcpauth.Limits{MinRigor: rigor.POC, MaxRigor: rigor.Critical, Hotfix: false,
+				SpendUSD: 25, Scopes: []string{mcpauth.ScopeTasksRead, mcpauth.ScopeTasksWrite}},
+		},
+		{
+			// D927: a scope the project does not grant is not held, and the
+			// ones it does are held in the token's own order.
+			name:    "the scopes are the project's grant read against the token's ask",
+			project: mcpauth.Limits{Scopes: []string{mcpauth.ScopeTasksRead}, Hotfix: true},
+			want: mcpauth.Limits{MinRigor: rigor.POC, MaxRigor: rigor.Critical, Hotfix: true,
+				SpendUSD: 25, Scopes: []string{mcpauth.ScopeTasksRead}},
+		},
+		{
+			// A project that names no scope grants the token's own: unset,
+			// like the window's bounds, and never a widening, because the
+			// token's set is already the ceiling.
+			name:    "a project that grants no scope leaves the token's own alone",
+			project: mcpauth.Limits{Hotfix: true},
+			want: mcpauth.Limits{MinRigor: rigor.POC, MaxRigor: rigor.Critical, Hotfix: true,
+				SpendUSD: 25, Scopes: []string{mcpauth.ScopeTasksRead, mcpauth.ScopeTasksWrite}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := token.Narrow(tc.project)
+			if err != nil {
+				t.Fatalf("Narrow: %v", err)
+			}
+			check(t, got, tc.want)
+		})
+	}
+
+	// The flag narrows from the token's side too: a project that allows
+	// Hotfix does not put it on a token whose limits never asked for it.
+	off := token
+	off.Hotfix = false
+	got, err := off.Narrow(mcpauth.Limits{Hotfix: true})
+	if err != nil {
+		t.Fatalf("Narrow: %v", err)
+	}
+	if got.Hotfix {
+		t.Error("Hotfix = true; a project that allows it does not grant it to a token that does not ask")
+	}
+}
+
+// TestEmptyWindowIsRefusedAtMint pins D926's answer: a window that admits no
+// mode is refused where the token is written, so a token that could never
+// start a run cannot be issued, and the refusal names the two fields rather
+// than leaving the operator to guess which bound is wrong.
+//
+// The second half is the same rule one step out: the token's own window is
+// mintable, and narrowing it against a project whose ceiling ends below the
+// token's floor admits nothing, so Narrow refuses it instead of handing back
+// a token that reaches no mode.
+func TestEmptyWindowIsRefusedAtMint(t *testing.T) {
+	empty := mcpauth.Limits{
+		MinRigor: rigor.Critical,
+		MaxRigor: rigor.Pro,
+		Scopes:   []string{mcpauth.ScopeTasksRead},
+	}
+	err := empty.Validate()
+	if !errors.Is(err, mcpauth.ErrEmptyWindow) {
+		t.Fatalf("Validate() = %v; want ErrEmptyWindow", err)
+	}
+	for _, field := range []string{"min_rigor", "max_rigor"} {
+		if !strings.Contains(err.Error(), field) {
+			t.Errorf("Validate() = %q; want it to name %s", err, field)
+		}
+	}
+
+	// A window of one mode is not empty: min == max admits exactly that
+	// mode, and refusing it would refuse the tightest token the design has.
+	if err := (mcpauth.Limits{
+		MinRigor: rigor.Pro, MaxRigor: rigor.Pro, Scopes: []string{mcpauth.ScopeTasksRead},
+	}).Validate(); err != nil {
+		t.Errorf("a window of one mode: Validate() = %v; want ok", err)
+	}
+
+	token := mcpauth.Limits{MinRigor: rigor.Critical, Scopes: []string{mcpauth.ScopeTasksRead}}
+	if err := token.Validate(); err != nil {
+		t.Fatalf("the token's own window: Validate() = %v; want ok", err)
+	}
+	_, err = token.Narrow(mcpauth.Limits{MaxRigor: rigor.Pro})
+	if !errors.Is(err, mcpauth.ErrEmptyWindow) {
+		t.Fatalf("Narrow() = %v; want ErrEmptyWindow", err)
+	}
+	if !strings.Contains(err.Error(), "min_rigor") || !strings.Contains(err.Error(), "max_rigor") {
+		t.Errorf("Narrow() = %q; want it to name min_rigor and max_rigor", err)
+	}
+}
+
+// TestUnknownScopeIsRefusedNotIgnored pins D927: the v1 vocabulary is
+// tasks:read and tasks:write, and a value outside it is refused where the
+// token is written rather than dropped, because a scope a server silently
+// ignored would be a token whose holder believes it holds a permission it
+// does not — and because a scope, once minted, is a wire contract that cannot
+// be withdrawn without breaking tokens.
+func TestUnknownScopeIsRefusedNotIgnored(t *testing.T) {
+	// roadmap:write is the scope the console's blocked write would want
+	// (D927): it is a real name the design deliberately leaves out of v1, so
+	// it is refused and not quietly read as one of the two that exist.
+	for _, s := range []string{"roadmap:write", "tasks:Read", "TASKS:READ", "tasks", "read", " tasks:read", "tasks:read "} {
+		lim := mcpauth.Limits{MinRigor: rigor.POC, Scopes: []string{mcpauth.ScopeTasksRead, s}}
+		err := lim.Validate()
+		if !errors.Is(err, mcpauth.ErrUnknownScope) {
+			t.Errorf("Validate(scopes %q) = %v; want ErrUnknownScope", s, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), s) {
+			t.Errorf("Validate(scopes %q) = %q; want it to name the scope", s, err)
+		}
+	}
+
+	// A token that reaches no tool is refused at mint for the same reason an
+	// empty window is: it is a limit that admits nothing.
+	err := (mcpauth.Limits{MinRigor: rigor.POC}).Validate()
+	if !errors.Is(err, mcpauth.ErrNoScope) {
+		t.Errorf("Validate() with no scopes = %v; want ErrNoScope", err)
+	}
+
+	// Narrow refuses a token carrying a scope outside the vocabulary rather
+	// than intersecting it away: the token was never mintable, and a silent
+	// intersection would hide that behind a call that looks like a narrowing.
+	_, err = (mcpauth.Limits{
+		MinRigor: rigor.POC,
+		Scopes:   []string{"roadmap:write"},
+	}).Narrow(mcpauth.Limits{Scopes: []string{"roadmap:write"}})
+	if !errors.Is(err, mcpauth.ErrUnknownScope) {
+		t.Errorf("Narrow() with an unknown scope = %v; want ErrUnknownScope", err)
+	}
+
+	// The vocabulary itself is exactly the two names D927 mints, so a later
+	// change that widened it is a decision and not an edit.
+	if !slices.Equal(mcpauth.ScopeVocabulary, []string{"tasks:read", "tasks:write"}) {
+		t.Errorf("ScopeVocabulary = %v; want tasks:read and tasks:write", mcpauth.ScopeVocabulary)
+	}
+	for _, s := range mcpauth.ScopeVocabulary {
+		if !mcpauth.KnownScope(s) {
+			t.Errorf("KnownScope(%q) is false", s)
+		}
+	}
+}
