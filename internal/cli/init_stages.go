@@ -142,6 +142,11 @@ func (e *initEngine) options() initflow.Options {
 		Program: o.loopProgram(),
 		Project: r.projectName, GCPProject: r.gcpProject, Region: e.lc.Region,
 		Redact: e.redact, OnPreview: func(rs []initflow.StageResult) { e.previewed = rs },
+		// The managed gate is `fugaro update`'s (D1016, update_managed.go):
+		// managedStage answers which door and which stages, and the loop asks
+		// it only in a coding agent's session, so a person's run never reads a
+		// mark on account of this line.
+		ManagedGate: e.managedStage,
 	}
 }
 

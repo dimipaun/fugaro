@@ -326,7 +326,19 @@ func policyMigrationRefusal(err error) error {
 //
 // What each door does around it is its own: the agent-session refusal and the
 // absent node's detail, and how a failure is worded where the door reports one.
-func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer) error {
+//
+// admitted is the managed project's gate's answer for this node (M1, D1016):
+// true means the document the write puts at the shared path was judged and
+// admitted, so the confirmations that exist to make the operator read it are
+// the gate's own and are not asked again. It is a parameter and not a field of
+// the migration for the reason initflow.Managed gives for its own: a caller
+// that could assert an admission could assert it for a node nobody judged, and
+// `fugaro upgrade` — the other door into this function, and the one with no
+// gate at all — passes false and gets exactly the code that was here before.
+// The refusals that are not confirmations stay: a run in flight is refused
+// whatever admitted the write, because that refusal is about the runs that read
+// the node and not about who approved this one.
+func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer, admitted bool) error {
 	// The in-flight refusal is about the NODE this run rewrites, and it is asked
 	// before the branch below: D854's re-seed carries a pending migration with it
 	// (confirmReseed writes the re-seeded file and then the migrated node), and a
@@ -338,7 +350,7 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		return err
 	}
 	if m.generations != nil {
-		return m.confirmReseed(ctx, cmd, yes, w)
+		return m.confirmReseed(ctx, cmd, yes, w, admitted)
 	}
 	if !m.writesNode() {
 		// The one write of this run is the generation record in this machine's
@@ -356,21 +368,23 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 	// the project is admitted by. So the typed name is asked for it and --yes
 	// does not stand in, which is what the sentence says to the operator whose
 	// script (or agent session) has just passed --yes and been refused.
-	if loosening := m.loosening(); len(loosening) > 0 {
-		why := m.looseningWhy(loosening)
-		// The sentence is said once. A session with no terminal is refused with
-		// it inside the error (confirmTypedStrict), and a door that reported
-		// that error next to the sentence it already printed said the same
-		// thing twice; the person at a terminal reads it here and only here,
-		// because the prompt below names the step and never the widening.
-		if stdinIsTerminal(cmd.InOrStdin()) {
-			fmt.Fprintf(w, "%s\n", why)
-		}
-		if err := confirmTypedStrict(cmd, m.lc, why, what); err != nil {
+	if !admitted {
+		if loosening := m.loosening(); len(loosening) > 0 {
+			why := m.looseningWhy(loosening)
+			// The sentence is said once. A session with no terminal is refused with
+			// it inside the error (confirmTypedStrict), and a door that reported
+			// that error next to the sentence it already printed said the same
+			// thing twice; the person at a terminal reads it here and only here,
+			// because the prompt below names the step and never the widening.
+			if stdinIsTerminal(cmd.InOrStdin()) {
+				fmt.Fprintf(w, "%s\n", why)
+			}
+			if err := confirmTypedStrict(cmd, m.lc, why, what); err != nil {
+				return err
+			}
+		} else if err := confirmRemoval(cmd, m.lc, yes, what); err != nil {
 			return err
 		}
-	} else if err := confirmRemoval(cmd, m.lc, yes, what); err != nil {
-		return err
 	}
 	if err := m.write(ctx); err != nil {
 		return err
@@ -470,10 +484,20 @@ func (m *policyMigration) recordGeneration(ctx context.Context, cmd *cobra.Comma
 // older file says. A migration pending beside it is carried out afterwards,
 // because the re-seed has just made the file the node's own, so writing the
 // migrated node no longer replaces anything a newer publish decided.
-func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command, yes bool, w io.Writer) error {
+//
+// admitted is policyMigrationConfirm's (M1, D1016): a re-seed that carries a
+// pending migration with it does write the node (writesNode), and that node is
+// the document the gate judged — the move of this machine's file is the same
+// kind of write as the local config an admitted installation apply writes
+// afterwards. A bare re-seed never reaches here admitted: nothing is published,
+// so there is no document for a verdict to be about, and the gate keeps the
+// session's own refusal for it.
+func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command, yes bool, w io.Writer, admitted bool) error {
 	m.printGenerationState(w)
-	if err := confirmRemoval(cmd, m.lc, yes, policyReseedWhat); err != nil {
-		return err
+	if !admitted {
+		if err := confirmRemoval(cmd, m.lc, yes, policyReseedWhat); err != nil {
+			return err
+		}
 	}
 	written, err := applyPolicyReseed(cmd, m.path, m.lc, m.node, m.drift)
 	if err != nil {
@@ -832,8 +856,19 @@ func (m *policyMigration) planDetail() string {
 // is what that refusal itself tells them — the same reading
 // `fugaro project policy publish --delete` has (internal/cli/project_cmd.go).
 func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
-	if marker := agentMarker(os.Getenv); marker != "" {
-		return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
+	// A managed project's gate is asked FIRST, and only this door has one: in a
+	// coding agent's session on a managed project the step that rewrites the
+	// published node is judged by the gate before it writes, and an admitted
+	// one proceeds (M1, D1016). The session's own refusal is kept for every
+	// other case, which is why it moves below the plan rather than going away:
+	// the plan is read-only, so a session that is going to refuse refuses after
+	// the same reads it has always made in the loop's preview pass, and the
+	// sentence it reads is the one it always read.
+	gate := s.e.r.gateUnderway()
+	if !gate {
+		if marker := agentMarker(os.Getenv); marker != "" {
+			return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
+		}
 	}
 	if policyNodeUnreachable(s.e.lc) {
 		return initflow.Outcome{Detail: policyNoDBReason}, nil
@@ -849,9 +884,26 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 	if m == nil {
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
-	cmd := s.e.r.cmd
-	if err := policyMigrationConfirm(ctx, cmd, m, env.Yes, cmd.OutOrStdout()); err != nil {
+	admitted, err := s.gateStep(ctx, m)
+	if err != nil {
 		return initflow.Outcome{}, err
+	}
+	if !admitted {
+		if marker := agentMarker(os.Getenv); marker != "" {
+			return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
+		}
+	}
+	cmd := s.e.r.cmd
+	if err := policyMigrationConfirm(ctx, cmd, m, env.Yes, cmd.OutOrStdout(), admitted); err != nil {
+		return initflow.Outcome{}, err
+	}
+	if admitted {
+		// The record follows the write (D1014) and not the admission: what an
+		// owner reads is that this node was published, and a step that failed
+		// inside the write has published nothing to record.
+		if err := s.e.r.gateApplied(ctx); err != nil {
+			return initflow.Outcome{}, err
+		}
 	}
 	return initflow.Outcome{Changed: true, Detail: m.doneDetail()}, nil
 }

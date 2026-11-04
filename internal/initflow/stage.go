@@ -451,6 +451,26 @@ type AgentError struct{ Marker string }
 
 func (e *AgentError) Error() string { return AgentRefusal(e.Marker) }
 
+// GatedError is a step the managed project's gate refused in a coding agent's
+// session (D1012, D1023): the loop reports it as the user's to do, in the
+// gate's own sentence rather than in the session's, because what refused the
+// step is the document the gate read and not the marker the session carries.
+// A session that read AgentRefusal here would be told to leave the run to
+// someone else; a session that reads this one is told what about the document
+// the gate would not admit, which is the account its reader acts on.
+//
+// Reason is the gate's sentence as the gate wrote it (managed.NotConverged and
+// the rules that fired, rendered by internal/managed), and Err is that refusal
+// as a value, so a caller can match on it (managed.ErrNotConverged) without
+// reading English.
+type GatedError struct {
+	Reason string
+	Err    error
+}
+
+func (e *GatedError) Error() string { return e.Reason }
+func (e *GatedError) Unwrap() error { return e.Err }
+
 // AgentProceeded is the other half of AgentRefusal: the sentence for the one
 // case in which a step in a coding agent's session runs all the same — D55's
 // answer, the managed project whose plan the gate admitted (Managed.Removes).
