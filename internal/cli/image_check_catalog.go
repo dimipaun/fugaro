@@ -551,7 +551,6 @@ func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 		if err != nil {
 			ev.d = imagecheck.CatalogDecision{Entry: w.name, Decision: imagecheck.CheckFailed, Error: oneLine(err.Error())}
 		}
-		state := catalogNextState(ev.prev, ev.d, ev.lastStatus, now)
 		// A rebuild the run's cap stops is left for the next run: it is
 		// recorded as a rebuild with the cap note, so the entry stays due and
 		// the line is an ERROR.
@@ -559,6 +558,7 @@ func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 		if capped {
 			ev.d.Reasons = append(ev.d.Reasons, imagecheck.ReasonBuildCap)
 		}
+		state := catalogNextState(ev.prev, ev.d, ev.lastStatus, now)
 		if ev.d.Decision == imagecheck.Rebuild && !o.dryRun && !capped {
 			id, status, serr := t.submit(ctx, w.entry, w.repo, w.slug, ev)
 			if serr != nil {
