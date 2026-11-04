@@ -230,6 +230,10 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 	// narrowed). It is accumulated across the retries of the loop, because a
 	// narrowing that landed stays landed.
 	var narrowedSoFar []string
+	// emptyAllowListConfirmed is whether this run's one empty-allow-list
+	// confirmation has been answered, so a retry of the write loop does not ask
+	// the operator the same question again.
+	var emptyAllowListConfirmed bool
 	for attempt := 1; attempt <= setAttempts; attempt++ {
 		etag, exists, raw, err := readPolicyNode(ctx, db, lc)
 		if err != nil {
@@ -281,6 +285,20 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		body, pol, sources, err := policyNodeForPublish(ctx, lc, old, raw, exists, o.seedRepos, o.removeRouting)
 		if err != nil {
 			return publishFailure(err, narrowedSoFar)
+		}
+		// A policy whose allow-list admits nothing stops every run of the
+		// project before it starts, which is doctor's allow-list-empty state —
+		// and the diff that shows the empty list prints only after the write, so
+		// it would announce the consequence only once it was in force. It is
+		// said here, before the first write, and a person has to type the
+		// project's name: no flag stands in, and a session with no terminal is
+		// refused (#1674). Asked once across the retries below, because it is a
+		// decision about the document and not about the attempt.
+		if len(pol.AllowRepos) == 0 && !emptyAllowListConfirmed {
+			if err := confirmEmptyAllowList(cmd, lc); err != nil {
+				return publishFailure(err, narrowedSoFar)
+			}
+			emptyAllowListConfirmed = true
 		}
 		// The gate, over the exact bytes this publish would write (D1022) and
 		// before the first write of this attempt — before the per-repository
@@ -1717,6 +1735,11 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	// TestPolicyCarriesNoSecretValue is the guard that it never does.
 	diffLines(out, providerLines(old), providerLines(new))
 	diffLines(out, priceLines(old), priceLines(new))
+	// The catalog is one line per entry, and a publish whose whole purpose was
+	// to carry one that printed no catalog line read as if the catalog was not
+	// published at all (#1657): the entries reach a run through this node, so
+	// the diff names them the way it names the providers and the prices.
+	diffLines(out, policyCatalogLines(old), policyCatalogLines(new))
 	// Profiles are the jobs this project deploys and the repositories each is
 	// admitted to, so a publish that changes one must say which: a line that
 	// only said "profiles: standard" would hide a widened allow_repos list or
@@ -2055,6 +2078,34 @@ func allowDataToText(p projectpolicy.Provider) string {
 		return "every repository (the key is absent)"
 	}
 	return fmt.Sprintf("%v", p.AllowDataTo)
+}
+
+// policyCatalogLines is one line per catalog entry, for the diff and for `policy
+// show` — one function for both, for the reason the provider and profile lines
+// are: a node that carries a catalog and a diff that does not print it read as
+// a publish that carried none, and a `policy show` that cannot print it is a
+// block nobody can audit (#1657). A node with no catalog has no lines.
+func policyCatalogLines(p *projectpolicy.Policy) map[string]string {
+	if p == nil || p.ImageCatalog == nil {
+		return nil
+	}
+	out := make(map[string]string, len(p.ImageCatalog.Entries))
+	for _, e := range p.ImageCatalog.Entries {
+		out["image_catalog "+e.Name] = catalogEntryText(e)
+	}
+	return out
+}
+
+// catalogEntryText is one catalog entry as one line: what it provides, whether
+// it is the entry a job that names nothing runs, and where its image comes from
+// (catalogSourceLine's own spelling, so a listing and this line cannot disagree
+// about a source).
+func catalogEntryText(e config.Entry) string {
+	tags := "none"
+	if len(e.Tags) > 0 {
+		tags = strings.Join(e.Tags, ", ")
+	}
+	return fmt.Sprintf("tags %s, default %v, source %s", tags, e.Default, catalogSourceLine(e.Source))
 }
 
 // routingLines is the routing switch as diff lines: the via and the explicit
@@ -2648,6 +2699,14 @@ func printPolicy(out io.Writer, p *projectpolicy.Policy) {
 	// model IDs.
 	for _, id := range slices.Sorted(maps.Keys(p.Prices)) {
 		fmt.Fprintf(out, "  model_prices %s: %s\n", id, priceText(p.Prices[id]))
+	}
+	// One line per catalog entry, under the entry's name: the catalog is the
+	// named images the project's jobs are built from (D1140), and a node that
+	// carries one this command does not print is a set of definitions nobody
+	// can audit (#1657).
+	catalog := policyCatalogLines(p)
+	for _, name := range slices.Sorted(maps.Keys(catalog)) {
+		fmt.Fprintf(out, "  %s: %s\n", name, catalog[name])
 	}
 	if p.Routing != nil {
 		fmt.Fprintf(out, "  routing: %s\n", routingText(p.Routing))
