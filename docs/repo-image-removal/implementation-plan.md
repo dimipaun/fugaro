@@ -283,13 +283,14 @@ readiness branches that decide between them.
 
 - **Interface.** `fugaro image build` (`internal/cli/image.go:78`) keeps its catalog arm
   (`fugaro image build <entry>`, `internal/cli/image_build_catalog.go`) and loses the derived one — the
-  `--local` arm, the render step and the repository-registry submit. **Four commands go whole**, as §1.2
-  and §6 say they do — `render` (`internal/cli/image.go:513`), `check` (`internal/cli/imagecheck.go:64`)
-  and `status` (`:952`), and the derived build's two steps `gate` and `record`
-  (`internal/cli/image_record.go:60`, `:145`). They are **removed, not narrowed**: the check a
-  workflow's image needed is the one D1148's project-level schedule makes over catalog entries, and it
-  is that schedule's own driver and not this command (§2), so nothing here keeps a per-workflow check
-  for it to read. `internal/infra/tf/cover.go:794`'s `image check --job` row goes with the job in R4.
+  `--local` arm, the render step and the repository-registry submit. **Five commands go whole**, as
+  §1.2 and §6 say they do — `render` (`internal/cli/image.go:513`), `check`
+  (`internal/cli/imagecheck.go:64`) and `status` (`:952`) of the family's own, and the derived build's
+  two steps `gate` and `record` (`internal/cli/image_record.go:60`, `:145`). They are **removed, not
+  narrowed**: the check a workflow's image needed is the one D1148's project-level schedule makes over
+  catalog entries, and it is that schedule's own driver and not this command (§2), so nothing here
+  keeps a per-workflow check for it to read. `internal/infra/tf/cover.go:794`'s `image check --job` row
+  goes with the job in R4.
   `checkedWorkflows` (`internal/cli/imagecheck.go:221`) goes, and `image refresh`'s derived steps
   (`internal/cli/image_refresh_steps.go`) go. **`rebuild.*` is read by nothing after this** (D1200) —
   the trigger set is `internal/imagecheck/catalog.go`'s and D1148's.

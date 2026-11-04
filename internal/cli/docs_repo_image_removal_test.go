@@ -174,10 +174,10 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 		// commit whatever the commit count is.
 		"**Files (51, in five commits of ≤12).**",
 		"**27 files, twice the ceiling on its own**",
-		// Four commands go whole, and the plan says so in the words the spec's
+		// Five commands go whole, and the plan says so in the words the spec's
 		// §1.2 table uses: a plan that keeps an arm of one of them is a plan
 		// whose own red step asserts a command the spec removes.
-		"**Four commands go whole**",
+		"**Five commands go whole**",
 		"the derived build's two steps `gate` and `record` (`internal/cli/image_record.go:60`, `:145`)",
 		// This folder's own pin is a file the removal moves, and §4 has to name
 		// the tasks that move it: a pin left asserting the pre-removal tree is
