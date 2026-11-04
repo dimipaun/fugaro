@@ -1,17 +1,24 @@
 # Workspaces: the implementation plan
 
-**Nothing here is approved.** Every decision in [reconciliation.md](reconciliation.md) §4 is open,
-and no task below starts before the owner has answered the decisions it depends on and has approved
-that task by name. This plan is written to the **recommended** answer of each decision; a decision
-answered the other way changes the task that names it.
+**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
+approved.** The sixteen decisions in [reconciliation.md](reconciliation.md) §4 (**D1290–D1305**) are
+**answered**, every one as recommended, so no task below is waiting on a decision any more. **No
+task is approved**: the owner approves each task by name, and one gate is still shut — [spec.md](spec.md)
+§8 is a threat model whose independent SECURITY review is mandatory before this design merges and
+**which the coordinator runs**, not this plan's author and not the runs that implement anything.
 
 Repository names in this file are placeholders (`owner/repo-a`, `owner/repo-b`), a person is
 `person-1`, and a workspace is `workspace-alpha`. No test named here uses a real credential, a real
 address or a string shaped like a secret: the fixtures use marker values, and §6 states the rule.
 
-## 1. What the owner must answer first
+## 1. The decisions the plan is written to
 
-| Decision | Blocks | Recommendation the plan is written to |
+**Answered by the owner on 2026-11-04, every one as recommended.** The table is kept because each
+row still names the task the answer binds; nothing in it is open. A reader looking for what was
+asked and what the alternative cost should read [reconciliation.md](reconciliation.md) §4 and
+[README.md](README.md).
+
+| Decision | Blocks | Answer the plan is written to |
 | --- | --- | --- |
 | D1290 | W3 | The workspace has its own Firebase project |
 | D1291 | W0, W1 | At most one workspace per project |
@@ -29,10 +36,12 @@ address or a string shaped like a secret: the fixtures use marker values, and §
 | D1304 | — | No console or mobile task in this plan |
 | D1305 | W9 | Not a new licensed unit and not a new price |
 
-**One thing must be read before any task starts:** [spec.md](spec.md) §8 is a threat model and its
-independent review is **mandatory** by the owner's brief. W4, W5, W6 and W7 each add a surface that
-section describes, and none of them starts before that review has been read and its findings
-answered.
+**One thing must be read before any task starts:** [spec.md](spec.md) §8 is a threat model, its
+independent SECURITY review is **mandatory before this design merges** by the owner's brief, and
+**the coordinator runs it** — it is not a task of this plan. W4, W5, W6 and W7 each add a surface
+that section describes, and none of them starts before that review has been read and its findings
+answered. (The brief first put the review before the decisions; the owner answered all sixteen on
+2026-11-04, so the gate it holds now is the merge.)
 
 ## 2. The order, and what forces it
 
@@ -41,10 +50,11 @@ Three dependencies force the order, and none of them is a preference:
 1. **The record comes before everything** (W0, W1, W2). A member cannot join a workspace whose record
    has no shape, and the shape is what the later tasks validate against.
 2. **The exchange is the MCP design's authorization server** (W4). `docs/mcp-server/` §3 puts one
-   inside a member's coordinator, and it is in **open pull request #1487**, not on `main`. W4 is
-   written to that design's interface; **if that design changes its library (its D921) or its flow,
-   W4 changes with it**, and if the owner declines the MCP design, W4 has no host and this plan's
-   SSO half does not start. That dependency is the whole reason §5 recommends the slot it does.
+   inside a member's coordinator, and it is in **open pull request #1487**, not on `main` — re-read
+   on 2026-11-04 at `origin/main` `b41709ea`, and the directory does not exist there. W4 is written
+   to that design's interface; **if that design changes its library (its D921) or its flow, W4
+   changes with it**, and if the owner declines the MCP design, W4 has no host and this plan's SSO
+   half does not start. That dependency is the whole reason §5 recommends the slot it does.
 3. **The shared pool comes before the cap** (W6 before W7). The cap is enforced where the calls are
    paid for (D1299), and until there is one place that pays for them there is no such place. A cap
    built first would be the member-gateway-only version D1299 rejects.
@@ -338,37 +348,52 @@ wherever two tasks would edit the same file; the second waits for the first to m
 
 ## 5. The release slot
 
-**Recommended: the design belongs to the 0.15.0 documentation window; the code belongs to
-0.17.0.**
+**Recommended: 0.20.0 or later.** Re-slotted on 2026-11-04: the slot this section used to recommend
+— design in 0.15.0, code in 0.17.0 — has **shipped** (0.15.0, 0.16.0 and 0.17.0 are all released
+files in `docs/releases/`, and 0.17.0 is the newest CLI release on `origin/main` at `b41709ea`), so
+the recommendation is remade rather than kept. The design is still only documentation and costs a
+release nothing; the code does not belong in the next release either, for the reasons below.
 
-Why the design is 0.15.0's: this folder is documentation, the owner asked for a design and approved
-one on 2026-10-31, and it costs nothing to carry it beside the release it will be built after. It is
-the same slot the MCP design takes for its own documents.
+**Why the design can ride any release.** This folder is documentation, the owner asked for a design
+and approved one on 2026-10-31, and it changes no behaviour.
 
-Why the code is **0.17.0** and not earlier:
+**Why the code is 0.20.0 or later, and not the next release:**
 
-1. **The exchange has no host until the MCP server exists.** W4 is written to the MCP design's
-   authorization server, and that design recommends **0.16.0** for its code
-   (`docs/mcp-server/implementation-plan.md` §5). A workspace cannot mint a member token before
-   there is a server that mints member tokens.
-2. **The shared pool has no host until the credentials service's later slice.** The service's Slice 3
-   is unscheduled (`docs/credentials-service/implementation-plan.md`), and W6 is a *second*
-   deployment of it, not a flag on the first. Building the workspace's pool on an unbuilt slice
-   would make this work's first task depend on another plan's last.
-3. **The workspace's services are `ee/`.** Rulings A5 and A6 (`docs/ee-reorg/spec.md`:7) put the
+1. **It is big.** Ten tasks, three of them new deployables (a Firebase project of its own, a second
+   credentials service, an exchange endpoint) and two new wire formats with schemas. Nothing on the
+   plan is a flag on something that exists; W6 is a *second* deployment of the credentials service
+   and W7 is a second spend ceiling beside the project's.
+2. **It is security-heavy.** Five of the ten tasks carry the plan's own **SEC** flag (W3, W4, W5,
+   W6 and W7: an identity boundary, an authorization decision, a credential pool and a spend
+   ceiling), and [spec.md](spec.md) §8's threat model needs an independent SECURITY review **before
+   this design merges**, run by the coordinator. Shipping an identity boundary, a cross-project read
+   and a shared credential pool before that review's findings have had a release to settle in would
+   put a security feature on the release's schedule rather than the review's.
+3. **The exchange has no host until the MCP server exists.** W4 is written to the MCP design's
+   authorization server, which is **open pull request #1487** and not on `main` (re-read 2026-11-04),
+   and that design recommends a slot of its own for its code. A workspace cannot mint a member token
+   before there is a server that mints member tokens.
+4. **The shared pool has no host until the credentials service's later slice.** The service's Slice 1
+   is still its first product slice and the rest are unscheduled
+   (`docs/credentials-service/implementation-plan.md`), and W6 is a *second* deployment of it, not a
+   flag on the first.
+5. **The workspace's services are `ee/`.** Rulings A5 and A6 (`docs/ee-reorg/spec.md`:7) put the
    coordinator and the credentials service's hosted half under the business folder, and the
    workspace's exchange endpoint and its service deployment are those. A release that shipped them
    in the MIT core would contradict a standing ruling, so the slot has to be one where the `ee/`
-   placement is settled — which it is not yet at this base.
+   placement is settled.
 
-Why not later than 0.17.0: nothing else the workspace needs is unbuilt by then. The `update` stage
-(W2), the kill scope (W8) and the docs (W9) are ordinary work on surfaces that exist today.
+**Why not later than the 0.20.0 window:** nothing else the workspace needs is unbuilt by then. The
+`update` stage (W2), the kill scope (W8) and the docs (W9) are ordinary work on surfaces that exist
+today.
 
 **What would move it.** If the owner declines the MCP design, W4 and W5 have no host and the SSO
 half waits for whichever design replaces it — the record, the node, the credentials pool and the cap
 (W0–W3, W6–W8) do not depend on it and could ship earlier, as a workspace without single sign-on.
 That is a real option and the owner may prefer it; this plan does not take it, because the owner's
-spec names the sign-in as one of the four things a workspace is.
+spec names the sign-in as one of the four things a workspace is. And a SECURITY finding that asks
+for a redesign of §8's surfaces moves the slot again: the review's answer, not this section, decides
+when W4–W7 can start.
 
 ## 6. The test rules
 

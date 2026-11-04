@@ -1,11 +1,21 @@
 # Workspaces: the spec
 
-**Status: design only.** Nothing here is approved and no line of it is implemented. §0 is the
-owner's spec as this run recorded it; the design that follows (§1 onward) is written to the
-**recommended** answer of each decision in [reconciliation.md](reconciliation.md) §4 (D1290–D1305), and
-**where the two disagree the reconciliation wins** — §0 is the record of what was asked, not of what
-this design proposes. Implementation is **not** approved: the owner decides, task by task, after
-[implementation-plan.md](implementation-plan.md) has been reviewed.
+**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
+approved.** §0 is the owner's spec as this run recorded it; the design that follows (§1 onward) is
+written to the answer of each decision in [reconciliation.md](reconciliation.md) §4 (**D1290–D1305**,
+the block this design was renumbered into on 2026-11-04), and **where the two disagree the
+reconciliation wins** — §0 is the record of what was asked, not of what this design proposes.
+**The owner answered all sixteen decisions on 2026-11-04, every one as recommended**, so every
+sentence below is the design the owner answered and not a recommendation awaiting one. That is still
+**not an approval**: no task is approved, the owner approves each task by name, and §8's independent
+SECURITY review gates the merge.
+
+**Every decision this file cites is answered, on 2026-11-04, and each as recommended.** A
+parenthetical like "(D1293)" below is therefore a **settled** decision and not an open one;
+[README.md](README.md) tabulates the sixteen with a one-line why for each, and
+[reconciliation.md](reconciliation.md) §4 carries the owner's answer beside the options and the cost
+of the alternative. The design's three load-bearing answers are stated where they bite: §3 (D1290,
+D1293, D1294, D1295), §4 (D1297, D1298) and §5 (D1299, D1300).
 
 Every repository, person and workspace this folder's own text names is a placeholder: `owner/repo-a`,
 `owner/repo-b`, `person-1`, `workspace-alpha` (and not `workspace-a`, which is already a Bitbucket
@@ -30,7 +40,8 @@ Two rules bind everything below and are not up for a decision:
 **The verbatim text was not recovered.** What follows is the recorded summary of the owner's spec of
 2026-10-24, exactly as this run received it; it is what this folder reconciles and designs against,
 and [README.md](README.md) records what was and was not recovered. The owner approved a design PR
-for this work on 2026-10-31.
+for this work on 2026-10-31 and **answered the sixteen decisions on 2026-11-04**, every one as
+recommended ([README.md](README.md) tabulates them).
 
 - **Workspaces:** an optional grouping of Fugaro projects.
 - **Single sign-on** via a workspace Firebase token exchange.
@@ -93,8 +104,10 @@ applies" has no answer a reader can act on.
 ## 3. Single sign-on: the workspace identity and the token exchange
 
 **The workspace has its own Firebase project**, created for the workspace and holding nothing else
-(D1290). It is the workspace's identity provider, and it is not any member's: a member's own Firebase
-continues to issue that member's own tokens, unchanged.
+(D1290, **answered 2026-11-04**: a designated member's Firebase would silently make that member's
+launcher and operator lists the workspace's admission lists). It is the workspace's identity
+provider, and it is not any member's: a member's own Firebase continues to issue that member's own
+tokens, unchanged.
 
 **What a person does.** They sign in to the workspace's Firebase once — the same Firebase sign-in
 methods the member projects already support (Google, email), verified against the keys Google
@@ -102,9 +115,12 @@ publishes, with the issuer and the bare-project-id audience rule `internal/creds
 implements (F4). What they hold afterwards is a **short-lived workspace token**, and it is a bearer
 for exactly one thing: the exchange endpoint of a member they are already admitted to.
 
-**The exchange** (D1293, D1294). To reach a member, the person presents the workspace token to that
-member's own authorization server — the one the MCP design puts inside the coordinator
-(`docs/mcp-server/spec.md` §3) — which:
+**The exchange** (D1293 and D1294, **both answered 2026-11-04**: one sign-in and one exchange per
+member, and the exchange happens **at the member**, so a stolen token is never every member at once
+and the member stays the authority over what the identity may do there). To reach a member, the
+person presents the workspace token to that member's own authorization server — the one the MCP
+design puts inside the coordinator (`docs/mcp-server/spec.md` §3, **still an open pull request and
+not on `main`** at the 2026-11-04 reading) — which:
 
 1. verifies the workspace token against the workspace's published keys, its issuer and its audience;
 2. maps the identity to the member's own permission lists (`internal/cli/user.go`: the launchers and
@@ -123,14 +139,19 @@ applied to the workspace); at each member, the member's own token record, unchan
 one delete at the workspace, and the next exchange by that person is refused; a member's own
 revocation is unchanged and independent.
 
-**What a workspace identity may do in a member is what the member already grants** (D1295). The
-workspace cannot add a launcher, cannot make an operator, cannot admit an address a member's lists
-do not name, and cannot widen a member's policy, caps or allow-lists. That is rule 1 of this folder
-stated as a mechanism: the exchange reads the member's lists and never writes them.
+**What a workspace identity may do in a member is what the member already grants** (D1295,
+**answered 2026-11-04**: option (A) — a workspace grants **nothing beyond the member's own launcher
+and operator lists**, because the only-tighten rule would not survive a workspace role that maps to
+a member role). The workspace cannot add a launcher, cannot make an operator, cannot admit an
+address a member's lists do not name, and cannot widen a member's policy, caps or allow-lists. That
+is rule 1 of this folder stated as a mechanism: the exchange reads the member's lists and never
+writes them.
 
 ## 4. Shared credentials
 
-**One workspace bundle, one workspace service** (D1297). The credentials service
+**One workspace bundle, one workspace service** (D1297, **answered 2026-11-04** and **re-read
+against main on that date**: N bundles would be N rotations, N leak sites and no single revocation —
+and no one hop that sees the total, which the cap needs). The credentials service
 (`docs/credentials-service/`) is deployed **once, in the workspace's project**, and holds the
 workspace's model credentials in its one bundle secret — the same shape the owner ruled for an
 installation (one Secret Manager secret, one `secretAccessor` grant). Every member's runs reach it
@@ -139,7 +160,20 @@ the service verifies the signature and the `email` claim, and the run is proved 
 identity. The one thing that changes is that the admitted set is the **workspace's** member job
 service accounts, not one installation's.
 
-**Which credentials may be shared, and with whom** (D1298). Every shared credential carries a
+**The person class is the one the service already has, and it does not change here.** Main's
+credentials service admits a **person** as a class of its own beside the job classes —
+`PersonAccounts` (`internal/credsvc/auth.go`:375) with `VerifyPersonCaller` (`:968`) for the GitHub
+read mint and `VerifyReadCaller` (`:890`) for the Bitbucket read mint, both taking a token a plain
+`gcloud auth print-identity-token` may have minted (`GcloudAudience`, `:241`, the owner's ruling of
+2026-11-04). A person reaches the workspace's service to *read what the workspace holds* — the
+member list, the cap, the rollup — through that same class, and a person is never a way to a
+credential's value (rule 2). Nothing in this design adds a class to the service or widens one: the
+workspace's deployment populates the same lists the installation's does, and the class rule that a
+person may not also be a job (`NewAuthenticator`) holds unchanged.
+
+**Which credentials may be shared, and with whom** (D1298, **answered 2026-11-04** and **re-read
+against main on that date**: a workspace credential available to every member would be a policy
+bypass, so the intersection is the only shape that keeps rule 1). Every shared credential carries a
 **per-project allow-list** — the pattern `allow_data_to` already uses for a model route — and the
 effective set is the **intersection** of:
 
@@ -161,15 +195,17 @@ additive: the workspace's pool is a set a member *may* draw on, subject to the i
 
 ## 5. The workspace cap
 
-**What it bounds** (D1300). The workspace cap bounds **the spend of the workspace's own credentials**.
+**What it bounds** (D1300, **answered 2026-11-04**: calling it a bound on a member's total spend
+would be false for a member that holds credentials of its own). The workspace cap bounds **the spend
+of the workspace's own credentials**.
 It is *not* a bound on a member's total spend, and the design refuses to call it one: a member may
 hold credentials of its own whose calls never pass the workspace. For a member that routes *every*
 model call through the workspace, the cap does bound that member's whole spend — but that is a
 property of how the member is configured, not a property of the cap, and the console and the docs
 must say so.
 
-**Where it is enforced** (D1299). At the **workspace's credentials service**, on the calls it pays
-for. That is the one hop every shared-credential call passes, so a member cannot bypass it by
+**Where it is enforced** (D1299, **answered 2026-11-04**: a member cannot be the fence over its own
+spend). At the **workspace's credentials service**, on the calls it pays for. That is the one hop every shared-credential call passes, so a member cannot bypass it by
 choosing a different gateway, and it is the only place that sees the total. Each member's own
 gateway additionally receives an **advisory headroom** — the workspace's remaining room, published
 to the member's database — so a run stops early rather than being cut off mid-stage; the advisory
@@ -205,8 +241,12 @@ one command to remember and not two.
 
 None of them writes the cloud. `workspace ls`, `workspace show`, the offline reads and the
 `--json` documents run anywhere, including under a coding agent's environment; the writes are local
-config edits and behave exactly as `fugaro models`' writes do — under a coding agent's marker they
-print the diff and the command for the user to run, and write nothing.
+config edits and behave exactly as `fugaro models`' and `fugaro settings`' writes do — under a
+coding agent's marker they print the diff and the command for the user to run, and write nothing
+(`internal/cli/managed_gate.go`:181 `readManagedGate`, the one helper the cloud writes on main
+already share: `config publish`, `project policy publish`, `image refresh` and `accounts add`).
+`fugaro workspace` adds no new caller of the gate, because it has nothing to gate — its writes never
+leave the machine.
 
 ## 7. The console and the mobile app
 
@@ -222,8 +262,11 @@ refuses for the roadmap scope. The mobile app reads nothing of this.
 
 ## 8. Threat model
 
-This section is the one the owner's brief requires an independent review of, and the review is
-mandatory before any decision in [reconciliation.md](reconciliation.md) §4 is answered. It is
+**This section needs an independent SECURITY review before this design merges, and the coordinator
+runs that review** — not this folder's author, and not the runs that implement anything. The owner's
+brief first put the review before the *decisions* in [reconciliation.md](reconciliation.md) §4; the
+owner answered all sixteen on 2026-11-04, so the gate the review now holds is the **merge**, and
+[README.md](README.md) and [implementation-plan.md](implementation-plan.md) §1 say the same. It is
 written as the questions a reader should be able to answer from it.
 
 **Who can reach what.** A workspace adds exactly one new reachable surface: the **exchange
@@ -342,6 +385,12 @@ This is rule 1 and rule 2 written as prohibitions. A workspace:
   bodies — is the MCP design's §3 for a member, and this design reuses it rather than writing a
   second one. If the owner answers that design's D921 (the OAuth library) differently, this design
   moves with it.
+- **#1487's authorization server.** The exchange endpoint of §3 *is* the MCP design's authorization
+  server, and that design is an **open pull request, not on `main`** at the 2026-11-04 reading
+  (`docs/mcp-server/` does not exist there). This design's SSO half therefore cannot be built until
+  that work lands, and [implementation-plan.md](implementation-plan.md) §2 and §5 carry that as the
+  dependency that forces the release slot. Nothing here duplicates it: this design adds a workspace
+  token and a workspace identity provider, and reuses that server as the member's exchange.
 - **Whether a member may be a member of a workspace whose identity provider it cannot reach** — a
   member whose network cannot reach the workspace's Firebase — is not settled here; the honest
   answer is that such a member is not a member in any useful sense, and the plan's W5 should refuse
