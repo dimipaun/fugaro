@@ -2205,23 +2205,26 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// replace is allowed, and named (bucket-iam.md H5).
 		upgrade := infra.LauncherGrantUpgrade(plan, spec.RunsBucket, spec.Launchers, spec.Operators)
 		allowed := append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...)
-		fmt.Fprint(r.w, infra.HardeningBanner(hardening))
-		fmt.Fprint(r.w, infra.LauncherGrantUpgradeBanner(upgrade))
 		counts := infra.CountPlan(plan)
-		r.res.Changes = &counts
 		// The managed gate judges the plan BEFORE the guard and the
 		// confirmation, and replaces both when it admits it (D1016,
 		// update_managed.go): a session that may not confirm anything reads
 		// what the gate refused rather than the guard's advice, which is what
-		// a managed project's refusal is about.
+		// a managed project's refusal is about. Everything the guard's own
+		// path prints or records stays where it was, on the path that runs it.
 		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.notCovered))
 		if err != nil {
 			return outs, false, err
 		}
-		if !gated {
+		if gated {
+			r.res.Changes = &counts
+		} else {
 			if err := r.guard(ctx, c, plan, allowed); err != nil {
 				return outs, false, err
 			}
+			fmt.Fprint(r.w, infra.HardeningBanner(hardening))
+			fmt.Fprint(r.w, infra.LauncherGrantUpgradeBanner(upgrade))
+			r.res.Changes = &counts
 			if r.o.planOnly {
 				fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
 				return outs, true, nil
@@ -3903,7 +3906,6 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	fmt.Fprint(r.w, tf.Summary(plan))
 	fmt.Fprintln(r.w, im.Bindings.String())
 	counts := infra.CountPlan(plan)
-	r.res.Changes = &counts
 	// The managed gate first, and the guard and the confirmation only when it
 	// does not admit this plan (D1016, update_managed.go). A repository root
 	// is one of Fugaro's own too, so it is judged by the same cover and the
@@ -3912,10 +3914,13 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	if err != nil {
 		return infra.RepoSpec{}, nil, err
 	}
-	if !gated {
+	if gated {
+		r.res.Changes = &counts
+	} else {
 		if err := r.guard(ctx, c, plan, r.o.allowDelete); err != nil {
 			return infra.RepoSpec{}, nil, err
 		}
+		r.res.Changes = &counts
 		if r.o.planOnly {
 			fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
 			return ready, missing, nil
