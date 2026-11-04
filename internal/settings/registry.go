@@ -645,6 +645,7 @@ var localRows = []Row{
 	loc("project_secrets.*.proxy", "none", "secrets", docSetup),
 
 	loc("workflow_secrets.*.allow_data_to", "nobody", "secrets", docSetup),
+	loc("workflow_secrets.*.proxy", "none", "secrets", docSetup),
 
 	loc("job_profiles.*.provider", "none", "project", docSetup),
 	loc("job_profiles.*.cpu", "the workflow's own", "project", docSetup),
