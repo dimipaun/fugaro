@@ -194,13 +194,16 @@ var layerRegistryKeys = func() []string {
 // key the registry does not know.
 //
 // A document this walk cannot read — YAML it cannot parse, a key that is not a
-// string, an anchor — gets no rule here, and that is deliberate: the parse
-// refuses all three, so the refusal a session reads is the parse's, and this
-// rule never has to describe a shape it did not understand.
+// string, an anchor or an alias — gets a rule of its own rather than no rule.
+// The parse refuses all four as well, so the verdict is a refusal either way;
+// what the rule adds is that the refusal names the keys as unjudged instead of
+// reading as a document every key rule passed, which is the reading an attempt
+// to reach past this gate through a shape the walk does not follow would
+// otherwise leave in the record.
 func layerDocumentRules(data []byte) []string {
 	paths, ok := layerKeyPaths(data)
 	if !ok {
-		return nil
+		return []string{"the layer's keys cannot be read as a document this gate judges (YAML it cannot parse, a key that is not a string, or an anchor and the alias that copies it), so no key of it was judged and no session publishes it"}
 	}
 	var reserved, unknown []string
 	for _, p := range paths {
@@ -468,8 +471,8 @@ func modelProviders(a, b map[string][]string) []string {
 	return slices.Sorted(slices.Values(out))
 }
 
-// addedStrings is the entries of next that prev did not hold, in next's own
-// order with duplicates dropped.
+// addedStrings is the entries of next that prev did not hold, sorted and
+// deduplicated, so a rule that named an entry twice does not read as two.
 func addedStrings(prev, next []string) []string {
 	var out []string
 	for _, s := range next {

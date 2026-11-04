@@ -435,3 +435,113 @@ func TestConfigPublishManagedRefusesACapRaised(t *testing.T) {
 		t.Fatalf("the bucket holds %q, want the narrowing layer", got)
 	}
 }
+
+// A document the key walk cannot follow — an anchor, and the alias that copies
+// it — is refused by a rule of the gate's own and not by the parse alone: a
+// refusal that read as a document whose every key rule passed would leave an
+// anchor-based attempt at a reserved key looking like a clean one in the record
+// (D1014).
+func TestConfigPublishManagedRefusesADocumentTheWalkCannotRead(t *testing.T) {
+	r := newManagedPublishRig(t)
+	agentSession(t)
+	publishedLayer(t, r.cloudFixture, "")
+	anchored := minimalAnchored + "defaults: &shared\n  agent: { auth: vertex }\nshared_defaults: *shared\n"
+	_, _, err := execute(t, "config", "publish", layerFile(t, anchored))
+	if err == nil {
+		t.Fatal("a layer whose keys the gate cannot walk was published in a coding agent's session")
+	}
+	const rule = "cannot be read as a document this gate judges"
+	if !strings.Contains(err.Error(), rule) {
+		t.Errorf("the refusal does not name the gate's own rule for a document it cannot walk: %v", err)
+	}
+	if strings.Contains(err.Error(), "your own terminal") {
+		t.Errorf("the marker's own refusal answered instead of the gate's: %v", err)
+	}
+	if got := bucketText(t, r.cloudFixture, config.LayerKey); got != "" {
+		t.Fatalf("a document the gate could not read reached the bucket: %q", got)
+	}
+	rec := r.audits(t)
+	if len(rec) != 1 || rec[0].Verdict != managedmode.AuditRefused {
+		t.Fatalf("the refusal's record is %v, want one refusal", rec)
+	}
+	if rules := strings.Join(rec[0].Rules, " "); !strings.Contains(rules, rule) {
+		t.Errorf("the record does not name the rule that refused: %q", rules)
+	}
+}
+
+// The rest of the widening rule (spec §4.1.5, §4.1.6): a model claim the
+// published layer did not serve, an A/B challenger it did not run, and the
+// sampling rate and the daily pair count raised. Each is refused on its own, so
+// the cap the test above covers is not the only comparison the gate makes, and
+// each refusal names the key that widened rather than the block it sits in.
+func TestConfigPublishManagedRefusesEachWidening(t *testing.T) {
+	const (
+		claim = "claude_models:\n  openrouter: [\"anthropic/claude-sonnet-5.5\"]\n"
+		v3    = "deepseek/deepseek-v3"
+		k2    = "moonshot/kimi-k2"
+	)
+	abBlock := func(rate string, pairs string, challengers ...string) string {
+		return "ab: { rate: " + rate + ", max_pairs_per_day: " + pairs + ", challengers: [" + strings.Join(challengers, ", ") + "] }\n"
+	}
+	base := abBlock("0.02", "2", v3)
+	// A claim is judged against the installation config's route table, so the
+	// route it names has to exist before the claim can be the thing that
+	// refuses: the provider the config does not define is that test's own
+	// subject and not this one's.
+	const route = "  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n"
+	cases := []struct {
+		name      string
+		routes    string
+		published string
+		next      string
+		names     string
+	}{
+		{"a model claim the project did not serve", route, minimalAnchored, minimalAnchored + claim, "claude_models"},
+		{"an A/B challenger the project did not run", "", minimalAnchored + base, minimalAnchored + abBlock("0.02", "2", v3, k2), "challenger"},
+		{"a raised sampling rate", "", minimalAnchored + base, minimalAnchored + abBlock("0.05", "2", v3), "ab.rate"},
+		{"a raised daily pair count", "", minimalAnchored + base, minimalAnchored + abBlock("0.02", "9", v3), "max_pairs_per_day"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newManagedPublishRig(t)
+			agentSession(t)
+			if tc.routes != "" {
+				r.appendConfig(t, "providers:\n"+tc.routes)
+			}
+			publishedLayer(t, r.cloudFixture, tc.published)
+			_, _, err := execute(t, "config", "publish", layerFile(t, tc.next))
+			if err == nil {
+				t.Fatalf("%s was published in a coding agent's session", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.names) || !strings.Contains(err.Error(), "widening") {
+				t.Errorf("the refusal does not name %s as the widening that refused: %v", tc.names, err)
+			}
+			if got := bucketText(t, r.cloudFixture, config.LayerKey); got != tc.published {
+				t.Fatalf("the published layer moved: %q", got)
+			}
+			if n := len(r.auditKeys(t)); n != 1 {
+				t.Errorf("the refusal left %d audit records, want one (D1025)", n)
+			}
+		})
+	}
+
+	// The other side of all four at once: the claim and the challenger dropped,
+	// the rate and the daily count lowered. Nothing there states a rule about a
+	// key being present — each of the five is a comparison of two layers.
+	t.Run("narrowing every lever at once", func(t *testing.T) {
+		r := newManagedPublishRig(t)
+		agentSession(t)
+		publishedLayer(t, r.cloudFixture, minimalAnchored+claim+abBlock("0.05", "9", v3, k2))
+		narrow := minimalAnchored + abBlock("0.01", "1", v3)
+		out, errOut, err := execute(t, "config", "publish", layerFile(t, narrow))
+		if err != nil {
+			t.Fatalf("a layer narrowing every lever was refused: %v\n%s", err, errOut)
+		}
+		if !strings.Contains(out, initflow.AgentProceeded("CLAUDECODE")) {
+			t.Errorf("the session does not read that the step proceeded: %q", out)
+		}
+		if got := bucketText(t, r.cloudFixture, config.LayerKey); got != narrow {
+			t.Fatalf("the bucket holds %q, want the narrowing layer", got)
+		}
+	})
+}
