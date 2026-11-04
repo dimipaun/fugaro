@@ -384,7 +384,8 @@ the entry names with nothing else to run: no apply, no re-grant, no prompt.
 **next run** of every job that mounts the container reads the new value. The container's ID is
 `gcp.ProjectSecretID(lc.Name, logical)` — the same ID whatever the name is (F2) — so a rotated
 workflow secret travels the path the reserved names already travel. The grant is on the container
-(`secret_accessor` on the secret, F7), not on a version, so it survives the rotation untouched.
+(`roles/secretmanager.secretAccessor` on the secret, F7), not on a version, so it survives the
+rotation untouched.
 
 **What a rotation does not reach, which is D1264's fact seen from the other side.** A repository that
 holds its own copy with an enabled version resolves *its own* copy (`resolveSecretID`, F5), so
