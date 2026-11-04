@@ -1509,11 +1509,22 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		}
 		edit.DryRun = dry
 	}
+	managed, gate, err := settingsManagedStep(cmd.Context(), lc, target, key, typed, why, old, newData, "settings set")
+	if err != nil {
+		return err
+	}
+	edit.Managed = managed
 	if err := applySettingsEdit(cmd, lc, edit); err != nil {
 		return err
 	}
 	if o.dryRun {
 		return nil
+	}
+	// The record is written after the write and for a write that happened: a
+	// dry run applies nothing, and an edit that reached applySettingsEdit wrote
+	// or was refused, so this call is the only one this command makes (D1014).
+	if err := gate.recorded(cmd.Context()); err != nil {
+		return err
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
 	return nil
@@ -1580,11 +1591,19 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 	if o.dryRun {
 		edit.DryRun = &settingsDryRun{key: key, layer: target.layer, oldValue: oldValue, newValue: settingsValueIn(newData, target.keyPath), jsonOut: o.jsonOut}
 	}
+	managed, gate, err := settingsManagedStep(cmd.Context(), lc, target, key, typed, why, old, newData, "settings unset")
+	if err != nil {
+		return err
+	}
+	edit.Managed = managed
 	if err := applySettingsEdit(cmd, lc, edit); err != nil {
 		return err
 	}
 	if o.dryRun {
 		return nil
+	}
+	if err := gate.recorded(cmd.Context()); err != nil {
+		return err
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
 	return nil
