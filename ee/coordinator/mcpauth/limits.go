@@ -80,42 +80,46 @@ func KnownScope(s string) bool { return slices.Contains(ScopeVocabulary, s) }
 // needs: errors.Is tells the front door which rule it hit, and the message
 // names the field and the value, because a person reading a mint failure or
 // an agent reading a tool refusal has to be able to act on it.
+//
+// Each error carries the condition and not the sentence: every return site
+// below says which side and which value it was reading ("mcpauth: min_rigor
+// %q and max_rigor %q admit no mode: ..."), so the same condition reached
+// from the mint and from a narrowing reads as the two different failures they
+// are.
 var (
 	// ErrEmptyWindow refuses a rigor window that admits no mode: a floor
 	// above a ceiling. It is refused where the limit is written rather than
 	// on every call (D926), because a token that could never start a run
 	// should fail at the operator's keyboard and not in an agent's retry
 	// loop.
-	ErrEmptyWindow = errors.New("mcpauth: the rigor window admits no mode: max_rigor is below min_rigor")
+	ErrEmptyWindow = errors.New("max_rigor is below min_rigor")
 
 	// ErrOffAxisBound refuses Hotfix as a window bound. Rank gives Hotfix 0
 	// so that it can never win a comparison against an on-axis mode, which
 	// means reading it as a bound would admit it at every floor (D925).
-	ErrOffAxisBound = errors.New("mcpauth: hotfix is not a rigor window bound: it is off the axis and gated by the Hotfix flag alone")
+	ErrOffAxisBound = errors.New("hotfix is not a rigor window bound: it is off the axis and gated by the Hotfix flag alone")
 
 	// ErrUnknownMode refuses a mode outside rigor's vocabulary rather than
 	// ranking it 0, which is what Rank does with a value that reached it
 	// without having been parsed.
-	ErrUnknownMode = errors.New("mcpauth: unknown rigor mode")
+	ErrUnknownMode = errors.New("unknown rigor mode")
 
 	// ErrModeRefused refuses a requested mode the token's limits do not
 	// admit. The message names the mode that was asked for and the limit
 	// that refused it (spec.md §6): an agent that cannot see which limit it
 	// hit retries the same request.
-	ErrModeRefused = errors.New("mcpauth: the requested rigor mode is outside the token's limits")
+	ErrModeRefused = errors.New("the requested rigor mode is outside the token's limits")
 
-	// ErrUnknownScope refuses a scope outside ScopeVocabulary (D927).
-	ErrUnknownScope = errors.New("mcpauth: unknown scope: v1 mints tasks:read and tasks:write only")
+	// ErrUnknownScope refuses a scope outside ScopeVocabulary (D927), on
+	// whichever side named it: the vocabulary is closed for the token that
+	// would hold it and for the project policy that would grant it.
+	ErrUnknownScope = errors.New("unknown scope: v1 mints tasks:read and tasks:write only")
 
-	// ErrNoScope refuses limits that reach no tool at all, whether the token
-	// carries no scope or the project's own policy grants none of the ones
-	// it asked for. It is the scope half of the empty window's rule.
-	ErrNoScope = errors.New("mcpauth: scopes is empty: a token with no scope reaches no tool")
+	// ErrNoScope refuses limits that reach no tool at all: the token carries
+	// no scope, or the project's policy grants none of the ones it asked
+	// for. It is the scope half of the empty window's rule.
+	ErrNoScope = errors.New("scopes admits no tool")
 )
-
-// onAxis reports whether m is a mode a window reads: one of the four, and not
-// Hotfix.
-func onAxis(m rigor.Mode) bool { return m != rigor.Hotfix && rigor.Known(m) }
 
 // Validate is the mint-time check (D926, D927, D929): the limits a token is
 // about to be issued with, or the one reason they cannot be.
@@ -133,7 +137,7 @@ func (l Limits) Validate() error {
 		return err
 	}
 	if len(l.Scopes) == 0 {
-		return ErrNoScope
+		return fmt.Errorf("mcpauth: scopes is empty: %w", ErrNoScope)
 	}
 	return nil
 }
@@ -163,9 +167,10 @@ func (l Limits) window() error {
 	return nil
 }
 
-// scopeVocabulary is the D927 check on its own, so a narrowing can refuse a
-// token that was never mintable without also asking whether the result is
-// empty.
+// scopeVocabulary is the D927 check on its own, either side's: a narrowing
+// refuses a set of scopes that names a value outside the vocabulary without
+// also asking whether the result is empty, and the token's side and the
+// project's are put to the same test.
 func (l Limits) scopeVocabulary() error {
 	for _, s := range l.Scopes {
 		if !KnownScope(s) {
@@ -226,6 +231,13 @@ func (l Limits) Admits(mode rigor.Mode) error {
 // a scope set the project's grant leaves empty. Both name the field, because
 // the caller is a launcher deciding whether to start a run and not a person
 // reading a page.
+//
+// It reads the scopes the project names as strictly as the token's own: a
+// project policy carrying a value outside D927's vocabulary is refused and
+// named rather than intersected away, because a project that seems to grant
+// a scope and quietly does not is the same silent narrowing the refusal
+// exists to prevent — and a project that names no scope at all is unset and
+// grants the token's own.
 func (l Limits) Narrow(project Limits) (Limits, error) {
 	if err := l.window(); err != nil {
 		return Limits{}, err
@@ -234,6 +246,9 @@ func (l Limits) Narrow(project Limits) (Limits, error) {
 		return Limits{}, err
 	}
 	if err := l.scopeVocabulary(); err != nil {
+		return Limits{}, err
+	}
+	if err := project.scopeVocabulary(); err != nil {
 		return Limits{}, err
 	}
 

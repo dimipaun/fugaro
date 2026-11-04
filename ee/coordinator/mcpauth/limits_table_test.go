@@ -110,15 +110,26 @@ func TestHotfixIsNotOnTheAxis(t *testing.T) {
 
 	// A bound that names Hotfix is not a window: it is refused where the
 	// limit is written rather than ranked inside a comparison it would lose
-	// (or, folded the other way, win).
-	for _, lim := range []mcpauth.Limits{
-		{MinRigor: rigor.Hotfix, Scopes: []string{mcpauth.ScopeTasksRead}},
-		{MaxRigor: rigor.Hotfix, Scopes: []string{mcpauth.ScopeTasksRead}},
-		{MinRigor: "fast", Scopes: []string{mcpauth.ScopeTasksRead}},
+	// (or, folded the other way, win). Admits refuses it too, and for the
+	// reason its own case above shows — Rank gives Hotfix 0, so a window
+	// that read it would answer as if the bound did not exist.
+	for _, tc := range []struct {
+		name string
+		lim  mcpauth.Limits
+		want error
+	}{
+		{"hotfix as the floor", mcpauth.Limits{MinRigor: rigor.Hotfix, Scopes: []string{mcpauth.ScopeTasksRead}}, mcpauth.ErrOffAxisBound},
+		{"hotfix as the ceiling", mcpauth.Limits{MaxRigor: rigor.Hotfix, Scopes: []string{mcpauth.ScopeTasksRead}}, mcpauth.ErrOffAxisBound},
+		{"a mode outside the vocabulary", mcpauth.Limits{MinRigor: "fast", Scopes: []string{mcpauth.ScopeTasksRead}}, mcpauth.ErrUnknownMode},
 	} {
-		if err := lim.Validate(); err == nil {
-			t.Errorf("Validate(%+v) = nil; want the bound refused", lim)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.lim.Validate(); !errors.Is(err, tc.want) {
+				t.Errorf("Validate(%+v) = %v; want %v", tc.lim, err, tc.want)
+			}
+			if err := tc.lim.Admits(rigor.Pro); !errors.Is(err, tc.want) {
+				t.Errorf("Admits(pro) on %+v = %v; want %v", tc.lim, err, tc.want)
+			}
+		})
 	}
 
 	// And a mode outside the vocabulary is refused as unknown rather than

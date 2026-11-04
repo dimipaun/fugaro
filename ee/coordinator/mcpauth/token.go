@@ -45,7 +45,7 @@ type Token struct {
 // no identity to authorize, no client to count its family by, or no expiry to
 // bound it. It is refused at mint, where the reason can be shown to the
 // operator, rather than stored and refused on every call.
-var ErrTokenIncomplete = errors.New("mcpauth: a token must carry an identity, a client id and an expiry")
+var ErrTokenIncomplete = errors.New("a token must carry an identity, a client id and an expiry")
 
 // Validate is the mint-time check of the token's shape, and the one place the
 // mint asks whether a token may be issued at all: the four things this shape

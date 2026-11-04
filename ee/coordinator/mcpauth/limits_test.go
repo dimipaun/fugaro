@@ -145,6 +145,65 @@ func TestLimitsOnlyNarrow(t *testing.T) {
 	}
 }
 
+// TestNarrowTakesTheTighterCeilingWhicheverSideIsLower covers both arms of
+// the ceiling: the table above always has the token's ceiling at the top of
+// the axis, so it only ever exercises the project's ceiling winning. The
+// other two readings — the token's own ceiling is the lower one, and the two
+// are equal — are where a comparison written the wrong way round returns the
+// project's value anyway and looks right.
+func TestNarrowTakesTheTighterCeilingWhicheverSideIsLower(t *testing.T) {
+	scopes := []string{mcpauth.ScopeTasksRead}
+
+	// The ceiling: the lower bound stands, whichever side carries it.
+	for _, tc := range []struct {
+		name    string
+		token   rigor.Mode
+		project rigor.Mode
+		want    rigor.Mode
+	}{
+		{"the project's ceiling is lower", rigor.Critical, rigor.Pro, rigor.Pro},
+		{"the token's ceiling is lower", rigor.Startup, rigor.Critical, rigor.Startup},
+		{"the two ceilings are equal", rigor.Pro, rigor.Pro, rigor.Pro},
+		{"the project sets no ceiling", rigor.Startup, "", rigor.Startup},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := (mcpauth.Limits{MaxRigor: tc.token, Scopes: scopes}).
+				Narrow(mcpauth.Limits{MaxRigor: tc.project, Scopes: scopes})
+			if err != nil {
+				t.Fatalf("Narrow: %v", err)
+			}
+			if got.MaxRigor != tc.want {
+				t.Errorf("MaxRigor = %q; want %q", got.MaxRigor, tc.want)
+			}
+		})
+	}
+
+	// The floor is the same comparison from the other end: the higher bound
+	// stands, and a token may not lower the project's.
+	for _, tc := range []struct {
+		name    string
+		token   rigor.Mode
+		project rigor.Mode
+		want    rigor.Mode
+	}{
+		{"the project's floor is higher", rigor.POC, rigor.Pro, rigor.Pro},
+		{"the token's floor is higher", rigor.Critical, rigor.POC, rigor.Critical},
+		{"the two floors are equal", rigor.Pro, rigor.Pro, rigor.Pro},
+		{"the project sets no floor", rigor.Startup, "", rigor.Startup},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := (mcpauth.Limits{MinRigor: tc.token, Scopes: scopes}).
+				Narrow(mcpauth.Limits{MinRigor: tc.project, Scopes: scopes})
+			if err != nil {
+				t.Fatalf("Narrow: %v", err)
+			}
+			if got.MinRigor != tc.want {
+				t.Errorf("MinRigor = %q; want %q", got.MinRigor, tc.want)
+			}
+		})
+	}
+}
+
 // TestEmptyWindowIsRefusedAtMint pins D926's answer: a window that admits no
 // mode is refused where the token is written, so a token that could never
 // start a run cannot be issued, and the refusal names the two fields rather
@@ -229,6 +288,36 @@ func TestUnknownScopeIsRefusedNotIgnored(t *testing.T) {
 	}).Narrow(mcpauth.Limits{Scopes: []string{"roadmap:write"}})
 	if !errors.Is(err, mcpauth.ErrUnknownScope) {
 		t.Errorf("Narrow() with an unknown scope = %v; want ErrUnknownScope", err)
+	}
+
+	// And it reads the project's side as strictly as the token's: a project
+	// policy that names a scope outside the vocabulary is refused and named,
+	// rather than quietly intersecting the scope away — which would be the
+	// same silent narrowing, one layer out.
+	project := mcpauth.Limits{Scopes: []string{mcpauth.ScopeTasksRead, "roadmap:write"}}
+	_, err = (mcpauth.Limits{
+		MinRigor: rigor.POC,
+		Scopes:   []string{mcpauth.ScopeTasksRead},
+	}).Narrow(project)
+	if !errors.Is(err, mcpauth.ErrUnknownScope) {
+		t.Fatalf("Narrow() against a project naming an unknown scope = %v; want ErrUnknownScope", err)
+	}
+	if !strings.Contains(err.Error(), "roadmap:write") {
+		t.Errorf("Narrow() = %q; want it to name the project's scope", err)
+	}
+
+	// A token and a project that share no scope admit nothing between them,
+	// and the refusal says so rather than reporting the token as empty: the
+	// two are different failures and an operator acts on them differently.
+	_, err = (mcpauth.Limits{
+		MinRigor: rigor.POC,
+		Scopes:   []string{mcpauth.ScopeTasksRead},
+	}).Narrow(mcpauth.Limits{Scopes: []string{mcpauth.ScopeTasksWrite}})
+	if !errors.Is(err, mcpauth.ErrNoScope) {
+		t.Fatalf("Narrow() with no shared scope = %v; want ErrNoScope", err)
+	}
+	if !strings.Contains(err.Error(), "the project grants none of the token's scopes") {
+		t.Errorf("Narrow() = %q; want it to name the project's grant as the cause", err)
 	}
 
 	// The vocabulary itself is exactly the two names D927 mints, so a later
