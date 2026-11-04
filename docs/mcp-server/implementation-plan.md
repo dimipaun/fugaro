@@ -90,6 +90,12 @@ it:
   `tf.Cover`**.
 - **D925, D926, D927 and D928** were not touched by the review.
 
+**What the amendment does to the tasks that were already running.** **M1 and M3 may continue** — M1
+takes the micros change the review asked for and M3 is unchanged — and **M4 and M6 were cancelled**
+and will be rerun from this amended plan, because M4's draft predates the D934 and M-e answers and
+M6's predates M-a and H1. **Nothing else started**
+([reconciliation.md](reconciliation.md) §4a, "What the running tasks do").
+
 ### The two decisions the amendment added
 
 Both were taken on 2026-11-04, out of this folder's block: **D935** and **D936**, whose full
@@ -503,9 +509,10 @@ planner picks it up with the others.
 - **Why it is deferred:** it needs **three privileges, not one** — `signJwt`, write on the runs
   bucket, and **`run.jobs.runWithOverrides`**, which can override container args and so run any
   command beside the job's credentials — and the third contradicts "the coordinator mints nothing"
-  (D923). **`cancel_task` goes with it**: it writes the runs bucket's cancellation marker, which is
-  the same write the coordinator does not hold. Full reasoning: [reconciliation.md](reconciliation.md)
-  §4b, D935.
+  (D923). **`cancel_task` goes with it**: it writes the run's cancellation marker
+  (`internal/runstore/runstore.go:1295`), which is the same write the coordinator does not hold, and
+  the first slice is **the authorization server plus the read tools** and nothing that writes.
+  Full reasoning: [reconciliation.md](reconciliation.md) §4b, D935.
 - **Interface, when it is built.** **`spawn_task`** (D931's answer — the owner's name for the
   `submit_task` of the spec §0) starts the project's own job through `internal/backend` with the
   token's spend limit in a variable of its own on the execution override (D924); the run's ceiling
