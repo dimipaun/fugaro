@@ -3454,19 +3454,29 @@ func prebuiltCatalogEntries() []config.Entry {
 // TestSpecCatalogOnlyRepoNeedsNoBaseImage: the daily check rebuilds the
 // repository's own derived image, and a workflow a catalog entry gives its
 // image to never runs one — a prebuilt entry's image is pushed by the
-// operator, and a built one is the catalog's own check's to rebuild. Such a
-// workflow is therefore never checked here, so a repository whose every
-// workflow runs a catalog entry needs no base_images entry at all and
-// fugaro update --repo must not refuse it for one (issue 1661 item 3).
+// operator, and a built one is the catalog's own project-level check's to
+// rebuild (D1148), never this repository's. Such a workflow is therefore
+// never checked here, so a repository whose every workflow runs a catalog
+// entry needs no base_images entry at all and fugaro update --repo must not
+// refuse it for one (issue 1661 item 3). Both entry sources are covered
+// because the reason is the same for both: what the check rebuilds is not
+// what the job runs.
 func TestSpecCatalogOnlyRepoNeedsNoBaseImage(t *testing.T) {
-	in := catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()})
-	delete(in.LC.BaseImages, config.BaseKind)
-	rs, err := Repo(in)
-	if err != nil {
-		t.Fatalf("Repo = %v, want no error: no workflow of this repository runs a per-repository image", err)
-	}
-	if rs.Check != nil {
-		t.Errorf("the repository has a daily image check job %s, want none: every workflow runs a catalog entry", rs.Check.Job)
+	for name, entries := range map[string][]config.Entry{
+		"prebuilt":          prebuiltCatalogEntries(),
+		"built from a repo": catalogEntries(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := catalogInputs(t, &config.Catalog{Entries: entries})
+			delete(in.LC.BaseImages, config.BaseKind)
+			rs, err := Repo(in)
+			if err != nil {
+				t.Fatalf("Repo = %v, want no error: no workflow of this repository runs a per-repository image", err)
+			}
+			if rs.Check != nil {
+				t.Errorf("the repository has a daily image check job %s, want none: every workflow runs a catalog entry", rs.Check.Job)
+			}
+		})
 	}
 }
 
