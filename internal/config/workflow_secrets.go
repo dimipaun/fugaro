@@ -9,10 +9,10 @@ import (
 // ValidateWorkflowSecrets reports every rule the local config's
 // workflow_secrets block breaks, the same shape as ValidateProjectSecrets.
 // The block is D1260's: a repository's own application secret — a name no
-// repository's fugaro.yaml may claim, which is why it needs a second block
-// rather than a widened project_secrets — stored once per project and mounted
-// from the repositories its entry allow-lists
-// (docs/project-workflow-secrets).
+// project_secrets entry can hold, that block's keys being the reserved names,
+// which is why D1260 gives it a second block rather than widening the first —
+// stored once per project and mounted from the repositories its entry
+// allow-lists (docs/project-workflow-secrets).
 //
 // The key rule is D1261's, and this function holds the half of it that is a
 // function of the name alone: a name a secret may carry, and none that a
