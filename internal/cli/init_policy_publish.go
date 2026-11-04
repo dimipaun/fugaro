@@ -351,6 +351,32 @@ func printPolicyPublishDiff(w io.Writer, drift []policyDrift, sources map[string
 	}
 }
 
+// printFirstPublishDiff is printPolicyPublishDiff for a project whose node does
+// not exist yet (#1656), and it is a renderer of its own because there is no
+// published side to render: the drift is measured against an empty document, so
+// every member's right-hand value is that document's zero rather than anything
+// the project ever published, and the arrow would point at it — "per_run_usd: 5
+// (this machine) -> 0 (published)" names a node nobody published, in the one
+// confirmation the operator cannot check against a node they do not have. What
+// is shown instead is what the node will carry, member by member, with the
+// members the config is silent about left out: they are the node's own.
+func printFirstPublishDiff(w io.Writer, drift []policyDrift, sources map[string]string) {
+	if len(drift) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "%s: this publish creates the node, carrying what the local config states\n", projectpolicy.PathShared())
+	for _, d := range drift {
+		if d.File == "" {
+			fmt.Fprintf(w, "  %s differs\n", d.Member)
+			continue
+		}
+		fmt.Fprintf(w, "  %s: %s\n", d.Member, d.File)
+	}
+	if len(sources) > 0 {
+		fmt.Fprintf(w, "  allow_repos is seeded from this machine's repositories: %s\n", entryListText(sources))
+	}
+}
+
 // printPolicyDrift is the three-way state of a publish: this machine's file, and
 // the node as it stands now, member by member.
 func printPolicyDrift(w io.Writer, drift []policyDrift) {

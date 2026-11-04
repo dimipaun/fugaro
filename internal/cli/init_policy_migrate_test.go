@@ -329,8 +329,8 @@ func TestUpdatePublishesTheFirstPolicyNodeForACatalog(t *testing.T) {
 	if !strings.Contains(out, "⚠ CONFIRM (project aurora)") {
 		t.Errorf("the first publish was not behind the confirmation:\n%s", out)
 	}
-	if !strings.Contains(out, "image_catalog") {
-		t.Errorf("the diff the operator confirmed does not name the catalog it publishes:\n%s", out)
+	if !strings.Contains(out, "this publish creates the node") || !strings.Contains(out, "image_catalog") {
+		t.Errorf("the diff the operator confirmed does not name the catalog it creates the node with:\n%s", out)
 	}
 	p := publishedPolicy(t, f)
 	if p.ImageCatalog == nil {

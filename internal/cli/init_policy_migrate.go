@@ -431,7 +431,13 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		return m.recordGeneration(ctx, cmd)
 	}
 	m.print(w)
-	what := m.what() + ": every run of the project reads it, and the fields you edited into it by hand are carried over rather than published again"
+	what := m.what() + ": every run of the project reads it"
+	if !m.firstPublish {
+		// A node that is there carries the fields the operator edited into it by
+		// hand; the first one has no such fields to carry over, and saying it did
+		// would describe a document the project does not have.
+		what += ", and the fields you edited into it by hand are carried over rather than published again"
+	}
 	if m.firstPublish && admitsNoRepository(m.pub) {
 		// The first node of a project whose local config lists no repository
 		// admits nothing, and from the moment it is published every run of the
@@ -449,6 +455,12 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 			return err
 		}
 	} else if !admitted {
+		// D846 reaches this door too: a publish that raises a ceiling, removes one
+		// or widens the model list is the widening the settings commands reserve for
+		// the project's own hand, and the two are one decision — what every run of
+		// the project is admitted by. So the typed name is asked for it and --yes
+		// does not stand in, which is what the sentence says to the operator whose
+		// script (or agent session) has just passed --yes and been refused.
 		if loosening := m.loosening(); len(loosening) > 0 {
 			why := m.looseningWhy(loosening)
 			// The sentence is said once. A session with no terminal is refused with
@@ -788,7 +800,11 @@ func (m *policyMigration) print(w io.Writer) {
 		}
 	}
 	if m.pub != nil {
-		printPolicyPublishDiff(w, m.pub.drift, m.pub.sources)
+		if m.firstPublish {
+			printFirstPublishDiff(w, m.pub.drift, m.pub.sources)
+		} else {
+			printPolicyPublishDiff(w, m.pub.drift, m.pub.sources)
+		}
 		if m.pub.adopted {
 			// D854's other half: an installation that records no generation has
 			// no baseline to compare against, so this run adopts the node it is
