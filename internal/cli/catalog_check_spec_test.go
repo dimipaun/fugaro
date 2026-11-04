@@ -103,8 +103,8 @@ func installationCatalogCheck(t *testing.T, yaml string, o infra.InstallOptions)
 // the two in step, and without it the scheduled check (D1148) is inert: the job
 // refuses to start, once a night, on bytes the installation wrote.
 //
-// Mutation (run, restore): change infra.CatalogCheckSpecVersion and this test
-// fails on the version it read back.
+// Mutation (run, restore): change infra.CatalogCheckSpecVersion — or the
+// producer's `version` tag — and this test fails on the version it read back.
 func TestCatalogCheckSpecRoundTripsThroughItsReader(t *testing.T) {
 	cc, lc := installationCatalogCheck(t, catalogProducerLocal, infra.InstallOptions{})
 	if cc == nil {
@@ -127,8 +127,12 @@ func TestCatalogCheckSpecRoundTripsThroughItsReader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the installed catalog check job would refuse the spec this installation writes: %v", err)
 	}
-	if e.spec.Version != infra.CatalogCheckSpecVersion {
-		t.Fatalf("the spec the reader read is version %d, and the producer writes %d: an installation and the job it deploys disagree about the document", e.spec.Version, infra.CatalogCheckSpecVersion)
+	// The version is a wire value: the reader accepts the document it knows
+	// (version 1) and refuses anything below it, so a producer that bumped its
+	// own version without the reader's is caught here rather than once a night
+	// in a job that starts nothing.
+	if e.spec.Version != 1 {
+		t.Fatalf("the reader read version %d, and this release's document is version 1 (infra.CatalogCheckSpecVersion): an installation and the job it deploys disagree about the bytes between them", e.spec.Version)
 	}
 	if e.spec.Catalog == nil || len(e.spec.Catalog.Entries) != 4 {
 		t.Fatalf("the reader read the catalog %+v, want the four entries of the local config", e.spec.Catalog)

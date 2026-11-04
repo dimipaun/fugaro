@@ -9,7 +9,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
-	"github.com/dimipaun/fugaro/internal/infra/managed"
+	// internal/infra/managed is aliased because this package's own tests declare a
+	// package-level `managed` (discover_test.go's label map, which a file-block
+	// import of that name may not shadow): the bound's spellings are still read
+	// from the package that owns them rather than restated here.
+	inframanaged "github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -136,8 +140,9 @@ type CatalogCheckRepoSpec struct {
 // project has nothing to check: no effective catalog, or no entry whose
 // repository this installation can build with. bucket is the installation's
 // validated runs bucket, and imageBuilds is M5's managed bound — the marker's
-// max_image_builds, or zero when the installation has read none, which is M5's
-// default of one build per run.
+// max_image_builds, or zero when the installation has read none, which the job
+// then holds itself to M5's default of one build per run (the reader's own
+// default, the one an absent max_image_builds means).
 //
 // The job is what makes the catalog check run at all: nothing else submits a
 // build for an entry nobody pushed by hand, so the installation either deploys
@@ -153,11 +158,11 @@ func CatalogCheck(lc *localcfg.Config, bucket string, imageBuilds int64) (*Catal
 		return nil, err
 	}
 	if len(repos) == 0 {
-		// The catalog names entries no repository of this installation can
-		// build (or only prebuilt images, which nothing builds): a job deployed
-		// for them would be a nightly failure with nothing to submit, and the
-		// module's repositories list must not be empty. Leaving the job out is
-		// the same state the installation was in before the job existed.
+		// The catalog's entries all name repositories of this installation, and
+		// no repository of it can build with: a job deployed for them would be a
+		// nightly failure with nothing to submit, and the module's repositories
+		// list must not be empty. Leaving the job out is the same state the
+		// installation was in before the job existed.
 		return nil, nil
 	}
 	image := lc.BaseImage(config.BaseKind)
@@ -167,12 +172,13 @@ func CatalogCheck(lc *localcfg.Config, bucket string, imageBuilds int64) (*Catal
 	if !gcp.ValidBucketName(bucket) {
 		return nil, userErr("the runs bucket %q has a byte outside a-z, 0-9, '.', '_' and '-'", bucket)
 	}
-	builds := imageBuilds
-	if builds == 0 {
-		builds = managed.DefaultImageBuilds
-	}
-	if err := managed.CheckImageBuilds(builds); err != nil {
-		return nil, userErr("%v", err)
+	if imageBuilds != 0 {
+		if err := inframanaged.CheckImageBuilds(imageBuilds); err != nil {
+			// A count outside M5's range would deploy a job whose own reader
+			// refuses it: the installation would look updated and check nothing,
+			// once a night, silently.
+			return nil, userErr("%v", err)
+		}
 	}
 	region := lc.SchedulerRegion
 	if region == "" {
@@ -189,7 +195,7 @@ func CatalogCheck(lc *localcfg.Config, bucket string, imageBuilds int64) (*Catal
 		BaseImages:     maps.Clone(lc.BaseImages),
 		MachineType:    lc.Build.MachineType,
 		BuildRegion:    lc.BuildRegion(),
-		MaxImageBuilds: int(builds),
+		MaxImageBuilds: int(imageBuilds),
 	})
 	if err != nil {
 		return nil, err
