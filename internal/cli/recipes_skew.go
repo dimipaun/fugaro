@@ -362,6 +362,22 @@ const reviewLevelsSince = "0.16.0"
 // on levels reads.
 const reviewLevelsKnows = "the review levels (review_levels, agent.levels)"
 
+// reviewJobSince is the first fugaro release that deploys and launches the
+// review-only job variant (design docs/cloud-senior-review, CSR7): the second
+// job per (profile, provider, account), with its own service account and no
+// secret at all, which is what a senior review runs on. An image older than it
+// has no variant beside its coding job, so a launch naming one resolves a job
+// the installation does not hold.
+//
+// It is declared here, by the task that ships the variant, and read by the
+// tasks that gate on it — the launch refusal (CSR2: an image older than this
+// one would otherwise be accepted in silence) and the release's own checklist
+// entry (CSR6) — which is what the plan means by declaring the constant to
+// that task. It names the release this work is slotted for; docs/release.md's
+// ("Before you tag") list verifies the number against the tag actually cut,
+// the way digestSince's and reviewLevelsSince's bullets record.
+const reviewJobSince = "0.18.0"
+
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
 // check job's own rebuild names the secret ID Readiness resolved, so a
