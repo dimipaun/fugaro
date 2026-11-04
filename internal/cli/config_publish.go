@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -39,8 +40,21 @@ func newConfigPublishCmd() *cobra.Command {
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			if m := agentMarker(os.Getenv); m != "" {
-				return userErr("nothing was published: fugaro config publish writes to the cloud and changes what every repository of the project runs: %s", initflow.AgentRefusal(m))
+			// A coding agent's session may proceed only where the project is
+			// managed and this document passes the gate (D1012). The marker is
+			// read first and a person's own run never consults the gate at all:
+			// no mark is read, no client is built and no bucket is touched for a
+			// publish at a terminal, which is what keeps that path today's.
+			marker := agentMarker(os.Getenv)
+			var held *bytes.Buffer
+			open := o
+			if marker != "" {
+				// The project header selectProject prints is held until the gate
+				// has answered, because a session whose project is not managed
+				// reads the refusal this command has always given it and nothing
+				// else — the header would be a line no such run ever printed.
+				held = &bytes.Buffer{}
+				open.stderr = func() io.Writer { return held }
 			}
 			var data []byte
 			if len(args) == 1 {
@@ -49,11 +63,27 @@ func newConfigPublishCmd() *cobra.Command {
 					return userErr("nothing was published: %v", err)
 				}
 			}
-			env, err := openCloud(ctx, o)
+			env, err := openCloud(ctx, open)
 			if err != nil {
 				return err
 			}
 			defer env.Close()
+			var gate *managedGate
+			if marker != "" {
+				gate, err = configPublishGate(ctx, env, marker)
+				if err != nil {
+					return err
+				}
+				if gate == nil {
+					return userErr("nothing was published: fugaro config publish writes to the cloud and changes what every repository of the project runs: %s", initflow.AgentRefusal(marker))
+				}
+				// The marks, the ownership question and the class rule have all
+				// answered: the session may proceed, so the header the person's
+				// own run prints is released to stderr, once.
+				if _, err := io.Copy(cmd.ErrOrStderr(), held); err != nil {
+					return err
+				}
+			}
 			// The defaulted path is derived from the selected project, which
 			// openCloud is what resolves: the file is named after the project
 			// and lives beside its config (D830).
@@ -83,6 +113,20 @@ func newConfigPublishCmd() *cobra.Command {
 			if local, lerr := localcfg.LayerFile(os.Getenv, env.lc.Name); lerr == nil && filepath.Clean(local) == filepath.Clean(file) {
 				rec = layerRecord{path: policyConfigPath(env.lc), lc: env.lc}
 			}
+			if gate != nil {
+				// The gate's own rules run over the bytes this command is about
+				// to write, before anything else of the body: a document they
+				// refuse is refused with the gate's sentence and its record,
+				// whatever the rest of this command would have said about it.
+				m, aerr := gate.admit(ctx, initflow.YesOrTyped, configPublishConverge(ctx, env, data))
+				if aerr != nil {
+					return aerr
+				}
+				if !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, m) {
+					return userErr("nothing was published: fugaro config publish writes to the cloud and changes what every repository of the project runs: %s", initflow.AgentRefusal(marker))
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), initflow.AgentProceeded(marker))
+			}
 			if note := projectRecipesNote(env.lc); note != "" {
 				return userErr("nothing was published: %s", strings.Replace(note, "project recipes need", "the project layer needs", 1))
 			}
@@ -96,6 +140,15 @@ func newConfigPublishCmd() *cobra.Command {
 			gen, err := publishLayer(ctx, cmd.ErrOrStderr(), env.bucket, l, executable, nil, rec)
 			if err != nil {
 				return err
+			}
+			if gate != nil {
+				// The record of the admission, after the write it is about and
+				// before anything else: a step that applied and left no trail is
+				// the state D1014 exists to end, so a record that cannot be
+				// written fails this command rather than being a note beside it.
+				if err := gate.recorded(ctx); err != nil {
+					return err
+				}
 			}
 			bucket := "fugaro-runs-" + env.lc.GCPProject
 			_ = localcfg.SaveLayerCache(os.Getenv, env.lc.Name, localcfg.SharedCacheEntry{GCPProject: env.lc.GCPProject, Bucket: bucket, Generation: gen, CheckedAt: time.Now(), YAML: string(data)})
