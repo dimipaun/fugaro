@@ -25,9 +25,9 @@ One line per command of the spec's §3.1, each read against the command tree —
 - `fugaro settings set` — **landed** (`internal/cli/settings_managed.go`), the settings row's own build.
 - `fugaro rigor set` — **owed**: no `fugaro rigor` command exists on `main`, so an agent's session is refused there exactly as it is today.
 - `fugaro accounts add` — **landed** (`internal/cli/accounts_managed.go`), the accounts row's own build.
-- `fugaro accounts rm` — **owed**: the command does not exist on `main`, and the row's refusal is written above for whoever lands it.
+- `fugaro accounts rm` — **landed** (`internal/cli/accounts_rm.go`), the accounts row's inverse: it keeps the refusal its row above writes and refuses an agent's session outright besides, because the gate admits no plan that deletes a credential, so a session reads nothing, writes nothing and deletes nothing.
 
-The two handoff rows that landed — settings, and accounts `add` — did so in the 0.18.0 build, before this design's own M9; the rigor row and `accounts rm` are the two commands of §3.1 a release of this gate still leaves refused, and a reader who finds one of them missing has found the state the plan's §2 predicted rather than a regression. **A row that lands later moves its line above in the same pull request**: the note is a claim about the tree, and the folder's pin (`internal/cli/docs_managed_agent_converge_test.go`) reads the two against each other.
+The handoff rows that landed — settings and accounts `add` in the 0.18.0 build, before this design's own M9, then `accounts rm` with the accounts design's own A4 — did so in their own designs; the rigor row is the one command of §3.1 a release of this gate still leaves refused, and a reader who finds it missing has found the state the plan's §2 predicted rather than a regression. **A row that lands later moves its line above in the same pull request**: the note is a claim about the tree, and the folder's pin (`internal/cli/docs_managed_agent_converge_test.go`) reads the two against each other.
 
 ## The skill's paragraph (a handoff)
 
