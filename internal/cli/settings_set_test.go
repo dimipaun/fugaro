@@ -1433,6 +1433,291 @@ func TestSettingsSetRefusesAWildcardRowOutsideTheGenericKeys(t *testing.T) {
 	}
 }
 
+// settingsRepoWithEntries is a repository whose one workflow carries the three
+// blocks --add-entry and --remove-entry are about: a mapping no registry leaf
+// names (commands.rerun_failed), an object list whose entries are addressed by
+// name (secrets), and the cache list, whose entries carry no scalar key field
+// and are therefore a block the pair refuses (D1163).
+const settingsRepoWithEntries = `version: 1
+project: aurora
+git:
+  provider: github
+workflows:
+  web:
+    commands:
+      test: go test ./...
+      build: go build ./...
+      rerun_failed:
+        command: go test -run {id} ./...
+        each: "{id}"
+    cache:
+      - key: [go.sum]
+        paths: [.gocache]
+    secrets:
+      - name: app-token
+        env: APP_TOKEN
+`
+
+// TestSettingsSetAddEntryMapMember: a block whose members no registry leaf
+// names is written one member at a time (D1162). A repository's
+// `commands.rerun_failed` is a mapping, so `--add-entry member=value` writes
+// that one member through the same write path every other setting uses, and
+// leaves the member beside it where it was. The dry run answers first, because
+// it is the document the console draws its window from and it writes nothing.
+func TestSettingsSetAddEntryMapMember(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoWithEntries)
+	before := readFileString(t, path)
+	noTerminal(t)
+
+	doc := settingsDryRunDoc(t, "settings", "set", "workflows.web.commands.rerun_failed", "--add-entry", "command=go test -race -run {id} ./...", "--layer", "repo")
+	if doc.Key != "workflows.web.commands.rerun_failed" || doc.Layer != "repo" {
+		t.Errorf("the document names %s at layer %s, and the edit was the workflow's rerun_failed block at layer repo", doc.Key, doc.Layer)
+	}
+	if !doc.Changed {
+		t.Error("the document says the edit changes nothing, and the file holds another command")
+	}
+	if readFileString(t, path) != before {
+		t.Error("the dry run changed fugaro.yaml")
+	}
+	settingsNoBackup(t, path)
+
+	out, _, err := execute(t, "settings", "set", "workflows.web.commands.rerun_failed", "--add-entry", "command=go test -race -run {id} ./...", "--layer", "repo", "--yes")
+	if err != nil {
+		t.Fatalf("writing one member of a mapping was refused: %v\n%s", err, out)
+	}
+	cfg, ps := config.Parse([]byte(readFileString(t, path)))
+	if len(ps) > 0 {
+		t.Fatalf("the file the write produced does not read back: %s", ps[0].String())
+	}
+	rf := cfg.Workflows["web"].Commands.RerunFailed
+	if rf == nil || rf.Command != "go test -race -run {id} ./..." {
+		t.Errorf("commands.rerun_failed.command is %+v, want the value the write named", rf)
+	}
+	if rf.Each != "{id}" {
+		t.Errorf("the write moved the member beside it: rerun_failed.each is %q", rf.Each)
+	}
+}
+
+// TestSettingsSetAddEntryObjectListEntry: an object list's entry is a mapping
+// addressed by its key field and never by position (D1163), so
+// `--add-entry name=… env=…` writes the entry whose `name` is that value and
+// creates it when the sequence does not hold it yet. One entry per invocation
+// (D1167): the entry's members all travel in the one command.
+func TestSettingsSetAddEntryObjectListEntry(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoWithEntries)
+	before := readFileString(t, path)
+	noTerminal(t)
+
+	doc := settingsDryRunDoc(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo")
+	if doc.Key != "workflows.web.secrets" || doc.Layer != "repo" {
+		t.Errorf("the document names %s at layer %s, and the edit was the workflow's secrets block at layer repo", doc.Key, doc.Layer)
+	}
+	if !doc.Changed {
+		t.Error("the document says the edit changes nothing, and the file holds no entry named ci-token")
+	}
+	if readFileString(t, path) != before {
+		t.Error("the dry run changed fugaro.yaml")
+	}
+	settingsNoBackup(t, path)
+
+	out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo", "--yes")
+	if err != nil {
+		t.Fatalf("adding an object-list entry was refused: %v\n%s", err, out)
+	}
+	cfg, ps := config.Parse([]byte(readFileString(t, path)))
+	if len(ps) > 0 {
+		t.Fatalf("the file the write produced does not read back: %s", ps[0].String())
+	}
+	secrets := cfg.Workflows["web"].Secrets
+	if len(secrets) != 2 {
+		t.Fatalf("the write left %d secrets, want the entry it added beside the one already there: %+v", len(secrets), secrets)
+	}
+	if secrets[1].Name != "ci-token" || secrets[1].Env != "CI_TOKEN" {
+		t.Errorf("the entry written is %+v, want ci-token exposed as CI_TOKEN", secrets[1])
+	}
+	if secrets[0].Name != "app-token" || secrets[0].Env != "APP_TOKEN" {
+		t.Errorf("the write moved the entry beside it: %+v", secrets[0])
+	}
+}
+
+// TestSettingsSetAddEntryRefusesTwoEntries: one entry per invocation (D1167),
+// and an entry is the whole of what one command carries. Two members of a map
+// are two entries, and two occurrences of an object list's key field are two
+// entries: both are refused with nothing written, so a person repeats the
+// command rather than getting whichever of them the flag parser kept.
+func TestSettingsSetAddEntryRefusesTwoEntries(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoWithEntries)
+	before := readFileString(t, path)
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"two map members", []string{"settings", "set", "workflows.web.commands.rerun_failed", "--add-entry", "command=go test ./...", "--add-entry", "each={id}", "--layer", "repo", "--yes"}},
+		{"two object-list entries", []string{"settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "name=qa-token", "--layer", "repo", "--yes"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, _, err := execute(t, tc.args...)
+			if err == nil {
+				t.Fatalf("settings set wrote two entries in one invocation:\n%s", out)
+			}
+			if !strings.Contains(err.Error(), "one entry") {
+				t.Errorf("the refusal does not say one entry is what a command carries: %v", err)
+			}
+			if readFileString(t, path) != before {
+				t.Error("the refused write changed fugaro.yaml")
+			}
+		})
+	}
+}
+
+// TestSettingsSetRemoveEntryTakesOneOfADuplicateKey: a removal addresses its
+// entry by the key field's value and takes one of them — a value written twice
+// loses one entry, not both (D1163, and the editor's own rule) — so a file that
+// holds the same name twice is repaired by one invocation rather than by a hand
+// edit. The entry beside it is untouched.
+func TestSettingsSetRemoveEntryTakesOneOfADuplicateKey(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoWithEntries+`      - name: app-token
+        env: APP_TOKEN_LEGACY
+`)
+	noTerminal(t)
+
+	before, ps := config.Parse([]byte(readFileString(t, path)))
+	if len(ps) > 0 {
+		t.Fatalf("the fixture does not read back: %s", ps[0].String())
+	}
+	if len(before.Workflows["web"].Secrets) != 2 {
+		t.Fatalf("the fixture holds %d secrets, want the duplicate the removal is about", len(before.Workflows["web"].Secrets))
+	}
+
+	if _, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--remove-entry", "app-token", "--layer", "repo", "--yes"); err != nil {
+		t.Fatalf("removing one entry of a duplicate key was refused: %v", err)
+	}
+	cfg, ps := config.Parse([]byte(readFileString(t, path)))
+	if len(ps) > 0 {
+		t.Fatalf("the file the removal produced does not read back: %s", ps[0].String())
+	}
+	secrets := cfg.Workflows["web"].Secrets
+	if len(secrets) != 1 {
+		t.Fatalf("the removal left %d secrets, want one of the two entries named app-token: %+v", len(secrets), secrets)
+	}
+	if secrets[0].Name != "app-token" || secrets[0].Env != "APP_TOKEN_LEGACY" {
+		t.Errorf("the removal took %+v, and the editor's rule is that the first of the duplicates is the one taken", secrets[0])
+	}
+}
+
+// TestSettingsSetAddEntryRefusesABlockWithNoKeyField: the pair writes a block
+// whose entries it can address (D1163), and a cache entry carries a `key` list
+// and a `paths` list and no scalar name at all, so it is refused with a
+// sentence saying why rather than guessed at by position.
+func TestSettingsSetAddEntryRefusesABlockWithNoKeyField(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoWithEntries)
+	before := readFileString(t, path)
+	for _, args := range [][]string{
+		{"settings", "set", "workflows.web.cache", "--add-entry", "key=go.sum", "--layer", "repo", "--yes"},
+		{"settings", "set", "workflows.web.cache", "--remove-entry", "go.sum", "--layer", "repo", "--yes"},
+	} {
+		out, _, err := execute(t, args...)
+		if err == nil {
+			t.Fatalf("%v wrote a cache entry:\n%s", args, out)
+		}
+		if !strings.Contains(err.Error(), "key field") {
+			t.Errorf("the refusal does not say the block's entries carry no key field: %v", err)
+		}
+		if readFileString(t, path) != before {
+			t.Error("the refused write changed fugaro.yaml")
+		}
+	}
+}
+
+// TestSettingsSetAddEntrySecretsMemberIsATypedWidening: an entry write is
+// classified exactly as a scalar write is (D1165), and growing a workflow's
+// secrets hands a run a credential it did not have — so it is the widening
+// D846 reserves, askable with --yes only outside a coding agent's session
+// (D1107). The dry run answers for it and the fence comes first.
+func TestSettingsSetAddEntrySecretsMemberIsATypedWidening(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoWithEntries)
+	before := readFileString(t, path)
+	noTerminal(t)
+
+	doc := settingsDryRunDoc(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo")
+	if !doc.Widening || doc.Why == "" {
+		t.Errorf("the document classifies the entry write as widening=%v with why %q, and adding a secrets member widens what a run reaches", doc.Widening, doc.Why)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the dry run changed fugaro.yaml")
+	}
+
+	out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo")
+	if err == nil {
+		t.Fatalf("the widening was written with no terminal and no --yes:\n%s", out)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed fugaro.yaml")
+	}
+
+	for _, marker := range agentMarkers {
+		t.Run(marker, func(t *testing.T) {
+			t.Setenv(marker, "1")
+			out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo", "--yes")
+			if err == nil {
+				t.Fatalf("--yes lifted the fence for a secrets member:\n%s", out)
+			}
+			if !strings.Contains(err.Error(), "settings set") || !strings.Contains(err.Error(), "--add-entry") {
+				t.Errorf("the refusal does not print the command a person runs at their own terminal: %v", err)
+			}
+			if readFileString(t, path) != before {
+				t.Error("the refused write changed fugaro.yaml")
+			}
+		})
+	}
+
+	if out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo", "--yes"); err != nil {
+		t.Fatalf("--yes did not answer the widening outside a coding agent's session: %v\n%s", err, out)
+	}
+	if !strings.Contains(readFileString(t, path), "ci-token") {
+		t.Errorf("the confirmed write left the entry out of fugaro.yaml:\n%s", readFileString(t, path))
+	}
+}
+
+// TestSettingsSetEntryFlagsNameOneEdit: the four flags are four different
+// edits, and the entry pair takes a key and nothing else — a value beside it is
+// a mistake, because the value is the entry's own. Each refusal leaves the file
+// alone.
+func TestSettingsSetEntryFlagsNameOneEdit(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoWithEntries)
+	before := readFileString(t, path)
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"an add beside an add-entry", []string{"settings", "set", "workflows.web.secrets", "--add", "a", "--add-entry", "name=b", "--layer", "repo", "--yes"}, "different edits"},
+		{"an add-entry beside a remove-entry", []string{"settings", "set", "workflows.web.secrets", "--add-entry", "name=b", "--remove-entry", "b", "--layer", "repo", "--yes"}, "different edits"},
+		{"a value beside an add-entry", []string{"settings", "set", "workflows.web.secrets", "x", "--add-entry", "name=b", "--layer", "repo", "--yes"}, "one key"},
+		{"no entry at all", []string{"settings", "set", "workflows.web.secrets", "--add-entry", "nodots", "--layer", "repo", "--yes"}, "field=value"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, _, err := execute(t, tc.args...)
+			if err == nil {
+				t.Fatalf("settings set accepted %v:\n%s", tc.args, out)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal does not say %q: %v", tc.want, err)
+			}
+			if readFileString(t, path) != before {
+				t.Error("the refused write changed fugaro.yaml")
+			}
+		})
+	}
+}
+
 // TestSettingsSetRepoLayerChecksTheRepoFlag: --repo names a repository, so it
 // goes with --layer repo and nowhere else, it has to be owner/name, and the
 // checkout it names has to be one this machine remembers. Each is a refusal
