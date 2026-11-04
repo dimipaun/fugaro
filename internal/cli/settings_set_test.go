@@ -1542,6 +1542,30 @@ func TestSettingsSetAddEntryObjectListEntry(t *testing.T) {
 	}
 }
 
+// TestSettingsSetAddEntryCreatesTheBlock: an entry write reaches a block the
+// document does not hold and makes it, which is D1161's stated cost for a
+// concrete key and the same behaviour for the entries under it. The file reads
+// back, which is the loader's own answer that the block it created is one a run
+// can use.
+func TestSettingsSetAddEntryCreatesTheBlock(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML(""))
+	noTerminal(t)
+
+	out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo", "--yes")
+	if err != nil {
+		t.Fatalf("adding an entry to a block the file does not hold was refused: %v\n%s", err, out)
+	}
+	cfg, ps := config.Parse([]byte(readFileString(t, path)))
+	if len(ps) > 0 {
+		t.Fatalf("the file the write produced does not read back: %s", ps[0].String())
+	}
+	secrets := cfg.Workflows["web"].Secrets
+	if len(secrets) != 1 || secrets[0].Name != "ci-token" || secrets[0].Env != "CI_TOKEN" {
+		t.Errorf("the created block holds %+v, want the one entry the write named", secrets)
+	}
+}
+
 // TestSettingsSetAddEntryRefusesTwoEntries: one entry per invocation (D1167),
 // and an entry is the whole of what one command carries. Two members of a map
 // are two entries, and two occurrences of an object list's key field are two
