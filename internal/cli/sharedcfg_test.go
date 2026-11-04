@@ -570,9 +570,9 @@ func TestPublishSharedOversizeMergeFallsBackToLocal(t *testing.T) {
 // build-record read. A file:// bucket is not skipped.
 func TestFakeEndpointsNeverOpenARealBucket(t *testing.T) {
 	newCloudFixture(t)
-	old, oldRec := skipGSOnFakeEndpoints, openRecordBucket
+	old, oldRec, oldOpen := skipGSOnFakeEndpoints, openRecordBucket, sharedBucketOpener
 	skipGSOnFakeEndpoints = true
-	t.Cleanup(func() { skipGSOnFakeEndpoints, openRecordBucket = old, oldRec })
+	t.Cleanup(func() { skipGSOnFakeEndpoints, openRecordBucket, sharedBucketOpener = old, oldRec, oldOpen })
 	opened := 0
 	sharedBucketOpener = func(context.Context, string) (*blobx.Bucket, error) { opened++; return nil, errors.New("opened") }
 	openRecordBucket = func(context.Context, string) (*blobx.Bucket, error) { opened++; return nil, errors.New("opened") }

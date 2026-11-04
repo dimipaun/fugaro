@@ -1272,6 +1272,11 @@ func Repo(in Inputs) (RepoSpec, error) {
 		// backstop of the allow-list, design §6b.3). Every other auth kind
 		// has exactly the default account, unchanged from before this field
 		// existed.
+		// catalogImage is what catalogJobImage answered for the workflow's
+		// job, read back from the spec it built rather than asked again:
+		// the check below and the job's own image must never disagree about
+		// which jobs are the catalog's.
+		catalogImage := false
 		for _, tok := range WorkflowAccounts(in.Cfg, lc, in.Repo) {
 			ws, err := c.workflow(name, tok)
 			if err != nil {
@@ -1281,13 +1286,20 @@ func Repo(in Inputs) (RepoSpec, error) {
 			rs.Workflows[key] = ws
 			maps.Copy(rs.Secrets, ws.SecretIDs)
 			rs.BuildSecrets = append(rs.BuildSecrets, ws.BuildSecrets...)
+			catalogImage = ws.CatalogEntry != ""
 		}
 		// The daily check covers the workflow's image, the same image
 		// across every token variant: once per logical workflow, not once
 		// per variant. A checkout: clone workflow has no derived image to
 		// rebuild, so the daily check never covers it, whatever its
-		// rebuild.check says.
-		if in.Cfg.Workflows[name].Checkout != config.CheckoutClone && in.Cfg.Workflows[name].Rebuild.Defaults().Check != "off" {
+		// rebuild.check says. Neither does a workflow a catalog entry gives
+		// its image to: the check rebuilds the repository's own derived
+		// tag, which that job never runs — a prebuilt entry's image is
+		// pushed by the operator, and a built one belongs to the catalog's
+		// own check — so a repository whose every workflow runs an entry
+		// needs no base image at all.
+		w := in.Cfg.Workflows[name]
+		if w.Checkout != config.CheckoutClone && !catalogImage && w.Rebuild.Defaults().Check != "off" {
 			checked = append(checked, name)
 		}
 	}
