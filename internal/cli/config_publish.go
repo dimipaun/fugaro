@@ -46,6 +46,14 @@ func newConfigPublishCmd() *cobra.Command {
 			// no mark is read, no client is built and no bucket is touched for a
 			// publish at a terminal, which is what keeps that path today's.
 			marker := agentMarker(os.Getenv)
+			// refuseAgent is the refusal this command has always given a coding
+			// agent's session, written once because the two answers that keep it
+			// — the marks are not there, and the project stopped being managed
+			// between the gate's two reads — are read at two different points
+			// below, and a session must not be able to tell which of them it met.
+			refuseAgent := func() error {
+				return userErr("nothing was published: fugaro config publish writes to the cloud and changes what every repository of the project runs: %s", initflow.AgentRefusal(marker))
+			}
 			var held *bytes.Buffer
 			open := o
 			if marker != "" {
@@ -75,14 +83,11 @@ func newConfigPublishCmd() *cobra.Command {
 					return err
 				}
 				if gate == nil {
-					return userErr("nothing was published: fugaro config publish writes to the cloud and changes what every repository of the project runs: %s", initflow.AgentRefusal(marker))
+					return refuseAgent()
 				}
-				// The marks, the ownership question and the class rule have all
-				// answered: the session may proceed, so the header the person's
-				// own run prints is released to stderr, once.
-				if _, err := io.Copy(cmd.ErrOrStderr(), held); err != nil {
-					return err
-				}
+				// The marks have answered managed: the header the person's own run
+				// prints is released to stderr, once.
+				_, _ = io.Copy(cmd.ErrOrStderr(), held)
 			}
 			// The defaulted path is derived from the selected project, which
 			// openCloud is what resolves: the file is named after the project
@@ -123,7 +128,7 @@ func newConfigPublishCmd() *cobra.Command {
 					return aerr
 				}
 				if !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, m) {
-					return userErr("nothing was published: fugaro config publish writes to the cloud and changes what every repository of the project runs: %s", initflow.AgentRefusal(marker))
+					return refuseAgent()
 				}
 				fmt.Fprintln(cmd.OutOrStdout(), initflow.AgentProceeded(marker))
 			}
