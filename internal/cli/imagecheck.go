@@ -81,7 +81,7 @@ func newImageCheckCmd() *cobra.Command {
 			"deciding every entry of the project's image catalog and submitting at most one\n" +
 			"Cloud Build per entry that fires, as that entry's own repository's build account.\n" +
 			"It writes builds/<slug>/catalog/<entry>/check.json and logs one JSON line per\n" +
-			"entry.",
+			"entry it decides (an entry a prebuilt image answers has nothing to build).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if o.catalog && !o.job {
