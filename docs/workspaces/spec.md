@@ -480,7 +480,8 @@ is **wider than the nodes it uses**. That is new in this repository: every clien
 one project's database (F20). The honest statement of what the service holds is §5's table, and the
 honest statement of what that means is this:
 
-- **IAM on a Realtime Database is whole-database, and it bypasses the rules.** `iam.tf`:52 says of the
+- **IAM on a Realtime Database is whole-database, and it bypasses the rules.**
+  `deploy/terraform/gcp/modules/firebase/iam.tf`:52 says of the
   admin grant that it "writes /config over IAM, which bypasses the rules", and
   `credentials.tf`:251 says why the shape cannot be narrowed: RTDB "cannot express a path prefix in
   IAM". So the custom role's `firebasedatabase.instances.get` reads **every node** of a member's

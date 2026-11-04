@@ -4,14 +4,15 @@
 approved.**
 
 Each claim of [spec.md](spec.md) §0 — the owner's spec as this run recorded it — against the code at
-`origin/main` `b41709ea`, merged into this branch and read on 2026-11-04; the first reading was taken
+`origin/main` `c2ca0aee`, merged into this branch and read on 2026-11-04; the first reading was taken
 on 2026-11-01 at `3d6ed04d`, and **§2f lists what main has overtaken since**, which is the section to
-read before trusting any finding above it. Every citation is a path and a line at `b41709ea`. Each
+read before trusting any finding above it. Every citation is a path and a line at `c2ca0aee`. Each
 finding is classified **Exists**, **Missing** or **Conflicts**, and states its consequence. §4 is the
 decisions **D1290–D1305**, each with the recommended option first, the cost of the alternative and
 **the owner's answer of 2026-11-04**; §5 is the number block and how it was read; §6 is the owner
-checks no hermetic test can stand in for. **Where this file disagrees with [spec.md](spec.md), this
-file wins.**
+checks no hermetic test can stand in for; and **§8 is what this round found and did not decide** —
+the two owner decisions [spec.md](spec.md) §5 and §10 point at rather than take. **Where this file
+disagrees with [spec.md](spec.md), this file wins.**
 
 ## 1. What the code has, in one paragraph
 
@@ -215,7 +216,8 @@ written against `3d6ed04d` on 2026-11-01; main has since moved to `b41709ea`, an
 that touch this design. Each is classified the same way, and each states what it changes here.
 
 **F23 — Managed mode landed, and the gate is real code. — Exists (new since the first reading).**
-The gate is a value in `internal/managed` (`plan.go:217` `Gate`, `budget.go:124` `ApplyGate`), and
+The gate is a value in `internal/managed` (`internal/managed/plan.go:217` `Gate`,
+`internal/managed/budget.go:124` `ApplyGate`), and
 the CLI has **one** helper for the four steps around a write (`internal/cli/managed_gate.go:181`
 `readManagedGate`, whose own doc states why it is written once rather than four times). It is called
 by `fugaro config publish` (`internal/cli/config_publish_managed.go:97`), `fugaro project policy
@@ -287,11 +289,40 @@ it a false one while every sentence around it stays true. **One had moved**: the
 `PerRunUSD float64`; `internal/budget/model.go:5-8` (money is µ$) and `:31` `PathCapsGlobal`;
 `internal/budget/rules/rules.json.tmpl:60` (`NEW >= OLD`); `internal/policy/merge.go:44` `Merge`;
 `internal/localcfg/localcfg.go:41` `Config`; `internal/cli/config_list.go:53` `configListDoc`;
-`internal/cli/user.go:73`, `settings.go:61`, `accounts.go:25`, `root.go:191`; the managed-gate set
+`internal/cli/user.go:73`, `internal/cli/settings.go:61`, `internal/cli/accounts.go:25`,
+`internal/cli/root.go:191`; the managed-gate set
 (`internal/cli/managed_gate.go:181` and its four callers, `internal/managed/plan.go:217`,
-`budget.go:124`); `internal/runner/stray.go:24`; `internal/credsvc/auth.go:375`, `:890`, `:968`,
-`:241`, `:1072`; `internal/projectpolicy/bitbucket.go:30`, `:75-76`, `:194` and `paths.go:18-23`;
+`internal/managed/budget.go:124`); `internal/runner/stray.go:24`; `internal/credsvc/auth.go:375`,
+`:890`, `:968`, `:258`, `:1072`; `internal/projectpolicy/bitbucket.go:30`, `:75-76`, `:194` and
+`internal/projectpolicy/paths.go:18-23`;
 `internal/backend/gcp/catalog.go:65`; `docs/ee-reorg/spec.md`:7 and `docs/subscriptions/spec.md`:55.
+
+**F29 — The second re-read, 2026-11-04, at `origin/main` `c2ca0aee`. — Two citations were wrong, and
+both were wrong in the same way.** A security review of [spec.md](spec.md) §5 and §8 read the grants
+back out of the code, and the reading disagreed with the folder in two places:
+
+- **`GcloudAudience` is at `internal/credsvc/auth.go`:258**, not `:241` (F24 above and §2f's list
+  both carried the older number). The constant itself is unchanged — `32555940559.apps.googleusercontent.com`
+  — and so is the ruling beside it.
+- **The `credentials.tf` citations in [spec.md](spec.md) §5 named the wrong lines**, and one of them
+  named lines that say the *opposite* of the sentence citing them. The authoritative statements are:
+  RTDB "has NO path-level scope" and `get` is "read any node" / `update` is "write any node" at
+  `deploy/terraform/gcp/modules/installation/credentials.tf`:201-210; `update` "is what
+  `roles/firebasedatabase.admin` carries for the budget admins who 'write /config over IAM'" at
+  `:209-213`; `admin`'s extra is `instances.list` and the instance lifecycle at `:215-219`; the role
+  `fugaroCredentialsDatabase` and its two permissions at `:242-246`; and "RTDB cannot express a path
+  prefix in IAM" at `:251-253`. §5 cited `:204-210`, `:207-208`, `:212-217`, `:241` and `:254`, which
+  is five for five: each was one or more lines off, and `:207-208` pointed at the **read** permission
+  while the sentence claimed the write. Corrected in [spec.md](spec.md) and
+  [implementation-plan.md](implementation-plan.md) in the same round.
+
+**F30 — The MCP design is on `main`, and this folder said it was not. — Exists (new), and it changes
+a dependency's status without changing the dependency.** `docs/mcp-server/` (D920–D934) merged as
+**#1487 on 2026-11-04**, the same day as this design's answers; **none of its code is written** — it
+is a design folder with this folder's own status line. So W4's host exists as a *design* and not as
+code, and [implementation-plan.md](implementation-plan.md) §2 and §5 and §7's V2 are updated to say
+that rather than "still open". Nothing else moves: D921's licence is still unconfirmed there, and
+that design still recommends a slot of its own for its code.
 
 ## 3. What the reconciliation refuses to accept
 
@@ -536,13 +567,13 @@ the whole design moved, in order, into the block this pull request was given. Th
 **D980→D1290, D981→D1291, …, D995→D1305**, one to one and in order, and it is tabulated in
 [README.md](README.md). Nothing about a decision changed but its number.
 
-Read by hand at `origin/main` `b41709ea` on 2026-11-04:
+Read by hand at `origin/main` `c2ca0aee` on 2026-11-04:
 
 | | |
 | --- | --- |
 | Highest number written in `docs/` on `main` | **D1189**, the reserved tail of `docs/config-management`'s block: its own test writes "D1160–D1183 are written here, and D1184–D1189 are reserved and unused" (`internal/cli/docs_config_management_test.go`:118) |
 | Taken by work not on `main` | **D1190–D1219** (**#1676**, the repo-image removal design), **D1220–D1259** (the stateless-orchestrator work), **D1260–D1289** (**#1678**) |
-| Still holding its block, unmerged | **D920–D934**, `docs/mcp-server` (**#1487**), which this design's SSO half depends on and which is **still not on `main`** |
+| Landed on `main` on 2026-11-04, code unwritten | **D920–D934**, `docs/mcp-server` (**#1487**), which this design's SSO half depends on and whose code does not exist yet |
 | **This work's block** | **D1290–D1309** — the sixteen decisions of §4 take **D1290–D1305** |
 | Reserved, unused | **D1306–D1309** |
 | The next task that needs one | takes **D1310**, and re-checks the facts above rather than this conclusion |
@@ -551,8 +582,8 @@ Read by hand at `origin/main` `b41709ea` on 2026-11-04:
 and this reading confirms: it returns `D1000`, which is not a decision at all but the test name
 `TestSelftestManagedSettingsDirUID1000` in
 `docs/plans/2026-09-30-m9a-gateway-and-project-identity.md`:229, `:949` and `:1181`; and a concurrent
-work's block is not on `main` at all — #1487's, #1676's and #1678's own READMEs, in their own diffs,
-are where those numbers are written. Read with a boundary on both sides
+work's block may be written only in its own README, in its own diff — #1676's and #1678's are, and
+#1487's is on `main` now. Read with a boundary on both sides
 (`[^A-Za-z0-9]D[0-9]{3,4}[^0-9]`), the highest number written on `main` is **D1189**.
 
 **Checks.** None is claimed. The workspace's owner-run checks — creating the workspace's Firebase
@@ -575,8 +606,49 @@ names them without numbering them.
 | | What | Why |
 | --- | --- | --- |
 | V1 | The exact wording of the owner's spec of 2026-10-24 | **The verbatim text was not recovered.** §0 of [spec.md](spec.md) is the recorded summary, and a later reader who has the original should treat it as authoritative and fix §0 |
-| V2 | Whether the MCP design (**#1487**) is merged by the time this work starts | **Still open, and still not on `main`, at the 2026-11-04 reading** (`docs/mcp-server/` is absent from the tree). [implementation-plan.md](implementation-plan.md) §2 and §5 build on it as a dependency either way, and say what changes if it lands first |
+| V2 | Whether the MCP design (**#1487**) is merged by the time this work starts | **Answered on 2026-11-04: it is merged** — `docs/mcp-server/` is on `main` — and **none of its code is written**, so the dependency is a design dependency and not a code one (F30). [implementation-plan.md](implementation-plan.md) §2 and §5 say what that costs the slot |
 | V3 | The current revision of the MCP authorization specification, and whether the exchange's flow is a conforming token exchange or a small departure | The public specification is not reachable from this container; the MCP design's §0 open item carries the same question for its own flow |
 | V4 | Whether the `ee/` boundary rulings (A5, A6) have moved again by the time the workspace's services are built | `docs/ee-reorg/` is itself a plan; the workspace's service placement is read from it, not decided here |
 | V5 | Whether a member may keep a credential the workspace also holds, and how the two are chosen between at a run | The design says a member's own credentials keep working (§4) and does not say which of two is picked; the plan's W6 owns the rule and this document does not guess it |
 | V6 | Whether the credentials service's **person class** (F24) is stable enough to build a workspace's person admission on | It landed on 2026-11-03/04 (#1669 and #1646) and the owner's ruling that dates it is the **same day** as this design's answers; a class that is still moving is a dependency W6 must re-read rather than assume |
+
+## 8. Owner decisions this round did not take
+
+**These are reported rather than decided.** Each is a question a security review of
+[spec.md](spec.md) §5 and §8 raised, each is answerable by the owner and by nobody else, and each
+would change a design statement rather than fill a gap in one. Nothing here is open in the sense §4
+was open: the design as written is coherent and buildable, and these are the two places where a
+different answer is also coherent. **They are not tasks and not blockers**, and no task in
+[implementation-plan.md](implementation-plan.md) waits on them.
+
+**O1 — Where the advisory headroom lives.** The design keeps it in **the member's** database, which
+is why the workspace's service needs `firebasedatabase.instances.update` on every member, and why
+rule 1 ("a workspace never widens a member") is a property of the service's **code** rather than of
+its grant: `update` writes **any** node, so the grant can lift a member's cap
+([spec.md](spec.md) §5, and residual risk 5 of its §8). Moving the headroom into the **workspace's**
+database is the alternative. It would let the service's grant on each member drop to
+`instances.get` alone — no write anywhere, so the cap-lifting exposure is gone and rule 1 becomes a
+property of IAM — and the cost is the other direction: each member's gateway would then need a read
+of the workspace's database, that read is whole-database too, and every member would read the
+workspace's member list and its rollup. **The question for the owner is which data each side sees**,
+and it is why this is not a task's to settle. The design's own reading is stated in
+[spec.md](spec.md) §5 and it stands until the owner says otherwise.
+
+**O2 — Whether the workspace's cap is metered at the proxy instead of rolled up.** D1301 (answered
+2026-11-04, §4) makes the basis the **rollup** of each member's own run ledger, with an unreadable
+member recorded as `stale` and refused. The alternative is the service counting every call it pays
+for, at its own proxy, which is the only place that sees the call itself rather than a number about
+it. It is a real alternative and it has a real cost: it gives one spend **two** measurements — the
+member's ledger and the service's counter — with no rule for which wins, and it would make the
+workspace's number authoritative over the member's own record of its spend. **Taking it means
+changing D1301's answer**, so it is reported here rather than taken, and D1301 stands as answered.
+The design states one basis and only one ([spec.md](spec.md) §5); a reader who wants the other
+should read this entry rather than assume the design left the question unasked.
+
+**What a review of these two would also settle.** [spec.md](spec.md) §8's residual risks 5 and 6 are
+the two that a `stale`-and-refuse design does not close: a compromised workspace service can lift a
+member's cap (O1's exposure, unchanged by O2), and a Firebase Auth admin of the workspace's project
+can mint a verified token for any address in its member list, in every member — which is why the
+exchange requires `email_verified` (`internal/credsvc/auth.go`:1018) and why the member's own lists
+remain the whole of the admission (§3, W5). Neither is a defect in the design; both are what the
+design costs, and they are written down here so that a release does not ship them unstated.

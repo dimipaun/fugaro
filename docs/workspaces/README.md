@@ -14,24 +14,29 @@ through a workspace Firebase token exchange, credentials shared across the group
 cap over the group's spend. The owner approved a design PR on 2026-10-31 and **answered the sixteen
 decisions on 2026-11-04**.
 
-**Reconciled against.** `origin/main` at `b41709ea`, merged into this branch and read on 2026-11-04,
-and the pull requests open at that moment — most closely **#1487** (`docs/mcp-server`, D920–D934,
-the authorization server this work's sign-in half depends on and which is **still not on `main`**),
-#1491 (`docs/binary-allow-rule`, **D981–D1010** — the block this design's old numbers collided
-with), #1676 (the repo-image removal design, D1190–D1219) and #1678 (D1260–D1289). Every citation in
-[reconciliation.md](reconciliation.md) is a path and a line at that commit. The first reading was
-taken on 2026-11-01 at `3d6ed04d`; **what main has overtaken since is listed in
-[reconciliation.md](reconciliation.md) §2f**, which is the section to read before trusting any
-finding above it.
+**Reconciled against.** `origin/main` at `c2ca0aee`, merged into this branch and read on 2026-11-04,
+and the pull requests open at the first reading — **#1487** (`docs/mcp-server`, D920–D934, the
+authorization server this work's sign-in half depends on: it **landed on `main`** on 2026-11-04, with
+none of its code written), #1491 (`docs/binary-allow-rule`, **D981–D1010** — the block this design's
+old numbers collided with), #1676 (the repo-image removal design, D1190–D1219) and #1678
+(D1260–D1289). Every citation in [reconciliation.md](reconciliation.md) is a path and a line at the
+current base. The first reading was taken on 2026-11-01 at `3d6ed04d`; **what main has overtaken
+since is listed in [reconciliation.md](reconciliation.md) §2f**, which is the section to read before
+trusting any finding above it.
 
 **SECURITY-SENSITIVE.** Two things about this folder are not ordinary design text:
 
 - **[spec.md](spec.md) §8 is a threat model**, and it is the section the owner's brief asked for by
   name: what a stolen workspace token reaches that the person did not already have, what a member's
   operator can reach of the shared pool, why the workspace cap's accounting is only as good as each
-  member's own image, and what the new cross-project read exposes. **An independent SECURITY review
-  of that section is mandatory before this design merges**, and **the coordinator runs it** — it is
-  not a task of the runs that implement anything, and no task in
+  member's own image, and what the new cross-project read exposes. That last one is stated at its
+  real size: the service's IAM grant on a member is **whole-database read and whole-database write**
+  (Realtime Database has no path-level scope and IAM bypasses the rules), so a compromised service
+  can read a member's whole database and **lift a member's cap** — rule 1 is a property of the
+  service's code, not of its grant — and a Firebase Auth admin of the workspace's project can mint a
+  verified token for any listed address, in every member. **An independent SECURITY review of that
+  section is mandatory before this design merges**, and **the coordinator runs it** — it is not a
+  task of the runs that implement anything, and no task in
   [implementation-plan.md](implementation-plan.md) starts before its findings are answered. (The
   owner's brief first put that review before the *decisions*; the owner answered the decisions on
   2026-11-04, so the gate it holds now is the merge.)
@@ -59,8 +64,8 @@ are written against that summary. A reader who holds the original should treat i
 and fix §0 to match it, exactly as `docs/central-orchestrator/README.md` says of its own spec copy.
 
 **The original's worked example named a real organisation.** It is a placeholder here —
-`workspace-alpha` — and its projects are `owner/repo-a` and `owner/repo-b`, as they are throughout
-this folder. **The workspace is deliberately not `workspace-a`:** that string already means two
+`workspace-alpha` — and its projects are `owner/repo-a` and `owner/repo-b`, as they are in
+[spec.md](spec.md) and [implementation-plan.md](implementation-plan.md). **The workspace is deliberately not `workspace-a`:** that string already means two
 other things in this repository — it is a Bitbucket workspace name in the policy examples
 (`internal/projectpolicy/bitbucket.go`:33, `:75-76`, `:194` all write `bitbucket/workspace-a/…`, and
 the tests in `internal/cli/project_cmd_bitbucket_test.go` carry the same string) and it is a
@@ -99,10 +104,11 @@ number block* for why the block moved):
 | **D1305** (D995) | **Not a licence unit and not a price** | The subscriptions design already measures the paid unit — a seat — and a workspace is the shape that measurement takes |
 
 **Two dependencies the answers do not remove.** This design's SSO half is written to **#1487's**
-authorization server (`docs/mcp-server/`), which is **still open and not on `main`**
-([implementation-plan.md](implementation-plan.md) §2 and §5). And **§8's threat model needs an
-independent SECURITY review before this design merges — the coordinator runs it**, not this folder's
-author and not the runs that implement anything.
+authorization server (`docs/mcp-server/`), which is **on `main`** since 2026-11-04 — as a design
+folder, with **none of its code written** ([implementation-plan.md](implementation-plan.md) §2 and §5
+say what that costs the slot). And **§8's threat model needs an independent SECURITY review before
+this design merges — the coordinator runs it**, not this folder's author and not the runs that
+implement anything.
 
 ## The number block
 
@@ -122,11 +128,11 @@ launcher assigned to this pull request:
 | D986 | **D1296** | | D994 | **D1304** |
 | D987 | **D1297** | | D995 | **D1305** |
 
-Read on 2026-11-04 at `origin/main` `b41709ea`:
+Read on 2026-11-04 at `origin/main` `c2ca0aee`:
 
 | | |
 | --- | --- |
-| Highest number in `docs/` on `origin/main` (`b41709ea`) | **D1189**, the reserved tail of `docs/config-management`'s block (D1160–D1183 written, D1184–D1189 reserved and unused) |
+| Highest number in `docs/` on `origin/main` (`c2ca0aee`) | **D1189**, the reserved tail of `docs/config-management`'s block (D1160–D1183 written, D1184–D1189 reserved and unused) |
 | Taken by work not on `main` | **D1190–D1219** (**#1676**, the repo-image removal design), **D1220–D1259** (the stateless-orchestrator work), **D1260–D1289** (**#1678**) |
 | **This work's block** | **D1290–D1309** — the sixteen decisions of [reconciliation.md](reconciliation.md) §4 take **D1290–D1305** |
 | Reserved, unused | **D1306–D1309** |
@@ -144,7 +150,7 @@ notes the one false positive `grep -rhoE 'D[0-9]{3,4}' docs` returns on `main`.
   none of them starts before that section's mandatory independent SECURITY review — which **the
   coordinator runs** — has been read and answered.
 - **Not a claim that the sign-in half can be built now.** W4's exchange is the hosted MCP server's
-  authorization server, which is an open pull request today
+  authorization server: that design is on `main`, and **none of its code is written**
   ([implementation-plan.md](implementation-plan.md) §2 and §5 say what that costs the slot).
 - **Not a new kind of project.** A workspace owns no repository, no runs bucket, no job and no
   image; it is a grouping over projects that already exist.
