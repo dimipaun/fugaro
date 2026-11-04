@@ -277,6 +277,22 @@ D1292 and D1303 stand exactly as written: a workspace's cloud state reaches the 
 `fugaro update` and through nothing else. A reader who found `upgrade` and wondered whether it could
 publish a workspace node has the answer here: it cannot, and the design does not add a way for it to.
 
+**Every line citation in this folder was re-read at `b41709ea` on 2026-11-04**, not only the ones a
+finding above happens to rest on — a citation is a claim about a line, and a base that moved can make
+it a false one while every sentence around it stays true. **One had moved**: the config layer's
+`pricing.FromUSD` cap refusal, cited in [implementation-plan.md](implementation-plan.md) W0, was
+`internal/config/validate.go:796,801` at `3d6ed04d` and those lines are now inside `levelProblems`
+(`:789`); the two calls are at `:855` and `:860`, in `validateBudget` (`:844`). The rest hold:
+`internal/pricing/pricing.go:18` `Micros`, `:26` `FromUSD`; `internal/config/config.go:166`
+`PerRunUSD float64`; `internal/budget/model.go:5-8` (money is µ$) and `:31` `PathCapsGlobal`;
+`internal/budget/rules/rules.json.tmpl:60` (`NEW >= OLD`); `internal/policy/merge.go:44` `Merge`;
+`internal/localcfg/localcfg.go:41` `Config`; `internal/cli/config_list.go:53` `configListDoc`;
+`internal/cli/user.go:73`, `settings.go:61`, `accounts.go:25`, `root.go:191`; the managed-gate set
+(`internal/cli/managed_gate.go:181` and its four callers, `internal/managed/plan.go:217`,
+`budget.go:124`); `internal/runner/stray.go:24`; `internal/credsvc/auth.go:375`, `:890`, `:968`,
+`:241`, `:1072`; `internal/projectpolicy/bitbucket.go:30`, `:75-76`, `:194` and `paths.go:18-23`;
+`internal/backend/gcp/catalog.go:65`; `docs/ee-reorg/spec.md`:7 and `docs/subscriptions/spec.md`:55.
+
 ## 3. What the reconciliation refuses to accept
 
 - **That a workspace is a new kind of project.** It is a grouping over projects that exist; it owns

@@ -91,10 +91,10 @@ func (r *Record) Validate() error
 (`internal/config/config.go:166`): the YAML writes a dollar amount, `Parse` converts it once with
 `pricing.FromUSD` (`internal/pricing/pricing.go:26-28`), and below that point nothing does money
 arithmetic in a float. That conversion is also what gives the cap a project's bounds — `FromUSD`
-refuses a negative amount and anything above `pricing.MaxUSD`, the same refusal
-`internal/config/validate.go:796,801` makes for a project's caps — and micro-dollars are the unit the
-budget database stores (`internal/budget/model.go:5-8`), so the published node needs no second
-conversion. `schemas/workspace.schema.json` carries the dollar amount as a number, as every other
+refuses a negative amount and anything above `pricing.MaxUSD`, the same refusal the config layer's
+`validateBudget` makes for a project's caps (`internal/config/validate.go`:844, its two `FromUSD`
+calls at `:855` and `:860`) — and micro-dollars are the unit the budget database stores
+(`internal/budget/model.go:5-8`), so the published node needs no second conversion. `schemas/workspace.schema.json` carries the dollar amount as a number, as every other
 schema here does: the schema is what a person writes, and the struct is the exact side of the
 boundary.
 
