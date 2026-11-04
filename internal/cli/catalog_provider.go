@@ -87,11 +87,11 @@ var catalogAppKeySecretID = func(ctx context.Context, lc *localcfg.Config, rs in
 // own, the App's private key added to it.
 //
 // The App ID is rs's own: catalogGitHubAppID resolved it for this repository
-// -- config first, environment only when the config holds none -- and infra.Repo
+// (config first, environment only when the config holds none) and infra.Repo
 // carried that same answer into the spec, so the credential this command reads
 // the Dockerfile with and the one the submitted build clones with cannot
-// differ. The key stays overridable: an exported one wins and no
-// secret is read at all. The key read is the pre-check's own -- the repository's
+// differ. The key stays overridable: an exported one wins and no secret is read
+// at all. The key read is the pre-check's own -- the repository's
 // github-app-key secret, with the person's own credentials, in memory, behind
 // the coding agent's refusal -- and it is announced in the pre-check's own
 // line before it happens. The value joins the environment as a string, which
