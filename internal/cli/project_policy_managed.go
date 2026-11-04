@@ -326,13 +326,25 @@ func credentialsOf(p *projectpolicy.Policy) *projectpolicy.Credentials {
 // declined to do, and a database this installation may not write has no
 // business clearing anything. The helper asks it again for a managed project
 // and writes nothing either way.
+//
+// Why an installation whose clients cannot be built reads no mark at all. The
+// marks live in GCS and Resource Manager, so a config with no endpoints for
+// them is a project this program cannot even ask about — and not one it has
+// proved is managed. That is the fail-closed direction twice over: the zero
+// gate admits nothing, so the session keeps today's refusal exactly, which is
+// what an installation that predates the endpoints block (or that never
+// configured the cloud half) read before this design existed. Failing the
+// command instead would replace a refusal an operator can act on with a
+// sentence about endpoints the session has no business reading, and the gate
+// is consulted in a coding agent's session only, so nothing else in this
+// command's behaviour can depend on it.
 func policyPublishGate(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, agent string) (managedGate, error) {
 	if agent == "" {
 		return managedGate{}, nil
 	}
 	clients, err := newInitClients(ctx, lc)
 	if err != nil {
-		return managedGate{}, err
+		return managedGate{}, nil
 	}
 	return readManagedGate(ctx, managedGateEnv{lc: lc, s: clients.Storage, crm: clients.CRM, db: db}, managedGateFacts{
 		Subcommand:  "project policy publish",

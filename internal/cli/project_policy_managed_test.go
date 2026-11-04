@@ -514,6 +514,47 @@ func TestPolicyPublishUnmanagedProjectKeepsTheAgentRefusal(t *testing.T) {
 	}
 }
 
+// A project whose cloud half this installation cannot even build the clients
+// of — the config names no endpoint for GCS or Resource Manager, which is what
+// an installation that predates them reads as — is a project the gate cannot
+// ask about, and one it has therefore not proved is managed. The session keeps
+// today's refusal exactly, and nothing is written or recorded: the fail-closed
+// direction twice over, since the zero gate admits nothing. Failing the command
+// instead would answer a session with a sentence about endpoints it has no
+// business reading, and would be the one shape this design must not have — a
+// step that does not proceed for a reason other than the refusal.
+func TestPolicyPublishUnbuildableGateKeepsTheAgentRefusal(t *testing.T) {
+	f := newManagedPolicyFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+	base := projectConfigText(f.dir, f.db.URL, projectProvidersYAML, "")
+	base = strings.Replace(base, "runs_bucket: unused-bucket", "runs_bucket: "+initRunsBucket, 1)
+	if err := os.WriteFile(f.cfg, []byte(base), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := nodeOf(t, f.db)
+	t.Setenv("CLAUDECODE", "1")
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("a coding agent's session published through a gate no client could be built for:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "nothing was written") || !strings.Contains(err.Error(), initflow.AgentRefusal("CLAUDECODE")) {
+		t.Errorf("the refusal is not today's: %v", err)
+	}
+	if got := ExitCode(err); got != ExitUserError {
+		t.Errorf("exit %d, want %d", got, ExitUserError)
+	}
+	if strings.Contains(err.Error(), "endpoint") {
+		t.Errorf("the session was answered with the installation's endpoints: %v", err)
+	}
+	if after := nodeOf(t, f.db); after != before {
+		t.Errorf("the refused publish wrote something:\nbefore %s\nafter  %s", before, after)
+	}
+	if got := f.audits(t); len(got) != 0 {
+		t.Errorf("a gate that could not be built left %d audit records, want none", len(got))
+	}
+}
+
 // And a person's own session on a MANAGED project pays nothing for the gate:
 // not a record, and not even a read — the creation fact is refused at the API
 // here, and the publish still lands, because the gate is the coding agent's
