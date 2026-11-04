@@ -15,8 +15,9 @@ credential's **permission** does not cover the read. The route mints with
 `GET /repos/{owner}/{repo}/contents/fugaro.yaml` is refused with the token the service hands out today,
 and the refusal is correct: that constant is the coordinator's own reach, it reads no file, and two
 tests pin it so it cannot quietly grow one (reconciliation F6). A0 is that change, made on the service's
-own mint; it is the only **credentials-service change by rule** in this plan, and nothing below its line
-can be demonstrated end to end before it lands.
+own mint; it is the only **credentials-service change by rule** in this plan. **What waits on it is the
+real mint**, so A3's end-to-end read is the test that cannot be green before it; A1's own tests are
+hermetic — an `httpfixture` replay and a fake token source — and are not gated by it (F6).
 
 **The tasks are written against `main` as it is now**, with **#1477 merged** (reconciliation F1): the
 refusal this design answers is in the tree, so every red step below is red against `main` itself.
@@ -58,9 +59,11 @@ whole `internal/cli` or `internal/runner` run.
   subject.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/gitprov/github ./internal/credsvc -run 'Permissions|GitHubRead' -count=1`.
 - **Red step:** `TestPersonReadPermissionsCoverAFileRead` is red against `main`, where no set carrying
-  `contents: read` exists and `githubRead` mints with the coordinator's. The end-to-end half — a person's
-  mint actually reading `fugaro.yaml` — cannot be made green by anything in A1 or A3, which is why both
-  depend on this task.
+  `contents: read` exists and `githubRead` mints with the coordinator's. What A0 gates beyond itself is
+  the **live** path: with today's set a real `Contents` call is refused (403, reconciliation F6), so
+  A3's end-to-end test cannot be green before this lands. A1's own tests need nothing from this task —
+  they replay a fixture against a fake token source — and A1 must not add a test that claims a live mint
+  it has not got.
 - **Commit:** `credsvc: the person read mint asks for the file read it is for`.
 
 ## A1. The file at a ref, read with the person's read-only token (D910, D911). **SEC**
@@ -76,8 +79,14 @@ whole `internal/cli` or `internal/runner` run.
   entry, a submodule, a non-base64 body and anything over `gitprov.MaxContentsBytes`. What A1 adds is
   the one thing the launcher's messages need and `Contents` does not carry: a **typed not-found**, so a
   file the repository does not hold at the ref is a different error from a read that was refused
-  (spec.md §7's rows differ for the two). **No permission is asked for, and there is no parameter to
-  ask with:** what the token reaches is the set the service mints (A0).
+  (spec.md §7's rows differ for the two). **It adds no parsing and no second decode:** `FileAt` returns
+  `Contents`'s bytes unchanged, and the distinction is drawn from the error `Contents` already returns —
+  `errors.As(err, new(*httpjson.StatusError))` with `Status == 404` is `ErrFileNotFound`, and every other
+  failure (403 included: **what a live call with today's mint gets**, 5xx, a non-file entry, a body over
+  the bound) stays a refusal with `Contents`'s own wording. **No permission is asked for, and there is
+  no parameter to ask with:** what the token reaches is the set the service mints (A0). **Its
+  dependence on A0 is the live path and nothing else:** the fixture tests below are green the day A1 is
+  written, and what waits for A0 is a real person's token reading a real file — A3's end-to-end test.
 - **Tests:** `TestFileAtAsksForTheRefItWasGiven`, `TestFileAtDistinguishesMissingFromRefused`,
   `TestFileAtUsesTheTokenSourceItIsGiven` (a fake `gitprov.TokenSource` observes one mint and the
   request carries its token). The kind, encoding and size refusals are `Contents`'s own and stay in
@@ -239,7 +248,12 @@ whole `internal/cli` or `internal/runner` run.
 - **It does not replace the copy of the person identity in `ee/`** (reconciliation F13). A3 writes the
   launcher's own helper because the core may not import `ee/`; repaying the duplication the other way —
   a core package `ee/coordinator/cli` adopts — is a task for the owner of the coordinator, not for this
-  design, and doing it here would edit a business-licensed file to serve a core feature.
+  design, and doing it here would edit a business-licensed file to serve a core feature. **Where that
+  debt is tracked:** here, in this bullet, and — when the coordinator's owner takes it — as one item in
+  `docs/backlog/` in the shape `FORMAT.md` describes, which is the tree's register for work an owner has
+  accepted and nobody has scheduled. **This design does not file it**: the backlog's own census is
+  pinned (two items, both open) by the Backlog tests, and one design's report is not another owner's
+  accepted work.
 - **The console needs no change** (D906): the five-field argv schema, `privateWorkingDirectory` and
   the launch screen are untouched, and the console renders the CLI's new refusals verbatim. The one
   thing to check, not to build: whether any console test pins a launch-failure string

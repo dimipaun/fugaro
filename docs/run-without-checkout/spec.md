@@ -88,7 +88,13 @@ can carry a workflow's `checkout:` kind (`docs/project-layer.md`, the key's laye
 repo`) but **never a `job_profile`** — that key is `repo` only. So without the repository's own file
 the launcher can know a workflow is a clone workflow and still not know which shared job it runs on,
 and `standard` is exactly the wrong answer in the case that matters: a project publishes profiles
-because its repositories name them.
+because its repositories name them. **The layer is also never resolved on its own.** The config the
+launcher's decision reads is the repository's document with the project layer merged *under* it —
+`checkoutParse` reads the file first and only then calls `resolveFugaroYAML` with it
+(`internal/cli/cloud.go`), so a repository with no document anywhere has no merged config, no
+`checkout:` kind and no profile to read, and its launch keeps the per-repository job (§7). A layer-only
+resolution would place a run by a document the checkout path never reads alone, and would do it on the
+`standard` default this paragraph exists to refuse.
 
 ## 3. The ref
 
@@ -235,7 +241,7 @@ on a job the project's policy did not choose is worse than a refusal (D905).
 | No checkout, **no network**, or the credentials service or the forge answers 5xx | Refused, `remote(...)`'s wording for an unreachable service, same way out |
 | No checkout, the ref does not exist at the forge | Refused, naming the ref: a deleted or never-pushed branch is not a reason to read another one |
 | No checkout, the file **is there but the workflow is not**, or has no `checkout:` kind we can read | Unchanged from today: `resolveWorkflow`'s "cannot tell which workflow of `%s` to run; pass `--workflow`", and the per-repository job for anything but `clone` |
-| No checkout, the file is **not in the repository at all** | The per-repository job. A document that is not there selects no profile and no clone workflow, and the project layer cannot select a profile for it (§2). The project layer's `checkout:` kind is read as always, so a clone workflow the *layer* defines still reaches a shared job |
+| No checkout, the file is **not in the repository at all** | The per-repository job — and this is a **decision**, not a reading of the layers: a document that is not there selects no profile and no clone workflow, the project layer is never resolved on its own (below), so the launcher reaches the same answer `main` reaches for a workflow the checkout's file does not define (`!ok` → the per-repository job, §1's step 2). The runner's own `checkJobProfile` still judges whatever the document at the ref says when the run starts |
 | **A coding agent's session**, no checkout, profile published | Refused by `refuseKeyReadInAgent` before any read, naming the checkout as the way out |
 | A **checkout exists** but its working tree has no `fugaro.yaml` | Source 1 answers: the ref's file is read from the checkout's objects, and the launch is decided as if the file were in the tree. If the ref's commit genuinely has no file, the row above applies |
 | `--retry` / `--pr` of a run that has a launch record | The recorded job (§8, D907); no read |
@@ -307,10 +313,16 @@ launcher learns the document or the launch is refused.
   message verbatim, as it does for every other refusal.
 - The console's launches are at the **base branch** (`--ref` is on `NEVER_REACHABLE`), so the
   document read is the base branch's, and no branch can influence a console launch (§3).
-- The console's child carries the operator's own Google identity already — it writes the task to the
-  runs bucket and starts the execution — and that is the identity the credentials service verifies a
-  person by (D902), so the read needs no new control: the operator is one of the installation's people,
-  or the service refuses the mint and the console renders that refusal (§7). Where the installation has
+- **The console's child needs no new control, and this is not "it already has the credential".** The
+  child writes the task to the runs bucket and starts the execution with the operator's ambient
+  application-default credential — that is an **access token for Google APIs**, and the credentials
+  service verifies a person by an **ID token**, which no Google client library can mint from an
+  authorized-user ADC (reconciliation F13). So the ID token is new work inside the CLI (A3's
+  `personid.go`, `gcloud auth print-identity-token`), and what makes it invisible to the console is
+  where it runs: the mint happens in the `fugaro run` process the console spawns, on the machine the
+  operator is sitting at, with the `gcloud` and the account every other command already needs. The
+  console passes no flag, reads no new field, and the operator is one of the installation's people, or
+  the service refuses the mint and the console renders that refusal (§7). Where the installation has
   not opted into the service there is nothing to read and the launch keeps the tree's refusal (§2), so
   D902's answer is what makes the GUI work on an installation that has. D906's rejected alternative is a sixth field in the launch contract and a
   launch-screen control, which buys nothing here: every console launch is from outside a checkout, so

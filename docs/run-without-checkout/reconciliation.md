@@ -5,8 +5,9 @@
 **Where this file disagrees with [spec.md](spec.md), this file wins.** Every claim below was re-checked
 against `origin/main` as merged into this branch at `1625859c` (2026-11-04), by reading the code
 named, not by trusting a neighbouring document. **#1477 has merged**, so the refusal this design
-answers is on `main`; the first re-check, of 2026-11-01 against `432623d9c`, read it as still open, and
-F1 is the finding that changed. The owner's answers of 2026-11-04 are in §3.
+answers is on `main`; the first re-check, of 2026-11-01 against that day's `main` head `432623d9c` (the
+v0.14.1 release commit, an ancestor of this branch's tip like every hash named here), read the refusal
+as still open, and F1 is the finding that changed. The owner's answers of 2026-11-04 are in §3.
 
 ## 1. Findings against the tree
 
@@ -98,6 +99,17 @@ and a provider can be built to hold no key at all (`Options.ServiceHeldKey`, the
 which takes any `gitprov.TokenSource` — `ServiceReadTokens` is one), so the launcher's reader is a thin
 use of what is in the tree rather than a new HTTP client (A1).
 
+**The two halves above do not collide, and this is the place to say why.** `Contents` called with the
+token the route mints today is **refused by GitHub** — a 403, `Resource not accessible by integration`,
+because the token carries no `contents` — and that is precisely what A0 exists for: the reader is real,
+the reader is testable, and the *mint* is what cannot read a file. The refusal is also the shape the
+design wants: a read that fails is a refusal, never a silent wrong placement (D905). **A1's own tests do
+not wait on A0**: they replay an `httpfixture` response through a fake `gitprov.TokenSource`, so they
+exercise the reader — the ref it asks at, the token the request carries, the not-found it maps — with no
+real mint anywhere in the path, and the 403 above is not a case they can reach. What waits on A0 is the
+**real** mint, and therefore A3's end-to-end test, which is the one test in this design that cannot be
+green before A0 lands.
+
 **F7. The recorded job needs no new storage.** `internal/runstore/launch.go` records `Job` in
 `launch.json`, and `existingLaunch` (`internal/cli/run.go`) already backfills that record from
 `result.json`'s execution when the CLI died before writing one — `ParseExecution(rec.Execution)` and
@@ -156,7 +168,11 @@ no test names this folder**, so nothing pins it. Adding one would mean a new
 `internal/cli/docs_*_test.go`, which moves the `docs_*_test.go` census row `docs/rigor-modes/reconciliation.md`
 states (`TestDocsRigorModesCensusStatesItsCommands`, `TestDocsRigorModesReconciliationCountsTheConfigManagementPin`)
 — that row is another design's pin, so this design adds no test and leaves the folder unpinned rather
-than edit a document that is not its own. Reported, not done.
+than edit a document that is not its own. **The gap that leaves is real and is recorded here rather
+than hidden:** a folder no test names cannot be flagged by a census that counts test files, so the
+first change to this design that ships code — B1, which touches `internal/cli/docs_checkout_test.go`
+and any other docs test the Docs filter turns up — carries the pin for this folder and moves that
+census row in the same commit. Reported, not done.
 
 **F13. The launcher's person identity is not in the core, and the core may not import the one that
 exists.** The only code in the tree that mints an operator's own Google ID token is
@@ -174,11 +190,20 @@ function decides it. This is new work in this round, and the plan's A3 carries i
 design.** Three things landed since the first reading, and each is checked here rather than assumed:
 
 - **The project image catalog** (jobs deploy on catalog images, 0.16.0's design at 0.17.0's build) and
-  **#1676**'s removal of per-repository *images* move the image axis and not the job axis. A repository
-  still has its own Cloud Run job (`gcp.JobName(slug, gcp.WorkflowVariant(...))`) and a clone workflow
-  on a provider a shared job serves still runs on the shared one (`gcp.ProjectJobName`), so "the
-  repository's own job" — and "the per-repository job" — remain the right names for the placement this
-  design decides, and #1676 changes nothing in it. The catalog does touch one kind: `checkout: shared`
+  **#1676**'s removal of the per-repository **derived image** change the image axis, and — checked
+  rather than asserted — **not the job this design places**. What #1676 removes is read from its own
+  documents (`docs/repo-image-removal/`): the derived per-repository, per-workflow image; the
+  repository's own Artifact Registry repository and its build grants; and the per-repository **image
+  check** job and its Scheduler (`deploy/terraform/gcp/modules/repo/check.tf:16`,
+  `google_cloud_scheduler_job "check"` at `:116`, `CheckJobName` → `fugarochk-<slug>`,
+  `internal/backend/gcp/names.go:280`), which one installation-level check replaces (D1148 (ii), #1683).
+  **The run job is not in that list.** Its spec §2.3 keeps the job and changes only the image it runs:
+  `checkout: clone` → the installation's base image for that workflow's kind, otherwise the catalog's
+  chosen entry. So `gcp.JobName(slug, gcp.WorkflowVariant(...))` still exists, still belongs to one
+  repository, and still runs the workflows that do not clone — and `gcp.ProjectJobName` still serves the
+  clone workflows a shared job serves. "The repository's own job" and "the per-repository job" therefore
+  remain the right names for the placement this design decides, and #1676 changes which image that job
+  runs and not which job it is. The catalog does touch one kind: `checkout: shared`
   (a shared dependency-layer image, still refused by `fugaro validate` until one is released) is not
   `clone`, so §1's step 2 keeps its per-repository job; the design already treats it that way.
 - **The managed gate** (a managed project's rules over what a session may write: `update`,
@@ -238,7 +263,7 @@ the person read mint reaches no file (F6), and the design states both options ra
 | **D908** | A provider no shared job serves | **Proceed on the per-repository job with no read** (`infra.SharedJobProvider`): it is the same answer the checkout path gives for the same repository | **Refuse for every provider** (the merged refusal's shape): every Bitbucket console launch is refused for a question with one answer, and the operator's way out — a checkout — is not one the console can take | **As recommended.** Proceed on the per-repository job with no read and no credential: for a provider no shared job serves, it is the same answer the checkout path gives |
 | **D909** | A checkout whose working tree has no `fugaro.yaml` | **Read the ref's document from the checkout's objects** (`checkoutFugaroYAMLAtRef`, promoted from the auth axis to the whole document) | **Keep the refusal, fix only the message**: an operator standing in the checkout is told to run it from the checkout, when the local `git cat-file` that answers is the reader the same function already uses two gates later | **As recommended.** Read the ref's objects: the local `git cat-file` answers where the working tree does not, and the operator standing in the checkout is not sent back to it |
 | **D910** | Where the reader lives | **A CLI seam** (`readRepoConfigAtRef`) over a `FileAt` in `internal/gitprov/github`, with the package's existing replaceable HTTP seams and `httpfixture` for replay | **`gitprov.Provider.FileAt`**: a method every provider must implement, the fake included, for a read only GitHub can serve — and a second place a caller could reach with the run's own credential instead of a narrow one | **As recommended, and narrower than it looked:** the package already has `Contents`, one file at a ref with a provider's own token (`gitprov.ContentsReader`, F6), so A1 is the launcher-facing reader over it and not a second HTTP client — with the launcher's person identity added beside it (F13): a core helper minting the operator's own ID token, because the core may not import `ee/`'s |
-| **D911** | Which permissions the minted token asks for | **A new `contents:read` + `metadata:read` set** in `internal/gitprov/github`, beside the two that exist | **`RunTokenPermissions`**: the launcher's process would hold a write-capable token for every repository the App serves, to read one file, enlarging the blast radius of the one process this design newly gives a provider credential | **As recommended, and the recommendation is now a task rather than an assumption.** The mint is the service's (D902) and its client has no field in which to ask for another permission — but the set the route mints with today is `CoordinatorTokenPermissions`, `pull requests` and `metadata`, read, and it reaches no file: the read this design is for needs a set that carries `contents: read` (F6, D915, task A0), and A1 cannot pass its end-to-end test before that set exists. The banned set is still banned: never `RunTokenPermissions`, and never a widened `CoordinatorTokenPermissions` |
+| **D911** | Which permissions the minted token asks for | **A new `contents:read` + `metadata:read` set** in `internal/gitprov/github`, beside the two that exist | **`RunTokenPermissions`**: the launcher's process would hold a write-capable token for every repository the App serves, to read one file, enlarging the blast radius of the one process this design newly gives a provider credential | **As recommended, and the recommendation is now a task rather than an assumption.** The mint is the service's (D902) and its client has no field in which to ask for another permission — but the set the route mints with today is `CoordinatorTokenPermissions`, `pull requests` and `metadata`, read, and it reaches no file: the read this design is for needs a set that carries `contents: read` (F6, D915, task A0), and it is A3's end-to-end test that cannot be green before that set exists: A1's own tests are hermetic — an `httpfixture` replay and a fake token source — so the reader is testable the day it is written, and only the real mint waits (F6). The banned set is still banned: never `RunTokenPermissions`, and never a widened `CoordinatorTokenPermissions` |
 | **D912** | The message an operator sees | **Two distinct refusals**: "outside `X`'s checkout" (no checkout anywhere) and "the ref's `fugaro.yaml` could not be read" (with the cause and both ways out); the merged text stays only for the coding-agent case, where it is true | **One message**: the operator in a checkout is told to run from the checkout, and the operator without the permission is told something that does not fix it | **As recommended.** Two messages for two causes, because they have two remedies; a third line names the installation's own credentials-service opt-in where that is why no read could be made |
 | **D913** | The documents this changes | **`docs/checkout.md`** loses the "Known gaps" bullet; **`docs/git-providers.md`** states the one exception in its own words; `docs/project-layer.md` is not touched; no `plugin/skills` change, since no flag is added (D901) | **No documentation change**: two pages keep describing a launcher that cannot read the file, and the next reader believes them | **As recommended**, with the exception now the service's read rather than a key read: `docs/git-providers.md` says the CLI holds no provider credential of its own, and a launch outside a checkout on an installation with a credentials service holds one read-only, repository-scoped token the service minted for the operator, for one file |
 | **D914** | The review this work needs | **Security-sensitive, like the credentials service**: the tasks that add the read (A1–A3 of the plan) merge only on an independent review, and the flag-refusal path is a named test, not a comment | **Ordinary review**: the first path that reads a repository's configuration outside a checkout, with a provider credential in the process, ships on one reviewer's judgement | **As recommended, and wider than recommended:** with A0 the change is the **service's own** — its mint's permission set, or a route of its own (D915) — so it is a credentials-service change by rule (`.claude/rules/credentials-service.md`: independent review before merging, one audit line per refusal, no credential value in any line), and the review covers the person class, the audited mint, the permission set's two pins, the absence of a key in the launcher and the agent-session refusal. A0, A1 and A3 are one reviewed range |
