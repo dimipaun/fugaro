@@ -59,9 +59,9 @@ is asked here for every task that changes who may reach what.
 
 **Two gates stand before the first line of any task.** The **independent SECURITY review of
 [spec.md](spec.md) §8** — **run by the coordinator**, per the owner's brief — comes first: no task
-starts until it has been read and its findings answered, and its scope is §8, the four SEC-marked
-tasks below (M3, M4, M5, M7 and M9) and the one new privilege this design asks for (M9's launch
-grant). **D921's unconfirmed licence** is the second
+starts until it has been read and its findings answered, and its scope is §8, every **SEC**-marked
+task below (the five whose marker says **mandatory** are M3, M4, M5, M7 and M9) and the one new
+privilege this design asks for (M9's launch grant). **D921's unconfirmed licence** is the second
 ([reconciliation.md](reconciliation.md) §6, the first owner check): it gates **M5** specifically,
 because M5 is the task that takes the dependency, and a licence that turns out to be unusable sends
 D921 back to its alternatives before any code exists rather than after.

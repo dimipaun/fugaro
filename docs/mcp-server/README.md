@@ -34,8 +34,9 @@ line at the later commit, and its §7 records the seven things `main` had overta
   mandatory** — and **the coordinator runs it**, not this folder's authors, exactly as it runs every
   other security-sensitive review in this repository. **The review is a precondition of this pull
   request merging**, and no task in [implementation-plan.md](implementation-plan.md) starts before it
-  has been read and its findings answered. Its scope is §8, the four SEC-marked tasks of §3 (M4, M5,
-  M7, M9) and the one new privilege this design asks for (M9's launch grant).
+  has been read and its findings answered. Its scope is §8, every **SEC**-marked task of §3 — the
+  five whose marker says **mandatory** are M3, M4, M5, M7 and M9, and M2, M6, M8 and M10 carry the
+  marker without that word — and the one new privilege this design asks for (M9's launch grant).
 - **The folder keeps one rule unconditionally**: **no agent handles a credential.** The coordinator
   never hands a model credential or a forge credential to an MCP caller — not as a tool result, not
   in an error, not in a log line. A run's credential reaches the run the way it reaches every run
@@ -48,7 +49,7 @@ One document set, four files:
 | File | What it holds |
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec, copied **verbatim**, as §0 — and then the design written to the owner's answers of 2026-11-04: the front door and its transport (§2), the authorization server and its flow (§3), Firebase as the identity provider (§4), the six tools (§5), tokens, rigor windows and spend limits (§6), unattended agents (§7), **the threat model (§8)**, the coordinator's prohibitions (§9), and the console's graph write (§10) |
-| [reconciliation.md](reconciliation.md) | Each claim of §0 against the code at the base: **what exists** (F1–F15, F19), **what is missing** (F16–F18, F20–F22) and **what conflicts** (F23–F31), each with a path and a line; then the **fifteen decisions, D920–D934** (§4), the number block and how it was read (§5), and the owner checks that no hermetic test can stand in for (§6) |
+| [reconciliation.md](reconciliation.md) | Each claim of §0 against the code at the base: **what exists** (F1–F15, F19), **what is missing** (F16–F18, F20–F22) and **what conflicts** (F23–F31), each with a path and a line; then the **fifteen decisions, D920–D934** (§4) with the owner's answers of 2026-11-04 under them, the number block and how it was read (§5), the owner checks that no hermetic test can stand in for (§6), and what `main` had overtaken (§7) |
 | [implementation-plan.md](implementation-plan.md) | What the owner was asked and answered (§1), the order and what forces it (§2), ten tasks **M1–M10** each with its files, its interface, its **red step**, its named tests and its SEC flag (§3) — M4 carrying its **For operators** block — the **shared-files table** (§4), **the release slot** (§5), the test rules (§6) and what the plan does not own (§7) |
 | `README.md` | This file: the status, the reading of the number block, and what a reader should not take from here |
 
