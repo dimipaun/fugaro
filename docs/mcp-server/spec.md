@@ -579,16 +579,20 @@ the runner may clone and which git credential the job holds — must come from s
 Run sets**, and `internal/backend/launchenv.go:91` (`LaunchEnv`) is where the seam refuses an entry
 naming a reserved variable at all, with the platform's five (`PlatformEnvNames`, `:32`, whose
 reservation `ReservedEnvNames` at `:52` hands both backends) pinned so a platform variable cannot be
-silently rewritten. **This design answers the same question the owner
-asked on 2026-11-04: the runner ignores the override environment except for an allowlist.** The
-allowlist is exactly the variables this design adds — the token's ceiling of D924, and the marker
-that says a launch carries one — and nothing else a caller could put there is read: not the
-repository, not the provider, not the backend, not the policy or the kill switch, not the account,
-not the credentials service's endpoint. A compromised coordinator therefore cannot change *what* a
-run does by rewriting its environment; the worst it can do through the override is **narrow** a run's
-ceiling, which is the direction D924 already requires — and everything else it could do it can do
-only as a launcher, which is the privilege the owner is being asked to grant and which the
-independent review of this section exists to price.
+silently rewritten. **The owner's requirement of 2026-11-04 is that the runner ignores the override environment except for an
+allowlist, and that fence is NOT BUILT.** Today `internal/runner` reads its ceiling and wiring from plain
+environment variables that `runWithOverrides` can rewrite (`FUGARO_MAX_RUN_USD`, `FUGARO_BUDGET_MODE`
+and `FUGARO_ALLOWED_MODELS` in `internal/runner/spend.go`, `FUGARO_CREDENTIALS_SERVICE_URL` in
+`internal/runner/gateway.go`, `FUGARO_GIT_PROVIDER` and `FUGARO_CHECKOUT` in `provision.go`), and
+`LaunchEnv` refuses a reserved name only for a caller that goes through the Go seam: a compromised
+coordinator calls the Cloud Run API directly. The container sees one merged environment, so an env-only
+runner cannot tell a template value from an override value. The intended allowlist is exactly the
+variables this design adds (the token's ceiling of D924 and the marker that says a launch carries one),
+and the requirement is that nothing else a caller could put there is read. Until a mechanism lets the
+runner read its non-allowlisted configuration from something an override cannot set, **a compromised
+coordinator can change what a run does, not only narrow its ceiling**, and the privilege the owner is
+asked to grant is that of a launcher with an unfenced environment. Building the mechanism is a gate on
+M9 and D931, and which mechanism is an owner decision (§11).
 
 ## 9. What the coordinator must never do
 
@@ -622,6 +626,7 @@ and ask for it.
 
 ## 11. What this design leaves open
 
+- **The override fence is unbuilt and its mechanism is undecided** (§8): how the runner reads non-allowlisted configuration from something `runWithOverrides` cannot set. It gates M9 and D931; the owner decides the mechanism before either is built.
 - The three open items of the owner's spec are answered or narrowed: the library is **zitadel/oidc**
   (§3, D921, answered 2026-11-04 with **its licence UNCONFIRMED** — the owner or counsel confirms it
   before any build, and that is the first owner check); the standalone-server option is not taken; and

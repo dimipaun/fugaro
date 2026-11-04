@@ -195,6 +195,7 @@ These are not decisions — no answer changes the design. They are the things th
 verify hermetically, and they belong on the live checklist, in the owner's hands, before the first
 code task starts:
 
+0. **The launch-override fence is decided and built before M9 or D931.** Spec §8 states the owner's requirement (the runner ignores the override environment except an allowlist) as NOT BUILT: the runner reads its ceiling and wiring from variables `runWithOverrides` can rewrite today, so the mechanism that lets it read non-allowlisted configuration from something an override cannot set is an open owner decision.
 1. **`zitadel/oidc`'s licence is confirmed — by the owner or by counsel — before any build.** D921
    was answered with the licence **UNCONFIRMED**: the library's Apache 2.0 claim is the library's own
    and nothing in this container can check it, and a dependency a self-hosted product cannot ship is
