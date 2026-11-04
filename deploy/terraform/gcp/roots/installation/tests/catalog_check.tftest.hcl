@@ -22,10 +22,11 @@
 # drops one of the six, so both halves of that gate are shown firing rather
 # than assumed.
 #
-# The names, the argv, the two IAM condition titles and the alert filter are
-# the ones internal/infra writes (gcp.CatalogReadConditionTitle,
-# gcp.CatalogRecordsConditionTitle, the mode's argv): the run that asserts them
-# is the run that would have to move if any of those changed, and the Go tests
+# The names, the argv, the condition titles and the alert filter are the ones
+# internal/infra writes (gcp.CatalogReadConditionTitle for the definitions
+# condition, and each repository's own records title, which the module takes
+# from its input because it is per repository): the run that asserts them is
+# the run that would have to move if any of those changed, and the Go tests
 # beside them pin the same bytes from the side that builds them.
 
 mock_provider "google" {}
