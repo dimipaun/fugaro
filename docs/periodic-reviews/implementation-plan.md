@@ -17,10 +17,11 @@ Each with its why:
   reader acts on a flagged row with `fugaro diagnose RUN`, and the draft's reader is a public
   issue)* — no task: §4 of the spec states what already holds.
 
-The other nine decisions were not singled out and the recommendation stands for each. What the 2026-11-04 refresh *does* change is in
-[reconciliation.md](reconciliation.md) §4: a class for R2's check (M9), a sentence in the spec's §9
-(M1, M2), the sequencing behind `plugin/**` (M6) and the release slot (M8). Each task touches at most
-12 files, names its tests, starts with a red step and ends at the gates below.
+The other nine decisions were not singled out and the recommendation stands for each. What the
+2026-11-04 refresh *does* change is in [reconciliation.md](reconciliation.md) §4: a class for R2's
+check (M9), a sentence in the spec's §9 (M1, M2), the sequencing behind `plugin/**` (M6) and the
+release slot (M8). Each task touches at most 12 files, names its tests, starts with a red step and
+ends at the gates below.
 
 ## Order, and what this plan does not own
 

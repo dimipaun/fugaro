@@ -72,5 +72,7 @@ recommendation"**; the other nine were not singled out and the recommendation st
 and `internal/cli/root.go` are each owned by another work stream or an open pull request. **#1488
 (`docs/plugin-user-scope`) moves `plugin/**` to user scope and rewrites the setup skill**, so the
 tasks that touch it — R3, R4's rule list and R6's §7 sentence — are sequenced after it
-([implementation-plan.md](implementation-plan.md), "Order"). Tasks R3 and R5 name the borrowed files
-and wait for the owner's go, as `docs/models-commands` does for its own.
+([implementation-plan.md](implementation-plan.md), "Order"). R3 names the borrowed files and waits
+for the owner's go on them; R5 is the owner's own task at their terminal, and R5 and R6 name the
+`website/**` line they do not write. `docs/models-commands` does the same for its own borrowed
+files.
