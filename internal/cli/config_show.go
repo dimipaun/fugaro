@@ -197,7 +197,7 @@ func printConfigShow(w io.Writer, doc configShowDoc, checked time.Time, asJSON b
 func configLayerAnchor(ctx context.Context) (data []byte, inCheckout bool, err error) {
 	root, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel")
 	if err == nil {
-		data, err := readFugaroYAML(filepath.Join(root, "fugaro.yaml"))
+		data, err := requireFugaroYAML(filepath.Join(root, "fugaro.yaml"))
 		if err != nil {
 			return nil, true, userErr("%v", err)
 		}
