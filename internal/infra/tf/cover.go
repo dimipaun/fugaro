@@ -675,17 +675,17 @@ func (c Cover) isCredentialsMember(m string) bool {
 // isCoordinatorMember is whether m is exactly the coordinator's writer
 // account as an IAM member, in the installation's project: its one grant is
 // on the Firebase project, which does not move the account.
+func (c Cover) isCoordinatorMember(m string) bool {
+	p := c.installationProject()
+	return p != "" && m == "serviceAccount:"+CoordinatorAccountID+"@"+p+".iam.gserviceaccount.com"
+}
+
 // isCatalogCheckMember is whether m is exactly the project's catalog check job
 // account as an IAM member, in the installation's project: the account
 // catalogcheck.tf creates (var.project).
 func (c Cover) isCatalogCheckMember(m string) bool {
 	p := c.installationProject()
 	return p != "" && m == "serviceAccount:"+CatalogCheckAccountID+"@"+p+".iam.gserviceaccount.com"
-}
-
-func (c Cover) isCoordinatorMember(m string) bool {
-	p := c.installationProject()
-	return p != "" && m == "serviceAccount:"+CoordinatorAccountID+"@"+p+".iam.gserviceaccount.com"
 }
 
 // isDeployerMember is whether m is exactly this run's deployer account as an
