@@ -454,6 +454,12 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		o.Checks = append(o.Checks, fromPreflight(c))
 	}
 	o.Checks = append(o.Checks, doctorRunsBucketIAM(ctx, lc, crmSvc)...)
+	// The last managed agent apply (M7, D1014), beside the runs-bucket sweep
+	// for the same reason: both read the installation's own bucket, and this
+	// one reads it through the audit family's parser alone.
+	if c := doctorManagedAudit(ctx, lc, crmSvc); c != nil {
+		o.Checks = append(o.Checks, *c)
+	}
 	o.Checks = append(o.Checks, doctorLauncherReach(ctx, lc)...)
 	// The secrets-brokering checks that read the installation rather than this
 	// checkout (plan B1.9): the credentials service and its callers' invoker

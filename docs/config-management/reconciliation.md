@@ -19,13 +19,17 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 323 rows and the generic writer carries 89 of them.** 13 by name
-  (`internal/cli/settings_set.go:68`: the four budget scalars, `base_branch`, `max_parallel`,
-  `update_check`, `commit_name`, `commit_email`, `layer.default_profile`, and D873's three account
-  keys) and 76 through the nine prefixes (`internal/cli/settings_set.go:95`: `agent.`, `git.`,
-  `followup.`, `governance.`, `watch.`, `layer.defaults.`, `layer.governance.`, `credentials.`,
-  `clone_urls.`). **234 rows have no generic writer**, and the audit's whole subject is which of them
-  are a defect and which are the installation's own plumbing (F13, D1182).
+- **F1 — the registry is 323 rows and the generic writer carries 164 of them.** 88 by name
+  (`internal/cli/settings_set.go:81`), made of the thirteen §4.4 names (the four budget scalars,
+  `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`
+  and D873's three account keys), the two budget keys D1179 hands this path, and the wildcard blocks
+  D1161 gives it — a repository's 37 `workflows.*` rows and the project layer's 36 `profiles.*` ones;
+  the layer's five `ab.*` rows are listed beside them, but the models family owns them, so this count
+  does not carry them — and 76 through the nine prefixes
+  (`internal/cli/settings_set.go:195`: `agent.`, `git.`, `followup.`, `governance.`, `watch.`,
+  `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`). **159 rows have no generic
+  writer**, and the audit's whole subject is which of them are a defect and which are the
+  installation's own plumbing (F13, D1182).
 - **F2 — `fugaro rigor` does not exist.** There is no `newRigorCmd` in `internal/cli`, no `rigor` cobra
   command and no `floor` subcommand, while the registry names `rigor` (`internal/settings/registry.go:266`)
   and `rigor floor` (`:682`) as the owners of keys. Two of the registry's owner strings name a command a
@@ -57,7 +61,7 @@ what the guard at the end of this section re-runs.
 - **F8 — the editors for the missing shapes already exist and the write path does not call them.**
   `yamledit.UpsertSeqItemByKey` and `RemoveSeqItemByKey` (`internal/yamledit/yamledit.go:294`, `:351`)
   address an object-list entry by its key field, and the write path's dispatch
-  (`internal/cli/settings_set.go:1005`) reaches only `SetScalar`, `AddListItem` and `RemoveListItem`.
+  (`internal/cli/settings_set.go:1107`) reaches only `SetScalar`, `AddListItem` and `RemoveListItem`.
   The gap is one dispatch and one flag pair, not a new editor.
 - **F9 — the settings-write document is version 1 with ten required members, and the console reads it.**
   `schemas/settings-write.schema.json:20` pins `"const": 1`, and `version`, `key`, `layer`, `path`,
@@ -74,7 +78,7 @@ what the guard at the end of this section re-runs.
   `rigor floor`, `accounts`, `secrets` and `project`; `setup`, `update` and `config` are absent, so the
   rows they own read with no family beside them (`internal/cli/settings_read.go:388`). The read is not
   the only caller: the same map is what refuses a write and points the key at its family
-  (`internal/cli/settings_set.go:298`). So a family cannot simply be added — `config` owns `max_parallel`
+  (`internal/cli/settings_set.go:402`). So a family cannot simply be added — `config` owns `max_parallel`
   (`internal/settings/registry.go:560`) and `setup` owns `update_check` (`:566`), and **both keys are in
   the allowlist and are written by the generic path today**, so an entry for either family would refuse
   two keys `settings set` writes. The map also carries no entry for the default owner
@@ -82,18 +86,20 @@ what the guard at the end of this section re-runs.
   which is the shape F13's two rows are read through. D1178 decides what the read resolves an owner
   through instead of widening a map that answers a second question.
 - **F12 — a concrete key reaches a wildcard row only when the allowlist names that row.**
-  `settingsWriteLookup` (`internal/cli/settings_set.go:328`) matches `settingsPatternMatch` (`:351`)
+  `settingsWriteLookup` (`internal/cli/settings_set.go:430`) matches `settingsPatternMatch` (`:453`)
   across the registry's wildcard rows, bounded to the rows `settingsGenericKeys` carries by name — which
-  is how `stages.*.claude_account` (`:84`) is reachable and why `workflows.*`
-  (`internal/settings/registry.go:223`) is not. The literal `*` spelling keeps its own refusal
-  (`internal/cli/settings_set.go:306`).
+  is how `stages.*.claude_account` (`:99`) is reachable, and why a wildcard row the allowlist does not
+  carry stays unreachable however it is spelled. The literal `*` spelling keeps its own refusal
+  (`internal/cli/settings_set.go:406`). **D1161 is the decision that widens the named rows**: to a
+  repository's `workflows.*` (`internal/settings/registry.go:223`, the row this finding was written
+  about) and the layer's `profiles.*`.
 - **F13 — `budget.mode` and `budget.per_day_usd` name no owner and default to `settings set`, and the
-  generic path refuses them on purpose.** The rows are `internal/settings/registry.go:210` and `:213`,
-  the default owner is `:324`, and the allowlist's own comment (`internal/cli/settings_set.go:60`) says
-  in so many words that the spec does not hand them to the generic path. So they are **unwritable and
-  owned by a command that will not write them**: the sharpest single defect of the audit. The other two
-  keys of the same block — `budget.per_run_usd` and `budget.allowed_models` — *are* in the allowlist
-  (`internal/cli/settings_set.go:68`), so the four rows of a repository's own budget block are split
+  generic path refused them on purpose.** The rows are `internal/settings/registry.go:210` and `:213`,
+  the default owner is `:324`, and the allowlist's own comment said so in as many words until D1179
+  rewrote it (`internal/cli/settings_set.go:65`). So they were **unwritable and owned by a command that
+  will not write them**: the sharpest single defect of the audit. The other two keys of the same block —
+  `budget.per_run_usd` and `budget.allowed_models` — *are* in the allowlist
+  (`internal/cli/settings_set.go:81`), so the four rows of a repository's own budget block were split
   across two answers for no reason a reader can see; D1179 makes them one.
 - **F14 — the census row this folder moves is a running total of other folders' guards.**
   `docs/rigor-modes/reconciliation.md:732` counts the folders that ship their own
@@ -118,11 +124,11 @@ on.
   policy node's (`internal/cli/project_cmd.go:450`). A second guard here would be a second contract for
   one document, so D1166 keeps the one that exists.
 - **C2 — `--add` and `--remove` already exist.** The brief asks for them as new. They are on the shared
-  option struct (`internal/cli/settings_set.go:121`, `:122`) and they write **string-list** items
+  option struct (`internal/cli/settings_set.go:221`, `:222`) and they write **string-list** items
   through `yamledit.AddListItem` / `RemoveListItem` (`:1005`). What does not exist is an entry write for
   a map or an object list, which is what D1162 adds and what F8 shows the editor already supports.
 - **C3 — the wildcard resolver already exists.** The brief reads the wildcard gap as a parsing gap. It
-  is an allowlist gap: `settingsWriteLookup` (`internal/cli/settings_set.go:328`) already resolves a
+  is an allowlist gap: `settingsWriteLookup` (`internal/cli/settings_set.go:430`) already resolves a
   concrete key against a wildcard row, for the rows the allowlist names (F12). Nothing in the resolver
   changes; the decision is which rows the allowlist gains (D1161).
 - **C4 — `budget.mode` and `budget.per_day_usd` do not carry an empty owner.** Their rows store
@@ -148,7 +154,7 @@ on.
 - **C7 — `job_profiles.*` and `image_catalog.entries.*` are already `project`-family keys.** The rows
   say so (`internal/settings/registry.go:647`, `:690`), so the two commands the brief asks for extend a
   family that exists rather than creating one, and they are refused by the generic path today for
-  exactly that reason (`internal/cli/settings_set.go:298`).
+  exactly that reason (`internal/cli/settings_set.go:402`).
 - **C8 — the secret policy keys are already `secrets`-family keys** (`internal/settings/registry.go:644`),
   so the flags of D1171 extend `secrets` and do not need a new owner row. The one thing they do need is
   the rule that a secret's **value** is never a setting: it has no row in the registry at all, and this
@@ -189,7 +195,7 @@ rather than its conclusion.
 - **D1161 (a concrete key addresses a wildcard row) — OPEN, recommended.**
   Recommendation: the allowlist gains the wildcard blocks this design manages — a repository's
   `workflows.*`, the layer's `profiles.*` and `ab.*` — and each concrete spelling resolves through the
-  resolver that exists (`internal/cli/settings_set.go:328`). The row keeps the key as written,
+  resolver that exists (`internal/cli/settings_set.go:430`). The row keeps the key as written,
   which is the path the edit lands on, and the registry spelling is what the allowlist is asked about —
   the shape `stages.*.claude_account` (`:84`) already has.
   Cost of the alternative: requiring the literal `*` needs no decision and makes the command unusable by
@@ -201,7 +207,7 @@ rather than its conclusion.
 - **D1162 (one new flag pair, `--add-entry` / `--remove-entry`, for maps and object lists) — OPEN,
   recommended.**
   Recommendation: `--add` and `--remove` keep writing string-list items
-  (`internal/cli/settings_set.go:1005`) and the new pair carries an entry: for a **map**,
+  (`internal/cli/settings_set.go:1107`) and the new pair carries an entry: for a **map**,
   `--add-entry key=value` and `--remove-entry key`; for an **object list**, the entry's key field and
   its fields, resolved by `yamledit.UpsertSeqItemByKey` and `RemoveSeqItemByKey`
   (`internal/yamledit/yamledit.go:294`, `:351`).
@@ -224,7 +230,7 @@ rather than its conclusion.
 
 - **D1164 (the settings-write document keeps version 1 and gains its entry members as optional ones, and
   the console keeps working unchanged) — OPEN, recommended.**
-  Recommendation: `settingsWriteDocVersion` (`internal/cli/settings_set.go:1197`) and the schema's const
+  Recommendation: `settingsWriteDocVersion` (`internal/cli/settings_set.go:1299`) and the schema's const
   (`schemas/settings-write.schema.json:20`) **stay at `1`**, and the entry write's members — `operation`,
   the entry's key field, the entry's members — are **added as optional members**, none of them required.
   The document's own description is the rule being followed: members are only ever added within a version
@@ -243,7 +249,7 @@ rather than its conclusion.
 - **D1165 (an entry write is classified, confirmed and fenced exactly as a scalar write is) — OPEN,
   recommended.**
   Recommendation: the entry pair goes through the same `settingsTypedWrite` classification
-  (`internal/cli/settings_set.go:886`) and the same `applySettingsEdit`
+  (`internal/cli/settings_set.go:988`) and the same `applySettingsEdit`
   (`internal/cli/settings_write.go:86`), so a widening is still the typed project name (**D846**,
   `docs/settings-commands/reconciliation.md:218`), `--yes` still answers it only outside a coding
   agent's session (**D1107**, `internal/cli/settings_write.go:127`) and the agent-session fence
@@ -257,7 +263,7 @@ rather than its conclusion.
 
 - **D1166 (the dry run, the backup and the byte compare-and-swap are the existing ones; no ETag is
   added) — OPEN, recommended.**
-  Recommendation: `--dry-run` prints the one document (`internal/cli/settings_set.go:1211`), the write
+  Recommendation: `--dry-run` prints the one document (`internal/cli/settings_set.go:1313`), the write
   backs the file up through `backupFile` (`internal/cli/init.go:2602`) and refuses a file that moved
   through the compare-and-swap (`internal/cli/settings_write.go:150`). A field never changes meaning;
   the entry fields are members **added** to the document (D1164).
@@ -382,7 +388,7 @@ rather than its conclusion.
 - **D1176 (the edit's own next step publishes; `fugaro config publish` stays, but no edit needs it) —
   OPEN, recommended.**
   Recommendation: a layer write ends with `next: fugaro update`
-  (`internal/cli/settings_set.go:1070`) and `update`'s Layer stage publishes the file every writer here
+  (`internal/cli/settings_set.go:1172`) and `update`'s Layer stage publishes the file every writer here
   has just written — the HARD RULE's own command, not a second one. `config publish` remains the
   operator's door and the door the agent runs under the gate
   ([managed spec](../managed-agent-converge/spec.md) §4.2), so nothing documented is removed; what
@@ -430,7 +436,7 @@ rather than its conclusion.
   Recommendation: `budget.mode`, `budget.per_day_usd`, `budget.per_run_usd` and `budget.allowed_models`
   (`internal/config/scope.go:91`, four `InRepo` rows) are a repository's own tightening of a ceiling and
   **stay the generic writer's**. Two of them are already in the allowlist
-  (`internal/cli/settings_set.go:68`: `budget.per_run_usd`, `budget.allowed_models`); the other two are
+  (`internal/cli/settings_set.go:81`: `budget.per_run_usd`, `budget.allowed_models`); the other two are
   **added to it**, which is the whole change F13 needs, so a key `settings set` writes and a key its
   allowlist carries are the same set (D1160). `fugaro budget set` keeps writing the budget **database**'s
   caps under its ETag-guarded write (`internal/cli/budget.go:923`) and owns no registry row: handing it

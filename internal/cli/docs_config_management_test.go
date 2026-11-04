@@ -87,12 +87,17 @@ const (
 )
 
 // The audit's two figures (F1): the registry's rows, and the rows the generic
-// write path's allowlist carries -- thirteen by name and the rest through the
-// nine prefixes. They are re-counted below rather than trusted, because the
-// whole of §1's argument is that 234 rows have no writer.
+// write path's allowlist carries -- eighty-eight by name and the rest through
+// the nine prefixes. They are re-counted below rather than trusted, because the
+// whole of §1's argument is that the rows no writer carries are the defect.
+//
+// The named figure moved with G0, which is what the audit's §5 says a figure in
+// a document does: the allowlist gained the wildcard blocks D1161 hands this
+// path and the two budget keys D1179 does, and the two documents whose argument
+// is made of this count carry the number the count produced.
 const (
 	cfmRegistryRows   = 323
-	cfmAllowlistNamed = 13
+	cfmAllowlistNamed = 88
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {
@@ -320,11 +325,11 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 
 // TestDocsConfigManagementAllowlistCounts: the figure the audit's whole argument
 // is made of is re-counted here rather than trusted. The registry holds 323 rows
-// and the generic write path's allowlist carries thirteen of them by name plus
-// the rows its nine prefixes reach; the documents state the registry's count and
-// the allowlist's, and a row added to either -- which moves the gap between the
-// two -- fails here rather than leaving §1's "234 rows have no generic writer"
-// reading as checked when it is not.
+// and the generic write path's allowlist carries eighty-eight of them by name
+// plus the rows its nine prefixes reach; the documents state the registry's
+// count and the allowlist's, and a row added to either -- which moves the gap
+// between the two -- fails here rather than leaving §1's "159 rows have no
+// generic writer" reading as checked when it is not.
 //
 // It counts through the same predicate the write path uses, so the test and the
 // command cannot disagree about what "the allowlist carries" means: the three
