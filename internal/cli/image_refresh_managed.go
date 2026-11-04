@@ -60,9 +60,9 @@ type refreshManaged struct {
 	// refreshPreflight is handed: a plan judged against one installation and
 	// applied to another is the drift internal/infra/managed's own warning
 	// about gcpProject is about, so the selection is made once and used twice.
-	lc    *localcfg.Config
+	lc     *localcfg.Config
 	lcPath string
-	lcOld []byte
+	lcOld  []byte
 	// s, crm and db are the clients the read used, kept because the bound and
 	// the kill switch are re-read with them before every build.
 	s   *storage.Service
