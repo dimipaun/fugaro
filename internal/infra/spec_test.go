@@ -3440,6 +3440,36 @@ func TestSpecCatalogIsTheProjectsOwnWhenTheLocalConfigWritesOne(t *testing.T) {
 	}
 }
 
+// prebuiltCatalogEntries are the same three entries with a prebuilt image
+// source: nothing in Fugaro builds them, so the daily check has nothing of
+// theirs to rebuild.
+func prebuiltCatalogEntries() []config.Entry {
+	return []config.Entry{
+		{Name: "minimal", Tags: []string{"postgres", "redis"}, Source: config.Source{Kind: config.SourceImage, Image: "example.invalid/catalog-minimal:1"}},
+		{Name: "standard", Default: true, Tags: []string{"node", "postgres", "redis"}, Source: config.Source{Kind: config.SourceImage, Image: "example.invalid/catalog-standard:1"}},
+		{Name: "universal", Tags: []string{"node", "postgres", "redis", "firebase-emulator"}, Source: config.Source{Kind: config.SourceImage, Image: "example.invalid/catalog-universal:1"}},
+	}
+}
+
+// TestSpecCatalogOnlyRepoNeedsNoBaseImage: the daily check rebuilds the
+// repository's own derived image, and a workflow a catalog entry gives its
+// image to never runs one — a prebuilt entry's image is pushed by the
+// operator, and a built one is the catalog's own check's to rebuild. Such a
+// workflow is therefore never checked here, so a repository whose every
+// workflow runs a catalog entry needs no base_images entry at all and
+// fugaro update --repo must not refuse it for one (issue 1661 item 3).
+func TestSpecCatalogOnlyRepoNeedsNoBaseImage(t *testing.T) {
+	in := catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()})
+	delete(in.LC.BaseImages, config.BaseKind)
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatalf("Repo = %v, want no error: no workflow of this repository runs a per-repository image", err)
+	}
+	if rs.Check != nil {
+		t.Errorf("the repository has a daily image check job %s, want none: every workflow runs a catalog entry", rs.Check.Job)
+	}
+}
+
 // TestPlanWorkflowJobMovesACatalogJobsImage: a baked job whose image the
 // project's catalog chose is the third shape the mover accepts, and the only
 // baked one (D1152, PIC5). Both halves of the move have to be catalog images,
