@@ -29,9 +29,9 @@ const MaxDockerfileBytes = gitprov.MaxContentsBytes
 // is taken from the entry itself, with no repository involved.
 //
 // open and kind are the project's git provider opener and kind
-// (gitprov.KindGitHub or KindBitbucket). A kind whose provider cannot read a
-// file (gitprov.ContentsReader, which the Bitbucket adapter does not
-// implement) is refused: an inline entry needs neither.
+// (gitprov.KindGitHub or KindBitbucket, both of which read a file). A kind
+// whose provider cannot read one (Readable) is refused: an inline entry needs
+// neither.
 //
 // The credential the opener returns is dropped here: nothing in this
 // function writes it, returns it or puts it in a failure — what a caller
@@ -83,7 +83,7 @@ func fetchDockerfile(ctx context.Context, open gitprov.Opener, kind string, e co
 	}
 	r, ok := p.(gitprov.ContentsReader)
 	if !ok {
-		return nil, fmt.Errorf("the catalog entry %s: the %s provider cannot read a file out of %s, so its Dockerfile cannot be fetched; use an inline definition or a repository on a provider that can", nameOf(e), pluginwire.Printable(kind), pluginwire.Printable(s.Repo))
+		return nil, UnreadableRefusal(e, kind)
 	}
 	data, err := r.Contents(ctx, s.Path, s.Branch)
 	if err != nil {
@@ -94,6 +94,35 @@ func fetchDockerfile(ctx context.Context, open gitprov.Opener, kind string, e co
 		return nil, fmt.Errorf("the catalog entry %s: reading %s from %s: %w", nameOf(e), pluginwire.Printable(s.Path), pluginwire.Printable(s.Repo), err)
 	}
 	return bounded(e, data)
+}
+
+// Readable reports whether the adapter for a provider kind reads a file out
+// of its repository (gitprov.ContentsReader): the GitHub and the Bitbucket
+// adapters do, and that is what this list is — a kind whose adapter does not
+// is refused wherever a dockerfile source is resolved or accepted.
+//
+// It is the offline half of the read, for a caller that has no provider open
+// and no credential to open one with, and must still refuse a dockerfile
+// source before anything is built (fugaro image add, fugaro validate). What a
+// read actually gets is the type assertion in fetchDockerfile, which stays
+// where it is: an opener may return a provider of a kind this list admits and
+// that still cannot answer, and then the read is what refuses it.
+func Readable(kind string) bool {
+	switch kind {
+	case gitprov.KindGitHub, gitprov.KindBitbucket:
+		return true
+	}
+	return false
+}
+
+// UnreadableRefusal is the refusal a dockerfile source on a provider that
+// cannot read a file gets, in one place: fetchDockerfile's own refusal and
+// the commands that refuse the source before a build ever starts (fugaro
+// image add, fugaro validate) print the same sentence, so an operator who
+// meets it early meets the one the build would have given.
+func UnreadableRefusal(e config.Entry, kind string) error {
+	return fmt.Errorf("the catalog entry %s: the %s provider cannot read a file out of %s, so its Dockerfile cannot be fetched; use an inline definition or a repository on a provider that can",
+		nameOf(e), pluginwire.Printable(kind), pluginwire.Printable(e.Source.Repo))
 }
 
 // bounded refuses a definition larger than MaxDockerfileBytes. It is applied
