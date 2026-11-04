@@ -15,7 +15,7 @@ themselves, and **the CLI holds no App key and reads no environment variable**.
 | File | What it holds |
 | --- | --- |
 | [spec.md](spec.md) | The behaviour: which launch reaches this decision, where the document comes from, at which ref, what it is trusted for, the failure modes and their messages, the console's contract, `--retry` and `--pr`, and the threat model |
-| [reconciliation.md](reconciliation.md) | Each spec claim against the code on `main`: what exists, what is missing, what conflicts (findings F1–F13), then the decisions D901–D919 with the owner's answers |
+| [reconciliation.md](reconciliation.md) | Each spec claim against the code on `main`: what exists, what is missing, what conflicts (findings F1–F14), then the decisions D901–D919 with the owner's answers |
 | [implementation-plan.md](implementation-plan.md) | Tasks A1–A4, B1–B2, C1 and D1, the files each owns, its tests, its red step and its commit, the shared-files table, and the slot this work takes |
 
 ## What it is
@@ -24,7 +24,9 @@ A run is one execution of one Cloud Run **job**. Which job is decided by the lau
 job is started: a workflow whose `checkout` kind is `clone` runs on a shared **project job**
 (`gcp.ProjectJobName(profile, provider, account)`) that the project's published policy defines, and
 every other workflow runs on the repository's own job
-(`gcp.JobName(slug, gcp.WorkflowVariant(workflow, token))`). The kind and the profile come from the
+(`gcp.JobName(slug, gcp.WorkflowVariant(workflow, token))`). The project's image catalog and #1676's
+removal of per-repository **images** move the image axis and not the job axis: a repository's own
+workflows still run on its own job (reconciliation F14). The kind and the profile come from the
 repository's `fugaro.yaml` — from the file at the ref the run checks out.
 
 So a launch that has no checkout of the repository cannot decide the job, and the tree refuses it

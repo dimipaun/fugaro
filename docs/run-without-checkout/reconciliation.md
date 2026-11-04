@@ -150,6 +150,29 @@ core import of `ee/`, so the launcher cannot reuse that function and needs its o
 argv is the plain mint for a person and the audience-scoped one for a service account, exactly as that
 function decides it. This is new work in this round, and the plan's A3 carries it.
 
+**F14. What the re-check of 2026-11-04 found changed elsewhere, and why none of it moves this
+design.** Three things landed since the first reading, and each is checked here rather than assumed:
+
+- **The project image catalog** (jobs deploy on catalog images, 0.16.0's design at 0.17.0's build) and
+  **#1676**'s removal of per-repository *images* move the image axis and not the job axis. A repository
+  still has its own Cloud Run job (`gcp.JobName(slug, gcp.WorkflowVariant(...))`) and a clone workflow
+  on a provider a shared job serves still runs on the shared one (`gcp.ProjectJobName`), so "the
+  repository's own job" — and "the per-repository job" — remain the right names for the placement this
+  design decides, and #1676 changes nothing in it. The catalog does touch one kind: `checkout: shared`
+  (a shared dependency-layer image, still refused by `fugaro validate` until one is released) is not
+  `clone`, so §1's step 2 keeps its per-repository job; the design already treats it that way.
+- **The managed gate** (a managed project's rules over what a session may write: `update`,
+  `config publish`, `image refresh`, `accounts add`, `project policy publish`, `settings`) governs
+  writes to the project's own documents, and it does not govern this read: the document is a
+  repository's own `fugaro.yaml` read through the credentials service, `fugaro run` is not one of the
+  gated commands, and A2/A3 add a placement rather than a document. The design therefore adds no gated
+  write and needs no entry in the gate's rules — stated here because a design that reads a document to
+  decide a run is exactly where a reader would expect one.
+- **`fugaro upgrade` still exists** as the local half of an upgrade, and nothing here needs it: the
+  design's only operator step, where it has one, is `fugaro update`. `internal/runner/stray.go`
+  (#1476) is the runner's stray-artifact refusal at finalize — a different stage from this decision,
+  which happens before anything is started.
+
 ## 2. What the brief asks for that the tree cannot do
 
 **"Let the runner pick the job after cloning."** It cannot, and the spec says so (§9): a Cloud Run
