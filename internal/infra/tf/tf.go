@@ -317,6 +317,17 @@ func (t *TF) Show(ctx context.Context, planFile string) (*Plan, error) {
 	return parsePlan(data)
 }
 
+// ShowJSON reads a saved plan file and returns terraform's own JSON for it:
+// the bytes plan.go's rules are parsed from and therefore the document a
+// managed gate's digest is of (D1022). Show is this function plus the parse,
+// and the two are kept apart because a gate that hashed the plan FILE would be
+// hashing bytes no rule ever read: the file is terraform's own format, and what
+// the gate judged — and what an owner checks their kept document against — is
+// this JSON.
+func (t *TF) ShowJSON(ctx context.Context, planFile string) ([]byte, error) {
+	return t.showJSON(ctx, planFile)
+}
+
 func (t *TF) showJSON(ctx context.Context, planFile string) ([]byte, error) {
 	if planFile == "" || strings.HasPrefix(planFile, "-") {
 		return nil, fmt.Errorf("terraform show: bad plan file %q", planFile)
