@@ -1,22 +1,23 @@
 # Repository image removal: reconciliation against the code
 
-**Status: a design, and every decision in it is open.** The owner's ruling of 2026-11-04 —
+**Status: a design, and every decision in it is answered.** The owner's ruling of 2026-11-04 —
 *"Completely disable repo-level images for now to make things simpler."* — is reconciled here against
-the tree at `aa034db1`, and **where this file disagrees with [spec.md](spec.md), this file wins**. Each
-decision **D1190–D1208** carries its recommendation, the cost of the alternative and the cost of the
-recommendation; the block and how it was read are §3.
+the tree of **`777b902d`** (the merge of `main` this round read, 2026-11-04), and **where this file
+disagrees with [spec.md](spec.md), this file wins**. Each decision **D1190–D1208** carries the owner's
+answer of **2026-11-04**, the one-line reason it rests on, its recommendation and the cost of the
+alternative and of the recommendation; the block and how it was read are §3.
 
 ---
 
 ## 1. The audit, against the tree
 
 Each finding is **Exists**, **Missing** or **Conflicts**: what the brief assumed, read against the
-code. A `:line` is a **declaration** line at `aa034db1`; the symbol is what to search for.
+code. A `:line` is a **declaration** line at `777b902d`; the symbol is what to search for.
 
 - **F1: Exists. A job's image is per `(repository, workflow)`, a `:latest` tag in the repository's own
-  registry.** `internal/infra/spec.go:1011` computes
+  registry.** `internal/infra/spec.go:1019` computes
   `gcp.ImageName(c.registryPath(), slug, name) + ":latest"`, `internal/backend/gcp/names.go:233` is the
-  name function, and `internal/infra/spec.go:749` (`registryPath`) is the registry it lands in. Nothing
+  name function, and `internal/infra/spec.go:757` (`registryPath`) is the registry it lands in. Nothing
   about the image is project-level except the catalog's newer path.
 
 - **F2: Exists. `image:` is the repository's build input and it has no name.**
@@ -32,7 +33,7 @@ code. A `:line` is a **declaration** line at `aa034db1`; the symbol is what to s
 
 - **F4: Exists. The catalog is the *other* path, and one predicate turns it off.**
   `internal/catalog/select.go:318` (`Applies`) returns false as soon as the workflow sets `image:` or
-  `dockerfile:`, which is why `internal/infra/spec.go:799` (`catalogJobImage`) is reached for every
+  `dockerfile:`, which is why `internal/infra/spec.go:807` (`catalogJobImage`) is reached for every
   workflow *except* the ones this design is about. The tree carries two image paths today, and that is
   finding F4's whole point.
 
@@ -41,23 +42,29 @@ code. A `:line` is a **declaration** line at `aa034db1`; the symbol is what to s
   `image_catalog` key), `internal/projectpolicy/policy.go:1131` (its validation where it is published).
 
 - **F6: Exists. The catalog's deploy-time selection is built**, with the tag-cover rule and the two
-  refusals: `internal/infra/spec.go:799`, and the config-side references
+  refusals: `internal/infra/spec.go:807`, and the config-side references
   (`image_name`, `needs`) at `internal/config/config.go:619`, `:626`.
 
-- **F7: Exists. The catalog's scheduled check has its decision layer and not its schedule.**
-  `internal/imagecheck/catalog.go:20` (`CheckCatalog`) landed; the Terraform piece the D1148 answer
-  calls for has not, and `internal/cli/imagecheck.go:221` (`checkedWorkflows`) still decides what the
-  **per-repository** check looks at.
+- **F7: Exists, in two pieces and at two stages. The catalog's scheduled check has its decision layer
+  and its job mode, and not yet its schedule.** `internal/imagecheck/catalog.go:20` (`CheckCatalog`)
+  landed, and so has the job mode itself — `fugaro image check --job --catalog`
+  (`internal/cli/image_check_catalog.go:31`, the spec it reads out of `catalogCheckSpecEnv`), merged as
+  **#1679**; the Terraform piece the D1148 answer calls for — the installation-level Scheduler and its
+  target — is open as **#1683**. `internal/cli/imagecheck.go:241` (`checkedWorkflows`) still decides
+  what the **per-repository** check looks at, and that is the arm the removal takes.
 
-- **F8: Exists, and it matters for the order. The catalog is not yet the deployed path on `main`:**
-  `internal/cli/recipes_skew.go:177` holds `imageCatalogShipped = false` beside
-  `imageCatalogSince = "0.17.0"` (`:169`), its twin at `internal/infra/readiness.go:755` holds the same
-  fact, and the open pull request #1665 flips both. So the removal is sequenced behind a flip that has
-  not merged, and a plan that removed the per-repository path first would leave the tree with **no**
-  deployed image path at all. **The direction of the failure is the safe one**, which is why the
-  dogfood migration can be planned rather than hoped for: a workflow that names an entry while the flag
-  is false is **held back, not silently mis-imaged** — readiness refuses the job and says why
-  (`internal/infra/readiness.go:459`, and the same words again at `:507`).
+- **F8: Exists, and the order has moved under it since this finding was written: the catalog is the
+  shipped path on `main`.** `internal/cli/recipes_skew.go:176` and `internal/infra/readiness.go:762`
+  both hold `imageCatalogShipped` **true** — "as of 0.18.0, the first release that ships the flip", its
+  own comment says (`internal/cli/recipes_skew.go:171`), 0.17.0 having published the key with the gate
+  still false. The pull request this finding named as open, **#1665**, is **merged**, and so is
+  **#1679**, the catalog check job's mode. What is still open is **#1683**, D1148 (ii)'s
+  installation-level schedule and its repo-module pieces, so the removal is sequenced behind **one**
+  merge rather than behind a flag, and the plan's step 0 (§2) is already done. The safe direction this
+  finding described is also the reason the dogfood migration can be planned rather than hoped for: a
+  workflow that named an entry while the flag was false was **held back, not silently mis-imaged** —
+  readiness refused the job and said why (`internal/infra/readiness.go:462`, the same words again at
+  `:512`).
 
 - **F9: Exists. One Cloud Run job per repository, one Scheduler, one name function.**
   `deploy/terraform/gcp/modules/repo/check.tf:16` (`google_cloud_run_v2_job "check"`), `:116`
@@ -77,16 +84,16 @@ code. A `:line` is a **declaration** line at `aa034db1`; the symbol is what to s
   This is what makes the retirement in §4 of [spec.md](spec.md) a separate, explicit act.
 
 - **F12: Exists. Readiness asks for a repository image, by tag, in the repository's own registry.**
-  `internal/infra/readiness.go:30` (`MissingImage`), `:723` (`hasLatest`), and the per-workflow
+  `internal/infra/readiness.go:30` (`MissingImage`), `:731` (`hasLatest`), and the per-workflow
   decision at `internal/infra/readiness.go:445`. The catalog branch is already beside it
   (`catalogImageEntry`), which is what lets the removal **replace** the check rather than delete it.
 
 - **F13: Exists. `repoCtx.check` is the one producer of the check spec.**
-  `internal/infra/spec.go:1440` builds the `CheckSpec` (`internal/infra/spec.go:318`) that the module
+  `internal/infra/spec.go:1451` builds the `CheckSpec` (`internal/infra/spec.go:326`) that the module
   turns into the job and the Scheduler, from the head's workflows and the repository's registry.
 
 - **F14: Exists. The image is fixed at deploy time, so every choice here is a deploy-time choice.**
-  `internal/infra/spec.go:799`'s comment states it and `internal/infra/spec.go:1011` implements it: the
+  `internal/infra/spec.go:807`'s comment states it and `internal/infra/spec.go:1019` implements it: the
   job's image is written into the job, and a run cannot change it. A refusal for a bad image therefore
   has to happen where the spec is built, not where the run starts.
 
@@ -130,7 +137,7 @@ code. A `:line` is a **declaration** line at `aa034db1`; the symbol is what to s
   `internal/cli/docs_website_cliref_test.go:186`. Removing a command without moving these fails a test.
 
 - **F22: Conflicts. `checkout: baked`'s image *is* the per-repository tag, so removing the tag changes
-  what `baked` resolves to.** `internal/infra/spec.go:1011` computes it and `:1014` gives `clone` the
+  what `baked` resolves to.** `internal/infra/spec.go:1019` computes it and `:1023` gives `clone` the
   base image instead. `checkout` keeps both its values, but what `baked` points at is no longer built by
   the engine — a decision, not an implementation detail (D1191).
 
@@ -192,16 +199,16 @@ Six corrections, each a fact of the tree rather than an opinion:
 The decision block is taken **above every `D<number>` on `main` and in every open work stream**, read on
 **2026-11-04** by fetching each **branch** and reading it rather than by trusting a neighbour's table.
 
-- **On `main`**, at the head this branch was cut from (`aa034db1`), the highest **written** decision is
-  **D1183** (`docs/config-management/reconciliation.md`, that work's block D1160–D1183) and the highest
-  number **named** is **D1189**, its reserved tail. No `D119x` or `D12xx` appears anywhere in `docs/`.
-- **In the open work streams**, re-checked in this run by fetching each branch and reading it — the
-  branch is the evidence. The highest number any of them names is again **D1189**, from the same
+- **On `main`**, re-read in this round at `777b902d`, the highest **written** decision is **D1183**
+  (`docs/config-management/reconciliation.md`, that work's block D1160–D1183) and the highest number
+  **named** is **D1189**, its reserved tail. No `D119x` or `D12xx` appears anywhere in `docs/`.
+- **In the open work streams**, re-checked by fetching each branch and reading it — the branch is the
+  evidence. The highest number any of them names is again **D1189**, from the same
   configuration-management folder `main` carries; `docs/workspaces` (#1492), `docs/binary-allow-rule`
   (#1491), `docs/periodic-reviews` (#1490), `docs/mcp-server` (#1487), `docs/plugin-user-scope`
   (#1488) and `docs/run-without-checkout` (#1481) all sit below D1027, and the managed-mode, settings
-  and catalog **code** branches (#1663, #1665, #1666–#1673) write no new decision. **D1190 is therefore
-  free.**
+  and catalog **code** streams (#1663, #1665, #1666–#1673, and the open #1683, #1685 and #1686) write
+  no new decision. **D1190 is therefore free.**
 - **This work takes D1190–D1219: D1190–D1208 are written here, and D1209–D1219 are reserved and
   unused** — the thirty-wide width `docs/ee-reorg` took for D520–D549. A later task that needs a number
   re-checks this section's facts rather than its conclusion.
@@ -210,13 +217,23 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
 
 ## 4. The decisions
 
-- **D1190 (what exactly is removed, and in how many pieces) — OPEN, recommended.**
+**The owner answered all nineteen on 2026-11-04.** Seven of them — D1190, D1191, D1192, D1195, D1201,
+D1202 and D1208 — are **answered as recommended**, or with the one correction the answer itself states;
+the other twelve — D1193, D1194, D1196–D1200 and D1203–D1207 — carry **`default-by-owner: not
+objected`**, which is what it says: the owner read the recommendation and did not object, so it stands
+as the design's default and **is not a ruling** — a later reader may still raise one. Each entry keeps
+its `Recommendation` and both costs, so the answer and the price of the other reading sit together.
+
+- **D1190 (what exactly is removed, and in how many pieces) — ANSWERED by the owner, 2026-11-04, as
+  recommended: all four places, in 0.18.0.** The reason, in the owner's own terms: this is a removal and
+  not a deprecation, so splitting it across releases would leave both image paths alive and the ruling's
+  simplification unpaid.
   Recommendation: the four places of [spec.md](spec.md) §1 — the **configuration** (the `image.*`
   block, `dockerfile:`, `rebuild.*`, the scope rows, the registry rows and the three schemas), the
   **commands**
   (`image build`'s derived arm, `image refresh`'s derived steps, `check`, `status`, `render`, `gate`,
   `record`, `promote`), the **deploy path** (the derived image name, the per-repository check job and
-  its Scheduler, the repository's registry, readiness) and the **writers** (the setup skill, the
+  its Scheduler, the derived build path's grants, readiness) and the **writers** (the setup skill, the
   plugin, the console, the website) — in one release, in the order [spec.md](spec.md) §3.1 gives:
   configuration, deploy path, commands.
   Cost of the alternative: leaving the commands alive while the configuration refuses produces a
@@ -224,8 +241,11 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   Cost of the recommendation: 0.18.0 carries a Terraform change, a CLI change and two schema changes
   at once, and the Terraform one is a **SEC** task that a reviewer reads line by line.
 
-- **D1191 (`checkout: baked` after the removal, and the one rule the catalog gains) — OPEN,
-  recommended.**
+- **D1191 (`checkout: baked` after the removal, and the one rule the catalog gains) — ANSWERED by the
+  owner, 2026-11-04: keep both `checkout:` values, and refuse a prebuilt entry on a `baked` workflow at
+  deploy time.** The reason: `checkout` is a wire field and `CLAUDE.md` forbids re-meaning one, and a
+  prebuilt image is the one source kind nothing guarantees holds the checkout. **The refusal is a new
+  deploy-time refusal, so R1 is a SEC task.**
   Recommendation: `checkout` **keeps both values** (`internal/config/config.go:657`) and both their
   meanings; a `baked` workflow's image is the **catalog's** choice, and a `baked` workflow whose chosen
   entry's source is a **prebuilt image** (`SourceImage`, `internal/config/catalog.go:71`) is **refused
@@ -237,7 +257,7 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   Cost of the recommendation: a new refusal to write and test, and it has to be **complete**, because
   a prebuilt entry that passes it deploys a job whose first minute fails.
 
-- **D1192 (how an existing repository migrates) — OPEN, recommended.**
+- **D1192 (how an existing repository migrates) — ANSWERED by the owner, 2026-11-04, as recommended: no migration command.** The reason: the dogfood repository and the sandbox repository run `fugaro image promote` **before** the removal lands, and the removed key's refusal names `fugaro image add`.
   Recommendation: **no migration command.** The migration is the two dogfood repositories' steps of
   [spec.md](spec.md) §3.1, run with the binary that still has `fugaro image promote`
   (`internal/cli/image_promote.go:19`) **before** the removal lands, and `promote` is removed in the
@@ -252,7 +272,7 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   reads the old `image:` block out of git history and passes it to `fugaro image add --inline`, which
   is a hand conversion, not a lost image.
 
-- **D1193 (the order, so the dogfood pipeline never loses its image) — OPEN, recommended.**
+- **D1193 (the order, so the dogfood pipeline never loses its image) — default-by-owner: not objected, 2026-11-04.** No answer came back on this one, so the design's recommendation stands as the default — on the reason the recommendation itself gives below, which is the reason a reader should re-check before building it.
   Recommendation: for this repository and the sandbox repository, **the entry, its build, the
   `image_name` pin and one confirmed run come first** — a task for this repository, an owner-run live
   step for the sandbox ([spec.md](spec.md) §3.1) — and every removal task is sequenced behind them and
@@ -264,7 +284,7 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   Cost of the recommendation: the first task of the series changes no engine code (it is a Dockerfile
   and a pin), so the series opens with a commit whose review value is its ordering.
 
-- **D1194 (retirement) — OPEN, recommended.**
+- **D1194 (retirement) — default-by-owner: not objected, 2026-11-04.** No answer came back on this one, so the design's recommendation stands as the default — on the reason the recommendation itself gives below, which is the reason a reader should re-check before building it.
   Recommendation: retirement stays **owner-run only** — `fugaro update --repo <r> --retire` with the
   two typed confirmations (`internal/cli/init.go:444`) — it is **never automatic**, **never** admitted
   by the managed gate, and `deletion_protection`
@@ -276,7 +296,7 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   Cost of the recommendation: an installation keeps an idle check job, an idle Scheduler entry and an
   empty registry until the owner runs one command, and that costs money in the meantime.
 
-- **D1195 (what a removed key says when it is read) — OPEN, recommended.**
+- **D1195 (what a removed key says when it is read) — ANSWERED by the owner, 2026-11-04, as recommended: a removed key is a refusal that NAMES the catalog command.** The reason: a person who meets the refusal has to be told what replaces the key, and a decoder's own words name nothing.
   Recommendation: each removed key becomes a **tombstone** in the config — the mechanism
   `image.node`/`image.jdk` already use (`internal/config/image.go:119`, `:122`) — and its refusal names
   the release and the catalog command that replaces it. Strict decoding
@@ -287,7 +307,7 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   Cost of the recommendation: the removed keys stay in the tree as names for at least one release, so
   "removed" means "refused and named", not "absent from the source".
 
-- **D1196 (the schemas, and the rows that make the keys writable) — OPEN, recommended.**
+- **D1196 (the schemas, and the rows that make the keys writable) — default-by-owner: not objected, 2026-11-04.** No answer came back on this one, so the design's recommendation stands as the default — on the reason the recommendation itself gives below, which is the reason a reader should re-check before building it.
   Recommendation: `schemas/fugaro.schema.json:358` loses `image` (`:396` for `dockerfile`, `:511` for
   `rebuild`) and its mutual-exclusion clauses (`:306`) shrink to `image_name` with `needs`;
   `schemas/project-layer.schema.json:265` loses the same keys (`:338` for `rebuild`);
@@ -305,7 +325,7 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   meets G0/G1 of [docs/config-management/implementation-plan.md](../config-management/implementation-plan.md)
   in `internal/settings/registry.go` (§4).
 
-- **D1197 (the fixtures and the golden) — OPEN, recommended.**
+- **D1197 (the fixtures and the golden) — default-by-owner: not objected, 2026-11-04.** No answer came back on this one, so the design's recommendation stands as the default — on the reason the recommendation itself gives below, which is the reason a reader should re-check before building it.
   Recommendation: the **50** files under `testdata/` carrying one of the three keys
   (`grep -rlE '^[[:space:]]*(image|dockerfile|rebuild):' testdata/`) are the task's own list. The
   **invalid** fixtures that assert an old refusal — `image-and-dockerfile.yaml`, the `legacy-image-*`
@@ -316,9 +336,9 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   Cost of the recommendation: 50 fixture files move in one commit, which is a large but purely
   mechanical diff, and every one of them is a file some test names.
 
-- **D1198 (skew) — OPEN, recommended.**
+- **D1198 (skew) — default-by-owner: not objected, 2026-11-04.** No answer came back on this one, so the design's recommendation stands as the default — on the reason the recommendation itself gives below, which is the reason a reader should re-check before building it.
   Recommendation: **no new skew pair.** `imageCatalogSince`/`imageCatalogShipped`
-  (`internal/cli/recipes_skew.go:169`, `:177`) keep their meaning and are not duplicated; the removed
+  (`internal/cli/recipes_skew.go:169`, `:176`) keep their meaning and are not duplicated; the removed
   keys are a **repository's own `fugaro.yaml`**, read and written by the same binary, so the removal's
   skew is a launcher-and-checkout pairing, which the release's `### For operators` states in one
   sentence. No wire shape is removed: `checkout`, `image_name` and `needs` are unchanged.
@@ -329,10 +349,10 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   Cost of the recommendation: an installation that upgrades the checkout before the CLI meets a refusal
   that names an upgrade, which is the ordinary direction of every skew in this tree.
 
-- **D1199 (the per-repository check job and its Scheduler) — OPEN, recommended.**
+- **D1199 (the per-repository check job and its Scheduler) — default-by-owner: not objected, 2026-11-04.** No answer came back on this one, so the design's recommendation stands as the default — on the reason the recommendation itself gives below, which is the reason a reader should re-check before building it.
   Recommendation: **removed**, with the ruling it folds in — *no repo-level scheduled check unless
-  there is a repo-level image* — and `checkedWorkflows` (`internal/cli/imagecheck.go:221`) and
-  `repoCtx.check` (`internal/infra/spec.go:1440`) go with them. The catalog's rebuilds are the
+  there is a repo-level image* — and `checkedWorkflows` (`internal/cli/imagecheck.go:241`) and
+  `repoCtx.check` (`internal/infra/spec.go:1451`) go with them. The catalog's rebuilds are the
   project-level schedule D1148 answers, and nothing per repository survives.
   Cost of the alternative: keeping one job per repository to check **catalog** entries makes N
   repositories race over one shared registry and one build bound, and it is a second scheduler doing
@@ -340,7 +360,7 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   Cost of the recommendation: a project all of whose entries are prebuilt images gets a scheduled check
   that fires nothing, which is D1148's subject and not a reason to keep a repository-level one.
 
-- **D1200 (`rebuild:`'s disposition) — OPEN, recommended.**
+- **D1200 (`rebuild:`'s disposition) — default-by-owner: not objected, 2026-11-04.** No answer came back on this one, so the design's recommendation stands as the default — on the reason the recommendation itself gives below, which is the reason a reader should re-check before building it.
   Recommendation: **removed entirely** with the repository-level check, and a per-entry age cap, if the
   catalog wants one, is D1148's or a catalog key's — never a repository's.
   Cost of the alternative: keeping `rebuild.max_age` as a repository key read by the project-level check
@@ -349,18 +369,30 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   Cost of the recommendation: a repository that wanted a shorter rebuild interval for its own toolchain
   has no knob until the catalog gets one.
 
-- **D1201 (the repository's own Artifact Registry repository) — OPEN, recommended.**
-  Recommendation: it leaves the **Terraform configuration**
-  (`deploy/terraform/gcp/modules/repo/registry.tf:10`) and the **object** is
-  destroyed only by the owner's `--retire` run (D1194). The installation's shared and base registries
-  (`deploy/terraform/gcp/modules/installation/registry.tf:93`) are untouched.
-  Cost of the alternative: keeping it keeps one empty registry per repository, with its cleanup policies
-  and its IAM, so the removal's promise "one image path" would be false in the bill even while it is
-  true in the configuration.
-  Cost of the recommendation: until the owner runs `--retire`, an installation pays for an empty
-  registry per repository — a real cost, named rather than hidden.
+- **D1201 (the repository's own Artifact Registry repository) — ANSWERED by the owner, 2026-11-04: it
+  STAYS in the Terraform configuration, `prevent_destroy` and all, and only the owner's typed
+  `fugaro update --repo <r> --retire` may ever take the object.** The reason: the registry holds the
+  images a rollback needs, and taking a `prevent_destroy` resource out of the configuration is the one
+  change no ordinary converge may make — and the recommendation below is **corrected here**: its first
+  sentence used to say the registry leaves the configuration, which is what R4 contradicted.
+  Recommendation: the registry **stays in the configuration**, `prevent_destroy` and all, and the
+  removal's Terraform task touches neither `deploy/terraform/gcp/modules/repo/registry.tf:10` nor its
+  guard. **R4 stays as written**: it removes the check job, its Scheduler and the derived build path's
+  grants from the same module.
+  An ordinary converge of a repository that still holds one therefore produces the registry exactly as
+  it does today — it is in the state and in the spec, so it is **not** in the retirement set, and no
+  `--retire` takes it either. The installation's shared and base registries
+  (`deploy/terraform/gcp/modules/installation/registry.tf:93`) are untouched the same way.
+  Cost of the alternative: removing the resource from the configuration in this release would destroy a
+  `prevent_destroy` object, which the provider refuses at apply time — the release would ship a converge
+  that cannot finish, the failure D1194's design exists to avoid. Keeping it costs one empty registry per
+  repository, with its cleanup policies and its IAM, so the removal's promise "one image path" is true
+  in the configuration and not in the bill.
+  Cost of the recommendation: an installation keeps paying for an empty registry per repository for as
+  long as it keeps the repository — a real cost, named rather than hidden — and a reader who wants it
+  gone has to plan a second, destructive change with its own retirement.
 
-- **D1202 (the build account) — OPEN, recommended.**
+- **D1202 (the build account) — ANSWERED by the owner, 2026-11-04, as recommended: the build accounts stay, with NARROWED grants.** The reason: a catalog entry is built as its source repository's account, and one installation-level account for every catalog build would hold every repository's credential at once. **This is a SEC Terraform task, and its test is an exact-set one** — the grants the module leaves are the grants the list names, no more and no fewer.
   Recommendation: **the build accounts stay** (`deploy/terraform/gcp/modules/repo/build.tf:5`) with
   their grants narrowed to the **shared** registry, the base registry and the ghcr pull-through. A
   catalog entry whose source is a Dockerfile in repository X is built as **X's** build account with X's
@@ -374,9 +406,9 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   source repository's account, and a repository that is retired takes its entries' ability to rebuild
   with it. This is handed to D1148 as a constraint, and §5 repeats it.
 
-- **D1203 (readiness for an image) — OPEN, recommended.**
+- **D1203 (readiness for an image) — default-by-owner: not objected, 2026-11-04.** No answer came back on this one, so the design's recommendation stands as the default — on the reason the recommendation itself gives below, which is the reason a reader should re-check before building it.
   Recommendation: **re-pointed, not deleted.** The repository-image probe (`MissingImage`,
-  `internal/infra/readiness.go:30`; `hasLatest`, `:723`) becomes "the chosen catalog entry has a
+  `internal/infra/readiness.go:30`; `hasLatest`, `:731`) becomes "the chosen catalog entry has a
   `:latest` in the **shared** registry", which is the catalog branch `internal/infra/readiness.go:449`
   already reads.
   Cost of the alternative: dropping readiness for images altogether deploys a job pointing at an entry
@@ -385,7 +417,7 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   Cost of the recommendation: readiness now depends on the shared registry's contents rather than on a
   registry the repository owns, so the probe and the build account's reader grant must agree.
 
-- **D1204 (the console and the website) — OPEN, recommended.**
+- **D1204 (the console and the website) — default-by-owner: not objected, 2026-11-04.** No answer came back on this one, so the design's recommendation stands as the default — on the reason the recommendation itself gives below, which is the reason a reader should re-check before building it.
   Recommendation: the console's never-reachable table drops the commands that no longer exist and keeps
   the two that stay (`console/src/main/ipc.ts:1764`; `console/test/unit/ipc.test.ts:681` moves with it),
   and `website/content/cli-reference.md` is **regenerated in the same task**
@@ -397,7 +429,7 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   Cost of the recommendation: the console's command classification is regenerated by a person rather
   than by a command, so the task has to run the console's own `npm run test:unit` to prove it.
 
-- **D1205 (the setup skill and the plugin) — OPEN, recommended.**
+- **D1205 (the setup skill and the plugin) — default-by-owner: not objected, 2026-11-04.** No answer came back on this one, so the design's recommendation stands as the default — on the reason the recommendation itself gives below, which is the reason a reader should re-check before building it.
   Recommendation: the skill writes a **catalog entry** instead of the removed keys
   (`plugin/skills/setup/SKILL.md:84`, `:91`), its reference documents carry the new examples, and the
   two tests that pin them are the task's red step (`plugin/setup_skill_test.go:154`,
@@ -408,7 +440,7 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   Cost of the recommendation: the skill's decided shape — add an entry, point the workflow at it — is
   more steps than "write a block", and the skill has to make that legible.
 
-- **D1206 (the managed gate's rows) — OPEN, recommended.**
+- **D1206 (the managed gate's rows) — default-by-owner: not objected, 2026-11-04.** No answer came back on this one, so the design's recommendation stands as the default — on the reason the recommendation itself gives below, which is the reason a reader should re-check before building it.
   Recommendation: the rows of [spec.md](spec.md) §6 — `fugaro image refresh` re-written to what it still
   does, an `fugaro image build` row for the catalog arm and the D1013 bound, no row for a command that
   no longer exists, and **`--retire` never admitted**. **A Typed step is never admitted (D1026)**, and a
@@ -419,7 +451,7 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   Cost of the recommendation: a row set changes in the same release as the commands, so the managed
   build's own task order has to take the removal into account, which the plan's §5 states.
 
-- **D1207 (`fugaro setup` and its first-build offer) — OPEN, recommended.**
+- **D1207 (`fugaro setup` and its first-build offer) — default-by-owner: not objected, 2026-11-04.** No answer came back on this one, so the design's recommendation stands as the default — on the reason the recommendation itself gives below, which is the reason a reader should re-check before building it.
   Recommendation: `setup` offers a **catalog** build where it offered a derived one — `fugaro image add`
   then `fugaro image build <name>` — and `--no-build` keeps its meaning
   (`internal/cli/init.go:3415`).
@@ -428,7 +460,7 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   Cost of the recommendation: `setup` now has to sequence a catalog write and a build around a project
   whose catalog may be empty, which is more states than "submit the first derived image".
 
-- **D1208 (how a migrated entry bakes the repository's own dependency cache) — OPEN, recommended.**
+- **D1208 (how a migrated entry bakes the repository's own dependency cache) — ANSWERED by the owner, 2026-11-04, as recommended: the entry's own Dockerfile does the clone, the warm-up and a final `finalize-checkout`, and the engine gains NO bake mode.** The reason: an engine-side bake keyed by repository re-creates the per-repository build input inside the catalog, which is the thing the ruling removes.
   Recommendation: **the entry's Dockerfile does it, with what the build already hands it** (F25) —
   `git clone "$REPO_URL"` at `$FUGARO_COMMIT` under the `git-credentials` secret, then the dependency
   warm-up, then `finalize-checkout` as the last step, exactly as the renderer's template does today
@@ -468,6 +500,23 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
 - **The `baked` refusal (D1191) is only as good as its completeness.** A prebuilt entry that passes it
   deploys a job whose first minute fails. The refusal is a list of source kinds, and a source kind added
   to the catalog later has to be added to it.
+- **An ordinary converge of a repository that had a check job stops before its apply, and that is where
+  this design meets the HARD RULE.** The check job's state carries `deletion_protection = true`
+  (`deploy/terraform/gcp/modules/repo/check.tf:27`), so once R4 takes it out of the configuration the
+  address is retired **and protected**: `blockingJobs` (`internal/cli/init_retire.go:305`) names it, and
+  `retireRefusal` (`internal/cli/init_retire.go:327`, called from `internal/cli/init.go:3845`) stops the
+  run **before the apply**, naming `fugaro update --repo . --retire`. Two consequences are named here
+  rather than hidden. The unprotected Scheduler (`deploy/terraform/gcp/modules/repo/check.tf:116`, which
+  carries no `deletion_protection` of its own) is **not** destroyed by that run either, because the run
+  stops before the apply; it is destroyed by the apply `--retire` runs, and by nothing else. And an
+  installation whose repositories had a per-repository image needs the owner's `--retire` **per
+  repository** before its converge completes, which is an operator step beyond `fugaro update` — while
+  `CLAUDE.md`'s HARD RULE says a release must not ship one. This design states the tension and refuses
+  to settle it alone: the readings are (a) the removal's release teaches `update` to perform the
+  retirement inside its own converge, with the typed confirmation D1194 keeps and no second command for
+  the operator to remember, or (b) it ships the step and says so in `### For operators`. **Picking
+  between them is a new decision, not one of these nineteen**, and no task of the plan may land before
+  it is picked.
 - **Unit tests cannot show the deploy path.** The registry, the build account, the job and the run are
   one artefact, and the hermetic fakes are written from the API documentation. That is why the 0.18.0
   tag waits for the owner's live check rather than for a green suite, and why the check is a step of the

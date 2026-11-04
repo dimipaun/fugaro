@@ -122,11 +122,11 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 	}
 	readme := flattenDoc(readDoc(t, rirReadme))
 	for _, want := range []string{
-		"**Status: a design, and nothing is built.**",
+		"**Status: a design, and nothing is built. The owner answered every decision on 2026-11-04.**",
 		// The owner's ruling, verbatim, so the index cannot drift into a
 		// paraphrase of it: every task of the plan answers this sentence.
 		"Completely disable repo-level images for now to make things simpler.",
-		// The block, and the fact that no decision in it is answered: a reader
+		// The block, and the fact that every decision in it is answered: a reader
 		// who takes one thing from the index takes that.
 		"**D1190 is therefore free.**",
 		"D1190–D1208 are written here, and D1209–D1219 are reserved and unused.",
@@ -142,7 +142,7 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 	}
 	spec := flattenDoc(readDoc(t, rirSpec))
 	for _, want := range []string{
-		"**Status: a design, and nothing is built. Every decision in it is open.**",
+		"**Status: a design, and nothing is built. Every decision in it is answered.**",
 		// Which document wins when the two disagree: the spec is the one a
 		// reader meets first and the reconciliation is the one checked against
 		// the tree.
@@ -174,10 +174,11 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 		// commit whatever the commit count is.
 		"**Files (51, in five commits of ≤12).**",
 		"**27 files, twice the ceiling on its own**",
-		// Five commands go whole, and the plan says so in the words the spec's
+		// Four commands go whole, and the plan says so in the words the spec's
 		// §1.2 table uses: a plan that keeps an arm of one of them is a plan
-		// whose own red step asserts a command the spec removes.
-		"**Five commands go whole**",
+		// whose own red step asserts a command the spec removes. The count is
+		// four and not five because `image check` keeps the catalog job's arm.
+		"**Four commands go whole**",
 		"the derived build's two steps `gate` and `record` (`internal/cli/image_record.go:60`, `:145`)",
 		// This folder's own pin is a file the removal moves, and §4 has to name
 		// the tasks that move it: a pin left asserting the pre-removal tree is
@@ -199,8 +200,21 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 var rirDecisionRE = regexp.MustCompile(`(?m)^- \*\*D([0-9]{4}) \(`)
 
 // TestDocsRepoImageRemovalDecisionsAreInRange: this work's block is written,
-// every decision in it is open with a recommendation and the cost of both
-// readings, and the block does not run past the numbers this work reserved.
+// every decision in it carries the owner's answer of 2026-11-04 -- the
+// recommendation where the owner gave one, the design's own default where the
+// owner answered nothing -- with the reason that answer rests on, a
+// recommendation and the cost of both readings, and the block does not run past
+// the numbers this work reserved.
+
+// rirAnsweredRE and rirDefaultRE are the two ways a decision in this block can
+// be settled. A third reading -- an entry that names neither -- is a decision
+// the design took without the owner, which is the one thing the block exists to
+// make impossible to write by accident.
+var (
+	rirAnsweredRE = regexp.MustCompile(`ANSWERED by the owner, 2026-11-04`)
+	rirDefaultRE  = regexp.MustCompile(`default-by-owner: not objected, 2026-11-04`)
+)
+
 func TestDocsRepoImageRemovalDecisionsAreInRange(t *testing.T) {
 	raw := readDoc(t, rirReconciled)
 	matches := rirDecisionRE.FindAllStringSubmatchIndex(raw, -1)
@@ -227,9 +241,19 @@ func TestDocsRepoImageRemovalDecisionsAreInRange(t *testing.T) {
 			end = matches[i+1][0]
 		}
 		block := flattenDoc(raw[m[0]:end])
-		if !strings.Contains(block, "OPEN, recommended") {
-			t.Errorf("%s' D%d is not written as open: every decision in this work's block is open with a recommendation, and an entry that reads as answered is a decision the design took without the owner", rirReconciled, n)
+		answered, byDefault := rirAnsweredRE.MatchString(block), rirDefaultRE.MatchString(block)
+		if !answered && !byDefault {
+			t.Errorf("%s' D%d carries no answer: every decision in this work's block carries the owner's answer of 2026-11-04, and an entry that names neither the answer nor the default is a decision the design took without the owner", rirReconciled, n)
 			continue
+		}
+		if answered && byDefault {
+			t.Errorf("%s' D%d is written as both answered and not objected: the two markers say different things about who settled it, and a reader cannot take both", rirReconciled, n)
+		}
+		if answered && !strings.Contains(block, "The reason") {
+			t.Errorf("%s' D%d is answered and says no reason: an answer recorded without the reason it rests on is a ruling a later task cannot re-check against the tree", rirReconciled, n)
+		}
+		if byDefault && !strings.Contains(block, "the reason the recommendation itself gives below") {
+			t.Errorf("%s' D%d is left to the default and says no reason: an unanswered decision still owes the reason its recommendation stands on, and it is the one a reader re-checks before building it", rirReconciled, n)
 		}
 		if !strings.Contains(block, "Recommendation:") {
 			t.Errorf("%s' D%d is open and carries no recommendation: an open decision without one is a question, not a decision, and the owner has nothing to answer", rirReconciled, n)

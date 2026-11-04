@@ -1,16 +1,21 @@
 # Removing the per-repository derived images: the project image catalog is the only image path
 
-**Status: a design, and nothing is built.** The owner gave the ruling this folder answers on
-**2026-11-04** — *"Completely disable repo-level images for now to make things simpler."* — and this
-folder reconciles it against the code on `main`, decides every ambiguity it opens, and plans the build
-for **0.18.0**. This is a **design-only** pull request: it writes four documents, no code, no schema,
-no Terraform, no `go.mod`. **No decision here is answered yet** — each carries a recommendation and
-the cost of every alternative, and the plan's tasks start only when the owner approves them.
+**Status: a design, and nothing is built. The owner answered every decision on 2026-11-04.** The owner
+gave the ruling this folder answers on **2026-11-04** — *"Completely disable repo-level images for now
+to make things simpler."* — and this folder reconciles it against the code on `main`, decides every
+ambiguity it opens, and plans the build for **0.18.0**. This is a **design-only** pull request: it
+writes four documents, no code, no schema, no Terraform, no `go.mod`. **All nineteen decisions
+D1190–D1208 are answered** — seven of them as recommended, the other twelve as the design's default
+that the owner did not object to, each with the date and the reason it rests on
+([reconciliation.md](reconciliation.md) §4) — so what is still owed is the owner's **approval of the
+plan**, and the one question its residual raises: whether the removal's release may ship the
+per-repository `--retire` as an operator step, or has to fold the retirement into `fugaro update`'s own
+converge. **No task starts before that is picked.**
 
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The design in full: what is removed, what stays, how a repository migrates and in what order so the dogfood pipeline never loses its image, the retirement of the surviving cloud objects, what each removal does to `fugaro.yaml` validation, the schemas and the goldens, the managed gate's rows, and the owner-run live check that gates the 0.18.0 tag. **Where it disagrees with [reconciliation.md](reconciliation.md), the reconciliation wins** |
-| [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `main`: findings **F1–F25**, what exists and what is missing, the decisions **D1190–D1208** (§4) with the recommendation and the cost of each alternative, the number block and how it was read (§3), and the residual this design refuses to hide (§5) |
+| [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `main`: findings **F1–F25**, what exists and what is missing, the decisions **D1190–D1208** (§4) each with the owner's answer of 2026-11-04 and the reason it rests on, the recommendation and the cost of each alternative, the number block and how it was read (§3), and the residual this design refuses to hide (§5) |
 | [implementation-plan.md](implementation-plan.md) | Eleven tasks **R0–R10**, each with its files (at most twelve **per commit** — R3's 50-fixture sweep is the one subject that needs five), its interface, its **red step**, its named tests and its **SEC** flag; the shared-files table (§4) and the order (§2), which migrates the dogfood repositories **before** anything is removed and every removal task **after** D1148's two; and the recommended slot (§7), **0.18.0**, whose tag waits for the owner's live check |
 | `README.md` | This file: the status, the reading of the number block, what is being asked, and what a reader should not take from here |
 
@@ -80,8 +85,9 @@ on **2026-11-04** by fetching each **branch** and reading it, not by trusting a 
   new decision. **D1190 is therefore free.**
 
 **This work takes D1190–D1219: D1190–D1208 are written here, and D1209–D1219 are reserved and
-unused.** Every decision in the block is **OPEN, with a recommendation** — none is answered, and the
-owner answers them or the design is not approved. A later task that needs a number re-checks this
+unused.** Every decision in the block is **answered on 2026-11-04** — seven as recommended, twelve as
+the default the owner did not object to — and the residual's one open question takes a number from the
+reserved tail rather than being decided in prose. A later task that needs a number re-checks this
 section's facts rather than its conclusion.
 
 ## What this design does not do
@@ -91,11 +97,18 @@ section's facts rather than its conclusion.
 - **It does not remove the project image catalog**, its tag-cover rule, its sources or its commands.
   The catalog is what survives, and this design changes it in one place only: what a `checkout: baked`
   workflow may point at (§2.2, D1191).
-- **It does not delete a cloud object by itself.** The check job, its Scheduler and the repository's
-  registry leave the Terraform configuration; the objects themselves are destroyed by the owner's own
-  `--retire` run and by nothing else (§4, D1194).
+- **It does not delete a cloud object by itself.** The check job and its Scheduler leave the Terraform
+  configuration; the objects themselves are destroyed by the owner's own `--retire` run and by nothing
+  else (§4, D1194) — and an ordinary converge **stops before its apply** while the retired check job's
+  state says `deletion_protection = true`, so even the unprotected Scheduler survives that run. The
+  repository's own Artifact Registry repository is not in that set: it **stays in the configuration**
+  with its `prevent_destroy` (D1201).
 - **It does not make retirement agent-runnable.** `--retire` keeps its two typed confirmations, is
-  never admitted by the managed gate, and no task of this plan adds a path to it (D1194, D1206).
+  never admitted by the managed gate, and no task of this plan adds a path to it (D1194, D1206). **Where
+  that meets the HARD RULE is named rather than hidden**: an installation whose repositories had a
+  per-repository image needs the owner's `--retire` per repository before its converge completes, which
+  is an operator step beyond `fugaro update` — and this design puts the question in the residual
+  ([reconciliation.md](reconciliation.md) §5) instead of settling it alone.
 - **It does not lift the `checkout: shared` refusal** and does not touch C8a's code, exactly as
   [docs/project-image-catalog/](../project-image-catalog/README.md) left them.
 - **It does not add a compatibility shim.** A removed key is refused and the refusal names the catalog

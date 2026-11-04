@@ -1,8 +1,9 @@
 # Removing the per-repository images: the design
 
-**Status: a design, and nothing is built. Every decision in it is open.** The owner's ruling of
+**Status: a design, and nothing is built. Every decision in it is answered.** The owner's ruling of
 **2026-11-04** — *"Completely disable repo-level images for now to make things simpler."* — is the
-requirement; the reading of it into this tree is [reconciliation.md](reconciliation.md), and **where
+requirement; the reading of it into this tree is [reconciliation.md](reconciliation.md), which also
+carries the owner's answers of the same day to all nineteen questions the ruling opened — and **where
 this file and that one disagree, the reconciliation wins**.
 
 **How a `:line` in this folder reads.** A citation names a file and a symbol, and the number is the
@@ -51,8 +52,8 @@ removal and not a separate one.
 | --- | --- |
 | `fugaro image build` | **loses its repository arm.** It builds a catalog entry, named or all (`internal/cli/image_build_catalog.go:37`); the derived fall-through (`internal/cli/image.go:194`) is deleted, and with it `--workflow`, `--local`, `--base` and `--no-smoke`'s derived meaning |
 | `fugaro image refresh` | **loses its repository-image steps**: `refreshCheckJob` (`internal/cli/image_refresh_steps.go:110`) and `refreshBuilds` (`:325`). The base pin and `refreshCloneJobs` (`:244`) stay — a `checkout: clone` job's image is the installation's base and still moves |
-| `fugaro image check` | **removed** (`internal/cli/imagecheck.go:61`). The catalog's check is D1148's scheduler, not this command |
-| `fugaro image status` | **removed** (`internal/cli/imagecheck.go:945`) |
+| `fugaro image check` | **loses its repository arms and keeps the catalog job's.** The local workflow check and the per-repository `--job` mode go with the repository image — they read `rebuild.*` and the repository's registry, and the job they serve is R4's. **`--job --catalog` stays** (`internal/cli/image_check_catalog.go:31`, merged as #1679): one run of the installation's catalog check job, reading its spec out of `catalogCheckSpecEnv` and deciding every entry of the project's catalog — that is D1148's driver, and not this removal's to delete |
+| `fugaro image status` | **removed** (`internal/cli/imagecheck.go:982`) |
 | `fugaro image render` | **removed** (`internal/cli/image.go:510`). It prints the Dockerfile the template generates, and there is no template |
 | `fugaro image gate`, `fugaro image record` | **removed** (`internal/cli/image_record.go:60`, `:145`). They are the derived build's own steps; the catalog build carries its own pin, tag and record steps (`internal/backend/gcp/catalog.go:338`, `:376`, `:410`) and calls neither |
 | `fugaro image selftest` | **stays** (`internal/cli/image.go:44`). It is the runtime-contract check the *catalog* build's smoke runs too (`internal/cli/image_build_catalog.go:208`), so it is the catalog's step now |
@@ -62,29 +63,31 @@ removal and not a separate one.
 
 ### 1.3 The deploy path
 
-- **The job's image stops being derived.** `internal/infra/spec.go:1011` currently computes
+- **The job's image stops being derived.** `internal/infra/spec.go:1019` currently computes
   `gcp.ImageName(c.registryPath(), slug, name) + ":latest"` for a `baked` workflow and lets the catalog
   override it; after the removal a `baked` workflow's image **is** the catalog's choice, and there is
-  no fall-through left (`internal/infra/spec.go:799`).
+  no fall-through left (`internal/infra/spec.go:807`).
 - **The per-repository check job and its Scheduler go.**
   `deploy/terraform/gcp/modules/repo/check.tf:16` (`google_cloud_run_v2_job "check"`) and
   `:116` (`google_cloud_scheduler_job "check"`) are deleted, with their invoker grant and their
-  variables; `internal/infra/spec.go:1440` (`repoCtx.check`) stops producing a `CheckSpec`
-  (`internal/infra/spec.go:318`) at all. This **folds in the ruling** "no repo-level scheduled check
+  variables; `internal/infra/spec.go:1451` (`repoCtx.check`) stops producing a `CheckSpec`
+  (`internal/infra/spec.go:326`) at all. This **folds in the ruling** "no repo-level scheduled check
   unless there is a repo-level image": with no repository image there is nothing to check, so there is
   no repository-level schedule.
-- **The per-repository build path goes.** The repository's own Artifact Registry repository
-  (`deploy/terraform/gcp/modules/repo/registry.tf:10`), the writer and tag-mover grants on it, and the
-  build account's submitter role for this path
-  (`deploy/terraform/gcp/modules/repo/build.tf:5`) leave the module. The **shared** registry
-  (`deploy/terraform/gcp/modules/installation/registry.tf:93`) and the **base** registry stay: a
-  catalog build writes into the shared one and reads the base's.
+- **The per-repository build path goes, and the repository's own registry stays.** The writer and
+  tag-mover grants a repository image needed, and the build account's submitter role for this path
+  (`deploy/terraform/gcp/modules/repo/build.tf:5`), leave the module. The repository's own Artifact
+  Registry repository (`deploy/terraform/gcp/modules/repo/registry.tf:10`) **does not**: the owner ruled
+  that it stays in the configuration with its `prevent_destroy`, so an ordinary converge produces it
+  exactly as it does today and no `--retire` takes it either (D1201). The **shared** registry
+  (`deploy/terraform/gcp/modules/installation/registry.tf:93`) and the **base** registry stay for the
+  reason they always did: a catalog build writes into the shared one and reads the base's.
 - **Readiness stops asking for a repository image.** `MissingImage`
   (`internal/infra/readiness.go:30`) and the `hasLatest` probe against the repository's own registry
-  (`internal/infra/readiness.go:723`) are replaced by "the chosen catalog entry has a `:latest` in the
+  (`internal/infra/readiness.go:731`) are replaced by "the chosen catalog entry has a `:latest` in the
   shared registry" (§2.3, D1203).
 - **The Terraform root stops producing the check.** `internal/infra/repo.go` writes the repo root's
-  tfvars from `RepoSpec` (`internal/infra/spec.go:387`); the `check` member goes with the resources it
+  tfvars from `RepoSpec` (`internal/infra/spec.go:395`); the `check` member goes with the resources it
   drove, and `deploy/terraform/gcp/roots/repo/main.tf:28` passes one fewer member.
 
 ### 1.4 Every path that writes the removed settings
@@ -118,8 +121,8 @@ Both move with the commands (§8, D1204).
 ### 2.1 `checkout: clone` workflows
 
 A `checkout: clone` workflow's job runs the installation's base image directly
-(`internal/infra/spec.go:1014`) and always has: it never had a derived image, which is why the daily
-check skips it (`internal/cli/imagecheck.go:221`) and why the refresh chain's `refreshCloneJobs`
+(`internal/infra/spec.go:1023`) and always has: it never had a derived image, which is why the daily
+check skips it (`internal/cli/imagecheck.go:241`) and why the refresh chain's `refreshCloneJobs`
 (`internal/cli/image_refresh_steps.go:244`) moves its job image instead of rebuilding anything. It is
 untouched by this design, base pin included.
 
@@ -234,14 +237,28 @@ repository nobody has yet, at the price of a reader of removed keys living in th
 The removal changes the **configuration**; the objects the old configuration created are still there.
 They are destroyed by the flow the tree already has and by nothing else:
 
-- **`deletion_protection` stays.** The check job keeps `deletion_protection = true`
-  (`deploy/terraform/gcp/modules/repo/check.tf:27`) and the repository's registry keeps
-  `prevent_destroy = true` (`deploy/terraform/gcp/modules/repo/registry.tf:10`), so an ordinary
-  converge **cannot** delete either one, whatever the configuration says. The guard is the **object's**,
-  not the file's: R4 takes the check job out of the configuration, and the job that is still running
-  carries the flag that makes a plan's destroy refuse, which is why this is a retirement and not a
+- **`deletion_protection` stays, and what an ordinary converge does with it is the point.** The check
+  job keeps `deletion_protection = true` (`deploy/terraform/gcp/modules/repo/check.tf:27`) and the
+  repository's registry keeps `prevent_destroy = true`
+  (`deploy/terraform/gcp/modules/repo/registry.tf:10`) — the registry's guard is now protecting a
+  resource that **stays in the configuration** (D1201), so nothing in this release asks it to destroy
+  one. The guard is the **object's**, not the file's: R4 takes the check job out of the configuration,
+  and the job that is still running carries the flag, which is why this is a retirement and not a
   delete. What the flag means for a job is not lost either — a repository's workflow jobs, which stay,
   carry the same `!var.allow_job_delete` (`deploy/terraform/gcp/modules/workflow/job.tf:15`).
+- **So an ordinary converge of that repository stops before its apply, and the Scheduler survives that
+  run with it.** The retired check job's state says `deletion_protection = true`, so
+  `blockingJobs` (`internal/cli/init_retire.go:305`) names it and the run refuses with
+  `fugaro update --repo . --retire` (`internal/cli/init_retire.go:327`, called from
+  `internal/cli/init.go:3845`) — **before the apply**, which is why the Scheduler, which carries no
+  protection of its own (`deploy/terraform/gcp/modules/repo/check.tf:116`), is not destroyed by an
+  ordinary converge either: the run stops, rather than destroying what it can and failing on what it
+  cannot. `fugaro update --repo <r> --retire` is the one path that finishes it: it removes the protected
+  address from Terraform's state first (destroying nothing), applies — and **that** apply destroys the
+  Scheduler — then deletes the job through the Cloud Run API once its labels say it is this
+  repository's. `--plan-only` shows the destroy without acting on it. The operator consequence is named
+  in [reconciliation.md](reconciliation.md) §5 and is not hidden here: until the owner runs it for a
+  repository, that repository's converge is refused.
 - **Retirement is owner-run: `fugaro update --repo <r> --retire`**, with the two typed confirmations
   `--yes` cannot cover (`internal/cli/init.go:444`; the flow is `internal/cli/init_retire.go:22` and
   the set it acts on is `internal/infra/retire.go:26`). A coding agent's session, a pipe, `--json` and
@@ -278,7 +295,7 @@ No compatibility, in the shape the tree already uses for a removed key.
   the *invalid* ones that assert an old refusal (`image-and-dockerfile.yaml`, the `legacy-image-*` pair,
   the `checkout-clone-*` set) are replaced by fixtures asserting the **new** refusal, and
   `internal/cli/testdata/init_retire.golden` is regenerated (D1197).
-- **Skew.** `imageCatalogSince`/`imageCatalogShipped` (`internal/cli/recipes_skew.go:169`, `:177`) keep
+- **Skew.** `imageCatalogSince`/`imageCatalogShipped` (`internal/cli/recipes_skew.go:169`, `:176`) keep
   their meaning — a node carrying `image_catalog` read by an older CLI — and this design adds no second
   pair. What the removal *does* need is one sentence in the release's own notes: a launcher older than
   the removal reads a `fugaro.yaml` carrying the removed keys, so the checkout and the launcher move
@@ -299,7 +316,8 @@ so its row changes with it, and the plan carries the amended rows:
 | --- | --- |
 | `fugaro image refresh` | admitted **per build**: the base pin, and a `checkout: clone` job's image move. The derived rebuilds it used to admit are gone with the builds |
 | `fugaro image build` | admitted for a **catalog** entry — the entry exists in the effective catalog, the build account is the project's own for that entry's source repository, and the count is within D1013's `max_image_builds` bound |
-| `fugaro image check`, `status`, `render`, `gate`, `record`, `promote`, `migrate` | **no row**: the commands do not exist (and `migrate` is not written at all, §3.2) |
+| `fugaro image check` | **no row, and it never had one.** What is left of the command is `--job --catalog`, a job's own mode — the entrypoint the installation's catalog check job runs, not a command a session runs. The gate's set is the seven commands of §3.1, and a container's entrypoint is not one of them |
+| `fugaro image status`, `render`, `gate`, `record`, `promote`, `migrate` | **no row**: the commands do not exist (and `migrate` is not written at all, §3.2) |
 | `fugaro update --repo <r> --retire` | **never admitted.** A retirement is a delete, and D1026's rule that a `Typed` step is never admitted settles it twice over: the gate's first rule refuses a delete, and the typed confirmation is a step no plan gate may carry |
 
 **A Typed step is never admitted (D1026), and a retirement is never admitted** — not for a managed
