@@ -2,10 +2,11 @@
 
 **Status: a design, and nothing is built.** The decisions are **D1260–D1277** (§4), each with a
 recommendation and the cost of every alternative; **D1278–D1289 are reserved and unused**.
-**The owner answered D1260, D1266 and D1267 on 2026-11-04**, each as this file recommended —
-`workflow_secrets`, refuse, untouched — and **the other fifteen are unanswered**: the issue's own ask
-is one paragraph, and the rest of the block is still this pull request asking rather than deciding.
-**Where this file and [README.md](README.md) or [spec.md](spec.md) disagree, this file wins.**
+**The owner answered all eighteen on 2026-11-04, all as recommended** — D1260 (`workflow_secrets`),
+D1266 (refuse) and D1267 (untouched) were named explicitly, and D1261–D1265 and D1268–D1277 were
+answered **as this file recommended** — so **the build may start, at 0.19.0 (D1277)**, and every
+decision section below carries its answer. **Where this file and [README.md](README.md) or
+[spec.md](spec.md) disagree, this file wins.**
 
 Reconciled against `origin/main` at **`b41709ea`**, on 2026-11-04, by reading the files rather than
 the designs that describe them. Line numbers are that head.
@@ -23,8 +24,15 @@ of the decisions, which moved four things: **D1266's refusal to the deployer's f
 reading), **D1261's key rule split** by what each half can compute, **F13** (the section said
 `fugaro settings set` did not exist; it landed with `f09f10e5`, #1525, and D1270's recommendation is
 what the correction changes), and **§3**, which now names the build account among the readers of a
-project-scoped value. The three decisions the owner answered are marked in their own sections, and the
-other fifteen are not.
+project-scoped value. The three decisions the owner answered by name are marked in their own sections,
+as are the fifteen answered as recommended.
+
+**Read back once more on 2026-11-04 after merging `1c390bcb`**, which added no citation this file
+reads, and **after the owner answered the whole block**: all eighteen decisions are closed, each
+section carries its own answer, and the build is written to them. Two corrections rode with the
+answer: **D1270** now cites the write path's unknown-key refusal at `settings_set.go:412` (it moved
+when `fugaro settings set` grew the managed gate), and **§6** states the managed-mode exposure the
+allow-list does not close.
 
 **The shape of the reading: the mechanism the issue asks for is already built, end to end, and the
 only thing standing in its way is one branch of one predicate.** A project-wide secret today is a
@@ -481,7 +489,9 @@ already carries for the Bitbucket token, and §6 states for this subject rather 
 ## 4. Decisions
 
 Each decision carries the question, the **recommendation**, and the cost of every alternative.
-**None is answered**: this pull request asks.
+**All eighteen are answered**, on 2026-11-04: D1260, D1266 and D1267 by name, and D1261–D1265 and
+D1268–D1277 **as recommended**. Each section says so under its question, so no decision here is still
+this pull request asking.
 
 ### D1260. Where the allow-list lives
 
@@ -523,6 +533,10 @@ reader never has to ask which kind of name a given entry holds.
 
 **Question.** What may a key of `workflow_secrets` be, given that the installation root cannot see
 any repository's `fugaro.yaml` (F8) and so cannot check a declaration?
+
+**Answered 2026-11-04: as recommended.** The owner took the recommendation below — the key rule,
+split by where each half can be computed — so the section is the build's specification rather than
+an open question.
 
 **Recommendation.** A name that passes `config.CheckSecretName`/`config.SecretNameRE`, and is refused
 if **any** existing reservation claims it: a key of `config.ReservedSecrets`, a configured provider's
@@ -575,6 +589,10 @@ holds it. The refusals reuse the sentences those paths already have rather than 
 name with no entry is project-wide for every repository), or the reserved-and-listed rule ("absent or
 empty means nobody")?
 
+**Answered 2026-11-04: as recommended.** The owner took the recommendation below — absent or empty
+means nobody, and no sweep — so the section is the build's specification rather than an open
+question.
+
 **Recommendation.** **Absent or empty means nobody.** No sweep, for any workflow secret, ever. The
 operator's entry is the whole gate, and a repository that no entry names mounts nothing.
 
@@ -594,6 +612,9 @@ operator's entry is the whole gate, and a repository that no entry names mounts 
 ### D1263. Where the value is stored
 
 **Question.** A new container shape, or today's project container?
+
+**Answered 2026-11-04: as recommended.** The owner took the recommendation below — today's project
+container, unchanged — so the section is the build's specification rather than an open question.
 
 **Recommendation.** **Today's project container, unchanged**: `gcp.ProjectSecretID(lc.Name, name)`,
 the three labels (`fugaro=managed`, `fugaro_project`, `fugaro_secret`, F16), `prevent_destroy`,
@@ -615,6 +636,9 @@ union (F6) adopting one the store path created first.
 
 **Question.** Does the repository's own copy still win?
 
+**Answered 2026-11-04: as recommended.** The owner took the recommendation below — the repository's
+own copy still wins — so the section is the build's specification rather than an open question.
+
 **Recommendation.** **Yes, unchanged** (`resolveSecretID`, F5). The store-time note and the `secrets
 ls` scope column keep saying so, and the new block adds no exception.
 
@@ -634,6 +658,9 @@ ls` scope column keep saying so, and the new block adds no exception.
 
 **Question.** Which spellings of `fugaro secrets set` store a workflow secret project-wide, and what
 does each require?
+
+**Answered 2026-11-04: as recommended.** The owner took the recommendation below — three spellings,
+one decision function — so the section is the build's specification rather than an open question.
 
 **Recommendation.** Three spellings, one decision function (F3):
 
@@ -741,6 +768,9 @@ reach, and that is B3.1's edit.
 
 **Question.** Does anything about the new block reach the project policy?
 
+**Answered 2026-11-04: as recommended.** The owner took the recommendation below — nothing of the
+new block is published — so the section is the build's specification rather than an open question.
+
 **Recommendation.** **No.** The block is operator-local, like `project_secrets` (whose only published
 derivations are the Bitbucket token's `allow_repos` and the accounts' `allow_repos`). The mount is
 decided at plan time on the operator's own machine, the shared job case is refused (F9, D1266), and
@@ -759,6 +789,9 @@ nothing a run reads needs the list.
 ### D1269. The setup flow's secrets stage
 
 **Question.** Does the stage stop prompting for a workflow secret the project copy covers?
+
+**Answered 2026-11-04: as recommended.** The owner took the recommendation below — the setup stage
+asks the same function — so the section is the build's specification rather than an open question.
 
 **Recommendation.** **Yes, with no new logic**: `find()` (`initsecrets.go:447`) already asks
 `ProjectSecretCandidate` and the project listing before it adds a name to `wanted`, and
@@ -780,6 +813,10 @@ stage the operator actually runs.
 
 **Question.** What does the operator see, and what does `settings set` owe?
 
+**Answered 2026-11-04: as recommended.** The owner took the recommendation below — `secrets ls
+--project-wide` and the doctor checks read the new block — so the section is the build's
+specification rather than an open question.
+
 **Recommendation.** `secrets ls --project-wide` and doctor's scope checks read
 `ProjectSecretCandidate` and `projectSecretAllowed` (`:1145`), which gain the new block as a fourth
 source — no new column, no `--json` field, no format version (F17). One settings registry row and one
@@ -789,7 +826,8 @@ that writes it: `secrets`, as `project_secrets.*.allow_data_to`'s own row is (`r
 the key is not named in `settingsGenericKeys` (`settings_set.go:81`), which is the allowlist that
 decides what the generic path writes, so a row the family owns and the generic path does not carry is
 written by exactly one command. `settings set workflow_secrets.<name>.allow_data_to` today answers
-*"no setting has that name"* (`settings_set.go:410`); after W0 it answers as `project_secrets`' own
+*"no setting has that name"* (`settings_set.go:412`, the write path's unknown-key refusal; the read
+path's is `settings.go:170`); after W0 it answers as `project_secrets`' own
 row does, and `fugaro secrets set --allow-data-to` is what writes the entry (W3). **No new doctor
 check**: a check that the
 entry names a repository that declares the name would need every repository's `fugaro.yaml` (F8), and
@@ -819,6 +857,10 @@ The stray-container case (§6) is stated, not checked.
 **Question.** Does a repository's `validate` say anything about a project copy of one of its
 workflow secrets?
 
+**Answered 2026-11-04: as recommended.** The owner took the recommendation below — no new output
+from a repository's `validate` — so the section is the build's specification rather than an open
+question.
+
 **Recommendation.** **No new output.** `providerProblems` (`validate.go:355`) may read the
 operator's local config, but the answer is per-machine (F15): the same checkout would carry a note on
 the operator's laptop and none in CI or on a colleague's, which teaches a reader to distrust the
@@ -835,6 +877,10 @@ notes that do appear.
 ### D1272. The documents that change in the same pull request
 
 **Question.** Which sentences ship with the feature?
+
+**Answered 2026-11-04: as recommended.** The owner took the recommendation below — F14's documents,
+plus the project-scope paragraph in `SECURITY.md` — so the section is the build's specification
+rather than an open question.
 
 **Recommendation.** All of F14's, plus one addition: `SECURITY.md`'s project-scope section gains the
 reach sentence for a workflow secret (D1273). Concretely — `SECURITY.md:28`, `SECURITY.md:38`,
@@ -856,6 +902,10 @@ pins each.
 
 **Question.** What does the operator read before the value is stored?
 
+**Answered 2026-11-04: as recommended.** The owner took the recommendation below — the store-time
+reach sentence, extended to the new subject — so the section is the build's specification rather
+than an open question.
+
 **Recommendation.** The store-time note (`:859`, whose shape F19 records) and `SECURITY.md` say it in
 the shape the Bitbucket token's warning already has (`SECURITY.md:67`): the entry's list decides which
 repositories mount the value; a wildcard entry means every repository it matches **now and later**, so a repository
@@ -875,6 +925,10 @@ three.
 ### D1274. The container's lifetime, and the entry that names nothing
 
 **Question.** What happens to a container whose entry is later removed or was a typo?
+
+**Answered 2026-11-04: as recommended.** The owner took the recommendation below — today's lifetime
+and the discovery union, stated rather than changed — so the section is the build's specification
+rather than an open question.
 
 **Recommendation.** Today's behaviour, stated rather than changed: the discovery union (F6) keeps it
 planned, `prevent_destroy` keeps it, and it mounts nowhere. The design **says so** in the help and in
@@ -898,6 +952,9 @@ it.
 
 **Question.** May an entry of `workflow_secrets` set `proxy: true`?
 
+**Answered 2026-11-04: as recommended.** The owner took the recommendation below — `proxy` is
+refused in the new block — so the section is the build's specification rather than an open question.
+
 **Recommendation.** **Refused**, by `ValidateWorkflowSecrets`, with `ValidateProjectSecrets`'s own
 sentence shape (F4's validator, D493: *proxy is the Bitbucket token's switch and nothing else's*). The refusal is
 belt and braces — D1261 already refuses `bitbucket-token` as a key — and it is what keeps the
@@ -911,6 +968,10 @@ proxied."*
 ### D1276. The `allow_data_to` entry rules
 
 **Question.** Does the new block use the same entry rules and the same matcher?
+
+**Answered 2026-11-04: as recommended.** The owner took the recommendation below — the same entry
+rules and the same matcher — so the section is the build's specification rather than an open
+question.
 
 **Recommendation.** **Yes, unchanged**: `invalidAllowDataToEntry` (`:227`) and `matchRepoPattern`
 (`:66`), through `config.AllowedForProjectSecret`'s own shape. Owner segment literal, `*` inside a
@@ -928,6 +989,9 @@ segment, two segments, at most two stars, the bare `*` refused, case-folded.
 ### D1277. The release slot
 
 **Question.** Which release carries the build?
+
+**Answered 2026-11-04: as recommended.** The owner took the recommendation below — CLI 0.19.0 — so
+the section is the build's specification rather than an open question.
 
 **Recommendation.** **CLI 0.19.0**, and stated plainly: **the build is security-sensitive** — it
 changes which repositories may mount a credential an operator stored once, and D1260 and D1261 are
@@ -989,6 +1053,16 @@ the CLI at `current: 0.17.0`, `next: Ocelot` (0.18.0), so 0.19.0 is free and its
   it is scheduled, a project workflow secret is mounted and never brokered — and a repository copy
   wins over the project copy, so an installation that has opted into the service still carries the
   repository's own copy in its job.
+- **A managed project admits the new grant, because the managed gate judges the prefix and not the
+  block** (`fugaro managed`). An agent session that hand-edits the operator-local file to add an
+  entry, and then runs `fugaro update`, gets the grant that entry produces admitted: in
+  `internal/infra/tf/managed_cover.go` `google_secret_manager_secret_iam_member` is on the managed
+  type list (`:68`), its reason is that the grant names a secret the plan itself created with the
+  deployer's `secretmanager.secrets.setIamPolicy` conditioned on the prefix (`:88`), and the name
+  field it reads is `secret_id` (`:155`) — so nothing in the gate compares the entry against the
+  block it came from. **`project_secrets` has exactly the same exposure today**, so this design
+  neither adds nor worsens it; it also does not close it, and a reader who takes the allow-list for a
+  limit on what a managed project may reach has taken it for more than it is.
 - **None of this is a boundary against a hostile agent.** The allow-list decides which jobs mount a
   value, not what a run does with it once mounted; a run of an allow-listed repository can read it
   from its own environment and send it anywhere, exactly as it can today with a repository copy. The

@@ -1,14 +1,13 @@
 # The project workflow secret: a workflow's own secret stored once for the project, behind an operator-local allow-list
 
-**Status: a design, and nothing is built and nothing is approved.** This folder answers **issue
-#1678**, which the owner opened on 2026-11-04 and which is reproduced **verbatim** in
-[spec.md](spec.md). The owner answered **three of the eighteen** questions on 2026-11-04, each as
-[reconciliation.md](reconciliation.md) recommended — **D1260** (`workflow_secrets`), **D1266**
-(refuse) and **D1267** (untouched) — and the other fifteen are unanswered:
-[reconciliation.md](reconciliation.md) §4 carries all **eighteen questions (D1260–D1277)**, each with
-a recommendation and the cost of every alternative, and the build
-[implementation-plan.md](implementation-plan.md) prices is written to the recommendations and may not
-start until the owner rules on the rest.
+**Status: a design, and nothing is built.** This folder answers **issue #1678**, which the owner
+opened on 2026-11-04 and which is reproduced **verbatim** in [spec.md](spec.md). The owner answered
+**all eighteen questions (D1260–D1277) on 2026-11-04, all as recommended** — **D1260**
+(`workflow_secrets`), **D1266** (refuse) and **D1267** (untouched) by name, and D1261–D1265 and
+D1268–D1277 as [reconciliation.md](reconciliation.md) recommended — so **the build may start, at
+0.19.0 (D1277)**. [reconciliation.md](reconciliation.md) §4 carries all eighteen, each with its
+recommendation, its answer and the cost of every alternative, and the build
+[implementation-plan.md](implementation-plan.md) prices is written to those answers.
 
 **This is a design pull request; it writes four documents and one test.** No code, no Terraform, no
 schema, no `go.mod`.

@@ -1,12 +1,11 @@
 # The project workflow secret: implementation plan
 
-**Status: a design, and nothing is built, and nothing here is approved.** Every task below is written
-to a **recommendation** in [reconciliation.md](reconciliation.md) §4, and the owner has answered
-**three of the eighteen** — **D1260** (`workflow_secrets`), **D1266** (refuse) and **D1267**
-(untouched), on 2026-11-04, each as recommended. The other fifteen are unanswered: the tasks exist so
-the owner can price the build, not because it may start. **Where this plan and
-[reconciliation.md](reconciliation.md) disagree, the reconciliation wins**; where a task and the
-reconciliation disagree, the reconciliation wins.
+**Status: a design, and nothing is built.** Every task below is written to an **answered decision** in
+[reconciliation.md](reconciliation.md) §4: the owner answered **all eighteen on 2026-11-04, all as
+recommended** — **D1260** (`workflow_secrets`), **D1266** (refuse) and **D1267** (untouched) by name,
+and the other fifteen as recommended — so **the build may start, at 0.19.0 (D1277)**. **Where this
+plan and [reconciliation.md](reconciliation.md) disagree, the reconciliation wins**; where a task and
+the reconciliation disagree, the reconciliation wins.
 
 Each task touches at most twelve files, names its tests, starts with a **red step**, and carries a
 **SEC** flag where it moves a security boundary — and six of the eight carry one, because the whole
@@ -257,7 +256,12 @@ The one function every reader of the decision shares (F3), plus the container th
   at the other path. And the security work is already there rather than new: naming one more
   repository is a **widening**, classified by the same settings write path every other widening pays —
   the project's own name at a terminal, or `--yes` outside a coding agent's session — so a session is
-  refused, which is the property the task has to pin. What the task owes, therefore: the name check
+  refused, which is the property the task has to pin. **The outright refusal is G8's, and W3 keeps
+  it.** Beside the typed-widening path, G8 refuses a secret's policy write in a coding agent's session
+  outright — `internal/cli/secrets.go:747` on G8's branch is the line, and
+  `TestSecretsSetPolicyRefusesAnAgentSession` is the test — and `--yes` does not lift it. W3 writes
+  the new block's entry through that same call and adds no route of its own, because a second path
+  into one key is the door that refusal exists to close. What the task owes, therefore: the name check
   answers for either block (a `config.ReservedSecrets` name writes `project_secrets.<name>`; any
   other name writes `workflow_secrets.<name>` **when the new block holds it**; a name in neither is
   refused by G8's existing key-rule refusal, and this task points that refusal at the right block for
@@ -365,8 +369,9 @@ person decides whether storing one value for sixty-five repositories is safe.
 
 ## W7. This folder's status lines, and the census (D1277)
 
-- **Edits.** Each of this folder's four documents' status lines: from "nothing is approved" to what
-  the owner actually ruled, decision by decision, and never a decision's content. The release notes'
+- **Edits.** Each of this folder's four documents' status lines, from "a design, and nothing is
+  built" to what the build actually shipped: the answers the owner gave are already recorded here and
+  the task restates the outcome, never a decision's content. The release notes'
   `### For operators` section — which for this build is **"run `fugaro update`"** and nothing else,
   because the feature adds no operator step, no migration and no policy version — or, if W1's field
   turns out to need one, the step it names ([docs/releases/README.md](../releases/README.md)).

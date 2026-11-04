@@ -26,6 +26,11 @@ package cli
 //     that the owner can answer, which needs the price of the other
 //     readings. A decision with no recommendation, or with a recommendation
 //     and no cost, is a decision the owner cannot take.
+//   - **Every decision carries the owner's answer.** All eighteen were
+//     answered on 2026-11-04 — three by name, fifteen as recommended — and
+//     each section says so under its own question: a status line that read as
+//     ruled while a section still asked would leave the build unsure which of
+//     the two to believe.
 //   - **Every finding says what the claim is and what the code does.** The
 //     reconciliation's value is that it was read against the tree rather
 //     than the designs: a finding that cites no code is a paragraph.
@@ -37,9 +42,9 @@ package cli
 //     it is exactly the place a real value would be pasted "for
 //     illustration".
 //
-// Nothing here asserts the design is *right*: the decisions are unanswered
-// and this file must not read as approving them. It asserts that the folder
-// is complete enough to be answered.
+// Nothing here asserts the design is *right*: the decisions are the owner's,
+// and this file pins that the folder records them rather than re-argues them.
+// It asserts that the folder is complete enough to be built from.
 
 import (
 	"os"
@@ -101,12 +106,13 @@ func TestDocsProjectWorkflowSecretsFolderIsComplete(t *testing.T) {
 			t.Errorf("%s does not say that nothing is built", name)
 		}
 	}
-	// The owner answered three of the eighteen on 2026-11-04 and left the rest
-	// open, so the file states both halves: a status line that read as approval
-	// while fifteen questions are open is the one thing this folder must not do.
-	if doc := readProjectWorkflowSecrets(t, pwsReconcile); !strings.Contains(doc, "**The owner answered D1260, D1266 and D1267 on 2026-11-04**") ||
-		!strings.Contains(doc, "the other fifteen are unanswered") {
-		t.Error("reconciliation.md does not state the owner's answers beside what is still open")
+	// The owner answered all eighteen on 2026-11-04, so the status line says so
+	// and names what that unlocks: a reader who takes an answered design for an
+	// open one does not start the build, and one who takes it for approved
+	// without the slot does not know what it lands in.
+	if doc := readProjectWorkflowSecrets(t, pwsReconcile); !strings.Contains(doc, "**The owner answered all eighteen on 2026-11-04, all as recommended**") ||
+		!strings.Contains(doc, "the build may start") {
+		t.Error("reconciliation.md does not state the owner's answers and what they start")
 	}
 }
 
@@ -218,16 +224,18 @@ func TestDocsProjectWorkflowSecretsNumberBlockIsReadAboveTheOpenWork(t *testing.
 	}
 }
 
-// TestDocsProjectWorkflowSecretsRecordsTheOwnersAnswers: the owner answered
-// D1260, D1266 and D1267 on 2026-11-04 — `workflow_secrets`, refuse, untouched
-// — and left the other fifteen open. An answered decision has to say so in its
-// own section, because a status line carrying the news while the section still
-// reads as a request is an inconsistency a reader cannot resolve; and a
-// decision the owner has not ruled on must carry no answer marker at all,
-// because fifteen of these are still questions.
+// TestDocsProjectWorkflowSecretsRecordsTheOwnersAnswers: the owner answered all
+// eighteen on 2026-11-04 — D1260, D1266 and D1267 by name (`workflow_secrets`,
+// refuse, untouched) and the other fifteen **as recommended**. A decision has to
+// say which of the two it is in its own section, because a status line carrying
+// the news while the section still reads as a request is an inconsistency a
+// reader cannot resolve — and the fifteen have to say "as recommended" rather
+// than spell a ruling out, because a ruling written here that the
+// recommendation does not carry would be this file's decision and not the
+// owner's.
 func TestDocsProjectWorkflowSecretsRecordsTheOwnersAnswers(t *testing.T) {
 	doc := readProjectWorkflowSecrets(t, pwsReconcile)
-	want := map[string]string{
+	byName := map[string]string{
 		"D1260.": "workflow_secrets",
 		"D1266.": "refuse",
 		"D1267.": "untouched",
@@ -236,37 +244,46 @@ func TestDocsProjectWorkflowSecretsRecordsTheOwnersAnswers(t *testing.T) {
 	if len(sections) == 0 {
 		t.Fatal("no decision section was found")
 	}
-	answered := 0
+	byNameSeen, asRecommended := 0, 0
 	for _, s := range sections {
 		id := strings.Fields(strings.TrimPrefix(s.heading, "### "))[0]
-		ruling, ok := want[id]
-		if !ok {
-			if strings.Contains(s.body, "**Answered") {
-				t.Errorf("%s carries an answer, and the owner has not ruled on it", s.heading)
+		if !strings.Contains(s.body, "**Answered 2026-11-04") {
+			t.Errorf("%s carries no answer marker, and the owner answered all eighteen on 2026-11-04", s.heading)
+			continue
+		}
+		if ruling, ok := byName[id]; ok {
+			byNameSeen++
+			if !strings.Contains(s.body, ruling) {
+				t.Errorf("%s does not carry the owner's ruling (%q)", s.heading, ruling)
 			}
 			continue
 		}
-		answered++
-		if !strings.Contains(s.body, "**Answered 2026-11-04") {
-			t.Errorf("%s is one of the three the owner answered and does not say so", s.heading)
-		}
-		if !strings.Contains(s.body, ruling) {
-			t.Errorf("%s does not carry the owner's ruling (%q)", s.heading, ruling)
+		asRecommended++
+		if !strings.Contains(s.body, "**Answered 2026-11-04: as recommended.**") {
+			t.Errorf("%s is one of the fifteen the owner answered as recommended and does not say so", s.heading)
 		}
 	}
-	if answered != len(want) {
-		t.Errorf("%d of the three answered decisions were found in the reconciliation", answered)
+	if byNameSeen != len(byName) {
+		t.Errorf("%d of the three decisions the owner answered by name were found, want %d", byNameSeen, len(byName))
 	}
-	// The README and the plan carry the same status, and neither may read as an
-	// approval: a task a reader believes is approved is a task that gets built.
+	if asRecommended != 15 {
+		t.Errorf("%d decisions are marked as answered as recommended, want the fifteen that are", asRecommended)
+	}
+	// The README and the plan carry the same status, and every half of it
+	// matters: how many were answered, that the answers were the
+	// recommendations, and where the build lands. A task a reader believes is
+	// still open does not get built, and one believed approved without a slot
+	// gets built in the wrong release.
 	for _, name := range []string{pwsReadme, pwsPlan} {
 		other := readProjectWorkflowSecrets(t, name)
-		if !strings.Contains(other, "three of the eighteen") {
-			t.Errorf("%s does not say how many of the eighteen decisions the owner answered", name)
+		for _, want := range []string{"all eighteen", "as recommended", "the build may start", "0.19.0"} {
+			if !strings.Contains(other, want) {
+				t.Errorf("%s does not carry %q: the status line has to say the block is answered, how, and where it lands", name, want)
+			}
 		}
 		for _, id := range []string{"D1260", "D1266", "D1267"} {
 			if !strings.Contains(other, id) {
-				t.Errorf("%s does not name %s, which the owner answered", name, id)
+				t.Errorf("%s does not name %s, which the owner answered by name", name, id)
 			}
 		}
 	}
@@ -593,6 +610,12 @@ func TestDocsProjectWorkflowSecretsPlanSequencesAfterTheSecretsRmWork(t *testing
 		"--allow-data-to",
 		"workflow_secrets.<name>.allow_data_to",
 		"TestSecretsSetAllowDataToOnAWorkflowSecretRefusesAnAgentSession",
+		// The refusal the flag already carries in a coding agent's session is
+		// G8's, and it is the one a session gets rather than the widening path:
+		// a task that reached the new block by a route of its own would have
+		// re-opened the door that refusal closes.
+		"The outright refusal is G8's",
+		"TestSecretsSetPolicyRefusesAnAgentSession",
 		// `proxy` is the other half of the flag, and D1275 refuses the field.
 		"--proxy",
 	} {
@@ -695,6 +718,46 @@ func TestDocsProjectWorkflowSecretsProviderRuleIsWhereProvidersIsVisible(t *test
 	} {
 		if !strings.Contains(w2, want) {
 			t.Errorf("implementation-plan.md W2 does not carry %q: it is the task that could undo the fence, so it has to state what it does not touch", want)
+		}
+	}
+}
+
+// TestDocsProjectWorkflowSecretsResidualNamesTheManagedExposure: §6 is the
+// folder's list of what the design does not fix, and one exposure belongs there
+// that the gate itself creates — a managed project admits the grant the new
+// block produces, because the managed cover judges a resource's type and the
+// prefix of the name it carries, never the block the entry came from. The
+// section has to say that, and say that `project_secrets` is exposed the same
+// way today: an exposure a reader discovers for themselves after reading a
+// residual list is worse than one the list names.
+func TestDocsProjectWorkflowSecretsResidualNamesTheManagedExposure(t *testing.T) {
+	rec := readProjectWorkflowSecrets(t, pwsReconcile)
+	residual := sectionBody(t, rec, "6. The residual this design refuses to hide")
+	for _, want := range []string{
+		"internal/infra/tf/managed_cover.go",
+		// The type list, the reason, and the field the gate reads the name out
+		// of: without all three the sentence is a claim about a gate rather
+		// than a reading of it.
+		"(`:68`)",
+		"(`:88`)",
+		"(`:155`)",
+		"secret_id",
+		"fugaro managed",
+		// The comparison that keeps it a residual rather than a new hole.
+		"`project_secrets` has exactly the same exposure today",
+	} {
+		if !strings.Contains(residual, want) {
+			t.Errorf("reconciliation.md §6 does not carry %q: the managed exposure belongs in the residual", want)
+		}
+	}
+	// D1270's unknown-key citation is the write path's, and it moved when
+	// `fugaro settings set` grew the managed gate. The read path's own refusal
+	// is a different line in a different file, and saying which is which is what
+	// makes the citation re-readable.
+	d1270 := subBody(t, rec, "D1270")
+	for _, want := range []string{"settings_set.go:412", "settings.go:170"} {
+		if !strings.Contains(d1270, want) {
+			t.Errorf("reconciliation.md D1270 does not cite %q: the registry answer has to name the line it comes from", want)
 		}
 	}
 }
