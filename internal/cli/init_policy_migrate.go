@@ -92,6 +92,15 @@ type policyMigration struct {
 	// re-seed rewrites the file's policy keys under the same config struct, and
 	// a plan that read them again afterwards would be comparing two states.
 	recorded string
+
+	// firstPublish is whether the write this plan holds is the project's FIRST
+	// published node: nothing is at the path today, so the write creates it
+	// rather than replacing one. The distinction is not decoration — every other
+	// sentence of this stage is worded for a node that is already there ("this
+	// rewrites the published policy node in place", the diff against it, the
+	// generation the file was written from) — and the publish that admits no
+	// repository is confirmed differently when it is the first (#1674).
+	firstPublish bool
 }
 
 // policyNodeUnreachable is whether this project has no published policy node to
@@ -168,7 +177,16 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 		return nil, false, err
 	}
 	if !found {
-		return nil, false, nil
+		// #1656: a project that has never published a node is not always a
+		// project with nothing to do. The local config can state something only
+		// the node can carry — an image_catalog, which no job's environment
+		// carries — and a stage that reported done here left the operator's
+		// catalog in a file no run reads, with `fugaro project policy publish`
+		// as the second command `fugaro update`'s one command must not need.
+		if !firstPublishCarriesCatalog(lc) {
+			return nil, false, nil
+		}
+		return firstPolicyPublish(ctx, db, lc, etag, configPath)
 	}
 	node, derr := withDerivedMembers(raw, lc)
 	moved, changes, err := projectpolicy.Migrate(node)
@@ -263,6 +281,58 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 		return nil, true, nil
 	}
 	return m, true, nil
+}
+
+// firstPublishCarriesCatalog is whether the local config states an image
+// catalog the node would carry, which is the one member a first publish is made
+// for. ImageCatalogEffective is nil for a config that names none and for one
+// that writes an empty catalog, and an empty catalog publishes no member at all
+// (D1156), so neither is a reason to write a node where none was — the publish
+// would create a policy that admits nothing and carry no catalog with it.
+//
+// The other members the local config states are not this stage's to publish
+// here: a budget ceiling, a base branch or a model list reaches every run
+// through the job's own environment and the shared config, so a project that has
+// never published a node is a project those are already read for. A catalog is
+// not among them, which is what makes it the whole of this case.
+func firstPublishCarriesCatalog(lc *localcfg.Config) bool {
+	return lc.ImageCatalogEffective(nil) != nil
+}
+
+// firstPolicyPublish is the publish half of a project that has never published a
+// node: the document the local config states, built by the publisher's own
+// function (policyNodeForPublish), so the node this stage writes and the node
+// `fugaro project policy publish` writes are the same document from the same
+// config.
+//
+// The write creates the node rather than replacing one, which is what makes it
+// the one write of this stage that is not a "rewrite" and the only one with a
+// first-publishing question to ask (the empty allow-list, in
+// policyMigrationConfirm). Everything else is the stage's ordinary posture: the
+// ETag the read found absent is the precondition the create is conditional on
+// (rtdb.PutIfMatch), the publisher's rules gate is asked before the write
+// (requirePolicyRules, P3), and the generation the write lands is recorded in
+// the file it was built from (D854).
+//
+// The drift is measured against an empty node rather than a nil one: there is no
+// published policy for the local config to agree with, so every member the
+// config states is a member the node does not carry yet — which is what the
+// operator's diff is a diff OF. policyConfigDrift reads a nil node as "nothing
+// to differ from" and would print no diff at all.
+func firstPolicyPublish(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, etag, configPath string) (*policyMigration, bool, error) {
+	body, pol, sources, err := policyNodeForPublish(ctx, lc, nil, nil, false, false, false)
+	if err != nil {
+		return nil, false, err
+	}
+	m := &policyMigration{lc: lc, db: db, etag: etag, path: configPath,
+		recorded: lc.PolicyGeneration, firstPublish: true}
+	m.drift = policyConfigDrift(lc, &projectpolicy.Policy{})
+	m.pub = &policyPublish{body: body, pol: pol, drift: m.drift, sources: sources,
+		adopted: lc.PolicyGeneration == ""}
+	if err := requirePolicyRules(ctx, db, lc); err != nil {
+		return nil, false, err
+	}
+	return m, false, nil
 }
 
 // publishPlanFor works out what this run does about a node that does not carry
@@ -362,13 +432,23 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 	}
 	m.print(w)
 	what := m.what() + ": every run of the project reads it, and the fields you edited into it by hand are carried over rather than published again"
-	// D846 reaches this door too: a publish that raises a ceiling, removes one
-	// or widens the model list is the widening the settings commands reserve for
-	// the project's own hand, and the two are one decision — what every run of
-	// the project is admitted by. So the typed name is asked for it and --yes
-	// does not stand in, which is what the sentence says to the operator whose
-	// script (or agent session) has just passed --yes and been refused.
-	if !admitted {
+	if m.firstPublish && admitsNoRepository(m.pub) {
+		// The first node of a project whose local config lists no repository
+		// admits nothing, and from the moment it is published every run of the
+		// project stops before it starts (doctor's allow-list-empty). The diff
+		// above shows the empty list as one line among the ones a first publish
+		// adds, which reads as harmless, so the consequence is said before the
+		// write and a person has to type the project's name — the publisher's own
+		// confirmation, reused rather than worded a second time, and the same one
+		// the explicit door asks (#1674). It replaces the confirmations below
+		// rather than joining them: it is the stricter of the two (no flag stands
+		// in, and a session with no terminal or a coding agent's is refused), and
+		// a document this node's confirmation already covers needs no second
+		// question.
+		if err := confirmEmptyAllowList(cmd, m.lc, agentMarker(os.Getenv)); err != nil {
+			return err
+		}
+	} else if !admitted {
 		if loosening := m.loosening(); len(loosening) > 0 {
 			why := m.looseningWhy(loosening)
 			// The sentence is said once. A session with no terminal is refused with
@@ -416,11 +496,21 @@ func (m *policyMigration) refuseRunsInFlight(ctx context.Context, yes bool) erro
 // node: the migration, the publish, or both in one write.
 func (m *policyMigration) writesNode() bool { return m.moved != nil || m.pub != nil }
 
+// admitsNoRepository is whether the document this publish would write admits no
+// repository at all, which is the node that stops every run of the project
+// before it starts. It is asked of the built publish and not of the local
+// config: the allow-list a publish writes also carries what the shared config's
+// repositories add and the entries a node already had, and a confirmation keyed
+// on the file alone would refuse a write whose allow-list is not empty.
+func admitsNoRepository(p *policyPublish) bool { return p != nil && len(p.pol.AllowRepos) == 0 }
+
 // what names this run's write as the confirmation and the outcome read it: the
 // migration and the publish are one write and are worded as one, and either
 // alone is worded as itself.
 func (m *policyMigration) what() string {
 	switch {
+	case m.firstPublish:
+		return "this writes the project's first published policy node, from your local config"
 	case m.moved != nil && m.pub != nil:
 		return "this rewrites the published policy node in place, carrying the migration and what your local config states"
 	case m.pub != nil:
@@ -444,6 +534,8 @@ func (m *policyMigration) payload() []byte {
 // doneDetail is the line both doors report the write with.
 func (m *policyMigration) doneDetail() string {
 	switch {
+	case m.firstPublish:
+		return "published the project's first policy node, carrying what the local config states"
 	case m.moved != nil && m.pub != nil:
 		return fmt.Sprintf("migrated the published policy from version %d to %d in place, with what the local config states", m.from, projectpolicy.Version)
 	case m.pub != nil:
@@ -782,8 +874,13 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 		return initflow.Status{}, err
 	}
 	switch {
-	case !published:
+	case !published && m == nil:
 		return initflow.Status{State: initflow.Done, Detail: policyNoneDetail()}, nil
+	case !published:
+		// The project has no node and the local config states a catalog, so the
+		// check is not the no-policy state: it is the first publish this run
+		// would make, and it says so rather than reporting the stage done.
+		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("no policy is published at %s, and the local config states an image_catalog that only the node carries: this run publishes the project's first node, after your confirmation", projectpolicy.PathShared())}, nil
 	case m == nil:
 		return initflow.Status{State: initflow.Done, Detail: fmt.Sprintf("the published policy is version %d", projectpolicy.Version)}, nil
 	case m.generations != nil:
@@ -819,7 +916,7 @@ func (s *policyMigrateStage) Plan(ctx context.Context, env initflow.Env) (initfl
 		return initflow.Plan{}, err
 	}
 	switch {
-	case !published:
+	case !published && m == nil:
 		return initflow.Plan{NothingToDo: true, Detail: policyNoneDetail()}, nil
 	case m == nil:
 		return initflow.Plan{NothingToDo: true, Detail: fmt.Sprintf("the published policy is version %d", projectpolicy.Version)}, nil
@@ -835,6 +932,8 @@ func (s *policyMigrateStage) Plan(ctx context.Context, env initflow.Env) (initfl
 // file.
 func (m *policyMigration) planDetail() string {
 	switch {
+	case m.firstPublish:
+		return "publish the project's first policy node, carrying the image_catalog the local config states, after your confirmation"
 	case m.generations != nil:
 		return fmt.Sprintf("re-seed %s from the published policy node, after your confirmation", m.path)
 	case m.record != "":

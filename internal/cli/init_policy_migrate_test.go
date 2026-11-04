@@ -366,28 +366,32 @@ func setCatalogConfigWithNoRepos(t *testing.T, f *projectFixture) {
 	}
 }
 
-// TestUpdatePolicyFirstPublishIsRefusedWithoutAConfirmation: the write the
-// stage now makes when nothing is published keeps the stage's own refusal — a
-// session with no terminal and no --yes is refused, as every other node write of
-// this stage is — and an allow-list that admits nothing is refused whatever the
-// session is: --yes does not stand in for the project's name, because that node
-// stops every run of the project before it starts and a flag typed in advance is
-// not a person who read the consequence (#1674's confirmation, reused).
+// TestUpdatePolicyFirstPublishIsRefusedWithoutAConfirmation: the node the stage
+// now writes when nothing is published is the one every run of the project is
+// admitted by from here on, chosen where none was, so it is the operator's own
+// write and not one a session makes: --yes does not stand in for the project's
+// name, and a session with no terminal is refused — the confirmation D846
+// reserves for the boundary every run is admitted by, and the class a coding
+// agent's session never reaches under the managed gate (D1026).
 func TestUpdatePolicyFirstPublishIsRefusedWithoutAConfirmation(t *testing.T) {
 	f := newProjectFixture(t, catalogConfigYAML)
 	h := newMigrationRig(t, f, &initOptions{})
 	noTerminal(t)
 
-	out, err := h.apply(t, false)
+	out, err := h.apply(t, true)
 	if err == nil {
-		t.Fatalf("the first publish landed with no terminal and no --yes:\n%s", out)
+		t.Fatalf("--yes published the project's first policy node with no terminal:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "does not stand in") {
+		t.Errorf("the refusal does not say that --yes is no stand-in: %v", err)
 	}
 	if v := f.db.Value(projectpolicy.PathShared()); v != nil {
 		t.Fatalf("the refused publish wrote a node: %v", v)
 	}
 
-	// A config that lists no repository publishes a node that admits nothing, so
-	// --yes is no stand-in there either.
+	// A config that lists no repository is the other refusal of the same write,
+	// and the sentence is the publisher's own (#1674): the node admits nothing,
+	// so every run of the project stops before it starts.
 	ger := newProjectFixture(t, catalogConfigYAML)
 	setCatalogConfigWithNoRepos(t, ger)
 	h2 := newMigrationRig(t, ger, &initOptions{})
