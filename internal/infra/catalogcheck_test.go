@@ -185,6 +185,49 @@ func TestCatalogCheckAssignsEveryEntry(t *testing.T) {
 	}
 }
 
+// catalogCheckTwoNames is the local config of a project that spells one
+// repository twice, in the two cases the fold makes equal (task.CanonicalRepo):
+// only the second key, the one whose provider and workflow the config names, is
+// one this installation can build with.
+const catalogCheckTwoNames = `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry: us-east5-docker.pkg.dev/proj-1234/fugaro
+registry_host: us-east5-docker.pkg.dev/proj-1234
+build: { service_account: fugaro-build@proj-1234.iam.gserviceaccount.com }
+user: test@example.com
+base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc }
+repos:
+  acme/APP: {}
+  acme/app: { provider: bitbucket, workflows: [web] }
+image_catalog:
+  entries:
+    - name: tools
+      tags: [node]
+      source: { kind: dockerfile, repo: acme/app, path: .fugaro/tools.Dockerfile }
+`
+
+// TestCatalogCheckAssignsAnEntryToTheBuildableKeyOfTwoNames: two keys of the
+// local config can name one repository — only the fold says so — and a key this
+// installation cannot build with must not hide the buildable one beside it: an
+// entry naming that repository goes to the key that can build it, rather than
+// to no build at all, which is what the sorted-first key would leave it.
+func TestCatalogCheckAssignsAnEntryToTheBuildableKeyOfTwoNames(t *testing.T) {
+	cc, spec := catalogCheckJob(t, catalogCheckTwoNames, 0)
+	if len(spec.Repositories) != 1 {
+		t.Fatalf("the spec names %d repositories (%+v), want the one this installation can build with", len(spec.Repositories), spec.Repositories)
+	}
+	r := spec.Repositories[0]
+	if r.Repo != "acme/app" || r.Provider != gitprov.KindBitbucket || !slices.Equal(r.Entries, []string{"tools"}) {
+		t.Fatalf("the spec's repository is %+v, want acme/app on bitbucket building tools", r)
+	}
+	if len(cc.Repositories) != 1 {
+		t.Errorf("the tfvars carry the records grant of %d repositories, want one", len(cc.Repositories))
+	}
+}
+
 // TestCatalogCheckUsesTheProjectCopyOfAProjectScopedCredential: an operator who
 // stores a provider's credential once for the project stores it in the
 // project's own container, and the repository's build mounts that one — the
@@ -283,7 +326,7 @@ func TestCatalogCheckRefusesAMissingBaseImage(t *testing.T) {
 func TestCatalogCheckCarriesTheManagedBound(t *testing.T) {
 	for _, tc := range []struct {
 		builds int64
-		want   int
+		want   int64
 	}{{0, 0}, {7, 7}, {1000, 1000}} {
 		_, spec := catalogCheckJob(t, catalogCheckLocal, tc.builds)
 		if spec.MaxImageBuilds != tc.want {

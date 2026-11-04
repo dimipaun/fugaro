@@ -108,7 +108,9 @@ type CatalogCheckJobSpec struct {
 	// the job may submit, whatever the catalog says changed. It is M5's bound
 	// (managed.MaxImageBuilds' range), and zero is the default the reader
 	// shares with M5, so an installation that has read no bound writes no cap.
-	MaxImageBuilds int `json:"max_image_builds,omitempty"`
+	// It is the bound's own type rather than the int the reader declares: JSON
+	// has one number type, and the narrowing belongs nowhere in between.
+	MaxImageBuilds int64 `json:"max_image_builds,omitempty"`
 }
 
 // CatalogCheckRepoSpec is one repository's part of the assignment: the facts a
@@ -195,7 +197,7 @@ func CatalogCheck(lc *localcfg.Config, bucket string, imageBuilds int64) (*Catal
 		BaseImages:     maps.Clone(lc.BaseImages),
 		MachineType:    lc.Build.MachineType,
 		BuildRegion:    lc.BuildRegion(),
-		MaxImageBuilds: int(imageBuilds),
+		MaxImageBuilds: imageBuilds,
 	})
 	if err != nil {
 		return nil, err
@@ -243,19 +245,17 @@ func CatalogCheck(lc *localcfg.Config, bucket string, imageBuilds int64) (*Catal
 // with no App ID, or a name no provider could address.
 func catalogCheckRepos(lc *localcfg.Config, cat *config.Catalog) ([]CatalogCheckRepoSpec, error) {
 	var out []CatalogCheckRepoSpec
-	// at resolves a canonical repository name to the repository that answers
-	// for it, which is the FIRST of the sorted keys naming it — the rule
-	// localcfg.Config.RepoFor reads repos.<r> through, so the repository this
-	// assignment names and the one the rest of the installation reads are the
-	// same entry. A name that resolved to a repository this installation cannot
-	// build with resolves to nothing.
+	// at resolves a canonical repository name to the repository that answers for
+	// it: the first of the sorted keys naming it that this installation can build
+	// with, which is localcfg.Config.RepoFor's read (sorted keys, first match)
+	// narrowed to the keys that can answer at all — two keys can name one
+	// repository, only the fold says so, and a key this installation cannot build
+	// with must not hide a buildable one beside it. A name no buildable key names
+	// resolves to nothing.
 	at := map[string]int{}
 	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
 		canonical, err := task.CanonicalRepo(name)
 		if err != nil {
-			continue
-		}
-		if _, seen := at[canonical]; seen {
 			continue
 		}
 		r, ok, err := catalogCheckRepo(lc, name)
@@ -263,7 +263,12 @@ func catalogCheckRepos(lc *localcfg.Config, cat *config.Catalog) ([]CatalogCheck
 			return nil, err
 		}
 		if !ok {
-			at[canonical] = -1
+			if _, seen := at[canonical]; !seen {
+				at[canonical] = -1
+			}
+			continue
+		}
+		if i, seen := at[canonical]; seen && i >= 0 {
 			continue
 		}
 		at[canonical] = len(out)
