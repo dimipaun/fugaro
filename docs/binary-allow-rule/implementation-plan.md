@@ -1,22 +1,28 @@
 # The binary allow rule and the no-verdict label: implementation plan
 
-**Status: plan only; nothing is implemented; no task approved; the owner decides.** Written to
-[spec.md](spec.md) and [reconciliation.md](reconciliation.md) **as recommended**, so an answer of
-"as recommended" on D981–D996 needs no rewrite here, and **AR4 is the one task D997 can delete**
-(see its heading).
+**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
+approved.** Written to [spec.md](spec.md) and [reconciliation.md](reconciliation.md), and refreshed
+2026-11-04: **#1476 is merged**, so AR3–AR6 lose their external dependency and **AR4 is written**
+(D997 was answered *yes*); AR1's publish rides the **managed** policy-publish gate (D1012/M3) and
+the publish doors both designs' work left on `main`, not a stage this plan waits for. The label's
+tasks keep their recommendation unchanged — the owner's 2026-11-04 ruling covered the *rule*'s
+decisions (D983–D989, D991, D997), not the label's.
 
 ## 1. Order, and what this plan does not own
 
 Two works, and they are independent of each other:
 
-- **NV — the label** (NV0–NV2): three tasks, no dependency on anything but the 0.14.2 runner group.
+- **NV — the label** (NV0–NV2): three tasks, and no dependency at all (the 0.14.2 runner group is
+  merged, so `Decide`'s no-verdict case and the status switch are `main`'s).
   It can land first, on its own, and it should: it closes a falsehood on a wire five clients read,
   and it has nothing to do with binaries.
-- **AR — the rule** (AR0–AR7): the runner half (AR0, AR2–AR6) is likewise independent — it is tested
-  against a policy built by hand — and only **AR1, the publish**, needs another design's work: the
-  `initflow.Policy` stage that [docs/settings-commands](../settings-commands/implementation-plan.md)
-  **S3** turns into a publish. **AR1 is written to sit immediately after S3** and must not be
-  reordered before it.
+- **AR — the rule** (AR0–AR7): the runner half (AR0, AR2–AR6) is independent — it is tested against a
+  policy built by hand — and **AR1, the publish**, needs nothing this plan does not already have on
+  `main`: the publish doors exist (the explicit `fugaro project policy publish`, and the
+  `initflow.Policy` stage `fugaro update` runs, `internal/cli/init_policy_publish.go`), both build
+  the node through the one `buildProjectPolicy`, and the explicit door is under the **managed agent
+  gate** (D1012/M3, `internal/cli/project_policy_managed.go`). AR1 adds a member to that one build
+  and nothing else, so **no AR task waits on another design**.
 
 **This plan owns no other design's files**, and it shares three with the sibling plans:
 
@@ -24,9 +30,9 @@ Two works, and they are independent of each other:
 
 | File | Who writes it, in order | What keeps it one file |
 | --- | --- | --- |
-| `internal/runner/runner.go` | **AR3, AR4, AR5** (finalize's switch, the two hunks that call the checks, the refusal text) | **The 0.15.0 rulings give this file one writer across the planning runs**, and each hunk here is a few lines inside `finalize`. The implementing run that lands AR3–AR5 lands them in one slot and rebases once; a second writer in the same slot is what the ruling forbids |
-| `internal/cli/project_cmd.go` | the settings design's **S3** (`buildProjectPolicy` gains the agent refusal), then **AR1** (the same function gains `binaries.*`) | **one `buildProjectPolicy`**, pinned by name already (`internal/cli/docs_project_centric_test.go:2326`) and guarded by S3's `TestUpdateStageAndTheExplicitDoorBuildTheSameNode`. AR1 adds a member to a function S3 has already reshaped; it never writes a second build path |
-| `internal/cli/init_stages.go` | the settings design's **S3** (the publish becomes part of the `Policy` stage's work) | AR1 writes **no line of it**: the stage, the ETag guard and the generation guard are S3's, and the binaries block rides the node S3 already publishes. This is the whole reason AR0–AR6 can land before AR1 |
+| `internal/runner/runner.go` | **AR3, AR4, AR5** (finalize's switch, the two hunks that call the checks, the refusal text) | **The planning rulings give this file one writer across the planning runs**, and each hunk here is a few lines inside `finalize`. The implementing run that lands AR3–AR5 lands them in one slot and rebases once; a second writer in the same slot is what the ruling forbids |
+| `internal/cli/project_cmd.go` | **AR1** (`buildProjectPolicy` gains `binaries.*`) | **one `buildProjectPolicy`** (`project_cmd.go:765`), pinned by name already (`internal/cli/docs_project_centric_test.go:2326`) and shared by both doors (the explicit publish and the `update` stage's publish half, `internal/cli/init_policy_publish.go`). AR1 never writes a second build path. **The agent refusal is no longer a sibling design's task** — it is on `main`, in `project_cmd.go:199`–`223` and `project_policy_managed.go` (D1012/M3) |
+| `internal/cli/init_stages.go` | nobody in this plan | AR1 writes **no line of it**: the stage, the ETag guard and the generation guard are already there, and the binaries block rides the node both doors already publish. This is the whole reason AR0–AR6 can land before AR1 |
 
 `internal/policy/policy.go` and `internal/policy/merge.go` (AR2) are shared with the governance work
 only in the sense that they live in a package with a seam (`hook.go`); AR2 adds a field and a merge
@@ -52,7 +58,7 @@ the four and leaves the fifth (the console, E2) named.
 
 - **Files (7):** `internal/runstore/runstore.go` (`StatusUnreviewed`, its comment, and a
   `Statuses` slice so the set has **one** spelling the way `rigor.Modes` and `tier.Tiers` do),
-  `schemas/result.schema.json` (the `status` enum, line 16), `internal/digest/digest.go` (the
+  `schemas/result.schema.json` (the `status` enum, line 22), `internal/digest/digest.go` (the
   `statuses` closed set reads the slice instead of restating it), `internal/runstore/runstore_test.go`,
   `schemas/schemas_test.go`, `internal/digest/digest_test.go`, and `internal/cli/runs_test.go`
   (the guard test named above; **`internal/cli/runs.go` and `internal/cli/watch_queued.go`
@@ -82,7 +88,8 @@ the four and leaves the fifth (the console, E2) named.
   no-verdict cases, F6), `internal/runner/runner.go` (the one `case` in finalize's switch),
   `internal/runner/outcome_test.go`, `internal/runner/runner_test.go` (one new test function).
 - **Red step:** `TestUnreviewedRunIsNotFailed` fails — a run whose senior round answered nothing is
-  recorded `failed` at `runner.go:3653` today, which is the lie this task removes.
+  recorded `failed` at finalize's status switch (`runner.go:3936`–`3942`) today, which is the lie
+  this task removes.
 - **Tests:** `TestUnreviewedRunIsNotFailed` (a record whose last senior round is `verdict: none`
   ends `unreviewed` / `draft`, and the reason still names the round), `TestNoSeniorRoundIsUnreviewed`
   (`last == nil` takes the same label), `TestDecideClassMatchesTheReadiness` (a `ready` answer is
@@ -114,9 +121,10 @@ The foundation: the canonical shape and the one place it is validated. It is wri
 node only — nothing reads it yet — so it lands without waiting for anything.
 
 - **Files (6):** `internal/projectpolicy/binaries.go` (new: the `Binaries` carrier, its decode, its
-  validation — the four path-glob checks of `rigor.Area.Validate` / `rebuild.paths`, the cap's
-  positivity and ceiling), `internal/projectpolicy/policy.go` (the member, `knownTopLevelKeys`),
-  `internal/projectpolicy/version.go` (`Version = 5`, `VersionSince[5] = "0.15.0"`), and the three
+  validation — the four pattern checks of `rigor.Area.Validate` / `rebuild.paths` **plus the length
+  bound** (`MaxAreaPattern`, 200) that `Area.Validate` adds, and the cap's positivity and ceiling),
+  `internal/projectpolicy/policy.go` (the member, `knownTopLevelKeys`),
+  `internal/projectpolicy/version.go` (`Version = 5`, `VersionSince[5] = "0.20.0"`), and the three
   test files `binaries_test.go` (new), `policy_test.go`, `version_test.go`.
 - **Red step:** `TestBinariesAllowPatternsAreRefusedAtDecode` fails — `website/public/**.png`,
   `/etc/passwd`, `..`, and an empty entry are all accepted by a decoder that has no such member, and
@@ -135,24 +143,35 @@ node only — nothing reads it yet — so it lands without waiting for anything.
   sentence: the four `rebuild.paths` pattern checks are shared, the length bound is the one the
   spec's first draft left out of its count.
 
-### AR1. The owner's carrier, the publish, and the convergence (D987, D990). **Needs S3**
+### AR1. The owner's carrier, the publish, and the convergence (D987, D990)
 
 - **Files (8):** `internal/localcfg/localcfg.go` (`BinariesAllow`, `BinariesMaxBytes`, validated at
   load — a misspelt pattern is a refusal, never a rule that quietly admits nothing),
-  `internal/cli/sharedcfg.go` (`sharedForbidden` gains `binaries`), `internal/cli/project_cmd.go`
-  (`buildProjectPolicy` fills the member; silence keeps the node's list, a written empty block clears
-  it — `review_floor`'s rule, D987), `internal/cli/init_policy_migrate.go` (the version-4 → 5
-  republish path the stage already owns), and the four test files
-  `internal/localcfg/localcfg_test.go`, `internal/cli/project_policy_test.go`,
+  `internal/cli/sharedcfg.go` (`sharedForbidden`, `sharedcfg.go:216`, gains `binaries`),
+  `internal/cli/project_cmd.go` (`buildProjectPolicy`, `project_cmd.go:765`, fills the member;
+  silence keeps the node's list, a written empty block clears it — `review_floor`'s rule, D987),
+  `internal/projectpolicy/migrate.go` (the version-4 → 5 step: the node keeps its shape and its
+  version number moves, the shape-free step `migrateV3ToV4` is the precedent for), and the four test
+  files `internal/localcfg/localcfg_test.go`, `internal/cli/project_policy_test.go`,
   `internal/cli/sharedcfg_test.go`, `internal/cli/update_converge_test.go`.
 - **Red step:** `TestInstallationAtThePreviousVersionConvergesBinaries` fails — an installation whose
   published node is version 4 ends `fugaro update` with a version-5 node carrying its `binaries`
-  block, and today the stage publishes nothing at all (it does not exist until S3).
-- **Tests:** that one, `TestUpdatePolicyStagePublishesTheBinariesBlock`,
+  block, and today the publish (both doors) states no `binaries` member, so there is nothing for the
+  node to carry.
+- **Tests:** that one, `TestUpdatePolicyStagePublishesTheBinariesBlock` (the `update` door, whose
+  publish half is `internal/cli/init_policy_publish.go`),
   `TestPublishKeepsTheBinariesListWhenTheLocalFileSaysNothing`,
   `TestPublishClearsTheBinariesListOnAWrittenEmptyBlock`,
   `TestConfigPublishRefusesTheBinariesKey` (the shared config is a launcher-writable file, F11), and
   `TestLocalConfigRefusesAnUnreadableBinariesPattern`.
+- **The managed gate, and why `binaries` needs no rule of its own there.** `fugaro project policy
+  publish` is under the **managed agent gate** (`project_policy_managed.go`, M3, D1012): in a coding
+  agent's session the node the publish *would* write is judged member by member, and every member no
+  rule reads is refused by `policyUnjudgedRefusal`. `binaries` is deliberately one of those — a rule
+  that let an agent's publish move it would be the self-grant D986 refuses, and the catch-all's
+  answer (an agent may not move it at all) is the answer this design wants.
+  `TestAnAgentsPublishMayNotMoveTheBinariesBlock` pins it, so a later task that adds a rule for the
+  member has to change that test on purpose.
 - **Hermetic:** a fake Realtime Database, an ETag, `t.TempDir()`. No apply, no deploy, no cloud.
 - **Carries its own `### For operators` note, in its PR body, for the release PR to copy:**
   "`fugaro update` republishes the project policy as version 5, which carries `binaries` — the paths
@@ -179,7 +198,8 @@ node only — nothing reads it yet — so it lands without waiting for anything.
 
 - **Files (3):** `internal/runner/stray.go` (an admitted path is not a stray; the reason gains the
   cap and the rule), `internal/runner/runner.go` (the hunk that hands the check the run's policy),
-  `internal/runner/stray_test.go` (today's `finalize_binary_test.go` on #1476, renamed or extended).
+  `internal/runner/stray_test.go` (**`finalize_binary_test.go` is on `main` now** — #1476 is merged —
+  so this is that file's tests extended, or the file renamed and extended, never a second copy).
 - **Red step:** `TestAnAdmittedImageIsCommitted` fails — a run that leaves a new `.webp` under an
   admitted path is refused and ends a draft, which is item 1 in one test.
 - **Tests:** `TestAnAdmittedImageIsCommitted` (the file is in the leftover commit and the run is not
@@ -190,18 +210,18 @@ node only — nothing reads it yet — so it lands without waiting for anything.
 
 ### AR4. The residual: the run's own diff (D989, D997, F3, F4, F14)
 
-**This is the one task the owner can delete.** It implements option **A** of D997 — refuse a new
-binary anywhere in the run's own range, subject to the allow rule. If the owner answers **B**
-(finalize only, as #1476 ships), AR4 is not written, the residual stays documented in spec.md §7 and
-§9 instead of closed, and the plan loses its longest task without any other one changing. If the
-owner answers **C**, AR4's reading moves to the runner's commit call sites and its tests move with
-it — and the hole it was written to close (the coder's own commits, which are not a runner call
-site) stays open, which is the argument D997 makes against C.
+**Written, because the owner answered D997 yes on 2026-11-04** (reconciliation.md §2). It implements
+option **A** — refuse a new binary anywhere in the run's own range, subject to the allow rule. The
+other two options are recorded as refused rather than left as branches for an implementer to pick
+from: **B** (finalize only, as #1476 ships) leaves the residual documented in spec.md §7 and §9
+instead of closed and leaves the deliberate payload admitted, and **C** moves the reading to the
+runner's commit call sites while leaving the hole this task exists to close (the coder's own commits,
+which are not a runner call site) still open.
 
 - **Files (5):** `internal/runner/stray.go` (the diff reader and the shared predicate),
-  `internal/runner/diffbase.go` (`--name-status` beside the numstat read, so an **added** path is
-  known), `internal/runner/runner.go` (the hunk that runs it), `internal/runner/shadow.go`, and
-  `internal/runner/stray_test.go`.
+  `internal/runner/diffbase.go` (`--raw -z --no-renames` beside the numstat read, so an **added**
+  path and both blob ids are known), `internal/runner/runner.go` (the hunk that runs it),
+  `internal/runner/shadow.go`, and `internal/runner/stray_test.go`.
 - **Red step:** `TestASelfCommittedBinaryFailsTheRun` fails — an agent that commits a payload in
   implement, and one that stages it with `git add -N` first, both reach the branch with no refusal
   today.
@@ -216,9 +236,9 @@ site) stays open, which is the argument D997 makes against C.
   spec.md §4.2 and residual 4: the add is hidden by a later delete, and this test makes closing it
   a decision), and `TestTheRefusalNamesThePathAndTheSize`.
 - **`shadow.go`, named rather than assumed away.** The **fifth** committer is
-  `internal/runner/shadow.go:324` — a challenger arm's own leftover `CommitAll`, which is a
-  different call site from finalize's and would otherwise be the one commit path the rule never
-  reads. It is checked for the same reason #1476 holds stray paths back from it: the two arms'
+  `internal/runner/shadow.go:318`'s `shadowFinalize` — a challenger arm's own leftover commit
+  (`CommitAllExcept`, `shadow.go:333`), which is a different call site from finalize's and would
+  otherwise be the one commit path the rule never reads. It is checked for the same reason #1476 holds stray paths back from it: the two arms'
   records have to agree about what the run did, and a challenger arm that admitted a payload and
   reported a clean run would make the pairing's own comparison lie. **The bytes are not the same
   risk** — *"nothing of a challenger's reaches the developer"* (`shadow.go:37`), so the arm's branch
@@ -264,30 +284,38 @@ site) stays open, which is the argument D997 makes against C.
 
 ## 3. External dependencies
 
+**Two, and neither blocks a task.** The other dependency this plan used to carry — **PR #1476**, the
+0.14.2 runner group — **is merged** (`main`, 2026-11-04): `internal/runner/stray.go`,
+`gitops.NewPaths` and `CommitAllExcept` are `main`'s, so AR3–AR6 are written against code that
+exists and the entry is gone rather than marked done.
+
 | # | What | Why it blocks | What this plan does meanwhile |
 | --- | --- | --- | --- |
-| **E1** | **PR #1476** (the 0.14.2 runner group) | AR3 widens a check that only exists there, and NV1's second no-verdict case is #1476's | AR0 and AR2 are written against the node and the merge and land without it; AR3–AR6 wait for it; NV0 and the first half of NV1 are independent |
-| **E2** | **`console/**` and `mobile/**`** | a new status value is a chip and a label in two clients this plan does not own | the value reaches both unchanged (`status` is a contract key, so the person pass never rewrites it) and `internal/runview` passes a terminal status through; the console task is a one-row change to its status table, filed by the console's own stream |
-| **E3** | **the settings design's S3** | AR1's publish rides the `Policy` stage S3 builds | AR0, AR2–AR6 need no publish to be tested: a policy built by hand is the fixture. AR1 is the last AR task and sits after S3 in the slot below |
+| **E2** | **`console/**` and `mobile/**`** | a new status value is a chip and a label in two clients this plan does not own | the value reaches both unchanged (`status` is a contract key, so the person pass never rewrites it) and `internal/runview` passes a terminal status through; the console task is a one-row change to its status table, filed by the console's own stream. **Nothing waits on it**: a client that does not know the word renders it as itself, which is the correct and visible answer |
+| **E3** | **the managed agent gate** (`project_policy_managed.go`, M3, D1012) | not a blocker and named because AR1's member travels through it: the gate judges the node a publish *would* write, and a member no rule reads is refused by `policyUnjudgedRefusal` | **it is on `main`**, so AR1 tests against it rather than waiting: `binaries` stays unjudged on purpose and `TestAnAgentsPublishMayNotMoveTheBinariesBlock` pins that an agent's session may not move it at all (AR1) |
 
 ## 4. The recommended slot
 
-The 0.15.0 line is planned by three designs at once — `settings`, `rigor`, `models` — plus the
-review-levels work and this one. The order below is this design's recommendation, stated against
-the joint order [docs/settings-commands](../settings-commands/implementation-plan.md) already
-publishes.
+**0.20.0.** 0.15.0, 0.16.0 and 0.17.0 have all shipped (the newest notes in `docs/releases/`), 0.18.0
+and 0.19.0 are spoken for by work already planned, and this design is **two** works — one of them a
+policy-node version bump, which is the kind of change that has to converge in one `fugaro update`
+(HARD RULE). It fits in one release; it does not need its own. **The row order inside the slot is
+what matters, not the number** — if 0.19.0 opens up, this moves down into it unchanged.
+
+The order below is this design's recommendation, and **nothing in it waits on another design any
+more**: #1476 is merged, the publish doors and the managed gate are on `main`, and `binaries` is a
+member added to a node build that already exists.
 
 | # | What lands | Tasks | Why it sits here |
 | --- | --- | --- | --- |
-| 1 | **The status label, whole** | NV0–NV2 | it closes a falsehood, has no dependency at all, and does not touch a policy, a stage or the settings work. It can land in the same release as anything else, first, and it is the cheapest thing to review |
-| 2 | **The node member and the merge** | AR0, AR2 | no publish, no stage, no other design: the shape and the direction, tested against a policy built by hand. This is the slice that a reviewer of this design can judge on its own |
-| 3 | **The runner's two checks, the sentences and the end-to-end test, as one slot** | AR3, AR4, AR5, AR6 (with **E1**, #1476; **AR4 only if D997 is answered A**) | the enforcement lands once, in finalize, where the run's own commits and its stray files are both readable. **AR5 is in this row and not its own row** because §1.1 puts AR3–AR5 in one slot: all three write `stray.go` and `runner.go`, and the sentences must describe checks that exist. AR5 names no file AR3–AR4 do not already name except `prompts.go` and `prflow.go` |
-| 4 | **The publish** | AR1 (with **E3**, settings S3) | last, because it rides a stage S3 builds. Before it lands the rule is enforceable but unpublished, which is exactly what step 2's hand-built fixture tests |
+| 1 | **The status label, whole** | NV0–NV2 | it closes a falsehood, has no dependency at all, and does not touch a policy, a stage or the settings work. It can land in a release of its own, first, and it is the cheapest thing to review |
+| 2 | **The node member and the merge** | AR0, AR2 | no publish, no stage: the shape and the direction, tested against a policy built by hand. This is the slice a reviewer of this design can judge on its own |
+| 3 | **The runner's two checks, the sentences and the end-to-end test, as one slot** | AR3, AR4, AR5, AR6 | the enforcement lands once, in finalize, where the run's own commits and its stray files are both readable. **AR5 is in this row and not its own row** because §1.1 puts AR3–AR5 in one slot: all three write `stray.go` and `runner.go`, and the sentences must describe checks that exist. AR5 names no file AR3–AR4 do not already name except `prompts.go` and `prflow.go` |
+| 4 | **The publish** | AR1 | last, because until it lands the rule is enforceable but unpublished — which is exactly what step 2's hand-built fixture tests. It rides the one `buildProjectPolicy` both publish doors share, under the managed gate (E3) |
 | 5 | **The docs, the skill and the notes** | AR7 | with the release, not before it |
 
 **The one-line answer:** the label first (NV0–NV2), the rule's runner half next (AR0, AR2, then
-AR3–AR6 in one slot once #1476 has landed), and the publish last, immediately after the settings
-design's S3.
+AR3–AR6 in one slot), and the publish last, in the same release.
 
 ## 5. Operator steps
 
@@ -295,7 +323,9 @@ design's S3.
 — the node that carries `binaries` — and refreshes the runner image in the same command, in the same
 confirmation, with nothing else to run and nothing to delete. A project that sets no `binaries`
 block is unchanged: the node gains a member it does not use, and the run that leaves a build product
-in the tree is refused exactly as it is today.
+in the tree is refused exactly as it is today. **The version-4 → 5 convergence is AR1's red step**
+(`TestInstallationAtThePreviousVersionConvergesBinaries`), so the HARD RULE's "an installation at
+the previous version converges" is a test this plan owns rather than a hope.
 
 The release notes carry that as one line in `### For operators` (`docs/releases/README.md`), drafted
 in AR1's PR body because `docs/releases/**` is written by the release PR and no task may name a

@@ -1,47 +1,50 @@
 # The binary allow rule and the no-verdict label: the design
 
-**Status: design only; nothing is implemented; the owner decides.** This document is the design in
-full. Where [reconciliation.md](reconciliation.md) disagrees with it, the reconciliation wins, and
-the tasks in [implementation-plan.md](implementation-plan.md) are written to what is here.
+**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
+approved.** This document is the design in full, refreshed against `main` on 2026-11-04 (#1476 is
+merged; the managed gate is current — see §6). Where [reconciliation.md](reconciliation.md)
+disagrees with it, the reconciliation wins, and the tasks in
+[implementation-plan.md](implementation-plan.md) are written to what is here.
 
 ## 1. What the code does today
 
-**Read this section with the next paragraph's caveat: nothing in it is on `main` yet.**
-`main` at `3d6ed04d` has none of the symbols below — no `internal/runner/stray.go`, no
-`gitops.Untracked`, no `gitops.CommitAllExcept`, and no stray exclusion in `shadow.go`. They exist
-only in **PR #1476**, which is open and unmerged, and every statement about them below is marked
-**(needs #1476)**. This design is written against #1476 because #1476 is what creates the problem it
-answers; if #1476 is reshaped or dropped before it lands, this section and §4 change with it.
+**Everything in this section is `main`'s, not a proposal's.** **PR #1476 is merged** (2026-11-04),
+so `internal/runner/stray.go`, `gitops.CommitAllExcept` and the stray half of `shadow.go` are code
+this design reads rather than code it waits for; the line citations below are re-taken on `main`.
+What remains a proposal is this folder's own rule — §§2–5 — and the label (§8).
 
-**The stray refusal (#1476).** finalize's leftover commit used to be `gitops.CommitAll`, which is
-`git add -A` and a commit: everything the run left behind went onto the branch. PR #1476 puts a
-check in front of it:
+**The stray refusal.** finalize's leftover commit used to be `gitops.CommitAll`, which is
+`git add -A` and a commit: everything the run left behind went onto the branch. A check now sits in
+front of it:
 
-- **(needs #1476)** `gitops.Untracked` lists `git ls-files --others --exclude-standard -z` — the
-  paths git would add, which is exactly the set `git add -A` would stage, an ignored file aside.
-- **(needs #1476)** `runner.strayArtifacts` reads each of those paths (up to 8000 bytes,
-  `binaryScanBytes`) and calls it a stray when the bytes hold a NUL. A symlink is not one; a path
-  that vanished between the listing and the read is not one; a path it cannot read **is** one.
-- **(needs #1476)** finalize calls `r.fail(strayRefusal(strays))` — the reason names every path with
-  its reason — and then commits with `gitops.CommitAllExcept(ctx, leftover, strayPaths(strays))`, so
-  the file stays untracked in the tree and the branch does not carry it. The run ends `failed`,
-  `outcome: draft`.
-- **(needs #1476)** the challenger arm of a shadow pair (`shadow.go`, which does exist on `main`
-  with its own exclusions) holds back the same paths so the two arms' records agree. The file is on
-  `main`; the stray half of what it holds back is #1476's.
+- `gitops.NewPaths` (`internal/gitops/gitops.go:647`) lists what a commit would carry that no commit
+  has: the untracked paths **and the ones the agent staged itself** — `git add -N` is in this set,
+  which an `ls-files --others` reading would have missed (that widening is pinned by
+  `TestNewPathsSeesAnIntentToAddFile`).
+- `runner.strayArtifacts` (`internal/runner/stray.go:48`) reads each of those paths (up to 8000
+  bytes, `binaryScanBytes`, `stray.go:19`) and calls it a stray when the bytes hold a NUL. A symlink
+  is not one; a path that vanished between the listing and the read is not one; a path it cannot read
+  **is** one.
+- finalize calls `r.fail(strayRefusal(strays))` (`runner.go:3736`; the reason names every path with
+  its reason, `stray.go:102`) and then commits with
+  `gitops.CommitAllExcept(ctx, leftover, strayPaths(strays))` (`runner.go:3738`), so the file stays
+  untracked in the tree and the branch does not carry it. The run ends `failed`, `outcome: draft`.
+- the challenger arm of a shadow pair holds back the same paths — `shadowFinalize`
+  (`internal/runner/shadow.go:318`) calls `strayArtifacts` and `CommitAllExcept` at `shadow.go:329`
+  and `:333` — so the two arms' records agree about what the run did.
 
 The rule's own comment states its reason: *"a file that is not text is a build's artifact, not the
 run's work"*. It is right about a `go build` product and about a bundle's output. It is wrong about
 a run whose task *is* to add an asset.
 
-**The no-verdict refusal (needs #1476).** `runner.Decide` (`internal/runner/outcome.go:45`) answers
-readiness from the last verified test on the final commit and the last **senior** review round
-(`seniorReview` skips a first-line round). #1476 adds a case: a senior round whose verdict is `none`
-— no parseable verdict after the one retry `seniorLoop` gives it — is not ready, because *"a run
-nobody read is not one this rule marks ready"*. The pull request stays a draft and the reason says
-which round it was.
+**The no-verdict refusal.** `runner.Decide` (`internal/runner/outcome.go:46`) answers readiness from
+the last verified test on the final commit and the last **senior** review round (`seniorReview`
+skips a first-line round). It refuses readiness with "no review verdict" in two places: `last ==
+nil` (no senior round to read) and a senior round whose verdict is `none` — no parseable verdict
+after the one retry `seniorLoop` gives it — because *"a run nobody read is not one this rule marks
+ready"*. The pull request stays a draft and the reason says which round it was.
 
-finalize then maps that refusal to a status (`internal/runner/runner.go:3653`):
+finalize then maps that refusal to a status (`internal/runner/runner.go:3936`):
 
 ```go
 	r.rec.Reason = reason
@@ -118,7 +121,7 @@ which says the same thing without giving up the path. One way to say it, not two
 
 **2.4 Content types are not checked.** No `net/http.DetectContentType`, no magic-number table, no
 extension-to-MIME map. The rule's premise is that a NUL byte in the first 8000 bytes means "a person
-cannot review this", and the check that decides *that* is already #1476's. A second, finer test —
+cannot review this", and the check that decides *that* is already `main`'s. A second, finer test —
 "this is a PNG, and PNGs are fine" — would admit **any** PNG at an admitted path, would run a second
 read of every added file, and would still not make the bytes reviewable: the file a reviewer must
 judge is still a marker line with a size on it. The honest boundary is the path and the size, and §9
@@ -136,12 +139,22 @@ states what it leaves open.
   agent write `binaries: {allow: ["**"]}`, commit it, and admit its own payload with the
   repository's own consent-looking file. The rule's writer must not be a file the subject of the
   rule can write, and there is exactly one such file here.
-- **The owner's local project config carries it, and `fugaro project policy publish` (and, once the
-  settings work lands, `fugaro update`) builds it into the node.** The carrier is
-  `localcfg.Config`, the way `base_branch` and `review_floor` are carried, and for the same reason
-  their comments give: the value travels into the owner-only node and never into the shared config a
-  launcher can write (`internal/cli/sharedcfg.go`'s `sharedForbidden` gains `binaries`, so
-  `fugaro config publish` refuses it).
+- **The owner's local project config carries it, and both publish doors build it into the node —
+  and both are on `main`.** The carrier is `localcfg.Config`, the way `base_branch` and
+  `review_floor` are carried, and for the same reason their comments give: the value travels into
+  the owner-only node and never into the shared config a launcher can write
+  (`internal/cli/sharedcfg.go:216`'s `sharedForbidden` gains `binaries`, so `fugaro config publish`
+  refuses it). The doors are `fugaro project policy publish` and the publish half of `fugaro
+  update`'s policy stage (`internal/cli/init_policy_publish.go`), and they share one
+  `buildProjectPolicy` (`project_cmd.go:765`) — so there is one node build to add the member to and
+  no second path to keep in step.
+- **The explicit door is under the managed agent gate, and that is the answer for `binaries`.**
+  `fugaro project policy publish` refuses a coding agent's session outright unless the project is
+  managed, and in a managed project it reaches `project_policy_managed.go`'s rules (M3, D1012),
+  which judge the node the publish *would* write. A member no rule reads is refused by
+  `policyUnjudgedRefusal` — and `binaries` stays unjudged on purpose: letting an agent's publish move
+  it would be the self-grant this section exists to prevent, and "an agent may not move it at all"
+  is the answer this design wants. AR1 pins it with a test.
 - **A publish that says nothing leaves the node's list alone.** An absent `binaries` key in the local
   file is not a request to remove the published one; taking a list away on purpose is a written
   empty block (`binaries: {allow: []}`), which is the strictest answer and not the same spelling as
@@ -158,7 +171,9 @@ states what it leaves open.
 
 **Two checks, one rule, at one moment.** The run's outcome, its push and its pull request all happen
 in `finalize`, and both checks run before `ensurePR` — so a run that fails either one ends a draft
-that a person can look at, exactly as #1476's refusal does today.
+that a person can look at, exactly as the stray refusal does today. **Both are answered decisions**
+(D988, D991): finalize, before the pull request settles, and the run ends `StatusFailed` /
+`OutcomeDraft` with no new status value.
 
 **The order against the readiness decision, stated once so §8.5 cannot be read against this.** The
 two binary checks run **first**, before `ensurePR` and before finalize asks `Decide` for readiness.
@@ -168,19 +183,20 @@ for a run that passed both checks**. So the two never compete: **a binary refusa
 run is never labelled `unreviewed` on the strength of a failure that was about binaries.** §8.5's
 "finalize's last decision" means last in the readiness sequence, not last in finalize.
 
-**4.1 The untracked check (what #1476 already does, widened by the rule).** `strayArtifact` returns
+**4.1 The untracked check (what `main` already does, widened by the rule).** `strayArtifact` returns
 nil for a path whose bytes are text, and now also for a path the policy admits and whose size is
 within the cap. Everything else is unchanged: the file is held out of the leftover commit by
 `CommitAllExcept`, the reason names it, and the run fails. This is the check that covers the run
 that *adds an asset and does not commit it*, which is the ordinary case and the one item 1 is about.
 
-**4.2 The committed check (the residual, closed — and this whole subsection is conditional on
-§D997's answer).** A binary the agent committed itself — or one
-`swept` into a commit by `gate.go`'s `CommitAll` for `commands.fix`
+**4.2 The committed check (the residual, closed).** **The owner answered D997 *yes* on 2026-11-04**,
+so this subsection is the design and not one branch of an open question. A binary the agent
+committed itself — or one swept into a commit by `gate.go`'s `CommitAll` for `commands.fix`
 (`internal/runner/gate.go:357`) or by `digest.go`'s report step (`internal/runner/digest.go:359`) —
-never passes through 4.1: `Untracked` lists only what git would *add*, and a committed path is not
-that. So finalize also reads **the run's own diff** (`diffBase()...HEAD`, the range the review stage
-is already handed) and refuses an **added** path that is binary and unadmitted:
+never passes through 4.1: `gitops.NewPaths` lists only what a commit would carry and no commit has,
+and a committed path is not that. So finalize also reads **the run's own diff** (`diffBase()...HEAD`,
+the range the review stage is already handed) and refuses an **added** path that is binary and
+unadmitted:
 
 - the reading is `git diff --raw -z --no-renames --end-of-options <base>...HEAD`: one row per path
   with its status letter (`A`, `D`, `M`) and **both blob ids**, paired **by path, never by index**,
@@ -240,8 +256,9 @@ told to never read or attach a binary, and the marker line is still all it gets.
 **In the refusal.** The reason names every refused path with why (`it is not text`, `it could not be
 read`, `it is 3 145 728 bytes, over the project's 2 097 152-byte cap`), names the rule (`the
 project's binaries.allow`), and states where the fix is for the two readers who have one: a person
-admits a path in the owner's project config and publishes it (`fugaro project policy publish`
-today; `fugaro update` once the settings work lands), and **a repository cannot** — the sentence
+admits a path in the owner's project config and publishes it — either door on `main` will do
+(`fugaro project policy publish`, or `fugaro update`, which publishes the same node from the same
+local config) — and **a repository cannot** — the sentence
 says so, so an agent that decides to "fix" the refusal by editing `fugaro.yaml` learns immediately
 that the file it is about to write is not one the rule reads, and a run that wrote it anyway is
 refused by `internal/config`'s strict decode.
@@ -254,25 +271,32 @@ the pull request knows an unreadable file is there without opening the diff. Tha
 
 ## 6. How `fugaro update` publishes it
 
-**Through the stage that already exists, with no separate command anywhere.**
+**Through the doors that already exist, with no separate command anywhere.**
 
-`internal/cli/init_stages.go` already registers `initflow.Policy` (`policyMigrateStage`,
-`internal/cli/init_policy_migrate.go:352`), and
-[docs/settings-commands](../settings-commands/implementation-plan.md) S3 is what makes that stage
-also **publish** the node from the local config through `buildProjectPolicy`
-(`internal/cli/project_cmd.go:670`) under an ETag guard and a generation guard (D854). The binaries
+Both halves are on `main`: `internal/cli/init_stages.go` registers `initflow.Policy`
+(`policyMigrateStage`, `internal/cli/init_policy_migrate.go:694`), and that stage's **publish half**
+is `internal/cli/init_policy_publish.go` — the node built from the local config through
+`buildProjectPolicy` under an ETag guard and a generation guard (D854). The explicit door,
+`fugaro project policy publish`, goes through the same `buildProjectPolicy`, and it is additionally
+under the **managed agent gate** (`internal/cli/project_policy_managed.go`, M3, D1012). The binaries
 block is a member `buildProjectPolicy` fills like `review_floor`, so:
 
 - **`fugaro update` publishes it.** One command, no flag, no second step: the HARD RULE in
   `CLAUDE.md` holds, and there is nothing for an operator to remember.
 - **The explicit door builds the same bytes.** `fugaro project policy publish` goes through the same
-  `buildProjectPolicy`, so the stage and the door cannot drift; the settings plan's
-  `TestUpdateStageAndTheExplicitDoorBuildTheSameNode` is the guard and this work does not add a
-  second path.
+  `buildProjectPolicy` (`project_cmd.go:765`), so the stage and the door cannot drift; the shared
+  build is the guard and this work does not add a second path.
+- **What an agent's session may do with it is already decided.** The explicit door refuses a coding
+  agent's session unless the project is managed, and a managed session reaches
+  `project_policy_managed.go`'s rules: a member no rule reads is refused by
+  `policyUnjudgedRefusal`. `binaries` stays unjudged on purpose (§3), so an agent's publish may not
+  move the block at all — the tightening answer, and the one D986's "the owner's word alone" asks
+  for.
 - **The runner and the node move together.** The image refresh is part of the same `fugaro update`
   (behind its own confirmation), so a node that carries `binaries` and an image that reads it arrive
   in one command.
-- **The policy version moves 4 → 5** (§D990), `VersionSince` gains its row (`5: "0.15.0"`), and
+- **The policy version moves 4 → 5** (§D990 — the recommendation; the owner did not rule on it),
+  `VersionSince` gains its row (`5: "0.20.0"`, the slot of §4 of the plan), and
   `TestVersionSinceCoversEveryVersion` fails until it does. The convergence test the HARD RULE asks
   for — an installation at the previous version ends `fugaro update` with a version-5 node published
   — is `TestInstallationAtThePreviousVersionConvergesBinaries`, written with the `…Binaries` suffix
@@ -289,43 +313,54 @@ tolerated. See §D990 for why, and for the cost of the alternative.
 
 ## 7. The residual: does the agent's own commit get checked?
 
-**Yes — §4.2 is that closure, and this section is why it is worth the work. Whether to close it at
-all is the owner's open decision (§D997), the one thing in this design that changes a run's
-behaviour rather than its shape; everything below is the case for the recommended answer.** Before
-#1476 the
-question could not be asked, because exactly one thing committed: finalize. Today there are **five**
-places a file can reach a branch (`git grep 'CommitAll' internal/runner/*.go`, excluding tests),
-and #1476 guards only the first:
+**Yes — §4.2 is that closure, and this section is why it is worth the work. The owner answered the
+question *yes* on 2026-11-04 (§D997), so what follows is the case the answer rests on rather than a
+question still open; it is the one part of this design that changes a run's behaviour rather than
+its shape.** Before the stray refusal the question could not be asked, because exactly one thing
+committed: finalize. Today there are **five** places a file can reach a branch
+(`git grep 'CommitAll' internal/runner/*.go`, excluding tests), and the stray refusal guards only
+the two finalize paths:
 
-1. finalize's leftover commit (`runner.go:3442`);
+1. finalize's leftover commit (`runner.go:3738`);
 2. `gate.go:357`'s autofix commit of a `commands.fix` working-tree change;
 3. `digest.go:359`'s report step;
 4. the agent's own `git commit` in the implement stage — no runner call site at all;
-5. the **challenger arm's** own leftover commit (`shadow.go:324`), which is a different call site
+5. the **challenger arm's** own leftover commit (`shadow.go:333`), which is a different call site
    from finalize's and is the one the design's first draft missed.
 
-(`runner.go:3836`'s backlog commit is deliberately not in that list: it commits the engine's own
-`docs/backlog/` files, which the runner wrote from its own record, not bytes the agent chose.)
+**The count was five, and an earlier draft of this folder said four** — it missed the challenger
+arm. It did briefly read six while the engine still filed its own `docs/backlog/` commit at
+finalize; `main` no longer has that commit (the engine stopped filing backlog items there, because
+the commit landed after the suite the run had tested, `runner.go:3778`–`3786`), so five is the
+count on `main` today.
 
 That gap is not exotic:
 
 - an agent that runs `git commit -am work` at the end of implement puts everything it wrote,
   compiler output included, on the branch, and no check ever saw it;
-- `git add -N payload.bin` puts a path in the index without its content, so `ls-files --others`
-  stops listing it — and the `git add -A` inside `CommitAll`/`CommitAllExcept` then stages its bytes
-  into the leftover commit. #1476's check is blind to it by construction, because the path is no
-  longer "untracked".
+- `git add -N payload.bin` puts a path in the index without its content, so a reading built on
+  `ls-files --others` would stop listing it — and the `git add -A` inside
+  `CommitAll`/`CommitAllExcept` would then stage its bytes into the leftover commit. **That half is
+  already closed**: the reading is `gitops.NewPaths` (`gitops.go:647`), which lists the staged paths
+  too, and `TestNewPathsSeesAnIntentToAddFile` pins it. What `git add -N` still buys an agent is the
+  *committed* case — stage with intent to add, then commit — which is exactly what §4.2 reads.
 
 **Closing it with one predicate over the run's diff, and not at each committer, is the whole
-argument**: all of 1–5 end with the same bytes on a branch, the range `diffBase()...HEAD` is already
-computed for the review stage and the review scope, and a check at each committer would be five
-places to keep in step and five places for a future committer to be missed. The *predicate* is
-written once (§4.3) and called from the two finalize paths — `finalize` and `shadowFinalize` —
-which is why "one point" means one reading, not one call site. The cost is named in §D989: a file
-the agent committed cannot be taken back without rewriting history, so the run fails and a person
-deletes it, where an untracked stray is silently held out.
+argument** (D989, answered 2026-11-04): all of 1–5 end with the same bytes on a branch, the range
+`diffBase()...HEAD` is already computed for the review stage and the review scope, and a check at
+each committer would be five places to keep in step and five places for a future committer to be
+missed. The *predicate* is written once (§4.3) and called from the two finalize paths — `finalize`
+and `shadowFinalize` — which is why "one point" means one reading, not one call site. The cost is
+named in §D989: a file the agent committed cannot be taken back without rewriting history, so the
+run fails and a person deletes it, where an untracked stray is silently held out.
 
 ## 8. The status label for a run no review answered
+
+**This section and D994–D996 are recommendations; the owner ruled on the *rule*'s decisions on
+2026-11-04 and this label was not part of that ruling** (reconciliation.md §2). The one place the
+ruling touches it is D991: "there is no new status" is a ruling about **the binary checks** — an
+unadmitted binary keeps `failed`, and no "refused" value is added for it — not about this label,
+which is the run nothing failed in.
 
 **The label is `unreviewed`** — `runstore.StatusUnreviewed`, the seventh value of the status
 vocabulary, beside `running`, `succeeded`, `failed`, `infra_error`, `cancelled` and `halted`:
@@ -363,18 +398,18 @@ runstore.StatusUnreviewed, runstore.OutcomeDraft`. The alternative — finalize 
 string — is refused in §D995: a sentence is not an enum, and the next task to reword it would move a
 status by accident.
 
-**8.4 The wire, and who reads it.** The label is a value of a field four clients read, so the tasks
-name each one:
+**8.4 The wire, and who reads it.** The label is a value of a field every reader of a run record
+reads, so the tasks name each reading (F13 counts the places the vocabulary is written down):
 
 | Reader | What it does with the new value |
 | --- | --- |
-| `schemas/result.schema.json` (`status` enum, line 16) | gains `unreviewed` — the run record's own schema, and the one a strict reader validates against |
-| `internal/digest` (`statuses`, `internal/digest/digest.go:120`) | gains it, or a record this Fugaro wrote renders as `other` |
-| `internal/watch` (`isFailure`, `internal/watch/finished.go:44`) | **not** a failure: nothing failed. A watched run that was never reviewed is a draft to look at, not an outage, and the row carries the status word itself |
-| `internal/userstats` | the switch's `default` already counts it as `Other`; §D996 recommends leaving it there and naming the counter a follow-up |
-| `internal/runview` | passes a status through unchanged when the record is terminal (`runview.go:394`), so nothing is derived wrongly; the console and the phone are the readers that need a chip, and they are **external** (E2) — `console/**` and `mobile/**` are other work streams' files |
+| `schemas/result.schema.json` (`status` enum, line 22) | gains `unreviewed` — the run record's own schema, and the one a strict reader validates against |
+| `internal/digest` (`statuses`, `internal/digest/digest.go:119`) | gains it, or a record this Fugaro wrote renders as `other` |
+| `internal/watch` (`isFailure`, `internal/watch/finished.go:43`) | **not** a failure: nothing failed. A watched run that was never reviewed is a draft to look at, not an outage, and the row carries the status word itself |
+| `internal/userstats` (`internal/userstats/userstats.go:200`) | the switch's `default` already counts it as `Other`; §D996 recommends leaving it there and naming the counter a follow-up |
+| `internal/runview` | passes a status through unchanged when the record is terminal (`runview.go:398`), so nothing is derived wrongly; the console and the phone are the readers that need a chip, and they are **external** (E2) — `console/**` and `mobile/**` are other work streams' files |
 
-**8.5 What the pull request says.** The status section's line for the round is already #1476's
+**8.5 What the pull request says.** The status section's line for the round is already `main`'s
 (`review round N returned no parseable verdict after a retry`), and the run's reason is unchanged.
 The label changes what the *record* and the *lists* say, and it is the last decision **of the
 readiness sequence**: §4's two binary checks run first and end the run themselves, so the label is
@@ -413,11 +448,12 @@ owner's own word, and a rule that its writer can widen is not a rule.
 | --- | --- |
 | The agent writes `binaries: {allow: ["**"]}` into `fugaro.yaml` and commits it | `internal/config` decodes strictly: the field does not exist, so the run stops at load, and the file never reaches a run's policy in the first place (P2, §3) |
 | The agent self-commits a payload during implement | §4.2 refuses the run at finalize; the commit stays on the branch and a person deletes it |
-| The agent stages the payload with `git add -N` so `ls-files --others` no longer lists it | the same: the bytes land in a commit, and §4.2 reads the commit's path out of the diff |
+| The agent stages the payload with `git add -N` and leaves it staged | §4.1: `gitops.NewPaths` lists the staged paths as well as the untracked ones, so the file is read and refused |
+| The agent stages the payload with `git add -N` **and commits it** | §4.2: the bytes land in a commit, and §4.2 reads the commit's path out of the diff |
 | The agent adds a payload, commits it, then deletes it in a later commit | **not refused: residual 4.** §4.2 reads `base...HEAD` and takes `A` statuses, so the deletion hides the add, and the added blob stays reachable in the branch's history. The pull request's own commit list shows the add, and AR4 pins the behaviour with a test rather than leaving it to be discovered |
 | The agent writes `.gitignore` or `.git/info/exclude` for the path | the file is never committed, so it never reaches the branch. It is not a bypass, and it is not an escape either: the file stays in the tree where the person reading the run finds it |
 | The payload is committed under an admitted path | **admitted, by design.** The rule is a path-and-size gate; the project said that path may hold a binary. §2.4 says why no finer gate is offered |
-| The payload is a "text" file with no NUL in its first 8000 bytes (a script, a base64 blob) | **not a binary by the rule's premise, and reviewable** — the diff carries it and the reviewer reads it. This is #1476's boundary, not a new one |
+| The payload is a "text" file with no NUL in its first 8000 bytes (a script, a base64 blob) | **not a binary by the rule's premise, and reviewable** — the diff carries it and the reviewer reads it. This is the stray rule's boundary as merged, not a new one |
 | The agent makes the admitted file enormous | `max_bytes` refuses it by name (§2.2) |
 | The agent writes a text file of any size at any path | out of scope: the rule is about binaries, and a text file is read by the review like any other diff line |
 
@@ -425,13 +461,13 @@ owner's own word, and a rule that its writer can widen is not a rule.
 admits `website/public/**` has said a binary may sit anywhere under it, and the reviewer's only
 signal is the marker line with its size. (2) A committed payload is refused *after* it is on the
 branch — §4.2 fails the run and does not rewrite history, so containment is "a draft nobody merged"
-rather than "the bytes never left the checkout". **And only if D997 is answered A**: under B the
-refusal does not exist at all and the run can be `ready` with those bytes on the branch, which is
-that option's whole cost. (3) The check reads the checkout's own git, which
+rather than "the bytes never left the checkout". **(D997 was answered *A* on 2026-11-04**, so the
+refusal exists; under B it would not, and the run could be `ready` with those bytes on the branch,
+which was that option's whole cost.) (3) The check reads the checkout's own git, which
 the agent writes; `stray.go` already refuses an unreadable file rather than trusting it, and §4.2's
 reading goes through the same `sessionGit` seam the review range does, but a checkout whose `.git`
 the agent owns is a checkout with a smaller trusted core than the repository's own history would
-have. That limit is #1476's and is named here rather than claimed away. (4) A path **added and then
+have. That limit came in with the stray refusal and is named here rather than claimed away. (4) A path **added and then
 deleted in a later commit** is not refused: §4.2 reads the two ends of the range and takes `A`
 statuses, so the deletion hides the add, while the added blob stays reachable in the branch's
 history. It is a limit of the reading, not an oversight, and AR4 pins it with a test so closing it
