@@ -12,6 +12,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -145,9 +146,22 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// token written for it replaces the one in use, and the confirmation says
 	// so. It is read from the config as it was, before the edit above.
 	_, rotation := lc.ClaudeAccounts[name]
-	what := accountsAddWhat(after, name, profile, accountsAddBeyond(cmd.Context(), repos), rotation)
+	beyond := accountsAddBeyond(cmd.Context(), repos)
+	what := accountsAddWhat(after, name, profile, beyond, rotation)
 	command := accountsAddCommand(name, repos, profile, o.claude)
 	changed := yamledit.Changed(old, next)
+
+	// The managed gate, before anything is screened or written (accounts_managed.go
+	// and the managed plan's §2 accounts row): in a managed project's coding
+	// agent's session this decides whether the declaration is a step the session
+	// may write, and it refuses a widening and a token entry here — before the
+	// login is screened and before the diff is shown — so a refusal leaves the
+	// file exactly as it was. Everywhere else it answers the zero Managed, which
+	// is every fence below unchanged.
+	m, gate, err := accountsAddGate(cmd.Context(), lc, o, name, profile, beyond, next)
+	if err != nil {
+		return err
+	}
 
 	// §3's act one is screened here and run below, and the split is the owner's
 	// ruling of 2026-11-02: everything that can refuse the login — a coding
@@ -167,15 +181,28 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	}
 
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
-		Path:    sel.Path,
-		Old:     old,
-		New:     next,
-		What:    what,
-		Kind:    settingsDocLocal,
+		Path: sel.Path,
+		Old:  old,
+		New:  next,
+		What: what,
+		Kind: settingsDocLocal,
+		// The managed gate's answer for the step this edit is: its zero value is
+		// what every other caller of this helper passes, and it is the refusal
+		// this file has always made, byte for byte.
+		Managed: m,
 		Command: command,
 		Yes:     o.yes,
 	}); err != nil {
 		return err
+	}
+	// The record of the admission, written AFTER the write it was admitted for
+	// and never before it (D1014, spec §6): a step the gate admitted that never
+	// reached its write leaves no record at all, which is why this is here and
+	// not beside the admit above.
+	if changed {
+		if err := gate.recorded(cmd.Context()); err != nil {
+			return err
+		}
 	}
 	// A file that was already what this command would write — a rotation
 	// re-run, the account declared and the profile serving it — returns from
@@ -184,9 +211,11 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// stores a new version of it project-wide and clears the account's mark,
 	// which is the write the refusal is about and the change the confirmation
 	// is about. A session writes nothing, --yes included (spec §2.4), and the
-	// marker fence comes first, as it does in applySettingsEdit.
+	// marker fence comes first, as it does in applySettingsEdit — the same rule,
+	// lifted by the same answer and for the same class, so a session the gate
+	// admitted to the declaration is not refused the step it declared.
 	if !changed {
-		if marker := agentMarker(os.Getenv); marker != "" {
+		if marker := agentMarker(os.Getenv); marker != "" && !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, m) {
 			return userErr("refusing to write %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
 				sel.Path, marker, what, command)
 		}
@@ -202,6 +231,15 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 		if err := accountsAddClaudeRun(cmd, claudeBin); err != nil {
 			return err
 		}
+	}
+	// The token, which is the one step of this command no gate admits: the value
+	// is a secret entering the project, and a secret is the class a plan gate
+	// never judges (D1026). It is refused here — before the converge reads it,
+	// stores it and converges on it — so a coding agent's session is left with
+	// the declaration and nothing else, and with the sentence naming the command
+	// its owner runs at their own terminal (spec §4.2).
+	if marker := agentMarker(os.Getenv); marker != "" {
+		return accountsAddTokenStep(marker, name, command)
 	}
 	if profile == "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "no profile serves %s yet: this project's jobs do not select it until one does\n", name)
