@@ -1717,17 +1717,17 @@ func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
 			t.Fatalf("ask = %v, err = %v, want neither", ask, err)
 		}
 	})
-	// A workflow that keeps its own image definition is not the catalog's job
-	// at all (D1155): the deploy gave it the image this project builds for the
-	// repository, which no catalog entry is, so the launcher must not judge it
-	// — here the catalog's default is the docker entry, which would otherwise
+	// A workflow the catalog does not speak for is not judged at all
+	// (catalog.Applies): a clone workflow's job runs the installation's base
+	// image, which no catalog entry is, so the launcher must not judge it —
+	// here the catalog's default is the docker entry, which would otherwise
 	// refuse this launch on Cloud Run and ask a VM for a socket.
-	t.Run("its own image definition is not the catalog's", func(t *testing.T) {
-		derived := gcp.ImageName(gcp.DefaultRegistryHost("us-east5", "proj-1234")+"/"+gcp.RegistryRepoID(appSlug), appSlug, "web") + ":latest"
+	t.Run("a clone workflow is not the catalog's", func(t *testing.T) {
+		const base = "ghcr.io/dimipaun/fugaro-base:0.11.2"
 		for name, codec := range map[string]backend.Codec{"cloud-run": backend.CloudRunCodec(), "cloud-batch": backend.BatchCodec()} {
 			f := newCloudFixture(t)
-			dockerCheckout(t, "{ image: { apt: [jq] }, commands: { build: sh b.sh, test: sh t.sh } }")
-			ask, err := catalogDockerAsk(context.Background(), deployedLaunchEnv(t, f, codec, dockerDefaultCatalogYAML, derived), appSlug, spec)
+			dockerCheckout(t, "{ checkout: clone, commands: { build: sh b.sh, test: sh t.sh } }")
+			ask, err := catalogDockerAsk(context.Background(), deployedLaunchEnv(t, f, codec, dockerDefaultCatalogYAML, base), appSlug, spec)
 			if err != nil || ask {
 				t.Fatalf("%s: ask = %v, err = %v, want neither", name, ask, err)
 			}
