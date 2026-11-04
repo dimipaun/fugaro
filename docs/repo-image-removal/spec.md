@@ -35,7 +35,7 @@ from `fugaro.yaml` alone would leave a second door to the same build.
 (`internal/config/config.go:619`, `:621`) are the catalog's own selectors and stay; `checkout`
 (`internal/config/config.go:657`) keeps both its values (§2.2).
 
-The scope rows that make the removed keys settable
+The eleven scope rows that make the removed keys settable
 (`internal/config/scope.go:106`, `:108`, `:113`, `:131`) go with them, and so do their entries in
 `ExecutableKeys` and `NonExecutableImageKeys` (`internal/config/scope.go:179`, `:189`). A key that is
 gone from the scope table is a key no settings command may write, which is the second half of the
@@ -175,7 +175,7 @@ chosen entry's `:latest` exists in the shared registry — the catalog's counter
 
 Two repositories carry a per-repository image today, and both are the dogfood pipeline:
 
-- **this repository**, whose `go` workflow sets `image.setup` (`fugaro.yaml:43`);
+- **this repository**, whose `go` workflow sets `image.setup` (`./fugaro.yaml:43`);
 - **the sandbox repository**, whose workflows the live checks and the release's smoke runs use.
 
 **The order is the requirement, not a preference.** The catalog entry and the pin land **before** the
@@ -255,15 +255,15 @@ No compatibility, in the shape the tree already uses for a removed key.
   command that replaces it — the pattern the `image.node` and `image.jdk` tombstones already set
   (`internal/config/image.go:119`, `:122`). The keys stay decodable as tombstones and their *refusal*
   is the message; a bare "field image not found" names nothing and is not what ships (D1195).
-- **The schemas**: `schemas/fugaro.schema.json` loses `image` (`:358`), `dockerfile` (`:396`) and
-  `rebuild` (`:511`), and its mutual-exclusion clauses (`:306`) shrink to the pairs that survive
-  (`image_name` with `needs`); `schemas/project-layer.schema.json` loses the same keys at `:265` and
-  `:338`. **`schemas/settings.schema.json` loses the removed keys' own member rows** — the twenty-five
-  at `schemas/settings.schema.json:1130` through `:1181`, `workflows.*.image.setup` among them
-  (`:1145`), beside their rows in `internal/settings/registry.go:229`, without which `fugaro settings
-  set` would still offer a key the config refuses — **and keeps `base_images` and the flattened
-  `image_catalog.*` rows untouched** (`schemas/settings.schema.json:547`), as `image_name`/`needs` keep
-  their members (D1196).
+- **The schemas**: `schemas/fugaro.schema.json:358` loses `image` (`:396` for `dockerfile`, `:511`
+  for `rebuild`), and its mutual-exclusion clauses (`:306`) shrink to the pairs that survive
+  (`image_name` with `needs`); `schemas/project-layer.schema.json:265` loses the same keys (`:338` for
+  `rebuild`). **`schemas/settings.schema.json` loses the removed keys' own member rows** — the
+  twenty-one at `schemas/settings.schema.json:832` through `:1181` (`:1145` is
+  `workflows.*.image.setup`), beside their rows in `internal/settings/registry.go:229`, without which
+  `fugaro settings set` would still offer a key the config refuses — **and keeps `base_images` and the
+  flattened `image_catalog.*` rows untouched** (`schemas/settings.schema.json:547`), as
+  `image_name`/`needs` keep their members (D1196).
 - **The goldens and the fixtures**: the **50** files under `testdata/` that carry one of the three
   keys — `grep -rlE '^[[:space:]]*(image|dockerfile|rebuild):' testdata/` — are the removal's own
   list, in four directories (`testdata/config/{valid,invalid}`, `testdata/project-layer/{valid,invalid}`);

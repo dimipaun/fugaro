@@ -57,7 +57,7 @@ are the reason it is not a preference:
   rebuild with it. R4 narrows the build account's grants with this in mind and must not remove the
   catalog grants D1148's schedule runs on.
 - **R4 removes resource types from a module and D1148 adds one at installation level.** Both edit
-  `internal/infra/tf/cover.go`'s `allowedTypes` (`:22`) — R4 to drop the check job's and the Scheduler's
+  `internal/infra/tf/cover.go:22`'s `allowedTypes` — R4 to drop the check job's and the Scheduler's
   types, D1148 to add its own. **The table is never widened to make a plan pass**; each task adds or
   removes exactly the types its own `plan` prints.
 
@@ -86,13 +86,13 @@ adds its edit only after that task has merged**, and never re-derives what the o
 
 | File | Tasks | What each one does with it |
 | --- | --- | --- |
-| `internal/infra/spec.go` | **D1148's driver**, R4, R5, R6 | D1148's driver adds the installation-level check's spec; R4 removes the derived image name and the per-repository `CheckSpec` producer (`:1440`); R5 leaves the catalog branch of the image choice alone; R6 reads what R4 left. **D1148 first, then R4** — R4 deletes the producer D1148's check replaces, and a driver written against the old producer is a driver rewritten twice |
+| `internal/infra/spec.go` | **D1148's driver**, R4, R5, R6 | D1148's driver adds the installation-level check's spec; R4 removes the derived image name and the per-repository `CheckSpec` producer (`internal/infra/spec.go:1440`); R5 leaves the catalog branch of the image choice alone; R6 reads what R4 left. **D1148 first, then R4** — R4 deletes the producer D1148's check replaces, and a driver written against the old producer is a driver rewritten twice |
 | `deploy/terraform/gcp/modules/repo/` | **D1148's Terraform**, R4 | D1148 adds nothing here (its schedule is installation level) but reads the module's registry and build account; R4 removes `check.tf`'s job and Scheduler, the registry repository's role or the account's grants that only a repository image needed. **D1148's task merges first**, so R4 removes from a module D1148 has stopped depending on |
 | `deploy/terraform/gcp/modules/installation/` | **D1148's Terraform**, R4 | D1148 adds the Scheduler job and its target; R4 touches the shared registry's grants only. **D1148 first** |
-| `internal/infra/tf/cover.go` (`allowedTypes` `:22`, `ManagedAllowedTypes` `internal/infra/tf/managed_cover.go:124`) | **D1148's Terraform**, R4 | D1148 adds its types, R4 removes the check job's and the Scheduler's. Each edits the list for its own plan and **neither widens it to make a test pass** |
-| `internal/imagecheck/` (`catalog.go:20`, the per-repository check) | **D1148's driver**, R6 | D1148's driver calls `CheckCatalog` over every buildable entry; R6 removes the per-repository triggers' readers (`rebuild.*`) and `checkedWorkflows` (`internal/cli/imagecheck.go:221`). **D1148 first** |
-| `internal/settings/registry.go` | **G0/G1**, R2 | The configuration-management plan's G0 and G1 add rows and widen the generic writer's allowlist; R2 removes the twenty-one rows of the removed keys (`:229`, `:454`, `:477`). **One row, one owner**: R2 touches only the removed keys' rows and never the writer |
-| `schemas/settings.schema.json` | **G2**, **G8**, **G9**, R2 | They add member rows for the writes they add; R2 removes the members of the keys it removes (`:1130`–`:1181`). **R2 does not move the document's version** — the rule G2 states |
+| `internal/infra/tf/cover.go` (its `allowedTypes` at `internal/infra/tf/cover.go:22`, and `ManagedAllowedTypes` at `internal/infra/tf/managed_cover.go:124`) | **D1148's Terraform**, R4 | D1148 adds its types, R4 removes the check job's and the Scheduler's. Each edits the list for its own plan and **neither widens it to make a test pass** |
+| `internal/imagecheck/` (`internal/imagecheck/catalog.go:20`, the per-repository check) | **D1148's driver**, R6 | D1148's driver calls `CheckCatalog` over every buildable entry; R6 removes the per-repository triggers' readers (`rebuild.*`) and `checkedWorkflows` (`internal/cli/imagecheck.go:221`). **D1148 first** |
+| `internal/settings/registry.go` | **G0/G1**, R2 | The configuration-management plan's G0 and G1 add rows and widen the generic writer's allowlist; R2 removes the twenty-one rows of the removed keys (`internal/settings/registry.go:229`, `:454`, `:477`). **One row, one owner**: R2 touches only the removed keys' rows and never the writer |
+| `schemas/settings.schema.json` | **G2**, **G8**, **G9**, R2 | They add member rows for the writes they add; R2 removes the members of the keys it removes (`schemas/settings.schema.json:1130`, `:1181`). **R2 does not move the document's version** — the rule G2 states |
 | `internal/cli/image_refresh*.go` | **M-series** (`image_refresh_steps.go`, `image_refresh_rules.go`), R6 | The managed build's M-series changes what `image refresh` converges; R6 removes its derived-image arm. **The M-series lands first**, or R6 rewrites lines it is about to be handed back |
 | `internal/cli/init.go`, `internal/cli/update.go` | **M-series** (`update.go`, `init.go`), R7 | R7 changes `setup`'s first-build offer (`offerBuilds`, `internal/cli/init.go:3415`) and the retirement door is left alone (`:444`); the M-series adds the converge stages. **Different functions, one file, M-series first** |
 | `docs/rigor-modes/reconciliation.md` | none after the design | The census row this folder moves is moved **in the design's own commit** (`docs_repo_image_removal_test.go`'s own pin moves it, 93 → 94) |
@@ -153,7 +153,7 @@ readiness branches that decide between them.
   (`images/derived/Dockerfile.tmpl:130`). A catalog entry in the project layer whose source is that
   Dockerfile at that path, published and **built by the owner before the pin lands**: `fugaro image add
   --dockerfile images/catalog/go/Dockerfile --tags go`, `fugaro image build <entry>`; then the `go`
-  workflow drops its `image:` block (`fugaro.yaml:43`) and sets `image_name: <entry>`.
+  workflow drops its `image:` block (`./fugaro.yaml:43`) and sets `image_name: <entry>`.
 - **Red step.** `TestDogfoodWorkflowPinsTheCatalogEntry` — reads the repository's own `fugaro.yaml` and
   fails today: the `go` workflow carries `image:` and no `image_name`. Its second half reads the
   Dockerfile the entry names and fails if it does not end with `finalize-checkout`, which is the one
@@ -184,10 +184,11 @@ readiness branches that decide between them.
 
 - **Interface.** Each removed key becomes a tombstone that refuses by name and names the catalog command
   — the mechanism `image.node`/`image.jdk` already are (`internal/config/image.go:119`, `:122`), whose
-  sentence is built from `MigrationDoc`. `internal/config/scope.go` loses the rows at `:106`, `:108`,
-  `:113`, `:131`, `:179`, `:189`, `internal/settings/registry.go` its twenty-one (`:229`, `:454`,
-  `:477`), and the three schemas their members (`schemas/fugaro.schema.json:358`, `:396`, `:511`;
-  `schemas/project-layer.schema.json:265`, `:338`; `schemas/settings.schema.json:1130`–`:1181`).
+  sentence is built from `MigrationDoc`. `internal/config/scope.go:106` loses the eleven rows of the
+  removed keys (`:108`, `:113`, `:131`, `:179`, `:189`), `internal/settings/registry.go:229` its
+  twenty-one (`:454`, `:477`), and the three schemas their members
+  (`schemas/fugaro.schema.json:358`, `:396`, `:511`; `schemas/project-layer.schema.json:265`, `:338`;
+  `schemas/settings.schema.json:1130`, `:1181`).
   `image_name`, `needs` and `image_catalog.*` keep every member they have, and no version moves.
 - **Red step.** `TestRemovedImageKeysAreRefusedByName` — a table of the removed paths, each asserted to
   fail with a message naming `fugaro image add`: today each fails, or is accepted, with the decoder's
@@ -216,12 +217,14 @@ readiness branches that decide between them.
 ## R4. The deploy path: the derived name, the check job, the Scheduler and the registry. **SEC**
 
 - **Interface.** `repoCtx.check` (`internal/infra/spec.go:1440`) and the `CheckSpec` it produces
-  (`:318`) go, with `deploy/terraform/gcp/modules/repo/check.tf`'s job (`:16`) and Scheduler (`:116`) and
+  (`:318`) go, with `deploy/terraform/gcp/modules/repo/check.tf:16`'s job (`:116` is its Scheduler) and
   their `allowedTypes` entries. The derived image name (`internal/infra/spec.go:1011`) and
-  `registryPath` (`:749`) go from the job's image; `catalogJobImage` (`:799`) becomes the only producer.
+  `registryPath` (`internal/infra/spec.go:749`) go from the job's image; `catalogJobImage` (`:799`)
+  becomes the only producer.
   The repository's Artifact Registry repository stays **in the configuration** and its object is
-  destroyed only by the owner's `--retire` run (D1194) — so `deletion_protection` (`check.tf:27`) and
-  `prevent_destroy` (`registry.tf:10`) are **not** touched. The build account
+  destroyed only by the owner's `--retire` run (D1194) — so `deletion_protection`
+  (`deploy/terraform/gcp/modules/repo/check.tf:27`) and `prevent_destroy`
+  (`deploy/terraform/gcp/modules/repo/registry.tf:10`) are **not** touched. The build account
   (`deploy/terraform/gcp/modules/repo/build.tf:5`) stays, with its grants narrowed to the shared
   registry, the base registry and ghcr, and **the catalog grants D1148's schedule runs on are kept**
   (§2).
@@ -283,8 +286,8 @@ readiness branches that decide between them.
 
 ## R8. The writers and the published surfaces (D1204, D1205)
 
-- **Interface.** `plugin/skills/setup/SKILL.md` teaches `fugaro image add` and `image_name` in place of
-  the removed keys (`:84`, `:91`), with the reference documents and the plugin's two pins moving with
+- **Interface.** `plugin/skills/setup/SKILL.md:84` teaches `fugaro image add` and `image_name` in place
+  of the removed keys (`:91`), with the reference documents and the plugin's two pins moving with
   it (`plugin/setup_skill_test.go:154`, `plugin/skills_lint_test.go:789`). The console's never-reachable
   table drops the removed commands (`console/src/main/ipc.ts:1764`, with
   `console/test/unit/ipc.test.ts:681`), and the generated CLI reference is regenerated

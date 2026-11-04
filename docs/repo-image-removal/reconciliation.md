@@ -141,7 +141,7 @@ code. A `:line` is a **declaration** line at `aa034db1`; the symbol is what to s
   schema, the project layer's, the settings document's and the registry's — and not one.
 
 - **F24: Exists. Two dogfood repositories carry the keys.** This repository's `go` workflow sets
-  `image.setup` (`fugaro.yaml:43`), and the sandbox repository's workflows are what the live checks run.
+  `image.setup` (`./fugaro.yaml:43`), and the sandbox repository's workflows are what the live checks run.
   Nothing in the tree enumerates a third, which is §5's residual.
 
 - **F25: Exists, and it is what makes the migration possible at all. A catalog build hands the entry's
@@ -267,8 +267,9 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
 - **D1194 (retirement) — OPEN, recommended.**
   Recommendation: retirement stays **owner-run only** — `fugaro update --repo <r> --retire` with the
   two typed confirmations (`internal/cli/init.go:444`) — it is **never automatic**, **never** admitted
-  by the managed gate, and `deletion_protection` (`check.tf:27`) and `prevent_destroy`
-  (`registry.tf:10`) are unchanged. The plan shows the destroy and refuses it without the flag.
+  by the managed gate, and `deletion_protection`
+  (`deploy/terraform/gcp/modules/repo/check.tf:27`) and `prevent_destroy`
+  (`deploy/terraform/gcp/modules/repo/registry.tf:10`) are unchanged. The plan shows the destroy and refuses it without the flag.
   Cost of the alternative: an ordinary converge destroying them removes an Artifact Registry
   repository that may hold a live job's image and the versions a rollback needs, with no confirmation
   and no record — which is why the two protections exist.
@@ -287,12 +288,12 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   "removed" means "refused and named", not "absent from the source".
 
 - **D1196 (the schemas, and the rows that make the keys writable) — OPEN, recommended.**
-  Recommendation: `schemas/fugaro.schema.json` loses `image` (`:358`), `dockerfile` (`:396`) and
-  `rebuild` (`:511`) and its mutual-exclusion clauses (`:306`) shrink to `image_name` with `needs`;
-  `schemas/project-layer.schema.json` loses `:265` and `:338`;
+  Recommendation: `schemas/fugaro.schema.json:358` loses `image` (`:396` for `dockerfile`, `:511` for
+  `rebuild`) and its mutual-exclusion clauses (`:306`) shrink to `image_name` with `needs`;
+  `schemas/project-layer.schema.json:265` loses the same keys (`:338` for `rebuild`);
   `internal/settings/registry.go:229` loses the twenty-one rows that make the keys writable (`:234`,
   `:254`, `:258`, and the `layerRow`s at `internal/settings/registry.go:454`, `:458`, `:477`, `:481`),
-  and `schemas/settings.schema.json:1145` loses their twenty-five members (`:1130`, `:1181`) — a key
+  and `schemas/settings.schema.json:1145` loses their twenty-one members (`:832`, `:1181`) — a key
   with no scope row and no registry row is a key `settings set` must not offer. `image_catalog.*`
   (`schemas/settings.schema.json:547`), `base_images` and the catalog's own rows are untouched.
   Cost of the alternative: a schema that still allows a removed key is the file a person's editor
@@ -349,7 +350,8 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   has no knob until the catalog gets one.
 
 - **D1201 (the repository's own Artifact Registry repository) — OPEN, recommended.**
-  Recommendation: it leaves the **Terraform configuration** (`registry.tf:10`) and the **object** is
+  Recommendation: it leaves the **Terraform configuration**
+  (`deploy/terraform/gcp/modules/repo/registry.tf:10`) and the **object** is
   destroyed only by the owner's `--retire` run (D1194). The installation's shared and base registries
   (`deploy/terraform/gcp/modules/installation/registry.tf:93`) are untouched.
   Cost of the alternative: keeping it keeps one empty registry per repository, with its cleanup policies

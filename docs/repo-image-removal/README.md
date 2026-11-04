@@ -55,7 +55,7 @@ only for a workflow that declares none of the derived-image keys, because `catal
 tree carries **two image paths**, and the ruling says one: the catalog's.
 
 **Two repositories carry a per-repository image today and neither may lose it:** this repository, whose
-`go` workflow sets `image.setup` (`fugaro.yaml:43`), and the sandbox repository. §3 of
+`go` workflow sets `image.setup` (`./fugaro.yaml:43`), and the sandbox repository. §3 of
 [spec.md](spec.md) is the order that gets both onto a catalog entry **before** the removal lands, so
 the dogfood pipeline never runs a job whose image does not exist.
 
