@@ -51,9 +51,13 @@ code. A `:line` is a **declaration** line at `aa034db1`; the symbol is what to s
 
 - **F8: Exists, and it matters for the order. The catalog is not yet the deployed path on `main`:**
   `internal/cli/recipes_skew.go:177` holds `imageCatalogShipped = false` beside
-  `imageCatalogSince = "0.17.0"` (`:169`), and the open pull request #1665 flips it. So the removal is
-  sequenced behind a flip that has not merged, and a plan that removed the per-repository path first
-  would leave the tree with **no** deployed image path at all.
+  `imageCatalogSince = "0.17.0"` (`:169`), its twin at `internal/infra/readiness.go:755` holds the same
+  fact, and the open pull request #1665 flips both. So the removal is sequenced behind a flip that has
+  not merged, and a plan that removed the per-repository path first would leave the tree with **no**
+  deployed image path at all. **The direction of the failure is the safe one**, which is why the
+  dogfood migration can be planned rather than hoped for: a workflow that names an entry while the flag
+  is false is **held back, not silently mis-imaged** — readiness refuses the job and says why
+  (`internal/infra/readiness.go:459`, and the same words again at `:507`).
 
 - **F9: Exists. One Cloud Run job per repository, one Scheduler, one name function.**
   `deploy/terraform/gcp/modules/repo/check.tf:16` (`google_cloud_run_v2_job "check"`), `:116`
