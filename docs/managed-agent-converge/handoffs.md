@@ -6,7 +6,7 @@
 
 ## The three rows
 
-Each row is one design's whole handoff: what its command's task adds to itself, and what stays refused in a managed project after that. A command whose row has not landed keeps the refusal it has today — the gate is a call the command makes, so a command that does not make it is a command an agent's session still cannot run, which is the safe direction rather than a hole.
+Each row is one design's whole handoff: what that design's own task adds to its command, and what stays refused in a managed project once it lands. A command whose row has not landed keeps the refusal it has today — the gate is a call the command makes, so a command that does not make it is a command an agent's session still cannot run, which is the safe direction rather than a hole.
 
 | Design | Its command | What its task adds | What stays refused in a managed project, and who refuses it |
 | --- | --- | --- | --- |
@@ -16,7 +16,7 @@ Each row is one design's whole handoff: what its command's task adds to itself, 
 
 ## What the tree says today
 
-One line per command of the spec's §3.1, and the command tree is what decides it — a row that landed and whose command is not in the gate's set, and a row that has not landed and whose command a session can already run, are the two mismatches worth a report. M9 read the tree rather than trusting the plan's order, and **nothing below is a mismatch**: the three rows are owed by their own designs, not by this build.
+One line per command of the spec's §3.1, each read against the command tree — a row that landed and whose command is not in the gate's set, and a row that has not landed and whose command a session can already run, are the two mismatches worth a report. M9 read the tree rather than trusting the plan's order, and **nothing below is a mismatch**: the three rows are owed by their own designs, not by this build.
 
 - `fugaro update` — **landed** (M1, `internal/cli/update_managed.go`): each stage's saved plan, and each non-Terraform stage's own dry-run document.
 - `fugaro config publish` — **landed** (M2, `internal/cli/config_publish_managed.go`).
@@ -27,7 +27,7 @@ One line per command of the spec's §3.1, and the command tree is what decides i
 - `fugaro accounts add` — **landed** (`internal/cli/accounts_managed.go`), the accounts row's own build.
 - `fugaro accounts rm` — **owed**: the command does not exist on `main`, and the row's refusal is written above for whoever lands it.
 
-The two rows that landed did so in the 0.18.0 build, before the design's own M9; the rigor row and `accounts rm` are the two pieces of §3.1 a release of this gate still leaves refused, and a reader who finds one of them missing has found the state the plan's §2 predicted rather than a regression. **A row that lands later moves the line above it in the same pull request**: the note is a claim about the tree, and the folder's pin (`internal/cli/docs_managed_agent_converge_test.go`) reads the two against each other.
+The two handoff rows that landed — settings, and accounts `add` — did so in the 0.18.0 build, before this design's own M9; the rigor row and `accounts rm` are the two commands of §3.1 a release of this gate still leaves refused, and a reader who finds one of them missing has found the state the plan's §2 predicted rather than a regression. **A row that lands later moves its line above in the same pull request**: the note is a claim about the tree, and the folder's pin (`internal/cli/docs_managed_agent_converge_test.go`) reads the two against each other.
 
 ## The skill's paragraph (a handoff)
 
