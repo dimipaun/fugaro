@@ -1487,6 +1487,51 @@ func TestProjectJobAccountsKnowsTheVariant(t *testing.T) {
 	}
 }
 
+// projectReviewSuffixAccountLC is projectAccountAxisLC's shape with one account
+// whose own name ends in the review suffix, which is what makes a coding job's
+// name and service account the review variant of another account's job.
+const projectReviewSuffixAccountLC = `claude_accounts:
+  acme-personal: { allow_data_to: [acme/webapp] }
+  acme-personal-review: { allow_data_to: [acme/webapp] }
+project_secrets:
+  claude-oauth-token: { allow_data_to: [acme/webapp] }
+  github-app-key: { allow_data_to: [acme/webapp] }
+profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [github/acme/webapp], claude_accounts: [acme-personal, acme-personal-review], secrets: [github-app-key] }
+`
+
+// TestReviewJobVariantRefusesAnAccountCarryingTheSuffix: the variant's names
+// are derived over the same axis as the coding set, so an account named after
+// another account's review variant derives the same job name AND the same
+// service account as that variant — and the variant would then run as the
+// account of a coding job that mounts the App key, which is the one thing the
+// review job's own account must never be (O1). The two sets are checked
+// against each other and the deployment stops rather than deploying it: a
+// coding job and its review variant may not share an account, and this is the
+// shape in which a name can make them.
+//
+// The check is on the deployment, not on the variant alone: it is the pair
+// that collides, and a profile with one of the two names is a perfectly good
+// installation — an account called acme-personal-review deploys its own job
+// and no variant of acme-personal exists to collide with it.
+//
+// Mutation (run, restore): drop the cross-set check in ProjectReviewJobs — the
+// variant of acme-personal is built onto acme-personal-review's account and
+// this test, which expects the refusal, fails.
+func TestReviewJobVariantRefusesAnAccountCarryingTheSuffix(t *testing.T) {
+	const lc = m4LocalConfig + projectJobRepoLC + m5Additions + projectReviewSuffixAccountLC
+	coding := projectJobsFor(t, lc)
+	if len(coding) != 3 {
+		t.Fatalf("the fixture's coding jobs are %v, want the no-account job and the two accounts'", sortedJobNames(coding))
+	}
+	c := parseLC(t, lc)
+	if _, err := ProjectReviewJobs(c, "fugaro-runs-proj-1234", false); err == nil {
+		t.Fatalf("the review variants of %v were built although acme-personal-review holds the job name and the service account of acme-personal's variant", sortedJobNames(coding))
+	} else if !strings.Contains(err.Error(), "acme-personal-review") {
+		t.Errorf("the refusal does not name the account to rename: %v", err)
+	}
+}
+
 // TestReviewJobVariantFollowsTheProfiles: an installation whose profiles a
 // shared job cannot serve gets no variant, and one that declares no profile
 // gets none at all. The review job is a project job with a suffix, so it

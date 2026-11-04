@@ -261,11 +261,47 @@ func ProjectReviewJobs(lc *localcfg.Config, bucket string, vertex bool) (map[str
 	}
 	out := make(map[string]ProjectJob, len(coding))
 	for _, j := range coding {
-		if err := addProjectJob(out, reviewVariant(lc, j)); err != nil {
+		v := reviewVariant(lc, j)
+		// The variant's name and service account are derived over the same
+		// axis as the coding set, so an account whose own name ends in the
+		// review suffix collides with the variant of the account it names: a
+		// profile listing acme-review gets a coding job named exactly as the
+		// review variant of acme, and the two derive ONE service account — so
+		// the variant would run as a job account that mounts the App key,
+		// which is the whole of what it exists not to be. addProjectJob's
+		// check is within a set; this is the same check across the two, and it
+		// fails closed rather than deploying the variant onto an account that
+		// may read a secret.
+		for name, c := range coding {
+			if c.Job != v.Job && c.ServiceAccount.AccountID != v.ServiceAccount.AccountID {
+				continue
+			}
+			return nil, userErr("profiles.%s: the review variant of the account %q derives the job name %s and the service account %s, and the shared job %s of the account %q already holds them: a Claude account whose name ends in %q is the review variant of the account it names, and the review job would run as an account that mounts the App key. Rename that account (claude_accounts) and run fugaro update again",
+				j.Profile, v.Account, v.Job, v.ServiceAccount.AccountID, name, c.Account, credsvc.ReviewVariantSuffix)
+		}
+		if err := addProjectJob(out, v); err != nil {
 			return nil, err
 		}
 	}
 	return out, nil
+}
+
+// ReviewVariantAccount is one entry of config.ProjectJobAccounts' axis as the
+// review variant's names spell it: the policy's own spelling of the account,
+// which writes the default account as config.DefaultClaudeAccount where the
+// axis writes it as the empty string.
+//
+// It is exported because the variant's names are computed in two places — the
+// deployer here and the launcher (internal/cli's project job lookup) — and a
+// second spelling of the mapping would be a launcher that resolves a job
+// nobody deployed, or a service that admits an account that does not exist.
+// The service makes the same mapping for its own table
+// (credsvc.ReviewJobAccountsFor), over the same axis.
+func ReviewVariantAccount(account string) string {
+	if account == "" {
+		return config.DefaultClaudeAccount
+	}
+	return account
 }
 
 // reviewVariant is one coding job's review-only twin. j is the coding job the
@@ -283,10 +319,7 @@ func reviewVariant(lc *localcfg.Config, j ProjectJob) ProjectJob {
 	// config.ProjectJobTokenAccount makes for the token-carrying entries is made
 	// here for the variant's name — the same mapping, and the same account name,
 	// credsvc.ReviewJobAccountsFor computes the admitted set with.
-	account := j.Account
-	if account == "" {
-		account = config.DefaultClaudeAccount
-	}
+	account := ReviewVariantAccount(j.Account)
 	saID := credsvc.ReviewServiceAccountID(j.Profile, j.Provider, account)
 	env := maps.Clone(j.Env)
 	delete(env, runner.SecretEnvsVar)
