@@ -1,0 +1,445 @@
+package cli
+
+// docs/project-workflow-secrets/ is the design-only folder for issue #1678:
+// a workflow's own secret (`workflows.<w>.secrets`) that can be stored once
+// for the project behind an operator-local allow-list. This file pins the
+// folder's facts, the way docs_rigor_modes_test.go pins docs/rigor-modes/ and
+// docs_backlog_test.go pins docs/backlog/ — there is no registry test over
+// docs/, so a folder that wants its documents pinned writes its own file.
+//
+// What it pins, and why each one is worth a test rather than a promise:
+//
+//   - **The four documents exist and each says what it is.** The folder's
+//     shape is the spec-to-pr one (a spec, a reconciliation, a plan, a
+//     README), and a reader arriving from the issue must find all four.
+//   - **spec.md is the issue, byte for byte.** It is the folder's only
+//     document that is not a reading: the issue's words are what the design
+//     is answerable to, so the headings, the three quoted sentences and the
+//     checklist line are pinned as written. A paraphrase is a claim the
+//     owner never made.
+//   - **The decision block is exactly D1260–D1277, with D1278–D1289 held.**
+//     Taken above D1189 on `main` and above the blocks #1676 and the
+//     stateless-orchestrator work hold (reconciliation §4). A number written
+//     twice in two work streams is the collision the block exists to avoid,
+//     and a number *reused* would draw a wrong figure with no error.
+//   - **Every decision costs its alternatives.** The point of the folder is
+//     that the owner can answer, which needs the price of the other
+//     readings. A decision with no recommendation, or with a recommendation
+//     and no cost, is a decision the owner cannot take.
+//   - **Every finding says what the claim is and what the code does.** The
+//     reconciliation's value is that it was read against the tree rather
+//     than the designs: a finding that cites no code is a paragraph.
+//   - **The plan names eight tasks, each with a red step and a file budget,
+//     and the file budget is the brief's twelve.** A task with no red step
+//     is a task whose test was written after the code.
+//   - **No document in the folder carries a secret-shaped literal.** The
+//     folder's subject is a credential stored once for 65 repositories, so
+//     it is exactly the place a real value would be pasted "for
+//     illustration".
+//
+// Nothing here asserts the design is *right*: the decisions are unanswered
+// and this file must not read as approving them. It asserts that the folder
+// is complete enough to be answered.
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+const (
+	// projectWorkflowSecretsDir is the folder, relative to this package's
+	// directory (the tests run with internal/cli as the working directory).
+	projectWorkflowSecretsDir = "../../docs/project-workflow-secrets"
+
+	// The folder's four documents, by name. Every one of them is hand-written
+	// and none is generated, so a missing one is a missing argument rather
+	// than a stale build artifact.
+	pwsReadme    = "README.md"
+	pwsSpec      = "spec.md"
+	pwsReconcile = "reconciliation.md"
+	pwsPlan      = "implementation-plan.md"
+)
+
+// readProjectWorkflowSecrets reads one of the folder's documents, failing the
+// test rather than returning an empty string: an assertion made against a
+// document that could not be read would pass on nothing.
+func readProjectWorkflowSecrets(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(projectWorkflowSecretsDir, name))
+	if err != nil {
+		t.Fatalf("reading %s/%s: %v", projectWorkflowSecretsDir, name, err)
+	}
+	return string(data)
+}
+
+// TestProjectWorkflowSecretsFolderIsComplete: the four documents, none empty,
+// and each carrying a status line — the fact docs/managed-agent-converge/
+// carries in its README and this folder carries in each file, because a
+// reader who lands on reconciliation.md directly must be able to see that
+// nothing is built and nothing is approved.
+func TestDocsProjectWorkflowSecretsFolderIsComplete(t *testing.T) {
+	for _, name := range []string{pwsReadme, pwsSpec, pwsReconcile, pwsPlan} {
+		doc := readProjectWorkflowSecrets(t, name)
+		if strings.TrimSpace(doc) == "" {
+			t.Errorf("%s is empty", name)
+			continue
+		}
+		if !strings.Contains(doc, "**Status:") {
+			t.Errorf("%s carries no status line: every document in this folder states what it is", name)
+		}
+	}
+	// The three reading documents must say the same thing about the build, in
+	// the folder's own words. spec.md is the exception on purpose: it is the
+	// issue, and the issue does not know what a design folder is.
+	for _, name := range []string{pwsReadme, pwsReconcile, pwsPlan} {
+		doc := readProjectWorkflowSecrets(t, name)
+		if !strings.Contains(doc, "nothing is built") {
+			t.Errorf("%s does not say that nothing is built", name)
+		}
+	}
+	if doc := readProjectWorkflowSecrets(t, pwsReconcile); !strings.Contains(doc, "None of\nthem is answered") &&
+		!strings.Contains(doc, "None of them is answered") {
+		t.Error("reconciliation.md does not say that none of its decisions is answered: the folder asks, it does not decide")
+	}
+}
+
+// TestProjectWorkflowSecretsSpecIsTheIssueVerbatim: the issue's own headings,
+// the three sentences the design is answerable to, and the checklist line the
+// issue ends with. The assertions are made byte for byte rather than
+// whitespace-normalized, because the point of the file is that it is a copy.
+func TestDocsProjectWorkflowSecretsSpecIsTheIssueVerbatim(t *testing.T) {
+	doc := readProjectWorkflowSecrets(t, pwsSpec)
+	for _, want := range []string{
+		// The issue's own title line and its three section headings.
+		"# Issue #1678: secrets: let a workflow secret be stored once for the project, behind an allow-list",
+		"### The problem",
+		"### What you would like",
+		"### Help",
+		// The problem, as the issue states it: the per-repository rule, its
+		// source in the help text, who may be stored project-wide today, and
+		// the two costs the issue counts.
+		"A workflow's own secret (`workflows.<w>.secrets` in `fugaro.yaml`) is always stored per repository.",
+		`"A workflow's own secret has no project-wide meaning and is stored in the repository's own container as before."`,
+		"Only the reserved names (the API key, the GitHub App key, a provider's key, an allow-listed reserved secret, a named Claude account's token) can be stored once for the project.",
+		"about 130 hidden prompts, and 130 copies to rotate when the password changes.",
+		// The ask, including the two properties the design may not trade away:
+		// the list is operator-local, and a repository's own copy still wins.
+		"gated the way the project-wide Bitbucket token already is: an operator-local allow-list (like `project_secrets.<name>.allow_data_to`, wildcards within a segment)",
+		"so a project copy never widens to a repository the operator did not list.",
+		"A repository's own copy would still win over the project's, as it does for the reserved names.",
+		// The checklist line, and the fact that it is the file's last line: a
+		// reader copying the issue into a tracker gets the whole thing.
+		"- [ ] I could help build, review or test this",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("spec.md does not carry the issue verbatim: %q is missing", want)
+		}
+	}
+	// The issue states no scale figure other than the two the design quotes
+	// as the issue's own; a number invented here would be the folder's, not
+	// the issue's. The one figure the issue gives is the repository count.
+	if !strings.Contains(doc, "about 65 Maven services") {
+		t.Error("spec.md does not carry the issue's own example (about 65 Maven services)")
+	}
+	if !strings.HasSuffix(strings.TrimRight(doc, "\n"), "- [ ] I could help build, review or test this") {
+		t.Error("spec.md does not end with the issue's checklist line: the copy has grown something the issue does not have")
+	}
+}
+
+// TestProjectWorkflowSecretsDecisionsAreD1260ToD1277AndNoFurther: the numbers
+// the reconciliation writes, in order, with none skipped and none outside the
+// block. D1278–D1289 are reserved and unused, so a decision heading there is
+// a number taken twice (reconciliation §4).
+func TestDocsProjectWorkflowSecretsDecisionsAreD1260ToD1277AndNoFurther(t *testing.T) {
+	doc := readProjectWorkflowSecrets(t, pwsReconcile)
+	var got []int
+	for _, m := range regexp.MustCompile(`(?m)^### D(\d+)\. `).FindAllStringSubmatch(doc, -1) {
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			t.Fatalf("decision heading %q does not carry a number", m[0])
+		}
+		got = append(got, n)
+	}
+	if len(got) == 0 {
+		t.Fatal("reconciliation.md writes no decision of the form `### D<number>. `")
+	}
+	for i, n := range got {
+		if want := 1260 + i; n != want {
+			t.Fatalf("decision %d of the block is D%d, want D%d: the block is contiguous from D1260", i+1, n, want)
+		}
+	}
+	if last := got[len(got)-1]; last != 1277 {
+		t.Errorf("the highest decision written is D%d, want D1277: D1278-D1289 are reserved and unused", last)
+	}
+	// The reserved half must be named as reserved, and the block's top must
+	// be stated, or a reader cannot tell whether the design ran out of
+	// decisions or out of block.
+	for _, want := range []string{"D1278–D1289", "D1260–D1289"} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("reconciliation.md does not name the block %s", want)
+		}
+	}
+}
+
+// TestProjectWorkflowSecretsNumberBlockIsReadAboveTheOpenWork: §4's facts. The
+// numbers are read by grepping the trees, and the block is taken above the
+// highest one claimed anywhere — so the file must name the ceiling it was
+// taken above, and the two work streams that hold the numbers under it. A
+// later task re-runs the commands rather than trusting the conclusion, which
+// is why the commands themselves are pinned here.
+func TestDocsProjectWorkflowSecretsNumberBlockIsReadAboveTheOpenWork(t *testing.T) {
+	doc := readProjectWorkflowSecrets(t, pwsReconcile)
+	for _, want := range []string{
+		"D1189",
+		"#1676",
+		"D1190–D1209",
+		"D1219",
+		"D1220–D1259",
+		"b41709ea",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("reconciliation.md §4 does not carry %q: the number block must name what it was read above", want)
+		}
+	}
+	// The README states the same block, and a reader arriving there must not
+	// have to open the reconciliation to learn that the numbers are free.
+	readme := readProjectWorkflowSecrets(t, pwsReadme)
+	for _, want := range []string{"D1260–D1289", "D1260–D1277", "D1278–D1289", "D1189"} {
+		if !strings.Contains(readme, want) {
+			t.Errorf("README.md does not carry %q of the number block", want)
+		}
+	}
+}
+
+// TestProjectWorkflowSecretsEveryDecisionIsAnswerable: each decision section
+// must carry a recommendation and the cost of at least one alternative. The
+// owner answers these; a decision that recommends nothing, or that costs
+// nothing, is not one a reader can answer.
+func TestDocsProjectWorkflowSecretsEveryDecisionIsAnswerable(t *testing.T) {
+	doc := readProjectWorkflowSecrets(t, pwsReconcile)
+	sections := decisionSections(t, doc)
+	if len(sections) == 0 {
+		t.Fatal("no decision section was found")
+	}
+	for _, s := range sections {
+		if !strings.Contains(s.body, "**Recommendation.**") {
+			t.Errorf("%s carries no recommendation", s.heading)
+		}
+		if !strings.Contains(s.body, "**Cost of the alternative") {
+			t.Errorf("%s does not cost its alternatives", s.heading)
+		}
+		// A recommendation the design cannot defend against the tree is a
+		// preference. Every decision here was reached from a finding.
+		if !strings.Contains(s.body, "F") && !strings.Contains(s.body, "§") {
+			t.Errorf("%s cites neither a finding nor another section: it is an opinion", s.heading)
+		}
+	}
+}
+
+// TestProjectWorkflowSecretsFindingsRunF1ToF20: the findings are contiguous
+// and each states its claim and what the code does. A finding that is a
+// paragraph about the design rather than a reading of the tree is what the
+// reconciliation exists not to be.
+func TestDocsProjectWorkflowSecretsFindingsRunF1ToF20(t *testing.T) {
+	doc := readProjectWorkflowSecrets(t, pwsReconcile)
+	re := regexp.MustCompile(`(?m)^### (F\d+)\. `)
+	ms := re.FindAllStringSubmatch(doc, -1)
+	if len(ms) == 0 {
+		t.Fatal("reconciliation.md writes no finding of the form `### F<number>. `")
+	}
+	want := make([]string, 0, len(ms))
+	for i := range ms {
+		want = append(want, "F"+strconv.Itoa(i+1))
+	}
+	for i, m := range ms {
+		if m[1] != want[i] {
+			t.Fatalf("finding %d is %s, want %s: the findings are contiguous from F1", i+1, m[1], want[i])
+		}
+	}
+	if last := ms[len(ms)-1][1]; last != "F20" {
+		t.Errorf("the highest finding is %s, want F20", last)
+	}
+	var bodies []string
+	bounds := re.FindAllStringIndex(doc, -1)
+	for i, b := range bounds {
+		end := len(doc)
+		if i+1 < len(bounds) {
+			end = bounds[i+1][0]
+		}
+		bodies = append(bodies, doc[b[0]:end])
+	}
+	for i, body := range bodies {
+		if !strings.Contains(body, "**What the code does.**") {
+			t.Errorf("finding F%d does not say what the code does", i+1)
+		}
+		if !strings.Contains(body, "**Claim of the ") {
+			t.Errorf("finding F%d does not state the claim it reconciles", i+1)
+		}
+	}
+}
+
+// TestProjectWorkflowSecretsPlanNamesItsEightTasks: W0–W7, each with a red
+// step, an interface or a rule, a named-test line and a file budget at or
+// under the brief's twelve. The file budget is parsed rather than asserted
+// by eye: a task that grew past twelve files would otherwise be a plan that
+// cannot be reviewed in one sitting.
+func TestDocsProjectWorkflowSecretsPlanNamesItsEightTasks(t *testing.T) {
+	doc := readProjectWorkflowSecrets(t, pwsPlan)
+	head := regexp.MustCompile(`(?m)^## (W\d+)\. `)
+	ms := head.FindAllStringSubmatch(doc, -1)
+	if len(ms) != 8 {
+		t.Fatalf("implementation-plan.md names %d tasks, want 8 (W0-W7)", len(ms))
+	}
+	bounds := head.FindAllStringIndex(doc, -1)
+	sec := 0
+	for i, m := range ms {
+		if want := "W" + strconv.Itoa(i); m[1] != want {
+			t.Fatalf("task %d is %s, want %s", i+1, m[1], want)
+		}
+		end := len(doc)
+		if i+1 < len(bounds) {
+			end = bounds[i+1][0]
+		}
+		body := doc[bounds[i][0]:end]
+		if !strings.Contains(body, "**Red step.**") {
+			t.Errorf("%s has no red step", m[1])
+		}
+		if !strings.Contains(body, "**Files (") {
+			t.Errorf("%s names no file budget", m[1])
+		}
+		for _, n := range regexp.MustCompile(`\*\*Files \(≤(\d+)\)`).FindAllStringSubmatch(body, -1) {
+			v, err := strconv.Atoi(n[1])
+			if err != nil {
+				t.Fatalf("%s: unparsable file budget %q", m[1], n[1])
+			}
+			if v > 12 {
+				t.Errorf("%s budgets %d files, and the brief's bound is 12", m[1], v)
+			}
+		}
+		if strings.Contains(body, "**SEC**") {
+			sec++
+		}
+	}
+	// The SEC flags are the plan's own claim about where the boundaries are,
+	// and the README counts them. Today six of the eight carry one; the count
+	// is asserted so that a task losing its flag is a failing test rather
+	// than a quieter plan.
+	if sec != 6 {
+		t.Errorf("%d of the eight tasks carry a SEC flag, want 6 (the README says so)", sec)
+	}
+	// The order and the critical path are the two facts that decide what may
+	// be built in parallel, so both are pinned.
+	for _, want := range []string{"Critical path", "W0 → W1 → W2 → W3 → W6 → W7", "| Level | Tasks | Needs (code) |"} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("implementation-plan.md does not carry %q", want)
+		}
+	}
+}
+
+// TestProjectWorkflowSecretsPlanProtectsTheTwoPropertiesTheIssueNames: the
+// issue asks for two things that are not negotiable — the list is
+// operator-local, and a repository's own copy still wins. Both are decisions
+// in the reconciliation (D1260's alternatives and D1264) and both must be
+// visible in the plan that would build them, or a task could take either away
+// without a reviewer noticing.
+func TestDocsProjectWorkflowSecretsPlanProtectsTheTwoPropertiesTheIssueNames(t *testing.T) {
+	rec := readProjectWorkflowSecrets(t, pwsReconcile)
+	for _, want := range []string{
+		// The operator-local block, and the refusal of the published variant.
+		"workflow_secrets",
+		"operator-local",
+		// The precedence, cited to the function that holds it.
+		"resolveSecretID",
+		"the repository's own copy wins",
+	} {
+		if !strings.Contains(rec, want) {
+			t.Errorf("reconciliation.md does not carry %q", want)
+		}
+	}
+	plan := readProjectWorkflowSecrets(t, pwsPlan)
+	// The plan must say that the repository's own copy winning is not this
+	// work's to change, and that a shared project job may not mount one.
+	for _, want := range []string{"resolveSecretID", "shared project job", "D1266"} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("implementation-plan.md does not carry %q", want)
+		}
+	}
+}
+
+// TestProjectWorkflowSecretsReadmeLinksItsSiblings: every document the README
+// describes must exist, and the folder must not have grown a fifth document
+// nobody describes. A design folder whose README is stale is one whose table
+// of contents lies.
+func TestDocsProjectWorkflowSecretsReadmeLinksItsSiblings(t *testing.T) {
+	readme := readProjectWorkflowSecrets(t, pwsReadme)
+	for _, name := range []string{pwsSpec, pwsReconcile, pwsPlan} {
+		if !strings.Contains(readme, "("+name+")") {
+			t.Errorf("README.md does not link %s", name)
+		}
+	}
+	entries, err := os.ReadDir(projectWorkflowSecretsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var files []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+			files = append(files, e.Name())
+		}
+	}
+	if len(files) != 4 {
+		t.Errorf("%s holds %d Markdown files (%s), want the four the README describes", projectWorkflowSecretsDir, len(files), strings.Join(files, ", "))
+	}
+}
+
+// TestProjectWorkflowSecretsFolderCarriesNoSecretShapedLiteral: the folder's
+// subject is a credential stored once for many repositories, which is exactly
+// where a real value would be pasted as an illustration. The patterns are the
+// shapes a value takes, not a list of vendors: a PEM header, a well-known
+// key prefix, and a long unbroken token-shaped run inside a code span.
+func TestDocsProjectWorkflowSecretsFolderCarriesNoSecretShapedLiteral(t *testing.T) {
+	entries, err := os.ReadDir(projectWorkflowSecretsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shapes := []*regexp.Regexp{
+		regexp.MustCompile(`-----BEGIN [A-Z ]*(PRIVATE KEY|CERTIFICATE)-----`),
+		regexp.MustCompile(`\bsk-[A-Za-z0-9-]{8,}`),
+		regexp.MustCompile(`\bghp_[A-Za-z0-9]{8,}`),
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		doc := readProjectWorkflowSecrets(t, e.Name())
+		for _, re := range shapes {
+			if m := re.FindString(doc); m != "" {
+				t.Errorf("%s carries a secret-shaped literal (%s)", e.Name(), re.String())
+			}
+		}
+	}
+}
+
+// decision is one decision section of the reconciliation: its heading and the
+// text under it, up to the next heading of the same kind.
+type decision struct{ heading, body string }
+
+// decisionSections splits the reconciliation's `### D<number>. ` sections.
+func decisionSections(t *testing.T, doc string) []decision {
+	t.Helper()
+	re := regexp.MustCompile(`(?m)^### D\d+\. .*$`)
+	bounds := re.FindAllStringIndex(doc, -1)
+	out := make([]decision, 0, len(bounds))
+	for i, b := range bounds {
+		end := len(doc)
+		if i+1 < len(bounds) {
+			end = bounds[i+1][0]
+		}
+		out = append(out, decision{heading: strings.TrimSpace(doc[b[0]:b[1]]), body: doc[b[0]:end]})
+	}
+	return out
+}

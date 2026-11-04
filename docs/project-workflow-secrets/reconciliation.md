@@ -572,7 +572,7 @@ reach, and that is B3.1's edit.
 
 **Recommendation.** **No.** The block is operator-local, like `project_secrets` (whose only published
 derivations are the Bitbucket token's `allow_repos` and the accounts' `allow_repos`). The mount is
-decided at plan time on the operator's own machine, the shared job case is refused (D1266), and
+decided at plan time on the operator's own machine, the shared job case is refused (F9, D1266), and
 nothing a run reads needs the list.
 
 **Cost of the alternatives.**
@@ -671,9 +671,9 @@ pins each.
 
 **Question.** What does the operator read before the value is stored?
 
-**Recommendation.** The store-time note (`:859`) and `SECURITY.md` say, in the shape the Bitbucket
-token's warning already has (`SECURITY.md:67`): the entry's list decides which repositories mount the
-value; a wildcard entry means every repository it matches **now and later**, so a repository
+**Recommendation.** The store-time note (`:859`, whose shape F19 records) and `SECURITY.md` say it in
+the shape the Bitbucket token's warning already has (`SECURITY.md:67`): the entry's list decides which
+repositories mount the value; a wildcard entry means every repository it matches **now and later**, so a repository
 onboarded afterwards mounts it with nothing else to do; **the value is whatever the repository's
 build and tests read**, and a repository that stores its own copy keeps it. The note names the reach
 through `repoMayUseProject`, never a fixed sentence, so an entry that lists three repositories says
@@ -714,7 +714,7 @@ it.
 **Question.** May an entry of `workflow_secrets` set `proxy: true`?
 
 **Recommendation.** **Refused**, by `ValidateWorkflowSecrets`, with `ValidateProjectSecrets`'s own
-sentence shape (D493: *proxy is the Bitbucket token's switch and nothing else's*). The refusal is
+sentence shape (F4's validator, D493: *proxy is the Bitbucket token's switch and nothing else's*). The refusal is
 belt and braces — D1261 already refuses `bitbucket-token` as a key — and it is what keeps the
 forwarding feature from acquiring a second spelling.
 

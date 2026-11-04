@@ -7,7 +7,7 @@ the tasks exist so the owner can price the build, not because it may start. **Wh
 reconciliation disagree, the reconciliation wins.
 
 Each task touches at most twelve files, names its tests, starts with a **red step**, and carries a
-**SEC** flag where it moves a security boundary — and five of the eight carry one, because the whole
+**SEC** flag where it moves a security boundary — and six of the eight carry one, because the whole
 design is a gate on which repositories may mount a credential the operator stored once.
 
 Slot: **CLI 0.19.0** (D1277). Nothing here is a console, mobile, website or `ee` change, and no task

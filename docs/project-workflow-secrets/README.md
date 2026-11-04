@@ -69,7 +69,7 @@ The block is taken **above every `D<number>` on `main` and in every open work st
 
 ## What this design does not do
 
-- **It does not build anything, and it does not approve anything.** Five of the eight tasks carry a
+- **It does not build anything, and it does not approve anything.** Six of the eight tasks carry a
   **SEC** flag; the build is security-sensitive and its recommended slot is **0.19.0** (D1277),
   deliberately not the 0.18.0 release that carries the managed-agent-converge theme.
 - **It does not weaken the reserved names' block.** `project_secrets`' key rule, D2's sweep,
