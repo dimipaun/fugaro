@@ -72,8 +72,8 @@ device allowlist, which is what D923's answer signs a person in with).
   other security-sensitive review in this repository. **That review ran on 2026-11-04**, after this
   design had merged; **its findings and the owner's answers are
   [reconciliation.md](reconciliation.md) §4a**, every document here is written to them, and **no task
-  in [implementation-plan.md](implementation-plan.md) starts before that is true of the task it
-  builds**. Its scope was §8, every **SEC**-marked task of §3 — the four whose marker says
+  in [implementation-plan.md](implementation-plan.md) starts before the finding that names it is
+  answered in the task it builds**. Its scope was §8, every **SEC**-marked task of §3 — the four whose marker says
   **mandatory** are **M3, M4, M5 and M7**, with **M9 keeping the marker in the deferred slice** and
   M2, M6, M8 and M10 carrying the marker without that word — and the one new privilege this design
   asks for (M9's launch grant, **also deferred**). **One of its findings was accepted and documented
