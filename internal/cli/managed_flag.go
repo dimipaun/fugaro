@@ -349,11 +349,13 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	// The undo names both writes, because this command made both (Task 3.0):
 	// the object in the runs bucket and the label on the project. Either one
 	// alone makes the project unmanaged again — the read requires both — and
-	// they come off differently: the object has no command of ours, and the
-	// label has a gcloud line that no test can run, so it is marked
-	// UNVERIFIED as the backfill in docs/design/managed-projects.md is.
-	fmt.Fprintf(w, "undo: this command wrote two things, and either one alone makes the project unmanaged again, because the read requires both — delete the object gs://%s/%s yourself as the operator, since no command of ours removes the marker in this release, and take the label %s=%s off the project itself with gcloud projects update %s --remove-labels=%s, which is UNVERIFIED until an operator has run it live (docs/design/managed-projects.md carries the same line)\n",
-		safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, safetext.Field(lc.GCPProject), managed.ProjectLabelKey)
+	// they come off together now: `fugaro managed unflag` is the owner-run
+	// command that takes both off (D1020), the one this line used to say did
+	// not exist. The gcloud line takes the label off on
+	// its own, and no test can run it, so it stays marked UNVERIFIED as the
+	// backfill in docs/design/managed-projects.md is.
+	fmt.Fprintf(w, "undo: this command wrote two things, and either one alone makes the project unmanaged again, because the read requires both — take both off with `fugaro managed unflag %s` in your own terminal, which removes the object gs://%s/%s and the %s=%s label on the project itself; the label alone comes off with `gcloud projects update %s --remove-labels=%s`, which is UNVERIFIED until an operator has run it live (docs/design/managed-projects.md carries the same line)\n",
+		safetext.Field(lc.GCPProject), safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, safetext.Field(lc.GCPProject), managed.ProjectLabelKey)
 	return nil
 }
 

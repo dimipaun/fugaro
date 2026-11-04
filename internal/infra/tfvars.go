@@ -647,9 +647,10 @@ func ManagedDeployerScopedRecorded(vars []byte) (bool, error) {
 // mode, and that is the reading the rollback's refusal is built on
 // (ManagedDeployerScopedRecorded): this carry puts the key back into every
 // rewrite, so a project whose two marks have come off still has a document that
-// records the fourteen, and the fourteen are still live in it. The creation fact
-// is one-way — nothing in this tree removes the marker object or the project
-// label — and so is this entry.
+// records the fourteen, and the fourteen are still live in it. So is this entry
+// one-way: the two marks come off by command (`fugaro managed unflag` removes
+// the marker object and the project label), while nothing in this tree removes
+// the key.
 func CarriedManagedDeployerScoped(vars, prev []byte) ([]byte, error) {
 	if prev == nil {
 		return vars, nil // no document held one: nothing to carry

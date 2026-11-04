@@ -132,9 +132,12 @@ var (
 // (ErrServiceReadIdentity) rather than a call the service would answer with
 // less.
 type ServiceReadTokens struct {
-	// URL is the credentials service's base URL. It comes from the
-	// installation's published credentials_service block, or from
-	// FUGARO_BITBUCKET_READ_SERVICE_URL as an override on top of it.
+	// URL is the credentials service's base URL, and it comes from the
+	// installation's published credentials_service block and from nothing else.
+	// There is deliberately no environment variable behind it (the owner's
+	// ruling of 2026-11-03): the URL decides where the caller's own Google ID
+	// token is presented, so a value a person's shell carries may not supply one
+	// their project never published.
 	URL string
 	// Repository is the repository the token is asked for, in the spelling the
 	// installation uses ("workspace/name"). It is the one field of the request,
@@ -158,8 +161,23 @@ type ServiceReadTokens struct {
 }
 
 // ServiceReadTokens is the TokenSource a provider installs (gitprov.TokenSource)
-// when the installation's service holds the read consumer.
-var _ gitprov.TokenSource = (*ServiceReadTokens)(nil)
+// when the installation's service holds the read consumer, and it is a
+// gitprov.TokenHolder so that the reader above can redact the token out of a
+// host's echo of it: the token never passes through the reader's hands, so the
+// holder is the only thing that knows it.
+var (
+	_ gitprov.TokenSource = (*ServiceReadTokens)(nil)
+	_ gitprov.TokenHolder = (*ServiceReadTokens)(nil)
+)
+
+// HeldToken is the token this source last minted, or "" before the first mint.
+// It is read under the same lock Token mints under, because the provider's
+// calls and the reader's failure path are different goroutines.
+func (s *ServiceReadTokens) HeldToken() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.token
+}
 
 func (s *ServiceReadTokens) now() time.Time {
 	if s.Now == nil {

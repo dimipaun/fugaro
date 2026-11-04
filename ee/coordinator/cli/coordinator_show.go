@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -22,13 +21,14 @@ import (
 // host has it, whole — the description included.
 //
 // The credential is the coordinator's own and not a second path to one: the
-// read goes through coordinatorReader, so it is the same installation token,
-// minted from the GitHub App the environment holds with the read-only
-// permission set, cached for its life and revoked when the command is done
-// (github.CoordinatorTokenPermissions, no `write` anywhere). With the
-// installation's credentials service in the environment the App's key is the
-// service's and this command holds none, so it refuses — the property
-// reconciliation F9 says every read of this shape inherits.
+// read goes through coordinatorReader, so it is the same read-only token for
+// the repository, minted at the installation's credentials service with the
+// named read-only permission set and cached for its life
+// (github.CoordinatorTokenPermissions, no `write` anywhere). This command holds
+// no GitHub App key and no Bitbucket credential at all, and it reads no
+// environment variable to find either: the service's URL is the project's own
+// published block (the owner's ruling of 2026-11-03), and a project that
+// publishes none is one whose host read is refused.
 //
 // The provider is the repository's own, resolved the way the stored view's
 // provider field is (C1: the local config's entry, then the checkout's
@@ -58,23 +58,21 @@ func newCoordinatorShowCmd() *cobra.Command {
 			"per record would ride in the document every reader of the view fetches — so\n" +
 			"a console that draws one reads it here. It is untrusted text, and a renderer\n" +
 			"sanitises it before it reaches a line or a cell.\n\n" +
-			"The read is the coordinator's own: one installation token for the\n" +
-			"repository, minted from the GitHub App the environment holds and carrying\n" +
-			"the named read-only permission set — pull requests and metadata (Q3 answered\n" +
-			"(A)) — and revoked when the command is done, so the credential lives for the\n" +
-			"read and no longer. No credential of the host's reaches the output.\n" +
-			"With FUGARO_CREDENTIALS_SERVICE_URL set, the installation's credentials\n" +
-			"service holds the App's key and this command holds none, so it refuses\n" +
-			"(exit 1) before it reads the App's ID or key: the service mints a run's\n" +
-			"token, and this read is not a run.\n" +
+			"The read is the installation's: one read-only token for the repository,\n" +
+			"minted at the project's own published credentials service against the\n" +
+			"caller's own Google ID token and carrying the named read-only permission set\n" +
+			"— pull requests and metadata (Q3 answered (A)). This command holds no GitHub\n" +
+			"App key and no Bitbucket credential, and it reads no environment variable to\n" +
+			"find the service: a project that publishes none is one whose host read is\n" +
+			"refused (exit 1). No credential of the host's reaches the output.\n" +
 			"A repository on a host this read does not serve is refused the way the\n" +
-			"project-wide view refuses it (reconciliation Q12 (A), finding #30): the\n" +
-			"coordinator reads github only, because its bitbucket credential is one\n" +
-			"repository's access token and cannot be widened to a project.\n\n" +
+			"project-wide view refuses it (reconciliation Q12 (A), finding #30): a\n" +
+			"bitbucket repository is read through the same service, one repository's read\n" +
+			"token at a time, and refused where the project publishes none.\n\n" +
 			"A pull request the host does not have is the host's own failure (exit 2),\n" +
 			"carrying the host's status, and never an empty document: an empty one would\n" +
 			"draw a pull request with no description, which is a different fact.\n" +
-			"Exit codes: 1 for a missing or malformed App credential (or the refusals\n" +
+			"Exit codes: 1 for a project with no credentials service (or the refusals\n" +
 			"above), 2 for a failure of the host.\n\n" +
 			"With --json the document is printed as it is: number, url, title, body,\n" +
 			"state, draft, branch, base and author, every field the host's own answer and\n" +
@@ -117,7 +115,7 @@ func runCoordinatorShow(cmd *cobra.Command, o *coordinatorShowOptions) error {
 		return err
 	}
 
-	reader, tokens, err := coordinatorReader(env.Config(), os.Getenv, cmd.ErrOrStderr())
+	reader, tokens, err := coordinatorReader(env.Config(), cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}

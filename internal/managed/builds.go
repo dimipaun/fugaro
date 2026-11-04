@@ -97,13 +97,17 @@ type ImageBuildsRead struct {
 	// a reason to proceed.
 	Err error
 	// Managed and ManagedReason are internal/infra/managed's IsManaged, and
-	// they are filled in for one case only: when the read answered with no
-	// bound, no default and no error — a version-3 fact whose recorded bound
-	// the read refused and a project that is not managed at all both come back
-	// that way, and the second read is what tells them apart. The zero value is
-	// "not managed", which is the fail-closed direction: a bound that applies
-	// to a project nobody proved is managed is a bound nothing may be run
-	// under.
+	// the decision below consults them in two of its cases, so a caller fills
+	// them in whenever the read answered at all — for a version-1 or version-2
+	// fact as much as for one that answered nothing. Default && Managed is the
+	// case that answers with the default of one, so a caller that left Managed
+	// false there would have a managed project's older fact refused as one this
+	// bound does not apply to; and a version-3 fact whose recorded bound the
+	// read refused and a project that is not managed at all both arrive with no
+	// bound, no default and no error, where the second read is what tells them
+	// apart. The zero value is "not managed", which is the fail-closed
+	// direction: a bound that applies to a project nobody proved is managed is
+	// a bound nothing may be run under.
 	Managed       bool
 	ManagedReason string
 }

@@ -7,9 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
-	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -29,10 +27,15 @@ import (
 // BB5). Two commands gain it and they gain it as two different CALLERS: the
 // aggregation job sweeps a Bitbucket repository through the read mint as the
 // coordinator account, and a person's local `coordinator status` reads one
-// through it as themselves, each from its own variable — F23's whole point,
-// because the job's FUGARO_COORDINATOR_CREDENTIALS_SERVICE_URL and the person's
-// FUGARO_BITBUCKET_READ_SERVICE_URL name the same service and may not stand for
-// each other.
+// through it as themselves.
+//
+// The two classes now resolve the service from two different places, and that
+// difference is F23's whole point read the other way round: the job has no
+// project config file at all and its service URL is the variable Terraform sets
+// on it (FUGARO_COORDINATOR_CREDENTIALS_SERVICE_URL), while a person's command
+// reads the block the project published and has no variable at all (the owner's
+// ruling of 2026-11-03). A person's machine that carries the job's variable
+// reads the service the project published and never the one the variable names.
 //
 // What each test here holds:
 //
@@ -47,11 +50,12 @@ import (
 //   - TestSweepRefusesAPIRootOverride: G10 on the tick's own path.
 //   - TestSweepNeverRevokesBitbucketTokenAtGitHub: the record the command
 //     revokes from is its GitHub mints, and a read token never enters it.
-//   - TestLocalStatusBitbucketThroughService: the person's half, end to end.
+//   - TestLocalStatusBitbucketThroughService: the person's half, end to end,
+//     with the service published in the project's own configuration.
 //   - TestLocalStatusBitbucketAnotherWorkspaceRefused: B5's named refusal.
-//   - TestLocalStatusBitbucketPointsAtFromStoreWithoutService: what the
-//     refusal says where the person named no service, and that the GitHub read
-//     is untouched by any of it.
+//   - TestLocalStatusBitbucketPointsAtFromStoreWithoutService: a project that
+//     publishes no service is one whose Bitbucket read is refused, and the
+//     refusal names what a person can do instead.
 
 // bitbucketSweepPR is the pull request the fixtures' runs name and the fake
 // Bitbucket API answers. One number is enough: the read is what is under test,
@@ -116,17 +120,17 @@ func viewOf(t *testing.T, f *coordinatorSweepFixture, provider, repo string) (ma
 	return v, s
 }
 
-// setBitbucketReadSeams replaces the three seams the Bitbucket read reaches the
-// outside world through — the two identity tokens and the provider adapter —
-// and returns the Options the command built for the adapter, so a test can read
-// back what the command passed rather than what the fake API then received.
+// setBitbucketReadSeams replaces the two seams the JOB's Bitbucket read reaches
+// the outside world through — the job's identity token and the provider adapter
+// — and returns the Options the command built for the adapter, so a test can
+// read back what the command passed rather than what the fake API then
+// received.
 //
 // The adapter is the REAL one, pointed at the fake API by rewriting the one
 // field a test may rewrite (BB4's own arrangement in coordinator_show_test.go).
-// The two identity seams are both replaced: the sweep's, which is the job's own
-// account, and the person's, whose replacement FAILS — a command that presented
-// a person's identity where the job's is verified would be admitted under the
-// wrong class, and this is how that is noticed rather than read about.
+// The identity seam is the job's: the sweep presents the account the service's
+// coordinator class verifies, and a person's identity here would be admitted
+// under the wrong class.
 func setBitbucketReadSeams(t *testing.T, api *bitbucketAPI) *bitbucket.Options {
 	t.Helper()
 	seen := &bitbucket.Options{}
@@ -144,24 +148,35 @@ func setBitbucketReadSeams(t *testing.T, api *bitbucketAPI) *bitbucket.Options {
 	return seen
 }
 
+// setServiceClientSeam points every read mint's calls at mint's own client.
+//
+// It is the same seam the show tests set and for the same reason: the fake
+// service is a TLS server no machine trusts (a project's published URL is https
+// by validation, so a hermetic fake has to be one), while the client a real
+// path builds is the hardened one that trusts nothing. It is nil on every real
+// path.
+func setServiceClientSeam(t *testing.T, mint *readMintServer) {
+	t.Helper()
+	prev := coordinatorServiceClient
+	coordinatorServiceClient = func() *http.Client { return mint.client() }
+	t.Cleanup(func() { coordinatorServiceClient = prev })
+}
+
 // bitbucketSweepFixture is one tick over a Bitbucket repository: the sweep
 // fixture, the real provider opener (the fixture's own GitHub fake is replaced
 // back), the fake read mint and the fake API.
 type bitbucketSweepFixture struct {
 	*coordinatorSweepFixture
-	mint *readMintServer
-	// personMint is the service the PERSON's variable names on this job's
-	// environment: the tick must never call it (F23).
-	personMint *readMintServer
-	api        *bitbucketAPI
-	opened     *bitbucket.Options
-	revoked    *[]string
+	mint    *readMintServer
+	api     *bitbucketAPI
+	opened  *bitbucket.Options
+	revoked *[]string
 }
 
 // newBitbucketSweepFixture drives the sweep over the Bitbucket repository
 // acme/legacy, with the read mint's URL set from the JOB's variable when
-// serviceOn, and the PERSON's variable set to a second, identical fake that the
-// tick must never call (F23: the two names are not each other).
+// serviceOn. The job's variable is the only source there is for this class: it
+// has no project config file, so nothing else could turn the read on.
 func newBitbucketSweepFixture(t *testing.T, serviceOn bool) *bitbucketSweepFixture {
 	t.Helper()
 	// The opener the fixture's own GitHub fake replaces: the tick's Bitbucket
@@ -175,9 +190,8 @@ func newBitbucketSweepFixture(t *testing.T, serviceOn bool) *bitbucketSweepFixtu
 	t.Setenv(envCoordinatorRepos, `[{"provider":"bitbucket","repo":"acme/legacy"}]`)
 	seedBitbucketRun(t, f.cloudFixture, "acme/legacy", "20261013-150000-bb50", bitbucketSweepPR)
 
-	mint := newReadMintServer(t)
-	personMint := newReadMintServer(t)
-	t.Setenv(envBitbucketReadServiceURL, personMint.srv.URL)
+	mint := newReadMintServer(t, bitbucket.ServiceReadPath)
+	setServiceClientSeam(t, mint)
 	t.Setenv(envCoordinatorCredentialsServiceURL, "")
 	if serviceOn {
 		t.Setenv(envCoordinatorCredentialsServiceURL, mint.srv.URL)
@@ -186,7 +200,6 @@ func newBitbucketSweepFixture(t *testing.T, serviceOn bool) *bitbucketSweepFixtu
 	return &bitbucketSweepFixture{
 		coordinatorSweepFixture: f,
 		mint:                    mint,
-		personMint:              personMint,
 		api:                     api,
 		opened:                  setBitbucketReadSeams(t, api),
 		revoked:                 setCoordinatorMint(t, nil),
@@ -197,7 +210,7 @@ func newBitbucketSweepFixture(t *testing.T, serviceOn bool) *bitbucketSweepFixtu
 // reads it through the installation's credentials service rather than marking
 // it unsupported, and every link of that chain is held here — the repository
 // the mint was asked for, the identity it was presented with, the token the API
-// saw, the URL that was called, and the person's own variable left alone.
+// saw and the URL that was called.
 func TestSweepReadsBitbucketThroughService(t *testing.T) {
 	f := newBitbucketSweepFixture(t, true)
 
@@ -218,9 +231,9 @@ func TestSweepReadsBitbucketThroughService(t *testing.T) {
 
 	// The mint: one call, for the one repository the tick asked about, in the
 	// spelling the installation uses.
-	bodies, idents := f.mint.asked()
-	if len(bodies) != 1 {
-		t.Fatalf("the read mint was called %d times for one repository, want one: %v", len(bodies), bodies)
+	paths, bodies, idents := f.mint.asked()
+	if len(paths) != 1 || paths[0] != bitbucket.ServiceReadPath {
+		t.Fatalf("the read mint was asked on %v, want one call on %s", paths, bitbucket.ServiceReadPath)
 	}
 	if want := `{"repository":"acme/legacy"}`; bodies[0] != want {
 		t.Errorf("the read mint was asked for %s, want %s", bodies[0], want)
@@ -228,18 +241,12 @@ func TestSweepReadsBitbucketThroughService(t *testing.T) {
 	if idents[0] != "Bearer "+jobIdentity {
 		t.Errorf("the read mint was presented %q, want the coordinator job's own identity", idents[0])
 	}
-	// And the person's variable named a second service that must not be the
-	// one the tick called (F23): the two names are not each other, and a job
-	// that minted as the person would be the wrong class at the front door.
-	if bodies, _ := f.personMint.asked(); len(bodies) != 0 {
-		t.Errorf("the tick minted at the URL %s names, which is a person's variable and not the job's: %v", envBitbucketReadServiceURL, bodies)
-	}
 
 	// The read itself: the API was asked for the one pull request, with the
 	// token the service minted.
 	if paths, tokens := f.api.paths, f.api.tokens; len(paths) != 1 || paths[0] != "/2.0/repositories/acme/legacy/pullrequests/12" {
 		t.Fatalf("the API was asked for %v, want one pull-request read", paths)
-	} else if tokens[0] != "Bearer "+f.mint.token {
+	} else if tokens[0] != "Bearer "+f.mint.tokenFor("acme/legacy") {
 		t.Errorf("the API was authenticated with %q, want the token the service minted", tokens[0])
 	}
 	if len(f.api.stray) != 0 {
@@ -261,7 +268,7 @@ func TestSweepReadsBitbucketThroughService(t *testing.T) {
 
 	// Neither credential — the minted token or the identity that asked for it —
 	// reaches what the tick prints.
-	for _, secret := range []string{f.mint.token, jobIdentity} {
+	for _, secret := range []string{f.mint.tokenFor("acme/legacy"), jobIdentity} {
 		if strings.Contains(out, secret) || strings.Contains(errOut, secret) {
 			t.Errorf("the tick printed a credential:\n%s%s", out, errOut)
 		}
@@ -269,12 +276,12 @@ func TestSweepReadsBitbucketThroughService(t *testing.T) {
 }
 
 // TestSweepGitHubUnchangedWithService: the coordinator job's own service URL
-// changes nothing about a GitHub tick (G8, F23). The tick reads exactly what it
-// read before — the same report, the same view — and the read mint is never
-// called: GitHub is read with the App's credential, and the read consumer has
-// nothing to do with it.
+// changes nothing about a GitHub tick (G8). The tick reads exactly what it read
+// before — the same report, the same view — and the read mint is never called:
+// GitHub is read with the App's credential, and the read consumer has nothing
+// to do with it.
 func TestSweepGitHubUnchangedWithService(t *testing.T) {
-	mint := newReadMintServer(t)
+	mint := newReadMintServer(t, bitbucket.ServiceReadPath)
 	t.Setenv(envCoordinatorCredentialsServiceURL, mint.srv.URL)
 	f := newCoordinatorSweepFixture(t, coordinatorSeeds(), coordinatorPRs()...)
 
@@ -289,8 +296,8 @@ func TestSweepGitHubUnchangedWithService(t *testing.T) {
 	if !strings.Contains(out, "acme/app: ") || !strings.Contains(out, "swept 1 repositories: 1 reconciled, 0 stale") {
 		t.Errorf("the tick's report = %q, want the report a GitHub tick always writes", out)
 	}
-	if bodies, _ := mint.asked(); len(bodies) != 0 {
-		t.Errorf("a GitHub tick minted at the read mint: %v", bodies)
+	if paths, _, _ := mint.asked(); len(paths) != 0 {
+		t.Errorf("a GitHub tick minted at the read mint: %v", paths)
 	}
 }
 
@@ -316,8 +323,8 @@ func TestSweepBitbucketUnchangedWithoutService(t *testing.T) {
 	if !strings.Contains(out, "stale") || !strings.Contains(out, "0 reconciled, 1 stale") {
 		t.Errorf("the tick's report = %q, want the repository reported stale", out)
 	}
-	if bodies, _ := f.mint.asked(); len(bodies) != 0 {
-		t.Errorf("a tick with no service URL minted anyway: %v", bodies)
+	if paths, _, _ := f.mint.asked(); len(paths) != 0 {
+		t.Errorf("a tick with no service URL minted anyway: %v", paths)
 	}
 }
 
@@ -378,15 +385,16 @@ func TestSweepNeverRevokesBitbucketTokenAtGitHub(t *testing.T) {
 		t.Errorf("a Bitbucket tick revoked %v, want nothing: the read token is not this command's to take back", *revoked)
 	}
 	for _, token := range *revoked {
-		if token == f.mint.token {
+		if token == f.mint.tokenFor("acme/legacy") {
 			t.Errorf("the read mint's token was handed to the GitHub revoke")
 		}
 	}
 }
 
 // bitbucketStatusFixture is a person's local read of one Bitbucket repository:
-// the fixture's local config lists it, the App credential the opener is always
-// built on is set, and the person's own variable names the fake service.
+// the fixture's local config lists it, and the fake service — when the test
+// publishes one — is the project's own credentials_service block, which is the
+// only source a person's read has.
 type bitbucketStatusFixture struct {
 	f      *cloudFixture
 	mint   *readMintServer
@@ -394,25 +402,26 @@ type bitbucketStatusFixture struct {
 	opened *bitbucket.Options
 }
 
-func newBitbucketStatusFixture(t *testing.T, serviceOn bool) *bitbucketStatusFixture {
+// newBitbucketStatusFixture builds the fixture with mint published as the
+// project's credentials service, or with none published at all when mint is
+// nil — the two states a person's machine is in, and the two the tests below
+// tell apart.
+func newBitbucketStatusFixture(t *testing.T, mint *readMintServer) *bitbucketStatusFixture {
 	t.Helper()
 	f := newCloudFixture(t)
 	f.appendConfig(t, "  acme/legacy: { provider: bitbucket, base_branch: main, workflows: [web] }\n")
-	t.Setenv(providers.EnvGitHubAppID, "12345")
-	t.Setenv(providers.EnvGitHubAppKey, appKeyPEM(t))
 	t.Setenv(providers.EnvCredentialsServiceURL, "")
 	t.Setenv(providers.EnvBitbucketAPIURL, "")
 	t.Setenv(envCoordinatorCredentialsServiceURL, "")
-	t.Setenv(envBitbucketReadServiceURL, "")
 	seedBitbucketRun(t, f, "acme/legacy", "20261013-150000-bb51", bitbucketSweepPR)
-
-	mint := newReadMintServer(t)
-	if serviceOn {
-		t.Setenv(envBitbucketReadServiceURL, mint.srv.URL)
+	if mint != nil {
+		f.publishService(t, mint.srv.URL)
+		setServiceClientSeam(t, mint)
 	}
+
 	api := newBitbucketAPI(t, "acme", "legacy", bitbucketSweepPR)
-	prevID, prevPerson, prevProvider := coordinatorIdentityToken, coordinatorBitbucketIDToken, coordinatorBitbucketProvider
-	coordinatorBitbucketIDToken = func(context.Context) (string, error) { return personIdentity, nil }
+	prevID, prevPerson, prevProvider := coordinatorIdentityToken, coordinatorPersonIdentity, coordinatorBitbucketProvider
+	coordinatorPersonIdentity = func(context.Context, string) (string, error) { return personIdentity, nil }
 	// The job's seam is the one this command must NOT use: a person's status
 	// read presents the person (G4), and a metadata-server identity here would
 	// be the coordinator class arriving on a machine that is not the job.
@@ -427,22 +436,23 @@ func newBitbucketStatusFixture(t *testing.T, serviceOn bool) *bitbucketStatusFix
 		return bitbucket.New(o)
 	}
 	t.Cleanup(func() {
-		coordinatorIdentityToken, coordinatorBitbucketIDToken, coordinatorBitbucketProvider = prevID, prevPerson, prevProvider
+		coordinatorIdentityToken, coordinatorPersonIdentity, coordinatorBitbucketProvider = prevID, prevPerson, prevProvider
 	})
 	return &bitbucketStatusFixture{f: f, mint: mint, api: api, opened: seen}
 }
 
 // TestLocalStatusBitbucketThroughService: a person's `coordinator status` on a
-// Bitbucket repository reads it through the read mint under their OWN variable
-// (BB5), presenting their own identity and not the job's, and the view the
-// command prints is the host's answer.
+// Bitbucket repository reads it through the service the PROJECT published
+// (BB5, and the owner's ruling of 2026-11-03), presenting their own identity
+// and not the job's, and the view the command prints is the host's answer.
 func TestLocalStatusBitbucketThroughService(t *testing.T) {
 	// The job's variable names a second service that must not be called: a
-	// person's command is the person class, and the job's URL on a machine
-	// that is not the job is a variable nothing here may read (F23).
-	jobMint := newReadMintServer(t)
+	// person's command is the person class, and the job's URL on a machine that
+	// is not the job is a variable nothing here may read (F23).
+	jobMint := newReadMintServer(t, bitbucket.ServiceReadPath)
 	t.Setenv(envCoordinatorCredentialsServiceURL, jobMint.srv.URL)
-	f := newBitbucketStatusFixture(t, true)
+	mint := newReadMintServer(t, bitbucket.ServiceReadPath)
+	f := newBitbucketStatusFixture(t, mint)
 
 	out, errOut, err := execute(t, "coordinator", "status", "--repo", "acme/legacy", "--since", "0", "--json")
 	if err != nil {
@@ -464,17 +474,17 @@ func TestLocalStatusBitbucketThroughService(t *testing.T) {
 		t.Errorf("the view's pull request = %v, want the host's own answer", rec["pr"])
 	}
 
-	bodies, idents := f.mint.asked()
-	if len(bodies) != 1 || bodies[0] != `{"repository":"acme/legacy"}` {
-		t.Fatalf("the read mint was asked %v, want one call for acme/legacy", bodies)
+	paths, bodies, idents := f.mint.asked()
+	if len(paths) != 1 || paths[0] != bitbucket.ServiceReadPath || bodies[0] != `{"repository":"acme/legacy"}` {
+		t.Fatalf("the read mint was asked %v / %v, want one call for acme/legacy", paths, bodies)
 	}
 	if idents[0] != "Bearer "+personIdentity {
 		t.Errorf("the read mint was presented %q, want the person's own identity", idents[0])
 	}
-	if bodies, _ := jobMint.asked(); len(bodies) != 0 {
-		t.Errorf("a person's read minted at the URL %s names, which is the job's variable: %v", envCoordinatorCredentialsServiceURL, bodies)
+	if paths, _, _ := jobMint.asked(); len(paths) != 0 {
+		t.Errorf("a person's read minted at the URL %s names, which is the job's variable: %v", envCoordinatorCredentialsServiceURL, paths)
 	}
-	if tokens := f.api.tokens; len(tokens) != 1 || tokens[0] != "Bearer "+f.mint.token {
+	if tokens := f.api.tokens; len(tokens) != 1 || tokens[0] != "Bearer "+f.mint.tokenFor("acme/legacy") {
 		t.Errorf("the API was authenticated with %v, want the token the service minted", tokens)
 	}
 	if f.opened.BaseURL != bitbucket.DefaultBaseURL {
@@ -483,33 +493,22 @@ func TestLocalStatusBitbucketThroughService(t *testing.T) {
 	if !strings.Contains(out, "acme/legacy") {
 		t.Errorf("the view does not name the repository: %s", out)
 	}
-	for _, secret := range []string{f.mint.token, personIdentity} {
+	for _, secret := range []string{f.mint.tokenFor("acme/legacy"), personIdentity} {
 		if strings.Contains(out, secret) || strings.Contains(errOut, secret) {
 			t.Errorf("the read printed a credential:\n%s%s", out, errOut)
 		}
 	}
 }
 
-// refusedReadMint is a credentials service that refuses every read mint with
+// newRefusedReadMint is a credentials service that refuses every read mint with
 // one of its own codes and statuses, the way the service's own answer carries
 // them (credsvc's WireError): the error word and, below it, the sentence an
 // operator reads.
-func newRefusedReadMint(t *testing.T, code string, status int) *httptest.Server {
+func newRefusedReadMint(t *testing.T, code string, status int) *readMintServer {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != bitbucket.ServiceReadPath {
-			t.Errorf("the read mint was asked for %s, want %s", r.URL.Path, bitbucket.ServiceReadPath)
-		}
-		_, _ = io.ReadAll(r.Body)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"error":   code,
-			"message": "the repository is not in the workspace this service's read consumer is scoped to",
-		})
-	}))
-	t.Cleanup(srv.Close)
-	return srv
+	m := newReadMintServer(t, bitbucket.ServiceReadPath)
+	m.refuse(t, code, status)
+	return m
 }
 
 // TestLocalStatusBitbucketAnotherWorkspaceRefused: a repository outside the
@@ -518,9 +517,8 @@ func newRefusedReadMint(t *testing.T, code string, status int) *httptest.Server 
 // the command prints no view for the repository: a repository the service would
 // not mint for is not a repository with nothing in flight.
 func TestLocalStatusBitbucketAnotherWorkspaceRefused(t *testing.T) {
-	srv := newRefusedReadMint(t, "request_refused", http.StatusForbidden)
-	f := newBitbucketStatusFixture(t, false)
-	t.Setenv(envBitbucketReadServiceURL, srv.URL)
+	mint := newRefusedReadMint(t, "request_refused", http.StatusForbidden)
+	f := newBitbucketStatusFixture(t, mint)
 
 	out, errOut, err := execute(t, "coordinator", "status", "--repo", "acme/legacy", "--since", "0")
 	if err == nil {
@@ -546,35 +544,36 @@ func TestLocalStatusBitbucketAnotherWorkspaceRefused(t *testing.T) {
 	}
 }
 
-// TestLocalStatusBitbucketPointsAtFromStoreWithoutService: with no service URL
-// named anywhere, a Bitbucket repository is refused exactly as it was before
-// BB4 — and the refusal says what a person can do about it, which is the stored
-// view (`--from-store`, no host read and no key). The GitHub read beside it is
-// untouched by any of it (G8).
+// TestLocalStatusBitbucketPointsAtFromStoreWithoutService: with no service
+// published by the project, a Bitbucket repository is refused exactly as it was
+// before BB4 — and the refusal says what a person can do about it, which is the
+// stored view (`--from-store`, no host read and no key).
+//
+// The GitHub half beside it is the other property of the same rule rather than
+// a leftover: a repository whose runs name no pull request is read with no
+// credential at all, because the read returns before it opens a provider, so a
+// project that publishes no service still reads the repositories that have
+// nothing in flight.
 func TestLocalStatusBitbucketPointsAtFromStoreWithoutService(t *testing.T) {
-	f := newBitbucketStatusFixture(t, false)
-	// The local config's published block is the other half of the person's
-	// sources, and it is deliberately NOT one for status (BB4's own reading):
-	// the presence of a credentials_service block must not turn this read on.
-	f.f.appendConfig(t, "credentials_service:\n  url: https://credentials-service.example.invalid\n")
-	t.Setenv(envBitbucketReadServiceURL, "")
+	f := newBitbucketStatusFixture(t, nil)
 
 	out, errOut, err := execute(t, "coordinator", "status", "--repo", "acme/legacy", "--since", "0")
 	if err == nil {
-		t.Fatalf("a Bitbucket repository was read with no service URL:\n%s", out)
+		t.Fatalf("a Bitbucket repository was read with no service published:\n%s", out)
 	}
 	if !strings.Contains(err.Error(), "--from-store") {
 		t.Errorf("the refusal = %q, want it to point at --from-store (stderr: %s)", err.Error(), errOut)
 	}
-	if bodies, _ := f.mint.asked(); len(bodies) != 0 {
-		t.Errorf("the read mint was called for a read that named no service: %v", bodies)
+	if len(f.api.paths) != 0 {
+		t.Errorf("a read that published no service reached the API: %v", f.api.paths)
 	}
 
-	// The GitHub half of the same fixture is a read as it always was: the
-	// person's Bitbucket variable names no service and changes nothing here.
+	// The GitHub half: no runs name a pull request, so nothing is opened and
+	// nothing is minted — the read is a view with no records rather than a
+	// refusal.
 	githubOut, githubErr, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0", "--json")
 	if err != nil {
-		t.Fatalf("a GitHub read with no Bitbucket service URL = %v (stderr: %s)", err, githubErr)
+		t.Fatalf("a GitHub repository with no work in flight = %v (stderr: %s)", err, githubErr)
 	}
 	if !strings.Contains(githubOut, "acme/app") {
 		t.Errorf("the GitHub view does not name the repository: %s", githubOut)

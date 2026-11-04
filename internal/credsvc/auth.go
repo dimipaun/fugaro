@@ -856,6 +856,51 @@ func (a *Authenticator) VerifyReadCaller(ctx context.Context, tok string) (strin
 	return account, nil
 }
 
+// VerifyPersonCaller admits the caller of the GitHub read mint (githubread.go),
+// or refuses it with ErrUnverifiedJob (the caller is not one of the
+// installation's people) or ErrUnavailable (the key set could not be read). It
+// answers the configured spelling of the address that matched, which is what the
+// audit line carries, or the empty string with an error — never a partially
+// verified caller.
+//
+// It is VerifyReadCaller's mechanism with ONE list and not a third spelling of
+// the token check: the signature, the audience, the issuer, the email fold and
+// the token's own window are the same shared code (callerClaims,
+// checkCallerToken). What it leaves out is the coordinator, and that is the
+// whole of the difference.
+//
+// The coordinator class is NOT admitted here on purpose. It is admitted on the
+// Bitbucket read mint because it holds no Bitbucket credential of its own: BB4's
+// whole answer is that the service's read consumer is the only Bitbucket
+// credential in the installation, so the job that reads Bitbucket must ask for a
+// token. A GitHub read is the other way round — the coordinator job is handed
+// the App's ID and key by the deployment (coordinatorAppCredential) and mints its
+// own read-only token with them — so admitting it here would be a second way for
+// it to reach the same credential, widening this route for a caller that has no
+// use for it. The person is the one caller this route exists for: their machine
+// holds no App key, and this is where they get a token instead.
+//
+// It takes the caller's token directly for VerifyReadCaller's reason: the route
+// is answered ahead of RequestFromHTTP (server.go), because a person holds no run
+// identity and the shared parse refuses a call that has none.
+func (a *Authenticator) VerifyPersonCaller(ctx context.Context, tok string) (string, error) {
+	now := a.now()
+	claims, folded, err := a.callerClaims(ctx, tok)
+	if err != nil {
+		return "", err
+	}
+	account, ok := a.personAccounts[folded]
+	if !ok {
+		// The reason names the class and never the address, for the reason
+		// VerifyVerifier's does.
+		return "", fmt.Errorf("%w: the caller is not one of this installation's people, so it may not mint a GitHub read token", ErrUnverifiedJob)
+	}
+	if err := checkCallerToken(claims, now); err != nil {
+		return "", err
+	}
+	return account, nil
+}
+
 // checkCallerToken is the rest of the caller's ID token's checks, and they are
 // the same four for every class of caller: the address it names is verified,
 // the token has not expired, and it is neither issued in the future nor
