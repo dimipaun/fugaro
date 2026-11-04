@@ -125,13 +125,17 @@ func TestValidateRefusesLeftoverAllowForks(t *testing.T) {
 	}
 }
 
-// TestValidateSkipsNoLanguageRuntimeWarning covers CheckWarnings' two skip
-// conditions through the CLI: image.tools set and dockerfile: set both
-// silence the warning that a plain Fugaro-base workflow gets.
+// TestValidateSkipsNoLanguageRuntimeWarning covers CheckWarnings' three skip
+// conditions through the CLI: image.tools set, dockerfile: set, or a catalog
+// entry named — each silences the warning that a plain Fugaro-base workflow
+// gets. The last is issue 1661 item 1's report: a workflow whose runtime
+// comes from the catalog image has no per-repository image for the warning to
+// be about.
 func TestValidateSkipsNoLanguageRuntimeWarning(t *testing.T) {
 	for name, body := range map[string]string{
 		"image.tools set": strings.Replace(cliBaseYAML, "{ commands:", "{ image: { tools: { node: \"24\" } }, commands:", 1),
 		"dockerfile set":  strings.Replace(cliBaseYAML, "{ commands:", "{ dockerfile: .fugaro/app.Dockerfile, commands:", 1),
+		"catalog entry":   strings.Replace(cliBaseYAML, "{ commands:", "{ image_name: minimal, commands:", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := writeConfig(t, body)

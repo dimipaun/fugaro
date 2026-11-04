@@ -3470,6 +3470,25 @@ func TestSpecCatalogOnlyRepoNeedsNoBaseImage(t *testing.T) {
 	}
 }
 
+// TestSpecCheckCoversTheWorkflowsWithoutACatalogImage: the exclusion is per
+// workflow, not per repository. A workflow that keeps its own image
+// definition is not the catalog's (catalog.Applies), so the repository keeps
+// its daily check and the check covers that workflow alone.
+func TestSpecCheckCoversTheWorkflowsWithoutACatalogImage(t *testing.T) {
+	in := catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()})
+	w := in.Cfg.Workflows["api"]
+	w.Needs = nil
+	w.Image = config.Image{Tools: config.MiseTools{"node": "24"}}
+	in.Cfg.Workflows["api"] = w
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Check == nil || !slices.Equal(rs.Check.Workflows, []string{"api"}) {
+		t.Fatalf("the daily check covers %v, want only the workflow that builds an image of its own", rs.Check)
+	}
+}
+
 // TestPlanWorkflowJobMovesACatalogJobsImage: a baked job whose image the
 // project's catalog chose is the third shape the mover accepts, and the only
 // baked one (D1152, PIC5). Both halves of the move have to be catalog images,
