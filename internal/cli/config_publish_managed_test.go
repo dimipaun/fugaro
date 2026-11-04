@@ -161,9 +161,15 @@ func TestConfigPublishManagedRefusesACredentialsKey(t *testing.T) {
 	agentSession(t)
 	publishedLayer(t, r.cloudFixture, "")
 	text := testProjectLayer + "credentials:\n  anthropic: { api_key: not-a-real-key }\n"
-	_, _, err := execute(t, "config", "publish", "--executable-changes", layerFile(t, text))
+	_, errOut, err := execute(t, "config", "publish", "--executable-changes", layerFile(t, text))
 	if err == nil {
 		t.Fatal("a layer writing a reserved key was published in a coding agent's session")
+	}
+	// The header is held while the marks are read and released once they have
+	// answered managed: a refusal BY a rule of the gate is a session the gate
+	// judged, so it reads the project it is refused on, exactly once.
+	if n := strings.Count(errOut, "project: aurora (GCP proj-1234)"); n != 1 {
+		t.Errorf("the session the gate judged read the project header %d times, want exactly one (the held header is released when the marks answer managed): %q", n, errOut)
 	}
 	if !strings.Contains(err.Error(), "credentials") || !strings.Contains(err.Error(), "reserved") {
 		t.Errorf("the refusal does not name the reserved key that refused: %v", err)
@@ -267,6 +273,12 @@ func TestConfigPublishManagedAdmitsARegistryKey(t *testing.T) {
 	}
 	if !strings.Contains(out, initflow.AgentProceeded("CLAUDECODE")) {
 		t.Errorf("the session does not read that the step proceeded: %q", out)
+	}
+	// The other direction of the held header: a session the gate ADMITS reads
+	// the project it published to, exactly once. A gate that held the buffer
+	// and never released it would leave an admitted run with no header at all.
+	if n := strings.Count(errOut, "project: aurora (GCP proj-1234)"); n != 1 {
+		t.Errorf("the admitted session read the project header %d times, want exactly one: %q", n, errOut)
 	}
 	if !strings.Contains(out, "published the project layer") {
 		t.Errorf("the admitted step published nothing: %q", out)
