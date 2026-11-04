@@ -1,10 +1,11 @@
 # Reconciliation: every claim of the design against the code, and the decisions this design needs
 
 **Status: a design, and nothing is built.** The decisions are **D1260–D1277** (§4), each with a
-recommendation and the cost of every alternative; **D1278–D1289 are reserved and unused**. **None of
-them is answered** — this pull request asks, it does not decide (the issue's own ask is one paragraph,
-and the owner has not ruled on any of the eighteen). **Where this file and [README.md](README.md) or
-[spec.md](spec.md) disagree, this file wins.**
+recommendation and the cost of every alternative; **D1278–D1289 are reserved and unused**.
+**The owner answered D1260, D1266 and D1267 on 2026-11-04**, each as this file recommended —
+`workflow_secrets`, refuse, untouched — and **the other fifteen are unanswered**: the issue's own ask
+is one paragraph, and the rest of the block is still this pull request asking rather than deciding.
+**Where this file and [README.md](README.md) or [spec.md](spec.md) disagree, this file wins.**
 
 Reconciled against `origin/main` at **`b41709ea`**, on 2026-11-04, by reading the files rather than
 the designs that describe them. Line numbers are that head.
@@ -15,6 +16,15 @@ nothing else this file reads; the line numbers here are the merged head's. The t
 written in the same round, and the config-management work's `fugaro secrets rm` — unscheduled when
 this file was first written and now an open branch, #1691 — moved the plan's order (§2 of
 [implementation-plan.md](implementation-plan.md)) and its shared-files table (§4 of it).
+
+**Read back again on 2026-11-04 after merging `b4b8e008`**, which added no citation this file reads
+but did move the docs-test census by one (main's `docs/mcp-server` pin), and after a security review
+of the decisions, which moved four things: **D1266's refusal to the deployer's fence** (F9's
+reading), **D1261's key rule split** by what each half can compute, **F13** (the section said
+`fugaro settings set` did not exist; it landed with `f09f10e5`, #1525, and D1270's recommendation is
+what the correction changes), and **§3**, which now names the build account among the readers of a
+project-scoped value. The three decisions the owner answered are marked in their own sections, and the
+other fifteen are not.
 
 **The shape of the reading: the mechanism the issue asks for is already built, end to end, and the
 only thing standing in its way is one branch of one predicate.** A project-wide secret today is a
@@ -71,8 +81,9 @@ new mechanism.
   (`:186`–`:190`) only requires that a name a workflow mounts be in `repo.secrets` **or**
   `repo.project_secrets`.
 - `deploy/terraform/gcp/modules/repo/workflows.tf:9` merges the two maps into `local.secrets`, and
-  `module "workflow"` (`:17`) takes it as `secrets` — which is the map both `secret_key_ref` and the
-  job account's `google_secret_manager_secret_iam_member` are built from.
+  `module "workflow"` takes it as `secrets` (`:25`, inside the block `:15` opens) — which is the map
+  both `secret_key_ref` and the job account's `google_secret_manager_secret_iam_member` are built
+  from.
 
 **Consequence.** The feature's whole cloud-side cost is zero new resource types and zero new grant
 shapes, exactly as `docs/design/project-secrets.md` §4 argued when it added the project container.
@@ -152,10 +163,11 @@ than hiding it.
 **Claim of the design:** that no new IAM resource type is needed.
 
 **What the code does.** `workflows.tf`'s `module "workflow"` is placed with `secrets = local.secrets`
-(`:17`'s map, `:27`), which is the map the workflow module's own `google_secret_manager_secret_iam_member`
-and `secret_key_ref` read (`docs/design/project-secrets.md` §4: *"No new Terraform resource type for
-IAM, in either module"*). A project container lives in the installation root, in a different state,
-and the grant is written from the repository's own root against the ID string.
+(`:25`, from the map `:9` builds), which is the map the workflow module's own
+`google_secret_manager_secret_iam_member` and `secret_key_ref` read (`docs/design/project-secrets.md`
+§4: *"No new Terraform resource type for IAM, in either module"*). A project container lives in the
+installation root, in a different state, and the grant is written from the repository's own root
+against the ID string.
 
 **Consequence.** Nothing in `deploy/terraform/` changes for this design. A task that finds itself
 editing it has misread the design (see [implementation-plan.md](implementation-plan.md) §1).
@@ -173,20 +185,29 @@ block lives in the repository.
 this name" for the installation. D1261 cannot borrow a declaration check from `config.Validate`, and
 D1271's answer (no new `validate` output) follows from the same fact.
 
-### F9. A shared project job cannot honour a per-repository allow-list, and the code already refuses one that cannot
+### F9. A shared project job cannot honour a per-repository allow-list, and the deployer already refuses one
 
 **Claim of the design:** that a profile may not mount a project workflow secret.
 
-**What the code does.** `internal/cli/doctor.go:1611`'s own comment: a shared job *"mounts the
-container its secret_env names, which is always the project-wide one (infra.ProjectSecretCandidate,
-gcp.ProjectSecretID), so a repository copy does not reach it"*. And
-`internal/projectpolicy/profiles.go:322` refuses a profile naming a Claude OAuth token with the
-sentence that is this design's precedent: *"its allow_data_to is a per-repository list a shared job
-cannot honour — a profile is shared by every repository admitted to it"*.
+**What the code does.** The fence is `internal/infra/projectjobs.go:419`'s `projectJobSecrets`, which
+runs over the operator's own local config before any shared job is built. For every name a profile
+lists it refuses one whose container `projectSecretContainers` does not derive (`:426`) and one that
+`:517`'s `projectSecretEnv` cannot map to a variable (`:429`–`:431`). `projectSecretEnv` maps exactly
+two kinds — a key of `config.ReservedSecrets`, and a configured provider's own secret
+(`config.ProviderBySecret`) — so a name that is neither is refused rather than mounted, and the
+refusal names the profile entry and never a value. `internal/cli/doctor.go:1611`'s own comment states
+the same fact from the reader's side: a shared job *"mounts the container its secret_env names, which
+is always the project-wide one (infra.ProjectSecretCandidate, gcp.ProjectSecretID), so a repository
+copy does not reach it"*.
 
-**Consequence.** D1266 has a shape to copy rather than a rule to invent. The accounts case (`accounts.go`
-deriving `allow_repos` into the policy so a profile's list can only narrow it) is the *other*
-possible answer, and D1266 costs it.
+**Consequence.** D1266 is a refusal the tree already has, in the only place that can hold the
+operator's list, and W5's job is to **pin** it rather than to write it. The sentence
+`internal/projectpolicy/profiles.go:322` gives a Claude OAuth token — *"its allow_data_to is a
+per-repository list a shared job cannot honour — a profile is shared by every repository admitted to
+it"* — is the reasoning, and `CheckProfiles`' own signature (`:560`: the profiles and the accounts,
+and no local config) is why that reasoning is not written there. The accounts case (`accounts.go`
+deriving `allow_repos` into the policy so a profile's list can only narrow it) is the *other* possible
+answer, and D1266 costs it.
 
 ### F10. The credentials service's bundle is a closed set of kinds
 
@@ -232,18 +253,23 @@ bounds an entry at two segments and two stars and refuses the bare `*`.
 drift the shared one exists to prevent, and the narrowness `invalidAllowDataToEntry` carries
 (literal owner) is the *right* narrowness for a credential one owner holds.
 
-### F13. The allow-list is already a settings key, and `settings set` is not built
+### F13. The allow-list is already a settings key, and `settings set` writes it today
 
-**Claim of the design:** that a future `settings set` becomes a second writer of the same decision.
+**Claim of the design:** that `settings set` is a second writer of the same decision.
 
 **What the code does.** `internal/settings/registry.go:644` registers
 `project_secrets.*.allow_data_to` (default `nobody`) and `:645` `project_secrets.*.proxy`, and
-`schemas/settings.schema.json:962` publishes both. `docs/settings-commands/` designs the command;
-`fugaro settings set` does not exist on `main`.
+`schemas/settings.schema.json:962` and `:965` publish both. The command that writes them is built:
+`fugaro settings set` landed with S5 (`f09f10e5`, #1525) and lives in
+`internal/cli/settings_set.go`, reading the same registry to decide which keys it may write. (This
+finding first said the command did not exist. It does, and D1270's recommendation is what the
+correction changes.)
 
-**Consequence.** The new block's `allow_data_to` owes a registry row and a schema key in the same
-task that adds it, or the two blocks drift the day `settings set` lands. `implementation-plan.md`'s
-W0 carries it.
+**Consequence.** The new block's `allow_data_to` owes a registry row and a schema key in the same task
+that adds it. Without them the two blocks are not merely drifting later: they are apart **the day the
+feature ships**, because an operator who types `fugaro settings set
+workflow_secrets.<name>.allow_data_to …` today is told the key is not one Fugaro knows.
+`implementation-plan.md`'s W0 carries it.
 
 ### F14. Four documents, one help text and one skill state the opposite of this design
 
@@ -415,7 +441,8 @@ neither), and `secret-scope-shadowed` names the repository copy that wins over t
 entry's `allow_data_to` names, and the one place that set is computed is the **plan-time** candidate
 map.
 
-**What the code does — three steps, because the claim is only true as the three together.**
+**What the code does — three steps, because the claim is only true as the three together, and the
+account that reads the value after them.**
 
 - **The grant is the job account's, per mounted secret.** `deploy/terraform/gcp/modules/workflow/sa.tf:196`
   writes `roles/secretmanager.secretAccessor` for `google_service_account.job` on
@@ -433,6 +460,16 @@ map.
   refuses never becomes one — and a reader who assumed a second, Terraform-side check exists would be
   assuming an enforcement point this design does not have. That is why W2, the task that changes the
   predicate, carries a **SEC** flag and is the task that changes who can read the value.
+- **The repository's build account reads it, from the same map.**
+  `deploy/terraform/gcp/modules/repo/build.tf:15` grants `roles/secretmanager.secretAccessor` on
+  `local.secrets[each.value]` to `google_service_account.build` for every name in
+  `var.repo.build_secrets` — the workflows' own build secrets — and `local.secrets` is the map above.
+  So the set that can read a project-scoped workflow secret in a listed repository is its **build
+  account** as well as its job accounts, and it is the same plan-time answer that decides both: a
+  name `ProjectSecretCandidate` refuses is in neither grant, and a name it returns is in both. That
+  the build account is in the set is the point rather than a surprise — a workflow secret exists for
+  the workflow's build and tests to read — but a reader asking "who can read this value" gets the
+  wrong answer if they count only the jobs.
 
 **What this does not claim.** A value mounted by a repository the entry lists is readable by
 everything that repository's job is: its runs' agents, and its launchers. The allow-list decides which
@@ -450,6 +487,10 @@ Each decision carries the question, the **recommendation**, and the cost of ever
 
 **Question.** Does a workflow secret's per-name allow-list live in the existing operator-local
 `project_secrets` block, or in a second block of the same shape?
+
+**Answered 2026-11-04: the new block, `workflow_secrets`.** The owner took the recommendation. The
+rest of this section, and every consequence the plan draws from it (W1's field, W2's container and
+predicate, W3's store path), is the build that answer prices.
 
 **Recommendation.** A **new operator-local block, `workflow_secrets:`**, whose entries are the same
 `config.ProjectSecret` shape (`allow_data_to`, plus the reserved `proxy` switch refused by
@@ -486,10 +527,25 @@ any repository's `fugaro.yaml` (F8) and so cannot check a declaration?
 **Recommendation.** A name that passes `config.CheckSecretName`/`config.SecretNameRE`, and is refused
 if **any** existing reservation claims it: a key of `config.ReservedSecrets`, a configured provider's
 conventional name or its own `secret:`, either harness OAuth namespace
-(`claude-oauth-token*`, `codex-oauth-token*`), or `config.CredentialsBundleSecret`. The refusals
-reuse the sentences the tree already has (`providerConventionRefusal`, `codexOAuthRefusal`,
-`credentialsBundleRefusal`) rather than wording new ones. **No declaration check**: a name no
-repository declares is accepted and inert (§6).
+(`claude-oauth-token*`, `codex-oauth-token*`), or `config.CredentialsBundleSecret`. **No declaration
+check**: a name no repository declares is accepted and inert (§6).
+
+**The rule is split by what each half can compute, and this is forced rather than tidy.** W0's
+`ValidateWorkflowSecrets(secrets)` takes the block and nothing else — the signature
+`ValidateProjectSecrets` has (`internal/config/project_secrets.go:168`) — so it can hold the rules
+that are **a function of the name alone**: `config.ReservedSecrets`, the `claude-oauth-token` prefix
+namespace (which is every named account's secret ID whether or not the account is configured:
+`internal/config/validate.go:267`), `CodexOAuthSecret`, `CredentialsBundleSecret`. Those are exactly
+the names `internal/config/validate.go:264`–`:302` already refuses for a name in a *repository's* own
+workflow, so this block restates the tree's rule rather than inventing one. The two rules that read
+the operator's config — a configured provider's own `secret:` (`config.ProviderBySecret`) and the
+conventional name (`config.ReservedProviderSecret`, which takes the provider map) — **cannot** be
+written there: the function has no `lc.Providers` to ask, and a validator that guessed would refuse
+or accept names per machine. They live where the map is in hand, in `internal/localcfg`'s
+`validate()`, in the shape the tree already has for exactly this question:
+`internal/config/providers.go:779`'s `CheckWorkflowProviderSecrets(c *Config, providers
+map[string]ModelProvider)` takes the providers map as an argument and is called from the layer that
+holds it. The refusals reuse the sentences those paths already have rather than wording new ones.
 
 **Cost of the alternatives.**
 
@@ -505,6 +561,13 @@ repository declares is accepted and inert (§6).
   paths that declare it.** Explicit, but it duplicates a fact the repository already holds and can
   drift from it: the entry would say a repository declares the name, and the repository's file would
   say otherwise, with nothing to reconcile the two.
+- **Thread the operator's config into `ValidateWorkflowSecrets` so one function holds the whole key
+  rule.** One place to read and one place to test, and it removes the split above. It costs the
+  function's own contract: a `config`-package validator whose sibling (`ValidateProjectSecrets`) takes
+  the document it validates would be the first one that cannot be called without a machine's local
+  config, so the name-only half — the four reserved sets, which need nothing but the name — would
+  depend on a config to be asked at all. The tree already splits these two questions
+  (`validate.go:264` and `CheckWorkflowProviderSecrets`); the new block follows it.
 
 ### D1262. Eligibility at plan time: does a workflow secret get a default?
 
@@ -604,15 +667,35 @@ does each require?
 
 **Question.** May a shared project job (`profiles.<p>.secrets`) mount a project workflow secret?
 
-**Recommendation.** **No, and by refusal**: `projectpolicy`'s profile validation refuses a
-`profiles.<p>.secrets` entry naming a project workflow secret, in the shape
-`profiles.go:322` already refuses a Claude OAuth token with (F9) — *a profile is shared by every
-repository admitted to it, so a per-repository allow-list is not one a shared job can honour*. The
-refusal is written where the rule lives, so `publish`, the deployer and both readers of the node
-hold one profile to one rule rather than a copy each.
+**Answered 2026-11-04: refuse.** The owner took the recommendation — no shared project job mounts a
+project workflow secret — and the section below records where that refusal lives and why.
+
+**Recommendation.** **No — and the refusal is the deployer's, where it already is, not a rule this
+design adds to `projectpolicy`.** `internal/infra/projectjobs.go:419`'s `projectJobSecrets` refuses
+every `profiles.<p>.secrets` name that `:517`'s `projectSecretEnv` cannot map to a variable, and
+`projectSecretEnv` maps exactly two kinds: a key of `config.ReservedSecrets`, and a configured
+provider's own secret. A workflow secret is neither, so a profile naming one is refused **today**, at
+deploy time, on the operator's own machine — the one place the entry's list is in hand (F9). The
+refusal's own sentence is the reasoning `profiles.go:322` gives a Claude OAuth token — *a profile is
+shared by every repository admitted to it, so a per-repository allow-list is not one a shared job can
+honour* — but the **place** is not that one, and putting it there would fail open:
+`projectpolicy.CheckProfiles` (`internal/projectpolicy/profiles.go:560`) takes the policy's profiles
+and accounts and never the operator's local config, so a rule written beside the Claude OAuth token's
+is evaluated on machines where `workflow_secrets` is absent or different — a teammate's, a CI
+checkout, a reader of the published node — and it would accept the profile. The shared job then
+mounts the container for every repository the profile admits, which is the widening this decision
+exists to refuse; the failure would be silent, because nothing later asks the question again. **What
+this design owes is therefore a test, not a rule** (W5), and one obligation on W2: `projectSecretEnv`
+must **not** be widened to the new block, because that function is what the fence reads.
 
 **Cost of the alternatives.**
 
+- **Write the refusal into `projectpolicy`'s validator, beside the Claude OAuth token's
+  (`profiles.go:322`).** It is the shape the precedent has, it is where a published profile is
+  judged, and it would make the two refusals read the same. It costs the guarantee itself: the
+  validator has no local config (F9), so the rule is asked where the list is missing and the profile
+  is admitted — the refusal would fail open on every machine but the one that wrote the profile, and
+  it would *read* as enforced, which is worse than not having it.
 - **Derive the allow-list into the policy and require the profile's `allow_repos` to narrow it**, the
   way `accounts.<name>.allow_repos` is derived from `claude_accounts.<name>.allow_data_to`. It is
   the one alternative that lets the shared job mount the value, and it is a real precedent. It costs
@@ -621,13 +704,20 @@ hold one profile to one rule rather than a copy each.
   migration, and it publishes an operator-local list into a document every run token reads — for a
   feature (`profiles`) that is itself not yet deployed. Rejected on scope, and worth revisiting when
   shared jobs land.
-- **Leave it alone: the profile is the boundary.** No code at all. It costs the guarantee the issue
-  asks for — an entry naming three repositories, and a profile whose `allow_repos` names thirty,
-  would mount the value on all thirty and nothing would say so.
+- **Widen `projectSecretEnv` so the shared job may mount one.** One line in a function that already
+  exists, and the fence stops refusing. It costs the whole decision: the profile is shared by every
+  repository admitted to it, so the value would mount on all of them and the entry's list would be
+  honoured by nothing — the same outcome as the policy alternative, reached by deleting a refusal
+  instead of adding a rule, and reached silently, because a job that mounts a secret looks like a job
+  that was allowed to.
 
 ### D1267. The credentials service
 
 **Question.** Does a project workflow secret become a bundle entry, or wait for S3's vault fetch?
+
+**Answered 2026-11-04: untouched.** The owner took the recommendation: no bundle kind, no route, no
+second storage path for one credential before S3 is scheduled. The handoff below is what the design
+owes B3.1 when it lands, and it is a sentence there rather than a task here.
 
 **Recommendation.** **Neither now.** The bundle is untouched: it is a closed set of kinds (F10), one
 document, one writer (`fugaro creds set NAME`) and one reader, and a workflow secret is not one of
@@ -693,7 +783,15 @@ stage the operator actually runs.
 **Recommendation.** `secrets ls --project-wide` and doctor's scope checks read
 `ProjectSecretCandidate` and `projectSecretAllowed` (`:1145`), which gain the new block as a fourth
 source — no new column, no `--json` field, no format version (F17). One settings registry row and one
-schema key land in the same task that adds the block (F13). **No new doctor check**: a check that the
+schema key land in the same task that adds the block (F13), with the row's **Owner** being the family
+that writes it: `secrets`, as `project_secrets.*.allow_data_to`'s own row is (`registry.go:644`), so
+`fugaro secrets set --allow-data-to` writes the new block's list and `settings set` stays out of it —
+the key is not named in `settingsGenericKeys` (`settings_set.go:81`), which is the allowlist that
+decides what the generic path writes, so a row the family owns and the generic path does not carry is
+written by exactly one command. `settings set workflow_secrets.<name>.allow_data_to` today answers
+*"no setting has that name"* (`settings_set.go:410`); after W0 it answers as `project_secrets`' own
+row does, and `fugaro secrets set --allow-data-to` is what writes the entry (W3). **No new doctor
+check**: a check that the
 entry names a repository that declares the name would need every repository's `fugaro.yaml` (F8), and
 one that reads only the checkout in hand would print a clean bill of health for the other sixty-four.
 The stray-container case (§6) is stated, not checked.
@@ -706,9 +804,15 @@ The stray-container case (§6) is stated, not checked.
 - **A check that lists every `workflow_secrets` entry and the repositories whose checkouts the machine
   has.** Broader, and it costs a check that is silent about the entries it cannot see — silence that
   reads as "fine".
-- **Leave the settings registry alone** until `settings set` lands. It costs the day that command
-  ships writing a `project_secrets.*.allow_data_to` row and no other, so the new block's list would be
-  settable only by hand while the reserved one is settable by command — a difference nobody chose.
+- **Leave the settings registry alone.** The block would still work: the operator writes the entry by
+  hand, and `fugaro secrets set --allow-data-to` could reach it by the name check alone. It costs the
+  two blocks being tellable apart by tooling at all — `fugaro settings get
+  workflow_secrets.<name>.allow_data_to` answers *"no setting has that name"*, the console's own
+  reading of the registry cannot list the entry, and the list's default (`nobody`) is stated nowhere,
+  so a reader has to infer from the code that an absent entry means nobody. It also costs the count
+  the config-management work's audit is argued from, which would move without the row that moved it.
+  (This alternative used to say "until `settings set` lands". It landed with S5, `f09f10e5`, #1525;
+  F13 records the correction, and what the row buys is above.)
 
 ### D1271. `fugaro validate` in the repository's own checkout
 

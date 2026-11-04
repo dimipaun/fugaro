@@ -1,8 +1,10 @@
 # The project workflow secret: implementation plan
 
 **Status: a design, and nothing is built, and nothing here is approved.** Every task below is written
-to a **recommendation** in [reconciliation.md](reconciliation.md) §4, and **no decision is answered**:
-the tasks exist so the owner can price the build, not because it may start. **Where this plan and
+to a **recommendation** in [reconciliation.md](reconciliation.md) §4, and the owner has answered
+**three of the eighteen** — **D1260** (`workflow_secrets`), **D1266** (refuse) and **D1267**
+(untouched), on 2026-11-04, each as recommended. The other fifteen are unanswered: the tasks exist so
+the owner can price the build, not because it may start. **Where this plan and
 [reconciliation.md](reconciliation.md) disagree, the reconciliation wins**; where a task and the
 reconciliation disagree, the reconciliation wins.
 
@@ -29,8 +31,11 @@ edits `deploy/terraform/**`, `internal/credsvc/**`, `docs/secrets-brokering/**` 
   two harness OAuth namespaces and the `creds-bundle` refusal are read by W0 and amended by none.
 - **`fugaro managed`, its gate, the delete list and the run record.** Another design's
   (D1011–D1040). This design adds no command, so the gate's command set does not change.
-- **The shared project job path.** D1266 refuses it; W5 writes the refusal. No task makes a profile
-  honour a per-repository list.
+- **The shared project job path, and `internal/projectpolicy`.** D1266 refuses it, and the refusal is
+  the deployer's: `internal/infra/projectjobs.go`'s `projectJobSecrets` already refuses every profile
+  secret `projectSecretEnv` cannot map. W5 **pins** that fence; no task makes a profile honour a
+  per-repository list, and **no task edits `internal/projectpolicy/`** — a rule written there reads
+  a list it never sees and would fail open.
 - **The live checks.** No task adds, runs or edits one, and `docs/gcp-live-checklist.md` is
   untouched. Every test here is hermetic (`internal/gcpfake`, `internal/testutil`, `t.TempDir()`), and
   the 65-repository scale the issue names is not reproduced by any of them.
@@ -47,8 +52,8 @@ reviewed on its own.**
 | --- | --- | --- |
 | 0 | **W0** | nothing |
 | 1 | **W1** | W0 |
-| 2 | **W2**, **W5** | W0, W1 for W2; W0 for W5 |
-| 3 | **W3**, **W4** | W0–W2 for W3, and **G8 merged**; W2 for W4 |
+| 2 | **W2** | W0, W1 |
+| 3 | **W3**, **W4**, **W5** | W0–W2 for W3, and **G8 merged**; W2 for W4; W1–W2 for W5 |
 | 4 | **W6** | W3 (the pinned help sentences) |
 | 5 | **W7** | W0–W6 |
 
@@ -72,7 +77,9 @@ Three ordering facts are load-bearing:
   resolves by hand; landing it after makes it a task W3 owns.
 
 **Critical path: W0 → W1 → W2 → W3 → W6 → W7** (six tasks). W4 and W5 are off it: W4 is tests over
-behaviour W2 already gives, and W5 is a refusal in a package nothing else in this plan imports.
+behaviour W2 already gives, and W5 is a test over behaviour W1 and W2 have given — the fence it pins
+is `internal/infra`'s, and it needs the field and the container before the name it refuses can exist
+in a local config at all.
 
 ## 3. Gates (every task)
 
@@ -106,7 +113,7 @@ owner landed.
 | `internal/infra/tfvars.go` | W2 | `projectSecretContainers` (`:852`) derives the container from the new block's entries |
 | `internal/cli/secrets.go` | **G8**, then W3 | G8 adds the secret policy flags (`--allow-data-to`, `--proxy`); W3 adds the store path: `projectWideAccepted`, `projectWideRefusal`, `projectWideHint`, `projectScopeName`, `projectSecretAllowed`, and the `set` help (`:308`) and store-time note (`:859`). Two tasks, one file, and **W3 lands second** |
 | `internal/cli/secrets_rm.go` | **G8**, then W3 | G8's file, on an open branch (#1691): `fugaro secrets rm NAME` deletes the container and removes the `project_secrets.NAME` entry. W3 extends it to the new block once G8 has merged — `workflow_secrets.<name>` is the key `rm` drops for a project-scoped workflow secret, and `secretsRmWhat`'s sentence, the dry run's `key` and the `rm` help all name the block the entry lives in |
-| `internal/settings/registry.go` + `schemas/settings.schema.json` | W0 | One row and one key for `workflow_secrets.*.allow_data_to` (F13), plus the count pins their own tests hold |
+| `internal/settings/registry.go` + `schemas/settings.schema.json` | W0 | One row and one key for `workflow_secrets.*.allow_data_to` (F13), the row's **Owner** being `secrets` — the family `project_secrets.*.allow_data_to`'s row names and `--allow-data-to` writes — plus the count pins their own tests hold: the registry's row count is pinned by another folder's docs test (`internal/cli/docs_config_management_test.go`'s 323, and `docs/config-management/README.md:47`'s figure), so W0 moves that figure in the same commit rather than leaving a red test in a folder it does not own |
 | `SECURITY.md` | W6 | Two sentences amended (`:28`, `:38`) and one section extended (D1273) |
 | `docs/project-workflow-secrets/` | W7 | W7 is the only task that edits this folder, and it changes a *status* line, never a decision |
 | `plugin/skills/setup/SKILL.md` | W6 | One sentence at `:130`; no command or flag is added, so `plugin/skillcli_test.go` should pass unchanged — if it does not, W6 reports it rather than widening the skill |
@@ -119,22 +126,30 @@ Without it every later task would invent its own key rule, which is the drift D1
   map[string]ProjectSecret) []Problem` and `AllowedForWorkflowSecret(secrets, name, repo) bool`, the
   second `AllowedForProjectSecret`'s body over the new map. The type is **`ProjectSecret`**, reused
   rather than copied, so `AllowsData`, `matchRepoPattern` and `invalidAllowDataToEntry` are one
-  implementation for both blocks. The key rule is D1261's list and nothing else; the `proxy`
-  refusal is D1275's, worded with `ValidateProjectSecrets`'s own sentence shape; an entry rule is
-  `invalidAllowDataToEntry`'s, unchanged.
-- **Red step.** `TestWorkflowSecretRefusesAReservedName` (each of `config.ReservedSecrets`' four, a
-  configured provider's convention name, `claude-oauth-token-x`, `codex-oauth-token`, `creds-bundle`,
-  and the name a provider's own `secret:` holds — each refused, and each refusal naming the entry),
-  which fails to compile against a package with no such function. Then
+  implementation for both blocks. The key rule is D1261's list, and **the function holds only the half
+  it can compute: the rules that are a function of the name alone** — `config.ReservedSecrets`, the
+  `claude-oauth-token` prefix namespace, `CodexOAuthSecret` and `CredentialsBundleSecret`, which is
+  the set `internal/config/validate.go:264`–`:302` already refuses for a name in a repository's own
+  workflow. The two rules that read the operator's configured providers cannot be written here (the
+  signature takes the block and nothing else, and there is no `lc.Providers` to ask) and are **W1's**,
+  where the map is in hand. The `proxy` refusal is D1275's, worded with `ValidateProjectSecrets`'s own
+  sentence shape; an entry rule is `invalidAllowDataToEntry`'s, unchanged.
+- **Red step.** `TestWorkflowSecretRefusesAReservedName` (each of `config.ReservedSecrets`' four,
+  `claude-oauth-token-x`, `codex-oauth-token`, `creds-bundle` — each refused, and each refusal naming
+  the entry), which fails to compile against a package with no such function. Then
   `TestWorkflowSecretRefusesTheProxySwitch`, `TestWorkflowSecretRefusesABareStar` and
   `TestWorkflowSecretAcceptsASegmentWildcard` (the entry rules are `project_secrets`' own, held here
-  again so a later edit to one block cannot change the other silently).
+  again so a later edit to one block cannot change the other silently). The names a **configured**
+  provider holds are not this task's red: `ValidateWorkflowSecrets` cannot see them, and their test
+  belongs to W1, where the cross-block half of the key rule is written.
 - **Files (≤7).** `internal/config/workflow_secrets.go`, `internal/config/workflow_secrets_test.go`,
-  a registry row in `internal/settings/registry.go` and its test's own key map, the schema key, and
+  a registry row in `internal/settings/registry.go` and its test's own key map, the schema key, the
+  registry's row count in `internal/cli/docs_config_management_test.go` and the figure in
+  `docs/config-management/README.md` (§4: the count is pinned in a folder this plan does not own), and
   `internal/config/project_secrets.go` **only if** a helper must be exported — the recommendation is
   that it must not be.
-- **Not in this task:** the local config's field (W1), the plan-time predicate (W2), any CLI wording
-  (W3).
+- **Not in this task:** the local config's field and its cross-block refusals (W1), the plan-time
+  predicate (W2), any CLI wording (W3).
 
 ## W1. `internal/localcfg`: the block, its parse and its validation (D1260, D1263). **SEC**
 
@@ -144,14 +159,29 @@ Without it every later task would invent its own key rule, which is the drift D1
   (`localcfg.go:1605`), and dropped by `localcfg/shared.go:79`'s publish path the way
   `ProjectSecrets` is. Strict decoding already refuses an unknown field, so a misplaced block is an
   error rather than a silent ignore.
+- **The cross-block half of the key rule is this task's, because this is where `Providers` is
+  visible.** W0's `ValidateWorkflowSecrets(secrets)` holds the name-only rules; the two that read the
+  operator's configured providers are checked **here**, beside the `ValidateWorkflowSecrets` call in
+  `validate()` (`localcfg.go:1605`), where `lc.Providers` and `lc.ClaudeAccounts` are in hand: a key
+  that is a configured provider's own `secret:` (`config.ProviderBySecret`) or the conventional name
+  `config.ReservedProviderSecret` derives from the provider map, refused for the same reason
+  `CheckWorkflowProviderSecrets` refuses them in a repository's own workflow. The shape to copy is
+  that function (`internal/config/providers.go:779`, which takes the providers map as an argument and
+  is called from the layer holding it), not a second rule invented here; the refusal names the entry
+  and never a value.
 - **Where it belongs.** Operator-local: never `fugaro.yaml`, never the project layer, never the
   shared config, never published. The field's comment states the reach in the vocabulary
   `ProjectSecrets`' own comment uses, and links this folder.
 - **Red step.** `TestWorkflowSecretsAreRefusedInTheSharedConfig` (a shared config carrying the block
   loses it, as `ProjectSecrets` does) and `TestLocalConfigRefusesAReservedWorkflowSecretName` (the
   W0 rule, reached through the real parse rather than the validator directly) — both failing against a
-  struct with no such field.
-- **Files (≤5).** `internal/localcfg/localcfg.go`, `internal/localcfg/shared.go`, the two test files
+  struct with no such field. Then the cross-block pair, which cannot be reached at all today because
+  the field does not exist: `TestLocalConfigRefusesAProvidersOwnSecretAsAWorkflowSecretKey` (a
+  `workflow_secrets` key that is a configured provider's `secret:`) and
+  `TestLocalConfigRefusesAProvidersConventionalNameAsAWorkflowSecretKey` (a key the convention gives
+  that provider, whatever its `secret:` is spelled as) — both refused, with the entry named and no
+  value echoed. They are the tests that would have passed vacuously in W0.
+- **Files (≤6).** `internal/localcfg/localcfg.go`, `internal/localcfg/shared.go`, the two test files
   above, and `internal/cli/config_list.go`'s output with `config_list_test.go` if the listing
   enumerates the key set (it names `project_secrets` today, so it owes the new block a line).
 
@@ -159,17 +189,32 @@ Without it every later task would invent its own key rule, which is the drift D1
 
 The one function every reader of the decision shares (F3), plus the container the plan derives.
 
-- **Interface.** `ProjectSecretCandidate` (`spec.go:1356`) gains one source: `config.AllowedForWorkflowSecret(lc.WorkflowSecrets, logical, repo)`, read **before** the D2 sweep and with **no
-  sweep for a workflow secret** (D1262 — absent or empty means nobody). `projectSecretContainers`
-  (`tfvars.go:852`) iterates the new block's entries with a non-empty `allow_data_to`, exactly as it
-  iterates `lc.ProjectSecrets` today (D1263). `resolveSecretID` is **read and never edited** (D1264).
+- **Interface.** `ProjectSecretCandidate` (`spec.go:1356`) gains one source:
+  `config.AllowedForWorkflowSecret(lc.WorkflowSecrets, logical, repo)` — with **no sweep for a workflow secret**, so the entry
+  is the whole gate (D1262: absent or empty means nobody). It is consulted **only for a name no other source claims**: `config.AllowedForProjectSecret` (the `project_secrets` entry), the D2 sweep,
+  `config.ClaudeAccountBySecret` and `config.ProviderBySecret` answer first, and the new block is the
+  last question asked, so a hand-written entry can never widen a name those sources already answer
+  for — the predicate fails closed. `projectSecretContainers` (`tfvars.go:852`) iterates the new
+  block's entries with a non-empty `allow_data_to`, exactly as it iterates `lc.ProjectSecrets` today
+  (D1263). `resolveSecretID` is **read and never edited** (D1264).
+- **`projectSecretEnv` (`projectjobs.go:517`) is not widened to the new block, and this is
+  load-bearing rather than tidy.** Once `projectSecretContainers` derives a container for the entry,
+  the deployer's first check on a profile secret (`projectJobSecrets`, `projectjobs.go:426`) stops
+  firing for that name; what refuses a shared job the value is the second one (`:429`), which asks
+  `projectSecretEnv`. If this task taught that function a workflow secret's variable, a profile naming
+  the name would mount a value whose allow-list is per repository on a job every repository the
+  profile admits runs — D1266's whole subject, undone by a line in a function this task owns. W5 pins
+  it.
 - **Red step.** `TestProjectSecretCandidateTakesAWorkflowSecret` (a repository the entry lists gets
   `gcp.ProjectSecretID(name, logical)`) and `TestProjectSecretCandidateRefusesAnUnlistedRepository`
   (an entry that names another repository returns `"", false` — the issue's own guarantee), both
   failing against the predicate as it stands. Then
   `TestWorkflowSecretHasNoProjectScopeDefault` (a workflow secret with **no** entry is not eligible,
-  which is the assertion that keeps D1262 from being quietly reversed later), and
-  `TestProjectSecretContainerIsDerivedFromTheEntry`. The issue's own guarantee already has a home at
+  which is the assertion that keeps D1262 from being quietly reversed later),
+  `TestWorkflowSecretEntryCannotWidenAReservedName` (an entry whose key is one the sweep or a provider
+  already answers for leaves that source's answer alone — the predicate's order, held so a later edit
+  cannot put the new block first), and `TestProjectSecretContainerIsDerivedFromTheEntry`. The issue's
+  own guarantee already has a home at
   the layer a run reads: `projectsecret_coverage_test.go`'s
   `TestProjectSecretCoverageUnlistedRepoIsNotCovered` gains the workflow-secret case, so the listing
   and `Readiness` cannot drift on it either.
@@ -201,6 +246,24 @@ The one function every reader of the decision shares (F3), plus the container th
   Deleting the container and leaving the entry standing is the failure D1171's own comment says the
   command exists to prevent, and it is the same failure with the new block's key. **W3 lands after G8**
   (§2), so this is an extension of a merged file, not a conflict.
+- **G8's other flag, `--allow-data-to`: it writes `workflow_secrets.<name>.allow_data_to`.** The two
+  readings were "**it stays refused for the new block**" and this one, and the plan takes **this
+  one**, for three reasons. The issue asks for a gate "like `project_secrets.<name>.allow_data_to`"
+  (spec.md), and that list's writer is this flag: leaving the new block out would give the operator
+  one mechanism with two spellings, one of them hand-edited. The registry row's Owner decides the
+  writer (`settings_set.go:43`: a row a family owns is refused by the generic path so that two paths
+  cannot write one key), and `workflow_secrets.*.allow_data_to`'s Owner is `secrets` (W0) — so with
+  the flag refusing as well, the key would have no command writer at all and each refusal would point
+  at the other path. And the security work is already there rather than new: naming one more
+  repository is a **widening**, classified by the same settings write path every other widening pays —
+  the project's own name at a terminal, or `--yes` outside a coding agent's session — so a session is
+  refused, which is the property the task has to pin. What the task owes, therefore: the name check
+  answers for either block (a `config.ReservedSecrets` name writes `project_secrets.<name>`; any
+  other name writes `workflow_secrets.<name>` **when the new block holds it**; a name in neither is
+  refused by G8's existing key-rule refusal, and this task points that refusal at the right block for
+  a workflow secret); `--proxy` stays refused for a workflow secret, because D1275 refuses the field
+  in the new block entirely and a flag that wrote one would be the spelling that refusal exists to
+  prevent; and the red test below shows a session turned away.
 - **What must not change.** The value path, the name-vs-value refusals, `CheckSecretName`, the
   `--repo` path's `declares` check, and the precedence note's `repoMayUseProject` call. `rm`'s two
   halves stay together — one diff, one confirmation, the deletion last — and its note about a
@@ -215,11 +278,19 @@ The one function every reader of the decision shares (F3), plus the container th
   weaken it by accident). For the `rm` half, `TestSecretsRmRemovesTheWorkflowBlockEntry` (a project
   container and a `workflow_secrets.<name>` entry: `rm` deletes the container **and** drops that key,
   and the dry run's `key` reads `workflow_secrets.<name>`) fails against G8's `rm`, which drops
-  `project_secrets.<name>`.
-- **Files (≤7).** `internal/cli/secrets.go`, `internal/cli/secrets_test.go`,
-  `internal/cli/secrets_rm.go`, `internal/cli/secrets_rm_test.go`, and the pty and bitbucket-text
-  test files the help text's edits touch (`secrets_pty_test.go`, `secrets_bitbucket_text_test.go`),
-  named at implementation time by the pin gate.
+  `project_secrets.<name>`. For the flag, `TestSecretsSetAllowDataToWritesTheWorkflowBlockEntry` (a
+  name the new block holds: the flag writes `workflow_secrets.<name>.allow_data_to`, and the
+  confirmation prints the list the entry ends up with rather than the flag's own value, as G8's does
+  for a reserved name) and `TestSecretsSetAllowDataToOnAWorkflowSecretRefusesAnAgentSession` — the
+  test the widening owes, written first and red against G8, where the name is one `project_secrets`
+  cannot hold. Then `TestSecretsSetProxyStaysRefusedForAWorkflowSecret`, which is D1275 read through
+  the flag.
+- **Files (≤8).** `internal/cli/secrets.go`, `internal/cli/secrets_test.go`,
+  `internal/cli/secrets_rm.go`, `internal/cli/secrets_rm_test.go`, a new
+  `internal/cli/secrets_policy_workflow_test.go` if the flag's two tests do not belong beside G8's in
+  `secrets_policy_test.go`, and the pty and bitbucket-text test files the help text's edits touch
+  (`secrets_pty_test.go`, `secrets_bitbucket_text_test.go`), named at implementation time by the pin
+  gate.
 - **SEC.** It is the write path for a credential's project copy. Its refusals must be fail-closed on
   the three shapes D1261 names: an unknown name, a reserved name, and an entry that is present and
   empty.
@@ -239,22 +310,37 @@ The one function every reader of the decision shares (F3), plus the container th
   and the stage's own fixtures. If the stage needs a line of code to pass, that is a **finding to
   report**, not a line to write: the design says this task is tests alone.
 
-## W5. `internal/projectpolicy`: a profile may not mount one (D1266). **SEC**
+## W5. `internal/infra/projectjobs_test.go`: the deployer's fence, pinned (D1266). **SEC**
 
-- **Interface.** `profiles.go`'s secrets loop (`:302`–`:330`) gains one refusal beside the Claude
-  OAuth token's (`:322`), with that refusal's own reasoning: a shared job is shared by every
-  repository admitted to the profile, so a per-repository allow-list is not one it can honour. The
-  refusal is written **in the validator**, so `publish`, the deployer and both readers of the node
-  hold one profile to one rule.
-- **No policy version bump.** The node's shape does not change: the refusal is a rule about an entry
-  the node already carries, and D1268 publishes nothing.
-- **Red step.** `TestProfileRefusesAProjectWorkflowSecret` — a profile whose `secrets` names a
-  workflow secret is refused, and the refusal does not echo the name in a way that would quote a
-  value (the block's own rule). Then `TestProfileStillAcceptsAReservedName`, which is the test that
-  keeps the refusal from widening to names a profile legitimately mounts today.
-- **Files (≤4).** `internal/projectpolicy/profiles.go`, `internal/projectpolicy/profiles_test.go`,
-  and whichever of the package's other tests pin the profile-secrets refusals (named by the pin
-  gate).
+- **Interface.** **No code, and no file under `internal/projectpolicy/`.** The refusal a shared job
+  needs already exists and is where it must be: `projectJobSecrets` (`projectjobs.go:419`) refuses
+  every `profiles.<p>.secrets` name that `projectSecretEnv` (`:517`) cannot map to a variable, and
+  `projectSecretEnv` maps only `config.ReservedSecrets` and a configured provider's own secret — so a
+  workflow secret is refused **today**, on the operator's own machine, where the entry's list is in
+  hand. Writing the rule in `projectpolicy` instead, beside the Claude OAuth token's refusal
+  (`profiles.go:322`), is the reading this task exists to close off: `CheckProfiles`
+  (`internal/projectpolicy/profiles.go:560`) takes the policy's profiles and accounts and never the
+  local config, so the rule would be asked where the list is absent and the profile would be admitted
+  — a refusal that fails open, and that reads as enforced.
+- **What it pins.** The exact path a workflow secret takes today: `projectSecretContainers` derives
+  the container from the entry (W2), and the name is then refused by `projectSecretEnv`. The test is
+  therefore also the one that fails if W2 widens either function, which is why it is a task and not a
+  sentence in §1.
+- **Red step.** `TestProfileRefusesAProjectWorkflowSecret`, **via `ProjectJobs`**: a local config
+  whose `workflow_secrets` block holds a name (an entry listing one repository) and a profile whose
+  `secrets` lists that name is refused, through the real deployer path, and the refusal names the
+  profile entry and never a value. It cannot compile before W1's field, and it is the assertion that
+  fails the moment either half of the fence is widened. Then `TestProfileStillAcceptsAProviderKey`
+  and `TestProfileStillAcceptsAReservedName`, which keep the refusal from widening to the names a
+  shared job legitimately mounts today — and the neighbouring
+  `TestProjectJobSecretsMustBeProjectWide`'s own backstop ("no local config can reach it") is
+  amended, not deleted: after W2 a local config **does** reach `projectSecretEnv` with a workflow
+  secret's name, which is the state the two tests together describe.
+- **No policy version bump, and no published document.** The node's shape does not change, and D1268
+  publishes nothing; this task writes no `internal/projectpolicy/` line at all.
+- **Files (≤3).** `internal/infra/projectjobs_test.go`, and whichever of the package's tests pin the
+  container map and the env resolver (`internal/infra/tfvars_test.go` or `projectjobs_test.go`
+  itself), named by the pin gate.
 
 ## W6. The documents the change cannot ship without (D1272, D1273). **SEC**
 
@@ -302,5 +388,9 @@ person decides whether storing one value for sixty-five repositories is safe.
 - It **publishes nothing**: no policy version, no shared-config key, no schema version (D1268).
 - It touches **no Terraform**, so no installation has anything to converge beyond the container the
   first store creates (D1263).
+- It **weakens no existing refusal.** `projectSecretEnv` keeps mapping only the reserved names and a
+  configured provider's secret, so the deployer's fence keeps refusing a shared job that names a
+  workflow secret (D1266, W5); `projectpolicy` is not edited at all; and the eligibility predicate
+  answers for the new block only where no earlier source does (W2).
 - It **promises nothing about a hostile run**: the allow-list decides which jobs mount a value, not
   what a run does with it (reconciliation §6).

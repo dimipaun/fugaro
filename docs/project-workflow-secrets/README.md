@@ -2,10 +2,13 @@
 
 **Status: a design, and nothing is built and nothing is approved.** This folder answers **issue
 #1678**, which the owner opened on 2026-11-04 and which is reproduced **verbatim** in
-[spec.md](spec.md). No decision below is answered: [reconciliation.md](reconciliation.md) §4 asks
-**eighteen questions (D1260–D1277)**, each with a recommendation and the cost of every alternative,
-and the build [implementation-plan.md](implementation-plan.md) prices is written to the
-recommendations and may not start until the owner rules.
+[spec.md](spec.md). The owner answered **three of the eighteen** questions on 2026-11-04, each as
+[reconciliation.md](reconciliation.md) recommended — **D1260** (`workflow_secrets`), **D1266**
+(refuse) and **D1267** (untouched) — and the other fifteen are unanswered:
+[reconciliation.md](reconciliation.md) §4 carries all **eighteen questions (D1260–D1277)**, each with
+a recommendation and the cost of every alternative, and the build
+[implementation-plan.md](implementation-plan.md) prices is written to the recommendations and may not
+start until the owner rules on the rest.
 
 **This is a design pull request; it writes four documents and one test.** No code, no Terraform, no
 schema, no `go.mod`.
@@ -13,7 +16,7 @@ schema, no `go.mod`.
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The issue, **byte for byte** — its headings, its checklist box and its em dashes — with a status line and nothing else |
-| [reconciliation.md](reconciliation.md) | Each claim read against the code on `main` at `b41709ea`, re-read after merging `b3ed1842`: findings **F1–F20**, what already exists and what is missing; the threat model (§3) — rotation, the two doctor checks and who can read the value; the decisions **D1260–D1277** (§4) with the recommendation and the cost of each alternative; the number block and how it was read (§5); and the residual this design refuses to hide (§6). **Where it disagrees with this file, it wins** |
+| [reconciliation.md](reconciliation.md) | Each claim read against the code on `main` at `b41709ea`, re-read after merging `b3ed1842` and again at `b4b8e008`: findings **F1–F20**, what already exists and what is missing; the threat model (§3) — rotation, the two doctor checks, and who can read the value (the job accounts and the build account); the decisions **D1260–D1277** (§4) with the recommendation and the cost of each alternative, **three of them answered on 2026-11-04 and marked in their own sections**; the number block and how it was read (§5); and the residual this design refuses to hide (§6). **Where it disagrees with this file, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Eight tasks **W0–W7**, each with its files (at most twelve), its interface, its **red step**, its named tests and its **SEC** flag; the shared-files table (§4); the order and the critical path (§2); the recommended slot (D1277 of the reconciliation) |
 | `README.md` | This file: the status, the reading of the issue, the number block, and what a reader should not take from here |
 
@@ -45,9 +48,12 @@ word on the two properties that are not negotiable: the list is **operator-local
 2. **The block is new, and the reserved names' block is not weakened** (D1260, D1261). That is the
    design's most arguable recommendation and the one whose alternatives are costed in full: relaxing
    `project_secrets` is the smaller diff and it costs the typo check for every name in it.
-3. **A shared project job may not mount one** (D1266), because a profile is shared by every
-   repository admitted to it and a per-repository list is not one it can honour — the refusal
-   `internal/projectpolicy/profiles.go:322` already gives a Claude OAuth token.
+3. **A shared project job may not mount one** (D1266), and the refusal is **the deployer's, where it
+   already is**: `internal/infra/projectjobs.go`'s `projectJobSecrets` refuses every profile secret
+   `projectSecretEnv` cannot map, and a workflow secret is one. Writing the rule in
+   `projectpolicy` instead — beside the refusal `internal/projectpolicy/profiles.go:322` gives a
+   Claude OAuth token — would **fail open**, because that validator never sees the operator's
+   allow-list. W5 is a test that pins the fence.
 4. **No Terraform, no new grant shape, no new reader, no published document.** The whole build is a
    config block, one predicate, one store path, one refusal and five sentences. If a task in the plan
    finds itself editing a `.tf` file, the design is wrong and the task stops.

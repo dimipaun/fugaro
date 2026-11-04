@@ -101,9 +101,12 @@ func TestDocsProjectWorkflowSecretsFolderIsComplete(t *testing.T) {
 			t.Errorf("%s does not say that nothing is built", name)
 		}
 	}
-	if doc := readProjectWorkflowSecrets(t, pwsReconcile); !strings.Contains(doc, "None of\nthem is answered") &&
-		!strings.Contains(doc, "None of them is answered") {
-		t.Error("reconciliation.md does not say that none of its decisions is answered: the folder asks, it does not decide")
+	// The owner answered three of the eighteen on 2026-11-04 and left the rest
+	// open, so the file states both halves: a status line that read as approval
+	// while fifteen questions are open is the one thing this folder must not do.
+	if doc := readProjectWorkflowSecrets(t, pwsReconcile); !strings.Contains(doc, "**The owner answered D1260, D1266 and D1267 on 2026-11-04**") ||
+		!strings.Contains(doc, "the other fifteen are unanswered") {
+		t.Error("reconciliation.md does not state the owner's answers beside what is still open")
 	}
 }
 
@@ -211,6 +214,60 @@ func TestDocsProjectWorkflowSecretsNumberBlockIsReadAboveTheOpenWork(t *testing.
 	for _, want := range []string{"D1260–D1289", "D1260–D1277", "D1278–D1289", "D1189"} {
 		if !strings.Contains(readme, want) {
 			t.Errorf("README.md does not carry %q of the number block", want)
+		}
+	}
+}
+
+// TestDocsProjectWorkflowSecretsRecordsTheOwnersAnswers: the owner answered
+// D1260, D1266 and D1267 on 2026-11-04 — `workflow_secrets`, refuse, untouched
+// — and left the other fifteen open. An answered decision has to say so in its
+// own section, because a status line carrying the news while the section still
+// reads as a request is an inconsistency a reader cannot resolve; and a
+// decision the owner has not ruled on must carry no answer marker at all,
+// because fifteen of these are still questions.
+func TestDocsProjectWorkflowSecretsRecordsTheOwnersAnswers(t *testing.T) {
+	doc := readProjectWorkflowSecrets(t, pwsReconcile)
+	want := map[string]string{
+		"D1260.": "workflow_secrets",
+		"D1266.": "refuse",
+		"D1267.": "untouched",
+	}
+	sections := decisionSections(t, doc)
+	if len(sections) == 0 {
+		t.Fatal("no decision section was found")
+	}
+	answered := 0
+	for _, s := range sections {
+		id := strings.Fields(strings.TrimPrefix(s.heading, "### "))[0]
+		ruling, ok := want[id]
+		if !ok {
+			if strings.Contains(s.body, "**Answered") {
+				t.Errorf("%s carries an answer, and the owner has not ruled on it", s.heading)
+			}
+			continue
+		}
+		answered++
+		if !strings.Contains(s.body, "**Answered 2026-11-04") {
+			t.Errorf("%s is one of the three the owner answered and does not say so", s.heading)
+		}
+		if !strings.Contains(s.body, ruling) {
+			t.Errorf("%s does not carry the owner's ruling (%q)", s.heading, ruling)
+		}
+	}
+	if answered != len(want) {
+		t.Errorf("%d of the three answered decisions were found in the reconciliation", answered)
+	}
+	// The README and the plan carry the same status, and neither may read as an
+	// approval: a task a reader believes is approved is a task that gets built.
+	for _, name := range []string{pwsReadme, pwsPlan} {
+		other := readProjectWorkflowSecrets(t, name)
+		if !strings.Contains(other, "three of the eighteen") {
+			t.Errorf("%s does not say how many of the eighteen decisions the owner answered", name)
+		}
+		for _, id := range []string{"D1260", "D1266", "D1267"} {
+			if !strings.Contains(other, id) {
+				t.Errorf("%s does not name %s, which the owner answered", name, id)
+			}
 		}
 	}
 }
@@ -360,10 +417,19 @@ func TestDocsProjectWorkflowSecretsPlanProtectsTheTwoPropertiesTheIssueNames(t *
 			t.Errorf("reconciliation.md does not carry %q", want)
 		}
 	}
+	// The eligibility rule is the design's second guarantee — absent or empty
+	// means nobody, and no sweep for a workflow secret (D1262) — and it is the
+	// one a later task could reverse with a line. Both documents state it, and
+	// the plan names the task that holds the test.
+	for _, want := range []string{"Absent or empty means nobody", "ProjectScopeByDefault"} {
+		if !strings.Contains(rec, want) {
+			t.Errorf("reconciliation.md does not carry %q: D1262's rule is what keeps the entry the whole gate", want)
+		}
+	}
 	plan := readProjectWorkflowSecrets(t, pwsPlan)
 	// The plan must say that the repository's own copy winning is not this
 	// work's to change, and that a shared project job may not mount one.
-	for _, want := range []string{"resolveSecretID", "shared project job", "D1266"} {
+	for _, want := range []string{"resolveSecretID", "shared project job", "D1266", "no sweep for a workflow secret", "TestWorkflowSecretHasNoProjectScopeDefault"} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("implementation-plan.md does not carry %q", want)
 		}
@@ -398,9 +464,10 @@ func TestDocsProjectWorkflowSecretsReadmeLinksItsSiblings(t *testing.T) {
 
 // TestDocsProjectWorkflowSecretsFolderCarriesNoSecretShapedLiteral: the folder's
 // subject is a credential stored once for many repositories, which is exactly
-// where a real value would be pasted as an illustration. The patterns are the
-// shapes a value takes, not a list of vendors: a PEM header, a well-known
-// key prefix, and a long unbroken token-shaped run inside a code span.
+// where a real value would be pasted as an illustration. The three patterns are
+// the shapes a value takes rather than a list of vendors — a PEM header, and
+// the two key prefixes a pasted credential usually keeps — and they are the
+// three the folder's own subject could plausibly acquire.
 func TestDocsProjectWorkflowSecretsFolderCarriesNoSecretShapedLiteral(t *testing.T) {
 	entries, err := os.ReadDir(projectWorkflowSecretsDir)
 	if err != nil {
@@ -476,9 +543,14 @@ func TestDocsProjectWorkflowSecretsThreatModelAnswersWhoCanReadTheValue(t *testi
 		"secret-scope-shadowed",
 		"internal/cli/doctor.go:1000",
 		"no new doctor check",
-		// Who can read the value, and where the one decision point is.
+		// Who can read the value, and where the one decision point is. The
+		// build account is in the list because the job account is not the only
+		// member: a workflow secret is a name the repository's build reads too,
+		// and its grant is written from the same plan-time map.
 		"secretAccessor",
 		"local.secrets",
+		"deploy/terraform/gcp/modules/repo/build.tf:15",
+		"build account",
 		"internal/infra/spec.go:1356",
 		"not an independent Terraform check",
 	} {
@@ -514,6 +586,15 @@ func TestDocsProjectWorkflowSecretsPlanSequencesAfterTheSecretsRmWork(t *testing
 		// What `rm` does for the new block, said rather than left to the task.
 		"workflow_secrets.<name>",
 		"secrets rm",
+		// The other G8 flag the task has to rule on: one of the two readings is
+		// chosen and said, rather than left for a reviewer to infer from the
+		// code the task happens to write. The plan takes the reading that keeps
+		// one writer per registry row, and it owes the session refusal a test.
+		"--allow-data-to",
+		"workflow_secrets.<name>.allow_data_to",
+		"TestSecretsSetAllowDataToOnAWorkflowSecretRefusesAnAgentSession",
+		// `proxy` is the other half of the flag, and D1275 refuses the field.
+		"--proxy",
 	} {
 		if !strings.Contains(w3, want) {
 			t.Errorf("implementation-plan.md W3 does not carry %q: the task that edits secrets.go owns the rm half too", want)
@@ -526,6 +607,112 @@ func TestDocsProjectWorkflowSecretsPlanSequencesAfterTheSecretsRmWork(t *testing
 			t.Errorf("implementation-plan.md §4 carries no %q row: a shared file no table names is the merge the table exists to prevent", want)
 		}
 	}
+}
+
+// TestDocsProjectWorkflowSecretsProfileRefusalIsTheDeployersFence pins D1266's
+// placement, which a security review corrected. `projectpolicy.CheckProfiles`
+// takes the policy's two maps and never the operator's local config, so a
+// refusal written beside the Claude OAuth token's is evaluated on machines
+// where the allow-list is absent — a teammate's, or a reader of the published
+// node — and lets the profile through: it fails open, which is the opposite of
+// what a refusal about a credential's reach is for. The fence that fails
+// closed is the deployer's, `internal/infra/projectjobs.go`'s
+// `projectJobSecrets`, which refuses every profile secret `projectSecretEnv`
+// cannot map. The folder has to say that where the decision, the finding and
+// the task are, or a task reads the precedent as the place to write the rule.
+func TestDocsProjectWorkflowSecretsProfileRefusalIsTheDeployersFence(t *testing.T) {
+	rec := readProjectWorkflowSecrets(t, pwsReconcile)
+	d1266 := subBody(t, rec, "D1266")
+	for _, want := range []string{
+		"internal/infra/projectjobs.go",
+		"projectJobSecrets",
+		"projectSecretEnv",
+		// The reason the shape's own home is the wrong one.
+		"CheckProfiles",
+		"fail open",
+	} {
+		if !strings.Contains(d1266, want) {
+			t.Errorf("reconciliation.md D1266 does not carry %q: the refusal has to be placed where it fails closed", want)
+		}
+	}
+	f9 := subBody(t, rec, "F9")
+	for _, want := range []string{"internal/infra/projectjobs.go", "projectJobSecrets", "projectSecretEnv"} {
+		if !strings.Contains(f9, want) {
+			t.Errorf("reconciliation.md F9 does not cite %q: the finding is a reading of the tree, not of the shape", want)
+		}
+	}
+	plan := readProjectWorkflowSecrets(t, pwsPlan)
+	w5 := taskBody(t, plan, "W5")
+	for _, want := range []string{"ProjectJobs", "TestProfileRefusesAProjectWorkflowSecret", "projectSecretEnv"} {
+		if !strings.Contains(w5, want) {
+			t.Errorf("implementation-plan.md W5 does not carry %q: the task pins the fence the tree already has", want)
+		}
+	}
+}
+
+// TestDocsProjectWorkflowSecretsProviderRuleIsWhereProvidersIsVisible pins
+// D1261's split, which a security review corrected. W0's
+// `ValidateWorkflowSecrets(secrets)` takes the block and nothing else — the
+// signature `ValidateProjectSecrets` has — so the rules that read the
+// operator's configured providers (a provider's own `secret:`, and the
+// convention name `ReservedProviderSecret` derives from the provider map)
+// cannot be written there: they would be evaluated with `lc.Providers`
+// unavailable. They belong where it is in hand, which is `internal/localcfg`'s
+// validate, in the shape `config.CheckWorkflowProviderSecrets` already has.
+//
+// The predicate's own half is here too: W2 consults the new block only for a
+// name no other source claims, so a hand-written entry cannot widen a name the
+// sweep or a provider already answers for — the predicate fails closed.
+func TestDocsProjectWorkflowSecretsProviderRuleIsWhereProvidersIsVisible(t *testing.T) {
+	rec := readProjectWorkflowSecrets(t, pwsReconcile)
+	d1261 := subBody(t, rec, "D1261")
+	for _, want := range []string{
+		"ValidateWorkflowSecrets(secrets)",
+		"lc.Providers",
+		"internal/localcfg",
+		"CheckWorkflowProviderSecrets",
+	} {
+		if !strings.Contains(d1261, want) {
+			t.Errorf("reconciliation.md D1261 does not carry %q: the key rule is split by where each half can be computed", want)
+		}
+	}
+	plan := readProjectWorkflowSecrets(t, pwsPlan)
+	w0 := taskBody(t, plan, "W0")
+	if !strings.Contains(w0, "a function of the name alone") {
+		t.Error("implementation-plan.md W0 does not say what its validator can hold: the rules it cannot read belong to another task")
+	}
+	w1 := taskBody(t, plan, "W1")
+	for _, want := range []string{"ProviderBySecret", "ReservedProviderSecret", "CheckWorkflowProviderSecrets"} {
+		if !strings.Contains(w1, want) {
+			t.Errorf("implementation-plan.md W1 does not carry %q: the provider half of the key rule is this task's", want)
+		}
+	}
+	w2 := taskBody(t, plan, "W2")
+	for _, want := range []string{
+		"projectSecretEnv",
+		"is not widened to the new block",
+		"only for a name no other source claims",
+	} {
+		if !strings.Contains(w2, want) {
+			t.Errorf("implementation-plan.md W2 does not carry %q: it is the task that could undo the fence, so it has to state what it does not touch", want)
+		}
+	}
+}
+
+// subBody returns the text under a `### <id>. ...` heading, up to the next
+// heading of the same kind, failing the test when no such heading exists.
+func subBody(t *testing.T, doc, id string) string {
+	t.Helper()
+	re := regexp.MustCompile(`(?m)^### ` + regexp.QuoteMeta(id) + `\. .*$`)
+	loc := re.FindStringIndex(doc)
+	if loc == nil {
+		t.Fatalf("no `### %s. ` section was found", id)
+	}
+	rest := doc[loc[1]:]
+	if next := regexp.MustCompile(`(?m)^#{2,3} `).FindStringIndex(rest); next != nil {
+		return rest[:next[0]]
+	}
+	return rest
 }
 
 // sectionBody returns the text under a `## <heading>` line, up to the next
