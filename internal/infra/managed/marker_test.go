@@ -1397,12 +1397,12 @@ locals {
 	}
 	// The project's catalog check job's account (D1148): its grant set is
 	// pinned whole by runAccountGrants, which is the only thing that can be.
-	// A tftest cannot enumerate a module's resources, so a seventh grant
-	// resource beside the six is invisible to it; this is the mechanical half
+	// A tftest cannot enumerate a module's resources, so an extra grant
+	// resource beside the five is invisible to it; this is the mechanical half
 	// that catches one — the mutation adds a project-level role to that very
 	// account, and the finding has to name the grant and the object this whole
 	// test exists for, not merely be some other refusal.
-	t.Run("a seventh grant to the catalog check account", func(t *testing.T) {
+	t.Run("a sixth grant to the catalog check account", func(t *testing.T) {
 		files := moduleFiles(t)
 		files["modules/installation/catalogcheck.tf"] += `
 resource "google_project_iam_member" "catalog_check_viewer" {
@@ -1417,26 +1417,26 @@ resource "google_project_iam_member" "catalog_check_viewer" {
 		if !slices.ContainsFunc(scan.findings, func(f string) bool {
 			return strings.Contains(f, "catalog_check_viewer") && strings.Contains(f, MarkerObject)
 		}) {
-			t.Errorf("a seventh grant to the catalog check account is not refused for what it reaches:\n%s", strings.Join(scan.findings, "\n"))
+			t.Errorf("a sixth grant to the catalog check account is not refused for what it reaches:\n%s", strings.Join(scan.findings, "\n"))
 		}
 	})
-	// And the other direction: the set is exact, so dropping one of the six
+	// And the other direction: the set is exact, so dropping one of the five
 	// leaves an allowlist entry that no module grants any more, which the scan
 	// reports rather than keeping the reviewed row as if it were still there.
 	t.Run("a reviewed catalog check grant that is gone", func(t *testing.T) {
 		files := moduleFiles(t)
 		path := "modules/installation/catalogcheck.tf"
 		mutated := strings.Replace(files[path],
-			`"catalog_check_log_writer" {
+			`"catalog_check_build_submitter" {
   count = var.catalog_check == null ? 0 : 1
 
   project = var.project
-  role    = "roles/logging.logWriter"`,
-			`"catalog_check_log_writer" {
+  role    = "projects/${var.project}/roles/fugaroBuildSubmitter"`,
+			`"catalog_check_build_submitter" {
   count = var.catalog_check == null ? 0 : 1
 
   project = var.project
-  role    = "roles/logging.viewer"`, 1)
+  role    = "projects/${var.project}/roles/fugaroTagMover"`, 1)
 		if mutated == files[path] {
 			t.Fatal("the mutation changed nothing: this fixture is not reading the grant it means to drop")
 		}
@@ -1924,16 +1924,16 @@ var runAccountGrants = setOf(
 	// repository's own build account: the thing to read is that the account
 	// itself reaches no repository's rights and nothing at the bucket's root.
 	//
-	// The two project-level members are the build accounts' own two, role for
-	// role and permission for permission: roles/logging.logWriter, which Cloud
-	// Run needs for the job's log lines and which carries no storage
-	// permission at all, and the installation's fugaroBuildSubmitter, whose
-	// whole list is cloudbuild.builds.create and cloudbuild.builds.get (pinned
-	// by the perms column) — submitting a build and reading its status. Cloud
-	// Build offers no narrower scope than the project for either. Neither
-	// grants a role, acts as an account, mints a token or touches the runs
-	// bucket, so neither is a write path to the marker.
-	`google_project_iam_member | "roles/logging.logWriter" | project=var.project | google_service_account.catalog_check[0].member | for_each= | perms=`,
+	// The one project-level member it holds is the installation's existing
+	// fugaroBuildSubmitter, whose whole list is cloudbuild.builds.create and
+	// cloudbuild.builds.get (pinned by the perms column) — submitting a build
+	// and reading its status, the two operations each repository's build
+	// account holds it for. Cloud Build offers no narrower scope than the
+	// project for either. It grants no role, acts as no account, mints no
+	// token and touches no bucket, so it is not a write path to the marker.
+	// No roles/logging.logWriter beside it: the installation's coordinator and
+	// history jobs hold none, and the log lines the alert policies match are
+	// Cloud Run's own.
 	`google_project_iam_member | "projects/${var.project}/roles/fugaroBuildSubmitter" | project=var.project | google_service_account.catalog_check[0].member | for_each= | perms=cloudbuild.builds.create,cloudbuild.builds.get`,
 	// The catalog's copied definitions, builds/catalog/ (gcp.CatalogReadCondition),
 	// read-only: the same project-wide copy the build accounts read, under the
@@ -3120,10 +3120,12 @@ var narrowingConditions = map[string]bool{
 	"var.launcher_bucket_condition.expression":   true,
 	// gcp.ProjectBucketCondition, set by internal/infra/projectjobs.go.
 	"var.job.bucket_condition.expression": true,
-	// gcp.CatalogRecordsCondition, set per repository by internal/infra: the
-	// project's catalog check job writes one repository's check state beside
-	// its build records, under builds/<slug>/catalog/. That the bytes this
-	// names are the narrow ones is asserted above, on the builder itself.
+	// One repository's records condition, which the installation's input
+	// carries per repository (gcp.CatalogRecordsCondition, internal/backend/
+	// gcp): the project's catalog check job writes one repository's check
+	// state beside its build records, under builds/<slug>/catalog/. That the
+	// bytes this names are the narrow ones is asserted above, on the builder
+	// itself.
 	"each.value.records_condition.expression": true,
 }
 
