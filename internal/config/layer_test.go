@@ -29,6 +29,7 @@ profiles:
     commands:
       build: ./gradlew assemble
       test: ./gradlew test
+      reports: ["**/surefire*.xml"]
     resources: { cpu: 4, memory: 16Gi }
     timeouts: { total: 2h }
   node-web:
@@ -208,8 +209,8 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 		// change backs it.
 		{"named Claude accounts are repo-only", head + "defaults:\n  agent:\n    oauth_token: acme-personal\n", "agent.oauth_token may only be set in: repo, override"},
 		{"base branch is repo-only", head + "defaults:\n  git:\n    base_branch: evil\n", "git.base_branch may only be set in: repo"},
-		{"dockerfile is repo-only", head + "profiles:\n  p:\n    dockerfile: x.Dockerfile\n", "workflows.*.dockerfile may only be set in: repo"},
-		{"key files are repo-only", head + "profiles:\n  p:\n    image:\n      key_files: [patches]\n", "workflows.*.image.key_files may only be set in: repo"},
+		{"a removed dockerfile is refused by name in a profile", head + "profiles:\n  p:\n    dockerfile: x.Dockerfile\n", "profiles.p.dockerfile: was removed in 0.18.0"},
+		{"a removed key_files is refused by name in a profile", head + "profiles:\n  p:\n    image:\n      key_files: [patches]\n", "profiles.p.image.key_files: was removed in 0.18.0"},
 		{"workflow keys are not defaults", head + "defaults:\n  workflows:\n    web:\n      commands: { test: x }\n", "may only be set in: profile, repo"},
 		{"unknown key", head + "defaults:\n  agent:\n    colour: red\n", "defaults.agent.colour: is not a fugaro.yaml key"},
 		// claude_accounts is a local-config-only key (design
@@ -240,7 +241,7 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 		{"an inputs cap over its ceiling", head + "profiles:\n  p:\n    inputs: { max_files: 65 }\n", "profiles.p.inputs.max_files: must be at most 64"},
 		{"a negative inputs cap", head + "profiles:\n  p:\n    inputs: { max_bytes: -1 }\n", "profiles.p.inputs.max_bytes: must not be negative"},
 		{"a zero render timeout", head + "profiles:\n  p:\n    timeouts: { render: 0s }\n", "profiles.p.timeouts.render: must be positive"},
-		{"clone refuses apt in a profile", head + "profiles:\n  p: { checkout: clone, image: { apt: [jq] } }\n", "profiles.p.image.apt: checkout: clone runs the base image with no build; use checkout: baked to build an image"},
+		{"a removed image key is refused by name in a profile", head + "profiles:\n  p: { checkout: clone, image: { apt: [jq] } }\n", "profiles.p.image.apt: was removed in 0.18.0"},
 		{"clone refuses a legacy base in a profile", head + "profiles:\n  p: { base: go, checkout: clone }\n", "profiles.p.base: was removed in 0.7.0"},
 		{"oversized", head + "# " + strings.Repeat("x", LayerMaxBytes) + "\n", "over the 64 KiB limit"},
 		// A null profile would otherwise decode as a valid empty Profile
@@ -361,7 +362,7 @@ func TestParseProjectLayerRefusesMore(t *testing.T) {
 		{"a cpu", prof("    resources: { cpu: -1 }\n"), "profiles.p.resources.cpu: must not be negative"},
 		{"a memory", prof("    resources: { memory: 16GB }\n"), "profiles.p.resources.memory: must look like"},
 		{"a timeout", prof("    timeouts: { stage: -1h }\n"), "profiles.p.timeouts.stage: must be positive"},
-		{"a rebuild", prof("    rebuild: { check: weekly }\n"), "profiles.p.rebuild.check: must be daily or off"},
+		{"a removed rebuild key is refused by name", prof("    rebuild: { check: weekly }\n"), "profiles.p.rebuild.check: was removed in 0.18.0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := layerProblems(t, tc.text); !strings.Contains(got, tc.want) {
@@ -567,14 +568,6 @@ func TestProfileHasExecutable(t *testing.T) {
 		"commands: { build: make }", "commands: { test: make test }",
 		"commands: { lint: make lint }", "commands: { fix: make fmt }",
 		"commands: { rerun_failed: { command: go test, each: ' -run {id}' } }",
-		"image: { apt: [graphviz] }", "image: { setup: [make tools] }",
-		// A mise tool is as powerful as image.setup: every URL/host-form
-		// backend (cargo:, go:, npm:, asdf:/vfox:, ubi:/github:/aqua:)
-		// passes ValidMiseTool's charset, and the build installs it with
-		// the workflow's build secrets mounted. A profile holding only
-		// this must report HasExecutable true, so publishing it needs
-		// --executable-changes.
-		`image: { tools: { "cargo:https://evil.example/x": "ref:main" } }`,
 	} {
 		if !strings.HasPrefix(body, "{") {
 			body = "{ " + body + " }"
@@ -587,15 +580,6 @@ func TestProfileHasExecutable(t *testing.T) {
 	l := mustLayer(t, layerHead+"profiles:\n  p: { description: x, resources: { cpu: 2 }, commands: { reports: [r.xml] } }\n")
 	if l.Profiles["p"].HasExecutable() {
 		t.Error("a profile with no shell has HasExecutable() = true")
-	}
-	// Ruling: skip_build_scripts: true is the safe setting (it skips
-	// third-party install/build scripts); a profile whose only setting is
-	// that true must not count as executable on its own. Only a change of
-	// the value is gated, through executableChanges' direct key comparison,
-	// never through HasExecutable.
-	safe := mustLayer(t, layerHead+"profiles:\n  p: { image: { skip_build_scripts: true } }\n")
-	if safe.Profiles["p"].HasExecutable() {
-		t.Error("a profile whose only setting is skip_build_scripts: true has HasExecutable() = true, want false (true is the safe direction)")
 	}
 }
 

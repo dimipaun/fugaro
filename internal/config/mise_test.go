@@ -149,47 +149,6 @@ func TestWorkflowWithoutBaseGetsUniformDefaults(t *testing.T) {
 	}
 }
 
-func TestValidateImageTools(t *testing.T) {
-	for _, tc := range []struct {
-		image, want string // want: "" for valid, else a substring of the problem
-	}{
-		{`{ tools: { node: "24.19.0", python: "3.12", "npm:firebase-tools": "15.32.1", java: temurin-25 } }`, ""},
-		{`{ tools: { "Node!": "24" } }`, "image.tools.Node!"},
-		{`{ tools: { node: "24; rm -rf /" } }`, "must be a version"},
-		{`{ tools: { node: "'24'" } }`, "must be a version"},
-	} {
-		y := strings.Replace(baseYAML, "    commands:", "    image: "+tc.image+"\n    commands:", 1)
-		_, problems := Parse([]byte(y))
-		got := ""
-		for _, p := range problems {
-			got += p.String() + "\n"
-		}
-		if (tc.want == "") != (got == "") || (tc.want != "" && !strings.Contains(got, tc.want)) {
-			t.Errorf("%s: problems %q, want %q", tc.image, got, tc.want)
-		}
-	}
-}
-
-func TestValidateRefusesToolsWithARepositoryMiseConfig(t *testing.T) {
-	y := strings.Replace(baseYAML, "    commands:", "    image: { tools: { node: \"24\" } }\n    commands:", 1)
-	c, problems := Parse([]byte(y))
-	if len(problems) > 0 {
-		t.Fatal(problems)
-	}
-	root := t.TempDir()
-	testutil.WriteFiles(t, root, map[string]string{"mise.toml": "[tools]\nnode = \"22\"\n"})
-	ps := Check(c, root)
-	if len(ps) != 1 || ps[0].Path != "workflows.app.image.tools" || !strings.Contains(ps[0].Message, "mise.toml") {
-		t.Fatalf("Check = %v", ps)
-	}
-	if ps := Check(c, t.TempDir()); len(ps) != 0 {
-		t.Fatalf("tools alone: %v", ps)
-	}
-}
-
-// TestCheckSurfacesAMiseConfigFilesError: unlike CheckWarnings (best-effort,
-// swallows the error), Check must report a MiseConfigFiles error as a real
-// problem, since it is what fugaro validate refuses a config for.
 func TestCheckSurfacesAMiseConfigFilesError(t *testing.T) {
 	c, problems := Parse([]byte(baseYAML))
 	if len(problems) > 0 {
@@ -230,29 +189,16 @@ func TestCheckWarningsRedactsTheWorkflowName(t *testing.T) {
 	}
 }
 
-// TestCheckWarningsSkipConditions covers CheckWarnings' two independent skip
-// conditions (a dockerfile:, or image.tools set): each alone must silence
-// the "installs no language runtime" warning that an otherwise-identical
-// workflow with no mise config gets. It also confirms a MiseConfigFiles
-// error is swallowed (no warning, no panic), which is intentional:
-// CheckWarnings is best-effort, not authoritative (Check is what refuses a
-// config).
-func TestCheckWarningsSkipConditions(t *testing.T) {
-	for name, y := range map[string]string{
-		"dockerfile":  strings.Replace(baseYAML, "    commands:", "    dockerfile: .fugaro/app.Dockerfile\n    commands:", 1),
-		"image.tools": strings.Replace(baseYAML, "    commands:", "    image: { tools: { node: \"24\" } }\n    commands:", 1),
-	} {
-		t.Run(name, func(t *testing.T) {
-			c, problems := Parse([]byte(y))
-			if len(problems) > 0 {
-				t.Fatal(problems)
-			}
-			if ws := CheckWarnings(c, t.TempDir()); len(ws) != 0 {
-				t.Fatalf("CheckWarnings = %v, want none", ws)
-			}
-		})
-	}
-	t.Run("a MiseConfigFiles error is swallowed, not a warning", func(t *testing.T) {
+// TestCheckWarningsSwallowsAMiseConfigFilesError covers the one skip condition
+// CheckWarnings still has an unreadable root for: a MiseConfigFiles error is
+// swallowed (no warning, no panic), which is intentional: CheckWarnings is
+// best-effort, not authoritative (Check is what refuses a config). The table
+// this test used to hold — a dockerfile: or an image.tools silencing the
+// warning — went with the keys: a workflow can no longer carry either, so the
+// warning they silenced is one no workflow can raise. TestCheckWarningsSkipsACatalogEntry
+// covers the condition that remains.
+func TestCheckWarningsSwallowsAMiseConfigFilesError(t *testing.T) {
+	{
 		c, problems := Parse([]byte(baseYAML))
 		if len(problems) > 0 {
 			t.Fatal(problems)
@@ -268,7 +214,7 @@ func TestCheckWarningsSkipConditions(t *testing.T) {
 		if ws := CheckWarnings(c, root); len(ws) != 0 {
 			t.Fatalf("CheckWarnings = %v, want none (the error is swallowed, not surfaced as a false warning)", ws)
 		}
-	})
+	}
 }
 
 // TestCheckWarningsSkipsACatalogEntry: a workflow that names a catalog entry
@@ -284,21 +230,5 @@ func TestCheckWarningsSkipsACatalogEntry(t *testing.T) {
 	}
 	if ws := CheckWarnings(c, t.TempDir()); len(ws) != 0 {
 		t.Fatalf("CheckWarnings = %v, want none: the workflow runs a catalog entry", ws)
-	}
-}
-
-func TestSkipBuildScriptsOnTheBaseNeedsANodeWarmUp(t *testing.T) {
-	y := strings.Replace(baseYAML, "    commands:", "    image: { skip_build_scripts: true }\n    commands:", 1)
-	c, problems := Parse([]byte(y))
-	if len(problems) > 0 {
-		t.Fatal(problems)
-	}
-	if ps := Check(c, t.TempDir()); len(ps) != 1 || !strings.Contains(ps[0].Message, "package.json and a lockfile") {
-		t.Fatalf("no package.json: %v", ps)
-	}
-	root := t.TempDir()
-	testutil.WriteFiles(t, root, map[string]string{"package.json": `{"name":"x"}`, "package-lock.json": `{"lockfileVersion":3}`, "mise.toml": "[tools]\nnode = \"24\"\n"})
-	if ps := Check(c, root); len(ps) != 0 {
-		t.Fatalf("with npm: %v", ps)
 	}
 }

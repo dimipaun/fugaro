@@ -1,8 +1,6 @@
 package config
 
 import (
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -74,47 +72,6 @@ func TestLintDockerfileRejects(t *testing.T) {
 				t.Fatalf("want a problem containing %q, got %v", tc.want, msgs)
 			}
 		})
-	}
-}
-
-func TestCheckLintsDockerfile(t *testing.T) {
-	root := t.TempDir()
-	cfg, problems := Parse([]byte(webYAML + "    dockerfile: .fugaro/web.Dockerfile\n"))
-	if len(problems) > 0 {
-		t.Fatal(problems)
-	}
-	if err := os.MkdirAll(filepath.Join(root, ".fugaro"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".fugaro", "web.Dockerfile"), []byte("FROM node:24\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	ps := Check(cfg, root)
-	if !hasProblem(ps, "workflows.web.dockerfile", ".fugaro/web.Dockerfile must build its final stage FROM", 0) ||
-		!hasProblem(ps, "workflows.web.dockerfile", "must bake the checkout", 0) {
-		t.Fatalf("problems = %v", ps)
-	}
-}
-
-// TestCheckLintsDockerfileOnTheFugaroBase: a workflow (base: is removed in
-// 0.7.0, so every workflow builds on BaseKind) with a repository Dockerfile
-// FROM the literal ghcr.io/dimipaun/fugaro-base reference passes.
-func TestCheckLintsDockerfileOnTheFugaroBase(t *testing.T) {
-	root := t.TempDir()
-	y := strings.Replace(baseYAML, "    commands:", "    dockerfile: .fugaro/app.Dockerfile\n    commands:", 1)
-	cfg, problems := Parse([]byte(y))
-	if len(problems) > 0 {
-		t.Fatal(problems)
-	}
-	if err := os.MkdirAll(filepath.Join(root, ".fugaro"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	df := "FROM ghcr.io/dimipaun/fugaro-base:1.2.3\nRUN --mount=type=bind,target=/src git clone \"$REPO_URL\" /work/repo\n"
-	if err := os.WriteFile(filepath.Join(root, ".fugaro", "app.Dockerfile"), []byte(df), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if ps := Check(cfg, root); len(ps) != 0 {
-		t.Fatalf("a workflow on the default Fugaro base with a Dockerfile FROM fugaro-base: %v", ps)
 	}
 }
 

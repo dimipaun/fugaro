@@ -252,23 +252,17 @@ func TestSelectWorkflow(t *testing.T) {
 
 func TestCheckMissingFiles(t *testing.T) {
 	root := t.TempDir()
-	cfg, problems := Parse([]byte(minimalYAML + "    dockerfile: .fugaro/server.Dockerfile\n"))
+	cfg, problems := Parse([]byte(minimalYAML))
 	if len(problems) > 0 {
 		t.Fatal(problems)
 	}
 	ps := Check(cfg, root)
-	for _, path := range []string{"workflows.server.commands.build", "workflows.server.commands.test", "workflows.server.dockerfile"} {
+	for _, path := range []string{"workflows.server.commands.build", "workflows.server.commands.test"} {
 		if !hasProblem(ps, path, "does not exist", 0) {
 			t.Errorf("missing problem for %s in %v", path, ps)
 		}
 	}
 	if err := os.WriteFile(filepath.Join(root, "gradlew"), []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, ".fugaro"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".fugaro", "server.Dockerfile"), []byte(validRepoDockerfile), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if ps := Check(cfg, root); len(ps) != 0 {
@@ -328,24 +322,6 @@ func TestRebuildValidation(t *testing.T) {
 	data, _ := os.ReadFile("../../testdata/config/invalid/rebuild-unknown-field.yaml")
 	if cfg, ps := Parse(data); cfg != nil || !hasProblem(ps, "", "field smoke not found", 0) {
 		t.Errorf("unknown field: got %v", ps)
-	}
-}
-
-func TestRebuildPathAndAgeRules(t *testing.T) {
-	for _, tc := range []struct {
-		block string
-		ok    bool
-	}{
-		{"{ max_age: 1h }", true}, {"{ max_age: 90d }", true}, {"{ max_age: 91d }", false}, {"{ max_age: -1h }", false},
-		{"{ max_age: 0 }", true}, {"{ max_age: 1d12h }", true}, {"{ max_age: soon }", false},
-		{"{ max_age: 0d }", true}, {"{ max_age: 2d-5h }", false}, {"{ max_age: 2d+5h }", false}, {"{ max_age: 1d-0s }", false},
-		{`{ paths: ["a/**/b"] }`, true}, {`{ paths: ["/abs"] }`, false}, {`{ paths: [""] }`, false},
-		{`{ paths: ["a/../b"] }`, false}, {`{ paths: ["[a"] }`, false}, {`{ paths: [".."] }`, false},
-	} {
-		_, ps := Parse([]byte(minimalYAML + "    rebuild: " + tc.block + "\n"))
-		if (len(ps) == 0) != tc.ok {
-			t.Errorf("%s: ok=%v, problems %v", tc.block, tc.ok, ps)
-		}
 	}
 }
 

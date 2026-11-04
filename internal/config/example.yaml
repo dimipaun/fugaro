@@ -58,13 +58,10 @@ agent:
 
 workflows:
   web:                        # workflow name, chosen with `fugaro run --workflow`
-    image:                    # optional; rendered into the derived image (see `fugaro image render`)
-      # tools: { node: "24" }   # or a mise.toml at the root (docs/base-image.md)
-      apt: [fonts-liberation] # extra system packages
-      # setup:                # extra RUN steps, run as fugaro in /work/repo after the dependency install
-      #   - npx playwright install --with-deps chromium   # sudo works in setup steps, during the build only
-      # skip_build_scripts: true   # install without package build scripts; commands.build must build what the tests need
-    # dockerfile: .fugaro/web.Dockerfile   # escape hatch replacing the generated image; excludes image:
+    # image_name: web-runtime   # one entry of the project's image catalog, built and owned by the project
+    #                           # (fugaro image add; docs/project-image-catalog/README.md). Without it the job
+    #                           # runs the installation's base image; runtimes come from a mise.toml at the root
+    # needs: [node]             # or the tags the job needs, for an entry chosen by tag instead of by name
     commands:
       build: npm run build
       test: npm test
@@ -78,15 +75,8 @@ workflows:
       - { name: npm-token, env: NPM_TOKEN }
     resources: { cpu: 4, memory: 8Gi }
     timeouts: { total: 90m, stage: 40m, verify: 30m, finalize_reserve: 5m }
-    # rebuild:                # optional; the daily image check. A changed image:, dockerfile:, base or image.setup always rebuilds
-    #   check: daily          # daily | off (off: rebuilt only by fugaro image build)
-    #   max_age: 14d          # rebuild an image older than this (1h to 90d); 0 turns the age trigger off
-    #   lockfiles: true       # rebuild when a cache key file changed on the base branch
-    #   base: true            # rebuild when the base image's digest moved
-    #   paths: []             # globs; a change under one on the base branch forces a rebuild
-
   server:
-    # image: { apt: [postgresql-17, redis-server], setup: ["./gradlew --no-daemon testClasses"] }   # runtimes in mise.toml; services: docs/base-image.md
+    # runtimes in mise.toml; services (postgresql, redis) start with fugaro-services: docs/base-image.md
     commands:
       build: ./gradlew assemble
       test: ./gradlew test    # with services: fugaro-services start && TEST_SERVICES=local ./gradlew.sh integrationTest ...
