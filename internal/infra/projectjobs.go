@@ -243,14 +243,21 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 // A variant's name, service account and account segment are
 // credsvc.ReviewJobName's and credsvc.ReviewServiceAccountID's, over the axis
 // spelled the way the policy speaks it: the one spelling the service admits a
-// caller by. Its mounts, resources, timeout and Vertex grant are its coding
-// twin's — it serves the same profile, over the same repositories, and it
-// reaches the same buckets (F15 records that reach: a review job writes one
-// run's record and artifact, and the whole of runs/ is more than that; the
-// owner accepted it on 2026-10-17 and narrowing it is a bucket-layout change).
-// The one environment entry it drops is the coding job's redaction list
-// (runner.SecretEnvsVar): there are no mounts for it to name, and an empty list
-// beside no secret would claim a redactor had something to hide.
+// caller by. Its mounts, resources and timeout are its coding twin's — it
+// serves the same profile, over the same repositories, and it reaches the same
+// buckets (F15 records that reach: a review job writes one run's record and
+// artifact, and the whole of runs/ is more than that; the owner accepted it on
+// 2026-10-17 and narrowing it is a bucket-layout change). The one environment
+// entry it drops is the coding job's redaction list (runner.SecretEnvsVar):
+// there are no mounts for it to name, and an empty list beside no secret would
+// claim a redactor had something to hide.
+//
+// It holds no Vertex grant either (the owner's ruling of 2026-11-04): the
+// design's grant list is the two conditions, the account's own bucket reach
+// and nothing else, and under O1 the reviewer's model calls are served by the
+// credentials service, so roles/aiplatform.user on this account would be a
+// reach no task of the design names. reviewVariant says what stays in its
+// environment.
 func ProjectReviewJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]ProjectJob, error) {
 	coding, err := ProjectJobs(lc, bucket, vertex)
 	if err != nil {
@@ -272,6 +279,12 @@ func ProjectReviewJobs(lc *localcfg.Config, bucket string, vertex bool) (map[str
 		// check is within a set; this is the same check across the two, and it
 		// fails closed rather than deploying the variant onto an account that
 		// may read a secret.
+		//
+		// The name rule (config.ValidClaudeAccountRef, over the accounts a
+		// policy admits) now refuses such an account before this is reached,
+		// and this stays the last line: it is the only place the two sets are
+		// compared, so a config that arrives by another road is refused here
+		// too.
 		for name, c := range coding {
 			if c.Job != v.Job && c.ServiceAccount.AccountID != v.ServiceAccount.AccountID {
 				continue
@@ -307,11 +320,13 @@ func ReviewVariantAccount(account string) string {
 // reviewVariant is one coding job's review-only twin. j is the coding job the
 // deployer built for that (profile, provider, account), so the variant inherits
 // everything about the triple — its provider, its resources, its timeout, its
-// bucket and token conditions, its Vertex grant and its environment — and
-// differs from it in exactly three things: the name and service account carry
-// the review suffix (so no account of the deployment is ever shared with a
-// coding job), the mounts are empty, and the environment is the credentials
-// service's address.
+// bucket and token conditions and its environment — and differs from it in
+// exactly four things: the name and service account carry the review suffix (so
+// no account of the deployment is ever shared with a coding job), the mounts
+// are empty, the environment is the credentials service's address, and the
+// Vertex grant is not carried (the owner's ruling of 2026-11-04: the design's
+// grant list names no aiplatform role, and under O1 the reviewer's model calls
+// go through the credentials service).
 func reviewVariant(lc *localcfg.Config, j ProjectJob) ProjectJob {
 	// The account segment is the policy's spelling, not the axis's: the axis
 	// writes the default account as the empty string (config.ProjectJobAccounts)
@@ -346,7 +361,15 @@ func reviewVariant(lc *localcfg.Config, j ProjectJob) ProjectJob {
 			Title:      gcp.ProjectTokenBucketConditionTitle(saID),
 			Expression: j.TokenCondition.Expression,
 		},
-		Vertex: j.Vertex,
+		// No Vertex grant, whatever the coding job's: the module's one
+		// aiplatform member is what this field drives (modules/project/sa.tf),
+		// and the design's grant list for a review variant does not name it.
+		// The two Vertex names in the environment above stay, because they are
+		// not a grant: an agent on `agent.auth: vertex` refuses to start
+		// without CLOUD_ML_REGION and ANTHROPIC_VERTEX_PROJECT_ID
+		// (internal/agent/env.go), and a variant that cannot start is not a
+		// narrower variant.
+		Vertex: false,
 	}
 }
 
@@ -676,14 +699,21 @@ func projectSecretEnv(lc *localcfg.Config, name string) (string, bool) {
 
 // projectJobAddress is the address of a project job's Cloud Run job in the
 // installation root (roots/installation/main.tf calls modules/project as
-// "project", one instance per job name).
-var projectJobAddress = regexp.MustCompile(`^module\.project\["[^"]+"\]\.google_cloud_run_v2_job\.this$`)
+// "project", one instance per job name, and as "project_review" for the
+// review-only variants of CSR7). The variant is the same module over the same
+// axis, so its job is the same resource under the second instance's address and
+// is refused the same way.
+var projectJobAddress = regexp.MustCompile(`^module\.project(?:_review)?\["[^"]+"\]\.google_cloud_run_v2_job\.this$`)
 
 // RefuseProjectJobDeletes refuses a plan that deletes or replaces a project
-// job, whatever --allow-delete names. Retiring a project job is deferred: the
-// module protects its job from deletion and, unlike the workflow module
-// (modules/workflow/job.tf's allow_job_delete, internal/infra/retire.go), has
-// no switch to lift it. A profile removed, or one whose provider or secrets
+// job, whatever --allow-delete names, and a review-only variant with it: the
+// variant is the same module instance under the same axis, it is protected
+// from deletion the same way, and a plan that removes the coding job of a
+// triple removes its variant too (the variant is derived from the coding set,
+// so the profile that disappears takes both). Retiring a project job is
+// deferred: the module protects its job from deletion and, unlike the workflow
+// module (modules/workflow/job.tf's allow_job_delete, internal/infra/retire.go),
+// has no switch to lift it. A profile removed, or one whose provider or secrets
 // change and so its job's name, plans the old instance's delete, and an apply
 // let through would destroy the launchers' grants on the job and then fail on
 // the deletion protection, leaving the job unlaunchable. So the plan is

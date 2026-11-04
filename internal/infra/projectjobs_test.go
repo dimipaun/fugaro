@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
@@ -1157,18 +1158,35 @@ func TestNoSecretValueReadUnderInternal(t *testing.T) {
 // destroy the launchers' grants on the job and then fail on the deletion
 // protection. So the delete of a project job is refused before the apply
 // whatever --allow-delete names, with the way back and the reason.
+//
+// The review-only variant of a project job is refused with it (the owner's
+// ruling of 2026-11-04): it is the same module instance over the same axis
+// (CSR7), protected from deletion the same way, and a profile that disappears
+// takes the coding job and its variant in one plan — so a variant the guard
+// did not name would be the one project job an apply could still destroy.
+//
+// Mutation (run, restore): drop the `(?:_review)?` from projectJobAddress, or
+// the "module.project_review[" prefix from installation.go's hints — the
+// variant's branches below fail (the refusal does not fire, or the delete
+// comes back with no hint at all).
 func TestProjectJobDeletesAreRefusedUntilRetirementExists(t *testing.T) {
-	job := `module.project["` + gcp.ProjectJobName("standard", "github", "") + `"].google_cloud_run_v2_job.this`
-	for _, acts := range [][]string{{"delete"}, {"delete", "create"}, {"create", "delete"}} {
-		p := &tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: job, Change: tf.Change{Actions: acts}}}}
-		err := RefuseProjectJobDeletes(p)
-		if err == nil {
-			t.Fatalf("%v of %s is not refused", acts, job)
-		}
-		for _, want := range []string{job, "retiring a project job is not supported yet", "deletion protection", "restore the profile"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("%v: err = %v, want it to name %q", acts, err, want)
+	coding := `module.project["` + gcp.ProjectJobName("standard", "github", "") + `"].google_cloud_run_v2_job.this`
+	variant := `module.project_review["` + credsvc.ReviewJobName("standard", "github", config.DefaultClaudeAccount) + `"].google_cloud_run_v2_job.this`
+	for _, job := range []string{coding, variant} {
+		for _, acts := range [][]string{{"delete"}, {"delete", "create"}, {"create", "delete"}} {
+			p := &tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: job, Change: tf.Change{Actions: acts}}}}
+			err := RefuseProjectJobDeletes(p)
+			if err == nil {
+				t.Fatalf("%v of %s is not refused", acts, job)
 			}
+			for _, want := range []string{job, "retiring a project job is not supported yet", "deletion protection", "restore the profile"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v: err = %v, want it to name %q", acts, err, want)
+				}
+			}
+		}
+		if hints := DeleteHints(planDeleting(job), nil); len(hints) != 1 || !strings.Contains(hints[0], "profiles") {
+			t.Errorf("deleting %s: hints = %v, want one naming the local config's profiles", job, hints)
 		}
 	}
 	// Anything else the module holds may still be replaced with
@@ -1176,14 +1194,12 @@ func TestProjectJobDeletesAreRefusedUntilRetirementExists(t *testing.T) {
 	// deletes no project job is untouched.
 	for _, addr := range []string{
 		`module.project["` + gcp.ProjectJobName("standard", "github", "") + `"].google_storage_bucket_iam_member.job`,
+		`module.project_review["` + credsvc.ReviewJobName("standard", "github", config.DefaultClaudeAccount) + `"].google_storage_bucket_iam_member.job`,
 		"module.installation.google_cloud_run_v2_job.history[0]",
 	} {
 		if err := RefuseProjectJobDeletes(planDeleting(addr)); err != nil {
 			t.Errorf("deleting %s: %v", addr, err)
 		}
-	}
-	if hints := DeleteHints(planDeleting(job), nil); len(hints) != 1 || !strings.Contains(hints[0], "profiles") {
-		t.Errorf("hints = %v, want one naming the local config's profiles", hints)
 	}
 }
 
@@ -1407,6 +1423,53 @@ func TestReviewJobVariantMountsNoSecretAtAll(t *testing.T) {
 	}
 }
 
+// TestReviewJobVariantCarriesNoVertexGrant: an installation built on Vertex
+// grants its coding jobs' accounts roles/aiplatform.user, and the review
+// variant of those same jobs carries no such grant (the owner's ruling of
+// 2026-11-04). The design's grant list for a review variant is its two bucket
+// conditions and its own account and nothing else (spec §2, plan CSR7), and
+// under O1 the reviewer's model calls are served by the credentials service,
+// so an aiplatform member on this account is a reach no task of the design
+// names. modules/project/sa.tf's one vertex member is what the flag drives, so
+// the entry is the whole of the grant.
+//
+// The two Vertex names stay in the variant's plain environment: they are not a
+// grant, and an agent on `agent.auth: vertex` refuses to start without
+// CLOUD_ML_REGION and ANTHROPIC_VERTEX_PROJECT_ID (internal/agent/env.go) — a
+// variant that cannot start is not a narrower variant. What it does not hold is
+// the grant that would let a Vertex call leave the container.
+//
+// Mutation (run, restore): give the variant its coding job's flag (Vertex:
+// j.Vertex) — every variant below fails.
+func TestReviewJobVariantCarriesNoVertexGrant(t *testing.T) {
+	const lc = m4LocalConfig + projectJobRepoLC + m5Additions + projectAccountAxisLC
+	c := parseLC(t, lc)
+	coding, err := ProjectJobs(c, "fugaro-runs-proj-1234", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	review, err := ProjectReviewJobs(c, "fugaro-runs-proj-1234", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(coding) == 0 || len(review) != len(coding) {
+		t.Fatalf("the fixture built %d coding jobs and %d review variants: this test's contrast is gone", len(coding), len(review))
+	}
+	for name, j := range coding {
+		if !j.Vertex {
+			t.Fatalf("the coding job %s is not on Vertex although the installation is: this test's contrast is gone", name)
+		}
+	}
+	for name, v := range review {
+		if v.Vertex {
+			t.Errorf("the review variant %s carries its coding job's Vertex flag: the module would grant the account roles/aiplatform.user, which the design's grant list does not name", name)
+		}
+		if v.Env[VertexRegionEnv] != c.Region || v.Env[VertexProjectEnv] != c.GCPProject {
+			t.Errorf("the review variant %s carries %s = %q and %s = %q, want the installation's own region and project: the names are what an agent on agent.auth: vertex needs to start, and they are not the grant", name, VertexRegionEnv, v.Env[VertexRegionEnv], VertexProjectEnv, v.Env[VertexProjectEnv])
+		}
+	}
+}
+
 // TestSharedProjectJobKeepsItsAppKey is this task's other half: adding the
 // variant does not narrow an existing job. Every coding job of the axis still
 // mounts the App key exactly as it did, under the same service account and with
@@ -1515,20 +1578,36 @@ profiles:
 // installation — an account called acme-personal-review deploys its own job
 // and no variant of acme-personal exists to collide with it.
 //
-// Mutation (run, restore): drop the cross-set check in ProjectReviewJobs — the
-// variant of acme-personal is built onto acme-personal-review's account and
-// this test, which expects the refusal, fails.
+// Two lines refuse the name, and this test takes both: the local config's own
+// rule (config.ValidateClaudeAccounts, which localcfg.Parse runs) and the
+// published policy's, which is what the deployer builds the job sets from — so
+// `fugaro update` stops on the name before it plans a variant, and a config
+// that never met the loader's rule stops here.
+//
+// ProjectReviewJobs' cross-set check is the third and the last, and the name
+// rules now stand in front of it: it is kept because it is the only place the
+// two sets are compared, and it fails closed if a config ever reaches the
+// deployer by another road.
+//
+// Mutation (run, restore): drop the name rule from
+// config.ValidClaudeAccountRef — the policy admits the name, ProjectReviewJobs
+// builds the variant of acme-personal onto acme-personal-review's own job name
+// and service account, and this test, which expects the refusal, fails.
 func TestReviewJobVariantRefusesAnAccountCarryingTheSuffix(t *testing.T) {
 	const lc = m4LocalConfig + projectJobRepoLC + m5Additions + projectReviewSuffixAccountLC
-	coding := projectJobsFor(t, lc)
-	if len(coding) != 3 {
-		t.Fatalf("the fixture's coding jobs are %v, want the no-account job and the two accounts'", sortedJobNames(coding))
+	c, err := localcfg.Parse([]byte(lc))
+	if err == nil || !strings.Contains(err.Error(), config.ReviewVariantSuffix) {
+		t.Fatalf("the local config naming acme-personal-review parsed: err = %v, want the account name rule's refusal", err)
 	}
-	c := parseLC(t, lc)
 	if _, err := ProjectReviewJobs(c, "fugaro-runs-proj-1234", false); err == nil {
-		t.Fatalf("the review variants of %v were built although acme-personal-review holds the job name and the service account of acme-personal's variant", sortedJobNames(coding))
-	} else if !strings.Contains(err.Error(), "acme-personal-review") {
-		t.Errorf("the refusal does not name the account to rename: %v", err)
+		t.Fatal("the review variants were built although acme-personal-review holds the job name and the service account of acme-personal's variant")
+	} else if !strings.Contains(err.Error(), config.ReviewVariantSuffix) {
+		// The policy names the rule and the field, never the account it read
+		// (the no-echo rule), so the suffix is what the refusal is asked for.
+		t.Errorf("the refusal does not name the suffix the account carries: %v", err)
+	}
+	if _, err := ProjectJobs(c, "fugaro-runs-proj-1234", false); err == nil {
+		t.Error("the coding jobs were built although the policy refuses the account name acme-personal-review")
 	}
 }
 

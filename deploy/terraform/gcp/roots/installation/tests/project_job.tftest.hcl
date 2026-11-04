@@ -699,4 +699,18 @@ run "review_variant_mounts_no_secret_and_is_told_the_service" {
     condition     = google_storage_bucket_iam_member.job.condition[0].title == "fugaro-fugaro-p-standard-git-e415ffc5" && google_storage_bucket_iam_member.job_tokens.condition[0].title == "fugaro-project-tokens-fugaro-p-standard-git-e415ffc5"
     error_message = "the review variant's two condition titles must be gcp's own derivation over its account id"
   }
+
+  # And no aiplatform member: the entry above is the one internal/infra writes
+  # for a review variant (vertex = false, whatever the coding job of the same
+  # triple carries — the owner's ruling of 2026-11-04, held by
+  # TestReviewJobVariantCarriesNoVertexGrant). The grant list of a review
+  # account is its two conditions and its own bucket reach and nothing else:
+  # under O1 its model calls are served by the credentials service, so a
+  # member here would be a reach the design does not name. sa.tf's one vertex
+  # member is what job.vertex drives, so this is the plan-level half of the
+  # Go test's assertion.
+  assert {
+    condition     = length(google_project_iam_member.vertex) == 0
+    error_message = "the review variant's account must hold no roles/aiplatform.user: the design's grant list does not name it (O1 serves the reviewer's model calls through the credentials service)"
+  }
 }
