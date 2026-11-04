@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -200,7 +201,124 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 	return out, nil
 }
 
+// ProjectReviewJobs is the installation's review-only job variants, by job
+// name: one per (profile, provider, account) the coding set deploys (design
+// docs/cloud-senior-review/reconciliation.md's CSR7 entry, D883, D893(c) and
+// the owner's ruling O1 of 2026-11-01). They are the jobs a project's own
+// senior review runs on, so the container that runs a test from the head under
+// review (D885) is never the container a coding run holds its credentials in.
+//
+// It is a set of its own rather than entries in ProjectJobs', and that is load
+// bearing: the coding set is `config.ProjectJobAccounts`' axis read once (the
+// one function the deployer, the launcher and the runner compute it with), and
+// every consumer of that set — the credentials service's admitted accounts
+// (credsvc.ReviewJobAccountsFor derives the variants FROM the axis, not from a
+// second job set), doctor's census, the golden plan's count of `module.project`
+// instances — would see a doubled axis if the variants were in it. The root
+// deploys this map as a module instance of its own, with the installation's
+// secrets deliberately NOT handed in (roots/installation/main.tf): a variant
+// that is not offered a container cannot mount one.
+//
+// What a variant mounts is nothing (O1): no github-app-key, no review-signing
+// key and no Claude OAuth token either. The block is D892(a)'s ruling of the
+// same day — the credentials service signs, so no key is in the container — and
+// the reason is one property of the job, not three: a variant runs untrusted
+// code with the job's service account, so every credential in its environment
+// is a credential that code can read (and, on the shared OS user, one whose
+// /proc residual it can read).
+//
+// What it is handed instead is the credentials service's address
+// (providers.EnvCredentialsServiceURL, D893(c)), the way a per-repository
+// launch hands it to a repository's own job. Its git provider is therefore the
+// keyless one (internal/gitprov/providers reads the variable), which fetches the
+// read-only installation token from the service by name when it is needed and
+// refreshes it through the Token(ctx, minValid) contract; the request carries
+// the App's ID alone and the repository and permissions are the service's
+// decision (credsvc/github.go). Nothing is handed in — no per-launch secret is
+// created and no execution's environment carries a token value — and an
+// installation that has opted into no service gets no variant URL, exactly as a
+// repository job gets none: the variable's presence is the opt-in
+// (credentialsServiceLaunchEnv's rule, read here off the same local config).
+//
+// A variant's name, service account and account segment are
+// credsvc.ReviewJobName's and credsvc.ReviewServiceAccountID's, over the axis
+// spelled the way the policy speaks it: the one spelling the service admits a
+// caller by. Its mounts, resources, timeout and Vertex grant are its coding
+// twin's — it serves the same profile, over the same repositories, and it
+// reaches the same buckets (F15 records that reach: a review job writes one
+// run's record and artifact, and the whole of runs/ is more than that; the
+// owner accepted it on 2026-10-17 and narrowing it is a bucket-layout change).
+// The one environment entry it drops is the coding job's redaction list
+// (runner.SecretEnvsVar): there are no mounts for it to name, and an empty list
+// beside no secret would claim a redactor had something to hide.
+func ProjectReviewJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]ProjectJob, error) {
+	coding, err := ProjectJobs(lc, bucket, vertex)
+	if err != nil {
+		return nil, err
+	}
+	if len(coding) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]ProjectJob, len(coding))
+	for _, j := range coding {
+		if err := addProjectJob(out, reviewVariant(lc, j)); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// reviewVariant is one coding job's review-only twin. j is the coding job the
+// deployer built for that (profile, provider, account), so the variant inherits
+// everything about the triple — its provider, its resources, its timeout, its
+// bucket and token conditions, its Vertex grant and its environment — and
+// differs from it in exactly three things: the name and service account carry
+// the review suffix (so no account of the deployment is ever shared with a
+// coding job), the mounts are empty, and the environment is the credentials
+// service's address.
+func reviewVariant(lc *localcfg.Config, j ProjectJob) ProjectJob {
+	// The account segment is the policy's spelling, not the axis's: the axis
+	// writes the default account as the empty string (config.ProjectJobAccounts)
+	// and the review job holds no token of its own to join, so the mapping
+	// config.ProjectJobTokenAccount makes for the token-carrying entries is made
+	// here for the variant's name — the same mapping, and the same account name,
+	// credsvc.ReviewJobAccountsFor computes the admitted set with.
+	account := j.Account
+	if account == "" {
+		account = config.DefaultClaudeAccount
+	}
+	saID := credsvc.ReviewServiceAccountID(j.Profile, j.Provider, account)
+	env := maps.Clone(j.Env)
+	delete(env, runner.SecretEnvsVar)
+	if cs := lc.CredentialsService; cs != nil && cs.URL != "" {
+		env[providers.EnvCredentialsServiceURL] = cs.URL
+	}
+	return ProjectJob{
+		Profile:        j.Profile,
+		Provider:       j.Provider,
+		Account:        account,
+		Job:            credsvc.ReviewJobName(j.Profile, j.Provider, account),
+		ServiceAccount: ServiceAccount{AccountID: saID, DisplayName: gcp.ProjectSADisplayName(j.Profile, j.Provider, account+credsvc.ReviewVariantSuffix)},
+		Image:          j.Image,
+		CPU:            j.CPU,
+		Memory:         j.Memory,
+		TaskTimeoutS:   j.TaskTimeoutS,
+		Env:            env,
+		SecretEnv:      map[string]string{},
+		BucketCondition: Condition{
+			Title:      gcp.BucketConditionTitle(saID),
+			Expression: j.BucketCondition.Expression,
+		},
+		TokenCondition: Condition{
+			Title:      gcp.ProjectTokenBucketConditionTitle(saID),
+			Expression: j.TokenCondition.Expression,
+		},
+		Vertex: j.Vertex,
+	}
+}
+
 // addProjectJob adds j to the job set, refusing a job whose name or service
+
 // account another (profile, provider, account) already holds. Both are derived
 // with a short hash (gcp.ProjectJobName, gcp.ProjectServiceAccountID), so a
 // collision is improbable rather than impossible, and a silent replacement in

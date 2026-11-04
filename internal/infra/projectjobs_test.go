@@ -17,6 +17,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -1273,5 +1274,233 @@ func TestAddProjectJobRefusesACollision(t *testing.T) {
 		if out[a.Job].Account != a.Account || len(out) != 1 {
 			t.Errorf("the job set moved on a refused add: %v", out)
 		}
+	}
+}
+
+// projectReviewJobsFor is ProjectReviewJobs over a local config, for the tests
+// of the review-only variant (CSR7).
+func projectReviewJobsFor(t *testing.T, lc string) map[string]ProjectJob {
+	t.Helper()
+	c := parseLC(t, lc)
+	jobs, err := ProjectReviewJobs(c, "fugaro-runs-proj-1234", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return jobs
+}
+
+// reviewAccount is the account segment the review variant's own names carry:
+// the policy's spelling of the account, which the axis writes as the empty
+// string for the default account (config.ProjectJobTokenAccount's mapping, the
+// one credsvc.ReviewJobAccountsFor makes too).
+func reviewAccount(account string) string {
+	if account == "" {
+		return config.DefaultClaudeAccount
+	}
+	return account
+}
+
+// TestReviewJobVariantMountsNoAppKey is CSR7's red step: the review-only
+// variant of a project job mounts no github-app-key, while the coding job of
+// the same (profile, provider, account) triple keeps the key it has always
+// mounted. The variant is the container that runs a test from the head under
+// review (design docs/cloud-senior-review D885), so an App key in its
+// environment is a credential the code under review can read.
+//
+// Mutation (run, restore): add github-app-key to the variant's secret_env —
+// this test fails, and so does TestReviewJobVariantMountsNoSecretAtAll.
+func TestReviewJobVariantMountsNoAppKey(t *testing.T) {
+	coding := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectAccountAxisLC)
+	review := projectReviewJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectAccountAxisLC)
+	if len(review) == 0 {
+		t.Fatalf("no review variant was built for an installation whose profiles serve accounts: there is no variant, and the only job the axis knows mounts the key")
+	}
+	var mounted int
+	for _, j := range coding {
+		if j.SecretEnv[config.ReservedSecrets[config.GitHubAppKeySecret]] == config.GitHubAppKeySecret {
+			mounted++
+		}
+	}
+	if mounted != len(coding) {
+		t.Fatalf("%d of %d coding jobs mount the App key: this test's contrast is gone (the golden and the Terraform test hold that mount)", mounted, len(coding))
+	}
+	for name, j := range review {
+		for env, secret := range j.SecretEnv {
+			if secret == config.GitHubAppKeySecret {
+				t.Errorf("the review variant %s mounts the App key as %s: the variant runs the head under review, so the App's private key must not be in its environment", name, env)
+			}
+		}
+	}
+}
+
+// TestReviewJobVariantServiceAccountHasNoAppKeyAccessor is the grant half of
+// the same property: the variant's service account holds no secretAccessor on
+// the App key's container. modules/project/sa.tf grants one member per value of
+// a job's secret_env (google_secret_manager_secret_iam_member.job iterates it),
+// so the account's grant list is the variant's own secret_env — empty — and
+// never the coding job's, whose account is a different service account
+// entirely.
+//
+// Mutation (run, restore): mount the key on the variant (the entry that makes
+// sa.tf grant the accessor) — this test fails.
+func TestReviewJobVariantServiceAccountHasNoAppKeyAccessor(t *testing.T) {
+	coding := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectAccountAxisLC)
+	review := projectReviewJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectAccountAxisLC)
+	if len(review) != len(coding) {
+		t.Fatalf("the review variants are %d and the coding jobs %d: the variant is one job per coding job", len(review), len(coding))
+	}
+	codingSA := map[string]string{}
+	for _, j := range coding {
+		codingSA[j.ServiceAccount.AccountID] = j.Job
+	}
+	for name, j := range review {
+		// The grant list: what sa.tf's for_each would iterate.
+		for _, secret := range j.SecretEnv {
+			if secret == config.GitHubAppKeySecret {
+				t.Errorf("the review variant %s names %s in its grant list: its service account %s would hold secretAccessor on the App key", name, secret, j.ServiceAccount.AccountID)
+			}
+		}
+		if prev, shared := codingSA[j.ServiceAccount.AccountID]; shared {
+			t.Errorf("the review variant %s runs as %s, which is the coding job %s's account: the variant's grant list would then be that job's", name, j.ServiceAccount.AccountID, prev)
+		}
+	}
+}
+
+// TestReviewJobVariantMountsNoSecretAtAll is O1's property (the owner's ruling
+// of 2026-11-01) and D892(a)'s: the variant mounts nothing at all — no App key,
+// no review-signing key and no CLAUDE_CODE_OAUTH_TOKEN either — so a process
+// that reads /proc in the container finds nothing of the person's, and the
+// read-only installation token is fetched from the credentials service rather
+// than handed in (D893(c)).
+//
+// The mount is also the whole of the grant (sa.tf iterates it) and the whole of
+// the redaction list (runner.SecretEnvsVar, computed from the job's own
+// mounts), so an empty secret_env is the variant's environment carrying no
+// secret-shaped variable at all.
+//
+// Mutation (run, restore): add the signing key or the account's Claude token
+// back to the variant's secret_env (the two shapes earlier drafts of the
+// design had) — this test fails on whichever was added.
+func TestReviewJobVariantMountsNoSecretAtAll(t *testing.T) {
+	review := projectReviewJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectAccountAxisLC)
+	if len(review) == 0 {
+		t.Fatal("no review variant was built, so this pins nothing")
+	}
+	for name, j := range review {
+		if len(j.SecretEnv) != 0 {
+			t.Errorf("the review variant %s mounts %v: under O1 it mounts no secret at all, and its account's grant list is its mounts", name, j.SecretEnv)
+		}
+		if got, ok := j.Env[runner.SecretEnvsVar]; ok {
+			t.Errorf("the review variant %s carries %s = %q: the redaction list names the variables its secrets are mounted as, and it mounts none", name, runner.SecretEnvsVar, got)
+		}
+		for _, v := range slices.Collect(maps.Values(config.ReservedSecrets)) {
+			if _, ok := j.Env[v]; ok {
+				t.Errorf("the review variant %s carries %s, a reserved secret's variable, as plain environment: the variant mounts nothing", name, v)
+			}
+		}
+		if _, ok := j.Env[config.ClaudeAccountSecret(config.DefaultClaudeAccount)]; ok {
+			t.Errorf("the review variant %s carries a Claude token's variable in its environment", name)
+		}
+		if _, ok := j.Env[config.ClaudeAccountSecret("acme-personal")]; ok {
+			t.Errorf("the review variant %s carries a named account's token variable in its environment", name)
+		}
+	}
+}
+
+// TestSharedProjectJobKeepsItsAppKey is this task's other half: adding the
+// variant does not narrow an existing job. Every coding job of the axis still
+// mounts the App key exactly as it did, under the same service account and with
+// the same conditions, so an installation that converges deploys a second job
+// beside its jobs and moves none of them.
+//
+// Mutation (run, restore): drop the App key from the shared job (or build the
+// variant in place of it instead of beside it) — this test and the Terraform
+// test used by CSR7 both fail.
+func TestSharedProjectJobKeepsItsAppKey(t *testing.T) {
+	coding := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectAccountAxisLC)
+	axis := []string{"", "acme-personal"}
+	if len(coding) != len(axis) {
+		t.Fatalf("the fixture deployed %v, want one coding job per account of %v", sortedJobNames(coding), axis)
+	}
+	for _, account := range axis {
+		saID := gcp.ProjectServiceAccountID("standard", "github", account)
+		name := gcp.ProjectJobName("standard", "github", account)
+		j, ok := coding[name]
+		if !ok {
+			t.Fatalf("the fixture deployed %v, want %s among them", sortedJobNames(coding), name)
+		}
+		if got := j.SecretEnv[config.ReservedSecrets[config.GitHubAppKeySecret]]; got != config.GitHubAppKeySecret {
+			t.Errorf("the shared job %s mounts github-app-key = %q, want %q: this task adds a variant, it does not narrow an existing job", name, got, config.GitHubAppKeySecret)
+		}
+		if j.ServiceAccount.AccountID != saID {
+			t.Errorf("the shared job %s runs as %s, want %s", name, j.ServiceAccount.AccountID, saID)
+		}
+		if want := gcp.BucketConditionTitle(saID); j.BucketCondition.Title != want {
+			t.Errorf("the shared job %s has the bucket condition title %q, want %q", name, j.BucketCondition.Title, want)
+		}
+		if want := gcp.ProjectTokenBucketConditionTitle(saID); j.TokenCondition.Title != want {
+			t.Errorf("the shared job %s has the token condition title %q, want %q", name, j.TokenCondition.Title, want)
+		}
+	}
+}
+
+// TestProjectJobAccountsKnowsTheVariant: the review variant is derived from the
+// account axis the launcher, the deployer and the runner all compute the job
+// set with (config.ProjectJobAccounts), and never added to it. Every account
+// the axis names for a profile gets one variant, named the way
+// credsvc.ReviewJobName spells it over the policy's own account name — which is
+// what makes the launcher's lookup, the deployer's job set and the runner's
+// recomputation agree on one name — and the coding job of the same triple stays
+// where it was.
+//
+// Mutation (run, restore): spell the variant's account segment from the axis's
+// own value (the empty string for the default account) or add the variants to
+// config.ProjectJobAccounts — the first stops matching credsvc's names (and so
+// the service admits an account nobody deployed), the second gives the coding
+// jobs a second entry and every consumer that walks the axis a doubled set.
+func TestProjectJobAccountsKnowsTheVariant(t *testing.T) {
+	const lc = m4LocalConfig + projectJobRepoLC + m5Additions + projectAccountAxisLC
+	coding := projectJobsFor(t, lc)
+	review := projectReviewJobsFor(t, lc)
+	if len(review) != len(coding) {
+		t.Fatalf("the review variants are %v and the coding jobs %v: one variant per coding job", sortedJobNames(review), sortedJobNames(coding))
+	}
+	seen := map[string]string{}
+	for name, j := range coding {
+		wantName := credsvc.ReviewJobName(j.Profile, j.Provider, reviewAccount(j.Account))
+		wantSA := credsvc.ReviewServiceAccountID(j.Profile, j.Provider, reviewAccount(j.Account))
+		v, ok := review[wantName]
+		if !ok {
+			t.Errorf("the coding job %s has no review variant: the review set is %v, want %s among them (credsvc.ReviewJobName over the same triple)", name, sortedJobNames(review), wantName)
+			continue
+		}
+		if v.Job != wantName || v.Profile != j.Profile || v.Provider != j.Provider || reviewAccount(v.Account) != reviewAccount(j.Account) {
+			t.Errorf("the review variant %s = %+v, want the coding job %s's own triple under the review suffix", wantName, v, name)
+		}
+		if v.ServiceAccount.AccountID != wantSA {
+			t.Errorf("the review variant %s runs as %s, want %s (credsvc.ReviewServiceAccountID)", wantName, v.ServiceAccount.AccountID, wantSA)
+		}
+		if prev, dup := seen[wantName]; dup {
+			t.Errorf("the review variants of %s and %s are one job: %s", prev, name, wantName)
+		}
+		seen[wantName] = name
+	}
+}
+
+// TestReviewJobVariantFollowsTheProfiles: an installation whose profiles a
+// shared job cannot serve gets no variant, and one that declares no profile
+// gets none at all. The review job is a project job with a suffix, so it
+// follows the same predicate the coding set follows (infra.SharedJobProvider) —
+// a variant for a Bitbucket profile would be a job every consumer of the axis
+// looks for and no deployment creates.
+func TestReviewJobVariantFollowsTheProfiles(t *testing.T) {
+	if got := projectReviewJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions); got != nil {
+		t.Errorf("an installation with no profiles built the review variants %v, want none", sortedJobNames(got))
+	}
+	bitbucket := `profiles:
+  standard: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h }
+`
+	if got := projectReviewJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+bitbucket); len(got) != 0 {
+		t.Errorf("a Bitbucket profile built the review variants %v, want none: no shared job serves it", sortedJobNames(got))
 	}
 }

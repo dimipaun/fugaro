@@ -542,3 +542,155 @@ run "bitbucket_job_needs_no_app_id" {
     error_message = "a non-github project job plans without FUGARO_GITHUB_APP_ID"
   }
 }
+
+# The review-only variant of a project job (design docs/cloud-senior-review,
+# CSR7): the container a project's own senior review runs on, so it holds no
+# credential of the installation's — and this run is where that is a plan-level
+# fact rather than a promise.
+#
+# The variant plans the module exactly as roots/installation/main.tf's
+# module.project_review invokes it, with one difference in the variant's favour:
+# var.secrets below holds the App key's container, which the root does NOT hand
+# this instance (it passes `secrets = {}`). Every assertion would therefore
+# still hold with the containers handed in, which is the point — the empty
+# secret_env is what makes sa.tf's for_each grant nothing, and a plan that set
+# one entry would show up here as a secretAccessor member and a mounted
+# variable.
+#
+# What the variant is given instead of credentials is the credentials service's
+# address in its plain environment (internal/infra's ProjectReviewJobs, from
+# the local config's credentials_service block): its git provider is then the
+# keyless one, which fetches the run's read-only installation token from the
+# service by name when it is needed (D893(c)), and the App's ID — the only
+# thing the request carries — stays in the environment beside it.
+#
+# Mutation (run, restore): put the App key (or the account's Claude token) into
+# job.secret_env — the member, the mount and the "no secret variable at all"
+# assertions all fail, which is TestReviewJobVariantServiceAccountHasNoAppKeyAccessor
+# read from the Terraform side.
+run "review_variant_mounts_no_secret_and_is_told_the_service" {
+  command = plan
+
+  module {
+    source = "../../modules/project"
+  }
+
+  variables {
+    secrets = {
+      github-app-key = "fugaro-project-aurora-github-app-key-440b21d6e639db12"
+    }
+    job = {
+      profile  = "standard"
+      provider = "github"
+      account  = "personal"
+      job      = "fugaro-p-standard-github-personal-re-e415ffc5d9e1"
+      service_account = {
+        account_id   = "fugaro-p-standard-git-e415ffc5"
+        display_name = "Fugaro project job standard github personal-review"
+      }
+      image          = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/base:0.9.0"
+      cpu            = "4"
+      memory         = "8Gi"
+      task_timeout_s = 2820
+      env = {
+        FUGARO_CREDENTIALS_SERVICE_URL = "https://fugaro-creds-abc123-ue.a.run.app"
+        FUGARO_GITHUB_APP_ID           = "123456789"
+        FUGARO_PROJECT                 = "aurora"
+        FUGARO_GCP_PROJECT             = "proj-1234"
+        FUGARO_REGION                  = "us-east5"
+      }
+      secret_env = {}
+      bucket_condition = {
+        title = "fugaro-fugaro-p-standard-git-e415ffc5"
+        expression = join(" || ", [
+          "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")",
+          "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/cache/\")",
+          "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/locks/\")",
+        ])
+      }
+      token_condition = {
+        title      = "fugaro-project-tokens-fugaro-p-standard-git-e415ffc5"
+        expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"
+      }
+      vertex = false
+    }
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-p-standard-git-e415ffc5@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-p-standard-git-e415ffc5@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  # The App key's container is in var.secrets and this account reaches no
+  # secret at all: the accessor list is the job's own secret_env (sa.tf), and
+  # the variant's is empty. This is the assertion
+  # shared_job_mounting_the_app_key_keeps_the_accessor makes the other way
+  # round, and it is the one that has to fail if the variant is ever given a
+  # mount again.
+  assert {
+    condition     = length(google_secret_manager_secret_iam_member.job) == 0
+    error_message = "the review variant's account must hold no secretAccessor: it mounts no secret, and the App key's container must be unreadable from the container that runs the head under review"
+  }
+  # Nothing is mounted, so no variable of the container carries a
+  # value_source: the variant's environment is plain values only.
+  assert {
+    condition = !anytrue([for e in google_cloud_run_v2_job.this.template[0].template[0].containers[0].env :
+    length(e.value_source) > 0])
+    error_message = "the review variant must mount no secret at all (O1, 2026-11-01)"
+  }
+  assert {
+    condition = !anytrue([for e in google_cloud_run_v2_job.this.template[0].template[0].containers[0].env :
+    contains(["CLAUDE_CODE_OAUTH_TOKEN", "FUGARO_GITHUB_APP_PRIVATE_KEY"], e.name)])
+    error_message = "no Claude token and no App key may be named in the review variant's environment, mounted or plain"
+  }
+
+  # The service's address, plain — the one thing that names the credentials
+  # service, and the keyless git path's switch (providers.EnvCredentialsServiceURL).
+  assert {
+    condition = length([for e in google_cloud_run_v2_job.this.template[0].template[0].containers[0].env :
+    e if e.name == "FUGARO_CREDENTIALS_SERVICE_URL" && e.value == "https://fugaro-creds-abc123-ue.a.run.app" && length(e.value_source) == 0]) == 1
+    error_message = "a review variant must carry the credentials service's URL in its plain environment: its read-only installation token is fetched from there (D893(c))"
+  }
+  # No key material travels in plain environment either: a variable named for a
+  # key or a token, with a value and no value_source, is a credential in the
+  # container the head under review runs in.
+  assert {
+    condition = !anytrue([for e in google_cloud_run_v2_job.this.template[0].template[0].containers[0].env :
+    (strcontains(lower(e.name), "key") || strcontains(lower(e.name), "token")) && length(e.value_source) == 0 && e.value != ""])
+    error_message = "no key material may travel in the review variant's plain environment"
+  }
+
+  # The variant is the job of its own (profile, provider, account) triple and
+  # of no other: the name the runner matches, the account it runs as, and the
+  # account segment the log label carries.
+  assert {
+    condition     = google_cloud_run_v2_job.this.name == "fugaro-p-standard-github-personal-re-e415ffc5d9e1"
+    error_message = "the review variant's name must be credsvc.ReviewJobName of its (profile, provider, account)"
+  }
+  assert {
+    condition     = google_service_account.job.account_id == "fugaro-p-standard-git-e415ffc5"
+    error_message = "the review variant's account must be credsvc.ReviewServiceAccountID of the (profile, provider, account) it serves"
+  }
+  assert {
+    condition     = google_cloud_run_v2_job.this.labels["fugaro_account"] == "personal-review"
+    error_message = "the review variant's fugaro_account label must name the account segment it serves"
+  }
+
+  # The reach it does keep: the runs bucket, to its own account, under the two
+  # conditions internal/infra gave it (F15: a review job writes one run's
+  # record and artifact, and the whole of runs/ is more than it needs — the
+  # owner accepted the reach on 2026-10-17, and narrowing it is a
+  # bucket-layout change this design does not make).
+  assert {
+    condition     = google_storage_bucket_iam_member.job.member == "serviceAccount:fugaro-p-standard-git-e415ffc5@proj-1234.iam.gserviceaccount.com"
+    error_message = "the review variant's bucket grant must be to its own account"
+  }
+  assert {
+    condition     = google_storage_bucket_iam_member.job.condition[0].title == "fugaro-fugaro-p-standard-git-e415ffc5" && google_storage_bucket_iam_member.job_tokens.condition[0].title == "fugaro-project-tokens-fugaro-p-standard-git-e415ffc5"
+    error_message = "the review variant's two condition titles must be gcp's own derivation over its account id"
+  }
+}

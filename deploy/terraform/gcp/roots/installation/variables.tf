@@ -285,3 +285,34 @@ variable "project_jobs" {
   default  = {}
   nullable = false
 }
+
+variable "project_review_jobs" {
+  description = "The review-only variants of those jobs (design docs/cloud-senior-review, CSR7), by Cloud Run job name: one entry per (profile, provider, account), the module's own object type, with an empty secret_env. Deployed as a module instance of its own, with no secret container handed in. fugaro update writes it from the same profiles; empty for an installation that names none."
+  type = map(object({
+    profile  = string
+    provider = string
+    account  = string
+    job      = string
+    service_account = object({
+      account_id   = string
+      display_name = string
+    })
+    image          = string
+    cpu            = string
+    memory         = string
+    task_timeout_s = number
+    env            = map(string)
+    secret_env     = map(string)
+    bucket_condition = object({
+      title      = string
+      expression = string
+    })
+    token_condition = object({
+      title      = string
+      expression = string
+    })
+    vertex = bool
+  }))
+  default  = {}
+  nullable = false
+}
