@@ -118,11 +118,18 @@ func doctorManagedAudit(ctx context.Context, lc *localcfg.Config, c *crm.Service
 		last = newestAuditRecord(older)
 	}
 	if last == nil {
+		// The sentence names the window it read. "No managed apply has been
+		// recorded yet" would be a claim about the project's whole history, and
+		// this check has not read it: it reads two days, and a project whose
+		// last apply is a week old would be told none was ever recorded. An
+		// owner reading a false never is worse served than one told which two
+		// days were looked at, and the fix line says how to see the rest.
 		return &doctorCheck{ID: doctorManagedAuditID, OK: true, Severity: "info",
-			Problem: fmt.Sprintf("no managed agent apply has been recorded for %s yet", pluginwire.Printable(lc.Name)),
-			Fix:     "nothing to do: a managed apply files its record under gs://" + bucket + "/" + managedmode.AuditPrefix}
+			Problem: fmt.Sprintf("no managed agent apply has been recorded for %s in the last two days", pluginwire.Printable(lc.Name)),
+			Fix: "nothing to do: a managed apply files its record under gs://" + bucket + "/" + managedmode.AuditPrefix +
+				", and a record older than this check's two-day window is listed with gcloud storage ls gs://" + bucket + "/" + managedmode.AuditPrefix}
 	}
-	age := managedAuditAge(now.Sub(last.At))
+	age := recordAge(now.Sub(last.At))
 	problem := fmt.Sprintf("the last managed agent apply is %s at %s (%s ago): %s, plan digest %s; %s filed in the last day",
 		pluginwire.Printable(last.Command), last.At.UTC().Format(time.RFC3339), age, last.Verdict,
 		pluginwire.Printable(last.PlanDigest), auditRecordCount(len(records)))
@@ -164,12 +171,14 @@ func auditRecordCount(n int) string {
 	}
 }
 
-// managedAuditAge is how old the last apply is, in the words doctor already
-// renders an age with: humanAge's hours and minutes inside a day, ageDays'
-// whole days beyond it. A record whose own time is in the future — a clock
-// skew, or an object somebody else wrote, which this bucket permits — is "0s"
-// and never a negative age.
-func managedAuditAge(d time.Duration) string {
+// recordAge is how old one record is, in the words doctor already renders an
+// age with: humanAge's hours and minutes inside a day, ageDays' whole days
+// beyond it. Neither of those two does the pair on its own — humanAge says
+// "72h" for three days and ageDays says "less than a day" for an hour — so the
+// choice between them is made here rather than at each reader. A record whose
+// own time is in the future — a clock skew, or an object somebody else wrote,
+// which this bucket permits — is "0s" and never a negative age.
+func recordAge(d time.Duration) string {
 	if d < 0 {
 		d = 0
 	}

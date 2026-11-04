@@ -128,6 +128,12 @@ func TestDoctorShowsTheLastManagedAgentApply(t *testing.T) {
 		if !strings.Contains(c.Problem, "no managed agent apply") {
 			t.Errorf("problem = %q, want the check to say none was recorded", c.Problem)
 		}
+		// The sentence names the days it read. This check reads two, so a
+		// project whose last apply is older than that has records this line
+		// would otherwise deny the existence of.
+		if !strings.Contains(c.Problem, "in the last two days") {
+			t.Errorf("problem = %q, want the sentence to name the window it read rather than claim nothing was ever recorded", c.Problem)
+		}
 		if !c.OK || c.Severity != "info" {
 			t.Errorf("check = %+v, want a project that never ran a managed apply to pass, as a measurement", c)
 		}
