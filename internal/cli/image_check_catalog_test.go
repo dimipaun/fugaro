@@ -376,6 +376,33 @@ func TestCatalogCheckJobBuildsNothingFromAnUnreadableRecord(t *testing.T) {
 	_ = sum
 }
 
+// TestCatalogCheckJobBuildsNothingForAnEntryItHasNoRecordOf: an entry the
+// catalog has, with a definition copied and no build record, is due — and the
+// job still submits nothing, because the record is the only place a rebuild
+// could read the commit its image bakes. Building it once is the operator's
+// own build, from that repository's checkout.
+func TestCatalogCheckJobBuildsNothingForAnEntryItHasNoRecordOf(t *testing.T) {
+	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("runtime"), 5))
+	key, err := config.CatalogDockerfileKey("runtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.put(t, key, []byte(catalogCheckOtherDef))
+
+	lines, err := runCatalogCheck(t)
+	if got := buildPosts(f.fb); got != 0 {
+		t.Fatalf("builds submitted = %d, want 0", got)
+	}
+	if err == nil {
+		t.Fatal("the catalog check reported no failure for an entry with no build record")
+	}
+	l := lineFor(t, lines, "runtime")
+	if l.Decision != imagecheck.CheckFailed || l.Severity != "ERROR" || !slices.Contains(l.Reasons, imagecheck.ReasonNoRecord) ||
+		!strings.Contains(l.Error, "no build record") || !strings.Contains(l.Error, "fugaro image build runtime") || *l.BuildID != "" {
+		t.Fatalf("runtime line = %+v", l)
+	}
+}
+
 // TestCatalogCheckJobStopsAtTheRunBuildCap: one run submits at most the cap's
 // builds, whatever the catalog says changed, and an entry the cap stopped is
 // recorded as a rebuild left for the next run rather than dropped or failed.
@@ -473,13 +500,17 @@ func TestCatalogCheckJobRefusesAnEntryAssignedToAnotherRepository(t *testing.T) 
 	spec.Repositories = spec.Repositories[:1]
 	spec.Repositories[0].Entries = []string{"runtime"}
 	f := newCatalogCheckJob(t, spec)
+	// Everything the build the spec asks for would need is there, so only the
+	// guard stands between this run and a build of acme/other's Dockerfile
+	// submitted as acme/app's account.
+	f.seed(t, "runtime", "acme/app", catalogCheckOtherDef, "sha256:"+strings.Repeat("9", 64))
 
 	lines, err := runCatalogCheck(t)
+	if got := buildPosts(f.fb); got != 0 {
+		t.Fatalf("builds submitted = %d, want 0: the entry's Dockerfile is another repository's, and its build would run as acme/app's account", got)
+	}
 	if err == nil {
 		t.Fatal("the catalog check reported no failure for an entry assigned to another repository")
-	}
-	if got := buildPosts(f.fb); got != 0 {
-		t.Fatalf("builds submitted = %d, want 0", got)
 	}
 	l := lineFor(t, lines, "runtime")
 	if l.Decision != imagecheck.CheckFailed || l.Severity != "ERROR" ||
