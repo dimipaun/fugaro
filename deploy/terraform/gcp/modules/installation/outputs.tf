@@ -96,6 +96,15 @@ output "coordinator_job" {
   value       = local.deploy_coordinator ? google_cloud_run_v2_job.coordinator[0].name : null
 }
 
+output "mcp_server" {
+  description = "The coordinator's front door: its Cloud Run service name, its region and the URL Cloud Run assigned it (D920, D934), or null on an installation the owner has not turned the front door on for. The URL is the one the front door's own metadata documents must name as the resource every caller authenticates for (M5), so a later stage reads it back from here rather than deriving it — Cloud Run's URL carries the project number, which nothing computes offline. fugaro update's --mcp-server is the only writer of the variable this reads."
+  value = local.mcp_server_on ? {
+    name   = google_cloud_run_v2_service.coordinator_front_door[0].name
+    region = var.region
+    url    = google_cloud_run_v2_service.coordinator_front_door[0].uri
+  } : null
+}
+
 output "catalog_check_service_account" {
   description = "The project's catalog check job account email (D1148), or null on an installation whose project publishes no catalog. fugaro update passes it to every repository root, which grants it actAs (roles/iam.serviceAccountUser) on that repository's build account — the one grant that lets a scheduled catalog rebuild run as the entry's own repository."
   value       = var.catalog_check == null ? null : google_service_account.catalog_check[0].email

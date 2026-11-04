@@ -398,6 +398,35 @@ variable "coordinator" {
   }
 }
 
+variable "mcp_server" {
+  description = "The coordinator's front door: its public Cloud Run service, the one endpoint a standard MCP client reaches without a Google identity (D920), and the resource the coordinator's OAuth endpoints answer on (D931's tools, M5's authorization server). OFF by default (null) — the whole switch D934 asks for: an installation that has not asked for a front door plans exactly what it planned before, one that opted into the coordinator for its read-only view included, and a public write endpoint (spawn_task spends money) is never a side effect of an upgrade. service is the Cloud Run service's own name; image is the coordinator's image, which the module reads out of var.coordinator (one CLI binary serves the sweep and the front door). The front door runs as the coordinator's OWN account: there is no second identity to grant (spec.md §1), and that account already holds what the endpoints behind this port need — the FP's database admin (D922) and the runs bucket's read (D932). No environment variable and no secret is declared here: the process reads Cloud Run's own PORT, and M5's endpoints and M7's resource handler bring their configuration with them."
+  type = object({
+    service = string
+    image   = string
+  })
+  default = null
+
+  validation {
+    condition = var.mcp_server == null ? true : (
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.mcp_server.service)) &&
+      length(var.mcp_server.image) > 0
+    )
+    error_message = "mcp_server needs a Cloud Run service name (lower-case letters, digits and dashes) and the image it runs."
+  }
+
+  # The front door is the coordinator's own service, so it needs the
+  # coordinator: the account it runs as is created with that opt-in, and an
+  # installation without one has no identity for a public endpoint to serve as.
+  # Reading the other variable here is deliberate (Terraform 1.9's
+  # cross-variable validation): the alternative is a flag that plans nothing
+  # and says nothing, which is how an owner ends up believing a front door
+  # exists.
+  validation {
+    condition     = var.mcp_server == null || var.coordinator != null
+    error_message = "mcp_server needs var.coordinator: the front door runs as the coordinator's own account (spec.md §1), and an installation that has not opted into the coordinator has no such account."
+  }
+}
+
 variable "project_secrets" {
   description = "Project-wide secret containers: logical name -> secret ID (gcp.ProjectSecretID), fugaro update creates/adopts each; values are never set by Terraform."
   type        = map(string)

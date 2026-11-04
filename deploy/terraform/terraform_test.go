@@ -1549,7 +1549,17 @@ var (
 	// repository root reads it — the member of the actAs that root makes on its
 	// own build account, which is why it is a variable there and not a
 	// reference: the repository root never sees the installation module.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator)\[0\]\.member|google_service_account\.catalog_check\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
+	// "allUsers" is the ONE literal member of this list, and it is on it
+	// knowingly: it is D920's public invoker binding on the coordinator's
+	// front door (modules/installation/coordinator.tf), which the owner decided
+	// on 2026-11-04 — the endpoint is public, the handler is the gate, and a
+	// standard MCP client reaches it with no Google identity. It is a literal
+	// because it must be readable in the plan, and it is here rather than
+	// reached through a local so that the one resource that carries it is the
+	// one the scan accepts. The widening is not what makes the plan covered:
+	// internal/infra/tf's grant rules do NOT accept an allUsers member, so the
+	// update whose plan carries this grant asks its own typed confirmation.
+	allowedMemberExprs = regexp.MustCompile(`^("allUsers"|each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator)\[0\]\.member|google_service_account\.catalog_check\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
 
 	// A custom role of one of this run's projects, spelled as the literal path
 	// "projects/${var.<project>}/roles/<id>" rather than read from the role
