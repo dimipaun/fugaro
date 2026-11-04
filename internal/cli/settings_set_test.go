@@ -1659,6 +1659,30 @@ func TestSettingsSetAddEntryRefusesABlockWithNoKeyField(t *testing.T) {
 	}
 }
 
+// TestSettingsSetAddEntryRefusesAMapTheFileDoesNotHold: a map's entry is one
+// member (D1162) and this block's members are required together, so a map the
+// file does not hold cannot be built one member at a time: either order leaves
+// the block the loader wants incomplete and is refused with the loader's own
+// sentence, with the file unchanged. That is why the help text says the pair
+// edits the members of a map the file already holds.
+func TestSettingsSetAddEntryRefusesAMapTheFileDoesNotHold(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML(""))
+	before := readFileString(t, path)
+	for _, pair := range []string{"command=go test -run {id} ./...", "each={id}"} {
+		out, _, err := execute(t, "settings", "set", "workflows.web.commands.rerun_failed", "--add-entry", pair, "--layer", "repo", "--yes")
+		if err == nil {
+			t.Fatalf("--add-entry %s built half of a map the file did not hold:\n%s", pair, out)
+		}
+		if !strings.Contains(err.Error(), "workflows.web.commands.rerun_failed") {
+			t.Errorf("the refusal does not name the block: %v", err)
+		}
+		if readFileString(t, path) != before {
+			t.Errorf("the refused write left something behind in fugaro.yaml:\n%s", readFileString(t, path))
+		}
+	}
+}
+
 // TestSettingsSetRemoveEntryRefusesToEmptyTheList: the pair takes an object
 // list's last entry away the same way --remove takes a string list's last item,
 // and the loader tells an absent key from an empty list, so both the write and
