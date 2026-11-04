@@ -74,7 +74,7 @@ design is now written to them.
 | D | The question | The recommendation | The alternative, and its cost | Blocks |
 | --- | --- | --- | --- | --- |
 | **D920** | Is the MCP endpoint public, with the bearer token as the only gate, or does it keep P8's Cloud Run IAM invoker? | **Public.** `allUsers` may invoke, and the handler is the gate. Every unauthenticated path is a metadata document or an authorization endpoint with no work behind it; every refusal is audited. It is the only shape a standard MCP client can use. | **Keep IAM invoker** (P8's recorded departure): every caller — including a chat client — needs a Google identity with the project's invoker role and a way to mint an ID token for it. No standard MCP client can, so the feature is reachable only by software already written against Fugaro; the OAuth flow the owner's spec asks for becomes dead code. Cost of the recommendation: the endpoint is on the public internet and the handler is the whole perimeter (spec.md §8). | Everything. |
-| **D921** | Which OAuth library? | **zitadel/oidc** for the protocol machinery, with storage and Dynamic Client Registration supplied by the coordinator (the owner's spec already expects DCR to be hand-written). Apache 2.0, OpenID-certified, no new runtime. | **ory/fosite**: the same missing DCR, plus a heavier plugin surface for a flow this small. **A standalone third-party server**: a second resident service in a self-hosted product whose point is one service per project, on a licence the owner has not confirmed — the owner's own open item. Cost of the recommendation: a new dependency in `go.mod`, and a library whose storage interfaces must be fitted to a database it has never seen. | Every endpoint in D921's own scope; the implementation plan's first code task. |
+| **D921** | Which OAuth library? | **zitadel/oidc** for the protocol machinery, with storage and Dynamic Client Registration supplied by the coordinator (the owner's spec already expects DCR to be hand-written). **Apache 2.0 and OpenID-certified are the library's own claims and this container cannot check either** — the owner answered with the licence **UNCONFIRMED**, which is why confirming it is the first owner check (§6) and a gate on M5. No new runtime. | **ory/fosite**: the same missing DCR, plus a heavier plugin surface for a flow this small. **A standalone third-party server**: a second resident service in a self-hosted product whose point is one service per project, on a licence the owner has not confirmed — the owner's own open item, which the answer does not close for the library it did pick either. Cost of the recommendation: a new dependency in `go.mod`, a library whose storage interfaces must be fitted to a database it has never seen, and **a licence check that has to pass before any code is written**. | Every endpoint in D921's own scope; the implementation plan's first code task — **and M5 waits on the licence**. |
 | **D922** | Where do token records, client registrations and the audit trail live? | **A separate top-level subtree with reads and writes refused to everything but the coordinator's service account.** Only hashes are stored, and a database read yields no presentable value. | **Reuse the `coordinator/` subtree.** It is `.read: USER` today (F7), so every person the installation admits may read the client list, the redirect URIs, the revocation state and the whole tool-call audit. The "store only hashes" rule protects the token values and nothing else: the client list, the redirect URIs, the revocation state and the whole tool-call audit have no protection at all. Cost of the recommendation: one more subtree in the rules, one more account able to write it, and a census test to keep both honest. | D920's audit requirement, D929's client secrets, F22. |
 | **D923** | How does the person sign in at the authorize step? | **The custom-token flow the installation already has.** The authorize step hands the person to Fugaro's existing signer, and the coordinator verifies the resulting Firebase ID token exactly as F5 already does. No provider page. | **Enable a sign-in provider** so Firebase can host the page the owner's spec describes: it lifts the install's refusal of any public sign-up path (F6) for the whole project, which is the change `docs/mobile-auth` D221 exists to prevent and which that work's reconciliation classifies **Wrong**. Cost of the recommendation: the authorize step is a redirect to a Fugaro-owned page rather than to a provider's, so the flow is one hop longer than a client's most familiar shape, and a project that has *already* enabled a provider keeps it (the design neither enables nor disables one). | The whole auth flow. |
 | **D924** | How is a token's spend limit enforced? | **The coordinator passes the token's limit in its own variable on the execution override, and the run's ceiling becomes the tighter of that and the job's own.** The override mechanism already exists (F19) and the gateway already enforces whatever ceiling the run resolves (F10), so the limit is enforced where every other cap is. A variable of its own rather than a lower value written over the job's is what makes "only narrows" **structural**: the run takes the tighter side itself, so a wrong number at the coordinator cannot widen a ceiling. | **Overwrite the job's own cap variable with `min(...)`.** It works, and it puts the whole "only narrows" property in the launcher's arithmetic rather than in the run — one launcher bug away from a widened ceiling. **Through the agent's `--max-budget-usd`** (F27): the limit would be enforced by the agent's own estimate, which the repository's own notes record as wrong by roughly an order of magnitude for non-Anthropic models. **Or: not enforced, merely recorded** — which is no limit at all. Cost of the recommendation: a small core change (one variable in the run's ceiling, `internal/runner/spend.go`) that is not this work's to make unilaterally, plus the launch grant of F18. | D931; the spend half of spec.md §6. |
@@ -115,12 +115,15 @@ it. **The design in [spec.md](spec.md) and the tasks in
 | **D933** | **The recommendation** — **only the project's launcher and operator lists may call the front door**: a launcher may call the task tools, an operator may also read the audit record | With a public endpoint, "any signed-in identity of the project" (F29's sentence) would make every Firebase user of the project a launcher, and the two lists `fugaro user` maintains would govern nothing. |
 | **D934** | **The recommendation** — the front door is **OFF** on every installation until a person turns it on, on the coordinator's own opt-in | An installation that opted into the coordinator for its read-only aggregator must not acquire a **public write endpoint** — `submit_task` spends money — as a side effect of an upgrade. |
 
-**The four the owner should read first.** **D920** decides whether the owner's spec is
-implementable at all, and it reverses a departure the coordinator's own plan recorded deliberately —
-so the reason has to be worth it, and spec.md §8 is the price. **D923** is not a design choice but a
-collision with a decision already taken once (`docs/mobile-auth` D221) on the identical question.
-**D922** is the one place where "store only hashes" is not enough by itself. **D924** is the one
-place where the owner's own words, read literally, would produce a limit that does not hold.
+**The four the owner read first.** **D920** decided whether the owner's spec is implementable at
+all, and it reverses a departure the coordinator's own plan recorded deliberately — the answer was
+the recommendation, so the reason was judged worth it and spec.md §8 is the price. **D923** was not a
+design choice but a collision with a decision already taken once (`docs/mobile-auth` D221) on the
+identical question; the answer keeps that decision. **D922** is the one place where "store only
+hashes" is not enough by itself — and it is the answer the owner took **against** the recommendation,
+which is why §6 and §8 now state the exposure it accepts. **D924** is the one place where the
+owner's own words, read literally, would produce a limit that does not hold; the answer takes the
+recommendation, so the limit holds.
 
 **What each answer changes.** A different answer to D920 or D923 is a different document: the flow,
 the endpoint's shape and §8 all move. A different answer to D927, D928, D930, D932 or D934 is a
@@ -212,12 +215,15 @@ discover:
    route automatic rather than a second command; nothing in this design changes because of it, and
    §7 of the plan now says so.
 2. **Person-class reads landed.** The credentials service already admits the installation's
-   **operators** by verified Google ID token email: `internal/credsvc/auth.go:350` (`PersonAccounts`,
-   the installation's operators), `:890` (`VerifyReadCaller`), with the class itself **BB4** in
-   `docs/bitbucket-credentials/implementation-plan.md:131` (G4) and the same on the GitHub side.
-   **This is a precedent for D933 and not a mechanism this design reuses:** a *person* is already
-   admitted to a project-scoped service by a verified email, so D933's answer — the project's own
-   two lists — is the shape the repository already has rather than one invented here.
+   **operators** by verified Google ID token email, and it does so on **both** forges: the list is
+   `internal/credsvc/auth.go:375` (`PersonAccounts`, described at `:350` as "the installation's
+   operators"), Bitbucket's read mint verifies through `:890` (`VerifyReadCaller`, called at
+   `internal/credsvc/bitbucket.go:337`), and GitHub's read route verifies through `:968`
+   (`VerifyPersonCaller`, called from `internal/credsvc/githubread.go:231`). The class itself is
+   **BB4** in `docs/bitbucket-credentials/implementation-plan.md:131` (G4). **This is a precedent for
+   D933 and not a mechanism this design reuses:** a *person* is already admitted to a project-scoped
+   service by a verified email, so D933's answer — the project's own two lists — is the shape the
+   repository already has rather than one invented here.
 3. **Three commands are now on `main`**: `fugaro settings` (`internal/cli/settings.go:61`),
    `fugaro rigor` (`internal/cli/settings_set.go:45` names `fugaro rigor set` as the owner of the
    rigor keys) and `fugaro accounts` (`internal/cli/accounts.go:25`). F21's gap is unchanged — none

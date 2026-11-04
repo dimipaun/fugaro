@@ -280,8 +280,9 @@ it adds it because D920 otherwise leaves a public endpoint with no rule at all.
 **It is also the shape the repository already has**, which is why it is a list and not a new model:
 the credentials service admits the installation's **operators** by their verified Google ID token
 email, through the caller class its design calls the **person class** (BB4) —
-`internal/credsvc/auth.go:350` (`PersonAccounts`) and `:890` (`VerifyReadCaller`), with the class's
-own row at `docs/bitbucket-credentials/implementation-plan.md:131`. A person reaching a
+`internal/credsvc/auth.go:375` (`PersonAccounts`, "the installation's operators" at `:350`), reached
+on Bitbucket by `:890` (`VerifyReadCaller`) and on GitHub by `:968` (`VerifyPersonCaller`), with the
+class's own row at `docs/bitbucket-credentials/implementation-plan.md:131`. A person reaching a
 project-scoped service by a verified email, against a list the installation already maintains, is
 therefore the pattern here rather than an invention — and it is the same two lists `fugaro user`
 writes (`internal/cli/user.go:66`).
