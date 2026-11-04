@@ -29,8 +29,8 @@ Gone from `fugaro.yaml`, from a workflow:
 | `rebuild.*` (`check`, `max_age`, `lockfiles`, `base`, `paths`) | the daily check's triggers for this repository's image | `internal/config/config.go:714` |
 
 Gone from the **project layer file** too: the same `image.*` keys and `rebuild.*`
-(`schemas/project-layer.schema.json:265`, `:338`) — a profile can set them today, so removing them
-from `fugaro.yaml` alone would leave a second door to the same build.
+(`schemas/project-layer.schema.json:236` is the profile's `image` member) — a profile can set them, so
+removing them from `fugaro.yaml` alone would leave a second door to the same build.
 
 **What is not removed, and why it is named here:** `image_name` and `needs`
 (`internal/config/config.go:619`, `:626`) are the catalog's own selectors and stay; `checkout`
@@ -38,9 +38,10 @@ from `fugaro.yaml` alone would leave a second door to the same build.
 tombstones stay with them — they are not settings but refusals with a migration sentence
 (`internal/config/image.go:119`, `:122`), which is the mechanism the keys above reuse (C4, D1195).
 
-The eleven scope rows that make the removed keys settable
-(`internal/config/scope.go:108`, `:113`, `:131`, `:135`) go with them, and so do their entries in
-`ExecutableKeys` and `NonExecutableImageKeys` (`internal/config/scope.go:179`, `:189`). **Not every
+The eleven scope rows that made the removed keys settable
+(`internal/config/scope.go:108`, `:113`, `:131`, `:135`) went with them, and so did their entries in
+`ExecutableKeys` and `NonExecutableImageKeys` (`internal/config/scope.go:179`, `:189`): no scope row, no
+registry row and no settings-schema member stands for a removed key now. **Not every
 `image.*` row goes**: `internal/config/scope.go:106` and `:107` are `image.node` and `image.jdk`, the
 two tombstones that stay, so the removal's first scope row is `:108` and its last `:135`. A key that is
 gone from the scope table is a key no settings command may write, which is the second half of the
@@ -280,15 +281,19 @@ No compatibility, in the shape the tree already uses for a removed key.
   command that replaces it — the pattern the `image.node` and `image.jdk` tombstones already set
   (`internal/config/image.go:119`, `:122`). The keys stay decodable as tombstones and their *refusal*
   is the message; a bare "field image not found" names nothing and is not what ships (D1195).
-- **The schemas**: `schemas/fugaro.schema.json:358` loses `image` (`:396` for `dockerfile`, `:511`
-  for `rebuild`), and its mutual-exclusion clauses (`:306`) shrink to the pairs that survive
-  (`image_name` with `needs`); `schemas/project-layer.schema.json:265` loses the same keys (`:338` for
-  `rebuild`). **`schemas/settings.schema.json` loses the removed keys' own member rows** — the
-  twenty-one at `schemas/settings.schema.json:832` through `:1181` (`:1145` is
-  `workflows.*.image.setup`), beside their rows in `internal/settings/registry.go:229`, without which
+- **The schemas**: `schemas/fugaro.schema.json` loses the workflow's `image`, `dockerfile` and
+  `rebuild` members (`schemas/fugaro.schema.json:332` is the `image` member the two 0.7.0 tombstones
+  keep), and its mutual-exclusion clauses shrink to the pairs that survive (`image_name` with `needs`);
+  `schemas/project-layer.schema.json` loses the same keys (`schemas/project-layer.schema.json:236` is
+  its profile's `image` member). **`schemas/settings.schema.json` loses the removed keys' own member
+  rows** — the twenty-one that sat between the two 0.7.0 tombstones the document keeps
+  (`schemas/settings.schema.json:832`, `:1100`), beside their rows in
+  `internal/settings/registry.go:229`, without which
   `fugaro settings set` would still offer a key the config refuses — **and keeps `base_images` and the
   flattened `image_catalog.*` rows untouched** (`schemas/settings.schema.json:547`), as
-  `image_name`/`needs` keep their members (D1196).
+  `image_name`/`needs` keep their members (D1196). The two 0.7.0 tombstones are the control: a schema
+  member and a registry row stand for each of them still, because what the config refuses and the
+  document has to explain is a key the settings family may not write.
 - **The goldens and the fixtures**: the **50** files under `testdata/` that carry one of the three
   keys — `grep -rlE '^[[:space:]]*(image|dockerfile|rebuild):' testdata/` — are the removal's own
   list, in four directories (`testdata/config/{valid,invalid}`, `testdata/project-layer/{valid,invalid}`);

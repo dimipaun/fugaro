@@ -141,8 +141,9 @@ code. A `:line` is a **declaration** line at `777b902d`; the symbol is what to s
   base image instead. `checkout` keeps both its values, but what `baked` points at is no longer built by
   the engine — a decision, not an implementation detail (D1191).
 
-- **F23: Exists. The project layer can set the same keys.** `schemas/project-layer.schema.json:265`
-  (`image`) and `:338` (`rebuild`), validated through `internal/config/layer.go:305`
+- **F23: Exists. The project layer can set the same keys.** `schemas/project-layer.schema.json:236`
+  (the profile's `image` member, whose `rebuild` sibling sat beside it), validated through
+  `internal/config/layer.go:305`
   (`ParseProjectLayer`, which refuses a key outside its scope). A profile is therefore a **second door**
   to the removed build, so the removal has four configuration surfaces to move — this repository's
   schema, the project layer's, the settings document's and the registry's — and not one.
@@ -308,13 +309,16 @@ its `Recommendation` and both costs, so the answer and the price of the other re
   "removed" means "refused and named", not "absent from the source".
 
 - **D1196 (the schemas, and the rows that make the keys writable) — default-by-owner: not objected, 2026-11-04.** No answer came back on this one, so the design's recommendation stands as the default — on the reason the recommendation itself gives below, which is the reason a reader should re-check before building it.
-  Recommendation: `schemas/fugaro.schema.json:358` loses `image` (`:396` for `dockerfile`, `:511` for
-  `rebuild`) and its mutual-exclusion clauses (`:306`) shrink to `image_name` with `needs`;
-  `schemas/project-layer.schema.json:265` loses the same keys (`:338` for `rebuild`);
+  Recommendation: `schemas/fugaro.schema.json:332` loses `image` (`dockerfile` and
+  `rebuild` leave with it) and its mutual-exclusion clauses shrink to `image_name` with `needs`;
+  `schemas/project-layer.schema.json:236` loses the same keys;
   `internal/settings/registry.go:229` loses the twenty-one rows that make the keys writable (`:234`,
   `:254`, `:258`, and the `layerRow`s at `internal/settings/registry.go:454`, `:458`, `:477`, `:481`),
-  and `schemas/settings.schema.json:1145` loses their twenty-one members (`:832`, `:1181`) — a key
-  with no scope row and no registry row is a key `settings set` must not offer. `image_catalog.*`
+  and `schemas/settings.schema.json` loses the twenty-one members that sat between the two 0.7.0
+  tombstones it keeps (`schemas/settings.schema.json:832`, `:1100`) — a key
+  with no scope row and no registry row is a key `settings set` must not offer: R2 landed this half, and
+  the registry and the settings schema carry none of them now, which is the 0 the folder's pin
+  re-counts. `image_catalog.*`
   (`schemas/settings.schema.json:547`), `base_images` and the catalog's own rows are untouched.
   Cost of the alternative: a schema that still allows a removed key is the file a person's editor
   validates against, so it would let a `fugaro.yaml` through that the CLI refuses — the schema would be

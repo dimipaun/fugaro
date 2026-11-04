@@ -100,10 +100,20 @@ func TestRegistryCoversEveryConfigField(t *testing.T) {
 	for _, r := range Rows() {
 		have[r.Key] = true
 	}
+	// The repository-image removal's tombstones are the one set of struct
+	// fields that stays without a row: the config refuses every one of those
+	// keys by name, so a row here would offer a settings command a key no
+	// fugaro.yaml and no project layer may write (D1195, D1196). The
+	// exemption is exactly config.RemovedImageKeys' paths — the list the
+	// refusal itself is built from — and not a hand-written set.
+	removed := map[string]bool{}
+	for _, k := range config.RemovedImageKeys() {
+		removed[strings.Replace(k, "workflows.*.", "layer.profiles.*.", 1)] = true
+	}
 	var missing []string
 	add := func(paths []string) {
 		for _, p := range paths {
-			if !have[p] {
+			if !have[p] && !removed[p] {
 				missing = append(missing, p)
 			}
 		}
@@ -157,6 +167,33 @@ func TestRegistryFugaroYAMLKeysMatchConfigScopes(t *testing.T) {
 				t.Errorf("%s: claims the %s layer and is not a config.Scopes key", r.Key, l)
 				break
 			}
+		}
+	}
+}
+
+// TestRemovedImageKeysLeaveTheSettingsRegistry: a registry row is what makes a
+// key settable — `fugaro settings set` and `fugaro settings list` are built
+// from this table — so a row for a key the config refuses by name is a set of
+// commands that writes a fugaro.yaml the next run refuses (D1195, D1196). The
+// two 0.7.0 tombstones are the control: they are refused too, and their rows
+// stay, because the registry is also where a reader is told a key was removed
+// and sent to the guide for it.
+func TestRemovedImageKeysLeaveTheSettingsRegistry(t *testing.T) {
+	rows := map[string]bool{}
+	for _, r := range Rows() {
+		rows[r.Key] = true
+	}
+	for _, k := range config.RemovedImageKeys() {
+		if rows[k] {
+			t.Errorf("%s still has a registry row: the settings family would offer a key the config refuses", k)
+		}
+		if lay := strings.Replace(k, "workflows.*.", "layer.profiles.*.", 1); rows[lay] {
+			t.Errorf("%s still has a registry row: a profile is a workflow, and the config refuses the key there too", lay)
+		}
+	}
+	for _, k := range []string{"workflows.*.image.node", "workflows.*.image.jdk", "layer.profiles.*.image.node", "layer.profiles.*.image.jdk"} {
+		if !rows[k] {
+			t.Errorf("%s lost its registry row: the two 0.7.0 tombstones are not settings and stay in the table", k)
 		}
 	}
 }
