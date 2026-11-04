@@ -675,9 +675,15 @@ run "review_variant_mounts_no_secret_and_is_told_the_service" {
     condition     = google_service_account.job.account_id == "fugaro-p-standard-git-e415ffc5"
     error_message = "the review variant's account must be credsvc.ReviewServiceAccountID of the (profile, provider, account) it serves"
   }
+  # The label is the axis's own spelling of the account, not the suffixed one:
+  # the variant's entry carries the account as the policy writes it and the
+  # module labels a job by that field (local.account_label), which is what the
+  # log sink selects an account's runs by. The review identity is in the name
+  # and the account id above, and a label carrying the suffix would be the sign
+  # of an entry built over the wrong spelling.
   assert {
-    condition     = google_cloud_run_v2_job.this.labels["fugaro_account"] == "personal-review"
-    error_message = "the review variant's fugaro_account label must name the account segment it serves"
+    condition     = google_cloud_run_v2_job.this.labels["fugaro_account"] == "personal"
+    error_message = "the review variant's fugaro_account label must be the account segment its entry carries (the policy's spelling, unsuffixed)"
   }
 
   # The reach it does keep: the runs bucket, to its own account, under the two
