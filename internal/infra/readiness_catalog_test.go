@@ -132,6 +132,82 @@ func TestReadinessRefusesAnUnbuiltCatalogImage(t *testing.T) {
 	}
 }
 
+// prebuiltRef is a prebuilt entry's image: the operator's own name and tag in
+// the installation's shared registry, which isCatalogImage cannot recognise
+// (it is not catalog-<entry>) and which is not the repository's own registry.
+const prebuiltRef = "us-east5-docker.pkg.dev/proj/fugaro-shared-images-0123/team-image:1.0-latest"
+
+const prebuiltCatalogBlock = `
+image_catalog:
+  entries:
+    - name: team
+      tags: [jvm]
+      default: true
+      source: { kind: image, image: "` + prebuiltRef + `" }
+`
+
+// TestReadinessDeploysAPrebuiltCatalogEntry: a prebuilt entry's job runs the
+// reference the entry states, which no Fugaro build writes, so there is no
+// build record or catalog :latest tag to find and the job is ready as written.
+// Before, readiness took the reference for the repository's own derived tag
+// and refused it with "is not <registry>/<package>:latest in the repository's
+// registry", so no prebuilt entry could be deployed at all.
+func TestReadinessDeploysAPrebuiltCatalogEntry(t *testing.T) {
+	f := newCloud(t)
+	spec, err := Repo(budgetInputs(t, prebuiltCatalogBlock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyJob(t, f, spec)
+	got, missing := catalogReadiness(t, f, spec, true)
+	if slices.ContainsFunc(missing, func(m Missing) bool { return m.Kind == MissingImage }) {
+		t.Fatalf("missing = %v, want a prebuilt entry's image to be no gate", missing)
+	}
+	for name, ws := range got.Workflows {
+		if ws.Image != prebuiltRef || ws.CatalogEntry != "team" || !ws.CatalogPrebuilt {
+			t.Errorf("workflow %s: image %s, entry %q, prebuilt %v; want the entry's own reference, team, true", name, ws.Image, ws.CatalogEntry, ws.CatalogPrebuilt)
+		}
+		if !ws.DeployJob {
+			t.Errorf("workflow %s is not deployed: %v", name, missing)
+		}
+	}
+}
+
+// TestReadinessHoldsBackAPrebuiltEntryBeforeTheCatalogShips: the shipped gate
+// covers a prebuilt entry exactly as it covers a built one, and its refusal
+// names the entry rather than a build.
+func TestReadinessHoldsBackAPrebuiltEntryBeforeTheCatalogShips(t *testing.T) {
+	f := newCloud(t)
+	spec, err := Repo(budgetInputs(t, prebuiltCatalogBlock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyJob(t, f, spec)
+	got, missing := catalogReadiness(t, f, spec, false)
+	if !slices.ContainsFunc(missing, func(m Missing) bool {
+		return m.Kind == MissingImage && strings.Contains(m.Reason, "entry team") && strings.Contains(m.Reason, "image_catalog")
+	}) {
+		t.Errorf("missing = %v, want the shipped gate's refusal naming the entry", missing)
+	}
+	for name, ws := range got.Workflows {
+		if ws.DeployJob {
+			t.Errorf("workflow %s is deployed on a catalog entry no released fugaro reads the key for", name)
+		}
+	}
+}
+
+// TestSpecRecordsABuiltCatalogEntry: a built entry's job carries the entry it
+// runs and is not marked prebuilt, so readiness keeps asking the entry's own
+// build record or tag about it.
+func TestSpecRecordsABuiltCatalogEntry(t *testing.T) {
+	_, spec := catalogSpec(t)
+	for name, ws := range spec.Workflows {
+		if ws.CatalogEntry != "base" || ws.CatalogPrebuilt {
+			t.Errorf("workflow %s: entry %q, prebuilt %v; want base, false", name, ws.CatalogEntry, ws.CatalogPrebuilt)
+		}
+	}
+}
+
 // TestReadinessHoldsBackACatalogJobNoReleasedFugaroCanRun: the key ships with
 // the catalog's own release (imageCatalogShipped), and until it does no job
 // may be deployed on an entry — the runner image would meet the key as
@@ -154,5 +230,14 @@ func TestReadinessHoldsBackACatalogJobNoReleasedFugaroCanRun(t *testing.T) {
 		if ws.DeployJob {
 			t.Errorf("workflow %s is deployed on a catalog entry no released fugaro reads the key for", name)
 		}
+	}
+}
+
+// The shipped state itself is pinned here: every other readiness test sets the
+// gate through catalogReadiness, so none of them would notice the gate being
+// false in the code that ships (issue 1659: 0.17.0 was tagged that way).
+func TestImageCatalogGateIsShipped(t *testing.T) {
+	if !imageCatalogShipped {
+		t.Fatal("imageCatalogShipped is false: readiness holds back every job a catalog entry gives its image to, in every release")
 	}
 }

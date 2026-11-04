@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -31,6 +32,70 @@ type settingsDryRunJSON struct {
 	Old      string `json:"old"`
 	New      string `json:"new"`
 	Refusal  string `json:"refusal"`
+	// The entry write's own members (D1164), added to version 1 as optional
+	// ones: a scalar write's document carries none of them, and they are what a
+	// consumer reads to draw an entry edit.
+	Operation   string            `json:"operation"`
+	EntryKey    string            `json:"entry_key"`
+	EntryValue  string            `json:"entry_value"`
+	EntryFields map[string]string `json:"entry_fields"`
+}
+
+// settingsWriteSchema reads and compiles schemas/settings-write.schema.json —
+// the contract the dry run's document is read by — and answers the compiled
+// schema beside the raw JSON, which is where a member's presence and the
+// required list are read from. Both are read before a checkout moves the
+// working directory into its own temp dir.
+func settingsWriteSchema(t *testing.T) (*jsonschema.Schema, map[string]any) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "settings-write.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, _ := doc.(map[string]any)
+	id, _ := tree["$id"].(string)
+	if id == "" {
+		t.Fatal("schemas/settings-write.schema.json has no $id")
+	}
+	c := jsonschema.NewCompiler()
+	if err := c.AddResource(id, doc); err != nil {
+		t.Fatal(err)
+	}
+	sch, err := c.Compile(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sch, tree
+}
+
+// settingsWriteOptionalMembers is the document's optional members, read off the
+// struct that writes them: a member whose json tag carries omitempty is one a
+// document may leave out, which is the whole of what D1164 added to version 1.
+// It is read from the type rather than a second list, so a member added later
+// is checked in the schema's properties without an edit here.
+func settingsWriteOptionalMembers(t *testing.T) []string {
+	t.Helper()
+	typ := reflect.TypeOf(settingsWriteDoc{})
+	var out []string
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		tag := field.Tag.Get("json")
+		name, opts, _ := strings.Cut(tag, ",")
+		if name == "" || name == "-" {
+			t.Fatalf("settingsWriteDoc.%s carries no json member name: %q", field.Name, tag)
+		}
+		if slices.Contains(strings.Split(opts, ","), "omitempty") {
+			out = append(out, name)
+		}
+	}
+	if len(out) == 0 {
+		t.Fatal("settingsWriteDoc carries no optional member, so this test would check nothing")
+	}
+	return out
 }
 
 // settingsDryRunDoc runs a dry run with --json and decodes the document it
@@ -311,37 +376,24 @@ func TestSettingsSetDryRunRefusesAKeyTheGenericPathDoesNotOwn(t *testing.T) {
 // TestSettingsSetDryRunJSONMatchesSchema validates the dry run's document
 // against schemas/settings-write.schema.json, the contract a consumer reads it
 // by. Both shapes are validated: a widening with an old and a new value, and a
-// removal, whose new value is empty.
+// removal, whose new value is empty. So are the entry write's own documents —
+// a map member, an object-list entry and an entry's removal — which carry the
+// members D1164 added to version 1.
 func TestSettingsSetDryRunJSONMatchesSchema(t *testing.T) {
+	sch, _ := settingsWriteSchema(t)
 	settingsWriteHome(t)
-	// The schema is read before the checkout moves the working directory into
-	// its own temp dir.
-	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "settings-write.schema.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, _ := doc.(map[string]any)["$id"].(string)
-	if id == "" {
-		t.Fatal("schemas/settings-write.schema.json has no $id")
-	}
-	c := jsonschema.NewCompiler()
-	if err := c.AddResource(id, doc); err != nil {
-		t.Fatal(err)
-	}
-	sch, err := c.Compile(id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 10\n"))
+	// The checkout holds two secrets, because the two entry writes below are
+	// both about a block that stays a sequence: a removal that would empty one
+	// is refused before a dry run exists to answer for it.
+	settingsWriteCheckout(t, settingsRepoWithEntries+"      - name: ci-token\n        env: CI_TOKEN\n")
 	noTerminal(t)
 
 	for _, args := range [][]string{
 		{"settings", "set", "budget.per_run_usd", "50", "--layer", "repo"},
 		{"settings", "unset", "budget.per_run_usd", "--layer", "repo"},
+		{"settings", "set", "workflows.web.commands.rerun_failed", "--add-entry", "command=go test -race -run {id} ./...", "--layer", "repo"},
+		{"settings", "set", "workflows.web.secrets", "--add-entry", "name=qa-token", "--add-entry", "env=QA_TOKEN", "--layer", "repo"},
+		{"settings", "set", "workflows.web.secrets", "--remove-entry", "app-token", "--layer", "repo"},
 	} {
 		out, _, err := execute(t, append(slices.Clone(args), "--dry-run", "--json")...)
 		if err != nil {
@@ -354,6 +406,138 @@ func TestSettingsSetDryRunJSONMatchesSchema(t *testing.T) {
 		if err := sch.Validate(inst); err != nil {
 			t.Fatalf("%v does not match schemas/settings-write.schema.json: %v\n%s", args, err, out)
 		}
+	}
+}
+
+// TestSettingsWriteDocWithoutTheEntryMembersStillDecodes: the settings-write
+// document stays at version 1 and gains the entry write's members as optional
+// ones (D1164), so the console's settings edit — which pins that version —
+// reads a document of the shape it has always read. Both halves are checked:
+// the schema declares the members without requiring them, and the document a
+// plain scalar write prints carries none of them and still validates.
+func TestSettingsWriteDocWithoutTheEntryMembersStillDecodes(t *testing.T) {
+	sch, tree := settingsWriteSchema(t)
+	settingsWriteHome(t)
+	settingsWriteCheckout(t, settingsRepoWithEntries)
+	noTerminal(t)
+
+	props, _ := tree["properties"].(map[string]any)
+	required := map[string]bool{}
+	for _, name := range tree["required"].([]any) {
+		required[name.(string)] = true
+	}
+	for _, member := range settingsWriteOptionalMembers(t) {
+		if _, ok := props[member]; !ok {
+			t.Errorf("schemas/settings-write.schema.json declares no %s property, and the struct writes it", member)
+		}
+		if required[member] {
+			t.Errorf("schemas/settings-write.schema.json requires %s, and an entry write's member is one an older document and an older consumer both go without", member)
+		}
+	}
+
+	out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo", "--dry-run", "--json")
+	if err != nil {
+		t.Fatalf("the dry run was refused: %v\n%s", err, out)
+	}
+	var printed map[string]any
+	if err := json.Unmarshal([]byte(out), &printed); err != nil {
+		t.Fatalf("the dry run printed no document: %v\n%s", err, out)
+	}
+	for _, member := range settingsWriteOptionalMembers(t) {
+		if _, ok := printed[member]; ok {
+			t.Errorf("the document of a scalar write carries %s, and no entry write produced this one:\n%s", member, out)
+		}
+	}
+	if printed["version"] != float64(1) {
+		t.Errorf("the document is version %v, and the console reads version 1", printed["version"])
+	}
+	inst, err := jsonschema.UnmarshalJSON(strings.NewReader(out))
+	if err != nil {
+		t.Fatalf("the dry run printed no document: %v\n%s", err, out)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Errorf("a document without the entry members does not match the schema: %v\n%s", err, out)
+	}
+}
+
+// TestSettingsWriteDocEntryOperationNamesTheEntry: an entry write's document
+// names the entry it is about — the operation, the field the entry is
+// addressed by, its value and the members the entry carries — so a consumer
+// draws the entry from the document instead of re-deriving it from the command
+// line (D1164). The map's entry is its one member; an object list's is its key
+// field and the fields beside it.
+func TestSettingsWriteDocEntryOperationNamesTheEntry(t *testing.T) {
+	sch, _ := settingsWriteSchema(t)
+	settingsWriteHome(t)
+	settingsWriteCheckout(t, settingsRepoWithEntries+"      - name: ci-token\n        env: CI_TOKEN\n")
+	noTerminal(t)
+
+	for _, tc := range []struct {
+		name       string
+		args       []string
+		operation  string
+		entryKey   string
+		entryValue string
+		fields     map[string]string
+	}{
+		{
+			name:       "a map member",
+			args:       []string{"settings", "set", "workflows.web.commands.rerun_failed", "--add-entry", "command=go test -race -run {id} ./...", "--layer", "repo"},
+			operation:  "add-entry",
+			entryKey:   "command",
+			entryValue: "go test -race -run {id} ./...",
+		},
+		{
+			name:       "an object-list entry",
+			args:       []string{"settings", "set", "workflows.web.secrets", "--add-entry", "name=qa-token", "--add-entry", "env=QA_TOKEN", "--layer", "repo"},
+			operation:  "add-entry",
+			entryKey:   "name",
+			entryValue: "qa-token",
+			fields:     map[string]string{"env": "QA_TOKEN"},
+		},
+		{
+			name:       "an object-list removal",
+			args:       []string{"settings", "set", "workflows.web.secrets", "--remove-entry", "app-token", "--layer", "repo"},
+			operation:  "remove-entry",
+			entryKey:   "name",
+			entryValue: "app-token",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, _, err := execute(t, append(slices.Clone(tc.args), "--dry-run", "--json")...)
+			if err != nil {
+				t.Fatalf("the dry run was refused: %v\n%s", err, out)
+			}
+			var printed map[string]any
+			if err := json.Unmarshal([]byte(out), &printed); err != nil {
+				t.Fatalf("the dry run printed no document: %v\n%s", err, out)
+			}
+			if got := printed["operation"]; got != tc.operation {
+				t.Errorf("operation is %v, want %q: the document names the entry write it describes", got, tc.operation)
+			}
+			if got := printed["entry_key"]; got != tc.entryKey {
+				t.Errorf("entry_key is %v, want %q", got, tc.entryKey)
+			}
+			if got := printed["entry_value"]; got != tc.entryValue {
+				t.Errorf("entry_value is %v, want %q", got, tc.entryValue)
+			}
+			got, _ := printed["entry_fields"].(map[string]any)
+			if len(got) != len(tc.fields) {
+				t.Fatalf("entry_fields is %v, want %v", printed["entry_fields"], tc.fields)
+			}
+			for field, want := range tc.fields {
+				if got[field] != want {
+					t.Errorf("entry_fields.%s is %v, want %q", field, got[field], want)
+				}
+			}
+			inst, err := jsonschema.UnmarshalJSON(strings.NewReader(out))
+			if err != nil {
+				t.Fatalf("the dry run printed no document: %v\n%s", err, out)
+			}
+			if err := sch.Validate(inst); err != nil {
+				t.Errorf("the entry write's document does not match the schema: %v\n%s", err, out)
+			}
+		})
 	}
 }
 

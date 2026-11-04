@@ -306,6 +306,14 @@ type WorkflowSpec struct {
 	// is the sentence a caller prints to say so. They are json:"-" because
 	// nothing outside the process that built this spec reads them.
 	Warnings []string `json:"-"`
+	// CatalogEntry is the project image catalog's entry the job's image
+	// comes from, "" when the workflow runs no catalog entry. CatalogPrebuilt
+	// is whether that entry's source is a prebuilt reference
+	// (config.SourceImage): Image is then the entry's own reference, which no
+	// Fugaro build writes and no shape can recognise (isCatalogImage), so
+	// readiness asks this rather than the image.
+	CatalogEntry    string `json:"-"`
+	CatalogPrebuilt bool   `json:"-"`
 }
 
 // Registry is the repository's own image registry.
@@ -796,10 +804,10 @@ func (c *repoCtx) effectiveCatalog() *config.Catalog {
 // on (D1149), and today's only backend is Cloud Run — a config that names
 // cloud-batch is refused where it is read until the task that makes a Batch
 // run safe, which is also the point this line starts meaning something else.
-func (c *repoCtx) catalogJobImage(name string, w config.Workflow) (string, []string, bool, error) {
+func (c *repoCtx) catalogJobImage(name string, w config.Workflow) (config.Entry, []string, bool, error) {
 	cat := c.effectiveCatalog()
 	if cat == nil || !catalog.Applies(*cat, w) {
-		return "", nil, false, nil
+		return config.Entry{}, nil, false, nil
 	}
 	choice, err := catalog.Choose(catalog.Job{
 		Catalog: *cat,
@@ -807,13 +815,13 @@ func (c *repoCtx) catalogJobImage(name string, w config.Workflow) (string, []str
 		Backend: catalog.Backend(c.lc.Backend()),
 	})
 	if err != nil {
-		return "", nil, false, userErr("workflow %s: %w", name, err)
+		return config.Entry{}, nil, false, userErr("workflow %s: %w", name, err)
 	}
 	var warnings []string
 	if choice.Warn != "" {
 		warnings = append(warnings, choice.Warn)
 	}
-	return c.catalogImage(choice.Entry), warnings, true, nil
+	return choice.Entry, warnings, true, nil
 }
 
 // Workflow is the spec of one workflow of the repository, its default
@@ -1010,14 +1018,15 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// it runs; C8b1 owns replacing both.
 	image := gcp.ImageName(c.registryPath(), slug, name) + ":latest"
 	var warnings []string
+	var entry config.Entry
 	if w.Checkout == config.CheckoutClone {
 		image = lc.BaseImage(config.BaseKind)
-	} else if img, warns, chosen, err := c.catalogJobImage(name, w); err != nil {
+	} else if e, warns, chosen, err := c.catalogJobImage(name, w); err != nil {
 		// §3.3's refusals are raised here, before the job is deployed: a
 		// job whose image cannot do its work would die mid-run instead.
 		return WorkflowSpec{}, err
 	} else if chosen {
-		image, warnings = img, warns
+		image, warnings, entry = c.catalogImage(e), warns, e
 	}
 	ws := WorkflowSpec{
 		Job:            gcp.JobName(slug, variant),
@@ -1047,6 +1056,8 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 		SecretIDs:           map[string]string{},
 		GitSecret:           c.gitSecret,
 		Warnings:            warnings,
+		CatalogEntry:        entry.Name,
+		CatalogPrebuilt:     entry.Name != "" && entry.Source.Kind == config.SourceImage,
 	}
 	if lc.Registry != "" {
 		ws.LegacyImage = gcp.ImageName(lc.Registry, slug, name)

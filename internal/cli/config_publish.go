@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/yamledit"
 )
@@ -39,8 +41,29 @@ func newConfigPublishCmd() *cobra.Command {
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			if m := agentMarker(os.Getenv); m != "" {
-				return userErr("nothing was published: fugaro config publish writes to the cloud and changes what every repository of the project runs: %s", initflow.AgentRefusal(m))
+			// A coding agent's session may proceed only where the project is
+			// managed and this document passes the gate (D1012). The marker is
+			// read first and a person's own run never consults the gate at all:
+			// no mark is read, no client is built and no bucket is touched for a
+			// publish at a terminal, which is what keeps that path today's.
+			marker := agentMarker(os.Getenv)
+			// refuseAgent is the refusal this command has always given a coding
+			// agent's session, written once because the two answers that keep it
+			// — the marks are not there, and the project stopped being managed
+			// between the gate's two reads — are read at two different points
+			// below, and a session must not be able to tell which of them it met.
+			refuseAgent := func() error {
+				return userErr("nothing was published: fugaro config publish writes to the cloud and changes what every repository of the project runs: %s", initflow.AgentRefusal(marker))
+			}
+			var held *bytes.Buffer
+			open := o
+			if marker != "" {
+				// The project header selectProject prints is held until the gate
+				// has answered, because a session whose project is not managed
+				// reads the refusal this command has always given it and nothing
+				// else — the header would be a line no such run ever printed.
+				held = &bytes.Buffer{}
+				open.stderr = func() io.Writer { return held }
 			}
 			var data []byte
 			if len(args) == 1 {
@@ -49,11 +72,21 @@ func newConfigPublishCmd() *cobra.Command {
 					return userErr("nothing was published: %v", err)
 				}
 			}
-			env, err := openCloud(ctx, o)
+			env, err := openCloud(ctx, open)
 			if err != nil {
 				return err
 			}
 			defer env.Close()
+			var gate *managedGate
+			if marker != "" {
+				gate = configPublishGate(ctx, env, marker)
+				if gate == nil {
+					return refuseAgent()
+				}
+				// The marks have answered managed: the header the person's own run
+				// prints is released to stderr, once.
+				_, _ = io.Copy(cmd.ErrOrStderr(), held)
+			}
 			// The defaulted path is derived from the selected project, which
 			// openCloud is what resolves: the file is named after the project
 			// and lives beside its config (D830).
@@ -83,6 +116,29 @@ func newConfigPublishCmd() *cobra.Command {
 			if local, lerr := localcfg.LayerFile(os.Getenv, env.lc.Name); lerr == nil && filepath.Clean(local) == filepath.Clean(file) {
 				rec = layerRecord{path: policyConfigPath(env.lc), lc: env.lc}
 			}
+			// at is the read the gate judged the layer document against, and the
+			// write below is conditioned on THAT read (the same rule D1024 gives
+			// the two mark reads, one step further out): a publisher that landed
+			// between the two is refused as a conflict rather than measured
+			// against a layer no rule of this gate saw.
+			var at *layerAt
+			if gate != nil {
+				// The gate's own rules run over the bytes this command is about
+				// to write, before anything else of the body: a document they
+				// refuse is refused with the gate's sentence and its record,
+				// whatever the rest of this command would have said about it.
+				var conv managedmode.Converge
+				conv, at = configPublishConverge(ctx, env, data, rec.lc != nil)
+				m, aerr := gate.admit(ctx, initflow.YesOrTyped, conv)
+				if aerr != nil {
+					return aerr
+				}
+				if !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, m) {
+					return refuseAgent()
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), initflow.AgentProceeded(marker))
+				configPublishRace(ctx, env.bucket)
+			}
 			if note := projectRecipesNote(env.lc); note != "" {
 				return userErr("nothing was published: %s", strings.Replace(note, "project recipes need", "the project layer needs", 1))
 			}
@@ -93,9 +149,28 @@ func newConfigPublishCmd() *cobra.Command {
 			if len(ps) > 0 {
 				return userErr("nothing was published: %s is invalid: %s", file, pluginwire.Printable(layerProblemsText(ps)))
 			}
-			gen, err := publishLayer(ctx, cmd.ErrOrStderr(), env.bucket, l, executable, nil, rec)
+			gen, err := publishLayer(ctx, cmd.ErrOrStderr(), env.bucket, l, executable, at, rec)
 			if err != nil {
+				// A failure that came after the write means the step APPLIED
+				// and only the record beside it failed: the admission is
+				// recorded before the run reports that failure — an apply with
+				// no trail is the state D1014 exists to end, and it is worst
+				// exactly on the runs that end badly.
+				if gate != nil && errors.Is(err, errLayerWritten) {
+					if rerr := gate.recorded(ctx); rerr != nil {
+						return fmt.Errorf("%w: %w", err, rerr)
+					}
+				}
 				return err
+			}
+			if gate != nil {
+				// The record of the admission, after the write it is about and
+				// before anything else: a step that applied and left no trail is
+				// the state D1014 exists to end, so a record that cannot be
+				// written fails this command rather than being a note beside it.
+				if err := gate.recorded(ctx); err != nil {
+					return err
+				}
 			}
 			bucket := "fugaro-runs-" + env.lc.GCPProject
 			_ = localcfg.SaveLayerCache(os.Getenv, env.lc.Name, localcfg.SharedCacheEntry{GCPProject: env.lc.GCPProject, Bucket: bucket, Generation: gen, CheckedAt: time.Now(), YAML: string(data)})
@@ -108,7 +183,7 @@ func newConfigPublishCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&executable, "executable-changes", false, "allow a change to a profile's commands, image.apt or image.setup (they run as shell in every repository that takes the profile)")
+	cmd.Flags().BoolVar(&executable, "executable-changes", false, "allow a change to a profile's commands, image.apt or image.setup (they run as shell in every repository that takes the profile); a managed project refuses such a change in a coding agent's session whatever this flag says")
 	addCloudFlags(cmd, &o)
 	return cmd
 }
@@ -136,9 +211,23 @@ func projectLayerProblems(data []byte, lc *localcfg.Config) (*config.ProjectLaye
 	return l, cps
 }
 
+// errLayerWritten marks the failures that come after the layer was written:
+// publishing is the object's write and the generation record beside it, and
+// everything that fails once the bytes are in the bucket is that record. It is
+// a value rather than "the generation is not zero" because a local bucket has
+// no generations to report — it answers 0 for a write that landed — and a
+// caller deciding whether to record something it applied has to be able to tell
+// a write that landed from one that never happened.
+var errLayerWritten = errors.New("the project layer was written, and this step failed after it")
+
 // layerPublishRace is a test seam between publish's read of the existing
 // object and its conditional write.
 var layerPublishRace = func(ctx context.Context, b *blobx.Bucket) {}
+
+// configPublishRace is the same seam one read earlier: between the read the
+// managed gate judges the layer document against and the write conditioned on
+// it, which is the window a second read of that object would open.
+var configPublishRace = func(ctx context.Context, b *blobx.Bucket) {}
 
 // layerAt is config.LayerKey as a caller already read it: the bytes, and the
 // generation a write is conditional on. The update stage reads the object
@@ -238,8 +327,9 @@ func publishLayer(ctx context.Context, w io.Writer, b *blobx.Bucket, l *config.P
 		if err := layerGenerationRecord(w, rec.path, rec.lc, gen); err != nil {
 			// The write landed, so this is the run's outcome and not a publish
 			// that failed: a sentence that read as one would hide the object
-			// this run moved.
-			return gen, err
+			// this run moved. errLayerWritten is what says so to a caller that
+			// holds something to record about a step that APPLIED (D1014).
+			return gen, fmt.Errorf("%w: %w", errLayerWritten, err)
 		}
 	}
 	return gen, nil

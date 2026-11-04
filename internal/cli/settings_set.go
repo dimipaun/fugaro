@@ -55,21 +55,36 @@ var settingsFamilyCommands = map[string]string{
 // refused here until someone decides, deliberately, that the generic path owns
 // it, where a denylist would hand every new row to `settings set` by omission.
 //
-// The names are spec §4.4's. The project layer's own block is spelled with the
-// `layer.` prefix (SD14), so §4.4's `default_profile` is `layer.default_profile`
-// in the registry and its `defaults.git.*` is `layer.defaults.git.*`; the
-// registry's spelling is the one listed, because a name the registry does not
-// hold is refused before this list is reached. §4.4's list is the whole of it,
-// and it names four budget keys: `budget.mode` and `budget.per_day_usd` are the
-// registry's too — the audit (docs/settings-commands/audit.md:81) lists them as
-// user settings, and `fugaro setup` and the local config write them — but the
-// spec does not hand them to the generic path, so they are refused here like
-// any other key outside the list rather than widened in by this list.
+// The names are spec §4.4's, and where they are not, the decision that put
+// them here is named beside them. The project layer's own block is spelled with
+// the `layer.` prefix (SD14), so §4.4's `default_profile` is
+// `layer.default_profile` in the registry and its `defaults.git.*` is
+// `layer.defaults.git.*`; the registry's spelling is the one listed, because a
+// name the registry does not hold is refused before this list is reached.
+//
+// The four budget keys are one block and the generic path's whole (D1179):
+// §4.4's list names two of them, the audit (docs/settings-commands/audit.md:81)
+// finds the other two are user settings too, and until D1179 this list refused
+// them on purpose — a key the read prints, the local config writes and no
+// command owned. What `fugaro budget set` writes is the budget **database**'s
+// caps under its own ETag-guarded write; it owns no registry row, so naming it
+// the owner of these four would refuse two keys this path writes today.
+//
+// The wildcard blocks this design manages are listed by their registry pattern
+// (D1161). A person writes `workflows.web.commands.test`; settingsWriteLookup
+// matches it against the `workflows.*.commands.test` row below and keeps the
+// key as written, which is the path the edit lands on and the name the document
+// and the diff carry. Nothing enumerates a wildcard block's concrete spellings,
+// which is what lets one written key create a block the file does not hold —
+// D1161's stated cost, and the reason the layer a write lands in is still the
+// row's own Layers.
 var settingsGenericKeys = map[string]bool{
 	"budget.per_run_usd":       true,
 	"budget.max_run_tokens":    true,
 	"budget.allowed_models":    true,
 	"budget.unreachable_grace": true,
+	"budget.mode":              true,
+	"budget.per_day_usd":       true,
 	"base_branch":              true,
 	"max_parallel":             true,
 	"update_check":             true,
@@ -82,6 +97,91 @@ var settingsGenericKeys = map[string]bool{
 	"default_claude_account":  true,
 	"claude_account_auto":     true,
 	"stages.*.claude_account": true,
+	// A repository's workflows.* (37 rows) and the project layer's profiles.*
+	// (36), in the registry's own order.
+	"workflows.*.profile":                            true,
+	"workflows.*.job_profile":                        true,
+	"workflows.*.base":                               true,
+	"workflows.*.checkout":                           true,
+	"workflows.*.image.node":                         true,
+	"workflows.*.image.jdk":                          true,
+	"workflows.*.image.apt":                          true,
+	"workflows.*.image.setup":                        true,
+	"workflows.*.image.skip_build_scripts":           true,
+	"workflows.*.image.tools":                        true,
+	"workflows.*.image.key_files":                    true,
+	"workflows.*.dockerfile":                         true,
+	"workflows.*.commands.build":                     true,
+	"workflows.*.commands.test":                      true,
+	"workflows.*.commands.lint":                      true,
+	"workflows.*.commands.fix":                       true,
+	"workflows.*.commands.render":                    true,
+	"workflows.*.commands.probe":                     true,
+	"workflows.*.commands.rerun_failed":              true,
+	"workflows.*.commands.reports":                   true,
+	"workflows.*.cache":                              true,
+	"workflows.*.secrets":                            true,
+	"workflows.*.resources.cpu":                      true,
+	"workflows.*.resources.memory":                   true,
+	"workflows.*.timeouts.total":                     true,
+	"workflows.*.timeouts.stage":                     true,
+	"workflows.*.timeouts.verify":                    true,
+	"workflows.*.timeouts.render":                    true,
+	"workflows.*.timeouts.finalize_reserve":          true,
+	"workflows.*.rebuild.check":                      true,
+	"workflows.*.rebuild.max_age":                    true,
+	"workflows.*.rebuild.lockfiles":                  true,
+	"workflows.*.rebuild.base":                       true,
+	"workflows.*.rebuild.paths":                      true,
+	"workflows.*.inputs.max_files":                   true,
+	"workflows.*.inputs.max_bytes":                   true,
+	"workflows.*.inputs.max_total_bytes":             true,
+	"layer.profiles.*.description":                   true,
+	"layer.profiles.*.base":                          true,
+	"layer.profiles.*.image.node":                    true,
+	"layer.profiles.*.image.jdk":                     true,
+	"layer.profiles.*.image.apt":                     true,
+	"layer.profiles.*.image.setup":                   true,
+	"layer.profiles.*.image.skip_build_scripts":      true,
+	"layer.profiles.*.image.tools":                   true,
+	"layer.profiles.*.image.key_files":               true,
+	"layer.profiles.*.commands.build":                true,
+	"layer.profiles.*.commands.test":                 true,
+	"layer.profiles.*.commands.lint":                 true,
+	"layer.profiles.*.commands.fix":                  true,
+	"layer.profiles.*.commands.render":               true,
+	"layer.profiles.*.commands.probe":                true,
+	"layer.profiles.*.commands.rerun_failed.command": true,
+	"layer.profiles.*.commands.rerun_failed.each":    true,
+	"layer.profiles.*.commands.reports":              true,
+	"layer.profiles.*.cache.*.key":                   true,
+	"layer.profiles.*.cache.*.paths":                 true,
+	"layer.profiles.*.resources.cpu":                 true,
+	"layer.profiles.*.resources.memory":              true,
+	"layer.profiles.*.timeouts.total":                true,
+	"layer.profiles.*.timeouts.stage":                true,
+	"layer.profiles.*.timeouts.verify":               true,
+	"layer.profiles.*.timeouts.render":               true,
+	"layer.profiles.*.timeouts.finalize_reserve":     true,
+	"layer.profiles.*.rebuild.check":                 true,
+	"layer.profiles.*.rebuild.max_age":               true,
+	"layer.profiles.*.rebuild.lockfiles":             true,
+	"layer.profiles.*.rebuild.base":                  true,
+	"layer.profiles.*.rebuild.paths":                 true,
+	"layer.profiles.*.inputs.max_files":              true,
+	"layer.profiles.*.inputs.max_bytes":              true,
+	"layer.profiles.*.inputs.max_total_bytes":        true,
+	"layer.profiles.*.checkout":                      true,
+	// The layer's ab.* is the third block D1161 names. Its rows are the models
+	// family's today, and the family refusal is asked before this list, so
+	// listing them changes no answer: they are here because the block is this
+	// design's to write once the owner column names the generic writer (D1178),
+	// and a block listed in two places is the drift D1161's own cost names.
+	"layer.ab.rate":              true,
+	"layer.ab.max_pairs_per_day": true,
+	"layer.ab.challengers":       true,
+	"layer.ab.judge_model":       true,
+	"layer.ab.exchange_rate":     true,
 }
 
 // settingsGenericPrefixes are the blocks spec §4.4 hands to the generic path
@@ -120,8 +220,14 @@ type settingsWriteOptions struct {
 	yes     bool
 	add     string
 	remove  string
-	dryRun  bool
-	jsonOut bool
+	// addEntry and removeEntry are the entry pair (D1162). Each --add-entry
+	// occurrence is one `field=value` of the one entry the command writes, and
+	// --remove-entry takes the one value that addresses the entry: a map
+	// member's name, or an object list's key field value.
+	addEntry    []string
+	removeEntry []string
+	dryRun      bool
+	jsonOut     bool
 }
 
 // settingsDocKind names the document a write lands in: the local project
@@ -188,9 +294,17 @@ a target. With no --layer the narrowest layer the key may be set in is the
 target. --layer repo without --repo uses the current directory's checkout and
 refuses when the directory is not one.
 
-A string-list key takes --add V or --remove V instead of a value. A list
-emptied by --remove is refused: an absent key and an empty list mean different
-things to the loader, so use unset to remove the key.
+A string-list key takes --add V or --remove V instead of a value. A map or an
+object list takes --add-entry and --remove-entry instead: --add-entry carries
+one entry, one field=value per member the entry has, and --remove-entry carries
+the one value the entry is addressed by — a map member's name, or an object
+list's key field value, which is how an entry of an object list is named and
+never its position. One entry per command: several entries are several
+invocations. A map's entry is one member, so --add-entry edits the members of a
+map the file already holds, and a map the loader wants whole cannot be built
+one member at a time. A list emptied by --remove or --remove-entry is refused:
+an absent key and an empty list mean different things to the loader, so use
+unset to remove the key.
 
 Loosening a ceiling key (budget.*, governance.*, the agent caps
 agent.max_budget_usd and agent.max_run_tokens with the layer's own spellings),
@@ -220,6 +334,8 @@ Every write ends with one line: next: fugaro update.`,
 	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	f.StringVar(&o.add, "add", "", "add an item to a string-list key")
 	f.StringVar(&o.remove, "remove", "", "remove an item from a string-list key")
+	f.StringArrayVar(&o.addEntry, "add-entry", nil, "add one entry to a map or an object list (field=value, once per member the entry has)")
+	f.StringArrayVar(&o.removeEntry, "remove-entry", nil, "remove one entry from a map or an object list (the member's name, or the key field's value)")
 	f.BoolVar(&o.dryRun, "dry-run", false, "print what the edit would do and write nothing")
 	f.BoolVar(&o.jsonOut, "json", false, "print the dry run's document (with --dry-run)")
 	return cmd
@@ -306,7 +422,7 @@ func settingsWriteRowHinted(key string, list bool) (settings.Row, error) {
 		return settings.Row{}, userErr("%s varies with a name this command does not take: a key with a * is a map entry, and a map has no generic form", key)
 	}
 	if !settingsGenericKey(registry) {
-		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, credentials.*, clone_urls.* and the layer's defaults.*) and the account choice (default_claude_account, claude_account_auto, stages.<stage>.claude_account), and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
+		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, credentials.*, clone_urls.* and the layer's defaults.*), the account choice (default_claude_account, claude_account_auto, stages.<stage>.claude_account) and a repository's workflows.<name>.* and the project layer's profiles.<name>.*, and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
 	}
 	return row, nil
 }
@@ -318,10 +434,12 @@ func settingsWriteRowHinted(key string, list bool) (settings.Row, error) {
 // key as written, because that is the path the edit lands on, and the registry
 // spelling is what the allowlist and the row's own sentences name.
 //
-// Only a wildcard row settingsGenericKeys carries by name is matched, which is
-// how `stages.*.claude_account` is reachable at all. The registry's other
-// wildcard rows — the project layer's `workflows.*.*`, the project family's
-// `repos.*.*`, the models family's `providers.*.*` and the accounts family's
+// Only a wildcard row the allowlist carries is matched, which is how
+// `stages.*.claude_account` and the blocks D1161 hands this path — a
+// repository's `workflows.*.*` and the project layer's `profiles.*.*` — are
+// reachable at all. The registry's other wildcard rows — the project family's
+// `repos.*.*`, the models family's `providers.*.*` and `model_prices.*.*`, the
+// rigor family's `layer.defaults.rigor.areas.*.*` and the accounts family's
 // `claude_accounts.*.allow_data_to` — are other paths' keys: matching one would
 // hand back a row this command does not write, and the refusal a person gets
 // should be the one about the name, not a row that was never theirs.
@@ -674,6 +792,260 @@ func settingsListGoneOrEmpty(data []byte, path []string) bool {
 	return ok && len(s) == 0
 }
 
+// settingsEntryKind is the shape of a block --add-entry and --remove-entry
+// write: a map, whose members no registry leaf names, or an object list, whose
+// entries are mappings.
+type settingsEntryKind int
+
+const (
+	settingsEntryMap settingsEntryKind = iota
+	settingsEntryList
+)
+
+// settingsEntryBlock is one row of the table D1163 leaves to this task: how an
+// entry of that block is addressed, and whether growing it crosses the boundary
+// D846 guards.
+type settingsEntryBlock struct {
+	kind settingsEntryKind
+	// keyField is the field an object-list entry is addressed by (D1163). It is
+	// empty for a block whose entries carry no name this pair can address, and
+	// that block is refused rather than addressed by position: a position is a
+	// fact about the file's own order and not the person's intent.
+	keyField string
+	// widens says an entry added here hands a run something it did not reach
+	// before. A workflow's secrets are mounted into the job's environment, so
+	// adding one is the widening D1165 classifies as the typed write.
+	widens bool
+}
+
+// settingsEntryBlocks is that table, keyed by the registry's own spelling of
+// the block. The registry carries no shape, so the table stands beside the
+// writes that read it, and it is deliberately short: it is the blocks a
+// repository's fugaro.yaml holds whose entries can be addressed at all.
+//
+// A cache entry's key field is `key` (D1163, spec §2.2), and its value is a
+// list of files rather than a scalar — so the keyed lookup this pair writes
+// through, which compares the key field's own text, could never find one of
+// them, and the row carries no key field. That is a deviation from D1163 and
+// from spec §2.2's list, which both name the block as one the pair reaches: an
+// entry of it is refused with a sentence naming what D1163 decides and why
+// this pair cannot write by it. Addressing one by position is what D1163
+// refuses, so nothing else is left.
+var settingsEntryBlocks = map[string]settingsEntryBlock{
+	"workflows.*.commands.rerun_failed": {kind: settingsEntryMap},
+	"workflows.*.secrets":               {kind: settingsEntryList, keyField: "name", widens: true},
+	"workflows.*.cache":                 {kind: settingsEntryList},
+}
+
+// settingsEntryBlockOrder is the table's own order, and the lookup walks it
+// rather than the map: two patterns that matched one key would otherwise make
+// the block whichever row the map happened to yield first, and a table read at
+// random is not a table.
+var settingsEntryBlockOrder = []string{
+	"workflows.*.commands.rerun_failed",
+	"workflows.*.secrets",
+	"workflows.*.cache",
+}
+
+// settingsEntryBlockOf is the block a key names, matched the way
+// settingsWriteLookup matches the registry's rows: the block's own pattern
+// against the key as the command line spelled it, so `workflows.web.secrets`
+// reaches the `workflows.*.secrets` row.
+func settingsEntryBlockOf(key string) (settingsEntryBlock, bool) {
+	for _, pattern := range settingsEntryBlockOrder {
+		if settingsPatternMatch(pattern, key) {
+			return settingsEntryBlocks[pattern], true
+		}
+	}
+	return settingsEntryBlock{}, false
+}
+
+// settingsEntryAddr is the entry an entry write is about, in the old bytes and
+// in the new ones alike: the block's path, the field the entry is addressed by
+// — empty for a map, whose entry is the one member the write names — and that
+// field's value.
+type settingsEntryAddr struct {
+	path     []string
+	keyField string
+	keyValue string
+}
+
+// settingsEntryIn renders the entry an address names as the entry's own
+// members, one `field=value` pair each, sorted by field, and "" when the
+// document holds no such entry. It is where an entry write's old and new values
+// are read: the entry is what the edit is about and the block around it is not,
+// and a value read at the block would print a whole sequence as the change. The
+// rendering is for a person and for a window — nothing here compares it, so
+// members that are not scalars are printed the way fmt.Sprint prints them.
+func settingsEntryIn(data []byte, addr settingsEntryAddr) string {
+	var tree map[string]any
+	if yaml.Unmarshal(data, &tree) != nil {
+		return ""
+	}
+	var cur any = tree
+	for _, p := range addr.path {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return ""
+		}
+		cur, ok = m[p]
+		if !ok {
+			return ""
+		}
+	}
+	if addr.keyField == "" {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return ""
+		}
+		v, ok := m[addr.keyValue]
+		if !ok {
+			return ""
+		}
+		return addr.keyValue + "=" + fmt.Sprint(v)
+	}
+	items, ok := cur.([]any)
+	if !ok {
+		return ""
+	}
+	for _, item := range items {
+		m, ok := item.(map[string]any)
+		if !ok || fmt.Sprint(m[addr.keyField]) != addr.keyValue {
+			continue
+		}
+		fields := make([]string, 0, len(m))
+		for field := range m {
+			fields = append(fields, field)
+		}
+		slices.Sort(fields)
+		pairs := make([]string, 0, len(fields))
+		for _, field := range fields {
+			pairs = append(pairs, field+"="+fmt.Sprint(m[field]))
+		}
+		return strings.Join(pairs, ", ")
+	}
+	return ""
+}
+
+// settingsEntryWrite is one entry edit: the bytes it built, the address the
+// entry has in them — so the caller reads the entry's own value from each side
+// of the edit — and what the dry run's document says about the entry (D1164):
+// the operation that wrote it, the field it is addressed by, that field's
+// value, and the members the entry carries beside it.
+type settingsEntryWrite struct {
+	data        []byte
+	addr        settingsEntryAddr
+	operation   string
+	entryKey    string
+	entryValue  string
+	entryFields map[string]string
+}
+
+// settingsEntryAdd applies one --add-entry: the fields the flags carried, on the
+// block the row names (D1162). One entry per invocation (D1167) — a map's entry
+// is one member, and an object list's is one mapping, addressed by its key field
+// and created when the sequence does not hold it yet — and the entry is
+// classified afterwards exactly as a scalar write is, by the shared write path.
+func settingsEntryAdd(old []byte, keyPath []string, block settingsEntryBlock, pairs []string) (settingsEntryWrite, error) {
+	fields := make([][2]string, 0, len(pairs))
+	named := map[string]int{}
+	for _, pair := range pairs {
+		field, value, ok := strings.Cut(pair, "=")
+		if !ok || field == "" {
+			return settingsEntryWrite{}, userErr("--add-entry %s: an entry is written as field=value", pair)
+		}
+		fields = append(fields, [2]string{field, value})
+		named[field]++
+	}
+	if block.kind == settingsEntryMap {
+		if len(fields) != 1 {
+			return settingsEntryWrite{}, userErr("--add-entry carries one entry, and a map's entry is one member: name one field=value per command")
+		}
+		data, err := yamledit.SetScalar(old, append(slices.Clone(keyPath), fields[0][0]), fields[0][1])
+		if err != nil {
+			return settingsEntryWrite{}, err
+		}
+		return settingsEntryWrite{
+			data:       data,
+			addr:       settingsEntryAddr{path: keyPath, keyValue: fields[0][0]},
+			operation:  "add-entry",
+			entryKey:   fields[0][0],
+			entryValue: fields[0][1],
+		}, nil
+	}
+	switch {
+	case named[block.keyField] == 0:
+		return settingsEntryWrite{}, userErr("--add-entry carries one entry, and an entry of this block is one the %s field names: name one %s=value", block.keyField, block.keyField)
+	case named[block.keyField] > 1:
+		return settingsEntryWrite{}, userErr("--add-entry carries one entry: %s is the field that names it, and two of them are two entries", block.keyField)
+	}
+	members := make(map[string]string, len(fields))
+	keyValue := ""
+	for _, field := range fields {
+		if field[0] == block.keyField {
+			keyValue = field[1]
+			continue
+		}
+		if named[field[0]] > 1 {
+			// Two occurrences of one member are two answers to one question,
+			// and a map of them would write the second and drop the first
+			// without saying so.
+			return settingsEntryWrite{}, userErr("--add-entry names %s twice, and one entry carries one %s: name it once", field[0], field[0])
+		}
+		members[field[0]] = field[1]
+	}
+	if len(members) == 0 {
+		// The upsert writes the members it is handed and nothing else, so an
+		// entry carrying none of them would leave the document as it was and
+		// the write would report that the file already reads what was asked
+		// for — of an entry the file may not hold at all.
+		return settingsEntryWrite{}, userErr("--add-entry takes the entry's own members beside the field that names it: name one field=value besides %s", block.keyField)
+	}
+	data, err := yamledit.UpsertSeqItemByKey(old, keyPath, block.keyField, keyValue, members)
+	if err != nil {
+		return settingsEntryWrite{}, err
+	}
+	return settingsEntryWrite{
+		data:        data,
+		addr:        settingsEntryAddr{path: keyPath, keyField: block.keyField, keyValue: keyValue},
+		operation:   "add-entry",
+		entryKey:    block.keyField,
+		entryValue:  keyValue,
+		entryFields: members,
+	}, nil
+}
+
+// settingsEntryRemove applies one --remove-entry: the entry the value addresses
+// leaves the block, whatever else it carried. A map's entry is the member that
+// value names, and an object list's is the one entry whose key field carries it
+// — the first of them when the file holds the name twice, which is the editor's
+// own rule and one entry per invocation (D1167).
+func settingsEntryRemove(old []byte, keyPath []string, block settingsEntryBlock, value string) (settingsEntryWrite, error) {
+	if block.kind == settingsEntryMap {
+		data, err := yamledit.RemoveKey(old, append(slices.Clone(keyPath), value))
+		if err != nil {
+			return settingsEntryWrite{}, err
+		}
+		return settingsEntryWrite{
+			data:      data,
+			addr:      settingsEntryAddr{path: keyPath, keyValue: value},
+			operation: "remove-entry",
+			entryKey:  value,
+		}, nil
+	}
+	data, err := yamledit.RemoveSeqItemByKey(old, keyPath, block.keyField, value)
+	if err != nil {
+		return settingsEntryWrite{}, err
+	}
+	return settingsEntryWrite{
+		data:       data,
+		addr:       settingsEntryAddr{path: keyPath, keyField: block.keyField, keyValue: value},
+		operation:  "remove-entry",
+		entryKey:   block.keyField,
+		entryValue: value,
+	}, nil
+}
+
 // settingsCeilingAgentKeys are the agent block's own caps. D846's prefix test
 // reaches budget.* and governance.*, and these two are ceilings of the same
 // kind under a third name: agent.max_budget_usd is one stage's spend cap and
@@ -923,6 +1295,16 @@ func settingsTypedWrite(row settings.Row, oldValue, newValue, mode string) (bool
 	if row.TypedWhy != "" && mode == "set" && settingsTrue(newValue) {
 		return true, row.TypedWhy
 	}
+	// An entry write is classified here and nowhere else (D1165): the block the
+	// entry lands in says whether growing it hands a run something it did not
+	// have, because the registry's rows name the block and not its entries. A
+	// removal narrows the block and has no case, for the reason `remove` has
+	// none.
+	if mode == "add-entry" {
+		if block, ok := settingsEntryBlockOf(key); ok && block.widens {
+			return true, "this hands a run a credential it did not reach before: a workflow's secret is mounted into the job's environment, so the project's own name is what confirms it, or --yes outside a coding agent's session"
+		}
+	}
 	return false, ""
 }
 
@@ -933,6 +1315,12 @@ func settingsWriteCommand(op, key, value string, o settingsWriteOptions, layer s
 	switch op {
 	case "set":
 		switch {
+		case len(o.addEntry) > 0:
+			for _, pair := range o.addEntry {
+				parts = append(parts, "--add-entry", quoteWord(pair))
+			}
+		case len(o.removeEntry) > 0:
+			parts = append(parts, "--remove-entry", quoteWord(o.removeEntry[0]))
 		case o.add != "":
 			parts = append(parts, "--add", quoteWord(o.add))
 		case o.remove != "":
@@ -964,19 +1352,34 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	if err := settingsDryRunFlags(o); err != nil {
 		return err
 	}
-	if o.add != "" && o.remove != "" {
-		return userErr("--add and --remove are two different edits: name one")
+	edits := 0
+	for _, named := range []bool{o.add != "", o.remove != "", len(o.addEntry) > 0, len(o.removeEntry) > 0} {
+		if named {
+			edits++
+		}
+	}
+	if edits > 1 {
+		return userErr("--add, --remove, --add-entry and --remove-entry are four different edits: name one")
+	}
+	// One entry per invocation (D1167) holds for both halves of the pair: a
+	// second --remove-entry is a second entry the command would have to take
+	// away, and applying only the first would report a removal that did not
+	// happen. --remove takes one value by its own signature; --add-entry's
+	// second occurrence is refused below, by the entry's own shape.
+	if len(o.removeEntry) > 1 {
+		return userErr("--remove-entry carries one entry: name the one entry the command takes away, and repeat the command for another")
 	}
 	list := o.add != "" || o.remove != ""
+	entry := len(o.addEntry) > 0 || len(o.removeEntry) > 0
 	var key, value string
 	switch {
-	case list && len(args) != 1:
-		return userErr("settings set KEY --add V or --remove V takes one key")
-	case !list && len(args) != 2:
+	case (list || entry) && len(args) != 1:
+		return userErr("settings set takes one key with --add, --remove, --add-entry or --remove-entry: the value is the edit's own and travels in the flag")
+	case !list && !entry && len(args) != 2:
 		return userErr("settings set takes a key and a value")
 	default:
 		key = args[0]
-		if !list {
+		if !list && !entry {
 			value = args[1]
 		}
 	}
@@ -1002,13 +1405,42 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	}
 	mode := "set"
 	var newData []byte
+	// removed is how a removal's own refusal names what it takes away, and
+	// entryAddr is the entry an entry write is about, nil for every other write:
+	// the two are what the checks below need from the edit. entryDoc is the same
+	// write seen by the dry run, which is the only reader of the entry's own
+	// members (D1164).
+	var removed string
+	var entryAddr *settingsEntryAddr
+	var entryDoc *settingsEntryWrite
 	switch {
 	case o.add != "":
 		mode = "add"
 		newData, err = yamledit.AddListItem(old, target.keyPath, o.add)
 	case o.remove != "":
 		mode = "remove"
+		removed = quoteWord(o.remove)
 		newData, err = yamledit.RemoveListItem(old, target.keyPath, o.remove)
+	case entry:
+		block, ok := settingsEntryBlockOf(key)
+		if !ok {
+			return userErr("%s takes no entry: --add-entry and --remove-entry write the blocks an entry's own name addresses — a workflow's secrets, whose entries the name field names, and its commands.rerun_failed, whose members name themselves", key)
+		}
+		if block.kind == settingsEntryList && block.keyField == "" {
+			return userErr("%s takes no entry: an entry is addressed by its key field, and this block's key field is `key` — a list of files and not a name — so no entry of it has one of the kind this pair writes (D1163 decides the key field and not the shape of it)", key)
+		}
+		var written settingsEntryWrite
+		if len(o.addEntry) > 0 {
+			mode = "add-entry"
+			written, err = settingsEntryAdd(old, target.keyPath, block, o.addEntry)
+		} else {
+			mode = "remove-entry"
+			removed = quoteWord(o.removeEntry[0])
+			written, err = settingsEntryRemove(old, target.keyPath, block, o.removeEntry[0])
+		}
+		if err == nil {
+			newData, entryAddr, entryDoc = written.data, &written.addr, &written
+		}
 	default:
 		newData, err = yamledit.SetScalar(old, target.keyPath, value)
 	}
@@ -1026,13 +1458,24 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s already reads what was asked for\n", target.path, key)
 		return nil
 	}
-	if changed && mode == "remove" && settingsListGoneOrEmpty(newData, target.keyPath) {
-		return userErr("removing %s would leave %s an empty list, and an absent key and an empty list mean different things: remove the key with `fugaro settings unset %s --layer %s` instead", quoteWord(o.remove), key, key, target.layer)
+	// A removal that leaves a sequence with no items is refused wherever it
+	// happens: the loader tells an absent key from an empty one, and the two
+	// mean different things. A map member's removal is not asked, because the
+	// loader's own rules for the block answer it and those are the rules that
+	// decide.
+	listRemoval := mode == "remove" || (entryAddr != nil && entryAddr.keyField != "")
+	if changed && removed != "" && listRemoval && settingsListGoneOrEmpty(newData, target.keyPath) {
+		return userErr("removing %s would leave %s an empty list, and an absent key and an empty list mean different things: remove the key with `fugaro settings unset %s --layer %s` instead", removed, key, key, target.layer)
 	}
 	if err := settingsReparse(target, newData); err != nil {
 		return err
 	}
-	oldValue := settingsValueIn(old, target.keyPath)
+	oldValue, newValue := settingsValueIn(old, target.keyPath), settingsValueIn(newData, target.keyPath)
+	if entryAddr != nil {
+		// An entry write's own values are the entry's and not the block's: the
+		// member or the mapping the edit is about, never the sequence around it.
+		oldValue, newValue = settingsEntryIn(old, *entryAddr), settingsEntryIn(newData, *entryAddr)
+	}
 	// The widening check compares against the tighter of the file's own value
 	// and what a run gets today; the document's `old` is the file's own value,
 	// which is what a window shows the operator as the value being changed.
@@ -1059,7 +1502,12 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		Yes:      o.yes,
 	}
 	if o.dryRun {
-		edit.DryRun = &settingsDryRun{key: key, layer: target.layer, oldValue: oldValue, newValue: settingsValueIn(newData, target.keyPath), jsonOut: o.jsonOut}
+		dry := &settingsDryRun{key: key, layer: target.layer, oldValue: oldValue, newValue: newValue, jsonOut: o.jsonOut}
+		if entryDoc != nil {
+			dry.operation, dry.entryKey, dry.entryValue, dry.entryFields =
+				entryDoc.operation, entryDoc.entryKey, entryDoc.entryValue, entryDoc.entryFields
+		}
+		edit.DryRun = dry
 	}
 	if err := applySettingsEdit(cmd, lc, edit); err != nil {
 		return err
@@ -1170,7 +1618,16 @@ func settingsDryRunFlags(o settingsWriteOptions) error {
 type settingsDryRun struct {
 	key, layer         string
 	oldValue, newValue string
-	jsonOut            bool
+	// operation, entryKey, entryValue and entryFields are the entry write's own
+	// members (D1164): the operation that wrote the entry, the field it is
+	// addressed by, that field's value and the members it carries beside it.
+	// They are empty for every other write, and the document leaves an empty
+	// member out — a scalar write's document is the shape version 1 always had.
+	operation   string
+	entryKey    string
+	entryValue  string
+	entryFields map[string]string
+	jsonOut     bool
 }
 
 // document is the dry run's document for the edit it describes. changed is the
@@ -1178,16 +1635,24 @@ type settingsDryRun struct {
 // that decides whether a write would happen at all — and the caller does not
 // pass it, so a document cannot claim a change the write path did not see.
 func (d settingsDryRun) document(e settingsEdit, changed bool) settingsWriteDoc {
+	fields := make(map[string]string, len(d.entryFields))
+	for field, value := range d.entryFields {
+		fields[safetext.Field(field)] = safetext.Field(value)
+	}
 	return settingsWriteDoc{
-		Version:  settingsWriteDocVersion,
-		Key:      safetext.Field(d.key),
-		Layer:    safetext.Field(d.layer),
-		Path:     safetext.Field(e.Path),
-		Changed:  changed,
-		Widening: e.Typed,
-		Why:      safetext.Field(e.TypedWhy),
-		Old:      safetext.Field(d.oldValue),
-		New:      safetext.Field(d.newValue),
+		Version:     settingsWriteDocVersion,
+		Key:         safetext.Field(d.key),
+		Layer:       safetext.Field(d.layer),
+		Path:        safetext.Field(e.Path),
+		Changed:     changed,
+		Widening:    e.Typed,
+		Why:         safetext.Field(e.TypedWhy),
+		Old:         safetext.Field(d.oldValue),
+		New:         safetext.Field(d.newValue),
+		Operation:   safetext.Field(d.operation),
+		EntryKey:    safetext.Field(d.entryKey),
+		EntryValue:  safetext.Field(d.entryValue),
+		EntryFields: fields,
 	}
 }
 
@@ -1219,6 +1684,14 @@ type settingsWriteDoc struct {
 	Old      string `json:"old"`
 	New      string `json:"new"`
 	Refusal  string `json:"refusal"`
+	// The entry write's own members (D1164). They are optional and only an
+	// entry write produces them: version 1 may grow by members a document can
+	// leave out, because the settings view the console draws its edit from pins
+	// that version and reads the shape it has always read (D848).
+	Operation   string            `json:"operation,omitempty"`
+	EntryKey    string            `json:"entry_key,omitempty"`
+	EntryValue  string            `json:"entry_value,omitempty"`
+	EntryFields map[string]string `json:"entry_fields,omitempty"`
 }
 
 // writeSettingsWriteDoc prints the dry run's document: the versioned JSON
@@ -1250,8 +1723,28 @@ func writeSettingsWriteTable(w io.Writer, doc settingsWriteDoc) error {
 		{"old", doc.Old},
 		{"new", doc.New},
 		{"refusal", doc.Refusal},
+		{"operation", doc.Operation},
+		{"entry_key", doc.EntryKey},
+		{"entry_value", doc.EntryValue},
+		{"entry_fields", settingsEntryFieldsString(doc.EntryFields)},
 	} {
 		fmt.Fprintf(tw, "%s\t%s\n", row[0], row[1])
 	}
 	return tw.Flush()
+}
+
+// settingsEntryFieldsString renders the entry's members the one way a table cell
+// carries them: the pairs sorted by field and comma-separated, the same spelling
+// the document's own old and new carry an entry in.
+func settingsEntryFieldsString(fields map[string]string) string {
+	named := make([]string, 0, len(fields))
+	for field := range fields {
+		named = append(named, field)
+	}
+	slices.Sort(named)
+	pairs := make([]string, 0, len(named))
+	for _, field := range named {
+		pairs = append(pairs, field+"="+fields[field])
+	}
+	return strings.Join(pairs, ", ")
 }

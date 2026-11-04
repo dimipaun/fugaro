@@ -1305,7 +1305,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
-| `--executable-changes` | bool | `false` | no | allow a change to a profile's commands, image.apt or image.setup (they run as shell in every repository that takes the profile) |
+| `--executable-changes` | bool | `false` | no | allow a change to a profile's commands, image.apt or image.setup (they run as shell in every repository that takes the profile); a managed project refuses such a change in a coding agent's session whatever this flag says |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for publish |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
@@ -2044,12 +2044,20 @@ spec from FUGARO_CHECK_SPEC, submits a Cloud Build rebuild when a trigger fires
 (not with --dry-run), writes builds/<slug>/<workflow>/check.json, and logs one
 JSON line per workflow. It exits 2 when the check itself failed.
 
+With --job --catalog it is the project's catalog check job instead (D1148): one
+run of the project's own job, reading its spec from FUGARO_CATALOG_CHECK_SPEC,
+deciding every entry of the project's image catalog and submitting at most one
+Cloud Build per entry that fires, as that entry's own repository's build account.
+It writes builds/<slug>/catalog/<entry>/check.json and logs one JSON line per
+entry it decides (an entry a prebuilt image answers has nothing to build).
+
 Usage: `fugaro image check`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--catalog` | bool | `false` | no | with --job: run as the project's catalog check job (reads FUGARO_CATALOG_CHECK_SPEC; submits one rebuild per changed entry) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dry-run` | bool | `false` | no | never submit a build (locally the check never does anyway) |
 | `--force` | bool | `false` | no | decide rebuild whatever the triggers say (with --job: a build is submitted) |
@@ -4223,9 +4231,17 @@ a target. With no --layer the narrowest layer the key may be set in is the
 target. --layer repo without --repo uses the current directory's checkout and
 refuses when the directory is not one.
 
-A string-list key takes --add V or --remove V instead of a value. A list
-emptied by --remove is refused: an absent key and an empty list mean different
-things to the loader, so use unset to remove the key.
+A string-list key takes --add V or --remove V instead of a value. A map or an
+object list takes --add-entry and --remove-entry instead: --add-entry carries
+one entry, one field=value per member the entry has, and --remove-entry carries
+the one value the entry is addressed by — a map member's name, or an object
+list's key field value, which is how an entry of an object list is named and
+never its position. One entry per command: several entries are several
+invocations. A map's entry is one member, so --add-entry edits the members of a
+map the file already holds, and a map the loader wants whole cannot be built
+one member at a time. A list emptied by --remove or --remove-entry is refused:
+an absent key and an empty list mean different things to the loader, so use
+unset to remove the key.
 
 Loosening a ceiling key (budget.*, governance.*, the agent caps
 agent.max_budget_usd and agent.max_run_tokens with the layer's own spellings),
@@ -4251,6 +4267,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--add` | string | "" | no | add an item to a string-list key |
+| `--add-entry` | stringArray | `[]` | no | add one entry to a map or an object list (field=value, once per member the entry has) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dry-run` | bool | `false` | no | print what the edit would do and write nothing |
 | `-h`, `--help` | bool | `false` | no | help for set |
@@ -4258,6 +4275,7 @@ Flags:
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--remove` | string | "" | no | remove an item from a string-list key |
+| `--remove-entry` | stringArray | `[]` | no | remove one entry from a map or an object list (the member's name, or the key field's value) |
 | `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name) |
 | `--yes` | bool | `false` | no | confirm the write without a prompt |
 
