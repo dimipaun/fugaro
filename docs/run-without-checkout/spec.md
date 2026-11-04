@@ -381,7 +381,7 @@ author cannot do through this path are worth stating: they cannot make a **conso
 their branch (it always reads the base branch), and they cannot select a profile their repository is
 not admitted to.
 
-**What the launcher gains.** Exactly one new power: it can read one file of a repository the
+**What the launcher gains.** One new power, and it is wider than the one file the launcher asks for: the token option 1 of D915 mints carries `contents: read` on the WHOLE repository, and the route is a person route, so every person on the people list can mint full-tree read of every onboarded repository from their own terminal, not only through the launcher. "One file" is how the launcher uses the token, not a limit on it. The launcher can read one file of a repository the
 installation serves, where before it could read only a checkout's objects. The confused-deputy angle
 is pinned to `spec.Repo` and `spec.Ref`: the service mints *for that repository*, resolving the name
 through its own inventory, so a repository the installation does not hold is a refusal to read it, and

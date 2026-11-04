@@ -87,7 +87,7 @@ recommendation it answers and the cost of the alternative — is beside each dec
 | D912 | Two distinct refusals, one per cause | As recommended: the two causes have two different remedies |
 | D913 | `docs/checkout.md` and `docs/git-providers.md` state the new rule | As recommended: both pages describe the launcher's behaviour, and one describes what the CLI holds |
 | D914 | An independent, security-sensitive review | As recommended, and wider: with A0 the change is the service's own — its mint's permission set — so the review is the one `.claude/rules/credentials-service.md` requires |
-| D915 | **Open** — which permission the person read mint carries: a set of its own beside the coordinator's, or a route of its own | Raised by re-reading the code on 2026-11-04: the mint D902's answer uses reaches no file (F6). The design states both options and picks neither, so A0 waits for the owner |
+| D915 | **Open** — which permission the person read mint carries: a set of its own beside the coordinator's, or a route of its own | Raised by re-reading the code on 2026-11-04: the mint D902's answer uses reaches no file (F6). The design states both options and picks neither, so A0 waits for the owner. **Cost of option 1:** the token reads the whole repository, and every listed person can mint it for every onboarded repository through the existing person route; "one file" is the launcher's use of it, not a limit on it |
 
 ## Numbers this work holds
 

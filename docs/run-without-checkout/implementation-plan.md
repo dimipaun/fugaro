@@ -199,7 +199,7 @@ whole `internal/cli` or `internal/runner` run.
   exception in the same breath as the two that already exist (`--check-github-app`,
   `project sync --github-app-key`), stated as it now is: the CLI holds no provider credential **of its
   own** and no App key; a launch outside a checkout on an installation with a credentials service holds
-  one read-only, repository-scoped token the service minted for the operator, for one file.
+  one read-only, repository-scoped token the service minted for the operator, used for one file (it reads the whole repository: D915).
   `docs/project-layer.md` is **not** touched (reconciliation F11): its stale sentence belongs to that
   document's own owner.
 - **Tests:** the pinned sentences stay pinned — change the wording in both places, keep the fact.
