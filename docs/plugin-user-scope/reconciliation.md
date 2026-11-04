@@ -91,34 +91,64 @@ paragraph.
 
 ## 4. The census: everything that names `fugaro upgrade`
 
+Eight commands, run on two trees — and **every count below says which tree it came from**, because the
+same command run on a branch that carries these four documents and on `main` gives different answers:
+
 ```
-$ git grep -l 'fugaro upgrade' -- . | wc -l          # 119 files
-$ git grep -o 'fugaro upgrade' -- . | wc -l          # 539 occurrences
-$ git grep -l 'upgrade' -- . | wc -l                 # 300 files   (the bare word, for scale only)
-$ git grep -o 'upgrade' -- . | wc -l                 # 2186
+# on main at b41709ea (2026-11-04), the tree this design is reconciled against
+$ git grep -l 'fugaro upgrade' b41709ea -- . | wc -l          # 115 files
+$ git grep -o 'fugaro upgrade' b41709ea -- . | wc -l          # 488 occurrences
+$ git grep -lw 'upgrade' b41709ea -- . | wc -l                # 280 files   (the bare word, for scale only)
+$ git grep -ow 'upgrade' b41709ea -- . | wc -l                # 1449
+
+# on this branch's tree (2026-11-04), i.e. main plus these four documents
+$ git grep -l 'fugaro upgrade' -- . | wc -l                   # 119 files
+$ git grep -o 'fugaro upgrade' -- . | wc -l                   # 544 occurrences
+$ git grep -l 'fugaro upgrade' -- docs/plugin-user-scope | wc -l   # 4 files
+$ git grep -o 'fugaro upgrade' -- docs/plugin-user-scope | wc -l   # 56 occurrences
 ```
 
-By area (files): `docs/` 60, `internal/` 46, `plugin/` 5, `website/` 4, `console/` 1, plus root's
-`README.md` and `CLAUDE.md` and `.claude/skills/new-release/SKILL.md`. **Four of those 60 `docs/` files
-are this directory's own** (51 of the 539 occurrences are these four documents talking about the command
-they retire) — a census that does not say so reads as if the tree were busier than it is.
+On `main` by area (files): `docs/` 56, `internal/` 46, `plugin/` 5, `website/` 4, `console/` 1, plus
+root's `README.md` and `CLAUDE.md` and `.claude/skills/new-release/SKILL.md` — 115 in all. **The branch
+adds exactly four files and 56 occurrences, and they are this directory's own**: `docs/` reads 60 here
+and 56 on `main`, and 488 + 56 = 544, 115 + 4 = 119. A census that does not say so reads as if the
+tree were busier than it is, which is how an earlier draft of this section reported 539 under a
+`main` heading.
 
-| | at `3d6ed04d` (this file's first read) | on `28425eba` (2026-11-01) | on `b41709ea` (2026-11-04) |
-| --- | --- | --- | --- |
-| files naming `fugaro upgrade` | 120 | 119 | **119** |
-| occurrences | 507 | 531 | **539** |
-| `docs/plans/2026-10-08-upgrade.md` | 126 — and that count was **lines** (`git grep -c`), the 507 **occurrences** (`-o`): the two methods were mixed in one sentence | 126 lines, 147 occurrences | **126 lines, 147 occurrences** |
-| bare `upgrade` | 259 files, 1377 occurrences | 276 files, 2059 occurrences | **300 files, 2186 occurrences** |
+| | `main` at `3d6ed04d` (2026-10-31, this file's first read) | branch tree at `28425eba` (2026-11-01) | `main` at `b41709ea` (2026-11-04) | **branch tree (2026-11-04)** |
+| --- | --- | --- | --- | --- |
+| files naming `fugaro upgrade` | 120 | 119 | 115 | **119** |
+| occurrences | 507 | 531 | 488 | **544** |
+| of which this directory's documents | 0 (it did not exist) | 4 files, 41 occurrences | 0 | **4 files, 56 occurrences** |
+| `docs/plans/2026-10-08-upgrade.md` | 126 lines, 147 occurrences | 126 lines, 147 occurrences | 126 lines, 147 occurrences | **126 lines, 147 occurrences** |
+| bare `upgrade`, `-w` (word boundary) | 259 files, 1377 occurrences | 260 files, 1471 occurrences | 280 files, 1449 occurrences | **284 files, 1585 occurrences** |
 
-The counts moved between the first two reads because a commit landed on this branch's own line of work:
-**#1495** re-pointed the owner-facing messages at `fugaro update` (which *removed* files from the census
-and *added* occurrences to the tests that pin those strings), and these four documents themselves name
-the command heavily. They moved again by 2026-11-04 for the boring reason: three releases (0.15.0,
-0.16.0, 0.17.0) and the managed-mode work landed, and the bare word grows with the tree. The bare word
-`upgrade` stays irrelevant in bulk: it is `brew upgrade`, `image_refresh.go`'s own name, a policy
-*version* upgrade and ordinary prose. **The command string is the census**; a task re-runs the greps
-above, with `-l` for files and `-o` for occurrences and never the two mixed, and works from its own
-output rather than from this list.
+Read the four columns with the method in the command block above, because an earlier draft of this table
+mixed two of them and the header hid it: the 2026-11-01 and 2026-11-04 readings of the bare word were
+taken **without `-w`** (they read 276 files/2059 occurrences and 300/2186 on the branch trees, and
+`main` without `-w` reads 296/1997), and its 2026-11-04 column held **branch-tree** numbers under a
+`main` heading (119 files, 539 occurrences then — 544 now, after this round's own edits). Both are the
+sin this section warns about, committed by the section itself; the table above is re-measured
+uniformly — `-l` for files, `-o` for occurrences, `-w` for the bare word, and every column labelled
+with its tree.
+
+What the corrected numbers say. **`main`'s census is falling, not growing**, and the commits are the
+proof: eleven files stopped naming `fugaro upgrade` between `3d6ed04d` and `b41709ea` — `skillwarn.go`,
+`init_review.go`, `updateskills_test.go`, `init_plugin_stage_test.go`, `plugin_notices_test.go` and
+`run.go` in **#1495** (`46907837`, "every message that sent the owner to `fugaro upgrade --local` says
+`fugaro update`"), `doctor_render.go` and `doctor_render_test.go` in **#1500**, and `doctor.go`,
+`launch_budget.go` and `project_cmd.go` in **#1503** — while six started naming it
+(`docs/managed-agent-converge/reconciliation.md`, `docs/releases/v0.14.2.md`, `init_policy_publish.go`
+and its neighbours). Net, on a tree that grew: 120 → 115 files, 507 → 488 occurrences. This branch's own
+56 occurrences are the only reason its tree reads higher, which is why the number that matters to a task
+is **488 on `main`**, not the branch's. The step from the first read to the second went the other way
+for the same reason in reverse, and the intermediate is measurable: the `main` this branch merged at
+`28425eba` is **`46907837` itself — #1495** — with 115 files and **490** occurrences, and the branch
+tree adds these four documents to it: 119 = 115 + 4, 531 = 490 + 41. The bare word `upgrade` stays
+irrelevant in bulk: it is `brew upgrade`, `image_refresh.go`'s own name, a policy *version* upgrade and
+ordinary prose. **The command string is the census**; a task re-runs the greps above on `main` at the
+commit it is working from, with `-l` for files and `-o` for occurrences and never the two mixed, and
+works from its own output rather than from this list.
 
 ### 4a. Three classes, and only one of them changes
 
@@ -153,7 +183,8 @@ plan's own file lists name these per task):
 - **The tests.** §5.
 
 **Class 2 — dated records that must NOT change.** `docs/releases/` (22 files: v0.6.0 … v0.14.2) and the
-dated plans under `docs/plans/` (`2026-10-08-upgrade.md` alone carries **147** of the 539 occurrences).
+dated plans under `docs/plans/` (`2026-10-08-upgrade.md` alone carries **147** of `main`'s 488
+occurrences).
 A release note
 is what shipped, and rewriting one to name a command that did not exist then is a false record. This is
 already the tree's own rule: `internal/cli/docs_release_notes_test.go` calls them "a dated record that
@@ -253,7 +284,7 @@ overtaken of the six designs in the round, so the list is long.
 | **The gate already covers `update`'s neighbours** | `settings_write.go:121` and `accounts_add.go:218` call the gate; M2 (`config publish`), M3 (`project policy publish`), M4 (`image refresh`), M6 (audit), M7 (doctor), M8, M11 landed | the plugin step must not become the one writing step `update` performs in an agent's session without the gate; and the sentence doctor prints for it is written by the same work |
 | **The project image catalog is on `main`**, and the **repository-image removal design is #1676** | `internal/cli/{image_catalog.go,image_build_catalog.go,image_check_catalog.go,catalog_copy.go}`; #1676 holds D1190–D1219 | F23's images stage — the cloud stage whose stop hides the plugin — is now the busiest stage in `update`: the case for D954's marker is stronger than when F23 was written, and the plan's slot is no longer free for other reasons (#1676 and 0.18.0) |
 | **`settings`, `rigor` and `accounts` are commands now**, and `update` grew a **`Layer`** stage | `internal/cli/{settings.go,settings_set.go,settings_read.go,settings_render.go,rigor*.go,accounts*.go}`, `init_layer_stage.go:53`, appended at `init_stages.go:198`, `Checkout` now needs `Repository` **and** `Layer` (`initflow/stage.go:175`) | F2's stage order was rewritten for it (the `Layer` position), and the checkout stage this design reshapes now runs after one more stage; the settings work is also what makes `fugaro update` a gated command, so it is the reason the row above exists |
-| **`fugaro upgrade` is still on `main`**, unchanged | `internal/cli/upgrade.go` and the 119-file census (§4) | D950's "nothing, not even a tombstone" is still a task and not a description of the tree |
+| **`fugaro upgrade` is still on `main`**, unchanged | `internal/cli/upgrade.go` and `main`'s census of it — 115 files, 488 occurrences (§4) | D950's "nothing, not even a tombstone" is still a task and not a description of the tree |
 | **Person-class reads landed**: GitHub in #1646/#1669 and Bitbucket in BB4 | `internal/credsvc`'s person-class reads | nothing here rests on them: F24's `authState`/`enrolling()` gate reads the machine's own config, not a credential, and no claim in this file was about who can read a credential |
 | **`stray.go` (#1476) is on `main`** | `internal/runner/stray.go` — finalize refuses to commit a file that is not text | F10's read holds unchanged: this is runner-side handling of a cloud run's checkout, it does not name the command, and the plugin's file is still written only by the machine-side stage |
 | **0.15.0, 0.16.0 and 0.17.0 have shipped**; `docs/releases/` ends at `v0.17.0.md` | `docs/releases/` | every slot this design named (0.15.0, and the merge rule that waited for the 0.14.2 tag) is spent. 0.18.0 is claimed by the config-management, managed-agent-converge and project-image-catalog work, so **this design's slot is 0.19.0** |

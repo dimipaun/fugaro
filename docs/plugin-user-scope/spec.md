@@ -21,7 +21,8 @@ the user's own Claude Code — and one command that converges both is the only s
 
 ## 2. One command: what `fugaro update` does
 
-`fugaro upgrade` is removed (D941). Its five steps go to the places `fugaro update` already has for
+`fugaro upgrade` is removed (D950 — D941 is the separate decision about which stage the plugin step lives
+in). Its five steps go to the places `fugaro update` already has for
 them, and one of them moves stage as well, for a reason that is a defect in the naive version:
 
 | `fugaro upgrade`'s step | Where it lives after this work |
@@ -127,7 +128,10 @@ carried through, not a re-argument of it.
   plugin at user scope, and `--check` report what the machine and the checkout say. Its `Short` line and
   its `Long` text are rewritten: today they describe the merge ("pin the Fugaro plugin in the
   repository's `.claude/settings.json` to this release"), which stops being what the command does. Whether
-  the command keeps the name is D948's recommendation (unanswered); the pin half of it is not.
+  the command keeps its name now that its merge is gone is **not a numbered decision** — D948 asks a
+  different question, which of `upgrade`'s flags survive on `update`. It lands on the task that deletes
+  the merge (U2), which reports it rather than deciding it silently. What *is* settled is that the pin
+  half of the command's job is gone.
 - **What the pin paid for is given up, and this document says so rather than designing around it.** A
   repository could say "the skills are required", and a teammate who had run nothing got them from the
   commit (F22, §10). Under this answer a teammate gets the skills when their own machine has them, or not
