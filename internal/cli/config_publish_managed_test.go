@@ -606,6 +606,44 @@ func TestConfigPublishManagedRefusesALoweredRigorFloor(t *testing.T) {
 	})
 }
 
+// The published object is there and is not a layer this build can read: the
+// caps, claims and floors this write replaces cannot be compared with it, so the
+// document is refused rather than measured against nothing. Every rule of that
+// comparison would have counted its whole content as new — a document lowering a
+// floor the unreadable object held would pass — and the admission's record would
+// have named the rigor rule among the rules that passed though none ran (D1014).
+//
+// The object is not echoed: bytes nobody validated may hold a credential a hand
+// edit put there, which is publishLayer's own reason for printing the count and
+// nothing else.
+func TestConfigPublishManagedRefusesOverAnUnreadablePublishedLayer(t *testing.T) {
+	r := newManagedPublishRig(t)
+	agentSession(t)
+	unreadable := minimalAnchored + "this_key_does_not_exist: 1\n"
+	publishedLayer(t, r.cloudFixture, unreadable)
+	lowering := minimalAnchored + "defaults:\n  rigor: { default: startup }\n"
+	_, _, err := execute(t, "config", "publish", layerFile(t, lowering))
+	if err == nil {
+		t.Fatal("a layer lowering a floor was admitted over a published layer no rule could read")
+	}
+	if !strings.Contains(err.Error(), "not a layer this program can read") {
+		t.Errorf("the refusal does not name the predecessor it could not judge against: %v", err)
+	}
+	if strings.Contains(err.Error(), "this_key_does_not_exist") {
+		t.Errorf("the refusal echoes the untrusted object it could not read: %v", err)
+	}
+	if got := bucketText(t, r.cloudFixture, config.LayerKey); got != unreadable {
+		t.Fatalf("the published layer moved: %q", got)
+	}
+	rec := r.audits(t)
+	if len(rec) != 1 || rec[0].Verdict != managedmode.AuditRefused {
+		t.Fatalf("the record is %v, want one refusal", rec)
+	}
+	if rules := strings.Join(rec[0].Rules, " "); strings.Contains(rules, "lowers no rigor floor") {
+		t.Errorf("the record claims the rigor rule passed although no comparison was made: %q", rules)
+	}
+}
+
 // The write is conditioned on the read the gate judged the document against and
 // on no other: a publisher that lands in that window is refused as a conflict.
 // A second read taken after it — what publishLayer does with no layerAt — would

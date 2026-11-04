@@ -136,12 +136,21 @@ func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte) (man
 	switch {
 	case rerr == nil:
 		at = &layerAt{old: old, gen: gen, exists: true}
-		// nil when the published object is not a layer this build can read:
-		// every rule over the difference then counts its whole content as new,
-		// which is the fail-closed direction decision L7 already takes for the
-		// executable keys in publishLayer.
+		// An object that is not a layer this build can read is a predecessor
+		// no rule can be decided against, and that is a refusal rather than a
+		// predecessor of nothing. Measured against nil every cap, claim and
+		// floor of the new document counts as new — which for the executable
+		// keys is decision L7's fail-closed default, but for the widening and
+		// rigor rules is an admission nobody made: the document could be
+		// lowering a floor the unreadable object held, and the record would
+		// still say the rigor rule ran and passed. The count is named and the
+		// object is not echoed, for publishLayer's own reason: bytes nobody
+		// validated may hold a credential a hand edit put there.
 		if op, invalid := config.ParseProjectLayer(old, config.LayerAnchor{}); len(invalid) == 0 {
 			prev = op
+		} else {
+			rules = append(rules, fmt.Sprintf("the published project layer is not a layer this program can read (%d problem(s)), so the caps, claims and rigor floors this write replaces cannot be judged against it, and the project's owner publishes from their own terminal", len(invalid)))
+			return managedmode.ConvergeRefused(data, initflow.YesOrTyped, rules), at
 		}
 	case errors.Is(rerr, blobx.ErrNotExist):
 		// nothing is published yet: the diff is the whole document
