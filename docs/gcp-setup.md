@@ -14,6 +14,8 @@
   gcloud auth application-default login
   ```
 
+- **cosign** (`cosign version`), on your `PATH`, before you record a base image: `fugaro update --base` and `fugaro image refresh` pin the release base image only at the digest its cosign signature was verified for, and stop at the `images` stage without it (the stages after it wait for the next run). The Homebrew cask does not install it ([why](release.md#the-casks-quarantine-hook)). [Install](https://docs.sigstore.dev/cosign/installation/), or `brew install cosign`.
+
 ## Run it
 
 ```bash

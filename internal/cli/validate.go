@@ -684,6 +684,31 @@ func reviewFloorUnpublishable(lc *localcfg.Config) []config.Problem {
 		strings.Join(missing, " and "), lc.Name)}}
 }
 
+// catalogSourceProblems are the project's own catalog entries whose
+// Dockerfile this installation cannot fetch: a dockerfile source on a
+// provider with no reader (catalog.Readable) is refused by `fugaro image
+// build` -- the same sentence, catalog.UnreadableRefusal -- but only after
+// the operator has typed the confirmation for a billable build, so it is
+// reported here instead, where the entry can still be changed. The entry's
+// index is in the path because that is how every other problem about a
+// catalog entry in this file is addressed.
+//
+// The catalog read is the local config's, which is the one this machine
+// writes and publishes; a repository the config does not list has no kind
+// here and is not judged (see catalogUnfetchable).
+func catalogSourceProblems(lc *localcfg.Config) []config.Problem {
+	var out []config.Problem
+	if lc == nil || lc.ImageCatalog == nil {
+		return nil
+	}
+	for i, e := range lc.ImageCatalog.Entries {
+		if err := catalogUnfetchable(lc, e); err != nil {
+			out = append(out, config.Problem{Path: fmt.Sprintf("image_catalog.entries[%d].source.repo", i), Message: err.Error()})
+		}
+	}
+	return out
+}
+
 // claudePin is one of the run's three pins whose model is a canonical Claude
 // ID: the pins the routing switch applies to, because D1a's list is a list of
 // exactly those IDs.
@@ -1891,6 +1916,7 @@ func newValidateCmd() *cobra.Command {
 				rlp, rlw := reviewLevelProblems(filepath.Dir(path), cfg, lc, lcErr, claimed)
 				problems, warnings = append(problems, rlp...), append(warnings, rlw...)
 				warnings = append(warnings, reviewFloorUnpublishable(lc)...)
+				problems = append(problems, catalogSourceProblems(lc)...)
 				annotateProjectRecipe(filepath.Dir(path), cfg, problems)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {
 					if n := branchNote(cmd.Context(), path); n != "" {

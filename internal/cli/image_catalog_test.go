@@ -8,7 +8,9 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -431,5 +433,51 @@ func TestUpdatePrintsTheDeployTimePinWarning(t *testing.T) {
 	}
 	if at := strings.LastIndex(string(src)[:call], "infra.Repo(in)"); at < 0 || call-at > 200 {
 		t.Error("the warnings are read somewhere other than the stage that builds the specs fugaro update applies")
+	}
+}
+
+// TestCatalogUnfetchableJudgesOnlyAProviderWithoutAReader: `fugaro image add`
+// and `fugaro validate` refuse a dockerfile source the build could not fetch,
+// and the only thing they can judge before a build is the kind this machine's
+// config names. That is why a Bitbucket repository is no longer refused here
+// — its adapter reads a file now, which is what the catalog's dockerfile
+// source needed — while a kind with no reader still is, and why a repository
+// the config does not list is left alone: the build takes that one's kind
+// from its own checkout, and nothing is refused on a guess.
+func TestCatalogUnfetchableJudgesOnlyAProviderWithoutAReader(t *testing.T) {
+	lc := &localcfg.Config{Repos: map[string]localcfg.Repo{
+		"acme/app": {Provider: gitprov.KindBitbucket},
+		"acme/web": {Provider: gitprov.KindGitHub},
+		"acme/old": {Provider: "gitlab"},
+		"acme/new": {},
+	}}
+	entry := func(name, repo string) config.Entry {
+		return config.Entry{Name: name, Source: config.Source{
+			Kind: config.SourceDockerfile, Repo: repo, Path: "docker/agent.Dockerfile"}}
+	}
+	for _, e := range []config.Entry{
+		entry("app", "acme/app"),
+		entry("web", "acme/web"),
+		entry("new", "acme/new"),
+		entry("unlisted", "acme/other"),
+	} {
+		if err := catalogUnfetchable(lc, e); err != nil {
+			t.Errorf("%s on %s: %v, want no refusal", e.Name, e.Source.Repo, err)
+		}
+	}
+	if err := catalogUnfetchable(lc, config.Entry{Name: "inline", Source: config.Source{
+		Kind: config.SourceInline, Inline: "FROM scratch\n"}}); err != nil {
+		t.Errorf("an inline source was refused: %v", err)
+	}
+	if err := catalogUnfetchable(nil, entry("old", "acme/old")); err != nil {
+		t.Errorf("catalogUnfetchable with no config = %v, want no refusal", err)
+	}
+	e := entry("old", "acme/old")
+	err := catalogUnfetchable(lc, e)
+	if err == nil {
+		t.Fatal("a dockerfile source on a provider with no reader was accepted")
+	}
+	if want := catalog.UnreadableRefusal(e, "gitlab").Error(); err.Error() != want {
+		t.Errorf("the refusal = %q, want the one the build gives (%q)", err, want)
 	}
 }

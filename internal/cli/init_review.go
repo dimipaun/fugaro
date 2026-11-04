@@ -528,3 +528,43 @@ func (r *initRun) notCoveredFirebase(p *tf.Plan, imports []tf.ImportKey) string 
 	}
 	return r.notCovered(p, imports)
 }
+
+// stepCover is the cover of one step in the shape internal/managed reads
+// (managed.Cover), built from the very function the step's confirmation asks
+// (initRun.notCovered, initRun.notCoveredFirebase): what the gate judged and
+// what a person would have been shown about the same plan are then one answer
+// rather than two that happen to agree.
+//
+// It lives here because reading the run's review is this file's own rule, held
+// by TestRunConfirmationCallSites: the review is the confirmation's, and the
+// gate is a caller of the cover the confirmation asks rather than a reader of
+// the review behind it.
+//
+// A nil notCovered refuses every plan, which is managed.Spec's own rule for a
+// Cover nobody gave: a step whose review was never built is exactly the case a
+// mistake here could turn into "nothing refused it", and the gate's answer for
+// it is the refusal.
+type stepCover struct {
+	notCovered func(*tf.Plan, []tf.ImportKey) string
+}
+
+func (c stepCover) NotCovered(p *tf.Plan, imports []tf.ImportKey) []string {
+	if c.notCovered == nil {
+		return []string{"this step's cover was not available to the gate, and a plan no cover judged is not admitted"}
+	}
+	if why := c.notCovered(p, imports); why != "" {
+		return []string{why}
+	}
+	return nil
+}
+
+// coverOf is the cover of one step of this run, or one that refuses: a run
+// whose review was never built has no cover for any root, and notCovered
+// answers "" in that case because it has no plan to ask about — an answer the
+// gate must not read as "nothing to refuse".
+func (r *initRun) coverOf(which func(*tf.Plan, []tf.ImportKey) string) stepCover {
+	if r.review == nil || r.review.cover == nil {
+		return stepCover{}
+	}
+	return stepCover{notCovered: which}
+}

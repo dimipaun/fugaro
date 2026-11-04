@@ -446,7 +446,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 			if !built {
 				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("the local config has no base_images.%s, which workflow %s's checkout: clone job runs: fugaro update --base %s", config.BaseKind, ws.Name, config.BaseKind)})
 			}
-		} else if entry := catalogImageEntry(ws.Image); entry != "" {
+		} else if entry := workflowCatalogEntry(ws); entry != "" {
 			// A catalog image is not a tag in the repository's own registry
 			// (spec.go's catalogJobImage routes a workflow that pins an entry
 			// through the installation's shared one), so hasLatest's question
@@ -455,11 +455,16 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 			// is built is asked of the entry instead, and only once a release
 			// that reads the key exists at all: an older fugaro's image
 			// cannot read the catalog the entry is named in, so its job is
-			// held back with the fix that gives it one.
+			// held back with the fix that gives it one. A prebuilt entry's
+			// image is the reference the operator pushed and the entry
+			// states: no Fugaro build writes it, so there is no record or
+			// catalog :latest tag to ask about, and the job runs it as written.
 			if !imageCatalogShipped {
 				built = false
 				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("workflow %s's job runs the project image catalog's entry %s (%s), and no released fugaro publishes or reads the project policy's image_catalog key yet: this installation's fugaro is older than the release that does, so run fugaro update, or give the workflow an image: or dockerfile: block of its own and leave the catalog to a newer fugaro",
 					ws.Name, entry, ws.Image)})
+			} else if ws.CatalogPrebuilt {
+				built = true
 			} else {
 				b, err := catalogImageBuilt(ctx, c, tg, spec, entry)
 				if err != nil {
@@ -501,7 +506,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 					if ws.Checkout == config.CheckoutClone {
 						what = fmt.Sprintf("the local config has no base_images.%s", config.BaseKind)
 						fix = fmt.Sprintf("set it (fugaro update --base %s)", config.BaseKind)
-					} else if entry := catalogImageEntry(ws.Image); entry != "" {
+					} else if entry := workflowCatalogEntry(ws); entry != "" {
 						what = fmt.Sprintf("the project image catalog's entry %s is not built yet", entry)
 						fix = fmt.Sprintf("build it (fugaro image build %s)", entry)
 						if !imageCatalogShipped {
@@ -751,8 +756,20 @@ func hasLatest(ctx context.Context, c *Clients, tg target, spec RepoSpec, image 
 // internal/cli's imageCatalogShipped (recipes_skew.go) is the same fact at
 // the CLI's own edges, and this package cannot read it — internal/cli imports
 // internal/infra, never the other way round. The release that flips one flips
-// both in the same commit.
-var imageCatalogShipped = false
+// both in the same commit. It is true as of 0.18.0, the first release that
+// ships the flip: 0.17.0 published the key but was tagged with this still
+// false, so no job a catalog entry gives its image to could deploy on it.
+var imageCatalogShipped = true
+
+// workflowCatalogEntry is the catalog entry ws's job runs, "" when none: the
+// spec's own record for a prebuilt entry, whose reference has no shape to
+// recognise, and the image's shape (catalogImageEntry) for one Fugaro builds.
+func workflowCatalogEntry(ws WorkflowSpec) string {
+	if ws.CatalogPrebuilt {
+		return ws.CatalogEntry
+	}
+	return catalogImageEntry(ws.Image)
+}
 
 // catalogImageEntry is the catalog entry a job image belongs to, "" when the
 // image is not a catalog image. isCatalogImage is the recogniser, so what
