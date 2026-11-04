@@ -191,7 +191,7 @@ func TestGrantRulesNameOnlyKnownTypesAndRoles(t *testing.T) {
 			t.Errorf("%s has no roles", typ)
 		}
 		for key, w := range row {
-			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator) != 0 {
+			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toCatalogCheck) != 0 {
 				t.Errorf("%s %s: bad principal kinds %d", typ, key, w)
 			}
 			if id, ok := strings.CutPrefix(key, customKey); ok {
@@ -933,5 +933,137 @@ func TestDeployerGrantRefusesAMemberThatIsNotTheDeployer(t *testing.T) {
 	ch := rc("google_project_iam_member", after, map[string]any{}, "create")
 	if got := testCover.deployerGrant("google_project_iam_member", ch.Change, false); got != "" {
 		t.Errorf("deployerGrant on the deployer account = %q, want the modules' binding", got)
+	}
+}
+
+// catalogCheckMember is the member a plan names for the project's catalog check
+// job account (D1148 task (ii)).
+const catalogCheckMember = "serviceAccount:" + CatalogCheckAccountID + "@proj-1.iam.gserviceaccount.com"
+
+// catalogCheckCatalogRead is the plan the catalog check job's read of the
+// copied definitions comes from (modules/installation/catalogcheck.tf): the
+// account created in the same module, and an objectViewer grant on the runs
+// bucket under gcp.CatalogReadCondition — byte for byte the expression every
+// build account's own grant carries (modules/repo/build.tf). computed writes
+// the member the way a first plan does, from the account beside it; false
+// writes it the way the account's own update plan does, named outright.
+func catalogCheckCatalogRead(computed bool, title, expr string) *Plan {
+	after := map[string]any{
+		"bucket": cbBucket, "role": "roles/storage.objectViewer",
+		"condition": []any{cond(title, expr)},
+	}
+	unk := map[string]any{"condition": []any{map[string]any{}}}
+	if computed {
+		unk["member"] = true
+	} else {
+		after["member"] = catalogCheckMember
+	}
+	return &Plan{ResourceChanges: []ResourceChange{
+		{Address: "module.installation.google_service_account.catalog_check", Type: "google_service_account",
+			Change: Change{Actions: []string{"create"}, After: map[string]any{"account_id": CatalogCheckAccountID}}},
+		{Address: "module.installation.google_storage_bucket_iam_member.catalog_check_definitions", Type: "google_storage_bucket_iam_member",
+			Change: Change{Actions: []string{"create"}, After: after, AfterUnknown: unk}},
+	}}
+}
+
+// TestCatalogCheckAccountIsItsOwnPrincipalKind: the project's catalog check job
+// (D1148) is a principal of its own kind, like the credentials service's
+// account and the coordinator's writer, and for the same reason. Its six grants
+// — actAs on each repository's build account, the copied definitions read-only,
+// one repository's build records and check state, the build submitter, its own
+// log lines, and run.invoker on its own job — are a project-wide reach no
+// confirmation of `fugaro init`/`update` announced, so a plan carrying any of
+// them is one the step asks its owner about. Nothing else may accept it either:
+// an account that could ride one of the tables' rows would be one whose next
+// grant (a secret accessor, an IAM admin role, a key) is covered silently.
+//
+// The refusal is one rule and not a table of expressions: checkGrant reads the
+// member's kind before it reads the role, so the bucket paths below never get
+// as far as the rule that accepts a build account's catalog read. They are
+// pinned anyway, because that is the property a change to the tables could
+// quietly take away — the same bytes, granted to another account.
+//
+// Mutation (run, restore): give any row the toCatalogCheck bit and the row
+// loop below fails; drop the isCatalogCheckMember case from checkGrant and the
+// message case fails (the account reads as an address nobody listed); give the
+// catalog-read cases a member that is the build account's and they pass, which
+// is the whole point: the expression is the build accounts'.
+func TestCatalogCheckAccountIsItsOwnPrincipalKind(t *testing.T) {
+	if slices.Contains(FugaroAccounts, CatalogCheckAccountID) {
+		t.Errorf("the project's catalog check job is one of FugaroAccounts, so every toAccounts row accepts it")
+	}
+	for typ, row := range grantRules {
+		for key, w := range row {
+			if w&toCatalogCheck != 0 {
+				t.Errorf("%s %s: the row accepts the catalog check job's account, whose grants are the six of D1148 and are refused here one by one", typ, key)
+			}
+		}
+	}
+
+	roles := map[string][]string{}
+	for typ, row := range grantRules {
+		for key := range row {
+			roles[typ] = append(roles[typ], grantRoleString(key))
+		}
+	}
+	// The roles a plan reaching for this account would actually name: every
+	// project role of the tables, and the five that would matter most.
+	roles["google_project_iam_member"] = append(roles["google_project_iam_member"],
+		"roles/owner", "roles/editor", "roles/iam.serviceAccountAdmin",
+		"roles/iam.serviceAccountTokenCreator", "roles/iam.serviceAccountKeyAdmin", "roles/secretmanager.secretAccessor")
+	for typ, list := range roles {
+		for _, role := range slices.Sorted(slices.Values(list)) {
+			after := map[string]any{"member": catalogCheckMember, "role": role, "bucket": cbBucket}
+			withCondFor(after, typ, role, false)
+			ch := rc(typ, after, map[string]any{}, "create")
+			if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+				t.Errorf("%s: %s to the catalog check job is covered: every grant to this account is an owner-run apply", typ, role)
+			}
+		}
+	}
+
+	// The refusal says which kind of principal this is, and not that the
+	// address is missing from the review screen: the owner confirming the
+	// apply has to read why the tables refuse an account the modules create.
+	ch := rc("google_project_iam_member", map[string]any{"member": catalogCheckMember, "role": "roles/logging.logWriter", "bucket": cbBucket}, map[string]any{}, "create")
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) != 1 ||
+		!strings.Contains(got[0], "a kind of principal the installation's modules do not grant it to") {
+		t.Errorf("a project grant to the catalog check job: NotCovered = %q, want the refusal that names its own kind of principal", got)
+	}
+
+	// The bucket paths, which are the ones that bite: the catalog read's
+	// expression is byte for byte a build account's, so without a rule for this
+	// account the very rule that accepts a repository's build account
+	// (catalogReadGrant) would cover a project-wide read of the copied
+	// definitions — and a build account's records grant is the same shape. Both
+	// spellings of the member are refused: the computed one a first plan
+	// writes, and the one an update plan names outright.
+	for _, computed := range []bool{false, true} {
+		p := catalogCheckCatalogRead(computed, gcp.CatalogReadConditionTitle(CatalogCheckAccountID), gcp.CatalogReadCondition(cbBucket))
+		if got := testCover.NotCovered(p, nil); len(got) == 0 {
+			t.Errorf("an objectViewer grant on builds/catalog/ to the catalog check job (computed member %v) is covered: the rule that accepts a build account's catalog read must not accept the project job's", computed)
+		}
+	}
+
+	// The account is the installation's: a lookalike in another project is
+	// nobody Fugaro creates.
+	for _, member := range []string{
+		"serviceAccount:" + CatalogCheckAccountID + "@fp-2.iam.gserviceaccount.com",
+	} {
+		ch := rc("google_project_iam_member", map[string]any{"member": member, "role": "roles/logging.logWriter", "bucket": cbBucket}, map[string]any{}, "create")
+		if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+			t.Errorf("%s: the log writer is covered: the catalog check job is %s@proj-1 and nothing else", member, CatalogCheckAccountID)
+		}
+	}
+
+	// Listed on the review screen by mistake, it is still not a person: the
+	// kind is read before the list, as the deployer's, the credentials
+	// service's and the coordinator's are.
+	listed := Cover{Projects: testCover.Projects, Listed: []string{catalogCheckMember}, Region: testCover.Region, Buckets: testCover.Buckets}
+	for _, role := range []string{"roles/storage.objectViewer", "roles/run.invoker", "roles/logging.logWriter"} {
+		ch := rc("google_project_iam_member", map[string]any{"member": catalogCheckMember, "role": role, "bucket": cbBucket}, map[string]any{}, "create")
+		if got := listed.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+			t.Errorf("roles/%s to the catalog check job, listed on the review screen, is covered", role)
+		}
 	}
 }
