@@ -74,10 +74,21 @@ func catalogBuildWorkflowsYAML(secrets string) string {
 // catalogBuildBucket is the runs bucket the catalog fixture's config names.
 const catalogBuildBucket = "fugaro-runs-proj-1234"
 
-// catalogBuildCheckout is a Bitbucket checkout of acme/app whose fugaro.yaml
-// is repo and whose project names the catalog catalog, with the fakes a Cloud
-// Build needs, the installation's shared registry a catalog image is pushed to
-// (D1152) and the build secrets repo's workflows declare.
+// catalogBuildCheckout is catalogBuildCheckoutFor for a Bitbucket repository,
+// which is what a catalog build test needs unless it is about the credential
+// the copy is read with.
+func catalogBuildCheckout(t *testing.T, repo, catalog string) (*gcpfake.Build, *gcpfake.GCS, *cloudFixture) {
+	t.Helper()
+	return catalogBuildCheckoutFor(t, repo, catalog, gitprov.KindBitbucket, "")
+}
+
+// catalogBuildCheckoutFor is a checkout of acme/app on provider whose
+// fugaro.yaml is repo and whose project names the catalog catalog, with the
+// fakes a Cloud Build needs, the installation's shared registry a catalog
+// image is pushed to (D1152) and the build secrets repo's workflows declare.
+// appID is what the local config records for the repository, which only a
+// GitHub one carries (infra.Repo refuses a GitHub repository without one); ""
+// records none, which is the state the missing-ID test wants.
 //
 // Its record bucket is the GCS fake rather than the file:// bucket every other
 // cloud fixture uses: what the submission pins is the copy's object
@@ -86,13 +97,23 @@ const catalogBuildBucket = "fugaro-runs-proj-1234"
 // written through openRecordBucket, the seam every record-bucket caller has,
 // and the project-name check is answered from its cache, as it is in the
 // fixture that records to a gs:// bucket (setBucketURL).
-func catalogBuildCheckout(t *testing.T, repo, catalog string) (*gcpfake.Build, *gcpfake.GCS, *cloudFixture) {
+func catalogBuildCheckoutFor(t *testing.T, repo, catalog, provider, appID string) (*gcpfake.Build, *gcpfake.GCS, *cloudFixture) {
 	t.Helper()
 	files := npmFiles()
 	files["fugaro.yaml"] = repo
 	files[".fugaro/base.Dockerfile"] = catalogBuildFetched
 	dir := checkoutWith(t, files)
-	testutil.Git(t, dir, "remote", "set-url", "origin", "https://bitbucket.org/acme/app.git")
+	const entry = "  acme/app: { provider: github, base_branch: main, workflows: [web] }\n"
+	field := "provider: " + provider
+	if appID != "" {
+		field += ", github_app_id: \"" + appID + "\""
+	}
+	repos := strings.Replace(entry, "provider: github", field, 1)
+	origin := "https://bitbucket.org/acme/app.git"
+	if provider == gitprov.KindGitHub {
+		origin = "https://github.com/acme/app.git"
+	}
+	testutil.Git(t, dir, "remote", "set-url", "origin", origin)
 	fb := gcpfake.NewBuild(t)
 	sm := gcpfake.NewSecrets(t)
 	gcs := gcpfake.NewGCS(t)
@@ -103,7 +124,7 @@ func catalogBuildCheckout(t *testing.T, repo, catalog string) (*gcpfake.Build, *
 	if err != nil {
 		t.Fatal(err)
 	}
-	updated := strings.Replace(string(data), "provider: github", "provider: bitbucket", 1)
+	updated := strings.Replace(string(data), entry, repos, 1)
 	updated = strings.Replace(updated, "runs_bucket: unused-bucket", "runs_bucket: "+catalogBuildBucket, 1)
 	if updated == string(data) {
 		t.Fatal("the fixture config's repos entry or runs_bucket has changed shape")

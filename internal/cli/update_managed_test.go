@@ -796,12 +796,9 @@ func TestUpdateManagedRefusesTheFirstPolicyPublish(t *testing.T) {
 	updating(t, r)
 	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
 	// This machine's config states a catalog and nothing is published, which is
-	// the state the stage now leaves to do. A catalog also needs the base image
-	// its check job runs from and every catalog build is built FROM — the
-	// config `fugaro update --base-image` leaves on a machine that has one — or
-	// the run is refused before this stage is reached at all.
-	r.appendConfig(t, catalogConfigYAML)
-	r.appendConfig(t, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3}\n")
+	// the state the stage now leaves to do. The catalog has a built entry, so
+	// the catalog check job needs this installation's base image to run from.
+	r.appendConfig(t, catalogConfigYAML+"base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n")
 
 	got, err := updateRun(t, r, "update", "--yes")
 	if err == nil {
