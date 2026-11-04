@@ -603,7 +603,7 @@ func runInit(r *initRun) error {
 	cmd, o := r.cmd, r.o
 	defer func() { clear(r.appKeyMem) }()
 	if o.checkApp {
-		if err := refuseAppKeyReadInAgent(os.Getenv); err != nil {
+		if err := refuseAppKeyReadInAgent(os.Getenv, checkGitHubAppFlag); err != nil {
 			return err
 		}
 	}
@@ -3081,7 +3081,7 @@ func runInitRepo(r *initRun, args []string) error {
 	cmd, o := r.cmd, r.o
 	defer func() { clear(r.appKeyMem) }()
 	if o.checkApp {
-		if err := refuseAppKeyReadInAgent(os.Getenv); err != nil {
+		if err := refuseAppKeyReadInAgent(os.Getenv, checkGitHubAppFlag); err != nil {
 			return err
 		}
 	}
