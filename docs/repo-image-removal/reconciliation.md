@@ -1,8 +1,9 @@
 # Repository image removal: reconciliation against the code
 
 **Status: a design, and every decision in it is answered.** **Owner 2026-11-04: moved to 0.19.0
-because the live catalog check found #1701/#1703 first.** **Owner 2026-11-04 (after the 0.18.0 tag):
-moved again to 0.20.0 (0.19.0 = config management first).** The owner's ruling of 2026-11-04 —
+because the live catalog check found #1701/#1703 first** — superseded by the note below. **Owner
+2026-11-04 (after the 0.18.0 tag): moved again to 0.20.0 (0.19.0 = config management first).** The
+owner's ruling of 2026-11-04 —
 *"Completely disable repo-level images for now to make things simpler."* — is reconciled here against
 the tree of **`777b902d`** (the merge of `main` this round read, 2026-11-04), and **where this file
 disagrees with [spec.md](spec.md), this file wins**. Each decision **D1190–D1208** carries the owner's

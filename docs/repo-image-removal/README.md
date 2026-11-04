@@ -1,8 +1,9 @@
 # Removing the per-repository derived images: the project image catalog is the only image path
 
 **Status: a design, and nothing is built. The owner answered every decision on 2026-11-04.** **Owner
-2026-11-04: moved to 0.19.0 because the live catalog check found #1701/#1703 first.** **Owner
-2026-11-04 (after the 0.18.0 tag): moved again to 0.20.0 (0.19.0 = config management first).** The owner
+2026-11-04: moved to 0.19.0 because the live catalog check found #1701/#1703 first** — superseded by the
+note below. **Owner 2026-11-04 (after the 0.18.0 tag): moved again to 0.20.0 (0.19.0 = config
+management first).** The owner
 gave the ruling this folder answers on **2026-11-04** — *"Completely disable repo-level images for now
 to make things simpler."* — and this folder reconciles it against the code on `main`, decides every
 ambiguity it opens, and plans the build for **0.20.0**. This is a **design-only** pull request: it
