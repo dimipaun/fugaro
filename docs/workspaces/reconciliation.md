@@ -235,7 +235,7 @@ D1298.** The front door admits **people** as a class of their own
 (`internal/credsvc/auth.go:375` `PersonAccounts`, `:890` `VerifyReadCaller`, `:968`
 `VerifyPersonCaller`), with the owner's ruling of **2026-11-04** recorded where the check lives: a
 user account cannot mint a token for the service's own URL, so that class alone also admits the
-audience `gcloud auth print-identity-token` produces (`:241` `GcloudAudience`), and the tradeoff —
+audience `gcloud auth print-identity-token` produces (`:258` `GcloudAudience`), and the tradeoff —
 that audience is not scoped to the service — is stated there rather than hidden. A person is a class
 that may not overlap the job classes (`:369-375`). Consequence: **D1297's "one workspace service" is
 a service with two admission lists, not one.** Its job class is the workspace's member job service
@@ -284,7 +284,7 @@ finding above happens to rest on — a citation is a claim about a line, and a b
 it a false one while every sentence around it stays true. **One had moved**: the config layer's
 `pricing.FromUSD` cap refusal, cited in [implementation-plan.md](implementation-plan.md) W0, was
 `internal/config/validate.go:796,801` at `3d6ed04d` and those lines are now inside `levelProblems`
-(`:789`); the two calls are at `:855` and `:860`, in `validateBudget` (`:844`). The rest hold:
+(`:789`); the two calls are at `:861` and `:866`, in `validateBudget` (`:850`). The rest hold:
 `internal/pricing/pricing.go:18` `Micros`, `:26` `FromUSD`; `internal/config/config.go:166`
 `PerRunUSD float64`; `internal/budget/model.go:5-8` (money is µ$) and `:31` `PathCapsGlobal`;
 `internal/budget/rules/rules.json.tmpl:60` (`NEW >= OLD`); `internal/policy/merge.go:44` `Merge`;
