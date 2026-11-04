@@ -478,6 +478,10 @@ func accountsRmReport(cmd *cobra.Command, lc *localcfg.Config, stages map[string
 		row("secret", config.ClaudeAccountSecret(plan.name), secret)
 	} else {
 		row("account", plan.name, "claude_accounts."+pluginwire.Printable(plan.name)+" stays: "+accountsAddProfiles(plan.rest)+" still lists it")
+		// The secret's row is here too, and says the step did not run: a block
+		// that leaves it out reads as a deletion that printed nothing, and this
+		// is the one row a reader checks for whether the credential is gone.
+		row("secret", config.ClaudeAccountSecret(plan.name), "kept, not deleted: "+accountsAddProfiles(plan.rest)+" still serves the account, so its token is untouched")
 	}
 	row("publish", "policy node", accountsRmPublishLine(plan, stages[initflow.Policy], allow, carried, why))
 	row("deploy", "jobs", accountsRmDeployLine(lc, plan, stages[initflow.Installation]))

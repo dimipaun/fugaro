@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -217,6 +218,27 @@ func TestAccountsRmKeepsTheOtherRepositoriesComments(t *testing.T) {
 	}
 	if !strings.Contains(out, "- ") {
 		t.Errorf("the removal's diff removes nothing:\n%s", out)
+	}
+
+	// The fixture is written beside the add rig's own file, so the two are read
+	// against each other: everything but the account this test removes — the
+	// project, the profile, the repositories — is accountsAddLocal's, and a
+	// change there that this copy did not follow fails here rather than passing
+	// against a file no rig writes.
+	base, err := localcfg.Parse([]byte(accountsAddLocal))
+	if err != nil {
+		t.Fatalf("the add rig's own fixture does not parse: %v", err)
+	}
+	here, err := localcfg.Parse([]byte(accountsRmLocalCommented))
+	if err != nil {
+		t.Fatalf("accountsRmLocalCommented does not parse: %v", err)
+	}
+	served := here.Profiles["standard"]
+	served.ClaudeAccounts = nil
+	here.Profiles["standard"] = served
+	delete(here.ClaudeAccounts, "team-a")
+	if !reflect.DeepEqual(base, here) {
+		t.Errorf("accountsRmLocalCommented is no longer accountsAddLocal with claude_accounts.team-a and the profile's entry added:\nthe rig's fixture: %+v\nthis one:          %+v", base, here)
 	}
 
 	// The bytes of the edit, read off the resolver on the hand-written file: the
@@ -502,6 +524,9 @@ func TestAccountsRmTakesTheNameOutOfOneProfileAtATime(t *testing.T) {
 	}
 	if got := accountsAddRow(t, out, "account"); !strings.Contains(got, "stays") {
 		t.Errorf("the block's account line reads %q, and the account stays", got)
+	}
+	if got := accountsAddRow(t, out, "secret"); !strings.Contains(got, "kept, not deleted") {
+		t.Errorf("the block's secret line reads %q, and the secret was not deleted: a row that is missing reads as a deletion that printed nothing", got)
 	}
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	if last := lines[len(lines)-1]; !strings.Contains(last, "standard still does") {
