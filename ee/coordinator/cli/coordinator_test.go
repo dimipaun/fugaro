@@ -2218,6 +2218,9 @@ func TestCoordinatorPersonIdentityMintsThePlainFormForAUserAccount(t *testing.T)
 		if strings.HasPrefix(a, "--audiences") {
 			t.Errorf("the user account's mint argv carries %q: a user account cannot take an audience", a)
 		}
+		if a == "--include-email" {
+			t.Errorf("the user account's mint argv carries --include-email: gcloud refuses that flag for anything but an impersonated identity, and a user account's token carries the email claim already")
+		}
 	}
 	if want := []string{"auth", "print-identity-token", "--quiet"}; !slices.Equal(f.calls[1], want) {
 		t.Errorf("the user account's mint argv is %v, want %v", f.calls[1], want)
@@ -2227,16 +2230,32 @@ func TestCoordinatorPersonIdentityMintsThePlainFormForAUserAccount(t *testing.T)
 // A service account, and an identity gcloud is impersonating, keep the audience
 // form: both mint a token for the credentials service's own URL, which is the
 // audience the service verifies for every class but the person's.
+//
+// The two part company on --include-email, and it is the whole of the
+// difference: an impersonated mint goes through the IAM elevation call, whose
+// include-email input defaults off, so without the flag the token carries no
+// email claim and the service refuses it before it can read the class — while
+// gcloud refuses the flag for a credential that is not an impersonation, so a
+// logged-in service account must not be given it.
 func TestCoordinatorPersonIdentityKeepsTheAudienceForAServiceAccount(t *testing.T) {
 	const url = "https://creds.example.invalid"
 	for _, tc := range []struct {
-		name    string
-		listing string
+		name         string
+		listing      string
+		wantArgs     []string
+		wantEmailOpt bool
 	}{
-		{name: "the active account is a service account",
-			listing: `{"core":{"account":"runner@project.iam.gserviceaccount.com"}}`},
-		{name: "gcloud impersonates a service account",
-			listing: `{"core":{"account":"someone@example.invalid"},"auth":{"impersonate_service_account":"runner@project.iam.gserviceaccount.com"}}`},
+		{
+			name:     "the active account is a service account",
+			listing:  `{"core":{"account":"runner@project.iam.gserviceaccount.com"}}`,
+			wantArgs: []string{"auth", "print-identity-token", "--audiences=" + url, "--quiet"},
+		},
+		{
+			name:         "gcloud impersonates a service account",
+			listing:      `{"core":{"account":"someone@example.invalid"},"auth":{"impersonate_service_account":"runner@project.iam.gserviceaccount.com"}}`,
+			wantArgs:     []string{"auth", "print-identity-token", "--audiences=" + url, "--include-email", "--quiet"},
+			wantEmailOpt: true,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newGcloudFixture(t, url, tc.listing)
@@ -2250,8 +2269,11 @@ func TestCoordinatorPersonIdentityKeepsTheAudienceForAServiceAccount(t *testing.
 			if len(f.calls) != 2 {
 				t.Fatalf("gcloud was run %d times (%v), want the account listing and the mint", len(f.calls), f.calls)
 			}
-			if want := []string{"auth", "print-identity-token", "--audiences=" + url, "--quiet"}; !slices.Equal(f.calls[1], want) {
-				t.Errorf("the service account's mint argv is %v, want %v", f.calls[1], want)
+			if !slices.Equal(f.calls[1], tc.wantArgs) {
+				t.Errorf("the mint argv is %v, want %v", f.calls[1], tc.wantArgs)
+			}
+			if got := slices.Contains(f.calls[1], "--include-email"); got != tc.wantEmailOpt {
+				t.Errorf("the mint argv carries --include-email = %v, want %v: an impersonated token has no email claim without it, and gcloud refuses it for any other credential", got, tc.wantEmailOpt)
 			}
 		})
 	}
