@@ -87,7 +87,7 @@ const (
 )
 
 // The audit's two figures (F1): the registry's rows, and the rows the generic
-// write path's allowlist carries -- eighty-eight by name and the rest through
+// write path's allowlist carries -- sixty-seven by name and the rest through
 // the nine prefixes. They are re-counted below rather than trusted, because the
 // whole of §1's argument is that the rows no writer carries are the defect.
 //
@@ -95,9 +95,14 @@ const (
 // a document does: the allowlist gained the wildcard blocks D1161 hands this
 // path and the two budget keys D1179 does, and the two documents whose argument
 // is made of this count carry the number the count produced.
+//
+// Both figures moved again with the repository-image removal's R2, which deleted
+// the twenty-one registry rows of `image.*`, `dockerfile:` and `rebuild.*` -- all
+// twenty-one of them keys the allowlist carried by name, so the gap the audit's
+// §1 is about (the rows no generic writer reaches) is the same 159 it was.
 const (
-	cfmRegistryRows   = 323
-	cfmAllowlistNamed = 88
+	cfmRegistryRows   = 302
+	cfmAllowlistNamed = 67
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {
@@ -324,8 +329,8 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 }
 
 // TestDocsConfigManagementAllowlistCounts: the figure the audit's whole argument
-// is made of is re-counted here rather than trusted. The registry holds 323 rows
-// and the generic write path's allowlist carries eighty-eight of them by name
+// is made of is re-counted here rather than trusted. The registry holds 302 rows
+// and the generic write path's allowlist carries sixty-seven of them by name
 // plus the rows its nine prefixes reach; the documents state the registry's
 // count and the allowlist's, and a row added to either -- which moves the gap
 // between the two -- fails here rather than leaving §1's "159 rows have no
