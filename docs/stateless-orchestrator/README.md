@@ -7,7 +7,7 @@
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec verbatim: the stateless orchestrator loop and its daemon addendum. Not edited |
-| [reconciliation.md](reconciliation.md) | The spec against the code (F1-F23), the hard questions, the decisions **D1220-D1240** with the owner's answers of 2026-11-04, the UNVERIFIED list (U1-U8) and the open tensions (T1-T5) |
+| [reconciliation.md](reconciliation.md) | The spec against the code (F1-F23), the hard questions, the decisions **D1220-D1240** with the owner's answers of 2026-11-04 (and the open D1241-D1243), the UNVERIFIED list (U1-U8) and the open tensions (T1-T5) |
 | [implementation-plan.md](implementation-plan.md) | Tasks O0-O19 in three slices, the parallel levels, the shared-files table, the owner-run Checks 300-305 and four owner questions |
 
 ## The owner's answers
@@ -18,7 +18,7 @@ rollback to the old scripts is wanted is the owner's to rule.
 
 ## The number block
 
-**D1220-D1249**, confirmed by the owner. D1220-D1240 are written; **D1241-D1249 are reserved and unused.** Checks **300-309** are reserved for the
+**D1220-D1249**, confirmed by the owner. D1220-D1240 are written; **D1241-D1243 are new, unanswered owner questions** from the round-1 security review (the state node's writer, a paired-device channel, the session-start print versus D952); **D1244-D1249 are reserved and unused.** Checks **300-309** are reserved for the
 plan (300-305 used, 306-309 reserved), verified free on 2026-11-04.
 
 ## The spec's typo and numbering fixes

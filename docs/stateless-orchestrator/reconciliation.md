@@ -11,15 +11,15 @@ those names ("fugaro-coordinator-spec", "fugaro-mcp-server-spec"); they are `doc
 
 ## 0. The number block
 
-The block this folder uses is **D1220-D1249**, with D1250-D1259 held in reserve. Reading:
+The block this folder uses is **D1220-D1249**, confirmed by the owner on 2026-11-04. Reading:
 
 - `git grep` over `origin/main` for `D13[1-9][0-9]` finds nothing, and `D1310` is the highest number any open pull request writes (#1711,
   workspaces). `D1320-D1349`, the block the brief named, is therefore free.
-- **But `D1220-D1259` is already named for this work** on `origin/main` in six places: `docs/mcp-server/README.md` (the census table),
+- **But `D1220-D1259` is already named for this work** on `origin/main` in about ten places, the first six of which are: `docs/mcp-server/README.md` (the census table),
   `docs/mcp-server/reconciliation.md`, `docs/workspaces/README.md`, `docs/plugin-user-scope/README.md`, `docs/binary-allow-rule/README.md`
   and `docs/periodic-reviews/README.md`. No file on `main` writes a decision in that range, and the only open pull request touching it,
-  #1712, writes `D1260`/`D1261` (workflow secrets), i.e. above it. Taking `D1320` would leave 40 numbers permanently unused and make six
-  census tables wrong. **This design takes D1220-D1249** and says so; the coordinator should confirm before the owner is shown the numbers.
+  #1712, writes `D1260`/`D1261` (workflow secrets), i.e. above it. Taking `D1320` would leave 40 numbers permanently unused and make the
+  census tables wrong. **This design takes D1220-D1249**; the owner confirmed it (section 4).
 
 ## 1. Headline table: spec concept to what the repo already has
 
@@ -71,7 +71,10 @@ mirror" all disappear.
 
 **F4. Exists. The shared writer and rules.** `ee/coordinator/state.go` already documents the rule the spec wants: a new top-level
 subtree (`coordinator/project/`, `coordinator/repos/<slug>/`), deterministic IDs, written only by one account, rules scoped so a signed-in
-person reads and nobody else writes (D195, answered 2026-10-21). An orchestrator subtree is the same shape. Rules are generated in
+person reads and nobody else writes (D195, answered 2026-10-21). **The precedent does not carry to a person-written subtree.** The coordinator's
+subtree is `.write: false` with **one** service-account writer (the admin IAM bypasses the rules for it); the rules do not bind that writer,
+the account's identity does. An orchestrator state node written by a person's own credential has no such single identity: see the bound below
+(trust boundary) and D1241. Rules are generated in
 `internal/budget/rules/rules.go` (macros `RUN`, `USER`, ...), with emulator tests under `internal/budget/rules/`.
 
 **F5. Exists. Single-writer is compare-and-swap, not transactions.** `internal/rtdb/client.go:178` `GetETag`, `:209` `PutIfMatch` (a 412 is
@@ -170,7 +173,12 @@ heartbeat lease that is the right single-instance fence for a daemon). The Windo
 a stated platform limit.
 
 **F17. Gap. Session-start hook.** No `SessionStart` hook ships in the plugin (`git grep SessionStart -- plugin internal/claudeplugin`
-returns nothing). `docs/plugin-user-scope` designs a session-start nudge at user scope; one hook slot, not two, is the right shape. Note
+returns nothing), and **`docs/plugin-user-scope` designs no hook either** (`git grep -i hook -- docs/plugin-user-scope` is empty): its nudge is a
+**skill sentence** that runs `doctor --offline` (D945-D947, D952: "the session-start check never reaches the network"). So there is no hook slot
+to share: a hook is a new surface, defined by Claude Code's plugin hook configuration (to be confirmed against the Claude Code plugin reference by
+O10's red step; **not** `plugin/skills/hooks/session-start`, which is not where plugin hooks live), and D1237's "one slot shared" is read as "one
+printer: the same skill sentence or hook, ordered after the update nudge". And `state --brief` **reads the RTDB**, a network read that D952
+forbids for the nudge: D1243 asks the owner which wins. Note
 the plugin's tests check every command and flag a skill names against the CLI: a new `fugaro orchestrator ...` command is a plugin-test
 change in the same PR.
 
@@ -214,7 +222,7 @@ people and processes that can reach the state:
 
 | Writer | Reaches through | What a compromised one can do |
 | --- | --- | --- |
-| The local daemon (a person's laptop process) | its ADC / person credentials to RTDB | Everything the person can: that is the ceiling. A compromised **laptop session** = the person; state integrity cannot exceed it, so the cloud-side checks (kill switch, `Precheck`, per-run cap, rules) must be the real bound, not the daemon's own validation |
+| The local daemon (a person's laptop process) | its ADC / person credentials to RTDB (an OAuth Bearer, which is IAM and **bypasses the rules**) | Everything the person can: that is the ceiling. A compromised **laptop session** = the person; state integrity cannot exceed it, so the cloud-side checks (kill switch, `Precheck`, per-run cap, rules) must be the real bound, not the daemon's own validation |
 | An interactive Claude session | the same tools, via MCP or a CLI | `apply_patch` with attacker text from a PR title, log line or a pasted page. The text reaches `facts`, `summary` and `decisions`, which re-enter every later cycle's prompt: **stored prompt injection**, persistent across cycles |
 | A decision agent | its structured output | The same as the above plus `spawn_task` actions: a loop of spawns |
 | A cloud job | its own run-scoped RTDB entry only (F7) | Falsify its own heartbeat and status; it cannot touch other runs or the state doc |
@@ -229,6 +237,26 @@ spend caps), and a cycle's `spawn_task` may only launch a repository and recipe 
 destination (D1226); (5) the state document carries a per-field provenance (`by`: person id, session, daemon, decision-agent) so an audit can
 say who wrote a fact; (6) untrusted string values are length-capped and stripped of control characters (the repo's `internal/safetext`
 exists for this, and `watch/finished.go` already cleans bucket text before display).
+
+**What the rules do and do not bind (corrected after the round-1 security review).** The first draft said the RTDB rules bind the writer; they do
+not. People reach the database with an OAuth Bearer: launchers and operators hold only `roles/firebasedatabase.viewer`, admins
+`roles/firebasedatabase.admin` (`deploy/terraform/gcp/modules/firebase/iam.tf`, the `viewer` and `admin` grants), and **IAM bypasses `.write` and
+`.validate`** (`internal/mailbox/lease.go`'s own comment: the writer "runs on the operator's ADC, which the store does not hold to the mailbox's
+`.write` claims or `.validate` lists"). The rules macro `USER` is the **paired phone's `mu` claim**, not a CLI person, and any launcher can mint a
+custom token through `signJwt` (`iam.tf`, the `minter` grant), so a claim-based "write own" rule can be forged by a launcher. Consequences:
+(a) **validation of the state's shape is client-side** (O0's validator, the same code in the daemon and the CLI); a rules `.validate` defends only
+against a job or token identity, never against a person's CLI; (b) **write-own is not enforceable by the rules** for a CLI person; (c) the real
+bounds on money are outside the state node: the launch claim, `Precheck`, the kill switch and the spend caps; (d) a viewer-role person cannot
+write the node by Bearer at all, so the node needs a writer-identity decision before O2 (D1241, an owner question). What the rules *can* still do:
+refuse a run-scoped job identity and refuse an oversize or malformed value from a token-based writer.
+
+**Person-only is a mitigation, not a barrier.** `internal/initflow/stage.go` (`AgentAdvice`) and `internal/cli/init.go` both say the agent check is
+"a mitigation, not a barrier": `env -u CLAUDECODE fugaro orchestrator patch` or a direct node write (Bearer, no rules) passes it. So G2's CLI
+half (D1225) is **not enforced by an agent-session check**; **P1 is resolved as negative**. The honest bound: person-only ops (approve, `goal_set`,
+resolving a `waiting_on: person` decision) require at least a **Typed confirmation at a real terminal** (`initflow.CanConfirm(Typed)`, the control
+the repo's other person-only steps use), which stops the accident and a session that cannot type; the **residual** is stated: an adversary running
+as the person at a terminal is the person. A stronger channel (a paired-device approval) is an owner question (D1242), and nothing consumes a
+resolved person decision until it is answered.
 
 **Single-writer.** In RTDB, `PutIfMatch` on one state node plus a daemon lease (the mailbox heartbeat-lease pattern, F5/F16) gives one
 daemon per orchestrator id and a rejected write for any stale one. The spec's "Both modes coexist; transactions keep them from
@@ -274,8 +302,11 @@ cycle, re-issues the action, and the action id is "recorded in state" only on co
 that is **money**. Two repairs:
 
 1. **Intent first, at-most-once** (mailbox rule: "the record of a delivery is on disk before the action it asked for runs"): commit the
-   intent `{action id, spawn spec}` with a `PutIfMatch` of state, then launch with the action id as the idempotency key, then commit the
-   result. A crash between leaves an open intent; recovery re-issues with the same key and the launch claim makes it one run.
+   intent `{action id, minted run id, launch-spec digest}` with a `PutIfMatch` of state, then launch **under that recorded run id**, then commit
+   the result. **Correction after the round-1 security review:** `runstore.Store.ClaimKey()` takes no key (it is `<run prefix>launching`, per
+   run id), run ids are random (`task.NewRunID`), and the claim is released after a launch and stale after `ClaimTTL` (10 minutes), so the
+   claim cannot be "the idempotency key under a derived id". The fence is the **run id itself**: the intent records the minted run id before the
+   start; recovery looks for an existing `task.json`/`launch.json` under it and **adopts** it, and never mints or issues a second one.
 2. **Level-triggered**: no cursor at all; the next cycle re-derives "task t-042 has no run" and acts again, with the claim as the fence.
 
 The cursor is then only a performance device (skip events already folded) and its advance can be the same `PutIfMatch` as the state
@@ -354,18 +385,18 @@ Numbers **D1220-D1249** (section 0). Recommendation first; the cost of the alter
 | D1228 | What runs a decision agent, and what bounds its cost? | **Local `claude -p` first** on the person's own login, each call with a fixed brief, `--max-turns`, a pinned `max_output_tokens`, a **count cap** (proposal: 6 calls per hour, 40 per day) and a circuit breaker after 3 consecutive empty or failed cycles that pauses the daemon and raises a decision for the person. Cloud variant later on the cloud senior reviewer's pattern. | A Fugaro cloud run per decision: gateway-budgeted and isolated, but each cycle pays container start and a job slot; do it only for the security-sensitive class. Numbers are proposals, not measured (U4). | **Answered 2026-11-04.** Local `claude -p` with hard bounds (max-turns, pinned `max_output_tokens`, 6 per hour and 40 per day, circuit breaker after 3 failed or empty cycles): the recommendation. Why: the only dollar control on a person's own login. Numbers are proposals (U4). |
 | D1229 | Event log or level-triggered reconciliation? | **Level-triggered in v1**: each tick derives actions from state vs the run view (idempotent, no cursor, no replay). Keep a small append-only **decision/audit log** (deterministic ids) only for the daemon's decisions and `user.message`; add a cursor when a producer needs one. | The spec's full event stream with ULIDs and a cursor: more machinery, an ordering problem across clocks, a dead-letter path, and the crash window below. | **Answered 2026-11-04.** Level-triggered v1 plus a small audit log with deterministic ids: the recommendation. Why: no cursor, no replay, no ordering problem in the first slice. |
 | D1230 | Event ordering key, if a log exists | **Server-assigned** (RTDB push key / `ServerNow`), **deterministic ids** (`<run>:<transition>`) for producer retries; the cursor is a performance device, never the source of truth. | ULIDs minted by writers: laptop clocks make order ambiguous. | **Answered 2026-11-04.** Deterministic ids and a server-assigned order: the recommendation. Why: laptop clocks make writer-minted ULIDs ambiguous. |
-| D1231 | Order of effect and commit | **Intent first**: commit the action intent (derived id: work item + attempt) with `PutIfMatch`, then launch under that id as the launch claim key, then commit the outcome. At-most-once for money; recovery re-issues the same key. | The spec's act-then-commit: a crash between spawns twice because the id is not recorded yet. | **Answered 2026-11-04.** Intent first, launch under the derived id, then commit: the recommendation. Why: at-most-once for money across a crash. |
+| D1231 | Order of effect and commit | **Intent first**: commit the action intent (derived id: work item + attempt, **plus the minted run id and the launch-spec digest**) with `PutIfMatch`, then launch under that recorded run id, then commit the outcome. At-most-once for money; recovery adopts an existing `task.json`/`launch.json` for that run id and never re-issues (the claim takes no key, so it is not the fence: round-1 finding 3). | The spec's act-then-commit: a crash between spawns twice because the id is not recorded yet. | **Answered 2026-11-04.** Intent first, launch under the derived id, then commit: the recommendation. Why: at-most-once for money across a crash. |
 | D1232 | Platforms for the local daemon | **macOS launchd and Linux systemd user unit** installed by `fugaro orchestrator install`, one instance by an RTDB heartbeat lease (the mailbox lease pattern); Windows out of v1 (`docs/windows-cli`). A sleeping laptop is fine: cloud runs continue and the next tick catches up (level state). | macOS only (cheapest, matches the owner's machine); or all three (a service-manager abstraction to test per OS). | **Answered 2026-11-04.** macOS launchd and Linux systemd user unit, one instance by an RTDB heartbeat lease, Windows out of v1: the recommendation. Why: the mailbox lease is the existing fence; `docs/windows-cli` is not ready. |
 | D1233 | Keep `summary_replace`? | **No in v1.** State is structured (items, decisions, facts); the human-readable summary is **generated** from them on read, never written by a model. Removes the narrative field a hostile or confused cycle can drift or poison, and the whole summary-versioning chain (spec Next step 7). | Keep it with version history and a periodic rebuild: more code, and a persistent prompt-injection carrier that re-enters every later prompt. | **Answered 2026-11-04.** Drop `summary_replace`: the recommendation. Why: no model-written narrative that re-enters every later prompt. |
 | D1234 | Where is the model pinned per decision type, and who classifies "security-sensitive"? | The classifier is **deterministic code over changed paths** (the owner's reviewer-routing rule, F15), not model judgement and not configurable downward; the model name per class is a local config key, tightening-only against any project layer. | Model picks its own tier or a project may lower it: a security change reviewed by Sonnet because the description said "docs". | **Answered 2026-11-04.** Security-sensitive is deterministic code over changed paths, never configurable downward; the model per class is a tightening-only local key: the recommendation. Why: the class must not depend on how a change describes itself. |
 | D1235 | Migration of the owner's scripts | **Shadow mode for about a week** (daemon prints what it would do beside the sweep), then it takes over bookkeeping only (launch when dependencies merged, mark finished, stuck nudge); merge and review-model choices stay with the person until decision agents have a record. The one-time session dump goes through the same validated, capped `apply_patch`. | Cut over at once: no comparison, and a bad rule launches real runs on the owner's installation (`project belong` must not be touched in live steps). | **Answered 2026-11-04.** **NOT THE RECOMMENDATION: the owner chose to cut over at once, with no shadow week.** The daemon replaces the owner's sweep, watcher and queue scripts immediately. Why: the owner chose it; no further reason was given. The consequence is under OPEN TENSIONS (section 6). |
 | D1236 | Amending the owner-verbatim coordinator and central-orchestrator specs (auto-compact, Firestore) | **Do not edit them.** Add an "amended by `docs/stateless-orchestrator`" note to each design's README, as other designs do. Whether the coordinator's resident service becomes a per-event cycle is a P7/P8 question for its own design. | The owner edits the originals: authoritative but loses the record of what was asked. | **Answered 2026-11-04.** Do not edit the owner-verbatim coordinator and central-orchestrator specs; add an "amended by" note to each README: the recommendation. Why: keeps the record of what was asked. |
-| D1237 | Session-start hook | **One hook slot shared with `docs/plugin-user-scope`'s session-start nudge**: print a short `get_state` summary and any pending decision; `CLAUDE.md` instruction alone for v1 is the fallback. | A second hook: two things that print at start and must be ordered; or no hook: the session starts blind to state, the problem this design is for. | **Answered 2026-11-04.** One session-start hook slot shared with `docs/plugin-user-scope`'s nudge: the recommendation. Why: two printers at start would need ordering. |
+| D1237 | Session-start hook (F17: `docs/plugin-user-scope` has no hook; read as one printer, not a shared slot) | **One hook slot shared with `docs/plugin-user-scope`'s session-start nudge**: print a short `get_state` summary and any pending decision; `CLAUDE.md` instruction alone for v1 is the fallback. | A second hook: two things that print at start and must be ordered; or no hook: the session starts blind to state, the problem this design is for. | **Answered 2026-11-04.** One session-start hook slot shared with `docs/plugin-user-scope`'s nudge: the recommendation. Why: two printers at start would need ordering. |
 | D1238 | Managed projects | The daemon and its decision agents **never run a gated converge or publish command**; they may report "an update is due" and nothing else. | Let a managed project's daemon call the gate: ties the agent's judgment to the converge gate the owner deliberately made deterministic. | **Answered 2026-11-04.** The daemon and its decision agents never run a gated converge or publish command and report "update due" only: the recommendation. Why: the managed gate stays deterministic. |
 | D1239 | Spawn-guardrail defaults not in the repo (project running cap, per-minute spawn rate, batch size) | Put them in the **project policy as tightening-only** fields with conservative defaults (proposal: running cap = the person's `max_parallel`, batch 10 rather than the spec's 50); decided in the plan's slice that needs them. | The spec's 50: a looping cycle can launch 50 real runs before any person is asked. | **Answered 2026-11-04.** Project-policy fields, tightening-only, conservative defaults (running cap = `max_parallel`, batch 10, a per-minute spawn rate): the recommendation. Why: a looping cycle must not launch 50 runs before anyone is asked. |
 | D1240 | Release slot | **0.21.0 or later**, after the MCP chain (0.20.0 slot) for anything that needs the hosted tools; the local deterministic daemon (D1221) is independent of MCP and can ship earlier if the owner wants the saving first. | Same window as MCP: both are security-heavy and both touch the rules and `fugaro update`. | **Answered 2026-11-04.** The local daemon may ship earlier; the MCP-dependent parts are 0.21.0 or later: the recommendation. Why: the daemon is independent of the MCP chain. |
 
-D1241-D1249 are reserved and unused. The owner confirmed the block D1220-D1249 on 2026-11-04.
+D1241-D1243 are **new owner questions raised by the round-1 security review, unanswered** (section 6): D1241 (the state node's writer identity, before O2), D1242 (a paired-device channel for person decisions), D1243 (the session-start check versus an RTDB read, D952). D1244-D1249 are reserved and unused. The owner confirmed the block D1220-D1249 on 2026-11-04.
 
 **The owner answered all of D1220-D1240 on 2026-11-04. Twenty of the twenty-one are the recommendation; D1235 is not** (cut over at once instead of a shadow week).
 
@@ -413,6 +444,19 @@ later task, not this one.
 
 **T5. The workspaces design reuses the MCP server** and was amended the same day; anything this design says about workspace caps
 (D1222's `ee/` part) waits on that design as well.
+
+**Round-1 owner questions (new, unanswered; the plan decides none of them).**
+
+- **D1241. Who writes the state node, before O2?** The rules do not bind a person's OAuth write (trust boundary above). Options: (a) the person's own
+  credential, validation client-side only, the rules refusing only job and token identities; (b) a service-account writer behind the person's CLI (a new
+  identity to provision and converge, the coordinator's shape); (c) a custom-token write with a claim the rules check, which any launcher can mint
+  through `signJwt`, so only a mitigation. Until answered, O2 builds the job-refusing rules and the converge only and claims no write-own guarantee.
+- **D1242. A paired-device channel for person decisions.** The terminal Typed confirmation stops an accident, not an adversary running as the person.
+  Are approval, `goal_set` and a person decision to be resolved only from the paired phone or console? Nothing consumes a resolved person decision
+  until this is answered (the launch of an approved item stays bounded by the caps and the launch-spec digest, O0).
+- **D1243. The session-start print versus D952.** `docs/plugin-user-scope` D952 says the session-start check never reaches the network; `fugaro
+  orchestrator state --brief` reads the RTDB. Options: the print reads a local cache the daemon wrote (no network at session start, possibly
+  stale), or D952 is amended for this one read (the person's own project, opt-in by installing the daemon).
 
 ## 7. What this reconciliation does not do
 

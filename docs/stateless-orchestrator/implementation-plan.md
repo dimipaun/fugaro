@@ -1,6 +1,8 @@
 # The stateless orchestrator: the implementation plan
 
-**Status: plan only; nothing is implemented; no task approved.** Written 2026-11-04 against `origin/main` at `5998d67c7`.
+**Status: plan only; nothing is implemented; no task approved.** Written 2026-11-04 against `origin/main` at `5998d67c7`. **Round 1 of the independent
+security review (verdict "fix first") is applied in this revision**: the corrections are in reconciliation section 3 (the rules do not bind a person's
+write; person-only is a mitigation; the claim takes no key), in G2, G4, G5, G11, O0-O12 below, and in the new owner questions D1241-D1243 (section 6).
 
 ## 1. Opening and status
 
@@ -17,17 +19,17 @@ Findings are cited as F#, decisions as D#, open tensions as T# (reconciliation s
 | D1222 | Core: schema, validator, single-user daemon. `ee/`: shared agents, handoff, batch approval, workspace caps | O0-O11 core; O17-O19 `ee/` |
 | D1223 | `fugaro orchestrator state / events / patch --json` before any MCP tool | O5 |
 | D1224 | MCP run names kept; the work item is `work_item`, never "task"; state group `get_state`, `get_events`, `apply_patch` | O0, O5, O16 |
-| D1225 | Only a person-class identity resolves a person's decision or sets `goal_set` | O0, O5 |
+| D1225 | Only a person-class identity resolves a person's decision or sets `goal_set`; at the CLI that means at least a Typed confirmation at a real terminal, residual stated (reconciliation section 3, D1242) | O0, O5 |
 | D1226 | A cycle spawns only an already-approved work item, through the single launch path, capped | O6 |
 | D1227 | New scopes `state:read`, `state:write` (a later edit to the MCP design, T3) | O16 |
 | D1228 | Local `claude -p` with max-turns, a pinned `max_output_tokens`, 6 per hour and 40 per day, a breaker after 3 failed or empty cycles | O12 |
 | D1229, D1230 | Level-triggered v1; a small audit log with deterministic ids and a server-assigned order | O3, O7 |
-| D1231 | Intent first, launch under the derived id, then commit | O6 |
+| D1231 | Intent first, recording the minted run id and the launch-spec digest, launch under that run id, adopt on recovery, then commit | O6 |
 | D1232 | launchd and a systemd user unit, one instance by an RTDB heartbeat lease; no Windows | O3, O9 |
 | D1233 | No `summary_replace`; the summary is generated on read | O0 |
 | D1234 | The security-sensitive class is deterministic code over changed paths; the model per class is a tightening-only local key | O1, O4, O12 |
 | **D1235 (not the recommendation)** | **Cut over at once, no shadow week** | O11, T1 |
-| D1236 | The two owner-verbatim specs are not edited; the README notes are written (they exist on `main`) | done |
+| D1236 | The two owner-verbatim specs are not edited; the README notes are written (added by this branch, not yet on `main`) | done |
 | D1237 | One session-start hook slot shared with `docs/plugin-user-scope` | O10 |
 | D1238 | The daemon and decision agents never run a gated converge or publish command | O8, O12 |
 | D1239 | Project-policy guardrail fields, tightening-only, conservative defaults | O4 |
@@ -67,16 +69,16 @@ adjacent code), `.claude/rules/terraform.md` (not needed: no Terraform). Standin
 | # | Constraint a reviewer holds every task to | Pinned by |
 | --- | --- | --- |
 | G1 | The LLM never writes state: typed ops only, validated by code (spec) | O0 `TestUnknownOpIsRefused` |
-| G2 | A `waiting_on: person` decision and `goal_set` are closed only by a person-class actor; an agent token or an agent-session CLI call can add and propose only (D1225, F20) | O0 `TestAgentActorCannotResolveAPersonDecision`, O5 `TestPatchFromAnAgentSessionRefusesPersonOps` |
-| G3 | Free text (`facts`, `note`, titles) is data: length-capped, control characters stripped, fenced as untrusted in every prompt, never above the system prompt (hard-questions, trust boundary) | O0 `TestFactValuesAreCappedAndCleaned`, O12 `TestUntrustedTextIsFenced` |
-| G4 | A cycle launches only an approved work item's repo, recipe and rigor; caps per cycle, hour, day, running and per minute are code (D1226, D1239) | O6 `TestSpawnNeverLeavesTheApprovedItem`, `TestCapsStopALoop` |
-| G5 | Money is at-most-once: intent committed before the launch, launch keyed by the derived id (D1231) | O6 `TestCrashAfterLaunchBeforeCommitMakesOneRun` |
+| G2 | A `waiting_on: person` decision, an approval and `goal_set` are closed only by a person-class actor, which at the CLI needs a Typed confirmation at a real terminal (`CanConfirm(Typed)`); the agent-marker check is a mitigation, not a barrier (`stage.go` `AgentAdvice`), so an `env -u CLAUDECODE` call or a direct node write is the residual, owner question D1242 (D1225, F20) | O0 `TestAgentActorCannotResolveAPersonDecision`, O5 `TestPersonOpsNeedATypedConfirmation`, `TestPatchFromAnAgentSessionRefusesPersonOps` (the accident only) |
+| G3 | Free text (`facts`, `note`, titles, decision text) is data: length-capped, control characters stripped, fenced as untrusted in **every** surface that prints it into a session or a prompt, from slice 1 (O5's `state --brief`, O10's session-start print) and in O12's prompts, never above the system prompt | O0 `TestFactValuesAreCappedAndCleaned`, O5 `TestStateBriefFencesAndCleansStoredText`, O10 `TestSessionStartPrintFencesStoredText`, O12 `TestUntrustedTextIsFenced` |
+| G4 | A cycle launches only an approved work item under the **full launch spec the person approved** (repo, recipe, rigor tier, brief and task text, bound by a digest in the approval; any edit clears the approval); caps per cycle, hour, day, running and per minute are code, derived from committed intents (D1226, D1239) | O0 `TestEditAfterApprovalRevokes`, O6 `TestSpawnNeverLeavesTheApprovedItem`, `TestCapsStopALoop`, `TestCapsSurviveARestart` |
+| G5 | Money is at-most-once: the intent, with the minted run id, is committed before the launch; recovery adopts an existing `task.json`/`launch.json` and never issues a second launch (the claim takes no key, so it is not the fence) (D1231) | O6 `TestRecoveryAdoptsTheRecordedRunID`, O8 `TestCrashBetweenIntentAndLaunchMakesOneRun` (real runstore and gcpfake) |
 | G6 | The security-sensitive class is code over changed paths, never lowered by config or by the model (D1234) | O1 `TestPromptPathsAreAlwaysSensitive`, O4 `TestModelKeyOnlyTightens` |
 | G7 | Kill switch, `Precheck` and spend caps are always consulted; the daemon cannot widen a ceiling | O6 `TestKillSwitchStopsSpawning` |
-| G8 | The daemon and decision agents never run a gated converge or publish command and never answer a refusal with an action (D1238, F20) | O8 `TestDaemonRefusesGatedCommands`, O12 `TestDecisionAgentRunsWithTheAgentDenyRules` |
-| G9 | One daemon per orchestrator id; a stale writer's write is refused, never forced (D1232, F5) | O3 `TestTwoDaemonsOneLease` |
+| G8 | The daemon and decision agents never run a gated converge or publish command, never pass `Yes` to a confirmation, and never answer a refusal with an action (D1238, F20) | O8 `TestDaemonDoesNotDependOnGatedCommands` (an import and dependency test), `TestDaemonNeverPassesYes`, O12 `TestDecisionAgentRunsWithTheAgentDenyRules` |
+| G9 | One daemon per orchestrator id; a stale writer's write is refused, never forced (D1232, F5); `state`, `lease` and `audit` are **siblings** under `orchestrator/<id>` (a PUT of the parent wipes children and every heartbeat would move a shared ETag) | O3 `TestTwoDaemonsOneLease`, `TestHeartbeatDoesNotMoveTheStateETag` |
 | G10 | A failed or empty cycle is a visible state (a `pending_decisions` item), never a silent no-op (owner lesson 22) | O6 `TestBreakerRaisesADecision`, O12 `TestEmptyCycleCountsAsFailed` |
-| G11 | A rules or policy change is converged by `fugaro update` from the previous generation (HARD RULE) | O2 `TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration` |
+| G11 | A rules, policy, state-schema or daemon-unit change is converged by `fugaro update` from the previous generation (HARD RULE) | O2 `TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration`, O0 `TestMigrateFromThePreviousSchemaVersion`, O9 `TestUpdateRerendersAndRestartsAPreviousVersionUnit` |
 
 **Reviewer tier.** *Security*: `security-reviewer` (Opus), a mandatory independent review, at least one mutation check, routed by changed
 paths (rules, guards, the launch path, prompts and plugin skills are security paths per the owner's routing rule). *Light*: `light-reviewer`.
@@ -103,16 +105,23 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   `internal/orchestrator/summary_test.go` (new), `internal/orchestrator/export_test.go` (new), `internal/orchestrator/testdata/state-a.json`
   (new), `schemas/orchestrator-state.schema.json` (new), `schemas/orchestrator-patch.schema.json` (new).
 - **Interfaces:** `type State struct{ SchemaVersion int; Rev int64; AgentID, Role, Goal string; WorkItems []WorkItem; Decisions []Decision;
-  Facts map[string]Fact; ... }`. `WorkItem{ID, Title, Repo, Recipe, RigorTier, DependsOn, Phase, RunID, Approved *Approval, Attempts, Note}`: **`Phase`
-  is `queued|running|review|done|failed|blocked|cancelled`**, not `status`; the run's own state stays the run record's. `Decision{ID, Question,
+  Facts map[string]Fact; ... }`. `WorkItem{ID, Title, Repo, Recipe, RigorTier, Brief, DependsOn, Phase, RunID, Approved *Approval, Attempts, Note}`: **`Phase`
+  is `queued|running|review|done|failed|blocked|cancelled`**, not `status`; the run's own state stays the run record's. `Approval{By, At, SpecDigest}`: **the digest covers the full launch spec** (repo, recipe, rigor tier, brief and task text, `DependsOn`);
+  any `work_item_upsert` that changes a digested field clears `Approved`, so a later upsert cannot rewrite a brief under a standing approval.
+  `Intent{ID (item + attempt), RunID (minted before the start), SpecDigest, At (server time), Outcome}` and `Counters` (the per-hour and per-day
+  decision-call counts, O12) are **fields of `State`, named here** (`Intents []Intent`, `Counters Counters`); O6 and O12 use them and edit neither
+  `state.go` nor the schema. `Decision{ID, Question,
   WaitingOn (person|session|daemon), ...}`. `Fact{Value, By}` carries provenance (`by`: person, session, daemon, decision-agent). `Patch{BaseRev, Ops}`
   with ops `work_item_upsert`, `work_item_archive`, `decision_add`, `decision_resolve`, `fact_set`, `fact_delete`, `goal_set` (no
   `summary_replace`, D1233). `func Apply(State, Patch, Actor) (State, error)` with `Actor{Class: Person|Session|Daemon|DecisionAgent}`;
-  `func Summarize(State) string` generated on read, capped. Imports no `ee/`, no cloud package (pure).
+  `func Summarize(State) string` generated on read, capped, **free text fenced and cleaned** (G3). `func Migrate(State) (State, bool)` raises an
+  older `schema_version` to the current one in place (the store and `fugaro update` call it). Imports no `ee/`, no cloud package (pure).
 - **Schema/rules/config change:** two new JSON Schemas; the decode is strict (unknown field is an error). No rules, no config.
 - **Tests:** `TestStateRefusesAnUnknownField`, `TestUnknownOpIsRefused`, `TestStaleBaseRevIsRejected`, `TestAllowedPhaseTransitions`,
   `TestAgentActorCannotResolveAPersonDecision`, `TestOnlyAPersonSetsGoalOrApprovesAWorkItem`, `TestFactValuesAreCappedAndCleaned`
-  (uses `internal/safetext`), `TestWorkItemFieldsAreNotTheRunRecordsFields`, `TestSummaryIsGeneratedAndCapped`, `TestSchemasMatchTheStructs`.
+  (uses `internal/safetext`), `TestWorkItemFieldsAreNotTheRunRecordsFields`, `TestSummaryIsGeneratedAndCapped`, `TestSchemasMatchTheStructs`,
+  `TestEditAfterApprovalRevokes` (an upsert touching rigor, brief, repo, recipe or `DependsOn` clears the approval), `TestApprovalBindsTheFullLaunchSpec`,
+  `TestMigrateFromThePreviousSchemaVersion`.
 - **Command:** `go test ./internal/orchestrator/ -count=1 && go test ./schemas/ -count=1`
 - **Depends on:** none. **Level 0.**
 - **Commit:** `feat(orchestrator): the state schema, the typed patch and its validator (O0)`
@@ -124,12 +133,17 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 
 - **Files (4):** `internal/orchestrator/sensitivity/classify.go` (new), `internal/orchestrator/sensitivity/classify_test.go` (new),
   `internal/orchestrator/sensitivity/testdata/paths.txt` (new), `internal/orchestrator/sensitivity/export_test.go` (new).
-- **Interfaces:** `func Classify(changedPaths []string) Class` (`Routine|Sensitive`), by path only, from the owner's routing rule
-  (credentials, writes and guards, the managed gate, Terraform and IAM, the agent environment and gateway, agent prompts, recipes, `CLAUDE.md`,
-  `AGENTS.md`, `.claude/**`, plugin skills, CI and `docs/pending-workflows`). No input but paths: a title or description cannot lower it.
+- **Interfaces:** `func Classify(changedPaths []string) Class` (`Routine|Sensitive`), by path only. **An allowlist, not a denylist:** `Routine` only
+  when **every** path matches an allowlisted routine prefix (`docs/**` except `docs/pending-workflows/**`, `website/**`, `mobile/**`, the console
+  renderer; a `_test.go` file is routine only inside an allowlisted tree, so a test edit in `internal/orchestrator`, `internal/initflow`,
+  `internal/agentenv`, `internal/managed`, `schemas/`, `ee/` or `.claude/` is Sensitive). **Everything else, and every unknown, unmatched or malformed
+  path, is Sensitive**, so the classifier's own package, the daemon and the guards default to Sensitive. The owner's routing rule (credentials, writes
+  and guards, the managed gate, Terraform and IAM, the agent environment and gateway, agent prompts, recipes, `CLAUDE.md`, `AGENTS.md`, `.claude/**`,
+  plugin skills, CI) is a test fixture the allowlist must never contradict. No input but paths: a title or description cannot lower it.
 - **Schema/rules/config change:** none.
 - **Tests:** `TestPromptPathsAreAlwaysSensitive`, `TestDescriptionCannotLowerTheClass` (the signature has no description argument; a
-  reflective test pins it), `TestEmptyPathListIsSensitive` (fail closed), `TestDocsAndTestsAreRoutine`, `TestRulesTableMatchesTheReviewerRoutingText`.
+  reflective test pins it), `TestEmptyPathListIsSensitive` (fail closed), `TestUnlistedPathIsSensitive`, `TestOnlyAllowlistedPathsAreRoutine`,
+  `TestTestEditsInGuardTreesAreSensitive`, `TestRoutingRuleFixtureIsNeverRoutine`, `TestRulesTableMatchesTheReviewerRoutingText`.
 - **Command:** `go test ./internal/orchestrator/sensitivity/ -count=1`
 - **Depends on:** none. **Level 0.**
 - **Commit:** `feat(orchestrator): the path-based security-sensitive classifier (O1)`
@@ -138,23 +152,24 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 
 ### O2. The `orchestrator/` subtree, its rules and the `fugaro update` convergence
 
-- **Files (7):** `internal/budget/rules/rules.go`, `internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/marker.go`,
+- **Files (7), and the emulator and parity tests carry `//go:build firebase`:** `internal/budget/rules/rules.go`, `internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/marker.go`,
   `internal/budget/rules/emulator_orchestrator_test.go` (new), `internal/budget/rules/parity_test.go`, `internal/cli/update_converge_test.go`,
   `docs/releases/vX.Y.Z.md` (the release the owner assigns; created or amended).
-- **Interfaces:** a top-level `orchestrator/<id>/` subtree like D195's `coordinator/` (F4): `.read` for the signed-in person, `.write` for the person
-  class only, the daemon writing through the person's own credential (F16, the daemon is the person); fields validated against O0's shape; a lease node
-  `orchestrator/<id>/lease`. **Rules generation:** a marker of its own, on the credentials cascade's precedent (`marker.go`), **not** a `RulesVersion`
+- **Interfaces:** a top-level `orchestrator/<id>/` subtree: `.read` for the signed-in person, a `.write` that **refuses every run-scoped job identity** and
+  validates shape and size for a token-based writer; **the rules do not bind a person's OAuth write** (IAM bypasses them), so this task claims no
+  write-own guarantee and the writer identity is **owner question D1241**, decided before this task starts. Siblings under `orchestrator/<id>`:
+  `state`, `lease` and `audit` (a PUT of the parent would wipe children and a heartbeat would move a shared ETag). **Rules generation:** a marker of its own, on the credentials cascade's precedent (`marker.go`), **not** a `RulesVersion`
   bump, because a bump drops every published policy on an installation that has not redeployed. Task O2 confirms or reverses this in its red step.
 - **Schema/rules/config change:** the rules template and marker; `fugaro update`'s rules stage writes the marker after the PUT.
 - **Tests:** emulator: `TestOrchestratorSubtreeIsReadableOnlyBySignedInPeople`, `TestOrchestratorWritesRefuseAJobIdentity`,
   `TestOrchestratorRejectsAnOversizeOrMalformedState`; `TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration` (an installation at the
   previous generation converges in one `fugaro update` run, nothing else needed), `TestUpdateRefusesToRewindTheOrchestratorMarker`.
-- **Command:** `go test ./internal/budget/rules/ -run 'Orchestrator|Parity' -count=1 && go test ./internal/cli/ -run 'TestUpdate.*Orchestrator' -count=1`
-- **Depends on:** O0 (field names). **Level 1.**
+- **Command:** `go test -tags firebase ./internal/budget/rules/ -run 'Orchestrator|Parity' -count=1 && go test ./internal/cli/ -run 'TestUpdate.*Orchestrator' -count=1`
+- **Depends on:** O0 (field names), and the owner's answer to D1241. **Level 1.**
 - **Commit:** `feat(rules): the orchestrator subtree, closed to job identities, converged by update (O2)`
 - **Red step:** `TestOrchestratorWritesRefuseAJobIdentity` fails against the unchanged rules (a deny-by-default root makes it pass vacuously, so the
   test first proves a person write succeeds, then a job write fails).
-- **OWNER-RUN, Check 300:** with a real installation that is **not** project `belong`: run `fugaro update`; confirm a signed-in person can write
+- **OWNER-RUN, Check 300:** with a real installation that is **not** project `belong`: run `fugaro update`; confirm the writer D1241 names can write
   the state node and a run's own token cannot. The agent writes the check text, the owner runs it. Operators' line: "run `fugaro update`".
 - **Reviewer:** security (rules and guards).
 
@@ -164,12 +179,14 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   `internal/orchestrator/store_test.go` (new), `internal/orchestrator/lease_test.go` (new), `internal/orchestrator/audit_test.go` (new),
   `internal/orchestrator/testdata/lease-a.json` (new), `internal/orchestrator/export_store_test.go` (new; O0 owns `export_test.go`, so the
   table has no shared writer).
-- **Interfaces:** `type Store interface{ Load(ctx) (State, ETag, error); Save(ctx, State, ETag) error }` over `internal/rtdb` `GetETag`/`PutIfMatch`,
-  a bounded re-read on 412 and never forced (F5); `Lease` after `internal/mailbox/lease.go`'s heartbeat-lease pattern; `Audit.Append(ctx, Entry)` with
+- **Interfaces:** `type Store interface{ Load(ctx) (State, ETag, error); Save(ctx, State, ETag) error }` over `internal/rtdb` `GetETag`/`PutIfMatch` **on the `state` node
+  only, a sibling of `lease` and `audit`** (never a PUT of `orchestrator/<id>`), a bounded re-read on 412 and never forced (F5); `Load` applies O0's
+  `Migrate` and the next `Save` writes the migrated `schema_version`; `Lease` after `internal/mailbox/lease.go`'s heartbeat-lease pattern; `Audit.Append(ctx, Entry)` with
   a deterministic id (`<run>:<transition>`) and a server-assigned order (`rtdb.ServerNow`), D1229 and D1230.
 - **Schema/rules/config change:** none (O2 holds the rules).
 - **Tests:** `TestTwoDaemonsOneLease`, `TestStaleSaveIsRefusedNotForced`, `TestAuditAppendIsIdempotentOnADerivedId`, `TestLeaseExpiresWhenTheHolderStopsBeating`,
-  `TestStoreFailsClosedOnAnUnreadableState`.
+  `TestStoreFailsClosedOnAnUnreadableState`,
+  `TestHeartbeatDoesNotMoveTheStateETag`, `TestLoadMigratesAnOlderSchemaVersion`.
 - **Command:** `go test ./internal/orchestrator/ -run 'Store|Lease|Audit' -count=1`
 - **Depends on:** O0. **Level 1.**
 - **Commit:** `feat(orchestrator): the compare-and-swap state store, the daemon lease and the audit log (O3)`
@@ -181,13 +198,13 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 - **Files (6):** `internal/projectpolicy/policy.go`, `internal/projectpolicy/orchestrator_test.go` (new), `internal/policy/merge.go`,
   `internal/policy/orchestrator_merge_test.go` (new), `internal/localcfg/localcfg.go`, `internal/localcfg/orchestrator_test.go` (new).
 - **Interfaces:** an optional `orchestrator:` block in the published policy: `max_running` (default the person's `max_parallel`), `batch_size`
-  (default 10, D1239), `spawn_per_minute`, `decision_model_per_class` (tightening-only, G6); a local `orchestrator:` key holding the same plus the
+  (default 10, D1239), `spawn_per_minute` (default 2, conservative), `spawn_per_hour` and `spawn_per_day` (defaults 12 and 60), `decision_model_per_class` (tightening-only, G6; the tier order is **haiku < sonnet < opus**, an unknown model name is refused, and the Sensitive class never drops below opus); a local `orchestrator:` key holding the same plus the
   model names. `policy.Merge` only tightens. Additive optional keys: no policy version bump (F22: confirmed or reversed in the red step against
   `internal/projectpolicy/version.go`).
 - **Schema/rules/config change:** the policy and local-config schemas that list their keys gain the block (a `schemas/` entry exists for the project
   layer; if none lists the policy keys, the red step records that).
-- **Tests:** `TestPolicyDefaultsAreConservative`, `TestMergeNeverRaisesTheRunningCap`, `TestModelKeyOnlyTightens`,
-  `TestOrchestratorBlockDecodesStrictly`.
+- **Tests:** `TestPolicyDefaultsAreConservative`, `TestMergeNeverRaisesTheRunningCap`, `TestModelKeyOnlyTightens` (uses the tier order, refuses an unknown model and a lowering of the Sensitive class),
+  `TestOrchestratorBlockDecodesStrictly`, `TestSpawnPerMinuteHasADefault`.
 - **Command:** `go test ./internal/projectpolicy/ ./internal/policy/ ./internal/localcfg/ -run Orchestrator -count=1`
 - **Depends on:** none. **Level 0.**
 - **Commit:** `feat(policy): the orchestrator's spawn guardrails, tightening only (O4)`
@@ -196,22 +213,25 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 
 ### O5. `fugaro orchestrator state / events / patch --json`
 
-- **Files (7):** `internal/cli/orchestrator_cmd.go` (new), `internal/cli/orchestrator_state.go` (new), `internal/cli/orchestrator_patch.go` (new),
+- **Files (8):** `website/content/cli-reference.md` (regenerated by `go run ./ee/clidoc`, guarded by `TestCliReferenceIsCurrent` in `ee/clidoc`),
+  `internal/cli/orchestrator_cmd.go` (new), `internal/cli/orchestrator_state.go` (new), `internal/cli/orchestrator_patch.go` (new),
   `internal/cli/orchestrator_cmd_test.go` (new), `internal/cli/orchestrator_patch_test.go` (new), `internal/cli/root.go` (one line registering the command),
   `schemas/orchestrator-output.schema.json` (new).
-- **Interfaces:** `state [--brief]` prints the generated summary (the session-start print, D1237: short, one screen); `events [--since]` reads the
-  audit log; `patch -f file|-` validates with O0, with the actor class **person only when the call is a person's own** and `session` when
-  `initflow`'s agent-session detection says so (`AgentRefusal`, `CanConfirm`, `internal/initflow/stage.go:440`, `:617`); person-only ops from a
-  session are refused (G2). No `spawn`, no `retry`: launch is the daemon's (T2).
+- **Interfaces:** `state [--brief]` prints the generated summary (the session-start print, D1237: short, one screen), **with stored text fenced and cleaned** (G3); `events [--since]` reads the
+  audit log; `patch -f file|-` validates with O0, with the actor class `session` by default; **person-only ops (approve, `goal_set`, resolving a person decision) need a Typed confirmation at a real
+  terminal** (`initflow.CanConfirm(Typed)`) and are refused otherwise, and `--yes` never covers them. The agent-marker check
+  (`AgentRefusal`, `internal/initflow/stage.go`) stays as an extra refusal but **is a mitigation, not a barrier** (`env -u CLAUDECODE`, or a direct node
+  write, passes it), so it is not what G2 rests on; the residual is owner question D1242. No `spawn`, no `retry`: launch is the daemon's (T2).
 - **Schema/rules/config change:** the `--json` output schema, additive, `schema_version` 1.
-- **Tests:** `TestStateBriefFitsOneScreen`, `TestEventsJSONMatchesTheSchema`, `TestPatchFromAnAgentSessionRefusesPersonOps`,
-  `TestPatchRejectsAStaleRev`, `TestCommandIsRegisteredOnce`.
+- **Tests:** `TestStateBriefFitsOneScreen`, `TestEventsJSONMatchesTheSchema`, `TestPersonOpsNeedATypedConfirmation`,
+  `TestPatchFromAnAgentSessionRefusesPersonOps` (the accident only), `TestStateBriefFencesAndCleansStoredText`, `TestPatchRejectsAStaleRev`,
+  `TestCommandIsRegisteredOnce`; `go test ./ee/clidoc/ -count=1` for the regenerated reference.
 - **Command:** `go test ./internal/cli/ -run 'TestOrchestrator|TestStateBrief|TestEventsJSON|TestPatch' -count=1`
 - **Depends on:** O0, O3. **Level 2.**
 - **Commit:** `feat(cli): fugaro orchestrator state, events and patch with --json (O5)`
-- **Red step:** `TestPatchFromAnAgentSessionRefusesPersonOps` fails to build, then fails when a session patch closes a person decision. **UNVERIFIED
-  (P1):** that agent-session detection is reliable for a plain CLI call (not only the setup stages); the red step reads it and, if it is not,
-  the task reports instead of guessing, because G2 depends on it.
+- **Red step:** `TestPersonOpsNeedATypedConfirmation` fails to build, then fails when a patch with no terminal closes a person decision. **P1 is resolved
+  as negative:** the agent-session detection is not a barrier (`stage.go` `AgentAdvice`, `init.go`), so G2 rests on the Typed confirmation and the
+  residual is D1242.
 - **Reviewer:** security (the person-class fence).
 
 ### O6. The dependency-driven launcher: intent-first claims, caps, running cap and breaker
@@ -219,30 +239,35 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 - **Files (8):** `internal/orchestrator/launch.go` (new), `internal/orchestrator/intent.go` (new), `internal/orchestrator/caps.go` (new),
   `internal/orchestrator/breaker.go` (new), `internal/orchestrator/launch_test.go` (new), `internal/orchestrator/caps_test.go` (new),
   `internal/orchestrator/breaker_test.go` (new), `internal/orchestrator/export_launch_test.go` (new).
-- **Interfaces:** `type Launcher interface{ Launch(ctx, Spec, ClaimKey) (RunID, error) }` implemented in O8 over the `fugaro run` path (the core
-  must not import `internal/cli`); `func Plan(State, RunView, Caps, Now) []Action`: an item is eligible only if `Approved` by a person, all
-  `DependsOn` are `done`, its repo and recipe are the approved ones, the running count and the per-cycle, per-minute, per-hour and per-day counts are
-  under `Caps`, and the kill switch is off (consulted through an interface over `budget`); the claim key is derived from item id plus attempt
-  (D1231); `Breaker` counts consecutive failed or empty cycles (3) and writes a `pending_decisions` item.
+- **Interfaces:** `type Launcher interface{ Launch(ctx, Spec, RunID) (RunID, error) }` implemented in O8 over the `fugaro run` path (the core
+  must not import `internal/cli`); `func Plan(State, RunView, Caps, Now) []Action`: an item is eligible only if `Approved` by a person **and the
+  approval's `SpecDigest` equals the digest of the item's current launch spec** (repo, recipe, rigor tier, brief), all `DependsOn` are `done`, the
+  running count and the per-cycle, per-minute, per-hour and per-day counts are under `Caps`, and the kill switch is off (consulted through an
+  interface over `budget`). **The per-minute, per-hour and per-day counts are derived from the committed `Intents` using their server time**
+  (`rtdb.ServerNow`), never from in-memory counters, so a launchd restart loop does not reset them. **Intent first (D1231, corrected):** the
+  committed intent carries the **run id minted before the start** (`task.NewRunID`) and the spec digest; `Launch` starts the run under that id;
+  **recovery looks for an existing `task.json`/`launch.json` under the recorded run id and adopts it, never minting or issuing a second launch** (the
+  claim is `<run prefix>launching`, takes no key, is released after a launch and is stale after 10 minutes, so it is not the fence); `Breaker` counts consecutive failed or empty cycles (3) and writes a `pending_decisions` item.
 - **Schema/rules/config change:** none.
 - **Tests:** `TestSpawnNeverLeavesTheApprovedItem`, `TestUnapprovedItemIsNeverLaunched`, `TestCapsStopALoop`, `TestKillSwitchStopsSpawning`,
-  `TestCrashAfterLaunchBeforeCommitMakesOneRun` (a launcher fake that keys by claim), `TestBreakerRaisesADecision`, `TestDependencyOrderIsRespected`.
+  `TestRecoveryAdoptsTheRecordedRunID` (a fake that records started run ids; the real-store crash test is O8's), `TestEditedSpecIsNeverLaunched`,
+  `TestCapsSurviveARestart` (a new process with the same committed intents has the same counts), `TestBreakerRaisesADecision`, `TestDependencyOrderIsRespected`.
 - **Command:** `go test ./internal/orchestrator/ -run 'Launch|Caps|Breaker|Plan' -count=1`
 - **Depends on:** O0, O4 (the `Caps` values; the type is defined here and O4 fills it in O8). **Level 1.**
 - **Commit:** `feat(orchestrator): the dependency-driven launcher with intent-first claims and spawn caps (O6)`
-- **Red step:** `TestCrashAfterLaunchBeforeCommitMakesOneRun` fails to build, then fails when the claim key is generated rather than derived.
+- **Red step:** `TestRecoveryAdoptsTheRecordedRunID` fails to build, then fails when recovery mints a new run id instead of adopting the recorded one.
 - **Reviewer:** security (money).
 
 ### O7. The reconcile tick and notifications
 
 - **Files (6):** `internal/orchestrator/tick.go` (new), `internal/orchestrator/runview.go` (new), `internal/orchestrator/notify.go` (new),
   `internal/orchestrator/tick_test.go` (new), `internal/orchestrator/notify_test.go` (new), `internal/orchestrator/export_tick_test.go` (new).
-- **Interfaces:** `Tick(ctx, Store, RunViewReader, Launcher, Notifier)`: load, fold finished runs into the item phases, ask `Plan` (O6), execute
+- **Interfaces:** `Tick(ctx, Store, RunViewReader, Launcher, Notifier)`: load, fold finished runs into the item phases **by joining on the run id the daemon recorded in the intent, never on a run-writable field** (a run's own heartbeat, title or label), ask `Plan` (O6), execute
   intents, commit; a `Notifier` interface (a sink per OS in O9; a log sink here) fires on a finished run or a decision needed; level-triggered, no cursor
   (D1229). Nothing in it calls a model (D1221).
 - **Schema/rules/config change:** none.
 - **Tests:** `TestTickMarksAFinishedRunDone`, `TestTickIsIdempotentOnRepeat`, `TestTickNotifiesOnceForADecision`, `TestTickMakesNoModelCall` (the
-  dependency list has no agent package), `TestTickLeavesAPersonDecisionOpen`.
+  dependency list has no agent package), `TestTickLeavesAPersonDecisionOpen`, `TestTickJoinsOnTheRecordedRunIDOnly`.
 - **Command:** `go test ./internal/orchestrator/ -run 'Tick|Notify' -count=1`
 - **Depends on:** O3, O6. **Level 2.**
 - **Commit:** `feat(orchestrator): the reconcile tick and its notifications (O7)`
@@ -252,14 +277,17 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 
 ### O8. The foreground daemon command and the run-path launcher
 
-- **Files (6):** `internal/cli/orchestrator_run.go` (new), `internal/cli/orchestrator_launcher.go` (new), `internal/cli/orchestrator_run_test.go` (new),
+- **Files (7):** `website/content/cli-reference.md` (regenerated), `internal/cli/orchestrator_run.go` (new), `internal/cli/orchestrator_launcher.go` (new), `internal/cli/orchestrator_run_test.go` (new),
   `internal/cli/orchestrator_launcher_test.go` (new), `internal/cli/orchestrator_cmd.go` (edit: adds the `run` subcommand), `internal/cli/launch_budget.go`
   (a read-only export if one is needed; otherwise untouched).
 - **Interfaces:** `fugaro orchestrator run` = the lease, then `Tick` every N seconds, with the SSE stream of the project's RTDB as a wake-up (resume
   gives a full `put`, F8); the `Launcher` implemented over the same pre-launch path `fugaro run` uses (claim plus `budget.Precheck`, F11, T2). It
-  refuses any gated converge or publish command (G8): the daemon reports "update due" and nothing else.
+  refuses any gated converge or publish command (G8): the daemon reports "update due" and nothing else; **it never passes `Yes`** to any confirmation
+  and the daemon package does not depend on the gated-command packages.
 - **Schema/rules/config change:** none.
-- **Tests:** `TestDaemonRefusesGatedCommands`, `TestRunLauncherUsesTheLaunchClaim`, `TestRunLauncherRunsPrecheck`, `TestRunStopsWhenTheLeaseIsLost`,
+- **Tests:** `TestDaemonDoesNotDependOnGatedCommands` (an import and dependency test over `go list -deps`, not a string check), `TestDaemonNeverPassesYes`,
+  `TestCrashBetweenIntentAndLaunchMakesOneRun` (the real `internal/runstore` and `internal/gcpfake`: crash after the intent and again after the start,
+  recover, one run), `TestRunLauncherUsesTheLaunchClaim`, `TestRunLauncherRunsPrecheck`, `TestRunStopsWhenTheLeaseIsLost`,
   `TestRunReportsUpdateDueAndDoesNothingElse`.
 - **Command:** `go test ./internal/cli/ -run 'TestDaemon|TestRunLauncher|TestRunStops|TestRunReports' -count=1`
 - **Depends on:** O2 (the node must exist), O5, O7. **Level 3.**
@@ -269,17 +297,24 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 
 ### O9. The launchd and systemd user-unit installer
 
-- **Files (8):** `internal/orchestrator/service/launchd.go` (new), `internal/orchestrator/service/systemd.go` (new),
+- **Files (11):** `website/content/cli-reference.md` (regenerated), `internal/cli/update_orchestrator.go` (new), `internal/cli/update_orchestrator_test.go` (new),
+  `internal/orchestrator/service/launchd.go` (new), `internal/orchestrator/service/systemd.go` (new),
   `internal/orchestrator/service/service.go` (new), `internal/orchestrator/service/service_test.go` (new), `internal/orchestrator/service/testdata/unit-a.golden`
   (new), `internal/cli/orchestrator_install.go` (new), `internal/cli/orchestrator_install_test.go` (new), `internal/cli/orchestrator_cmd.go` (edit: install,
   uninstall, status).
 - **Interfaces:** `fugaro orchestrator install|uninstall|status`: writes a per-user unit that runs `fugaro orchestrator run`, restarts after a crash or
   reboot, never touches a system path or needs root; macOS and Linux only (D1232), Windows answers "not supported" (`docs/windows-cli`). Content is
-  rendered from a fixed template with the binary path quoted; nothing from state or policy goes into the unit.
+  rendered from a fixed template with the binary path quoted; nothing from state or policy goes into the unit. **The unit runs the stable binary
+  path** (the package manager's stable link, e.g. Homebrew's `opt` path, never a versioned `Cellar` path that `brew upgrade` removes, which would
+  crash-loop). **`fugaro update` converges an installed daemon (the HARD RULE):** when a unit is installed it re-renders it from the new template,
+  restarts it, and migrates the state node's `schema_version` with O0's `Migrate`, behind the update's own confirmation; nothing else is left for the
+  operator. `install` is refused under a coding agent's marker and `--yes` never covers it (a unit runs code at login).
 - **Schema/rules/config change:** none.
 - **Tests:** `TestLaunchdPlistMatchesTheGolden`, `TestSystemdUnitMatchesTheGolden`, `TestInstallWritesOnlyUnderTheUserHome`, `TestWindowsIsRefusedNamed`,
-  `TestUninstallRemovesWhatInstallWrote`. Tests render into `t.TempDir()` and never call `launchctl` or `systemctl` (an interface is faked).
-- **Command:** `go test ./internal/orchestrator/service/ ./internal/cli/ -run 'Launchd|Systemd|TestInstall|TestUninstall|TestWindows' -count=1`
+  `TestUninstallRemovesWhatInstallWrote`, `TestInstallRefusedUnderAnAgentMarker`, `TestUnitUsesTheStableBinaryPath`,
+  `TestUpdateRerendersAndRestartsAPreviousVersionUnit` (a unit rendered by the previous version converges in one `update`),
+  `TestUpdateMigratesTheStateSchemaVersion`. Tests render into `t.TempDir()` and never call `launchctl` or `systemctl` (an interface is faked).
+- **Command:** `go test ./internal/orchestrator/service/ ./internal/cli/ -run 'Launchd|Systemd|TestInstall|TestUninstall|TestWindows|TestUpdate.*(Unit|Schema)' -count=1`
 - **Depends on:** O8. **Level 4.**
 - **Commit:** `feat(cli): install the orchestrator daemon under launchd and a systemd user unit (O9)`
 - **Red step:** `TestInstallWritesOnlyUnderTheUserHome` fails to build, then fails when a path outside the home is accepted.
@@ -290,24 +325,24 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 ### O10. The plugin skill and the shared session-start hook slot
 
 - **Files (6):** `plugin/skills/orchestrator/SKILL.md` (new), `plugin/skills/orchestrator/reference/state.md` (new), `plugin/orchestrator_skill_test.go` (new),
-  `plugin/skills/hooks/session-start` (the hook file; **the slot `docs/plugin-user-scope` designs; this task adds its `get_state` print to it and
-  creates it only if that design's task has not landed**), `plugin/plugin_test.go` (edit: the new skill in the list), `plugin/readme_test.go` (edit).
+  the session-start print (**`docs/plugin-user-scope` designs no hook: its nudge is a skill sentence running `doctor --offline`, F17**; this task writes the
+  print as a skill sentence, and a real plugin hook only if the Claude Code plugin hook configuration is confirmed in the red step and D1243 is answered;
+  the path `plugin/skills/hooks/session-start` is not where Claude Code plugin hooks live), `plugin/plugin_test.go` (edit: the new skill in the list), `plugin/readme_test.go` (edit).
 - **Interfaces:** the skill teaches a session to read `fugaro orchestrator state --brief` first, to record decisions and facts through `patch` as they
-  happen and never to rely on chat history; it names only commands O5 has (the plugin tests check them). The hook prints the short summary and any
-  pending decision; one slot, ordered after the update nudge.
+  happen and never to rely on chat history; it names only commands O5 has (the plugin tests check them). The print shows the short summary and any pending decision, **fenced and cleaned** (G3), ordered after the update nudge. **`state --brief` reads the
+  RTDB, which D952 says the session-start check never does: owner question D1243**; until answered the print reads a local cache the daemon wrote.
 - **Schema/rules/config change:** the plugin skill list.
-- **Tests:** `TestOrchestratorSkillNamesOnlyRealCommandsAndFlags`, `TestSessionStartHookPrintsOneScreen`, `TestHookNeverRunsAGatedCommand`,
+- **Tests:** `TestOrchestratorSkillNamesOnlyRealCommandsAndFlags`, `TestSessionStartPrintsOneScreen`, `TestSessionStartPrintFencesStoredText`, `TestHookNeverRunsAGatedCommand`,
   `TestSkillSaysFirestoreIsNotTheStore`.
 - **Command:** `go test ./plugin/ -count=1`
-- **Depends on:** O5. **Level 3.** External dependency: `docs/plugin-user-scope`'s hook (unbuilt); if it is still unbuilt the hook falls back to the
-  `CLAUDE.md` instruction (D1237's stated fallback) and the task says so.
+- **Depends on:** O5. **Level 3.** External: `docs/plugin-user-scope`'s nudge (a skill sentence, unbuilt); the fallback is the `CLAUDE.md` instruction (D1237's stated fallback).
 - **Commit:** `feat(plugin): the orchestrator skill and the session-start state print (O10)`
 - **Red step:** `TestOrchestratorSkillNamesOnlyRealCommandsAndFlags` fails when the skill names a flag the CLI lacks.
 - **Reviewer:** security (plugin skills are security paths).
 
 ### O11. The cutover: the one-time import and the rollback note (D1235)
 
-- **Files (6):** `internal/cli/orchestrator_import.go` (new), `internal/cli/orchestrator_import_test.go` (new), `internal/cli/orchestrator_cmd.go` (edit: `import`),
+- **Files (7):** `website/content/cli-reference.md` (regenerated), `internal/cli/orchestrator_import.go` (new), `internal/cli/orchestrator_import_test.go` (new), `internal/cli/orchestrator_cmd.go` (edit: `import`),
   `docs/how-to/orchestrator-cutover.md` (new), `docs/releases/vX.Y.Z.md` (edit: the cutover line), `internal/cli/docs_orchestrator_cutover_test.go` (new).
 - **Interfaces:** `fugaro orchestrator import -f dump.json` takes the one-time session dump (spec "Migration") through O0's validator and caps
   (**the first stored-prompt-injection surface**), as a `patch` from a person; the how-to states the **cutover at once** (D1235): the daemon replaces the
@@ -323,7 +358,9 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 - **Red step:** `TestImportNeverMarksAnItemApproved` fails to build, then fails when a dump's `approved` is honoured.
 - **OWNER-RUN, Check 302:** the cutover itself, on the owner's own installation (never `belong`'s sandbox from an agent): start the daemon, confirm
   one finished run, one dependency-driven launch, one notification, with the spend caps and kill switch tested first. Because there is no shadow week
-  (D1235), the owner runs this with the scripts still in place and decides when to stop them.
+  (D1235), the owner runs this with the scripts still in place **but never launching at once**: the two share no launch key (the claim is per run id),
+  so scripts and daemon both launching the same work would double-launch. The check starts with the scripts' launching stopped (their watching may
+  stay) and the owner decides when to remove them.
 - **Reviewer:** security (an import into stored state).
 
 ### O12. The decision agent: brief, bounds, runner (slice 2)
@@ -333,13 +370,13 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   `internal/orchestrator/decide/runner_test.go` (new), `internal/orchestrator/decide/bounds_test.go` (new), `internal/orchestrator/decide/export_test.go` (new),
   `schemas/orchestrator-decision.schema.json` (new).
 - **Interfaces:** a fresh `claude -p` per decision with a small brief (the CI failure excerpt and the item, never the whole state), `--max-turns`, a
-  pinned `agent.max_output_tokens` (owner lesson 21), the model chosen by O1's class and O4's key, call counters (6 per hour, 40 per day) held in the
-  state node, the deny rules a coding agent's session has (G8), the output validated as an O0 patch from `DecisionAgent`, never a person-only op, and an
+  pinned `agent.max_output_tokens` (owner lesson 21), the model chosen by O1's class and O4's key, call counters (6 per hour, 40 per day) held in O0's `State.Counters` (derived with server time, `TestCountersSurviveARestart`; this task edits neither
+  `state.go` nor the schema), the deny rules a coding agent's session has (G8), the output validated as an O0 patch from `DecisionAgent`, never a person-only op, and an
   empty or failed result counts toward O6's breaker (G10). The decision and its reasoning are written to the audit log (O3). Prompts, facts and event text
   are fenced as untrusted.
 - **Schema/rules/config change:** the decision-output schema; the numbers (6, 40, 3) are config with the proposals as defaults (U4: not measured).
 - **Tests:** `TestUntrustedTextIsFenced`, `TestDecisionAgentRunsWithTheAgentDenyRules`, `TestEmptyCycleCountsAsFailed`, `TestHourlyAndDailyCapsStopCalls`,
-  `TestModelComesFromTheClassifierNotTheOutput`, `TestDecisionCannotSpawnAnUnapprovedItem`, `TestOutputTokenPinIsPassed`.
+  `TestModelComesFromTheClassifierNotTheOutput`, `TestDecisionCannotSpawnAnUnapprovedItem`, `TestOutputTokenPinIsPassed`, `TestCountersSurviveARestart`.
 - **Command:** `go test ./internal/orchestrator/decide/ -count=1`
 - **Depends on:** O0, O1, O3, O4, O6. **Level 2.** Not started before the owner approves slice 2 by name.
 - **Commit:** `feat(orchestrator): the bounded decision agent (O12)`
@@ -400,7 +437,7 @@ that design's tasks are. **Depends on:** O18 and the workspaces plan. Reviewer: 
 ## 4. Parallel execution
 
 Edges (a task depends on the tasks to its left): O2 <- O0; O3 <- O0; O6 <- O0, O4; O5 <- O0, O3; O7 <- O3, O6; O12 <- O0, O1, O3, O4, O6; O8 <- O2, O5, O7;
-O10 <- O5; O17 <- O0, O3, O4; O9 <- O8; O13 <- O8, O12; O18 <- O17; O11 <- O5, O8, O9. O16 and O19 are external-gated.
+O10 <- O5; O17 <- O0, O3, O4; O9 <- O8 (and O0, O3 for `Migrate`); O13 <- O8, O12; O18 <- O17; O11 <- O5, O8, O9. O16 and O19 are external-gated.
 
 | Level | Tasks (can all run at once) |
 | --- | --- |
@@ -431,6 +468,9 @@ and O13 at level 4, so it adds nothing to the critical path once approved; slice
 | `internal/orchestrator/export_test.go` | O0 (0); O3, O6, O7 each add an `export_<area>_test.go` of their own | one writer |
 | `internal/cli/launch_budget.go` | O8 (3) | one writer |
 | `schemas/*` | each schema has one writer (O0, O5, O12) | one writer each |
+| `internal/orchestrator/state.go` and `schemas/orchestrator-state.schema.json` | O0 (0) only; O6 and O12 use `Intents` and `Counters` and edit neither | one writer |
+| `website/content/cli-reference.md` (generated by `go run ./ee/clidoc`) | O5 (2), O8 (3), O9 (4), O11 (5) | no, one per level |
+| `internal/cli/update_orchestrator.go` and its test | O9 (4) | one writer |
 
 ## 5. Owner-run items, exactly
 
@@ -445,11 +485,14 @@ a two-person handoff), 305 (O16: the MCP state group, when it exists). 306-309 a
 - **Q2.** Should `fugaro update` offer `fugaro orchestrator install` behind its own confirmation, or is the install a separate opt-in the owner runs once?
 - **Q3 (P2).** OS notifications, or the owner's existing push, for a finished run and a decision needed?
 - **Q4.** Whether the owner approves O12 and O13 (slice 2) before the O11 cutover has run for a while, or only after.
+- **D1241, D1242, D1243** (new from the round-1 security review, numbered in this folder's block, reconciliation section 6): the state node's writer
+  identity (before O2), a paired-device channel for person decisions (before anything consumes a resolved decision), and the session-start print
+  versus D952's no-network rule (before O10). D1244-D1249 stay reserved.
 
 ## 7. UNVERIFIED added by this plan
 
-- **P1.** That `initflow`'s agent-session detection (`AgentRefusal`, `CanConfirm`) is reliable for a plain CLI call outside the setup stages; G2's CLI half
-  rests on it (O5's red step reads it).
+- **P1. Resolved as negative.** `initflow`'s agent-session detection is not reliable as a fence (its own text: "a mitigation, not a barrier"); G2's CLI
+  half rests on a Typed confirmation at a real terminal, with the residual in D1242.
 - **P2.** Which notification channel the owner wants (Q3).
 - **P3.** Whether a new top-level RTDB subtree needs a `RulesVersion` bump or a marker of its own: this plan recommends the marker (the credentials cascade
   precedent) and O2's red step confirms it against `internal/projectpolicy/version.go`.
