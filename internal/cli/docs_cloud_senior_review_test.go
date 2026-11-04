@@ -260,10 +260,11 @@ func TestDocsCloudSeniorReviewDecisionsAreAnswered(t *testing.T) {
 // A backticked token with no extension (a package name, a symbol on its own) is
 // not a citation of a file and is left alone, which is why the extension is
 // part of the pattern rather than a later filter. `ts` is here because these
-// folders cite the console's TypeScript, and an alternation that stopped at Go
-// and Terraform let `console/src/main/installlist.ts:71` through the census
-// unseen -- a citation inside a shape the pattern does not know is a citation
-// the check reports as passing.
+// folders cite the console's TypeScript (`installlist.ts`, whose
+// `DiscoveredInstallation` is the picker's wire type), and an alternation that
+// stopped at Go and Terraform let one such citation through the census unseen --
+// a citation inside a shape the pattern does not know is a citation the check
+// reports as passing.
 var csrCitationRE = regexp.MustCompile("`([A-Za-z0-9_][A-Za-z0-9_./-]*\\.(?:go|md|json|ts|tf|tmpl|yaml|yml))(:[0-9]+)`")
 
 // csrCensusRE is the independent count of how many path-looking tokens carry a
