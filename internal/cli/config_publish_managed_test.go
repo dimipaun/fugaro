@@ -444,6 +444,45 @@ func TestConfigPublishManagedRefusesACapRaised(t *testing.T) {
 	}
 }
 
+// The write landed and the step failed afterwards: the generation record could
+// not be written, so publishLayer answered a generation and an error together.
+// The admission is recorded all the same (D1014) — the step applied, and a
+// failure after the fact is when a trail is worth the most.
+//
+// The record is made to fail the way any writer beside a file fails: the config
+// file's name is at the filesystem's limit, so the backup layerGenerationRecord
+// writes next to it (`<name>.bak-<stamp>`) cannot be created.
+func TestConfigPublishManagedRecordsAnAdmissionThatFailedLate(t *testing.T) {
+	r := newManagedPublishRig(t)
+	agentSession(t)
+	publishedLayer(t, r.cloudFixture, "")
+	cfg, err := os.ReadFile(os.Getenv("FUGARO_CONFIG"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	long := filepath.Join(t.TempDir(), strings.Repeat("c", 240)+".yaml")
+	if err := os.WriteFile(long, cfg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FUGARO_CONFIG", long)
+	if err := os.WriteFile(localLayerPath(t), []byte(managedLayer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = execute(t, "config", "publish")
+	if err == nil {
+		t.Fatal("a publish whose generation record could not be written reported success")
+	}
+	if !strings.Contains(err.Error(), "recording the published project layer's generation") {
+		t.Errorf("the failure is not the one the write's aftermath met: %v", err)
+	}
+	if got := bucketText(t, r.cloudFixture, config.LayerKey); got != managedLayer {
+		t.Fatalf("the write did not land, so there is no late failure to record: the bucket holds %q", got)
+	}
+	if got := r.audits(t); len(got) != 1 || got[0].Verdict != managedmode.AuditAdmitted {
+		t.Fatalf("the applied step left %v, want one admission record (D1014)", got)
+	}
+}
+
 // The rigor floor: the one change the gate refuses for admitting LESS. A mode a
 // run is held to is not a session's to weaken (D20c, D1026) — the project's
 // floor lowered or dropped, and a rigor rule lowered or dropped, are all

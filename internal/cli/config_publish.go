@@ -154,6 +154,16 @@ func newConfigPublishCmd() *cobra.Command {
 			}
 			gen, err := publishLayer(ctx, cmd.ErrOrStderr(), env.bucket, l, executable, at, rec)
 			if err != nil {
+				// A failure that came after the write means the step APPLIED
+				// and only the record beside it failed: the admission is
+				// recorded before the run reports that failure — an apply with
+				// no trail is the state D1014 exists to end, and it is worst
+				// exactly on the runs that end badly.
+				if gate != nil && errors.Is(err, errLayerWritten) {
+					if rerr := gate.recorded(ctx); rerr != nil {
+						return fmt.Errorf("%w: %w", err, rerr)
+					}
+				}
 				return err
 			}
 			if gate != nil {
@@ -203,6 +213,15 @@ func projectLayerProblems(data []byte, lc *localcfg.Config) (*config.ProjectLaye
 	_, cps := config.ApplyClaudeClaims(lc.Providers, l.ClaudeModels)
 	return l, cps
 }
+
+// errLayerWritten marks the failures that come after the layer was written:
+// publishing is the object's write and the generation record beside it, and
+// everything that fails once the bytes are in the bucket is that record. It is
+// a value rather than "the generation is not zero" because a local bucket has
+// no generations to report — it answers 0 for a write that landed — and a
+// caller deciding whether to record something it applied has to be able to tell
+// a write that landed from one that never happened.
+var errLayerWritten = errors.New("the project layer was written, and this step failed after it")
 
 // layerPublishRace is a test seam between publish's read of the existing
 // object and its conditional write.
@@ -311,8 +330,9 @@ func publishLayer(ctx context.Context, w io.Writer, b *blobx.Bucket, l *config.P
 		if err := layerGenerationRecord(w, rec.path, rec.lc, gen); err != nil {
 			// The write landed, so this is the run's outcome and not a publish
 			// that failed: a sentence that read as one would hide the object
-			// this run moved.
-			return gen, err
+			// this run moved. errLayerWritten is what says so to a caller that
+			// holds something to record about a step that APPLIED (D1014).
+			return gen, fmt.Errorf("%w: %w", errLayerWritten, err)
 		}
 	}
 	return gen, nil
