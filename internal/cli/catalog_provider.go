@@ -36,8 +36,9 @@ const catalogKeyRead = "fugaro image build"
 
 // catalogGitHubAppID is the GitHub App ID a catalog build of repo is named
 // with: the repository's own, which the local config records
-// (localcfg.Repo.GitHubAppID, read through the same storedAppID fugaro doctor
-// and fugaro init read it through), else FUGARO_GITHUB_APP_ID.
+// (localcfg.Repo.GitHubAppID, read through the storedAppID the repository
+// stage resolves the checkout's own repository with, so a config that names
+// the repository another way still answers), else FUGARO_GITHUB_APP_ID.
 //
 // The configured ID wins over a different value in the environment, and the
 // environment is only the fallback when the config holds none. The config is
@@ -49,8 +50,12 @@ const catalogKeyRead = "fugaro image build"
 //
 // With neither set the refusal names both places, because they are the two
 // ways this ID ever gets here: the config key, where the fix is, and the
-// variable, where an automation with no local config puts it. --github-app-id,
-// which infra.Repo names for the same state, is not a flag this command takes.
+// variable, where an automation with no local config puts it. The command it
+// gives is the one that records an ID for a repository this machine already
+// knows -- the same fix internal/cli/init_firebase.go and
+// internal/infra/projectjobs.go give for the same missing field -- because
+// --github-app-id, which infra.Repo names for the same state, is not a flag
+// this command takes.
 func catalogGitHubAppID(lc *localcfg.Config, repo string, getenv func(string) string) (string, error) {
 	if id := storedAppID(lc, repo); id != "" {
 		return id, nil
@@ -58,7 +63,7 @@ func catalogGitHubAppID(lc *localcfg.Config, repo string, getenv func(string) st
 	if id := getenv(providers.EnvGitHubAppID); id != "" {
 		return id, nil
 	}
-	return "", userErr("%s has no GitHub App ID: set repos.%s.github_app_id in the project's local config (running %s --repo %s --github-app-id <id> records it), or export %s (the App's numeric ID, not a secret)",
+	return "", userErr("%s has no GitHub App ID: record it in the project's local config as repos.%s.github_app_id with %s update --repo %s --github-app-id <id>, or export %s (the App's numeric ID, not a secret)",
 		pluginwire.Printable(repo), pluginwire.Printable(repo), selfCommand(), pluginwire.Printable(repo), providers.EnvGitHubAppID)
 }
 

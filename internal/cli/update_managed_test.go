@@ -796,8 +796,12 @@ func TestUpdateManagedRefusesTheFirstPolicyPublish(t *testing.T) {
 	updating(t, r)
 	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
 	// This machine's config states a catalog and nothing is published, which is
-	// the state the stage now leaves to do.
+	// the state the stage now leaves to do. The catalog's own check job is
+	// built FROM base_images.base, so the config of a machine that states a
+	// catalog states one too (infra.CatalogCheck refuses the pair without it,
+	// before this run ever reaches the policy stage).
 	r.appendConfig(t, catalogConfigYAML)
+	r.appendConfig(t, "base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc }\n")
 
 	got, err := updateRun(t, r, "update", "--yes")
 	if err == nil {
