@@ -487,20 +487,15 @@ func settingsRounds(raw string) (float64, bool) {
 	return n, err == nil
 }
 
-// settingsFloorBase is the number of rounds a run spends today for the key at
-// keyPath: the layer's own value where it sets one, else the mode's own row.
-// The text beside it is what the refusal names, so an owner reading
-// "would lower it from 3" learns where the 3 came from.
-//
-// What it is not is every narrower layer. A repository's own `rigor.default` is
-// narrower than the project layer and wins over it (rigor.Resolve), so a
-// repository that names a stricter mode spends more rounds than this base
-// counts — and this gate cannot read it: `--layer project` writes one file for
-// every repository the project has, the checkouts are not part of the write,
-// and the layer being edited is the layer the number is written into. The base
-// is therefore what a run of the layer's own mode starts from, which is what
-// the refusal says, and a repository that raises its own mode is a residual
-// D1027 records rather than a number this rule can hold.
+// settingsFloorBase is the number of rounds a run can spend today for the key
+// at keyPath: the layer's own value where it sets one, else the STRICTEST
+// mode's row. A layer value pins the count, but with none set every run takes
+// its rounds from the mode it resolves, and that mode is not this layer's to
+// know: `--rigor critical`, an area match, a reached rigor (D22) and a
+// repository's own `rigor.default` all resolve higher than the layer's mode,
+// and the checkouts are not part of this write. So the base is the highest
+// row, and a session that writes a lower number into a layer that sets none is
+// refused. The text beside it is what the refusal names.
 func settingsFloorBase(old []byte, keyPath []string) (float64, string) {
 	if raw := settingsValueIn(old, keyPath); raw != "" {
 		// Zero is no number here: the layer's own reader treats a 0 round count
@@ -511,20 +506,9 @@ func settingsFloorBase(old []byte, keyPath []string) (float64, string) {
 			return n, raw
 		}
 	}
-	mode := rigor.Default
-	if raw := settingsValueIn(old, settingsRigorModePath); raw != "" {
-		if m, ok := rigor.Parse(raw); ok {
-			mode = m
-		}
-	}
-	n := rigor.DefaultRounds(mode).Senior
-	return float64(n), fmt.Sprintf("%d (the mode's own row)", n)
+	n := rigor.DefaultRounds(rigor.Critical).Senior
+	return float64(n), fmt.Sprintf("%d (the strictest mode's row)", n)
 }
-
-// settingsRigorModePath is where the project layer names the rigor mode whose
-// row supplies a round count no layer sets: the layer's own `defaults.rigor.default`
-// (SD14), read out of the same document the round keys are read from.
-var settingsRigorModePath = []string{"defaults", "rigor", "default"}
 
 // settingsReservedRefusal is the reserved run a written key hits, or "".
 //

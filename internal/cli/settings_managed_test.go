@@ -46,7 +46,7 @@ import (
 // what makes it a key the gate may admit at all.
 const (
 	settingsManagedLayerKey   = "layer.defaults.agent.review_rounds"
-	settingsManagedLayerValue = "4"
+	settingsManagedLayerValue = "6"
 )
 
 // settingsManagedMarks is which of the two marks a rig's project carries. The
@@ -186,7 +186,7 @@ func TestSettingsSetManagedAdmitsARegistryKeyInAnAgentSession(t *testing.T) {
 		t.Fatalf("a registry key was refused in a managed project's coding agent session: %v\nstdout:\n%s", err, out)
 	}
 	after := readFileString(t, path)
-	if !strings.Contains(after, "review_rounds: 4") {
+	if !strings.Contains(after, "review_rounds: 6") {
 		t.Fatalf("the layer file does not carry the write:\n%s", after)
 	}
 
@@ -229,7 +229,7 @@ func TestSettingsSetManagedAdmitsARegistryKeyInAnAgentSession(t *testing.T) {
 func TestSettingsUnsetManagedRefusesARemovedFloorKey(t *testing.T) {
 	r := newSettingsManagedRig(t, settingsMarksManaged)
 	r.managedRunsBucket(t)
-	path := settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  agent: { review_rounds: 4 }\n")
+	path := settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  agent: { review_rounds: 6 }\n")
 	before := readFileString(t, path)
 	agentSession(t)
 
@@ -429,7 +429,7 @@ func TestSettingsSetManagedAdmitsALayerWrittenFromThePublishedGeneration(t *test
 	if err != nil {
 		t.Fatalf("this machine's own layer file was refused: %v\n%s", err, out)
 	}
-	if !strings.Contains(readFileString(t, path), "review_rounds: 4") {
+	if !strings.Contains(readFileString(t, path), "review_rounds: 6") {
 		t.Errorf("the write did not land:\n%s", readFileString(t, path))
 	}
 	if recs := r.audits(t); len(recs) != 1 || recs[0].Verdict != managedmode.AuditAdmitted {
@@ -447,8 +447,8 @@ func TestSettingsManagedVerdictRefusesAnUnjudgedMember(t *testing.T) {
 	g := &managedGate{env: managedGateEnv{lc: r.managedLocal(t)}}
 	target := settingsManagedLayerTarget(settingsManagedLayerFile(t, minimalAnchored))
 	old := []byte(minimalAnchored)
-	judged := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 4 }\n")
-	elsewhere := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 4, auth: vertex }\n")
+	judged := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 6 }\n")
+	elsewhere := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 6, auth: vertex }\n")
 
 	if err := settingsManagedVerdict(context.Background(), g, target, settingsManagedLayerKey, false, "", old, judged).Refuse(); err != nil {
 		t.Fatalf("the judged key alone was refused: %v", err)
@@ -473,7 +473,7 @@ func TestSettingsManagedFilesTheAdmissionOnlyAfterTheWrite(t *testing.T) {
 	agentSession(t)
 	target := settingsManagedLayerTarget(settingsManagedLayerFile(t, minimalAnchored))
 	old := []byte(minimalAnchored)
-	doc := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 4 }\n")
+	doc := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 6 }\n")
 
 	m, gate, err := settingsManagedStep(context.Background(), r.managedLocal(t), r.managedConfigPath(t), target, settingsManagedLayerKey, false, "", old, doc, "settings set")
 	if err != nil {
@@ -510,7 +510,7 @@ func TestSettingsManagedFilesTheAdmissionOnlyAfterTheWrite(t *testing.T) {
 func TestSettingsSetManagedRecordsNothingWhenThereIsNoWrite(t *testing.T) {
 	r := newSettingsManagedRig(t, settingsMarksManaged)
 	r.managedRunsBucket(t)
-	path := settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  agent: { review_rounds: 4 }\n")
+	path := settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  agent: { review_rounds: 6 }\n")
 	before := readFileString(t, path)
 	agentSession(t)
 
@@ -610,7 +610,7 @@ func TestSettingsSetOwnerTerminalReadsNoMark(t *testing.T) {
 	path := settingsManagedLayerFile(t, minimalAnchored)
 	target := settingsManagedLayerTarget(path)
 	old := []byte(minimalAnchored)
-	doc := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 4 }\n")
+	doc := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 6 }\n")
 
 	m, gate, err := settingsManagedStep(context.Background(), r.managedLocal(t), r.managedConfigPath(t), target, settingsManagedLayerKey, false, "", old, doc, "settings set")
 	if err != nil {
@@ -633,7 +633,7 @@ func TestSettingsSetOwnerTerminalReadsNoMark(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(readFileString(t, path), "review_rounds: 4") {
+	if !strings.Contains(readFileString(t, path), "review_rounds: 6") {
 		t.Error("the owner's own run did not write")
 	}
 	if recs := r.audits(t); len(recs) != 0 {
@@ -776,7 +776,7 @@ func TestSettingsSetManagedRefusesATurnedOffReviewLevel(t *testing.T) {
 func TestSettingsSetManagedRefusesALoweredReviewRounds(t *testing.T) {
 	r := newSettingsManagedRig(t, settingsMarksManaged)
 	r.managedRunsBucket(t)
-	path := settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  agent: { review_rounds: 4 }\n")
+	path := settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  agent: { review_rounds: 6 }\n")
 	before := readFileString(t, path)
 	agentSession(t)
 
@@ -787,7 +787,7 @@ func TestSettingsSetManagedRefusesALoweredReviewRounds(t *testing.T) {
 	if !errors.Is(err, managedmode.ErrNotConverged) {
 		t.Fatalf("the lowering was not refused by the gate: %v", err)
 	}
-	if !strings.Contains(err.Error(), "would lower it from 4") {
+	if !strings.Contains(err.Error(), "would lower it from 6") {
 		t.Errorf("the refusal is not the floor rule's over the number the layer carries: %v", err)
 	}
 	if readFileString(t, path) != before {
@@ -916,7 +916,7 @@ func TestSettingsSetManagedAdmitsAConfigSpelledTheProjectsWay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the project's own config, spelled with a redundant segment, was refused: %v\n%s", err, out)
 	}
-	if !strings.Contains(readFileString(t, path), "review_rounds: 4") {
+	if !strings.Contains(readFileString(t, path), "review_rounds: 6") {
 		t.Errorf("the write did not land:\n%s", readFileString(t, path))
 	}
 	if recs := r.audits(t); len(recs) != 1 || recs[0].Verdict != managedmode.AuditAdmitted {
@@ -943,13 +943,41 @@ func TestSettingsSetManagedRefusesALoweringUnderAZeroedLayer(t *testing.T) {
 	if !errors.Is(err, managedmode.ErrNotConverged) {
 		t.Fatalf("the lowering was not refused by the gate: %v", err)
 	}
-	if !strings.Contains(err.Error(), "would lower it from 3 (the mode's own row)") {
-		t.Errorf("the refusal does not name the mode's own row as the number the write would lower: %v", err)
+	if !strings.Contains(err.Error(), "would lower it from 5 (the strictest mode's row)") {
+		t.Errorf("the refusal does not name the strictest mode's row as the number the write would lower: %v", err)
 	}
 	if readFileString(t, path) != before {
 		t.Error("the layer file changed under a refused lowering")
 	}
 	if recs := r.audits(t); len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
 		t.Fatalf("the refusal left %+v, want exactly one refused record", recs)
+	}
+}
+
+// A layer that sets no round count leaves every run to the mode it resolves,
+// and a run of --rigor critical, an area or a repository's own rigor.default
+// spends more than the layer's own mode does, so the floor is the strictest
+// row: writing 3 into an empty layer would lower those runs (probe of the
+// round-2 review).
+func TestSettingsSetManagedRefusesALoweringIntoAnEmptyLayer(t *testing.T) {
+	for _, key := range []string{settingsManagedLayerKey, "layer.defaults.agent.adversarial_rounds"} {
+		t.Run(key, func(t *testing.T) {
+			r := newSettingsManagedRig(t, settingsMarksManaged)
+			r.managedRunsBucket(t)
+			path := settingsManagedLayerFile(t, minimalAnchored)
+			before := readFileString(t, path)
+			agentSession(t)
+
+			out, _, err := execute(t, "settings", "set", key, "3", "--layer", "project", "--yes")
+			if err == nil {
+				t.Fatalf("a session wrote a round count below the strictest mode's row into an empty layer:\n%s", out)
+			}
+			if !errors.Is(err, managedmode.ErrNotConverged) {
+				t.Fatalf("the lowering was not refused by the gate: %v", err)
+			}
+			if readFileString(t, path) != before {
+				t.Error("the layer file changed under a refused lowering")
+			}
+		})
 	}
 }
