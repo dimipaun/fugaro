@@ -809,12 +809,13 @@ func (c *repoCtx) effectiveCatalog() *config.Catalog {
 // instead of being refused, and the two refusals of §3.3 are conditions of
 // the project's configuration rather than of one run.
 //
-// The repository's own image: or dockerfile: block is the override and never
-// reaches the catalog (D1155 item 1): its job runs the per-repository image
-// this spec builds, exactly as it did before the catalog existed, which is
-// what catalog.Applies decides for it — and what the same predicate decides
-// for the launcher, so the two cannot disagree about which jobs are the
-// catalog's.
+// Which workflows reach this at all is catalog.Applies, the same predicate the
+// launcher judges the deployed job's image by, so the two cannot disagree about
+// which jobs are the catalog's.
+//
+// The entry the rule chose is then held to D1191: a baked job's image has to
+// hold this repository's checkout, which only an entry a Fugaro build writes
+// can promise, so a prebuilt one is refused here rather than deployed.
 //
 // The backend is the installation's own, read from the config and not written
 // as a constant: the docker rule is a rule about the backend the job will run
@@ -834,11 +835,38 @@ func (c *repoCtx) catalogJobImage(name string, w config.Workflow) (config.Entry,
 	if err != nil {
 		return config.Entry{}, nil, false, userErr("workflow %s: %w", name, err)
 	}
+	// The checkout kind is stated here and not inherited from catalog.Applies:
+	// a clone-shaped job — clone, and shared after it — carries no baked
+	// checkout for a prebuilt image to be missing, so a workflow of that kind
+	// that the predicate later admits to the catalog is not refused by this
+	// rule.
+	if w.Checkout == config.CheckoutBaked && !slices.Contains(builtSourceKinds, choice.Entry.Source.Kind) {
+		return config.Entry{}, nil, false, unbuiltOnBaked(name, choice.Entry)
+	}
 	var warnings []string
 	if choice.Warn != "" {
 		warnings = append(warnings, choice.Warn)
 	}
 	return choice.Entry, warnings, true, nil
+}
+
+// builtSourceKinds are the catalog source kinds a Fugaro build writes an image
+// from (PIC4): a Dockerfile at a repository or inline in the catalog. The list
+// is what is built rather than what is not, so a kind added to the catalog
+// later is refused by D1191's rule until someone states that a build writes it.
+// That is the direction the failure is safe in: an entry this rule let through
+// because nobody had added its kind to a list of prebuilt ones would deploy a
+// job whose first minute fails, and the entry and the job would name nothing.
+var builtSourceKinds = []config.SourceKind{config.SourceDockerfile, config.SourceInline}
+
+// unbuiltOnBaked is D1191's refusal, raised where the job spec is built and not
+// by the job (F14). It names the entry, what it is built from and the two ways
+// out, because that is the choice the person reading it is making: run a
+// clone-shaped job, which clones the repository at launch instead of carrying
+// it, or give the workflow an entry this installation can build.
+func unbuiltOnBaked(workflow string, e config.Entry) error {
+	return userErr("workflow %s: the catalog entry %s has source kind %s, which Fugaro builds no image from, so its image holds no checkout of this repository — and a checkout: %s job runs an image that holds one; use checkout: %s, or a catalog entry Fugaro builds (fugaro image add <name> --dockerfile <owner/name:path> --tags <tags>)",
+		workflow, e.Name, e.Source.Kind, config.CheckoutBaked, config.CheckoutClone)
 }
 
 // Workflow is the spec of one workflow of the repository, its default

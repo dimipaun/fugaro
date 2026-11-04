@@ -137,14 +137,39 @@ func TestReadinessRefusesAnUnbuiltCatalogImage(t *testing.T) {
 // (it is not catalog-<entry>) and which is not the repository's own registry.
 const prebuiltRef = "us-east5-docker.pkg.dev/proj/fugaro-shared-images-0123/team-image:1.0-latest"
 
+// prebuiltCatalogBlock is a catalog whose one entry is the default, so the
+// webapp's workflows name nothing of their own and the entry is what their
+// jobs run. Its source is one this installation builds, because the two tests
+// below state the prebuilt reference on the spec themselves: the deploy path
+// refuses a prebuilt entry on a baked workflow (D1191), and readiness's branch
+// for one is still the branch a job is read by until that field is removed.
 const prebuiltCatalogBlock = `
 image_catalog:
   entries:
     - name: team
       tags: [jvm]
       default: true
-      source: { kind: image, image: "` + prebuiltRef + `" }
+      source: { kind: inline, inline: "FROM scratch\n" }
 `
+
+// prebuiltSpec is the webapp ready in every way but the entry's own image,
+// with the workflows' specs marked as running the prebuilt reference above:
+// the two fields workflowCatalogEntry and the image gate read.
+func prebuiltSpec(t *testing.T) (*cloud, RepoSpec) {
+	t.Helper()
+	f := newCloud(t)
+	spec, err := Repo(budgetInputs(t, prebuiltCatalogBlock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, ws := range spec.Workflows {
+		ws.Image = prebuiltRef
+		ws.CatalogPrebuilt = true
+		spec.Workflows[name] = ws
+	}
+	readyJob(t, f, spec)
+	return f, spec
+}
 
 // TestReadinessDeploysAPrebuiltCatalogEntry: a prebuilt entry's job runs the
 // reference the entry states, which no Fugaro build writes, so there is no
@@ -153,12 +178,7 @@ image_catalog:
 // and refused it with "is not <registry>/<package>:latest in the repository's
 // registry", so no prebuilt entry could be deployed at all.
 func TestReadinessDeploysAPrebuiltCatalogEntry(t *testing.T) {
-	f := newCloud(t)
-	spec, err := Repo(budgetInputs(t, prebuiltCatalogBlock))
-	if err != nil {
-		t.Fatal(err)
-	}
-	readyJob(t, f, spec)
+	f, spec := prebuiltSpec(t)
 	got, missing := catalogReadiness(t, f, spec, true)
 	if slices.ContainsFunc(missing, func(m Missing) bool { return m.Kind == MissingImage }) {
 		t.Fatalf("missing = %v, want a prebuilt entry's image to be no gate", missing)
@@ -177,12 +197,7 @@ func TestReadinessDeploysAPrebuiltCatalogEntry(t *testing.T) {
 // covers a prebuilt entry exactly as it covers a built one, and its refusal
 // names the entry rather than a build.
 func TestReadinessHoldsBackAPrebuiltEntryBeforeTheCatalogShips(t *testing.T) {
-	f := newCloud(t)
-	spec, err := Repo(budgetInputs(t, prebuiltCatalogBlock))
-	if err != nil {
-		t.Fatal(err)
-	}
-	readyJob(t, f, spec)
+	f, spec := prebuiltSpec(t)
 	got, missing := catalogReadiness(t, f, spec, false)
 	if !slices.ContainsFunc(missing, func(m Missing) bool {
 		return m.Kind == MissingImage && strings.Contains(m.Reason, "entry team") && strings.Contains(m.Reason, "image_catalog")
