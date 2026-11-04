@@ -71,7 +71,7 @@ func catalogCheckSpecFor(t *testing.T, cat *config.Catalog, maxBuilds int) catal
 	t.Helper()
 	spec := catalogCheckSpec{
 		Version: 1, Catalog: cat,
-		BaseImages: map[string]string{config.BaseKind: checkBase},
+		BaseImages:  map[string]string{config.BaseKind: checkBase},
 		MachineType: "E2_HIGHCPU_8", BuildRegion: "us-east5", MaxImageBuilds: maxBuilds,
 	}
 	for i, repo := range []string{"acme/app", "acme/other"} {
