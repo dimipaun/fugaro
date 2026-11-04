@@ -248,8 +248,13 @@ func refreshBuildRules(t *refreshTarget, p *refreshPlan, build, kind, host strin
 	} else {
 		rules = append(rules, "the base is one of this installation's own release images ("+safetext.Field(base)+")")
 	}
-	if strings.TrimSpace(account) == "" {
-		refused = append(refused, "the build runs as this project's own build account")
+	// The account is the project's own by construction (infra.Repo derives it
+	// from the installation), and the rule is stated over the reference that is
+	// actually submitted rather than over the derivation: an account that is
+	// empty or belongs to another project is a build this installation's own
+	// grant would not run, and the gate is the last place to notice.
+	if !strings.HasSuffix(account, "@"+t.lc.GCPProject+".iam.gserviceaccount.com") {
+		refused = append(refused, "the build runs as this project's own build account ("+safetext.Field(account)+" is not "+safetext.Field(t.lc.GCPProject)+"'s)")
 	} else {
 		rules = append(rules, "the build runs as this project's own build account ("+safetext.Field(account)+")")
 	}

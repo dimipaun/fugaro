@@ -104,6 +104,10 @@ func newManagedRefreshRig(t *testing.T, marker []byte) *managedRefresh {
 	// today, and the only session whose steps the gate is about.
 	t.Setenv(agentMarkers[0], "1")
 	r.e, r.tg = buildTarget(t, r.anchorModeRig)
+	// The account the build is submitted as, as infra.Repo derives it for this
+	// installation: the rig's own placeholder is another project's, which the
+	// gate's own rule refuses.
+	r.tg.spec.BuildServiceAccountEmail = "fugaro-build@" + initProject + ".iam.gserviceaccount.com"
 	return r
 }
 
@@ -244,6 +248,33 @@ func TestImageRefreshManagedStopsAtTheRecordedBound(t *testing.T) {
 	}
 	if admitted != 1 || refused != 1 {
 		t.Errorf("the day holds %d admissions and %d refusals, want one of each", admitted, refused)
+	}
+}
+
+// The rules over one build are the plan's M4 entry, and the build account is
+// one of them: an account that is not this project's own is a build this
+// installation's grant does not run, and the gate refuses it before the
+// submission rather than after.
+func TestImageRefreshManagedRefusesABuildThatIsNotTheProjectsOwn(t *testing.T) {
+	useVersion(t, "0.5.1")
+	r := newManagedRefreshRig(t, managedRefreshMarker(2))
+	fb := useFakeBuilder(t)
+	bothStale(t)
+	r.tg.spec.BuildServiceAccountEmail = "builder@another-project.iam.gserviceaccount.com"
+	p := r.plan(r.door(t))
+	err := r.e.r.refreshBuilds(t.Context(), p, r.tg)
+	if err == nil {
+		t.Fatal("a build ran under an account that is not this project's")
+	}
+	if !strings.Contains(err.Error(), "this project's own build account") {
+		t.Errorf("the refusal does not name the rule that fired:\n%v", err)
+	}
+	if len(fb.specs) != 0 {
+		t.Errorf("submitted %d builds under an account that is not this project's", len(fb.specs))
+	}
+	got := r.audits(t)
+	if len(got) != 1 || got[0].Verdict != managedmode.AuditRefused {
+		t.Fatalf("the day holds %d records, want the refusal alone (%+v)", len(got), got)
 	}
 }
 
