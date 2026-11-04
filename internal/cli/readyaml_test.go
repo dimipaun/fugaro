@@ -63,6 +63,45 @@ func TestReadFugaroYAMLRefusesWhatIsNotARegularFile(t *testing.T) {
 	}
 }
 
+// A checkout with no fugaro.yaml is the first thing anybody meets, and a
+// command that reads one must say what to do about it, never the raw
+// os.ErrNotExist ("lstat <path>: no such file or directory"), which reads as
+// a crash. loadCheckoutResolved is setup --repo's read; configLayerAnchor is
+// config layer's.
+func TestMissingFugaroYAMLGetsTheGuidedSentence(t *testing.T) {
+	const sentence = "this checkout has no fugaro.yaml yet: write it with /fugaro:setup in Claude Code (or start from fugaro config example), merge it, then run fugaro setup --repo again"
+	dir := repoCheckout(t, "https://github.com/acme/app.git", "")
+	t.Chdir(dir)
+
+	check := func(t *testing.T, err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatal("a checkout with no fugaro.yaml was read as if it had one")
+		}
+		if !strings.Contains(err.Error(), sentence) {
+			t.Errorf("the error is not the guided sentence:\n%v", err)
+		}
+		if s := err.Error(); strings.Contains(s, "lstat") || strings.Contains(s, "no such file") {
+			t.Errorf("the error carries syscall text:\n%s", s)
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("exit code %d, want %d", ExitCode(err), ExitUserError)
+		}
+	}
+	t.Run("setup --repo's checkout read", func(t *testing.T) {
+		_, _, err := loadCheckoutResolved(t.Context(), "", nil, layerOptions{})
+		check(t, err)
+	})
+	t.Run("config layer's anchor", func(t *testing.T) {
+		_, _, err := configLayerAnchor(t.Context())
+		check(t, err)
+	})
+	t.Run("the shared read", func(t *testing.T) {
+		_, err := requireFugaroYAML(filepath.Join(dir, "fugaro.yaml"))
+		check(t, err)
+	})
+}
+
 // Every command that reads a checkout's fugaro.yaml goes through it: a
 // symlinked one is never followed, and nothing it points at is read.
 func TestCommandsNeverFollowAFugaroYAMLSymlink(t *testing.T) {
