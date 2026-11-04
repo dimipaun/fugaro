@@ -298,10 +298,13 @@ A string-list key takes --add V or --remove V instead of a value. A map or an
 object list takes --add-entry and --remove-entry instead: --add-entry carries
 one entry, one field=value per member the entry has, and --remove-entry carries
 the one value the entry is addressed by — a map member's name, or an object
-list's key field value. One entry per command: several entries are several
-invocations. A list emptied by --remove or --remove-entry is refused: an absent
-key and an empty list mean different things to the loader, so use unset to
-remove the key.
+list's key field value, which is how an entry of an object list is named and
+never its position. One entry per command: several entries are several
+invocations. A map's entry is one member, so --add-entry edits the members of a
+map the file already holds, and a map the loader wants whole cannot be built
+one member at a time. A list emptied by --remove or --remove-entry is refused:
+an absent key and an empty list mean different things to the loader, so use
+unset to remove the key.
 
 Loosening a ceiling key (budget.*, governance.*, the agent caps
 agent.max_budget_usd and agent.max_run_tokens with the layer's own spellings),
@@ -805,9 +808,9 @@ const (
 type settingsEntryBlock struct {
 	kind settingsEntryKind
 	// keyField is the field an object-list entry is addressed by (D1163). It is
-	// empty for a block whose entries carry no scalar name at all, and that
-	// block is refused rather than addressed by position: a position is a fact
-	// about the file's own order and not the person's intent.
+	// empty for a block whose entries carry no name this pair can address, and
+	// that block is refused rather than addressed by position: a position is a
+	// fact about the file's own order and not the person's intent.
 	keyField string
 	// widens says an entry added here hands a run something it did not reach
 	// before. A workflow's secrets are mounted into the job's environment, so
@@ -819,10 +822,29 @@ type settingsEntryBlock struct {
 // the block. The registry carries no shape, so the table stands beside the
 // writes that read it, and it is deliberately short: it is the blocks a
 // repository's fugaro.yaml holds whose entries can be addressed at all.
+//
+// A cache entry's key field is `key` (D1163, spec §2.2), and its value is a
+// list of files rather than a scalar — so the keyed lookup this pair writes
+// through, which compares the key field's own text, could never find one of
+// them, and the row carries no key field. That is a deviation from D1163 and
+// from spec §2.2's list, which both name the block as one the pair reaches: an
+// entry of it is refused with a sentence naming what D1163 decides and why
+// this pair cannot write by it. Addressing one by position is what D1163
+// refuses, so nothing else is left.
 var settingsEntryBlocks = map[string]settingsEntryBlock{
 	"workflows.*.commands.rerun_failed": {kind: settingsEntryMap},
 	"workflows.*.secrets":               {kind: settingsEntryList, keyField: "name", widens: true},
 	"workflows.*.cache":                 {kind: settingsEntryList},
+}
+
+// settingsEntryBlockOrder is the table's own order, and the lookup walks it
+// rather than the map: two patterns that matched one key would otherwise make
+// the block whichever row the map happened to yield first, and a table read at
+// random is not a table.
+var settingsEntryBlockOrder = []string{
+	"workflows.*.commands.rerun_failed",
+	"workflows.*.secrets",
+	"workflows.*.cache",
 }
 
 // settingsEntryBlockOf is the block a key names, matched the way
@@ -830,9 +852,9 @@ var settingsEntryBlocks = map[string]settingsEntryBlock{
 // against the key as the command line spelled it, so `workflows.web.secrets`
 // reaches the `workflows.*.secrets` row.
 func settingsEntryBlockOf(key string) (settingsEntryBlock, bool) {
-	for pattern, block := range settingsEntryBlocks {
+	for _, pattern := range settingsEntryBlockOrder {
 		if settingsPatternMatch(pattern, key) {
-			return block, true
+			return settingsEntryBlocks[pattern], true
 		}
 	}
 	return settingsEntryBlock{}, false
@@ -964,7 +986,20 @@ func settingsEntryAdd(old []byte, keyPath []string, block settingsEntryBlock, pa
 			keyValue = field[1]
 			continue
 		}
+		if named[field[0]] > 1 {
+			// Two occurrences of one member are two answers to one question,
+			// and a map of them would write the second and drop the first
+			// without saying so.
+			return settingsEntryWrite{}, userErr("--add-entry names %s twice, and one entry carries one %s: name it once", field[0], field[0])
+		}
 		members[field[0]] = field[1]
+	}
+	if len(members) == 0 {
+		// The upsert writes the members it is handed and nothing else, so an
+		// entry carrying none of them would leave the document as it was and
+		// the write would report that the file already reads what was asked
+		// for — of an entry the file may not hold at all.
+		return settingsEntryWrite{}, userErr("--add-entry takes the entry's own members beside the field that names it: name one field=value besides %s", block.keyField)
 	}
 	data, err := yamledit.UpsertSeqItemByKey(old, keyPath, block.keyField, keyValue, members)
 	if err != nil {
@@ -1326,6 +1361,14 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	if edits > 1 {
 		return userErr("--add, --remove, --add-entry and --remove-entry are four different edits: name one")
 	}
+	// One entry per invocation (D1167) holds for both halves of the pair: a
+	// second --remove-entry is a second entry the command would have to take
+	// away, and applying only the first would report a removal that did not
+	// happen. --remove takes one value by its own signature; --add-entry's
+	// second occurrence is refused below, by the entry's own shape.
+	if len(o.removeEntry) > 1 {
+		return userErr("--remove-entry carries one entry: name the one entry the command takes away, and repeat the command for another")
+	}
 	list := o.add != "" || o.remove != ""
 	entry := len(o.addEntry) > 0 || len(o.removeEntry) > 0
 	var key, value string
@@ -1384,7 +1427,7 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 			return userErr("%s takes no entry: --add-entry and --remove-entry write the blocks an entry's own name addresses — a workflow's secrets, whose entries the name field names, and its commands.rerun_failed, whose members name themselves", key)
 		}
 		if block.kind == settingsEntryList && block.keyField == "" {
-			return userErr("%s takes no entry: an entry is addressed by its key field, and this block's entries carry none — a cache entry is a key list and a paths list, and no field names one (D1163)", key)
+			return userErr("%s takes no entry: an entry is addressed by its key field, and this block's key field is `key` — a list of files and not a name — so no entry of it has one of the kind this pair writes (D1163 decides the key field and not the shape of it)", key)
 		}
 		var written settingsEntryWrite
 		if len(o.addEntry) > 0 {

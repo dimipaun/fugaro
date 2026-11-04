@@ -1634,9 +1634,10 @@ func TestSettingsSetRemoveEntryTakesOneOfADuplicateKey(t *testing.T) {
 }
 
 // TestSettingsSetAddEntryRefusesABlockWithNoKeyField: the pair writes a block
-// whose entries it can address (D1163), and a cache entry carries a `key` list
-// and a `paths` list and no scalar name at all, so it is refused with a
-// sentence saying why rather than guessed at by position.
+// whose entries it can address (D1163), and a cache entry's key field is `key`
+// — a list of files and not a name — which is what the refusal says: D1163 and
+// spec §2.2 name the block as one the pair reaches, and this is the recorded
+// deviation, refused with a sentence rather than guessed at by position.
 func TestSettingsSetAddEntryRefusesABlockWithNoKeyField(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoWithEntries)
@@ -1649,8 +1650,138 @@ func TestSettingsSetAddEntryRefusesABlockWithNoKeyField(t *testing.T) {
 		if err == nil {
 			t.Fatalf("%v wrote a cache entry:\n%s", args, out)
 		}
-		if !strings.Contains(err.Error(), "key field") {
-			t.Errorf("the refusal does not say the block's entries carry no key field: %v", err)
+		if !strings.Contains(err.Error(), "key field") || !strings.Contains(err.Error(), "D1163") {
+			t.Errorf("the refusal does not say what the block's key field is and that D1163 decides it: %v", err)
+		}
+		if readFileString(t, path) != before {
+			t.Error("the refused write changed fugaro.yaml")
+		}
+	}
+}
+
+// TestSettingsSetRemoveEntryRefusesToEmptyTheList: the pair takes an object
+// list's last entry away the same way --remove takes a string list's last item,
+// and the loader tells an absent key from an empty list, so both the write and
+// the dry run that describes it are refused with the sentence naming unset
+// (spec §4.2). The dry run is refused too because what it would draw is a state
+// the file may not hold, and a key that goes absent is what unset is for.
+func TestSettingsSetRemoveEntryRefusesToEmptyTheList(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoWithEntries)
+	before := readFileString(t, path)
+	noTerminal(t)
+	for _, args := range [][]string{
+		{"settings", "set", "workflows.web.secrets", "--remove-entry", "app-token", "--layer", "repo", "--yes"},
+		{"settings", "set", "workflows.web.secrets", "--remove-entry", "app-token", "--layer", "repo", "--dry-run", "--json"},
+	} {
+		out, _, err := execute(t, args...)
+		if err == nil {
+			t.Fatalf("%v emptied workflows.web.secrets:\n%s", args, out)
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("%v exited %d, want %d (a user error: nothing was attempted)", args, ExitCode(err), ExitUserError)
+		}
+		if !strings.Contains(err.Error(), "empty list") || !strings.Contains(err.Error(), "unset") {
+			t.Errorf("the refusal does not say the list would be left empty and name unset: %v", err)
+		}
+		if readFileString(t, path) != before {
+			t.Error("the refused write changed fugaro.yaml")
+		}
+	}
+}
+
+// TestSettingsSetEntryFlagsRefuseAKeyThatIsNotAnEntryBlock: the pair writes the
+// blocks an entry's own name addresses and nothing else, so a key whose entries
+// it cannot address — a scalar, or a string list whose items are its own and
+// which --add and --remove write — is refused with a sentence saying so rather
+// than written as a map of one member.
+func TestSettingsSetEntryFlagsRefuseAKeyThatIsNotAnEntryBlock(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoWithEntries)
+	before := readFileString(t, path)
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"a scalar key", []string{"settings", "set", "budget.per_run_usd", "--add-entry", "foo=bar", "--layer", "repo", "--yes"}},
+		{"a string-list key", []string{"settings", "set", "workflows.web.commands.reports", "--add-entry", "foo=bar", "--layer", "repo", "--yes"}},
+		{"a scalar key on the removal side", []string{"settings", "set", "budget.per_run_usd", "--remove-entry", "foo", "--layer", "repo", "--yes"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, _, err := execute(t, tc.args...)
+			if err == nil {
+				t.Fatalf("settings set wrote an entry for %v:\n%s", tc.args, out)
+			}
+			if !strings.Contains(err.Error(), "takes no entry") {
+				t.Errorf("the refusal does not say the key takes no entry: %v", err)
+			}
+			if readFileString(t, path) != before {
+				t.Error("the refused write changed fugaro.yaml")
+			}
+		})
+	}
+}
+
+// TestSettingsSetRemoveEntryRefusesTwoEntries: one entry per invocation (D1167)
+// holds for the removal half of the pair too. A second --remove-entry is a
+// second entry, and a command that took away only the first would report a
+// removal that did not happen, so it is refused with nothing written.
+func TestSettingsSetRemoveEntryRefusesTwoEntries(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoWithEntries)
+	before := readFileString(t, path)
+	args := []string{"settings", "set", "workflows.web.secrets", "--remove-entry", "app-token", "--remove-entry", "ci-token", "--layer", "repo", "--yes"}
+	out, _, err := execute(t, args...)
+	if err == nil {
+		t.Fatalf("settings set took two entries away in one invocation:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "repeat the command") {
+		t.Errorf("the refusal does not say one entry is what a command takes away: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed fugaro.yaml")
+	}
+}
+
+// TestSettingsSetAddEntryRefusesOneFieldTwice: a member named twice in one
+// command is two answers to one question, and the entry's own mapping keeps
+// whichever came last — so the write is refused with nothing written rather
+// than quietly dropping the first value. The field that names the entry keeps
+// its own refusal, because two of those are two entries (D1167).
+func TestSettingsSetAddEntryRefusesOneFieldTwice(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoWithEntries)
+	before := readFileString(t, path)
+	args := []string{"settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--add-entry", "env=CI_TOKEN_LEGACY", "--layer", "repo", "--yes"}
+	out, _, err := execute(t, args...)
+	if err == nil {
+		t.Fatalf("settings set named one member twice and wrote it:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "env") || !strings.Contains(err.Error(), "twice") {
+		t.Errorf("the refusal does not name the member that was named twice: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed fugaro.yaml")
+	}
+}
+
+// TestSettingsSetAddEntryRefusesAnEntryWithNothingBesideItsName: an object
+// list's entry is the members it carries beside the field that names it, so a
+// command that names one and nothing else has nothing to write — and it is
+// refused rather than reported as a change already made, because the upsert
+// writes the members it is handed and an empty set of them leaves the document
+// as it was, whether or not the entry is in the file at all.
+func TestSettingsSetAddEntryRefusesAnEntryWithNothingBesideItsName(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoWithEntries)
+	before := readFileString(t, path)
+	for _, name := range []string{"ci-token", "app-token"} {
+		out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name="+name, "--layer", "repo", "--yes")
+		if err == nil {
+			t.Fatalf("--add-entry name=%s was accepted with no member beside it:\n%s", name, out)
+		}
+		if !strings.Contains(err.Error(), "beside") {
+			t.Errorf("the refusal does not say the entry's members travel beside the field that names it: %v", err)
 		}
 		if readFileString(t, path) != before {
 			t.Error("the refused write changed fugaro.yaml")

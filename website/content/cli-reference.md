@@ -4227,10 +4227,13 @@ A string-list key takes --add V or --remove V instead of a value. A map or an
 object list takes --add-entry and --remove-entry instead: --add-entry carries
 one entry, one field=value per member the entry has, and --remove-entry carries
 the one value the entry is addressed by — a map member's name, or an object
-list's key field value. One entry per command: several entries are several
-invocations. A list emptied by --remove or --remove-entry is refused: an absent
-key and an empty list mean different things to the loader, so use unset to
-remove the key.
+list's key field value, which is how an entry of an object list is named and
+never its position. One entry per command: several entries are several
+invocations. A map's entry is one member, so --add-entry edits the members of a
+map the file already holds, and a map the loader wants whole cannot be built
+one member at a time. A list emptied by --remove or --remove-entry is refused:
+an absent key and an empty list mean different things to the loader, so use
+unset to remove the key.
 
 Loosening a ceiling key (budget.*, governance.*, the agent caps
 agent.max_budget_usd and agent.max_run_tokens with the layer's own spellings),
