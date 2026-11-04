@@ -763,8 +763,9 @@ answers to all of them, and **not one of them took a new decision number**: two 
 decisions the block already holds — **D1299** (no write on a member; the advisory headroom comes from
 the service) and **D1301** (the cap is metered at the proxy, and the rollup becomes a reconciliation
 alarm), with **D1300** amended only as it depends on D1301 — and the rest correct design statements
-and the plan rather than deciding anything. An amended decision keeps its number and its original
-answer, with the amendment dated beside it in §4; a **new** meaning never takes an old number. So
+and the plan rather than deciding anything. A decision **amended 2026-11-04** keeps its number and its
+original answer, with the amendment dated beside it in §4; a **new** meaning never takes an old
+number. So
 **D1306–D1309 stay reserved and unused**, exactly as the row above says.
 
 `grep -rhoE 'D[0-9]{3,4}' docs` is not enough on its own, for the two reasons the MCP design records
