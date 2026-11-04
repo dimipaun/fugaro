@@ -376,7 +376,7 @@ const reviewLevelsKnows = "the review levels (review_levels, agent.levels)"
 // that task. It names the release this work is slotted for; docs/release.md's
 // ("Before you tag") list verifies the number against the tag actually cut,
 // the way digestSince's and reviewLevelsSince's bullets record.
-const reviewJobSince = "0.18.0"
+const reviewJobSince = "0.19.0"
 
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
