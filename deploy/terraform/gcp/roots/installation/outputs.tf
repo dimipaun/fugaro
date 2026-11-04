@@ -72,3 +72,7 @@ output "coordinator_job" {
 output "credentials_service" {
   value = module.installation.credentials_service
 }
+
+output "catalog_check_service_account" {
+  value = module.installation.catalog_check_service_account
+}

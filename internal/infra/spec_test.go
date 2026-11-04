@@ -2306,6 +2306,11 @@ type repoRootFixture struct {
 	// credentialsService sets the fixture's Installation.CredentialsService,
 	// the installation output the repository root reads.
 	credentialsService bool
+	// catalogCheckServiceAccount sets the fixture's
+	// Installation.CatalogCheckServiceAccount, the second installation output
+	// a repository root reads: the project's catalog check job's account
+	// (D1148), which the root grants actAs on its own build account.
+	catalogCheckServiceAccount string
 }
 
 // repoRootFixtures are the fixture specs, keyed by the golden's name.
@@ -2332,6 +2337,11 @@ var repoRootFixtures = map[string]repoRootFixture{
 	"repo_root":             {agent: repoRootOAuthAgent},
 	"repo_root_vertex":      {agent: repoRootVertexAgent},
 	"repo_root_credentials": {agent: repoRootOAuthAgent, credentialsService: true},
+	// repo_root_catalog_check is the D1148 fixture: the same oauth spec with
+	// the installation's catalog check job account set, so the one address the
+	// mirror adds (the actAs on the build account, modules/repo/catalogcheck.tf)
+	// is compared with a real plan rather than trusted.
+	"repo_root_catalog_check": {agent: repoRootOAuthAgent, catalogCheckServiceAccount: "fugaro-catalog-check@proj-1234.iam.gserviceaccount.com"},
 }
 
 // repoRootFixtureSpec builds one fixture's spec by name, the opt-in
@@ -2345,6 +2355,9 @@ func repoRootFixtureSpec(t *testing.T, name string) RepoSpec {
 	in := repoRootInputs(t, f.agent)
 	if f.credentialsService {
 		in.Installation.CredentialsService = &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	}
+	if f.catalogCheckServiceAccount != "" {
+		in.Installation.CatalogCheckServiceAccount = f.catalogCheckServiceAccount
 	}
 	rs, err := Repo(in)
 	if err != nil {

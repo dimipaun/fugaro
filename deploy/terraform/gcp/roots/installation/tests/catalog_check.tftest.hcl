@@ -67,7 +67,8 @@ run "no_catalog_check_job_without_one" {
   assert {
     condition = (
       length(google_service_account.catalog_check) == 0 && length(google_cloud_run_v2_job.catalog_check) == 0 &&
-      length(google_cloud_scheduler_job.catalog_check) == 0 && length(google_project_iam_member.catalog_check) == 0 &&
+      length(google_cloud_scheduler_job.catalog_check) == 0 &&
+      length(google_project_iam_member.catalog_check_log_writer) == 0 && length(google_project_iam_member.catalog_check_build_submitter) == 0 &&
       length(google_storage_bucket_iam_member.catalog_check_definitions) == 0 &&
       length(google_storage_bucket_iam_member.catalog_check_records) == 0 &&
       length(google_cloud_run_v2_job_iam_member.catalog_check_invoker) == 0
@@ -142,7 +143,8 @@ run "exact_grants" {
 
   assert {
     condition = toset(concat(
-      [for r in google_project_iam_member.catalog_check : "google_project_iam_member ${r.role} ${r.member}"],
+      [for r in google_project_iam_member.catalog_check_log_writer : "google_project_iam_member ${r.role} ${r.member}"],
+      [for r in google_project_iam_member.catalog_check_build_submitter : "google_project_iam_member ${r.role} ${r.member}"],
       [for r in google_storage_bucket_iam_member.catalog_check_definitions : "google_storage_bucket_iam_member ${r.role} ${one(r.condition).title} ${r.member}"],
       [for r in google_storage_bucket_iam_member.catalog_check_records : "google_storage_bucket_iam_member ${r.role} ${one(r.condition).title} ${r.member}"],
       [for r in google_cloud_run_v2_job_iam_member.catalog_check_invoker : "google_cloud_run_v2_job_iam_member ${r.role} ${r.member}"],

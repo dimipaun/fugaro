@@ -16,26 +16,30 @@
 # fugaro update's tfvars carry catalog_check — an installation whose project
 # publishes no catalog plans exactly what it planned before the job existed.
 
-# Its own log lines (the alert's one channel) and the builds it submits:
-# cloudbuild.builds.create to submit one and cloudbuild.builds.get to read its
-# status, which is the custom role each repository's build account holds for
-# the same two operations (modules/repo/build.tf). Cloud Build offers no
-# narrower scope than the project for either permission, and Cloud Run needs
-# logging.logEntries.create, so these two are project-level members: they are
-# the only project-level grants this account holds, and they are the same two
-# members the build accounts hold, not a wider role.
-#
-# The roles are literal paths, for the reason iam.tf's launcher grant gives: a
-# project grant whose role is computed cannot be told from one of the
-# deployer's at plan time.
-resource "google_project_iam_member" "catalog_check" {
-  for_each = var.catalog_check == null ? {} : {
-    log_writer      = "roles/logging.logWriter"
-    build_submitter = "projects/${var.project}/roles/fugaroBuildSubmitter"
-  }
+# Its own log lines (the alert's one channel): Cloud Run needs
+# logging.logEntries.create, so this one is a project-level member and there is
+# no narrower scope for it. It is the same member each repository's build
+# account holds (modules/repo/build.tf), not a wider role.
+resource "google_project_iam_member" "catalog_check_log_writer" {
+  count = var.catalog_check == null ? 0 : 1
 
   project = var.project
-  role    = each.value
+  role    = "roles/logging.logWriter"
+  member  = google_service_account.catalog_check[0].member
+}
+
+# The builds it submits: cloudbuild.builds.create to submit one and
+# cloudbuild.builds.get to read its status, which is the custom role each
+# repository's build account holds for the same two operations
+# (modules/repo/build.tf). Cloud Build offers no narrower scope than the
+# project for either permission. The role is a literal path, for the reason
+# iam.tf's launcher grant gives: a project grant whose role is computed cannot
+# be told from one of the deployer's at plan time.
+resource "google_project_iam_member" "catalog_check_build_submitter" {
+  count = var.catalog_check == null ? 0 : 1
+
+  project = var.project
+  role    = "projects/${var.project}/roles/fugaroBuildSubmitter"
   member  = google_service_account.catalog_check[0].member
 
   depends_on = [google_project_iam_custom_role.build_submitter]
