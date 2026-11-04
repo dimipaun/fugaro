@@ -898,3 +898,58 @@ func TestSettingsSetManagedRefusesAConfigAimedOutsideTheProject(t *testing.T) {
 		t.Errorf("a config the session chose filed %+v", recs)
 	}
 }
+
+// And the same guard is not allowed to refuse the project's own file because of
+// how it was spelled: `--config` with a redundant segment names one file, and
+// the gate compares the two paths made absolute. Without this the fix above
+// would refuse a person's spelling of the right file, which is the direction
+// this gate must not fail in.
+func TestSettingsSetManagedAdmitsAConfigSpelledTheProjectsWay(t *testing.T) {
+	r := newSettingsManagedRig(t, settingsMarksManaged)
+	r.managedRunsBucket(t)
+	path := settingsManagedLayerFile(t, minimalAnchored)
+	cfg := r.managedConfigPath(t)
+	spelled := filepath.Dir(cfg) + "/./" + filepath.Base(cfg)
+	agentSession(t)
+
+	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--config", spelled, "--yes")
+	if err != nil {
+		t.Fatalf("the project's own config, spelled with a redundant segment, was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(readFileString(t, path), "review_rounds: 4") {
+		t.Errorf("the write did not land:\n%s", readFileString(t, path))
+	}
+	if recs := r.audits(t); len(recs) != 1 || recs[0].Verdict != managedmode.AuditAdmitted {
+		t.Fatalf("the write left %+v, want exactly one admitted record", recs)
+	}
+}
+
+// A layer that carries the zero of a round count carries no count at all: the
+// loader treats 0 as unset and lets the mode's row decide, so the floor's base
+// is the mode's row and not 0 — otherwise the write of 1 would be admitted and
+// would take a run from the mode's own rounds down to one, which is exactly the
+// lowering this rule exists to refuse.
+func TestSettingsSetManagedRefusesALoweringUnderAZeroedLayer(t *testing.T) {
+	r := newSettingsManagedRig(t, settingsMarksManaged)
+	r.managedRunsBucket(t)
+	path := settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  agent: { review_rounds: 0 }\n")
+	before := readFileString(t, path)
+	agentSession(t)
+
+	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, "1", "--layer", "project", "--yes")
+	if err == nil {
+		t.Fatalf("a run's rounds were lowered from the mode's own row in a coding agent's session:\n%s", out)
+	}
+	if !errors.Is(err, managedmode.ErrNotConverged) {
+		t.Fatalf("the lowering was not refused by the gate: %v", err)
+	}
+	if !strings.Contains(err.Error(), "would lower it from 3 (the mode's own row)") {
+		t.Errorf("the refusal does not name the mode's own row as the number the write would lower: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the layer file changed under a refused lowering")
+	}
+	if recs := r.audits(t); len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
+		t.Fatalf("the refusal left %+v, want exactly one refused record", recs)
+	}
+}

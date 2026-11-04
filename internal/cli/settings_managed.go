@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -54,10 +54,15 @@ import (
 // were was wrong: the project layer's profiles carry them
 // (`layer.profiles.*.commands.*`, `layer.profiles.*.image.apt`,
 // `layer.profiles.*.image.setup`), and a `--layer project` write is exactly a
-// document this gate judges. So spec §4.2's executable-key guard has to fire
-// here, and settingsProfilesRule is it: every key of the project layer's
-// profiles block is refused, whatever the command line says, because a profile
-// is where a build script, an apt package or a command lives.
+// document this gate judges. So spec §4.2's executable-key guard belongs here,
+// and settingsProfilesRule is it: every key of the project layer's profiles
+// block is refused, whatever the command line says, because a profile is where
+// a build script, an apt package or a command lives. The allowlist below
+// refuses those keys too — they are not on it — and that is not a reason to
+// drop the rule: a session that tries one reads the reason spec §4.2 gives
+// rather than "nobody decided about this key", and the record an owner audits
+// says which door refused it. The two rules are one refusal with one reason
+// each, which is what the plan's §2 row carried before this gate existed.
 //
 // A rule named among the ones that passed is a claim that it ran and could
 // have failed, and an owner auditing a record reads it as one — so a rule that
@@ -133,9 +138,40 @@ func settingsGateApplies(marker string, kind settingsDocKind, typed bool) bool {
 // A path that cannot be derived at all — a name that is not a project name, a
 // config home that cannot be read — is not the project's own file either, and
 // the caller refuses on the same answer rather than on a second one.
+//
+// The comparison is over the paths made absolute rather than over the two
+// strings as they were written, so the file's own spelling with a redundant
+// segment (`/x/./aurora.yaml`) is the file it names: a guard that refused the
+// right file over how it was typed would refuse an edit a person is entitled to.
+// A symlinked or otherwise different spelling is still refused, which is the
+// fail-closed direction — this program compares names, and a name it cannot
+// prove is the project's own is not the project's own.
+//
+// What this does NOT decide is which config home is trusted. That path is
+// derived from the environment the command runs in (XDG_CONFIG_HOME, else
+// HOME), which every selection in this CLI already reads — `$FUGARO_CONFIG` and
+// `$FUGARO_PROJECT` are env-derived too — so a session that redirects the whole
+// config home selects another installation the same way it can select one with
+// `--config`. This guard narrows which FILE inside that home may be the
+// installation, which is the half the design's own read can check; the wider
+// question (a trusted home for a session) is D1027's recorded residual.
 func settingsConfigIsTheProjects(selPath, project string) bool {
+	if selPath == "" {
+		return false
+	}
 	own, err := localcfg.ProjectPath(os.Getenv, project)
-	return err == nil && selPath != "" && selPath == own
+	if err != nil {
+		return false
+	}
+	picked, err := filepath.Abs(selPath)
+	if err != nil {
+		return false
+	}
+	target, err := filepath.Abs(own)
+	if err != nil {
+		return false
+	}
+	return picked == target
 }
 
 // settingsWriteGate reads the two marks for one settings write and answers the
@@ -307,7 +343,9 @@ const (
 	// shell — a build script, an apt package, a command — and they are
 	// reachable only through a profile, which is why the rule is written over
 	// the block rather than over a list of key names a later release could
-	// grow past.
+	// grow past. The allowlist refuses these keys as well (none of them is on
+	// it); this rule is what makes the refusal name the executable key, so the
+	// session reads the reason and not only "no rule of this gate admits it".
 	settingsProfilesRule = "the write is no key of the project layer's profiles, which carry the keys that run as shell (spec §4.2)"
 	// settingsFloorRule is the direction rule over the two keys the allowlist
 	// admits: the review rounds a run spends, which a session may raise and
@@ -361,10 +399,25 @@ var settingsManagedKeys = []string{
 	"layer.defaults.agent.adversarial_rounds",
 }
 
+// settingsManagedAdmits reports whether key is one the allowlist names. The
+// comparison is the registry's own wildcard matcher and not string equality,
+// because the list holds names as the registry spells them: an entry the owner
+// adds with a `*` — the spelling every wildcard row has (D1161) — matches the
+// concrete key a command line carries, where an equality test would refuse that
+// key forever with a sentence naming a pattern nobody can type.
+func settingsManagedAdmits(key string) bool {
+	for _, k := range settingsManagedKeys {
+		if k == key || settingsPatternMatch(k, key) {
+			return true
+		}
+	}
+	return false
+}
+
 // settingsAdmittedRefusal is the key this write names when it is not one the
 // allowlist admits, or "".
 func settingsAdmittedRefusal(key string) string {
-	if slices.Contains(settingsManagedKeys, key) {
+	if settingsManagedAdmits(key) {
 		return ""
 	}
 	return ruleSaid(settingsAdmittedRule, fmt.Sprintf("%s is not a key a coding agent's session writes: this gate admits %s and nothing else, so a key the registry gains later is refused until the project's owner confirms it; the project's owner writes it at their own terminal", safetext.Field(key), strings.Join(settingsManagedKeys, " and ")))
@@ -408,7 +461,7 @@ func settingsProfilesRefusal(key string) string {
 // direction as every other read of this gate — a value nobody can hold at or
 // above the floor is not a value this rule may admit.
 func settingsFloorRefusal(key string, old, next []byte, keyPath []string) string {
-	if !slices.Contains(settingsManagedKeys, key) {
+	if !settingsManagedAdmits(key) {
 		return ""
 	}
 	raw := settingsValueIn(next, keyPath)
@@ -438,9 +491,23 @@ func settingsRounds(raw string) (float64, bool) {
 // keyPath: the layer's own value where it sets one, else the mode's own row.
 // The text beside it is what the refusal names, so an owner reading
 // "would lower it from 3" learns where the 3 came from.
+//
+// What it is not is every narrower layer. A repository's own `rigor.default` is
+// narrower than the project layer and wins over it (rigor.Resolve), so a
+// repository that names a stricter mode spends more rounds than this base
+// counts — and this gate cannot read it: `--layer project` writes one file for
+// every repository the project has, the checkouts are not part of the write,
+// and the layer being edited is the layer the number is written into. The base
+// is therefore what a run of the layer's own mode starts from, which is what
+// the refusal says, and a repository that raises its own mode is a residual
+// D1027 records rather than a number this rule can hold.
 func settingsFloorBase(old []byte, keyPath []string) (float64, string) {
 	if raw := settingsValueIn(old, keyPath); raw != "" {
-		if n, ok := settingsRounds(raw); ok {
+		// Zero is no number here: the layer's own reader treats a 0 round count
+		// as unset and lets the mode's row decide (config's validator fires only
+		// for a non-zero value that is out of range), so a base of 0 would admit
+		// the write that takes a run from the mode's row down to one round.
+		if n, ok := settingsRounds(raw); ok && n > 0 {
 			return n, raw
 		}
 	}
