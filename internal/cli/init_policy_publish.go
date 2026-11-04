@@ -460,7 +460,15 @@ func recordPublishedGeneration(ctx context.Context, w io.Writer, db *rtdb.Client
 			projectpolicy.PathShared(), path)
 	}
 	if !sameNode(raw, payload) {
-		return userErr("the policy node at %s was written and then changed again before the generation could be recorded in %s: another writer published in between, so nothing was recorded there and the config still records the generation from before this write. Read what the node holds now with 'fugaro project policy show': the next %s refuses to publish from a file the node has moved past, and offers to re-seed the file from the node instead",
+		// The node holds a document other than the one this run wrote, so the
+		// generation to record is not this run's to claim. What the next run
+		// does with the record then depends on what the node carries against
+		// what the config states — it records the generation when the two
+		// agree, and offers the re-seed when they do not — and the sentence
+		// says both rather than promising the refusal: the state this one
+		// leaves is not always the state that refuses, and the operator who
+		// went looking for a re-seed that never came is who it cost.
+		return userErr("the policy node at %s was written and then changed again before the generation could be recorded in %s: another writer holds a different document there now, so nothing was recorded and the config still records the generation from before this write. The next %s compares this machine's config with the node it finds and records that node's generation when the node carries what the config states; when the node carries something else it refuses and offers to re-seed the file from the node instead. Read what the node holds now with 'fugaro project policy show'",
 			projectpolicy.PathShared(), path, selfCommand()+" update")
 	}
 	return policyGenerationRecord(w, path, lc, etag)
@@ -469,49 +477,100 @@ func recordPublishedGeneration(ctx context.Context, w io.Writer, db *rtdb.Client
 // sameNode is whether two documents are the same node: the values they hold
 // rather than the bytes they are spelled with, because the database is free to
 // hand an object back with its keys in another order, a number spelled another
-// way or a member written as null gone entirely — a member the database stores
-// no value for is not a member (the real database drops it, and this machine's
-// policy carries one: budget.allowed_models is written null when the file
-// names no models). Numbers are read into float64 on both sides
-// (json.Unmarshal's default), a null member is dropped, and objects are
-// marshalled with sorted keys, so the two sides are compared as the values they
-// are.
+// way or a member it stores no value for gone entirely. A member the database
+// stores no value for is not a member, and it stores none for three shapes: a
+// null one, an empty object, and an empty list — an RTDB list is an object with
+// numeric keys, so an empty list is an empty object and is pruned the same way.
+// This machine's policy carries all three: budget.allowed_models is written
+// null when the file names no models, and a publish from a config that lists no
+// repository writes allow_repos as an empty list the database keeps no member
+// for. Comparing the bytes would report every such publish as one another
+// writer had moved, and the generation would never be recorded (#1658). Numbers
+// are read into float64 on both sides (json.Unmarshal's default), those members
+// are dropped, and objects are marshalled with sorted keys, so the two sides
+// are compared as the values they are.
 func sameNode(a, b []byte) bool {
 	var x, y any
 	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
 		return false
 	}
-	ja, err := json.Marshal(dropNullMembers(x))
+	ja, err := json.Marshal(dropAbsentMembers(x))
 	if err != nil {
 		return false
 	}
-	jb, err := json.Marshal(dropNullMembers(y))
+	jb, err := json.Marshal(dropAbsentMembers(y))
 	return err == nil && string(ja) == string(jb)
 }
 
-// dropNullMembers is a document with every object member whose value is null
-// removed, recursively. A null inside a list is a value and is left alone: what
-// the database drops is a member, not a position.
-func dropNullMembers(v any) any {
+// dropAbsentMembers is a document with every object member the database stores
+// no value for removed, recursively: a null one, an empty object, and an empty
+// list (an RTDB list is an object with numeric keys, so an empty list is an
+// empty object). A null inside a list is a value and is left alone: what the
+// database drops is a member, not a position.
+func dropAbsentMembers(v any) any {
 	switch t := v.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(t))
 		for k, m := range t {
-			if m == nil {
+			folded := dropAbsentMembers(m)
+			if storesNoMember(folded) {
 				continue
 			}
-			out[k] = dropNullMembers(m)
+			out[k] = folded
 		}
 		return out
 	case []any:
 		out := make([]any, len(t))
 		for i, m := range t {
-			out[i] = dropNullMembers(m)
+			out[i] = dropAbsentMembers(m)
 		}
 		return out
 	default:
 		return v
 	}
+}
+
+// storesNoMember is whether the database keeps no value for a member holding v:
+// null, an empty object, or an empty list.
+func storesNoMember(v any) bool {
+	switch t := v.(type) {
+	case nil:
+		return true
+	case map[string]any:
+		return len(t) == 0
+	case []any:
+		return len(t) == 0
+	}
+	return false
+}
+
+// policyEmptyAllowListWarning is what a publish says before it writes a policy
+// whose allow-list admits no repository, in doctor's own words (the
+// allow-list-empty check): once that node is published, every run of the
+// project stops before it starts. It is one function so the policy stage of
+// `fugaro update` can say the same sentence when it makes the first publish
+// (#1656, #1674), and it names the command that enrolls a repository, because a
+// refusal that only said what was wrong would leave the operator to find the
+// fix.
+func policyEmptyAllowListWarning() string {
+	return "the published policy admits no repository, so every run stops before it starts; run `fugaro project repos add provider/owner/name` to enroll one"
+}
+
+// confirmEmptyAllowList is the confirmation every publish that would write an
+// allow-list admitting nothing takes before its first write: a person types the
+// project's name at a terminal, no flag stands in for it, and a session with no
+// terminal — a script's, or a coding agent's — is refused, so an empty
+// allow-list is never written on the operator's behalf by something that cannot
+// have read the consequence (#1674). The same wording is both the confirmation
+// and the refusal, so the two cannot drift.
+func confirmEmptyAllowList(cmd *cobra.Command, lc *localcfg.Config, agent string) error {
+	why := policyEmptyAllowListWarning()
+	// A coding agent's session is refused before any prompt: a terminal it can
+	// give itself (a pty wrapper) is not a person reading the consequence.
+	if agent != "" {
+		return userErr("%s", why)
+	}
+	return confirmTypedStrict(cmd, lc, why, why)
 }
 
 // reseedPolicyKeys writes the published node's policy values back into the local

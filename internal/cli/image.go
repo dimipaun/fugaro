@@ -777,9 +777,9 @@ func loadCheckoutResolved(ctx context.Context, dir string, lc *localcfg.Config, 
 		return "", rf, &ExitError{Code: ExitUserError, Err: errors.New("not inside a git checkout; run this from the repository")}
 	}
 	root = strings.TrimSpace(string(out))
-	data, err := readFugaroYAML(filepath.Join(root, "fugaro.yaml"))
+	data, err := requireFugaroYAML(filepath.Join(root, "fugaro.yaml"))
 	if err != nil {
-		return "", rf, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%w; create it with /fugaro:setup or fugaro config example", err)}
+		return "", rf, userErr("%v", err)
 	}
 	if lc == nil {
 		lc = selectedProjectConfig(ctx)
