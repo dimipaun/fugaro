@@ -196,9 +196,13 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 	//
 	// A MANAGED project is the one exception the design makes (M3, D1012): there
 	// a coding agent's session reaches the deterministic gate instead, and the
-	// rules of project_policy_managed.go decide. That gate refuses a widening, a
-	// raised cap and this command's three flags whatever the session's arguments
-	// are, so what the exception admits is a publish that only ever narrows.
+	// rules of project_policy_managed.go decide. That gate refuses a widening of
+	// any allow list, a raised cap, this command's three flags whatever the
+	// session's arguments are — and, because those rules judge a handful of the
+	// node's members and the node carries many, any change at all to a member no
+	// rule of them reads (policyUnjudgedRule). So what the exception admits is a
+	// publish whose every changed member is one a rule read and judged not to be
+	// a widening: a node that narrows, or one that does not move.
 	agent := agentMarker(os.Getenv)
 	lc, db, configPath, err := openProjectBudget(ctx, o.cloud, "nothing was published")
 	if err != nil {

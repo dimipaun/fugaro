@@ -61,6 +61,11 @@ type managedPolicyFixture struct {
 	// so a test that rewrites the file (a second publish from a machine whose
 	// file says something else) keeps the fakes the rig was built with.
 	endpoints string
+	// providers is the providers block the config file carries, held here for
+	// the same reason endpoints is: a test whose second publish comes from a
+	// file whose provider block says something else replaces it (a block is one
+	// key of the file, so a second `providers:` line would be a duplicate).
+	providers string
 }
 
 // newManagedPolicyFixture is a project that is managed: both marks are in
@@ -82,7 +87,7 @@ func newPolicyFixture(t *testing.T, extra string, managedProject bool) *managedP
 	noRunSession(t)
 	r := newInitRig(t)
 	db := gcpfake.NewRTDB(t)
-	f := &managedPolicyFixture{initRig: r, db: db, endpoints: endpointsBlock(t, r, gcpfake.NewFirestore(t))}
+	f := &managedPolicyFixture{initRig: r, db: db, endpoints: endpointsBlock(t, r, gcpfake.NewFirestore(t)), providers: projectProvidersYAML}
 	if err := os.WriteFile(r.cfg, []byte(f.configText(t, extra)), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +155,7 @@ func endpointsBlock(t *testing.T, r *initRig, fs *gcpfake.Firestore) string {
 // creation fact is read from.
 func (f *managedPolicyFixture) configText(t *testing.T, extra string) string {
 	t.Helper()
-	cfg := projectConfigText(f.dir, f.db.URL, projectProvidersYAML, extra)
+	cfg := projectConfigText(f.dir, f.db.URL, f.providers, extra)
 	cfg = strings.Replace(cfg, "endpoints: { no_auth: true }", f.endpoints, 1)
 	return strings.Replace(cfg, "runs_bucket: unused-bucket", "runs_bucket: "+initRunsBucket, 1)
 }
@@ -163,6 +168,46 @@ func (f *managedPolicyFixture) rewriteConfig(t *testing.T, extra string) {
 	if err := os.WriteFile(f.cfg, []byte(f.configText(t, extra)), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// rewriteConfigWithProviders is rewriteConfig for the one member a test cannot
+// add with extra: a providers block is a key of the file and a second one
+// would be a duplicate, so a machine whose provider block says something else
+// is written by replacing the block itself.
+func (f *managedPolicyFixture) rewriteConfigWithProviders(t *testing.T, providers string) {
+	t.Helper()
+	f.providers = providers
+	f.rewriteConfig(t, "")
+}
+
+// narrowingFixture is the world the admission is measured in: the installation
+// publishes its own node, and the node is then left with a per-run ceiling
+// where the project was before the config was tightened, so the publish a
+// coding agent's session makes next is one that only narrows.
+//
+// The node has to be one this installation actually wrote, and not a small one
+// built by hand for the test. The gate holds every member no rule of it reads
+// to what the node carries, so a hand-built node — no providers, no profiles,
+// no accounts — makes the publish that supplies them a change to members this
+// test is not about, and the gate refuses it. A node the publisher wrote, with
+// one member moved, is also what the narrowing is in the field: an operator
+// tightens the cap in the file, and the next publish brings the node down to
+// it.
+func narrowingFixture(t *testing.T, f *managedPolicyFixture, usd float64) {
+	t.Helper()
+	if out, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("this installation's own publish was refused: %v\n%s", err, out)
+	}
+	node, ok := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	if !ok {
+		t.Fatalf("the published node at %s is not a block", projectpolicy.PathShared())
+	}
+	budget, ok := node["budget"].(map[string]any)
+	if !ok {
+		t.Fatalf("the published node carries no budget block: %v", node)
+	}
+	budget["per_run_usd"] = usd
+	f.db.Set(projectpolicy.PathShared(), node)
 }
 
 // audits is the day's records, read back through the reader a surface uses, so
@@ -358,7 +403,7 @@ func TestPolicyPublishManagedRefusesRemoveRouting(t *testing.T) {
 // what it was admitted for is the document the record names.
 func TestPolicyPublishManagedAdmitsANarrowerNode(t *testing.T) {
 	f := newManagedPolicyFixture(t, "")
-	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+	narrowingFixture(t, f, 9)
 	t.Setenv("CLAUDECODE", "1")
 
 	out, errOut, err := execute(t, "project", "policy", "publish")

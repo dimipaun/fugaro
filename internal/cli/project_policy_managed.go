@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
@@ -14,6 +15,7 @@ import (
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The managed gate as `fugaro project policy publish` reads it (M3, D1012,
@@ -92,6 +94,13 @@ const (
 	// policyCapRule is §4.1 rule 6: no increase of a budget cap, whichever
 	// command it is.
 	policyCapRule = "no budget cap is raised (spec §4.1 rule 6)"
+	// policyUnjudgedRule is §4.1 rule 2's fail-closed half, and the one rule
+	// that reads the whole node rather than one member of it: every member the
+	// rules above do not judge is unchanged, whatever it is. It is what makes
+	// this command's rules a gate rather than a list — see
+	// policyUnjudgedRefusal for why the question cannot be asked of a list of
+	// members.
+	policyUnjudgedRule = "every member of the node that no rule of this gate judges is unchanged (spec §4.1 rule 2)"
 	// The three flags §4.2 names as never admitted. They are rules and not a
 	// check on the arguments for the reason the rules above are read off the
 	// node: what is refused is the effect, and the effect of --seed-repos is an
@@ -133,6 +142,7 @@ func policyPublishVerdict(old, pol *projectpolicy.Policy, body []byte, seedRepos
 	judge(policyRoutingRule, policyRoutingRefusal(old, pol))
 	judge(policyCredentialsRule, policyCredentialsRefusal(old, pol))
 	judge(policyCapRule, policyCapRefusal(old, pol))
+	judge(policyUnjudgedRule, policyUnjudgedRefusal(old, pol))
 	if seedRepos {
 		refused = append(refused, ruleSaid(policySeedReposRule, "the flag re-seeds allow_repos from this machine's own repositories and the shared config, so the list it writes is the list this machine happens to hold: a publish never re-adds a name an operator removed"))
 	}
@@ -245,6 +255,155 @@ func policyCapRefusal(old, pol *projectpolicy.Policy) string {
 		what += fmt.Sprintf(", and %d more member(s)", len(loosening)-1)
 	}
 	return ruleSaid(policyCapRule, what)
+}
+
+// policyUnjudgedRefusal is the rule that closes this gate over every member the
+// rules above do not read, and it is the rule that makes this command's rules a
+// gate at all (spec §4.1 rule 2).
+//
+// Why the question is asked of the whole node and not of a list of members.
+// Each rule above judges one member, and a gate that judged only the members
+// someone remembered to write down is a gate a session steps around by editing
+// one nobody did: review_floor, a provider's base_url, the image catalog, the
+// Bitbucket API roots, a profile's secrets, the price overrides — the node
+// carries sixteen members and no reader of one rule would notice the other
+// fifteen. The one member no list can name is the one a later release adds to
+// projectpolicy.Policy, and that is the case that decides the shape here: a
+// rule written as a list is a rule that silently stops covering the node the
+// day the node grows, while a comparison of the two nodes minus the judged
+// members covers whatever the node holds, named or not. A rule added above for
+// a new member therefore only has to take that member out of this comparison;
+// it never has to remember to add one — and forget the subtraction instead, and
+// the member it judges is simply still covered here.
+//
+// The comparison is over the two documents and never over the two Go values: a
+// policy decoded from the database and a policy built from the config file are
+// the same document, and they are not the same struct. config's carriers keep
+// unexported mirrors of what the FILE wrote (`allowReposWritten`,
+// `allowDataToWritten`), a decode off the node sets none of them and a load of
+// a file that writes `allow_repos` in a profile sets it, so a reflect.DeepEqual
+// of the two structs would refuse a publish whose nodes are byte for byte the
+// same — every publish from a config that writes a profile's allow_repos, the
+// routine case, refused as a change nobody made. What is compared instead is
+// the member map of each node's own JSON, which is what the record's digest is
+// taken over (D1022) and what a run reads: the document is the artifact.
+func policyUnjudgedRefusal(old, pol *projectpolicy.Policy) string {
+	changed, err := unjudgedMemberChanges(old, pol)
+	if err != nil {
+		// A comparison that could not be made is not a pass. It is the same
+		// answer every unreadable read of this command gets: the node to be
+		// written holds a member nobody judged, and nobody can say it did not
+		// change.
+		return ruleSaid(policyUnjudgedRule, fmt.Sprintf("the node this publish would write cannot be compared against the one it replaces (%v), so no member of it was judged", err))
+	}
+	if len(changed) == 0 {
+		return ""
+	}
+	return ruleSaid(policyUnjudgedRule, fmt.Sprintf("this publish would write a different %s than the node it replaces, and no rule of this gate reads it: a coding agent's session writes what these rules judged, so the project's owner publishes this at their own terminal", safetext.FieldListLine(changed)))
+}
+
+// unjudgedMemberChanges names the members of the node this publish would write
+// that are not what the node it replaces holds, once the members the rules
+// above judge are taken out of both. A member only one of the two nodes carries
+// is a change like any other: it is the shape a member ADDED by this release
+// takes (image_catalog, verifier_accounts), and reading it as "nothing to
+// compare" would admit exactly the member whose absence the older node proves
+// was never judged by anybody.
+func unjudgedMemberChanges(old, pol *projectpolicy.Policy) ([]string, error) {
+	was, err := policyMemberMap(policyWithoutJudgedMembers(old))
+	if err != nil {
+		return nil, err
+	}
+	now, err := policyMemberMap(policyWithoutJudgedMembers(pol))
+	if err != nil {
+		return nil, err
+	}
+	names := make(map[string]bool, len(was)+len(now))
+	for name := range was {
+		names[name] = true
+	}
+	for name := range now {
+		names[name] = true
+	}
+	out := make([]string, 0, len(names))
+	for name := range names {
+		if !reflect.DeepEqual(was[name], now[name]) {
+			out = append(out, name)
+		}
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+// policyWithoutJudgedMembers is a node with every member the rules above judge
+// replaced by its zero value, so that what is left is exactly what no rule of
+// this gate reads: the budget block (the four ceilings policyLoosening
+// compares), the node's own allow_repos, each profile's allow_repos, the
+// accounts block (an entry carries nothing but the list that rule reads), the
+// bitbucket token's allow_repos — and not its proxy switch, which no rule reads
+// and which is therefore still held to equality below — the routing block and
+// the credentials block.
+//
+// A nil node is the zero policy: a project with nothing published has no member
+// for any of them to be unchanged, which is the answer policyReposRefusal gives
+// this door first and the answer this one gives it too.
+func policyWithoutJudgedMembers(p *projectpolicy.Policy) projectpolicy.Policy {
+	var out projectpolicy.Policy
+	if p == nil {
+		return out
+	}
+	out = *p
+	out.Budget = projectpolicy.Budget{}
+	out.AllowRepos = nil
+	out.Profiles = profilesWithoutAllowRepos(p.Profiles)
+	out.Accounts = nil
+	out.BitbucketToken = bitbucketTokenWithoutAllowRepos(p.BitbucketToken)
+	out.Routing = nil
+	out.Credentials = nil
+	return out
+}
+
+// policyMemberMap is a node as the document it is: each member's name to the
+// value it carries, through encoding/json, so that what the comparison above
+// sees is what a reader of the node sees and never how this build happens to
+// hold it.
+func policyMemberMap(p projectpolicy.Policy) (map[string]any, error) {
+	b, err := json.Marshal(p)
+	if err != nil {
+		return nil, err
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return nil, err
+	}
+	return doc, nil
+}
+
+// profilesWithoutAllowRepos and bitbucketTokenWithoutAllowRepos take the one
+// judged member out of the two blocks that carry an unjudged one beside it: a
+// profile's cpu, memory, timeout_class and secrets are no rule's business
+// above, and the token block's proxy switch is no rule's either, so both stay
+// in the comparison. The entries are copied rather than emptied in place — the
+// caller's policy is the one the command goes on to write.
+func profilesWithoutAllowRepos(in map[string]projectpolicy.Profile) map[string]projectpolicy.Profile {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]projectpolicy.Profile, len(in))
+	for name, pr := range in {
+		pr.AllowRepos = nil
+		out[name] = pr
+	}
+	return out
+}
+
+func bitbucketTokenWithoutAllowRepos(t *projectpolicy.BitbucketToken) *projectpolicy.BitbucketToken {
+	if t == nil {
+		return nil
+	}
+	out := *t
+	out.AllowRepos = nil
+	return &out
 }
 
 // widenedAllowList is the one predicate behind every "no widening of an allow
