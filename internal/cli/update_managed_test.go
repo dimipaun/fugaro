@@ -528,6 +528,11 @@ func TestUpdateManagedRefusesASessionWideningFlag(t *testing.T) {
 		}},
 		{"budget and billing account", []string{"--budget", "1", "--budget-currency", "USD", "--billing-account", billingAcc}, nil},
 		{"state bucket", []string{"--state-bucket", initStateBucket}, nil},
+		// --region rewrites the persisted region (and the cover's region and
+		// registry), --github-app-id the App ID the repository jobs carry: both
+		// are written to the local config by an apply this gate would admit.
+		{"region", []string{"--region", "us-west1"}, nil},
+		{"github app id", []string{"--github-app-id", "123456"}, nil},
 		{"the owner's delete list", []string{"--allow-delete", address}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

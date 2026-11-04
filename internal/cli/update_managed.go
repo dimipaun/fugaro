@@ -170,7 +170,8 @@ func (e *initEngine) managedStage(name string) bool {
 // not made, no verdict exists, and no record is written — the same property
 // --plan-only has, and for the same reason.
 func (r *initRun) shapesTheInstallation() bool {
-	return len(r.o.installationFlags()) > 0 || r.o.stateBucket != "" || len(r.o.allowDelete) > 0
+	return len(r.o.installationFlags()) > 0 || r.o.stateBucket != "" || len(r.o.allowDelete) > 0 ||
+		r.o.cloud.region != "" || r.o.githubAppID != ""
 }
 
 // readUpdateGate reads the two marks for this run, once, through M6's helper:
