@@ -346,6 +346,9 @@ func TestTheTokenEndpointRefusesAFirebaseIDToken(t *testing.T) {
 			t.Errorf("ParseGrantType(%s) admitted a grant type that is not one of the endpoint's three: a Firebase ID token presented as a grant is the one thing the endpoint must never read", testMarker)
 			continue
 		}
+		if !errors.Is(err, ErrUnsupportedGrant) {
+			t.Errorf("ParseGrantType refused with %v, which is not the endpoint's own sentinel: the token endpoint answers unsupported_grant_type from it", err)
+		}
 		if got != "" {
 			t.Errorf("ParseGrantType(%s) answered %q beside a refusal", testMarker, got)
 		}
