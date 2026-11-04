@@ -541,3 +541,104 @@ func TestUpdateManagedPlanOnlyStillAppliesNothing(t *testing.T) {
 		t.Errorf("a plan-only run in a managed project left a step for the owner, though it applies nothing:\n%s", got)
 	}
 }
+
+// The policy stage is the other judged step of this command whose document is
+// not a Terraform plan: the node the stage is about to publish, byte for byte
+// (policyMigration.payload — the bytes its conditional write puts at the shared
+// path). A node a release behind this binary is a node the gate admits in a
+// managed project, and the record it leaves names the two questions the step
+// asked before writing — the database is this installation's (D1017) and this
+// machine's config is not behind the published node (D854) — rather than a
+// value from the node.
+func TestUpdateManagedPolicyStageUnderTheGate(t *testing.T) {
+	r, db := updateBudgetRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	t.Setenv("CLAUDECODE", "1")
+	isolateGateCredentials(t)
+	// The rig's world plans an additive change, which is what lets the
+	// installation step run to its apply (see the rules stage's test).
+	updating(t, r)
+	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
+	// A node a release before this binary's, with the ceiling the local config
+	// states: the migration is the one write, and it loosens nothing.
+	db.Set(projectpolicy.PathShared(), v3Node(nil))
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	got := out + errOut
+	if err != nil {
+		t.Fatalf("a managed project's agent session did not publish the policy node (%v):\n%s", err, got)
+	}
+	if !strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
+		t.Errorf("the admitted policy step did not say it proceeded:\n%s", got)
+	}
+	if v := nodeVersionOn(t, db); v != projectpolicy.Version {
+		t.Errorf("the published policy is version %d, want %d: the admitted step wrote nothing\n%s", v, projectpolicy.Version, got)
+	}
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rulesDigest := gateDigest(gen)
+	var policy []managedmode.AuditRecord
+	for _, rec := range audits(t, r) {
+		for _, rule := range rec.Rules {
+			if strings.Contains(rule, "not behind the published node") {
+				policy = append(policy, rec)
+			}
+		}
+	}
+	if len(policy) != 1 {
+		t.Fatalf("%d record(s) say the policy node was judged, want one: %+v", len(policy), audits(t, r))
+	}
+	rec := policy[0]
+	if rec.Verdict != managedmode.AuditAdmitted {
+		t.Errorf("the policy node's record reads %q, want an admission", rec.Verdict)
+	}
+	if rec.Command != "fugaro update" {
+		t.Errorf("the record names the command %q", rec.Command)
+	}
+	// The digest is of the node this step wrote and not of another step's
+	// document: the rules generation is the one other document of this run whose
+	// digest the test can compute itself.
+	if rec.PlanDigest == "" || rec.PlanDigest == rulesDigest {
+		t.Errorf("the record's digest is %q, which is no document of its own (the rules generation's is %s)", rec.PlanDigest, rulesDigest)
+	}
+}
+
+// A publish that loosens a ceiling is the policy stage's Typed class (D846),
+// and D1026 never admits one: the node keeps every confirmation it has, so the
+// session reads its own refusal — not a sentence about the node — and nothing
+// is written and nothing is recorded about it. The gate does not judge the
+// document at all, which is what "the gate makes no judgment calls" means here.
+func TestUpdateManagedPolicyStageKeepsTheTypedLoosening(t *testing.T) {
+	r, db := updateBudgetRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	t.Setenv("CLAUDECODE", "1")
+	isolateGateCredentials(t)
+	updating(t, r)
+	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
+	// The node states 3 and the local config states 5 (updateBudgetRig): the
+	// publish would raise what every run of the project is admitted by.
+	db.Set(projectpolicy.PathShared(), staleBudgetNodeAt(3))
+
+	got, err := updateRun(t, r, "update", "--yes")
+	if err == nil {
+		t.Fatalf("a managed project's agent session published a looser node:\n%s", got)
+	}
+	if !strings.Contains(got, initflow.AgentRefusal("CLAUDECODE")) {
+		t.Errorf("the session does not read its own refusal for a typed step:\n%s", got)
+	}
+	if strings.Contains(got, managedmode.NotConverged) {
+		t.Errorf("a typed step was judged by the gate rather than left with its own confirmation:\n%s", got)
+	}
+	if got := ceilingOn(t, db); got != 3 {
+		t.Errorf("the published ceiling is %v, want the 3 it had: the refused step wrote the local config's 5", got)
+	}
+	for _, rec := range audits(t, r) {
+		for _, rule := range rec.Rules {
+			if strings.Contains(rule, "not behind the published node") {
+				t.Errorf("a step the gate never judged left a record: %+v", rec)
+			}
+		}
+	}
+}

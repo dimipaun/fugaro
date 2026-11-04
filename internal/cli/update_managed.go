@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -64,30 +65,37 @@ import (
 // are one entry each, because the gate judges the plan of the step in front of
 // it and not the stage's name.
 //
-// The rules stage is here with them, and it is not a Terraform stage: its
-// document is the generation this binary carries (rules.Generate, D1022's own
-// answer for "a document the binary carries, so the plan IS the generation"),
-// and it is judged in init_rules_stage.go where the database and the
-// classification are in hand.
+// The rules and policy stages are here with them, and neither is a Terraform
+// stage: the rules stage's document is the generation this binary carries
+// (rules.Generate, D1022's own answer for "a document the binary carries, so
+// the plan IS the generation") and the policy stage's is the node it is about
+// to publish (policyMigration.payload, the bytes the conditional write puts at
+// the shared path). Each is judged where its own document and its own two
+// questions — the database is this installation's (budgetDBUnadopted, D1017)
+// and the generation in play is one this binary's own may write over (D854) —
+// are in hand.
 //
 // The stages that are NOT here are as much a part of the decision:
 // preflight (it changes nothing), images (it copies blobs and pins digests
 // through the registry and writes this machine's config — it plans nothing, so
 // the pair this gate judges a Terraform stage with has no document to read),
 // secrets (spec §3.2: never admitted, and an agent's session is where a secret
-// would have to be typed), plugin (local files), the policy stage (its work is
-// three writes with three classes at once — a loosening migration takes its
-// typed confirmation, which D1026 never admits, and the re-seed and the
-// generation record write this machine's own file — so there is no single
-// document for one verdict to be about), credentials and compute (`noYes` in
-// the stage table today and under a managed project), the layer stage and the
-// checkout's own steps.
+// would have to be typed), plugin (local files), credentials and compute
+// (`noYes` in the stage table today and under a managed project), the layer
+// stage and the checkout's own steps.
+//
+// The policy stage's own two branches that write NO node are outside the gate
+// as well, and they are the ones this map cannot express: D854's bare re-seed
+// writes this machine's file alone and the generation-record step writes it
+// alone, so neither has a document for a verdict to be about and both keep
+// today's refusal in a coding agent's session (init_policy_migrate.go).
 var gatedStages = map[string]bool{
 	initflow.Installation:  true,
 	initflow.Firebase:      true,
 	initflow.Installation2: true,
 	initflow.Repository:    true,
 	initflow.Rules:         true,
+	initflow.Policy:        true,
 }
 
 // initGate is this run's use of the gate: M6's helper, and the one read of the
@@ -330,6 +338,69 @@ var rulesAdmittedRules = []string{
 	"the database is this installation's: budgetDBUnadopted admitted it (D1017), and the deployed generation is one this binary's own may be deployed over",
 }
 
+// gateStep judges the policy node this stage is about to publish, and answers
+// whether the gate admitted it: the policy stage's version of gateStep, for the
+// one step of this command that rewrites what every run of the project is
+// admitted by (M1's rule: "the policy stage against budgetDBUnadopted first
+// (D1017) and the D854 generation after").
+//
+// The document is m.payload — the bytes the stage's conditional write puts at
+// the shared path, read once and confirmed against, so the document the gate
+// judged and the document that lands are the same bytes (the ETag the write is
+// conditional on is the read the diff was made from). The two questions the
+// record names are the two the stage's own read answered before this call:
+// budgetDBUnadopted first (the database is this installation's, and a database
+// the predicate refuses is a stage that has already skipped), and the D854
+// generation after (this machine's file is not behind the published node, which
+// is the state in which publishing from here would replace a newer node with an
+// older file).
+//
+// The class is the step's own and not this function's choice: a publish that
+// loosens a ceiling takes the typed name (D846), which D1026 never admits, so
+// that node keeps every confirmation it has and no admission is recorded for it
+// — the helper decides that from the class, and this call passes the class it
+// read rather than the one it would have preferred.
+//
+// The two branches that write no node are not judged at all, and the reason is
+// the one above: D854's bare re-seed and the generation-record step write this
+// machine's file and nothing the gate could read.
+func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (bool, error) {
+	r := s.e.r
+	if !r.gateUnderway() || !m.writesNode() {
+		return false, nil
+	}
+	class := gateClass()
+	if len(m.loosening()) > 0 {
+		class = initflow.Typed
+	}
+	doc := m.payload()
+	if len(doc) == 0 {
+		// A node write with no bytes to write is the stage's own contract
+		// broken, and it is refused rather than published: an empty document is
+		// the one thing this gate must never hand to a write.
+		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the policy node this step would publish is empty")}
+	}
+	mg, err := r.gate.g.admit(ctx, class, managedmode.ConvergeAdmitted(doc, class, policyAdmittedRules))
+	if err != nil {
+		return true, &initflow.GatedError{Reason: err.Error(), Err: err}
+	}
+	if !initflow.CanConfirmManaged(class, r.conditions(), mg) {
+		return false, nil
+	}
+	fmt.Fprintf(r.w, "  %s\n", initflow.AgentProceeded(agentMarker(os.Getenv)))
+	return true, nil
+}
+
+// policyAdmittedRules is what the record says admitted the policy step: the two
+// questions the stage asked before its write, in the order it asked them
+// (D1017's ownership first, D854's generation after), and what the node is.
+// Neither the document's own content nor a value in it is named here — the
+// record's digest is what an owner checks the node against.
+var policyAdmittedRules = []string{
+	"the database is this installation's: budgetDBUnadopted admitted it (D1017)",
+	fmt.Sprintf("this machine's config is not behind the published node (D854), which is the state in which publishing writes version %d over a node this binary's own may write", projectpolicy.Version),
+}
+
 // gateApplied records the step the gate admitted, AFTER the step's own write
 // (D1014): an apply that cannot leave a trail fails the command, which is what
 // a record that is a control rather than a courtesy means. A run with no gate,
@@ -347,10 +418,13 @@ func (r *initRun) gateApplied(ctx context.Context) error {
 }
 
 // gateUnreadable is the sentence a step reads when the document the gate was
-// to judge could not be read at all: terraform's own error follows it, and
-// what it must not do is read as "nothing was refused". It names no flag and
-// no marker, the way every sentence this gate writes does not.
-const gateUnreadable = "the managed gate did not admit this step: the plan it was to judge could not be read, and a plan nobody could read is never applied here (D1012)"
+// to judge could not be produced or read at all: terraform's own error follows
+// it, and what it must not do is read as "nothing was refused". It names no
+// flag and no marker, the way every sentence this gate writes does not. It says
+// document rather than plan because one step of this command judges a plan and
+// two judge a document the binary or the database holds, and the sentence a
+// session reads must not name a shape the step never had.
+const gateUnreadable = "the managed gate did not admit this step: the document it was to judge could not be produced, and a document nobody could read is never applied here (D1012)"
 
 // gateClass is the confirmation class of a step the gate judges: these are the
 // ordinary applies of their stages, asked with confirmOrdinary, and an
