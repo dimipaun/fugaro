@@ -939,6 +939,16 @@ func TestRunAccountsHaveNoWritePathToTheMarker(t *testing.T) {
 	if got := startsWithPrefixes(gcp.LauncherBucketCondition(testBucket), testBucket); !slices.Equal(got, []string{"runs/", "tokens/"}) {
 		t.Errorf("the launcher condition grants %v", got)
 	}
+	// The project's catalog check job (D1148) writes one repository's check
+	// state beside that repository's build records, and this is the assertion
+	// that the condition which lets it is the narrow one: the repository's own
+	// catalog area, never the repository's whole prefix (which is the daily
+	// check's) and never the bucket's root. The module is handed this
+	// condition in its tfvars (narrowingConditions below reads it), so these
+	// bytes are what stands between the grant and the root.
+	if got := startsWithPrefixes(gcp.CatalogRecordsCondition(testBucket, "web"), testBucket); !slices.Equal(got, []string{"builds/web/catalog/"}) {
+		t.Errorf("the catalog records condition grants %v", got)
+	}
 
 	scan := scanModuleIAM(moduleFiles(t))
 	// The compute module's grants are refused, and that refusal is expected
@@ -1385,6 +1395,58 @@ locals {
 			}
 		})
 	}
+	// The project's catalog check job's account (D1148): its grant set is
+	// pinned whole by runAccountGrants, which is the only thing that can be.
+	// A tftest cannot enumerate a module's resources, so an extra grant
+	// resource beside the five is invisible to it; this is the mechanical half
+	// that catches one — the mutation adds a project-level role to that very
+	// account, and the finding has to name the grant and the object this whole
+	// test exists for, not merely be some other refusal.
+	t.Run("a sixth grant to the catalog check account", func(t *testing.T) {
+		files := moduleFiles(t)
+		files["modules/installation/catalogcheck.tf"] += `
+resource "google_project_iam_member" "catalog_check_viewer" {
+  count = var.catalog_check == null ? 0 : 1
+
+  project = var.project
+  role    = "roles/viewer"
+  member  = google_service_account.catalog_check[0].member
+}
+`
+		scan := scanModuleIAM(files)
+		if !slices.ContainsFunc(scan.findings, func(f string) bool {
+			return strings.Contains(f, "catalog_check_viewer") && strings.Contains(f, MarkerObject)
+		}) {
+			t.Errorf("a sixth grant to the catalog check account is not refused for what it reaches:\n%s", strings.Join(scan.findings, "\n"))
+		}
+	})
+	// And the other direction: the set is exact, so dropping one of the five
+	// leaves an allowlist entry that no module grants any more, which the scan
+	// reports rather than keeping the reviewed row as if it were still there.
+	t.Run("a reviewed catalog check grant that is gone", func(t *testing.T) {
+		files := moduleFiles(t)
+		path := "modules/installation/catalogcheck.tf"
+		mutated := strings.Replace(files[path],
+			`"catalog_check_build_submitter" {
+  count = var.catalog_check == null ? 0 : 1
+
+  project = var.project
+  role    = "projects/${var.project}/roles/fugaroBuildSubmitter"`,
+			`"catalog_check_build_submitter" {
+  count = var.catalog_check == null ? 0 : 1
+
+  project = var.project
+  role    = "projects/${var.project}/roles/fugaroTagMover"`, 1)
+		if mutated == files[path] {
+			t.Fatal("the mutation changed nothing: this fixture is not reading the grant it means to drop")
+		}
+		files[path] = mutated
+		if !slices.ContainsFunc(scanModuleIAM(files).findings, func(f string) bool {
+			return strings.Contains(f, "which no module grants any more")
+		}) {
+			t.Error("dropping a reviewed grant leaves its allowlist row standing, so the row would admit the grant coming back unreviewed")
+		}
+	})
 	// Task 3.0's rule fires by itself, and not only beside the allowlist.
 	// Every mutation above is also a new grant to a non-people member, which
 	// runAccountGrants refuses whatever it grants — so a mutation being
@@ -1855,6 +1917,57 @@ var runAccountGrants = setOf(
 	// from choosing the definition every other repository's jobs run — and
 	// the condition names a prefix under objects/, never the bucket's root.
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=var.installation.runs_bucket | google_service_account.build.member | for_each= | perms=`,
+
+	// The project's catalog check job and its own account (D1148, task (ii);
+	// PIC4). Reviewed whole, because it is the one account in the installation
+	// that decides a build for EVERY repository and then submits it as that
+	// repository's own build account: the thing to read is that the account
+	// itself reaches no repository's rights and nothing at the bucket's root.
+	//
+	// The one project-level member it holds is the installation's existing
+	// fugaroBuildSubmitter, whose whole list is cloudbuild.builds.create and
+	// cloudbuild.builds.get (pinned by the perms column) — submitting a build
+	// and reading its status, the two operations each repository's build
+	// account holds it for. Cloud Build offers no narrower scope than the
+	// project for either. It grants no role, acts as no account, mints no
+	// token and touches no bucket, so it is not a write path to the marker.
+	// No roles/logging.logWriter beside it: the installation's coordinator and
+	// history jobs hold none, and the log lines the alert policies match are
+	// Cloud Run's own.
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroBuildSubmitter" | project=var.project | google_service_account.catalog_check[0].member | for_each= | perms=cloudbuild.builds.create,cloudbuild.builds.get`,
+	// The catalog's copied definitions, builds/catalog/ (gcp.CatalogReadCondition),
+	// read-only: the same project-wide copy the build accounts read, under the
+	// same reasoning as the entry above it. A job that could rewrite a
+	// definition could make every repository run an image of its choosing.
+	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.catalog_check[0].member | for_each= | perms=`,
+	// One repository's build records and check state, builds/<slug>/catalog/
+	// (gcp.CatalogRecordsCondition, whose prefix is asserted at the top of this
+	// test): objectUser because the check writes its own check.json beside the
+	// record a build wrote, and nothing else — not builds/<slug>/<workflow>/,
+	// which is the repository's daily check's, and never the bucket's root,
+	// which the condition's prefix keeps it off. The grant is per repository,
+	// so the job reaches one repository's records per member and its own
+	// account reaches no other repository's.
+	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=google_storage_bucket.runs.name | google_service_account.catalog_check[0].member | for_each=var.catalog_check == null ? {} : { for r in var.catalog_check.repositories : r.slug => r } | perms=`,
+	// Scheduler's call to run the job, on that job alone: roles/run.invoker,
+	// the same grant and the same reason as the repository check job's. The
+	// member is the installation's scheduler account, not the catalog check
+	// account: the job cannot invoke itself, and this is the one row in this
+	// block that is not the new account's.
+	`google_cloud_run_v2_job_iam_member | "roles/run.invoker" | name=google_cloud_run_v2_job.catalog_check[0].name | google_service_account.scheduler.member | for_each= | perms=`,
+	// And the repository root's half: roles/iam.serviceAccountUser on this
+	// repository's BUILD account, which is what makes a build of this
+	// repository's catalog entry run as this repository (D1148's whole point —
+	// the same build account, the same BuildKit secret path, the same smoke and
+	// the same record as `fugaro image build`). actAs on the build account is
+	// not actAs on the project, and it is not actAs on anything else: the
+	// module writes no second member on the build account, no secret for this
+	// account, and no role on this repository's bucket prefix (asserted in
+	// roots/repo/tests/catalog_check.tftest.hcl). It is granted in the
+	// repository root because that is where the build account lives, gated on
+	// the installation having a job at all (the count), the way check.tf's
+	// deploy_job is.
+	`google_service_account_iam_member | "roles/iam.serviceAccountUser" | service_account_id=google_service_account.build.name | "serviceAccount:${var.installation.catalog_check_service_account}" | for_each= | perms=`,
 
 	// The history account's: the Firebase databases, its run listing, and a
 	// read of the runs bucket.
@@ -3007,6 +3120,13 @@ var narrowingConditions = map[string]bool{
 	"var.launcher_bucket_condition.expression":   true,
 	// gcp.ProjectBucketCondition, set by internal/infra/projectjobs.go.
 	"var.job.bucket_condition.expression": true,
+	// One repository's records condition, which the installation's input
+	// carries per repository (gcp.CatalogRecordsCondition, internal/backend/
+	// gcp): the project's catalog check job writes one repository's check
+	// state beside its build records, under builds/<slug>/catalog/. That the
+	// bytes this names are the narrow ones is asserted above, on the builder
+	// itself.
+	"each.value.records_condition.expression": true,
 }
 
 // grantMembers is who a grant is to: the member attribute, or the members of

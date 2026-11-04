@@ -161,6 +161,32 @@ variable "history" {
   default = null
 }
 
+variable "catalog_check" {
+  description = "The project's catalog check job (PIC4, D1148 task (ii)), or null when the project publishes no catalog: modules/installation/catalogcheck.tf and its variable of the same name. fugaro update writes it; it is passed through unchanged, and the module validates it."
+  type = object({
+    account_id       = string
+    job              = string
+    image            = string
+    scheduler_job    = string
+    scheduler_region = string
+    schedule         = optional(string, "17 4 * * *")
+    paused           = optional(bool, true)
+    env              = map(string)
+    definitions_condition = object({
+      title      = string
+      expression = string
+    })
+    repositories = list(object({
+      slug = string
+      records_condition = object({
+        title      = string
+        expression = string
+      })
+    }))
+  })
+  default = null
+}
+
 variable "coordinator" {
   type = object({
     account_id       = string
