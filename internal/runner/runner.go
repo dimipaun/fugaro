@@ -271,6 +271,10 @@ type run struct {
 	instructions string
 	reviewFile   string
 	stageN       map[string]int
+	// accounts is the ordered failover the stage-start account choice keeps
+	// for this run (accountchoice.go, D874): off unless the owner's published
+	// policy turns it on, and the account each stage has reached.
+	accounts accountChoice
 	// mu guards halt, cancelled, failReason, tokens, gatewayTokens and
 	// haltStage: the cancel watcher and, with the gateway, its halt
 	// callback record into them from other goroutines. Whichever of a halt
@@ -3279,6 +3283,14 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.fail("time budget exhausted before stage " + name)
 		return agent.Result{}, false, nil
 	}
+	// The stage's own account (accountchoice.go, D874): with the switch on
+	// this is the walk's next account for the stage, and a stage this run's
+	// own credential cannot serve is refused here rather than run as another
+	// account.
+	if reason := r.checkStageAccount(ctx, name); reason != "" {
+		r.fail("stage " + name + ": " + reason)
+		return agent.Result{}, false, errors.New(reason)
+	}
 	// With the gateway on, nothing the agent or the repository wrote since
 	// the last stage may send Claude Code around it.
 	if r.gatewayOn() {
@@ -3560,6 +3572,10 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// own.
 	var exhausted *exhaustedError
 	if errors.As(context.Cause(stageCtx), &exhausted) && (err != nil || res.IsError) {
+		// The answer ended this attempt, so the stage's next attempt is the
+		// walk's next account (accountchoice.go, D874): nothing inside the
+		// attempt that just ended moves it.
+		r.noteStageExhausted(name)
 		r.save(ctx)
 		return res, false, exhausted
 	}
