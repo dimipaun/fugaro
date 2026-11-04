@@ -1,9 +1,13 @@
 # Implementation plan: one `fugaro update`, the plugin at user scope, a session-start nudge
 
+**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task approved.**
+
 Nine tasks, one pull request each, in the order below, plus one external dependency. **Nothing here is
-approved**, and no task starts before the owner answers the decision it carries
-([reconciliation.md](reconciliation.md) §3). Each task's decision is named so a task whose answer came
-back the other way is redrawn before it is written, not after.
+approved and no task has started.** The owner answered four decisions on 2026-11-04 — **D943** and
+**D950** as recommended, **D954** as recommended, and **D949** **against** the recommendation (the pin
+merge is deleted outright) — and each task below carries its decision's answer where one exists, so a
+task whose answer came back the other way is redrawn before it is written, not after
+([reconciliation.md](reconciliation.md) §3, §8).
 
 ## Order, and what this plan does not own
 
@@ -11,18 +15,19 @@ back the other way is redrawn before it is written, not after.
 | --- | --- | --- | --- |
 | **U0** | The test that decides the design: an agent session in an un-enrolled repository still gets the plugin moved | — | a failing test and nothing else |
 | **U1** | The plugin step leaves the checkout stage and becomes `LocalUnderAgent` | U0 | D941, F12–F15 |
-| **U2** | The pin becomes opt-in: `fugaro update-skills --pin`, and `setup` writes no `.claude/settings.json` | U1 | D940, D944, D949 |
+| **U2** | The pin merge is deleted: `setup` and `update` write no `.claude/settings.json`, and `update-skills` becomes the machine-side command | U1 | D940, D944, **D949 (answered: delete it)** |
 | **U3** | doctor: the user-scope check, the classes, and `--offline` | U2 | D942, D945, D946, D951, D952 |
-| **U8** | The teammate who is not the owner: a machine-local stage is not blocked by a cloud stage that stopped, and the user-scope install stops asking about the repository | U1, U2 | D954, D955, F23–F25 |
-| **U4** | One command: `fugaro upgrade` is removed and `update` takes `--check` | U1, U2, U3, **U8** | D948, D950, F16, F18 |
-| **U5** | The migration of a repository carrying an old pin | U2, U4 | D943, F19 |
+| **U8** | The teammate who is not the owner: a machine-local stage is not blocked by a cloud stage that stopped, and the user-scope install stops asking about the repository | U1, U2 | **D954 (answered)**, D955, F23–F25 |
+| **U4** | One command: `fugaro upgrade` is removed and `update` takes `--check` | U1, U2, U3, **U8** | D948, **D950 (answered: no tombstone)**, F16, F18 |
+| **U5** | The migration of a repository carrying an old pin | U2, U4 | **D943 (answered, as recommended)**, F19, F26 |
 | **U6** | The skills: the nudge, the `update` skill, and the `plugin/` gate that keeps gating | U3, U4 | D947, D953, F8 |
 | **U7** | The living documents, and the release that carries them | U1–U6 | the census's class 1 ([reconciliation.md](reconciliation.md) §4a) |
 | **E1** | The release | U0–U8 | the notes, the summary line, and **no operator step** |
 
 **The order is a dependency, not a preference.** U1 must land before anything that assumes the plugin step
 is reachable in an agent session; U3's doctor fix strings must point at `fugaro update` **before** U4
-deletes `fugaro upgrade`; U5's migration has nothing to remove until U2 has made the pin opt-in. **One of
+deletes `fugaro upgrade`; U5's migration is the only thing left that reads a pin once U2 has deleted the
+writer, so it lands after U2 and after the command whose stage performs it. **One of
 these is a correctness condition rather than a preference: U8 lands before U4.** U4 deletes `fugaro
 upgrade` and with it `--local`, the only spelling that reached the plugin for a teammate who is not the
 owner today ([spec.md](spec.md) §11); U8 is what makes plain `fugaro update` reach it. A release in which
@@ -35,9 +40,11 @@ command that does the work it named.
 `LICENSING.md`, `README.md`, `.goreleaser.yaml` or `.github/workflows/**`: U7's tasks name them, and the
 runs that own those paths make the edits. **This design-only pull request edits none of them.**
 
-**The merge rule.** The whole 0.15.0 body of work, this plan included, waits for the 0.14.2 tag; the
-coordinator merges after review. A task does not merge `main` into a branch that a follow-up run will use
-if `main` changed `.github/workflows/` (`CLAUDE.md`).
+**The merge rule.** The whole 0.19.0 body of work, this plan included, waits for the releases the other
+runs carry — **0.15.0, 0.16.0 and 0.17.0 have shipped, and 0.18.0 belongs to the config-management,
+managed-agent-converge and project-image-catalog work** — so this plan's tasks queue behind them and its
+release is **0.19.0**. The coordinator merges after review. A task does not merge `main` into a branch that
+a follow-up run will use if `main` changed `.github/workflows/` (`CLAUDE.md`).
 
 ## Gates (every task)
 
@@ -59,9 +66,10 @@ if `main` changed `.github/workflows/` (`CLAUDE.md`).
   `t.TempDir()`. No secret-shaped literal anywhere, and no real name: `owner/repo-a`, `person-1`,
   `workspace-a`.
 - **No goldens.** Checked, not assumed: `git grep -l 'fugaro upgrade' -- '*testdata*' '*golden*'` is empty
-  on `main` at `3d6ed04d`, and no fixture in the tree carries a `.claude/settings.json` — every
+  on `main` at **`b41709ea`** (and was at `3d6ed04d`, where this plan was written), and no fixture in the
+  tree carries a `.claude/settings.json` — every
   `pluginwire` test builds its own in `t.TempDir()`. A task that adds a golden for new output says so in
-  its own pull request; none of these eight needs one.
+  its own pull request; none of these nine needs one.
 
 ## U0. The test that decides the design
 
@@ -111,34 +119,49 @@ after `fugaroCheckout` loses its disjunct — written to fail against today's co
 **Docs and release notes.** `docs/design/upgrade.md`'s "the plugin step is the checkout's" sentence is
 U7's; this task leaves it alone and says so in its description.
 
-## U2. The pin becomes opt-in (D940, D944, D949)
+## U2. The pin merge is deleted (D940, D944, D949 — D949 answered 2026-11-04, **not the recommendation**)
 
-**What it is.** The plugin stage's default is the user-scope install and nothing else: no
-`.claude/settings.json` is written, in `setup` or in `update`. `fugaro update-skills --pin` is the flag
-that keeps today's merge for a repository that wants the skills required, and `--check` reports both
-halves. `claudeplugin.Decide` stops maintaining project and local installs (`plan.go`'s loop becomes
-`user` only), while `Applying`/`Effective` keep answering "what applies to this checkout". No `claude`
-argv changes: the install was already `--scope user` (F5).
+**What it is.** `fugaro update-skills` stops merging anything. The owner's answer is to delete the merge
+outright, so this task adds no `--pin`, removes `--allow-fork` (a flag of the write — and
+`plugin/upgrade_skill_test.go`'s "never pass `--allow-fork`" string pins a rule about a flag that no longer
+exists), and leaves no code path in the tree that writes `extraKnownMarketplaces.fugaro` or
+`enabledPlugins["fugaro@fugaro"]`. What the command becomes is the
+machine-side half of [spec.md](spec.md) §3: install and update the plugin in Claude Code at user scope,
+and `--check` report what the machine and a checkout's leftover pin say. `setup` and `update` write no
+`.claude/settings.json` in any path. `claudeplugin.Decide` stops maintaining project and local installs
+(`plan.go`'s loop becomes `user` only), while `Applying`/`Effective` keep answering "what applies to this
+checkout". No `claude` argv changes: the install was already `--scope user` (F5).
 
-**Files.** `internal/cli/updateskills.go` (the flag, the output struct's `settings`/`changed` members),
-`internal/cli/init_plugin_stage.go` (the default path), `internal/claudeplugin/plan.go`,
-`internal/claudeplugin/claudeplugin.go` (the scope list's comment), `internal/pluginwire/status.go` (the
-`Fix()` strings, which stop offering a pin to a repository that has none); tests
-`internal/cli/{updateskills_test.go,init_plugin_stage_test.go,plugin_notices_test.go}`,
-`internal/claudeplugin/*_test.go`, `internal/pluginwire/*_test.go`.
+**What this task must NOT delete, and why (F26).** The **read** side and the parse/rewrite machinery stay:
+doctor's `plugin-pin` (`internal/pluginwire/status.go`) and `update-skills --check` are how a checkout that
+still carries a pin is told so, and U5 reuses the parsing to take the two entries out. `wire.go`'s `Plan`'s
+merge and `Snippet`, and `Change.Apply`'s write path, go; `json.go`'s parser, `fsx.go`'s safe read/replace
+and `status.go` stay. A task that finds itself deleting the parser deletes U5's migration with it and
+stops and reports instead.
 
-**Interface.** `fugaro update-skills --json`'s document keeps every member's meaning (F: "A field never
-changes meaning"): `settings` and `changed` are empty/`false` without `--pin` rather than absent, and
-`--pin` restores the old values exactly.
+**Files.** `internal/cli/updateskills.go` (the flags never added; `Short`/`Long` and the
+`settings`/`changed`/`ref` output members rewritten for the machine-side command),
+`internal/cli/init_plugin_stage.go` (the default path writes nothing), `internal/pluginwire/{wire.go,
+pluginwire.go}` (the write half), `internal/claudeplugin/plan.go`, `internal/claudeplugin/claudeplugin.go`
+(the scope list's comment), `internal/pluginwire/status.go` (the `Fix()` strings that offer a pin to a
+repository that has none); tests `internal/cli/{updateskills_test.go,init_plugin_stage_test.go,
+plugin_notices_test.go}`, `internal/claudeplugin/*_test.go`, `internal/pluginwire/*_test.go`.
+
+**Interface.** `fugaro update-skills --json`'s document keeps every member's meaning ("A field never
+changes meaning", `CLAUDE.md`): `settings`, `changed` and `ref` stay declared with their meanings and are
+absent or `false` now that nothing is written, rather than being retyped; a member removed outright would
+bump the document's version, which this task does not do.
 
 **Red step.** A test that the plugin stage writes no file in a checkout with no `settings.json` — failing
-today, where the stage's plan creates it.
+today, where the stage's plan creates it — and a test on the `--json` document's shape after the deletion
+(`settings` and `changed` still declared, nothing written).
 
 **Tests.** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestUpdateSkills|TestInitPluginStage|
 TestPluginNotices' -count=1`, `go test ./internal/claudeplugin/... ./internal/pluginwire/... -count=1`.
 
 **Docs and release notes.** `plugin/skills/setup/SKILL.md`'s step 9 and the plugin README are U6's and
-U7's; this task changes the code and its own tests only.
+U7's; this task changes the code and its own tests only. **No `### For operators` entry**: deleting the
+merge is inside `fugaro update` and `fugaro update-skills`.
 
 ## U3. doctor: the user-scope check, the classes, and `--offline` (D942, D945, D946, D951, D952)
 
@@ -146,7 +169,10 @@ U7's; this task changes the code and its own tests only.
 
 1. **`plugin-install` is re-aimed** at the user-scope install against this CLI (against the pin where one
    is opted in); `not installed` becomes a warning; the ID moves from `doctorMeasureIDs` into
-   `doctorUpdatePrefixes`; its fix line becomes ``run `fugaro update` ``.
+   `doctorUpdatePrefixes`. **Its fix line already says ``run `fugaro update` ``** — #1500 landed that
+   (`doctor_render.go:769-770`) — so what is left of this item is the class and the severity, and the
+   test that pins today's class: `doctor_render_test.go:725-733` asserts `plugin-install` is **not** an
+   update item, and it is this task's third red test.
 2. **`plugin-pin` keeps every meaning** and `not wired` becomes `info`, so `fugaro doctor --plugin
    --strict` stops failing a repository that never opted in (F21).
 3. **`fugaro doctor --offline`** runs the update class's local-file checks and records a skip for each
@@ -163,7 +189,8 @@ shorts), `internal/pluginwire/status.go` (`Fix` and the severity of `not wired`)
 changes meaning, one optional member is added, and `skipped` is absent on every ordinary run.
 
 **Red step.** Three: a `--plugin --strict` failure for an un-wired checkout (fails today for the wrong
-reason), a `plugin-install` fix string that names `fugaro update` (fails today), and `doctor --offline
+reason), the class test above turned around — `plugin-install` filed as an update item where
+`doctor_render_test.go:725-733` today demands it is not — and `doctor --offline
 --json` naming `cli-version` as skipped (fails today: no such flag).
 
 **Tests.** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDoctor|TestPlugin' -count=1`,
@@ -173,7 +200,7 @@ reason), a `plugin-install` fix string that names `fugaro update` (fails today),
 that owns the console makes that edit). This task's pull request states the added member and leaves the
 contract file to that run.
 
-## U4. One command: `fugaro upgrade` is removed (D948, D950)
+## U4. One command: `fugaro upgrade` is removed (D948, D950 — D950 answered 2026-11-04, as recommended)
 
 **What it is.** `--check` moves onto `fugaro update` (read-only, local files only, exit 1 when stale);
 `--local` is gone; `fugaro upgrade` and its file stop existing; nothing of it is left as a tombstone. The
@@ -213,10 +240,12 @@ TestInitPolicy|TestInitRules|TestInitReview|TestSkillWarn|TestRunAllowlist|TestC
 which this task rewrites as it goes. `internal/cli/docs_upgrade_test.go` and
 `docs_upgrade_local_test.go` are U7's, because they pin documents another run owns.
 
-## U5. The migration of a repository carrying an old pin (D943)
+## U5. The migration of a repository carrying an old pin (D943 — answered 2026-11-04, as recommended)
 
 **What it is.** The plugin stage offers to remove a `fugaro@fugaro` pin it finds: it prints the two entries
-as a diff, says in one sentence what the repository loses, removes them, and never commits. `--yes`
+as a diff, says in one sentence what the repository loses, removes them, and never commits. **Under D949
+this is the only thing in the tree that touches a pin at all** (F26): U2 deleted the writer, so a task that
+finds this section's removal harmed by a change in U2 has found a real problem and reports it. `--yes`
 confirms; a terminal asks. **In an agent's session it prints the diff and writes nothing**, `--yes`
 included, and says the exact line to run in the user's own terminal. It never unsets the marker that says
 the session is one, and no flag, environment variable or non-interactive mode gets around the refusal. A
@@ -253,7 +282,7 @@ pinned strings travel with the sentence instead of being rewritten.
 check every command and flag a skill names against the CLI tree (F8): `plugin/plugin_test.go:134`'s list
 swaps `upgrade` for `update` (D953 — a rename, not a drop, so
 `internal/cli/upgrade_readme_roadmap_test.go`'s "the five plugin skills" survives verbatim, which is this
-task's own check); `plugin/skills_lint_test.go:583`'s `userRunsAllowed` and `:746`'s `upgradeYesOnly`
+task's own check); `plugin/skills_lint_test.go:583`'s `userRunsAllowed` and `:749`'s `upgradeYesOnly`
 re-point at `fugaro update`; `plugin/readme_test.go:45`'s phrase list follows the README paragraph. No
 skill gains `allowed-tools` — the lint allows only `name` and `description`, and that refusal is unchanged.
 
@@ -296,7 +325,7 @@ both places.
 `npm run check` in `website/` for any website content. The backlog census is re-run and must still read
 its own count (it is not this work's to change).
 
-## U8. The teammate who is not the owner (D954, D955, F23–F25)
+## U8. The teammate who is not the owner (D954 — answered 2026-11-04, as recommended — D955, F23–F25)
 
 **What it is.** The one command has to work for a reader who holds no owner's role: a teammate with the
 CLI, `gcloud auth application-default login` and a checkout. Three changes, one subject — the machine's
@@ -309,6 +338,15 @@ own writes must not be stopped by the cloud's:
    comparing `initflow.Plugin`. The loop's rule is otherwise untouched: everything after the stop is still
    `blocked: waits for <stage>`, and the stage that ran says why it ran. **The marker's invariant is the
    task's to keep true**: a marked stage reads no cloud and writes nothing outside the machine.
+   **And the marker carries the managed gate's answer**: `fugaro update` is in the gate's set by design
+   ([docs/managed-agent-converge](../managed-agent-converge/README.md) §3.1, §4.2) while its own stages
+   are not under the gate on `main` yet, so a stage that now runs inside a managed project's agent
+   session after a cloud stage stopped is a writing step of a gated command. The task threads
+   `initflow.Managed` (`internal/initflow/stage.go:518`, whose verdict comes from
+   `internal/cli/managed_gate.go`) into the stage's confirmation and refuses on its zero value — the
+   direction that keeps the refusal. **A task that finds `update`'s own stages gated by then (M1) puts
+   the read where the other gated steps put it**, and re-reads this paragraph rather than adding a second
+   place.
 2. **The user-scope install stops asking about the repository (D955).** The plugin stage's `authState`
    gate and its need for a checkout belong to the pin; at user scope the install half drops both, and the
    checkout's own gate (`namesAnotherProject`) still guards every checkout write, the removal of U5
@@ -320,8 +358,9 @@ own writes must not be stopped by the cloud's:
 
 **Files.** `internal/initflow/stage.go` (the marker and its rule; `NeedsBilling`'s case list if it can
 read the marker rather than the name), `internal/initflow/loop.go` (the one exception in `converge`, and
-the line it prints), `internal/cli/init_plugin_stage.go` (the marker, the install half's gates, the three
-non-stopping refusals), `internal/cli/init_new_machine.go` (the guard), and `internal/cli/init_stages.go`
+the line it prints), `internal/cli/init_plugin_stage.go` (the marker, the managed gate's read, the
+install half's gates, the three non-stopping refusals), `internal/cli/init_new_machine.go` (the guard),
+`internal/cli/managed_gate.go` (the read the marker's verdict comes from), and `internal/cli/init_stages.go`
 if the registration's comment names the marker; tests `internal/initflow/*_test.go`,
 `internal/cli/{init_plugin_stage_test.go,init_new_machine_test.go,init_converge_test.go,
 init_checkout_upgrade_test.go,init_test.go}`.
@@ -342,8 +381,9 @@ refusal is `left_for_you` **and** still lets the next stage run — failing toda
 
 **Docs and release notes.** **No `### For operators` entry**: the whole point is that the teammate runs
 the one documented command and nothing else. **The two documents that send a teammate to that command are
-not this task's to edit and may not be edited before it lands**: `README.md` (~line 46) and
-`website/data/install.yaml` (~line 119) say `fugaro upgrade --local` today, both paths belong to other
+not this task's to edit and may not be edited before it lands**: `README.md:46` and
+`website/data/install.yaml:119` say `fugaro upgrade --local` today (re-checked on `origin/main` at
+`b41709ea`, where both lines are unchanged), both paths belong to other
 runs, and U7 names them ([spec.md](spec.md) §11's last paragraph is the rule).
 
 **The open item this task does not close, and must not pretend to.** Whether a given teammate's ADC may
@@ -369,8 +409,8 @@ HARD RULE failing, which is reported, not documented.
 **Known limits the notes should state plainly** (they are [spec.md](spec.md) §10's, in the user's words):
 every teammate installs Fugaro on their own machine, and for the one who is not the owner the run that
 does it reaches the plugin only with U8 in it ([spec.md](spec.md) §11); a repository that wants the skills
-required keeps the opt-in pin; the plugin's marketplace follows the default branch, so the installed plugin
-can be newer than the CLI on `PATH`.
+required has no way to say so any more, because the owner deleted the pin merge (D949); the plugin's
+marketplace follows the default branch, so the installed plugin can be newer than the CLI on `PATH`.
 
-**The release that ships it also ships the version bump every other 0.15.0 run needs**, so E1's notes are
-written once, by whoever tags, from the branch that holds them all.
+**The release that ships it is 0.19.0**, and it also ships the version bump the runs whose work the other
+slots carry need, so E1's notes are written once, by whoever tags, from the branch that holds them all.
