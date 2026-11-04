@@ -115,14 +115,39 @@ publishes, with the issuer and the bare-project-id audience rule `internal/creds
 implements (F4). What they hold afterwards is a **short-lived workspace token**, and it is a bearer
 for exactly one thing: the exchange endpoint of a member they are already admitted to.
 
-**The exchange** (D1293 and D1294, **both answered 2026-11-04**: one sign-in and one exchange per
-member, and the exchange happens **at the member**, so a stolen token is never every member at once
-and the member stays the authority over what the identity may do there). To reach a member, the
-person presents the workspace token to that member's own authorization server — the one the MCP
-design puts inside the coordinator (`docs/mcp-server/spec.md` §3, **still an open pull request and
-not on `main`** at the 2026-11-04 reading) — which:
+**The workspace token is a Firebase ID token, and three facts about those are load-bearing here.**
 
-1. verifies the workspace token against the workspace's published keys, its issuer and its audience;
+1. **Its audience is the bare project id**, not a URL (`docs/mcp-server/spec.md` "Firebase
+   specifics"), so **one workspace token verifies at every member's exchange**. D1293's answer is
+   *one sign-in at the workspace and one exchange per member* — not because the token stops at one
+   member (it does not), but because **no member accepts another member's token as a bearer**: what
+   each member mints is its own short-lived token, with its own scopes and limits, and the workspace
+   token is never one. The containment is the **member's own lists**, not the token's audience: the
+   exchange refuses unless that member's launcher/operator lists name the person, so a stolen token
+   reaches only the members the person was already admitted to.
+2. **A caller must present a verified address.** `email_verified` is required to be true, and a
+   claim that is absent or false is a refusal — exactly the rule every class of caller to the
+   credentials service already carries (`internal/credsvc/auth.go`:1018, `checkCallerToken`). An
+   unverified address is an address nobody proved they own, and admitting one would let anybody who
+   can register it with any identity provider the workspace's Firebase trusts become a listed
+   person.
+3. **A Firebase refresh token does not rotate and Firebase does not detect a replay.** The MCP
+   design's D930 — rotating refresh tokens, a replayed one revoking the whole family — is a property
+   of **the MCP server's own** tokens, which that design mints because a Firebase token's audience
+   fails its resource checks. It does **not** apply here: the workspace's sign-in is Firebase's, and
+   Firebase's refresh tokens are neither rotating nor replay-detecting. The workspace's theft
+   detection is therefore the token lifetime and the member's own lists, not rotation, and §8 says so
+   rather than borrowing a property this design does not have.
+
+**The exchange** (D1293 and D1294, **both answered 2026-11-04**: one sign-in at the workspace and one
+exchange per member, with the exchange happening **at the member** — fact 1 above says what that
+answer is and is not). The member stays the authority over what the identity may do there. To reach
+a member, the person presents the workspace token to that member's own authorization server — the
+one the MCP design puts inside the coordinator (`docs/mcp-server/spec.md` §3; that design is **on
+`main`** now, merged as #1487 on 2026-11-04, though none of its code is written) — which:
+
+1. verifies the workspace token against the workspace's published keys, its issuer and its audience,
+   and requires `email_verified` (fact 2);
 2. maps the identity to the member's own permission lists (`internal/cli/user.go`: the launchers and
    operators `fugaro user` writes), and **refuses when the member's lists do not name the person**;
 3. mints **the member's own token**, short-lived, with the member's own scopes and limits, exactly as
@@ -133,11 +158,24 @@ token as a bearer, and the workspace token is never a bearer for a member's API.
 down does not stop a person reaching another member; a member that is removed from the workspace
 stops being reachable through it, and its own sign-in keeps working.
 
-**What is stored** (D1296). Only **hashes**: at the workspace, the record of who signed in and what
-was issued, in a subtree no client of the workspace's database may read (the MCP design's D922
-applied to the workspace); at each member, the member's own token record, unchanged. Revocation is
-one delete at the workspace, and the next exchange by that person is refused; a member's own
-revocation is unchanged and independent.
+**What is stored** (D1296). The workspace mints no token of its own, so it stores no token of its
+own: the sign-in record is **Firebase's** (the workspace's Auth user list, which is what a Firebase
+identity provider is), and the tokens are the **members'**, each in the member's own token record
+exactly as today. D1296's answer binds whatever a task does store — **hashes only**, never a token
+value, in a subtree no client of the workspace's database may read (the MCP design's D922 applied to
+the workspace) — and this design stores none of the three, so the rule is a floor and not a promise
+about a node.
+
+**Revocation waits for the token to expire, and that is stated rather than implied.** "One delete at
+the workspace and the next exchange is refused" would hold only if **every member's exchange read the
+workspace's revocation state** on each call. It does not: the exchange verifies the workspace token's
+signature, its issuer and its audience and nothing else, because a member holds **no grant at all** on
+the workspace's project (§5 states the grants this design makes, and the reverse one is not among
+them). So the honest statement is that a workspace
+revocation — disabling the person in the workspace's Firebase — takes effect **when the workspace
+token they already hold expires** (fact 1), and that the member's own revocation is unchanged,
+independent, and bounded the same way. §8 carries it as a residual risk, and the mitigation is the
+token's lifetime and nothing else.
 
 **What a workspace identity may do in a member is what the member already grants** (D1295,
 **answered 2026-11-04**: option (A) — a workspace grants **nothing beyond the member's own launcher
@@ -157,14 +195,33 @@ workspace's model credentials in its one bundle secret — the same shape the ow
 installation (one Secret Manager secret, one `secretAccessor` grant). Every member's runs reach it
 the way a run reaches the service today: the job's own service account presents a Google ID token,
 the service verifies the signature and the `email` claim, and the run is proved by its budget
-identity. The one thing that changes is that the admitted set is the **workspace's** member job
-service accounts, not one installation's.
+identity.
+
+**It is not true that "the only thing that changes is the admitted set", and the design does not say
+it.** The admitted set does change — it becomes the **workspace's** member job service accounts —
+but the checks around it are pinned to one installation today, and they have to move with it:
+
+- **The caller's member comes from the verified service account and from nowhere else.** The service
+  already resolves a caller by looking the token's folded `email` up in its own list of the
+  installation's job accounts (`internal/credsvc/auth.go`:727, in `Verify`), and it returns **the
+  configured spelling** of the account it found (`:738`), never the claim's. That is the whole of
+  what names the member. **A member name in a request body, a header or a query parameter is never
+  identity** — a job's own launcher can write any header, so a member read off one would be a member
+  a caller chooses.
+- **The token's own pins have to admit the member.** `verifyRun` (`:1047`) refuses a token whose
+  `aud` is not this service's Firebase project (`:1069`), whose `iss` is not that project's
+  securetoken issuer (`:1072`), or whose `fp` is not this service's Fugaro project (`:1105`). A
+  workspace-deployed service therefore has to accept **each member's** Firebase project as the issuer
+  and **each member's** Fugaro project as `fp`, and hold the member it found to both: the account's
+  member, the issuer's member and the `fp`'s member must be the **same** member, or the call is
+  refused. That is a change to the check, not only to the list it looks the account up in, and W6
+  owns it.
 
 **The person class is the one the service already has, and it does not change here.** Main's
 credentials service admits a **person** as a class of its own beside the job classes —
 `PersonAccounts` (`internal/credsvc/auth.go`:375) with `VerifyPersonCaller` (`:968`) for the GitHub
 read mint and `VerifyReadCaller` (`:890`) for the Bitbucket read mint, both taking a token a plain
-`gcloud auth print-identity-token` may have minted (`GcloudAudience`, `:241`, the owner's ruling of
+`gcloud auth print-identity-token` may have minted (`GcloudAudience`, `:258`, the owner's ruling of
 2026-11-04). A person reaches the workspace's service to *read what the workspace holds* — the
 member list, the cap, the rollup — through that same class, and a person is never a way to a
 credential's value (rule 2). Nothing in this design adds a class to the service or widens one: the
@@ -211,12 +268,73 @@ gateway additionally receives an **advisory headroom** — the workspace's remai
 to the member's database — so a run stops early rather than being cut off mid-stage; the advisory
 number is a courtesy to the run, never the enforcement.
 
-**The ledger** (D1301). The authoritative per-run ledger is unchanged: `runs/<slug>/<run>` in the
-member's own database, written by the member's own gateway under the rules that already constrain it
-(`NEW >= OLD`, `spent <= reserved`). The workspace's ledger is a **rollup**, recomputed by the
-workspace service from each member's ledger on the history job's schedule, and the enforcement reads
-the last good rollup. A member whose ledger cannot be read is a member the rollup records as
-`stale` rather than as zero: an unreadable member must never look like a free one.
+**The basis is the rollup, and there is only one** (D1301, unchanged). The workspace service does
+**not** meter the calls it proxies and keeps no counter of its own: the authoritative per-run ledger
+is unchanged — `runs/<slug>/<run>` in the member's own database, written by the member's own gateway
+under the rules that already constrain it (`NEW >= OLD`, `spent <= reserved`,
+`internal/budget/rules/rules.json.tmpl`:60) — and the workspace's ledger is a **rollup** of those,
+recomputed by the workspace service on the history job's schedule. The enforcement reads the **last
+good rollup**. A design that also counted at the proxy would have two numbers for one spend and no
+rule for which wins, which is why there is one basis and this is it.
+
+**A `stale` member fails closed.** A member whose ledger cannot be read is recorded as `stale` rather
+than as zero — an unreadable member must never look like a free one — and **that member's
+shared-credential calls are refused** while it is `stale`. The refusal is the workspace's, it names
+the member as unreadable, and it lifts when the rollup next reads the member. Refusing is the only
+answer consistent with the rest of this folder: serving a call whose cost cannot be counted is
+spending against a cap the service cannot see.
+
+**What the service holds on a member, and what it does not.** The rollup and the enforcement need
+exactly three things, and the design grants exactly those:
+
+| On | Grant | What it reaches |
+| --- | --- | --- |
+| Each member's Firebase project | A **custom role holding exactly `firebasedatabase.instances.get` and `firebasedatabase.instances.update`** — the shape `fugaroCredentialsDatabase` already uses (`deploy/terraform/gcp/modules/installation/credentials.tf`:241) | `get` reads the member's run ledger; `update` writes the advisory headroom node |
+| Each member's runs bucket | `roles/storage.objectViewer` | The rollup's second read, which is what catches a member whose ledger and its bucket disagree |
+| The workspace's own project | The bundle secret's `secretAccessor`, and nothing else | §4 |
+
+**Those two permissions reach the whole database, and this design will not pretend otherwise.**
+`credentials.tf`:204-210 is the authoritative statement: Realtime Database IAM has **no path-level
+scope**, so a binding is per instance and reaches the whole database — `instances.get` is "read any
+node of the instance", the only read permission there is, and `instances.update` is "write any node
+of the instance", the only write permission. A condition cannot fence it either: RTDB "cannot express
+a path prefix in IAM" (`credentials.tf`:254). So the grant is **whole-database read and whole-database
+write on every member**, and "the ledger and the headroom" is what the service's **code** does with
+it.
+
+**That has a consequence for rule 1, and it is the sharpest thing in this section.** A write to any
+node includes a write to `config/caps/global` — `credentials.tf`:207-208 says so in as many words:
+`instances.update` "is what `roles/firebasedatabase.admin` carries for the budget admins who 'write
+/config over IAM'". So **the workspace service's grant can lift a member's cap**, and rule 1's "a
+workspace never widens a member" is therefore a property of the **service's code**, exactly as
+`deploy/terraform/gcp/modules/firebase/iam.tf`:75 says of the history job's own write to `/config`:
+"its code never writes /config, **which IAM can't enforce**". The design states it here rather than
+leaving it to be discovered, and it is residual risk 5 in §8.
+
+**What `admin` would add is worse, and the narrow role is still the right one.**
+`roles/firebasedatabase.admin` carries `instances.list` and the instance **lifecycle** —
+`create`, `delete`, `disable`, `reenable` and `undelete` (`credentials.tf`:212-217, and
+`deploy/terraform/testdata/custom-role-permissions.txt` is the whole set a custom role may hold). A
+component that holds every model credential must not be able to **delete or disable a member's
+database**. The narrow role buys that, and it does not buy the cap-lifting back — nothing does, short
+of the alternative below.
+
+**The service holds no grant on a member's policy, a member's secrets, a member's job or a member's
+project IAM**, and **a member holds no grant at all on the workspace's project** — which is why §3's
+revocation is bounded by the token's lifetime rather than by a read of the workspace's state.
+
+**The headroom stays in the member's database, and moving it is an owner decision.**
+Writing the headroom is the only reason the service needs `instances.update` on a member at all. If
+the headroom moved into the **workspace's** database, the service's grant on every member could drop
+to `instances.get` alone and it would hold **no write** on any member — which would make rule 1 a
+property of the grant rather than of the code, and is the one change this round found that would
+buy that. The cost is the other direction: a member's gateway would need read access to the
+workspace's database, that read is whole-database too, and every member would therefore read the
+workspace's member list and its rollup. **The design keeps the headroom where it is** — one's own
+headroom in one's own project is the smaller grant, and it is what makes §9's "never writes a
+member's database" a rule about one node rather than about the whole database —
+[reconciliation.md](reconciliation.md) §8 records the trade as an owner decision, because it decides
+which data each side sees and not a detail a task may settle.
 
 **The scope of the cap is stated, not implied.** `fugaro budget set --global` today means *the
 project* (F10). The workspace's cap is a **fourth scope**, spelled `fugaro workspace cap set
@@ -225,7 +343,17 @@ project* (F10). The workspace's cap is a **fourth scope**, spelled `fugaro works
 **The stop** (D1302). `fugaro budget kill` gains a **workspace scope**: one command stops every
 member's runs. It is the same switch the credentials service's own stop flag already is
 (`fugaro budget kill --all`, the operator's answer of 2026-10-19), so an operator under pressure has
-one command to remember and not two.
+one command to remember and not two. **Its scope is exactly this:** it stops the runs of every member
+of the workspace, and it makes the workspace's credentials service refuse every shared-credential
+call. It does **not** touch a member's own credentials, a member's own budget or caps, a member's own
+sign-in, or a member's runs that never touch the workspace — a stop that reached any of those would
+be a workspace reaching into a member, which §9 forbids.
+
+**An owner decision this round did not take.** Metering the workspace's spend at the proxy — the
+service counting each call it pays for, instead of reading the members' ledgers — is the other
+possible basis, and it is **not** this design's. It would change D1301's answer, so it is reported
+here as an owner decision to revisit rather than taken: [reconciliation.md](reconciliation.md) §8
+carries it, and D1301 stands as answered until the owner says otherwise.
 
 ## 6. The command surface
 
@@ -246,7 +374,10 @@ coding agent's marker they print the diff and the command for the user to run, a
 (`internal/cli/managed_gate.go`:181 `readManagedGate`, the one helper the cloud writes on main
 already share: `config publish`, `project policy publish`, `image refresh` and `accounts add`).
 `fugaro workspace` adds no new caller of the gate, because it has nothing to gate — its writes never
-leave the machine.
+leave the machine. The one write this design does add to the cloud is **W2's stage inside `fugaro
+update`**, and `fugaro update` already reads the gate directly for its own stages
+(`internal/cli/update_managed.go`:217 calls `readManagedGate`), so the new stage runs under the gate
+`update` already opens and needs no path of its own.
 
 ## 7. The console and the mobile app
 
@@ -269,11 +400,23 @@ owner answered all sixteen on 2026-11-04, so the gate the review now holds is th
 [README.md](README.md) and [implementation-plan.md](implementation-plan.md) §1 say the same. It is
 written as the questions a reader should be able to answer from it.
 
-**Who can reach what.** A workspace adds exactly one new reachable surface: the **exchange
-endpoint**, which lives on a member (D1294) and is reached with a workspace token. It adds no
-endpoint to the workspace's own project, and it opens no member's API to anyone who is not already
-in that member's own lists. The workspace's database holds the member list and the token record
-hashes, and it is read by no client (D1296).
+**Who can reach what.** A workspace adds **three** reachable surfaces, and an earlier draft of this
+section named only the first — which is the kind of omission a threat model cannot afford:
+
+1. **The exchange endpoint**, on each member (D1294), reached with a workspace token. It opens no
+   member's API to anyone who is not already in that member's own lists.
+2. **The workspace's credentials service**, in the workspace's project, reached by every member's job
+   service account with a Google ID token (§4), and — for the read mint, not for a credential — by a
+   person (§4's person class). This is the surface that spends the workspace's money, and it is
+   reachable by anything holding one of the member job service accounts.
+3. **The workspace's own Firebase**, which is a public sign-in surface: anybody who can reach it may
+   attempt to sign in, and Firebase decides whether they get a token. What that token is worth is the
+   member's lists (§3), so the sign-in surface itself grants nothing — but it is a surface, and a
+   threat model that did not name it would be describing a smaller system than the one being built.
+
+It adds **no endpoint to a member's own API** and no endpoint to the workspace's project other than
+the credentials service's. The workspace's database holds the member list and whatever the rollup
+writes, and it is read by no client (D1296).
 
 **What a stolen workspace token reaches.** One thing: `POST <member>/oauth/token`, and only for a
 member whose lists name the person, and only while it is unexpired. It is never a bearer for a
@@ -293,12 +436,22 @@ group.
 caps, its own policy, until it expires. The workspace does not extend it, cannot mint a sibling from
 it, and cannot revoke it — revocation at a member stays the member's.
 
-**Rotation and revocation.** The workspace's refresh token rotates on every use, and a replayed
-refresh token revokes the whole family (the MCP design's D930 applied here). Revocation at the
-workspace ends the person's ability to *exchange*, and nothing else: a member token already minted
-keeps working until it expires, which is why the member tokens stay short-lived. The honest
-statement is that a workspace revocation is not instantaneous across members, and the design buys
-that back with token lifetime rather than with a callback into every member.
+**Rotation and revocation.** **There is no rotation here, and the design does not claim one.** The
+MCP design's D930 — a refresh token that rotates on every use, and a replayed one that revokes the
+whole family — is a property of the tokens **that design mints**, and it is not a property of
+Firebase's: a Firebase refresh token neither rotates nor detects a replay, and this design's
+workspace token is Firebase's (§3, fact 3). A theft of the workspace token is therefore **not
+detectable by rotation**; what bounds it is that the token is a bearer for the exchange and for
+nothing else, that the exchange refuses anyone a member's lists do not name, and that the token is
+short-lived.
+
+**Revocation at the workspace ends the person's ability to *exchange*, and nothing else**, and it is
+bounded by the token's lifetime rather than instantaneous: the exchange reads the workspace token's
+signature, issuer and audience and nothing else, because no member holds a grant on the workspace's
+project (§5). A member token already minted keeps working until it expires, which is why member
+tokens stay short-lived. The honest statement is that **neither revocation is instantaneous across
+members**, and the design buys both back with token lifetime rather than with a callback into every
+member or a read of the workspace's revocation state on every exchange.
 
 **Shared credentials: what a compromised member reaches.** A member's job service account can call
 the workspace's credentials service, and therefore spend the workspace's money and use the
@@ -317,16 +470,41 @@ its own ledger under rules that forbid lowering it and do nothing to force it to
 member whose image under-reports therefore consumes more of the workspace's room than the rollup
 believes. The design's answer is honest rather than complete: the rollup reads each member's ledger
 *and* its runs bucket, a disagreement is recorded as `stale` for that member rather than averaged
-away, and the hard stop is the workspace kill (D1302) — one command, which does not depend on any
-member's honesty.
+away, **a `stale` member's shared-credential calls are refused while it is `stale`** (§5 — the
+service fails closed, because a call whose cost cannot be counted is spending against a cap the
+service cannot see), and the hard stop is the workspace kill (D1302) — one command, which does not
+depend on any member's honesty.
 
-**Cross-project read.** The workspace's service reads N members' databases. That is new in this
-repository: every client today is built on one project's database (F20). What bounds it is that the
-service reads **only** the two nodes it needs — each member's run ledger and its published headroom —
-and never a member's policy, secrets or run records. A compromised workspace service therefore
-learns each member's *spend*, which is the minimum the cap needs, and not each member's code, its
-repositories or its credentials. The service's own credential is a read grant per member and nothing
-else, and it is the one grant this design adds.
+**Cross-project read.** The workspace's service reads and writes N members' databases, and its grant
+is **wider than the nodes it uses**. That is new in this repository: every client today is built on
+one project's database (F20). The honest statement of what the service holds is §5's table, and the
+honest statement of what that means is this:
+
+- **IAM on a Realtime Database is whole-database, and it bypasses the rules.** `iam.tf`:52 says of the
+  admin grant that it "writes /config over IAM, which bypasses the rules", and
+  `credentials.tf`:254 says why the shape cannot be narrowed: RTDB "cannot express a path prefix in
+  IAM". So the custom role's `firebasedatabase.instances.get` reads **every node** of a member's
+  database, and its `instances.update` writes **every node**. "Only the ledger and the headroom" is a
+  property of the service's **code**, not of its grant, and no IAM policy enforces it.
+- **A compromised workspace service therefore reads a member's whole database** — its policy, its
+  budget and caps, its run records, its outcomes — and reads the member's runs bucket, which is where
+  the run's own artifacts and logs live. It learns each member's *spend* **and a great deal more**,
+  and it can write anything into a member's database that the member's own rules admit.
+- **It can lift a member's cap**, and the design says so rather than claiming IAM stops it: a write
+  to any node is a write to `config/caps/global` (`credentials.tf`:207-208), so rule 1's "a workspace
+  never widens a member" is a property of the service's **code** and not of its grant. Residual risk
+  5 below.
+- **What it still cannot do** is what the service's code and the members' own projects keep out of
+  reach: it cannot read a credential's **value** (rule 2 — the bundle is in Secret Manager, not the
+  database, and the service proxies calls), it cannot read a member's **secrets**, it cannot reach a
+  member's **project IAM** or its job, and it cannot **delete or disable a member's database** — that
+  needs the instance lifecycle, which the narrow role does not carry and `admin` does (§5).
+- **A member's runs bucket read is the same shape**: `roles/storage.objectViewer` on the bucket is
+  every object in it, not the ledger file the rollup wants.
+
+This is the design's largest accepted exposure, it is stated rather than argued away, and it is
+carried in the residual risks below. The mitigation that is real is the one in §5: the narrow custom
+role instead of `admin`, and a member's own rules, which the service's writes cannot exceed.
 
 **Injection into the workspace service.** The service parses untrusted text on every call: a member
 name, a run identifier, a bearer token. The rules are the ones the MCP design already states — a
@@ -353,6 +531,21 @@ ceiling is decided.
    reachable the way it is today.
 4. The workspace service is on the critical path of every shared-credential call. Mitigation: the
    advisory headroom lets a run stop early, and the runbook's stop flag is one command.
+5. **A compromised workspace service can write any node of any member's database**, including
+   `config/caps/global`: its grant is whole-database write and IAM cannot scope it (§5). Rule 1 —
+   a workspace never widens a member — is therefore enforced by the service's code and by the
+   members' own rules where a write is data, not by the grant. Mitigation: the narrow custom role
+   instead of `admin`, so it cannot delete or disable a member's database; the service's code, which
+   writes one node; the member's own policy, which is the tighter side of every merge; and the
+   workspace kill. **Not elimination, and not a claim that IAM stops it.**
+6. **A Firebase Auth administrator of the workspace's project can mint a verified token for any
+   address a member's lists name**, and therefore reach that member as that person. That is not a
+   widening this design introduces — it is what any identity provider is — but it is the trust the
+   workspace's Firebase now carries for every member at once, and a member's own Firebase does not
+   carry it for another member. Mitigation: the workspace's project is the workspace's own, with its
+   own IAM, and the member's lists still decide who is admitted; a member that will not extend that
+   trust to a workspace's administrator should not join the workspace, and §2's record is where the
+   member's own config says which issuer it trusts.
 
 ## 9. What a workspace never does
 
@@ -386,11 +579,24 @@ This is rule 1 and rule 2 written as prohibitions. A workspace:
   second one. If the owner answers that design's D921 (the OAuth library) differently, this design
   moves with it.
 - **#1487's authorization server.** The exchange endpoint of §3 *is* the MCP design's authorization
-  server, and that design is an **open pull request, not on `main`** at the 2026-11-04 reading
-  (`docs/mcp-server/` does not exist there). This design's SSO half therefore cannot be built until
-  that work lands, and [implementation-plan.md](implementation-plan.md) §2 and §5 carry that as the
-  dependency that forces the release slot. Nothing here duplicates it: this design adds a workspace
-  token and a workspace identity provider, and reuses that server as the member's exchange.
+  server. That design **landed on `main` on 2026-11-04** (merged as #1487, `docs/mcp-server/`), so
+  the interface this design was written to is now a settled document rather than an open pull
+  request — but **none of its code is written**: its plan's tasks M1–M10 are all unbuilt, and its
+  M5 is gated on D921's library licence being confirmed. This design's SSO half therefore still
+  cannot be built until that work is, and [implementation-plan.md](implementation-plan.md) §2 and §5
+  carry that as the dependency that forces the release slot. Nothing here duplicates it: this design
+  adds a workspace token and a workspace identity provider, and reuses that server as the member's
+  exchange.
+- **Where the advisory headroom lives.** §5 states the trade: in the member's database (this
+  design's reading) the service needs `instances.update` on a member, so rule 1 rests on the
+  service's code; in the workspace's database the service needs only `instances.get`, but every
+  member's gateway gains a whole-database read of the workspace. It is an owner decision
+  ([reconciliation.md](reconciliation.md) §8), not a task's, because it decides which data each side
+  sees.
+- **Whether the workspace's cap should be metered at the proxy instead of rolled up.** §5 states that
+  the basis is D1301's rollup and that a `stale` member is refused. Metering each call the service
+  pays for is the other possible basis, and it would change D1301's answer, so it is reported as an
+  owner decision ([reconciliation.md](reconciliation.md) §8) rather than taken.
 - **Whether a member may be a member of a workspace whose identity provider it cannot reach** — a
   member whose network cannot reach the workspace's Firebase — is not settled here; the honest
   answer is that such a member is not a member in any useful sense, and the plan's W5 should refuse
