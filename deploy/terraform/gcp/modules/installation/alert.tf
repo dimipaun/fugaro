@@ -14,7 +14,12 @@ resource "google_monitoring_notification_channel" "email" {
 # Cloud Monitoring allows a log-match condition only alone in its policy,
 # so each kind of failure has its own policy, emailing the same channel.
 locals {
-  image_alerts = {
+  # The catalog check's own policy joins the two image check ones only when the
+  # installation deploys that job: a policy watching for an event no job in the
+  # project can log is a policy that can only ever be silent, and an
+  # installation whose project publishes no catalog is the installation this
+  # change leaves alone.
+  image_alerts = merge({
     # The check's own line for each workflow whose rebuild or check failed.
     # The check logs exactly those at ERROR: a failed check, a failed
     # rebuild it backs off from, and a rebuild it submits after a failed
@@ -38,7 +43,18 @@ locals {
       condition    = "An image check job failed"
       filter       = "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND (logName:\"run.googleapis.com%2Fvarlog%2Fsystem\" OR logName:\"cloudaudit.googleapis.com%2Fsystem_event\") AND severity>=ERROR"
     }
-  }
+    }, var.catalog_check == null ? {} : {
+    # The project's catalog check (D1148) logs its own event, not the
+    # repository check's: its decisions are about the project's catalog, and
+    # one line names the entry and the repository whose account the build runs
+    # as. The job-failure entry above covers this job too — its name is under
+    # the same fugarochk- prefix — so this is the one policy the job adds.
+    catalog_check = {
+      display_name = "Fugaro project catalog check failed"
+      condition    = "A catalog entry's rebuild or check failed"
+      filter       = "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND jsonPayload.event=\"catalog-check\" AND severity>=ERROR"
+    }
+  })
 }
 
 resource "google_monitoring_alert_policy" "image" {

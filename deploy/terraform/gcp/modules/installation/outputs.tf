@@ -96,6 +96,16 @@ output "coordinator_job" {
   value       = local.deploy_coordinator ? google_cloud_run_v2_job.coordinator[0].name : null
 }
 
+output "catalog_check_service_account" {
+  description = "The project's catalog check job account email (D1148), or null on an installation whose project publishes no catalog. fugaro update passes it to every repository root, which grants it actAs (roles/iam.serviceAccountUser) on that repository's build account — the one grant that lets a scheduled catalog rebuild run as the entry's own repository."
+  value       = var.catalog_check == null ? null : google_service_account.catalog_check[0].email
+}
+
+output "catalog_check_job" {
+  description = "The project's catalog check job name, or null while it isn't deployed."
+  value       = var.catalog_check == null ? null : google_cloud_run_v2_job.catalog_check[0].name
+}
+
 output "credentials_service" {
   description = "The credentials service's Cloud Run service name and region, or null while the installation has not opted in (D147). A repository root grants each job account roles/run.invoker on it from these, and drops the job's model-secret accessors with it. url is the service's own URL as Cloud Run assigned it (the resource's uri), which is the audience a caller's Google ID token is minted for: it is what C1.20's stage writes back into var.credentials_service.url, because nothing inside the service resource can read its own uri (credentials.tf)."
   value = var.credentials_service == null ? null : {
