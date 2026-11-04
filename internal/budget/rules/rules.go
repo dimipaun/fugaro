@@ -691,6 +691,31 @@ func wordMacro(m string, depth int) (string, error) {
 	return "", fmt.Errorf("unknown macro %s", m)
 }
 
+// PathMCPAuth is the hosted MCP server's own subtree (docs/mcp-server/spec.md
+// §6 and §8; D922, answered and restated on 2026-11-04): the token records —
+// hashes only, never a value — the client registrations, the redirect URIs,
+// the revocation state and the whole tool-call audit. It is a top-level
+// sibling of `coordinator/` and deliberately not a child of it, so the
+// coordinator's shared view and the token records are not one node.
+//
+// The template carries it with `.read: false` and `.write: false`, written out
+// rather than left to the root's own denial, and deliberately not
+// `coordinator/`'s `.read: "USER"`: D195 has a signed-in person read the
+// coordinator's state, and D922's answer refuses that same person every read
+// of this one. Nothing a client holds admits it; the coordinator's own account
+// is its only writer, and it reaches the node through
+// roles/firebasedatabase.admin (deploy/terraform/gcp/modules/firebase/iam.tf),
+// which bypasses the rules — which is why the node is written as a refusal
+// beside the IAM grant rather than as a grant of its own. Without the read
+// being false, the client list, the redirect URIs, the revocation state and
+// the audit would be readable by everyone the installation admits, and "store
+// only hashes" would protect the token values and nothing else.
+//
+// It sits below the macro table rather than beside PathDevices because a
+// constant added above it would move the lines internal/cli's voice-switch
+// test reads out of this file to resolve a pinned citation.
+const PathMCPAuth = "mcpauth"
+
 // boundedMatch is a non-empty string of at most max characters, every one of
 // them in the pattern's set.
 func boundedMatch(max int, pattern string) string {
