@@ -41,6 +41,12 @@ import (
 // another way, and --seed-repos is in the list precisely because "the change,
 // spelled as a flag" is what a widening is.
 //
+// And they come in the two shapes §4.1 asks for rather than one: the rules
+// below that each judge a single member of the node, and the one rule that
+// holds every member none of them judges (policyUnjudgedRefusal) — because the
+// document is judged whole or it is judged by a list somebody wrote, and a
+// member nobody wrote a rule for is then a member an agent's session may move.
+//
 // What this file does NOT do is decide whether the session may go on. That is
 // initflow's own rule — CanConfirmManaged, asked with the answer these rules
 // produced — because a command that restated D55's rule would be a second copy
@@ -275,6 +281,10 @@ func policyCapRefusal(old, pol *projectpolicy.Policy) string {
 // a new member therefore only has to take that member out of this comparison;
 // it never has to remember to add one — and forget the subtraction instead, and
 // the member it judges is simply still covered here.
+//
+// §4.1's own preamble is the rule in one sentence: a field the gate does not
+// know is a refusal, never a pass. A member this build's Policy DOES know and
+// no rule here reads is the same field one release earlier.
 //
 // The comparison is over the two documents and never over the two Go values: a
 // policy decoded from the database and a policy built from the config file are

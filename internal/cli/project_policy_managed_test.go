@@ -733,10 +733,11 @@ func TestPolicyPublishManagedRefusesAChangedProfileSecrets(t *testing.T) {
 		rewriteWith(fmt.Sprintf(profile, "openrouter-key, npm-token")))
 }
 
-// model_prices: the owner's price overrides, which are what a run is metered
-// and charged by. A price the session wrote is the figure the project's own
-// budget is kept against and the one its reports carry, so a cheapened model
-// spends the ceiling faster than the owner set it to be spent.
+// model_prices: the owner's price overrides, which are the figures a run is
+// metered and charged by. A price the session wrote is the one the project's
+// own ceiling is measured with and the one its reports carry, so a lie in
+// either direction is a lie about what the project spent: a cheapened model
+// keeps runs going that the owner's own figure would have stopped.
 func TestPolicyPublishManagedRefusesChangedModelPrices(t *testing.T) {
 	refusedMemberChange(t, "model_prices", "", rewriteWith(
 		"model_prices:\n  deepseek/deepseek-v4-flash: { input_per_m: 0.02, output_per_m: 0.08 }\n"))
