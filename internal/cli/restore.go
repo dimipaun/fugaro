@@ -264,9 +264,9 @@ func restorePreflight(cmd *cobra.Command, o restoreOptions, newID, rootArg strin
 	// The checkout's line, read now: a line the restore would refuse to move
 	// (a third project, a nested key) is a refusal before the creation, not
 	// a project created for an installation whose checkout then cannot follow.
-	yaml, err := readFugaroYAML(filepath.Join(rr.checkout, "fugaro.yaml"))
+	yaml, err := requireFugaroYAML(filepath.Join(rr.checkout, "fugaro.yaml"))
 	if err != nil {
-		return nil, nil, userErr("the checkout's fugaro.yaml: %v", err)
+		return nil, nil, err
 	}
 	if _, _, err := restoreGCPProjectLine(yaml, lc.GCPProject, newID); err != nil {
 		return nil, nil, err
@@ -1055,9 +1055,9 @@ func (rr *restoreRun) create(ctx context.Context, made *initCreation) error {
 // value. There is no --yes here: a restore has none.
 func (rr *restoreRun) anchor(cmd *cobra.Command) error {
 	path := filepath.Join(rr.checkout, "fugaro.yaml")
-	old, err := readFugaroYAML(path)
+	old, err := requireFugaroYAML(path)
 	if err != nil {
-		return userErr("the checkout's %s: %v", path, err)
+		return err
 	}
 	out, changed, err := restoreGCPProjectLine(old, rr.lc.GCPProject, rr.newID)
 	if err != nil {

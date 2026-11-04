@@ -95,7 +95,7 @@ var allowedTypes = map[string]bool{
 // account holds — actAs on EVERY repository's build account, a read of every
 // repository's build records and check state, the copied catalog definitions
 // project-wide — so as one of FugaroAccounts a plan could have added any
-// toAccounts row's role to it, and as its own kind every one of its six grants
+// toAccounts row's role to it, and as its own kind every one of its grants
 // (and every other role) is refused and the step asks the owner. The rule that
 // accepts a build account's read of the copied definitions (catalogReadGrant)
 // would otherwise accept the project job's too: the expression is byte for
@@ -338,11 +338,13 @@ const (
 const CoordinatorAccountID = "fugaro-coordinator"
 
 // CatalogCheckAccountID is the project's catalog check job account (D1148
-// task (ii), internal/infra's CatalogCheckAccountID), created in the
-// installation's project. It is NOT among FugaroAccounts, for the credentials
-// and coordinator accounts' reason: its six grants are a project-wide reach
-// that no `fugaro update` confirmation announced, so every one of them is
-// refused here and the step asks its owner (toCatalogCheck).
+// task (ii)), the one modules/installation/catalogcheck.tf creates in the
+// installation's project; the module's variable validation pins the account ID
+// it is given to this constant, so a plan cannot hand the account a name this
+// package reads differently. It is NOT among FugaroAccounts, for the
+// credentials and coordinator accounts' reason: its grants are a project-wide
+// reach that no `fugaro update` confirmation announced, so every one of them
+// is refused here and the step asks its owner (toCatalogCheck).
 const CatalogCheckAccountID = "fugaro-catalog-check"
 
 // FugaroRoles are the custom role IDs the modules create; FugaroAccounts the
@@ -1275,7 +1277,7 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			kind = toCoordinator
 		case c.isCatalogCheckMember(m):
 			// ... and the project's catalog check job (D1148): its own kind,
-			// which no row accepts, so every one of its six grants — and every
+			// which no row accepts, so every one of its grants — and every
 			// other role a plan might reach for — is refused and the update
 			// that carries them asks its owner. Read here, before the review
 			// screen's list, for the deployer's reason: a plan that listed its

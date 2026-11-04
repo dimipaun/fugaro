@@ -968,7 +968,7 @@ func catalogCheckCatalogRead(computed bool, title, expr string) *Plan {
 
 // TestCatalogCheckAccountIsItsOwnPrincipalKind: the project's catalog check job
 // (D1148) is a principal of its own kind, like the credentials service's
-// account and the coordinator's writer, and for the same reason. Its six grants
+// account and the coordinator's writer, and for the same reason. Its grants
 // — actAs on each repository's build account, the copied definitions read-only,
 // one repository's build records and check state, the build submitter, its own
 // log lines, and run.invoker on its own job — are a project-wide reach no
@@ -995,7 +995,7 @@ func TestCatalogCheckAccountIsItsOwnPrincipalKind(t *testing.T) {
 	for typ, row := range grantRules {
 		for key, w := range row {
 			if w&toCatalogCheck != 0 {
-				t.Errorf("%s %s: the row accepts the catalog check job's account, whose grants are the six of D1148 and are refused here one by one", typ, key)
+				t.Errorf("%s %s: the row accepts the catalog check job's account, whose grants are the five of D1148 and are refused here one by one", typ, key)
 			}
 		}
 	}

@@ -10,23 +10,18 @@
 # entry belongs to, through the actAs grant the repository module makes on it
 # (modules/repo/catalogcheck.tf); this account never builds anything itself, so
 # it holds no registry role, no secret accessor and no key. Its whole reach is
-# the spec in its environment and the six grants below.
+# the spec in its environment, the four grants below and, in each repository
+# root, the actAs on that repository's build account.
+#
+# No log writer grant: this installation's other jobs — the coordinator's and
+# the history job's — hold none, and the log lines the alert policies match
+# are Cloud Run's own (alert.tf). The builds this job submits run as the build
+# accounts, which hold roles/logging.logWriter where a build's lines need it
+# (modules/repo/build.tf).
 #
 # Nothing else in the installation changes for it, and it exists only when
 # fugaro update's tfvars carry catalog_check — an installation whose project
 # publishes no catalog plans exactly what it planned before the job existed.
-
-# Its own log lines (the alert's one channel): Cloud Run needs
-# logging.logEntries.create, so this one is a project-level member and there is
-# no narrower scope for it. It is the same member each repository's build
-# account holds (modules/repo/build.tf), not a wider role.
-resource "google_project_iam_member" "catalog_check_log_writer" {
-  count = var.catalog_check == null ? 0 : 1
-
-  project = var.project
-  role    = "roles/logging.logWriter"
-  member  = google_service_account.catalog_check[0].member
-}
 
 # The builds it submits: cloudbuild.builds.create to submit one and
 # cloudbuild.builds.get to read its status, which is the custom role each
@@ -184,10 +179,11 @@ resource "google_cloud_run_v2_job_iam_member" "catalog_check_invoker" {
 }
 
 # Scheduler isn't offered in every Cloud Run region, so it runs in the
-# scheduler region and the URI names the job's own. It is created PAUSED and
-# nothing resumes it but the run that finds every catalog entry has a build
-# record: a first run would otherwise submit a build for every entry whose
-# record it cannot read, which is the whole catalog.
+# scheduler region and the URI names the job's own. paused is the input's and
+# its default is true: a project that publishes a catalog deploys the schedule
+# stopped, and the installation that wants the nightly run writes a false
+# (fugaro update). Terraform applies that value as written; nothing here
+# resumes the schedule on its own.
 resource "google_cloud_scheduler_job" "catalog_check" {
   count = var.catalog_check == null ? 0 : 1
 

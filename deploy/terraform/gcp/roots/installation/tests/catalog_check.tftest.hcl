@@ -6,20 +6,20 @@
 # project's image catalog and submits a build per entry that fires is a job
 # that can move every repository's images, so the set of things its account may
 # reach is the thing to read. The second run below pins what the plan carries,
-# grant by grant: the five grants this module makes — role, member and
+# grant by grant: the four grants this module makes — role, member and
 # condition title — the argv the job runs, the account it runs as, the spec in
 # its environment, the paused schedule and the account Scheduler calls it as,
-# and the alert's filter. The sixth grant, the actAs that lets a build of an
+# and the alert's filter. The fifth grant, the actAs that lets a build of an
 # entry run as the entry's own repository's account, is the repository root's
 # (roots/repo/tests/catalog_check.tftest.hcl).
 #
 # The exact-set half is NOT here, and cannot be: a tftest cannot enumerate a
-# module's resources, so a seventh grant resource beside these five is
+# module's resources, so an extra grant resource beside these four is
 # invisible to it. That gate is internal/infra/managed's scan, which pins every
 # grant to a member that is not a set of people whole (runAccountGrants) and
 # reports both a grant no row holds and a row no module grants any more;
-# TestTheModuleScanCatchesTheMutations adds a seventh grant to this account and
-# drops one of the six, so both halves of that gate are shown firing rather
+# TestTheModuleScanCatchesTheMutations adds a sixth grant to this account and
+# drops one of the five, so both halves of that gate are shown firing rather
 # than assumed.
 #
 # The names, the argv, the condition titles and the alert filter are the ones
@@ -79,7 +79,7 @@ run "no_catalog_check_job_without_one" {
     condition = (
       length(google_service_account.catalog_check) == 0 && length(google_cloud_run_v2_job.catalog_check) == 0 &&
       length(google_cloud_scheduler_job.catalog_check) == 0 &&
-      length(google_project_iam_member.catalog_check_log_writer) == 0 && length(google_project_iam_member.catalog_check_build_submitter) == 0 &&
+      length(google_project_iam_member.catalog_check_build_submitter) == 0 &&
       length(google_storage_bucket_iam_member.catalog_check_definitions) == 0 &&
       length(google_storage_bucket_iam_member.catalog_check_records) == 0 &&
       length(google_cloud_run_v2_job_iam_member.catalog_check_invoker) == 0
@@ -154,19 +154,17 @@ run "exact_grants" {
 
   assert {
     condition = toset(concat(
-      [for r in google_project_iam_member.catalog_check_log_writer : "google_project_iam_member ${r.role} ${r.member}"],
       [for r in google_project_iam_member.catalog_check_build_submitter : "google_project_iam_member ${r.role} ${r.member}"],
       [for r in google_storage_bucket_iam_member.catalog_check_definitions : "google_storage_bucket_iam_member ${r.role} ${one(r.condition).title} ${r.member}"],
       [for r in google_storage_bucket_iam_member.catalog_check_records : "google_storage_bucket_iam_member ${r.role} ${one(r.condition).title} ${r.member}"],
       [for r in google_cloud_run_v2_job_iam_member.catalog_check_invoker : "google_cloud_run_v2_job_iam_member ${r.role} ${r.member}"],
       )) == toset([
-      "google_project_iam_member roles/logging.logWriter serviceAccount:fugaro-catalog-check@proj-1234.iam.gserviceaccount.com",
       "google_project_iam_member projects/proj-1234/roles/fugaroBuildSubmitter serviceAccount:fugaro-catalog-check@proj-1234.iam.gserviceaccount.com",
       "google_storage_bucket_iam_member roles/storage.objectViewer fugaro-catalog-read-fugaro-catalog-check serviceAccount:fugaro-catalog-check@proj-1234.iam.gserviceaccount.com",
       "google_storage_bucket_iam_member roles/storage.objectUser fugaro-catalog-records-acme-app-0123456789abcdef serviceAccount:fugaro-catalog-check@proj-1234.iam.gserviceaccount.com",
       "google_cloud_run_v2_job_iam_member roles/run.invoker serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com",
     ])
-    error_message = "the catalog check job's grants must be exactly these five: its own log lines and the two build submissions on the project, the copied definitions read-only, one repository's build records and check state, and run.invoker on its own job for the scheduler account. A sixth grant — any role, on any of these four types — fails this assertion, and there is no secret accessor, no actAs and no key here: the actAs on a repository's build account is the repository root's grant, and the build reads the secrets."
+    error_message = "the catalog check job's grants must be exactly these four: the build submissions on the project, the copied definitions read-only, one repository's build records and check state, and run.invoker on its own job for the scheduler account. A fifth grant — any role, on any of these three types — fails this assertion, and there is no secret accessor, no log writer, no actAs and no key here: the actAs on a repository's build account is the repository root's grant, and the build reads the secrets."
   }
 
   assert {
@@ -189,7 +187,7 @@ run "exact_grants" {
       google_cloud_scheduler_job.catalog_check[0].paused == true &&
       google_cloud_scheduler_job.catalog_check[0].http_target[0].oauth_token[0].service_account_email == google_service_account.scheduler.email
     )
-    error_message = "the catalog check schedule must start paused (a first run would find no record anywhere and submit a build for every entry) and Scheduler must call it as the installation's scheduler account, which is the account the invoker grant names"
+    error_message = "the catalog check schedule must start paused (the input's default: a project that publishes a catalog deploys the schedule stopped, and the installation that wants the nightly run writes a false) and Scheduler must call it as the installation's scheduler account, which is the account the invoker grant names"
   }
   assert {
     condition     = one(one(google_monitoring_alert_policy.image["catalog_check"].conditions).condition_matched_log).filter == "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND jsonPayload.event=\"catalog-check\" AND severity>=ERROR"
@@ -231,6 +229,49 @@ run "job_name_must_be_fugarochk" {
   # The prefix is load-bearing both ways: fugaro runs ls and max_parallel count
   # the fugaro- jobs, so a fugaro-catalog-check job would be counted as a
   # repository's workflow job, and the alert policies match ^fugarochk-.
+  expect_failures = [var.catalog_check]
+}
+
+run "account_id_must_be_the_one_the_cover_knows" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    catalog_check = {
+      # A job-account-shaped id, which is exactly the dangerous one: the
+      # cover's job-account pattern is fugaro-<readable>-<8 hex>, so an id in
+      # that shape would be read as one of the project's job accounts and
+      # every toAccounts row would accept the account — including the
+      # repository root's roles/iam.serviceAccountUser on the build account,
+      # which is a grant the owner's typed confirmation is supposed to ask
+      # about.
+      account_id       = "fugaro-catalog-check-01234567"
+      job              = "fugarochk-catalog-1a2b3c4d"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/base:0.18.0"
+      scheduler_job    = "fugarochk-catalog"
+      scheduler_region = "us-east5"
+      env = {
+        FUGARO_PROJECT            = "aurora"
+        FUGARO_GCP_PROJECT        = "proj-1234"
+        FUGARO_CATALOG_CHECK_SPEC = "{\"version\":1}"
+      }
+      definitions_condition = {
+        title      = "fugaro-catalog-read-fugaro-catalog-check"
+        expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/builds/catalog/\")"
+      }
+      repositories = [{
+        slug = "acme-app-0123456789abcdef"
+        records_condition = {
+          title      = "fugaro-catalog-records-acme-app-0123456789abcdef"
+          expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/builds/acme-app-0123456789abcdef/catalog/\")"
+        }
+      }]
+    }
+  }
+
   expect_failures = [var.catalog_check]
 }
 
