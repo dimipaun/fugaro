@@ -23,7 +23,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/infra"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -194,15 +193,31 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 	// --delete too: taking the policy away changes what every run is admitted by
 	// exactly as much as publishing one does, and it is not an agent's to do on
 	// its own.
-	if m := agentMarker(os.Getenv); m != "" {
-		return userErr("nothing was written: fugaro project policy publish writes the policy every run of the project is admitted by: %s", initflow.AgentRefusal(m))
-	}
+	//
+	// A MANAGED project is the one exception the design makes (M3, D1012): there
+	// a coding agent's session reaches the deterministic gate instead, and the
+	// rules of project_policy_managed.go decide. That gate refuses a widening, a
+	// raised cap and this command's three flags whatever the session's arguments
+	// are, so what the exception admits is a publish that only ever narrows.
+	agent := agentMarker(os.Getenv)
 	lc, db, configPath, err := openProjectBudget(ctx, o.cloud, "nothing was published")
 	if err != nil {
 		return err
 	}
 	if err := requirePolicyRules(ctx, db, lc); err != nil {
 		return err
+	}
+	// The gate is read here, before the node is, and only in a coding agent's
+	// session: a person's own publish reads no mark and pays for no call
+	// (project_policy_managed.go says why). A project the read does not prove is
+	// managed keeps today's refusal, byte for byte, and reaches nothing else in
+	// this function.
+	gate, err := policyPublishGate(ctx, lc, db, agent)
+	if err != nil {
+		return err
+	}
+	if agent != "" && !gate.managed {
+		return publishAgentRefusal(agent)
 	}
 	out := cmd.OutOrStdout()
 	// narrowedSoFar is what the tightening phase has already written when a
@@ -224,6 +239,19 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		if o.delete {
 			// The ETag and the version this read is what the deletion is made
 			// against: see deleteProjectPolicy.
+			//
+			// And the gate, before a single child is touched: a removal is never
+			// admitted (spec §4.2), so the verdict is built refused over the node
+			// as it was read, and a coding agent's session reads why with the
+			// record of that refusal behind it. In every other session the zero
+			// gate answers here and the deletion proceeds exactly as it did.
+			m, gerr := gate.admit(ctx, policyPublishClass, policyDeleteVerdict(raw))
+			if gerr != nil {
+				return gerr
+			}
+			if err := policyPublishProceed(agent, out, m); err != nil {
+				return err
+			}
 			return deleteProjectPolicy(cmd, lc, db, out, exists, etag, o)
 		}
 		old, err := publishedPolicyOf(raw, exists)
@@ -238,6 +266,20 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		body, pol, sources, err := policyNodeForPublish(ctx, lc, old, raw, exists, o.seedRepos, o.removeRouting)
 		if err != nil {
 			return publishFailure(err, narrowedSoFar)
+		}
+		// The gate, over the exact bytes this publish would write (D1022) and
+		// before the first write of this attempt — before the per-repository
+		// children are narrowed, and before any argument of a write is built
+		// (D1021). It is asked per attempt, so a retry after a precondition
+		// failure re-reads the marks and re-judges the node it would now write
+		// (D1024). A refusal is the gate's own sentence and the record of it is
+		// written before this returns.
+		m, err := gate.admit(ctx, policyPublishClass, policyPublishVerdict(old, pol, body, o.seedRepos, o.removeRouting))
+		if err != nil {
+			return err
+		}
+		if err := policyPublishProceed(agent, out, m); err != nil {
+			return err
 		}
 		// The per-repository admissions (O4) and the shared node are two writes,
 		// not one transaction (the children are a multi-path patch, the node is
@@ -277,6 +319,17 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		err = db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, json.RawMessage(body))
 		switch {
 		case err == nil:
+			// The record of the gate's admission, written now: after this
+			// command's own write and before anything else it does, because the
+			// record is what makes the difference between "this program ran" and
+			// "this program ran, and here is what it did", and because a record
+			// that cannot be written fails the command rather than being reported
+			// beside a success (spec §6, D1014). A write that failed records
+			// nothing: there is no application of an admitted step to file, and
+			// the node is as it was.
+			if err := gate.recorded(ctx); err != nil {
+				return err
+			}
 			admissions, err := widenAdmissions(ctx, db, lc, desired, desiredBytes, now)
 			if err != nil {
 				return fmt.Errorf("%w; %s was set, but the admissions at %s are not as the config asks: they were narrowed first and never widened, so the repositories that lost an account stay admitted to the accounts they kept; run the publish again",
