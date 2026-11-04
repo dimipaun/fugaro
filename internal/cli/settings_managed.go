@@ -4,19 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"reflect"
-	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	crm "google.golang.org/api/cloudresourcemanager/v1"
-	"google.golang.org/api/googleapi"
 	storage "google.golang.org/api/storage/v1"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -31,35 +28,43 @@ import (
 // machine's own file — the local project config, the local project layer file,
 // or a repository's fugaro.yaml — and the write path has always refused a
 // coding agent's session everything outside the repository (SD9, S4.2 step 4):
-// `--layer local` and `--layer project` write `~/.config/fugaro`, and a typed
-// edit is refused even at `--layer repo`. In a managed project the project's
-// own gate answers that question per step instead, so a session that writes a
-// registry key whose whole effect the document shows is admitted, and the owner
-// gets a record of which key was written, by which rules, and against which
-// bytes.
+// `--layer local` and `--layer project` write the config home, and a typed edit
+// is refused even at `--layer repo`. In a managed project the project's own
+// gate answers that question per step instead, so a session that writes a
+// registry key whose effect the document shows is admitted, and the owner gets
+// a record of which key was written, by which rules, and against which bytes.
 //
 // Which rules are this command's own, and which it deliberately does not
 // restate. The registry (spec §4.4) and the layer a key may be set in are the
 // command's own checks, asked before the gate is (settingsWriteRow,
 // settingsResolveTarget), and they are named among the rules that passed
-// because a record has to say what was judged. The reserved keys and the
-// executable keys are the gate's own rules, in the same words `config publish`
-// uses. The rigor floors and `review_floor` are NOT rules here: those rows are
-// another family's (D853), so settingsWriteRow refuses them before any document
-// exists, and a rule over a document that can never carry them would be a check
-// an owner audits as one that merely happened to pass (M3's own reasoning).
+// because a record has to say what was judged. The reserved keys are the gate's
+// own rule, in config publish's own words.
+//
+// Three rules that could not fire here, and are therefore absent rather than
+// restated. (1) The executable keys (`commands.*`, `image.apt`,
+// `image.setup`): every one of them is a `repo` or `profile` layer key, and a
+// `--layer repo` write that is not the typed one is exactly the write today's
+// refusal admits (see settingsGateApplies), so no document this gate judges
+// can carry one. (2) The rigor floors and `review_floor`: those rows belong to
+// another family (D853), so settingsWriteRow refuses them before any document
+// exists. (3) The widening of a cap: `budget.*` and `governance.*` are the
+// reserved runs, refused whole. A rule named among the ones that passed is a
+// claim that it ran and could have failed, and an owner auditing a record
+// reads it as one — so a rule that can never fire is worse than an absent one,
+// which is the reason M3 gives for the same omission on its own path.
 //
 // Why the class the gate judges under is YesOrTyped and not the edit's own.
 // The edit's Typed form is what the confirmation asks a PERSON for, and it
-// stays the fence's (`settingsEdit.editClass`): nothing here touches it. What
-// the gate adds is the refusal the session reads instead of the marker's own —
-// and a widening is refused BY A RULE of the gate (settingsOwnerOnlyRule), so
-// the session reads which lever it tried to move rather than "run this
+// stays the fence's (settingsEdit.editClass): nothing here touches it. What the
+// gate adds is the refusal the session reads instead of the marker's own — and
+// the typed edit is refused BY A RULE of the gate (settingsOwnerOnlyRule), so
+// the session reads which declaration it tried to move rather than "run this
 // yourself". Both halves hold at once: an edit the typed confirmation reserves
-// is refused by the gate before the fence is reached, and an edit the gate
-// admitted without noticing the typed form would still be refused by the fence,
-// because the fence decides `Typed` on its own (D1026's rule is asked there and
-// is not restated here). No Typed edit can therefore be admitted by any path.
+// is refused by the gate, and an edit the gate admitted without noticing the
+// typed form would still be refused by the fence, because the fence decides
+// `Typed` on its own (D1026's rule is asked there and is not restated here).
+// No Typed edit can therefore be admitted by any path.
 //
 // Why a repository-scoped ordinary write reads nothing at all. Today's fence
 // does not apply inside a repository (`--layer repo` writes a file an agent
@@ -71,30 +76,31 @@ import (
 // asked once, in settingsGateApplies.
 
 // settingsGateMarker is the coding agent's session this command was run in, ""
-// for a person at a terminal. It is read once per command, here, so the three
+// for a person at a terminal. It is read once per command, here, so the two
 // places that ask "is the gate this command's business" cannot disagree.
 func settingsGateMarker() string { return agentMarker(os.Getenv) }
 
-// settingsGateApplies reports whether one write is one today's coding-agent
-// refusal would stop: the fence in applySettingsEdit reads exactly this
-// condition, and a gate consulted anywhere else would be reading marks for a
-// write that was never refused (D1025).
+// settingsGateApplies reports whether one edit is one today's coding-agent
+// refusal would stop: applySettingsEdit reads exactly this condition, and a
+// gate consulted anywhere else would be reading marks for a write that was
+// never refused (D1025).
 func settingsGateApplies(marker string, kind settingsDocKind, typed bool) bool {
 	return marker != "" && (kind != settingsDocRepo || typed)
 }
 
 // settingsWriteGate reads the two marks for one settings write and answers the
 // gate every command in the set calls. It is M6's ONE helper, read and called
-// here, and this function is only the three ways of not being able to ask:
-// a person's session (no marker), an installation with no cloud to read the
-// marks from, and a client that cannot be built.
+// here, and this function is only the ways of not being able to ask, each of
+// which leaves the zero gate behind — a gate that refuses nothing and records
+// nothing, so the session keeps this command's own refusal, the sentence it
+// read before this row landed.
 //
-// Each of the three leaves the zero gate behind, which refuses nothing and
-// records nothing: the session keeps this command's own refusal — the sentence
-// it read before this row landed — and a mark that cannot be read is never a
-// permission. That is also why the error `readManagedGate` may answer is folded
-// into the zero gate here rather than returned: a session that is refused
-// anyway must not learn which read broke or which endpoint carries it.
+// That is why the error readManagedGate may answer is folded into the zero gate
+// here rather than returned: a session that is refused anyway must not learn
+// which read broke, which endpoint carries it or what the Storage or Resource
+// Manager error said (config_publish_managed.go's own reason for the same
+// answer). A no_auth installation that names no storage or Resource Manager
+// endpoint has no cloud to read the marks from at all, so no call is attempted.
 func settingsWriteGate(ctx context.Context, lc *localcfg.Config, marker, subcommand string) managedGate {
 	if lc.Endpoints.NoAuth && (lc.Endpoints.Storage == "" || lc.Endpoints.ResourceManager == "") {
 		return managedGate{}
@@ -108,19 +114,15 @@ func settingsWriteGate(ctx context.Context, lc *localcfg.Config, marker, subcomm
 		return managedGate{}
 	}
 	g, err := readManagedGate(ctx, managedGateEnv{lc: lc, s: s, crm: c}, managedGateFacts{
-		Subcommand: subcommand,
-		Argv:       os.Args[1:],
-		// What this command would have written, for the ownership question
-		// D1017 asks with the database a command is about to write. This one
-		// writes a file and no database, so its gate holds no client for one
-		// (managedGateEnv.db stays nil) and the question is not asked here;
-		// the sentence travels all the same, so a later release that gives
-		// this path a database does not have to invent one.
+		Subcommand:  subcommand,
+		Argv:        os.Args[1:],
 		Declined:    "nothing was written",
 		AgentMarker: marker,
 		// The whole-project inventory (D59) is `fugaro managed apply`'s read
 		// and is not consulted here: a command that has none passes false,
-		// which is the documented answer for it.
+		// which is the documented answer for it (managedGateFacts). This
+		// command's gate holds no budget database either, so the ownership
+		// question D1017 asks is not asked on this path.
 		InventoryFallback: false,
 	})
 	if err != nil || !g.managed {
@@ -137,9 +139,9 @@ func settingsWriteGate(ctx context.Context, lc *localcfg.Config, marker, subcomm
 // when the gate refused the document.
 //
 // It is `accounts add`'s accountsAddGate in this command's own terms, and the
-// three answers are the same three for the same reasons. What differs is only
-// when it is asked at all (settingsGateApplies, read once here) and which
-// document it judges.
+// three answers are the same three for the same reasons. What differs is when
+// it is asked at all (settingsGateApplies, read once here) and which document
+// it judges.
 func settingsManagedStep(ctx context.Context, lc *localcfg.Config, target settingsTarget, key string, typed bool, why string, old, newData []byte, subcommand string) (initflow.Managed, managedGate, error) {
 	marker := settingsGateMarker()
 	if lc == nil || !settingsGateApplies(marker, target.kind, typed) {
@@ -147,11 +149,10 @@ func settingsManagedStep(ctx context.Context, lc *localcfg.Config, target settin
 	}
 	gate := settingsWriteGate(ctx, lc, marker, subcommand)
 	if !gate.managed {
-		// No installation to read, a mark that did not answer, a client that
-		// cannot be built, or the ownership question's own refusal: the project
-		// is not one this program can prove is managed, so the session keeps
-		// this command's refusal — the sentence it read before this row landed
-		// — and nothing is recorded.
+		// No installation to read, a mark that did not answer or a client that
+		// cannot be built: the project is not one this program can prove is
+		// managed, so the session keeps this command's refusal and nothing is
+		// recorded.
 		return initflow.Managed{}, managedGate{}, nil
 	}
 	conv := settingsManagedVerdict(ctx, &gate, target, key, typed, why, old, newData)
@@ -182,8 +183,8 @@ func settingsManagedStep(ctx context.Context, lc *localcfg.Config, target settin
 // SAME read the write is conditioned on: applySettingsEdit re-reads the file and
 // refuses to write unless it is still byte for byte what the caller read here,
 // so the document judged and the document applied are one artifact rather than
-// two that happened to agree at different moments (the plan's M6 review, item 3).
-func settingsManagedVerdict(ctx context.Context, g *managedGate, target settingsTarget, key string, typed bool, typedWhy string, old, newData []byte) managedmode.Converge {
+// two that happened to agree at different moments (M6's review, item 3).
+func settingsManagedVerdict(ctx context.Context, g *managedGate, target settingsTarget, key string, typed bool, why string, old, newData []byte) managedmode.Converge {
 	var applied, refused []string
 	judge := func(rule, refusal string) {
 		if refusal == "" {
@@ -195,16 +196,15 @@ func settingsManagedVerdict(ctx context.Context, g *managedGate, target settings
 	judge(settingsRegistryRule, "")
 	judge(settingsLayerRule, "")
 	judge(settingsReservedRule, settingsReservedRefusal(key))
-	judge(settingsExecutableRule, settingsExecutableRefusal(target.keyPath))
-	judge(settingsOwnerOnlyRule, settingsOwnerOnlyRefusal(typed, typedWhy))
+	judge(settingsOwnerOnlyRule, settingsOwnerOnlyRefusal(typed, why))
 	if target.kind == settingsDocLayer {
 		// D854's subject is this machine's own layer file and no other
-		// document: a repository's fugaro.yaml and the local project config
-		// are not copies of the published layer, so a rule about that file
-		// would name a check that never ran for them. It is written into the
-		// record only when it ran, for the reason config publish's own
-		// admission does the same.
-		judge(settingsStaleRule, settingsStaleRefusal(ctx, g, target))
+		// document: a repository's fugaro.yaml and the local project config are
+		// not copies of the published layer, so a rule about that file would
+		// name a check that never ran for them. It is written into the record
+		// only where it ran, for the reason config publish's own admission does
+		// the same.
+		judge(settingsStaleRule, settingsStaleRefusal(ctx, g))
 	}
 	judge(settingsUnjudgedRule, settingsUnjudgedRefusal(old, newData, target.keyPath))
 	if len(refused) > 0 {
@@ -223,23 +223,25 @@ const (
 	// settingsRegistryRule and settingsLayerRule are the command's own checks,
 	// asked before the gate is and named here so the record says what was
 	// judged. They cannot fail at this point — settingsWriteRow and
-	// settingsResolveTarget have already refused otherwise — and they are
-	// constants rather than functions for exactly that reason.
+	// settingsResolveTarget have already refused otherwise, in their own words,
+	// before a document existed — and they are constants rather than functions
+	// for exactly that reason.
 	settingsRegistryRule = "the key is one the settings registry knows and this path writes (spec §4.4)"
 	settingsLayerRule    = "the key may be set at the layer this write lands in (the registry's Layers, spec §4.2 step 2)"
 	// settingsReservedRule is the plan's §2 settings row: the keys no coding
 	// agent's session writes, whatever the registry says about them — most of
 	// them ARE registry keys, and that is the point (spec §4.2).
 	settingsReservedRule = "the write is no reserved key (credentials.*, clone_urls, budget.*, agent.oauth_token, governance.*)"
-	// settingsExecutableRule is §4.2 step 4's executable half, once more: what
-	// runs as shell in the job is the owner's to change in their own terminal.
-	settingsExecutableRule = "the write changes nothing that runs as shell (commands.*, image.apt, image.setup)"
 	// settingsOwnerOnlyRule is D1026's class rule as a rule of this gate: the
 	// edit the typed confirmation reserves — a ceiling loosened, a floor
 	// removed, a follow-up key turned on, a credential handed to a job — is
 	// never admitted, whatever a document looks like.
 	settingsOwnerOnlyRule = "the write is none that the typed confirmation reserves for the project's own hand (D1026)"
-	// settingsStaleRule is D854 over this machine's own layer file.
+	// settingsStaleRule is D854 over this machine's own layer file. Its
+	// refusal is config publish's own sentence rather than one written here
+	// (layerStaleRule), so the two doors the owner may reach a stale copy
+	// through refuse it in the same words; this is the name the admission's
+	// record carries.
 	settingsStaleRule = "this machine's layer file was written from the published layer's generation (D854)"
 	// settingsUnjudgedRule is §4.1 rule 2's fail-closed half: every member of
 	// the document no rule above judges is unchanged in the bytes written.
@@ -254,66 +256,15 @@ const (
 //
 // The comparison is over the key as the command line spelled it and not over
 // the registry's pattern: `settings set governance.review_ratio` is refused for
-// the `governance.*` run whichever layer it would land in, and
-// `layer.governance.review_ratio` is refused for the same run one word deeper —
-// the run is matched anywhere in the path, exactly as it is for a published
-// document.
+// the `governance.*` run, and the project layer's `layer.governance.review_ratio`
+// is refused for the same run one word deeper — the run is matched anywhere in
+// the path, exactly as it is for a published document.
 func settingsReservedRefusal(key string) string {
 	run := layerReservedRun(strings.Split(key, "."))
 	if len(run) == 0 {
 		return ""
 	}
 	return ruleSaid(settingsReservedRule, fmt.Sprintf("%s is a key no coding agent's session writes, whatever the registry says about it: the project's owner writes it at their own terminal", safetext.Field(strings.Join(run, "."))))
-}
-
-// settingsExecutableRefusal is the executable key this write would change, or
-// "".
-//
-// The vocabulary is config.ExecutableKeys's and not a second list: those are
-// the keys whose value a job runs as shell, and the tail of each of them —
-// everything under the workflow's or the profile's own name — is what tells a
-// repository's `workflows.web.commands.test` and the project layer's
-// `layer.profiles.svc.commands.test` from an ordinary key. A list written out
-// here would go stale the day a new executable key is added, which is the day
-// it would matter.
-func settingsExecutableRefusal(path []string) string {
-	for _, key := range config.ExecutableKeys {
-		segs := strings.Split(key, ".")
-		// "workflows.<name>.<tail>" and "profiles.<name>.<tail>": the first two
-		// segments are the block's own name and the entry the write names, and
-		// both commands' paths carry those under their own spellings.
-		if len(segs) < 3 {
-			continue
-		}
-		tail := segs[2:]
-		if !settingsPathEndsWith(path, tail) {
-			continue
-		}
-		return ruleSaid(settingsExecutableRule, fmt.Sprintf("%s is one of the keys a job runs as shell, and changing it is what the project's owner does in their own terminal — the document is judged by its effect and not by the flag the session passed", safetext.Field(strings.Join(tail, "."))))
-	}
-	return ""
-}
-
-// settingsPathEndsWith reports whether path ends with the pattern segments: the
-// same length from the tail, equal where the pattern names a value, and any
-// non-empty segment where it writes `*`.
-func settingsPathEndsWith(path, pattern []string) bool {
-	if len(path) < len(pattern) {
-		return false
-	}
-	tail := path[len(path)-len(pattern):]
-	for i := range pattern {
-		if pattern[i] == "*" {
-			if tail[i] == "" {
-				return false
-			}
-			continue
-		}
-		if pattern[i] != tail[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // settingsOwnerOnlyRefusal is the widening this edit is, in the command's own
@@ -335,63 +286,43 @@ func settingsOwnerOnlyRefusal(typed bool, why string) string {
 
 // settingsStaleRefusal is D854 over this machine's layer file, or "".
 //
-// It is doctor's own state and doctor's own sentence (localLayerState,
-// unpublishedText), asked the way config publish asks it: the local file's
-// recorded generation against the published object's, with the two causes a
-// difference has told apart by the record. Only the stale cause refuses — a
-// local edit on top of the published generation is exactly what a settings
-// write IS, and a file with no recorded generation is one this machine has
-// never published.
+// It is doctor's own state and doctor's own sentence (layerStaleRule, read from
+// config_publish_managed.go so neither door invents its own), asked the way
+// config publish asks it: the published object read out of the installation's
+// own bucket, then the local file's recorded generation against the object's,
+// with the two causes a difference has told apart by the record. Only the stale
+// cause refuses — a local edit on top of the published generation is exactly
+// what a settings write IS, and a file with no recorded generation is one this
+// machine has never published.
 //
 // A published object that cannot be read or decoded is a refusal rather than a
-// predecessor of nothing: measured against nothing, every local file is
-// "unchanged", and the rule an owner audits would have run without ever being
-// able to fail. Same answer, same reason, as config publish's own read.
-func settingsStaleRefusal(ctx context.Context, g *managedGate, target settingsTarget) string {
-	pub, gen, why := settingsPublishedLayer(ctx, g.env.s, g.env.lc)
-	if why != "" {
-		return ruleSaid(settingsStaleRule, why)
-	}
-	st := localLayerState(g.env.lc, g.env.lc.Name, pub, gen)
-	if !st.Unpublished || st.Cause != layerLocalStale {
-		return ""
-	}
-	return ruleSaid(settingsStaleRule, st.unpublishedText())
-}
-
-// settingsPublishedLayer reads the published project layer this machine's own
-// layer file is a copy of, with the gate's own storage client: the bytes, the
-// object's generation, and the one-line reason it could not be judged.
-//
-// An object that is not there is not a failure: a project that has published no
-// layer has no predecessor for the local file to have been written from, which
-// is the ordinary first publish and not a stale copy. Everything else — a grant
-// the session does not hold, an API that did not answer, an object this build
-// cannot decode — is a reason, and a reason refuses.
-func settingsPublishedLayer(ctx context.Context, s *storage.Service, lc *localcfg.Config) (*config.ProjectLayer, int64, string) {
-	if s == nil || lc == nil {
-		return nil, 0, "the published project layer cannot be read from this session at all, so whether this machine's file was written from it cannot be judged"
-	}
-	bucket := lc.RunsBucketName()
-	resp, err := s.Objects.Get(bucket, config.LayerKey).Context(ctx).Download()
+// predecessor of nothing: measured against nothing every local file counts as
+// unchanged, so the rule an owner audits would have run without ever being able
+// to fail. Same answer, same reason, as config publish's own read.
+func settingsStaleRefusal(ctx context.Context, g *managedGate) string {
+	lc := g.env.lc
+	b, err := blobx.Open(ctx, lc.BucketURL())
 	if err != nil {
-		var ge *googleapi.Error
-		if errors.As(err, &ge) && ge.Code == http.StatusNotFound {
-			return nil, 0, ""
+		return "the published project layer could not be read (" + oneLineCLI(err.Error()) + "), so whether this machine's layer file was written from it cannot be judged, and the project's owner makes this change at their own terminal"
+	}
+	defer b.Close()
+	data, gen, err := b.ReadMaxStrict(ctx, config.LayerKey, config.LayerMaxBytes)
+	var prev *config.ProjectLayer
+	switch {
+	case err == nil:
+		l, ps := config.ParseProjectLayer(data, config.LayerAnchor{Project: lc.Name, GCPProject: lc.GCPProject})
+		if len(ps) > 0 {
+			return fmt.Sprintf("the published project layer is not a layer this program can read (%d problem(s)), so whether this machine's layer file was written from it cannot be judged, and the project's owner republishes it at their own terminal", len(ps))
 		}
-		return nil, 0, fmt.Sprintf("the published project layer at gs://%s/%s could not be read (%s), so whether this machine's layer file was written from it cannot be judged: the project's owner writes this key at their own terminal", safetext.Field(bucket), config.LayerKey, oneLineCLI(err.Error()))
+		prev = l
+	case errors.Is(err, blobx.ErrNotExist):
+		// Nothing is published yet: this machine's file has no predecessor to
+		// have been written from, which is the ordinary first publish.
+		return ""
+	default:
+		return "the published project layer could not be read (" + oneLineCLI(err.Error()) + "), so whether this machine's layer file was written from it cannot be judged, and the project's owner makes this change at their own terminal"
 	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, config.LayerMaxBytes+1))
-	if err != nil {
-		return nil, 0, fmt.Sprintf("the published project layer at gs://%s/%s could not be read (%s), so whether this machine's layer file was written from it cannot be judged", safetext.Field(bucket), config.LayerKey, oneLineCLI(err.Error()))
-	}
-	gen, _ := strconv.ParseInt(resp.Header.Get("X-Goog-Generation"), 10, 64)
-	l, ps := config.ParseProjectLayer(data, config.LayerAnchor{Project: lc.Name, GCPProject: lc.GCPProject})
-	if len(ps) > 0 {
-		return nil, 0, fmt.Sprintf("the published project layer at gs://%s/%s is not a layer this program can read (%d problem(s)), so whether this machine's layer file was written from it cannot be judged: the project's owner republishes it at their own terminal", safetext.Field(bucket), config.LayerKey, len(ps))
-	}
-	return l, gen, ""
+	return layerStaleRule(lc, prev, gen)
 }
 
 // settingsUnjudgedRefusal is the rule that closes this gate over every member
@@ -405,14 +336,14 @@ func settingsPublishedLayer(ctx context.Context, s *storage.Service, lc *localcf
 // whole block, `yamledit` splices text rather than re-emitting the document,
 // and a document a later release teaches a new key is one nobody wrote a rule
 // for. What is compared is the two documents minus the key under judgement —
-// the members masked out of both sides — so a byte moved anywhere else is a
+// the member masked out of both sides — so a byte moved anywhere else is a
 // refusal, named, rather than a change that travelled in beside the one that
 // was admitted.
 //
 // The comparison is over the two documents and never over the two files: the
 // bytes are compared by their meaning as YAML, so a re-indent or a re-ordered
-// key that `yamledit` produced is not a change, which is the same reason
-// config publish compares member maps and not documents.
+// key that `yamledit` produced is not a change, which is the same reason config
+// publish compares member maps and not documents.
 //
 // A pair this walk cannot read is a refusal and not a pass. That is the
 // fail-closed direction every read of this gate falls in: a document nobody can
@@ -429,8 +360,7 @@ func settingsUnjudgedRefusal(old, next []byte, keyPath []string) string {
 	if reflect.DeepEqual(was, now) {
 		return ""
 	}
-	return ruleSaid(settingsUnjudgedRule, fmt.Sprintf("this write would change a member of %s other than %s, and no rule of this gate reads it: a coding agent's session writes what these rules judged, so the project's owner makes that change at their own terminal",
-		safetext.Field("the document"), safetext.Field(strings.Join(keyPath, "."))))
+	return ruleSaid(settingsUnjudgedRule, fmt.Sprintf("this write would change a member of the document other than %s, and no rule of this gate reads it: a coding agent's session writes what these rules judged, so the project's owner makes that change at their own terminal", safetext.Field(strings.Join(keyPath, "."))))
 }
 
 // settingsMaskedDocument is one document as the value this gate compares, with
@@ -451,20 +381,31 @@ func settingsMaskedDocument(data []byte, keyPath []string) (any, bool) {
 // settingsMaskPath removes the key at path from the parsed document, and does
 // nothing when the document does not carry it: a write that ADDS a key leaves
 // the old side without it, which is exactly the comparison the rule wants.
+//
+// It takes the empty mappings the walk left behind with it, and that is what
+// makes the rule about the key and not about the path to it: `settings set
+// layer.defaults.agent.review_rounds` on a layer that has no `defaults:` block
+// adds `defaults:` and `agent:` to reach the key, and a mapping this edit
+// created to hold one judged key is not a second member the document carries —
+// an empty one means exactly what an absent one means. A mapping that was
+// already there and is not empty is untouched, so a member that really changed
+// still differs between the two sides.
 func settingsMaskPath(doc any, path []string) {
 	cur, ok := doc.(map[string]any)
+	if !ok || len(path) == 0 {
+		return
+	}
+	seg := path[0]
+	if len(path) == 1 {
+		delete(cur, seg)
+		return
+	}
+	next, ok := cur[seg].(map[string]any)
 	if !ok {
 		return
 	}
-	for i, seg := range path {
-		if i == len(path)-1 {
-			delete(cur, seg)
-			return
-		}
-		next, ok := cur[seg].(map[string]any)
-		if !ok {
-			return
-		}
-		cur = next
+	settingsMaskPath(next, path[1:])
+	if len(next) == 0 {
+		delete(cur, seg)
 	}
 }
