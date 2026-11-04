@@ -45,7 +45,7 @@ A repo can do any one of these:
 
 ## Where Dockerfiles live
 Every Dockerfile is copied into the project's GCS bucket before it is built, and the build reads it from there. This gives one read path and a record of exactly what was built, and it avoids a full checkout just to get one file.
-- Repo reference: repo name + path (+ optional branch), for example backend-api:docker/agent.Dockerfile. Leaving out the repo means the project repo, if there is one. Fugaro fetches the file with the project's existing GitHub credentials from the security service; no new access is needed.
+- Repo reference: repo name + path (+ optional branch), for example backend-api:docker/agent.Dockerfile. Leaving out the repo means the project repo, if there is one. Fugaro fetches the file with the project's existing git credentials from the security service, at the repository's own provider (GitHub or Bitbucket); no new access is needed.
 - Inline: the definition is stored in project state and written to GCS as a Dockerfile.
 - The project repo is optional, so neither source depends on it.
 - Build context: a catalog entry can set it explicitly. By default, a repo-referenced Dockerfile uses its own repo as context, shallow-cloned at build time, so COPY works. An inline definition gets an empty context plus any baked repos. Builds run only nightly or on demand, so the clone cost doesn't matter.

@@ -162,7 +162,10 @@ upgrades every launcher before it launches again. The image-catalog gate is spel
 Every Dockerfile is copied into the project's bucket **before** it is built, and the build reads it from
 there — one read path and a record of exactly what was built ([spec.md](spec.md) §Where Dockerfiles
 live). A **repo reference** (`repo:path`, optional branch) is fetched with the project's **existing**
-GitHub credentials through `internal/gitprov`; no new access is added (**F9**'s boundary: the
+git credentials through `internal/gitprov` — the GitHub and the Bitbucket adapters both read a file
+(`internal/gitprov/github/contents.go`, `internal/gitprov/bitbucket/contents.go`), and a dockerfile
+source on a provider whose adapter does not is refused where the catalog is accepted, before a build
+is planned (`catalog.Readable`); no new access is added (**F9**'s boundary: the
 credentials service's bundle is not widened). An **inline** definition is written from project state. The
 copy is keyed under `builds/catalog/<name>/Dockerfile`, beside the layer copy
 (`config.LayerCopyKey`), and written with the same read-compare-write-if-changed rule
@@ -170,9 +173,12 @@ copy is keyed under `builds/catalog/<name>/Dockerfile`, beside the layer copy
 a repository credential and writes to the project bucket: the credential is used through `gitprov` and
 never logged, the fetch is bounded, and the path is validated against traversal.
 
-- **Files (10):** `internal/gitprov/gitprov.go` (a `Contents`-shaped read on the interface),
+- **Files (11):** `internal/gitprov/gitprov.go` (a `Contents`-shaped read on the interface),
   `internal/gitprov/github/contents.go` (new: the contents API, bounded, credential from the existing
-  source), `internal/gitprov/fake/fake.go` (the fake's file tree),
+  source), `internal/gitprov/bitbucket/contents.go` (new: the same read on Bitbucket Cloud's src API —
+  added with the rest of this task's subject, so a dockerfile source in a Bitbucket repository builds
+  like one in a GitHub repository instead of being refused),
+  `internal/gitprov/fake/fake.go` (the fake's file tree),
   `internal/catalog/fetch.go` (new: the resolver — repo reference vs inline — and the key),
   `internal/catalog/fetch_test.go` (new), `internal/config/catalog.go` (the key helper beside the type),
   `internal/cli/catalog_copy.go` (new: `writeCatalogDockerfile`, the `layer_copy.go` rule),

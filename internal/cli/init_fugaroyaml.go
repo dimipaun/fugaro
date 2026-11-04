@@ -183,7 +183,7 @@ func customBucketNote(lc *localcfg.Config) string {
 // edit refuses is a *byHandError, a differing value a user error.
 func prepareAnchor(lc *localcfg.Config, root string) (*anchorEdit, error) {
 	path := filepath.Join(root, "fugaro.yaml")
-	old, err := readFugaroYAML(path)
+	old, err := requireFugaroYAML(path)
 	if err != nil {
 		return nil, err
 	}
