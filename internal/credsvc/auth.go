@@ -875,8 +875,8 @@ func (a *Authenticator) VerifyVerifier(ctx context.Context, tok string) (string,
 // gcloud's own client id, which is all a plain `gcloud auth
 // print-identity-token` can mint for a user account (GcloudAudience, with the
 // replay tradeoff stated there), while the coordinator job — and every class on
-// every other route — still presents a token for this service's own URL.
-// readCallerClass is where the two sets live.
+// every other route — still presents a token for this service's own URL. Which
+// audiences each class may carry is readCallerClass's answer.
 //
 // It takes the caller's token directly for VerifyVerifier's reason: the read
 // route is answered ahead of RequestFromHTTP (server.go), because neither class
