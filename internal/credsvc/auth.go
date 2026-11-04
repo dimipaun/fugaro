@@ -271,8 +271,12 @@ type AuthConfig struct {
 	// the launcher puts the Fugaro project in fp (internal/cli's launch) and
 	// Firebase issues the token for its own project id.
 	FirebaseProject string
-	// Audience is the audience the job's Google ID token must carry — the
-	// service's own URL, which is what Cloud Run IAM checked it against.
+	// Audience is the audience every caller's Google ID token must carry —
+	// the service's own URL, which is what Cloud Run IAM checked it against.
+	// The person class alone also admits GcloudAudience, the audience a user
+	// account's own mint carries; which classes check what is readCallerClass's
+	// and checkCallerAudience's, and GcloudAudience's doc comment states why
+	// that class can afford it.
 	Audience string
 	// JobAccounts are the installation's per-repository job service accounts,
 	// by email: the identities that may call the service at all (the owner's
@@ -749,10 +753,11 @@ func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time
 // the audience is a fact about the class and is checked by each entry point
 // with checkCallerAudience once the class is known.
 //
-// It is written once so that the verifier branch (VerifyVerifier) is the same
-// token check as a job token and not a second spelling of it (D1068): a rule
-// added to one and not the other would be a caller of one class checking
-// something the other does not.
+// It is written once so that the verifier branch (VerifyVerifier) and the read
+// mints are the same token check as a job token and not a second spelling of it
+// (D1068): the audience and the list the folded address is matched against are
+// the class's own answers on either side of this call, so a rule added here
+// reaches every class at once.
 //
 // The email is folded to lower case *as ASCII* before it is matched, and an
 // address that is not printable ASCII is refused rather than folded
@@ -812,11 +817,12 @@ func (a *Authenticator) callerClaims(ctx context.Context, tok string) (map[strin
 //     nothing.
 //
 // Which set a caller is looked up in is what makes it a class, so this is a
-// branch beside verifyJob and not a second verifier: the signature, the
-// audience, the issuer and the fold above are shared code. This is also why it
-// takes the caller's token directly rather than a Request: the verify path is
-// answered ahead of RequestFromHTTP (server.go), so a Request is the one thing
-// its caller cannot build.
+// branch beside verifyJob and not a second verifier: the signature, the issuer,
+// the fold and the token's own window are shared code, and the audience is this
+// class's own line (checkCallerAudience) exactly as it is every other class's.
+// This is also why it takes the caller's token directly rather than a Request:
+// the verify path is answered ahead of RequestFromHTTP (server.go), so a
+// Request is the one thing its caller cannot build.
 func (a *Authenticator) VerifyVerifier(ctx context.Context, tok string) (string, error) {
 	now := a.now()
 	claims, folded, err := a.callerClaims(ctx, tok)
