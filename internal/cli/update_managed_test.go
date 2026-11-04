@@ -2,12 +2,14 @@ package cli
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
@@ -175,5 +177,257 @@ func TestUpdateManagedStageAdmitsAnAdditivePlan(t *testing.T) {
 	}
 	if _, held := os.LookupEnv("CLAUDECODE"); !held {
 		t.Fatal("this test is not a coding agent's session")
+	}
+}
+
+// markReads is how many calls asked the runs bucket for the managed marker
+// object, however the client spelled the path: the gate's own read is one, and
+// a run that never reads the marks makes none.
+func markReads(r *initRig) int {
+	n := 0
+	for _, rq := range r.gcs.Requests() {
+		if strings.Contains(rq.Path, "managed.json") || strings.Contains(rq.Query, "managed.json") {
+			n++
+		}
+	}
+	return n
+}
+
+// theMarkerObject writes the runs bucket's half of the fact and leaves the
+// project's half (the label) alone: half of the fact is not the fact, which is
+// the world TestUpdateReadsTheGateBeforeAnyWrite's third arm runs in.
+func theMarkerObject(t *testing.T, r *initRig, gcp string) {
+	t.Helper()
+	body := `{"version":1,"gcp_project":"` + gcp + `"}`
+	if err := r.gcs.Bucket(t, initRunsBucket).Bucket.WriteAll(context.Background(), managed.MarkerObject, []byte(body), nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The wiring property (spec §8.5): the gate is read BEFORE the step writes, and
+// the one shape that can witness it is the same run in two worlds. The plan,
+// the session and the command line are the same; the only thing that moves is
+// what the two marks say — and the write's very existence moves with them. A
+// command that wrote first and asked afterwards, or that asked only where a
+// clean answer was already in hand, cannot pass both halves.
+//
+// The three worlds that write nothing are the three ways a mark is not the
+// fact: the object gone, the label gone, and the object present but unreadable.
+// The last is the read blip M6's review binds this to (a transient GCS or CRM
+// failure must fail closed and never read as "not managed"), and all three are
+// the zero verdict's own answer: today's refusal, in the session's own words.
+func TestUpdateReadsTheGateBeforeAnyWrite(t *testing.T) {
+	const additive = "module.installation.google_service_account.scheduler"
+
+	t.Run("both marks, and the step writes", func(t *testing.T) {
+		r := updateManagedRig(t)
+		updating(t, r)
+		r.setPlan(t, change(additive, "create"))
+
+		got, err := updateRun(t, r, "update", "--yes")
+		if !strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
+			t.Fatalf("the step the gate admitted did not say so (err %v):\n%s", err, got)
+		}
+		if n := len(r.ran(t, "apply")); n == 0 {
+			t.Fatalf("the gate admitted the plan and the step applied nothing:\n%s", got)
+		}
+		// The read is what the write hangs on, and it is this run's own.
+		if n := markReads(r); n == 0 {
+			t.Error("the run applied a plan without ever reading the runs bucket's managed marker: the write is not gated on the read")
+		}
+		if recs := audits(t, r); len(recs) != 1 || recs[0].Verdict != managedmode.AuditAdmitted {
+			t.Errorf("the admitted step left %+v, want one admitted record", recs)
+		}
+	})
+
+	// The two worlds in which the marks are not the fact, one half each: the
+	// step writes nothing, and the session reads the refusal it always read.
+	for _, tc := range []struct {
+		name  string
+		world func(t *testing.T, r *initRig)
+	}{
+		{"no object", func(t *testing.T, r *initRig) {
+			r.markedRuns(t, initProjectName, initProject)
+			labelled(r.crm, initProject)
+		}},
+		{"no label", func(t *testing.T, r *initRig) {
+			r.markedRuns(t, initProjectName, initProject)
+			theMarkerObject(t, r, initProject)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := updateRig(t)
+			tc.world(t, r)
+			t.Setenv("CLAUDECODE", "1")
+			isolateGateCredentials(t)
+			updating(t, r)
+			r.setPlan(t, change(additive, "create"))
+
+			got, err := updateRun(t, r, "update", "--yes")
+			if n := len(r.ran(t, "apply")); n != 0 {
+				t.Errorf("%d terraform apply(s) ran in a session whose gate was never opened:\n%s", n, got)
+			}
+			if !strings.Contains(got, initflow.AgentRefusal("CLAUDECODE")) {
+				t.Errorf("the session did not read the refusal it has always read:\n%s", got)
+			}
+			if strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
+				t.Errorf("the step proceeded on a mark that is not the fact:\n%s", got)
+			}
+			if recs := audits(t, r); len(recs) != 0 {
+				t.Errorf("a step nothing judged left %+v: the record is the gate's", recs)
+			}
+			if err == nil {
+				t.Error("the run exited 0 with the step left for the user")
+			}
+		})
+	}
+
+	// And the third way a mark is not the fact, which is M6's own bind (a
+	// transient read that fails must fail closed): the object is there and the
+	// read of it answers 5xx. Nothing is applied — the run STOPS on the read
+	// rather than reading the failure as "not managed" and going on.
+	t.Run("the object cannot be read", func(t *testing.T) {
+		r := updateRig(t)
+		r.managedRuns(t, initProjectName, initProject)
+		r.gcs.RefusePath("managed.json", http.StatusInternalServerError, "INTERNAL", "", "backend error")
+		t.Setenv("CLAUDECODE", "1")
+		isolateGateCredentials(t)
+		updating(t, r)
+		r.setPlan(t, change(additive, "create"))
+
+		got, err := updateRun(t, r, "update", "--yes")
+		if err == nil {
+			t.Fatalf("a mark that could not be read was read as an answer:\n%s", got)
+		}
+		if n := len(r.ran(t, "apply")); n != 0 {
+			t.Errorf("%d terraform apply(s) ran while the marks could not be read:\n%s", n, got)
+		}
+		if strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
+			t.Errorf("the step proceeded on a read that failed:\n%s", got)
+		}
+		if !strings.Contains(got, "could not be read") {
+			t.Errorf("the run does not say that the read is what stopped it:\n%s", got)
+		}
+		if recs := audits(t, r); len(recs) != 0 {
+			t.Errorf("a step nothing judged left %+v: the record is the gate's", recs)
+		}
+	})
+}
+
+// A person's own run pays for the gate in nothing at all: the gate is
+// consulted only in a coding agent's session (M6's bind), so an owner's
+// terminal on an unmanaged project keeps every behaviour it had — --yes covers
+// what it always covered — and no record is written about a decision this
+// design never made.
+//
+// The count of reads is where "nothing at all" is measured. One call names the
+// marker object in a person's run, and it is the installation's own managed-fact
+// read, which every run has always made while planning (init_managed.go); the
+// gate's own read would be a second. A change that makes an owner's run read
+// the mark twice — or that makes the gate read it in the session it must not be
+// read in — fails here.
+func TestUpdateManagedLeavesAnOwnersRunAlone(t *testing.T) {
+	const additive = "module.installation.google_service_account.scheduler"
+	r := updateRig(t)
+	r.markedRuns(t, "", "") // the runs bucket, and no mark of any kind in it
+	updating(t, r)
+	r.setPlan(t, change(additive, "create"))
+
+	got, err := updateRun(t, r, "update", "--yes")
+	if err != nil {
+		t.Fatalf("an owner's run on an unmanaged project failed: %v\n%s", err, got)
+	}
+	if n := len(r.ran(t, "apply")); n == 0 {
+		t.Errorf("--yes stopped covering the installation step:\n%s", got)
+	}
+	if n := markReads(r); n != 1 {
+		t.Errorf("an owner's run read the managed marker %d time(s), want the one read the installation has always made: the gate costs an owner's session a read it never had", n)
+	}
+	if strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
+		t.Errorf("a person's run printed the coding agent's own sentence:\n%s", got)
+	}
+	if recs := audits(t, r); len(recs) != 0 {
+		t.Errorf("an unmanaged project left %+v: a record is about a managed project's step (D1025)", recs)
+	}
+}
+
+// The secrets stage is never admitted (§3.2), whatever the project is: a step
+// whose whole subject is a secret the user types has nothing a gate could read
+// — no plan, no digest, no rule — so the gate does not name it, and a coding
+// agent's session reads the route it always read. This is the gate's own
+// narrowing (D1011's never-list) and the reason the map has no entry for it.
+func TestUpdateManagedNeverAdmitsTheSecretsStage(t *testing.T) {
+	if gatedStages[initflow.Secrets] {
+		t.Fatal("the gate names the secrets stage: a step whose document is a secret has nothing the gate could judge")
+	}
+	spy := &readerSpy{Reader: strings.NewReader("")}
+	r := newSecretsRig(t, bitbucketOrigin, spy)
+	t.Setenv("CLAUDECODE", "1")
+	// The gate open and the project managed: the state a run is in when it
+	// reaches this stage, so what the stage does here is the stage's own doing
+	// and not the gate's absence.
+	r.e.r.gate = &initGate{read: true, managed: true}
+	r.e.r.o.door = updateDoor.name
+
+	res, err := r.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spy.read || r.store.setCalls() != 0 {
+		t.Fatalf("the secrets stage read stdin (%v) or stored a secret (%d sets) with the gate open", spy.read, r.store.setCalls())
+	}
+	if stateOf(res, initflow.Secrets) != initflow.NeedsYou || len(res.Left) != 1 {
+		t.Fatalf("the secrets stage is %s with %d step(s) left, want the owner's own step", stateOf(res, initflow.Secrets), len(res.Left))
+	}
+	if !strings.Contains(resultJSON(t, res), "your own terminal") {
+		t.Errorf("the step left for the owner does not name the route a coding agent can take:\n%s", resultJSON(t, res))
+	}
+	if len(r.store.secrets) != 0 {
+		t.Errorf("a secret was stored: %v", r.store.secrets)
+	}
+}
+
+// The two stages that create an identity and provision money-bearing
+// infrastructure stay the owner's: both are `noYes` in the stage table, neither
+// is in the gate's own set, and on this door the compute stage is not even
+// reachable — `fugaro update` does not take --provision-batch at all. A clean
+// plan verdict cannot reach either of them (D1026: the gate narrows, and a
+// stage --yes never covered has nothing to narrow).
+func TestUpdateManagedLeavesCredentialsAndComputeOwnerRun(t *testing.T) {
+	for _, name := range []string{initflow.Credentials, initflow.Compute} {
+		if initflow.YesCovers(name) || initflow.RunCovers(name) {
+			t.Errorf("--yes covers the %s stage: it is money or permanent", name)
+		}
+		if gatedStages[name] {
+			t.Errorf("the gate names the %s stage: a step with no plan and no confirmation class the gate covers is never an agent-runnable one", name)
+		}
+	}
+
+	r := updateManagedRig(t)
+	updating(t, r)
+	got, err := updateRun(t, r, "update", "--yes", "--provision-credentials")
+	if err == nil {
+		t.Fatalf("a coding agent's session provisioned the credentials service:\n%s", got)
+	}
+	if !strings.Contains(got, initflow.AgentRefusal("CLAUDECODE")) {
+		t.Errorf("the credentials stage was not refused in the agent's own words:\n%s", got)
+	}
+	if !strings.Contains(got, "[needs you]  "+initflow.Credentials) {
+		t.Errorf("the run did not reach the credentials stage, so this is another stage's refusal:\n%s", got)
+	}
+	if !strings.Contains(got, "--provision-credentials") {
+		t.Errorf("the step left for the owner does not name the flag that runs it:\n%s", got)
+	}
+
+	// The compute stage is not this door's to reach at all: the flag is
+	// setup's, and the refusal says so before anything runs.
+	r2 := updateManagedRig(t)
+	updating(t, r2)
+	got, err = updateRun(t, r2, "update", "--yes", "--provision-batch")
+	if err == nil || !strings.Contains(got, "fugaro update does not take --provision-batch") {
+		t.Errorf("this door took --provision-batch (err %v):\n%s", err, got)
+	}
+	if n := len(r2.ran(t, "apply")); n != 0 {
+		t.Errorf("the run applied %d plan(s) on its way to refusing the compute stage", n)
 	}
 }
