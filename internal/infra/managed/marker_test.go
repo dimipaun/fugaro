@@ -1395,6 +1395,58 @@ locals {
 			}
 		})
 	}
+	// The project's catalog check job's account (D1148): its grant set is
+	// pinned whole by runAccountGrants, which is the only thing that can be.
+	// A tftest cannot enumerate a module's resources, so a seventh grant
+	// resource beside the six is invisible to it; this is the mechanical half
+	// that catches one — the mutation adds a project-level role to that very
+	// account, and the finding has to name the grant and the object this whole
+	// test exists for, not merely be some other refusal.
+	t.Run("a seventh grant to the catalog check account", func(t *testing.T) {
+		files := moduleFiles(t)
+		files["modules/installation/catalogcheck.tf"] += `
+resource "google_project_iam_member" "catalog_check_viewer" {
+  count = var.catalog_check == null ? 0 : 1
+
+  project = var.project
+  role    = "roles/viewer"
+  member  = google_service_account.catalog_check[0].member
+}
+`
+		scan := scanModuleIAM(files)
+		if !slices.ContainsFunc(scan.findings, func(f string) bool {
+			return strings.Contains(f, "catalog_check_viewer") && strings.Contains(f, MarkerObject)
+		}) {
+			t.Errorf("a seventh grant to the catalog check account is not refused for what it reaches:\n%s", strings.Join(scan.findings, "\n"))
+		}
+	})
+	// And the other direction: the set is exact, so dropping one of the six
+	// leaves an allowlist entry that no module grants any more, which the scan
+	// reports rather than keeping the reviewed row as if it were still there.
+	t.Run("a reviewed catalog check grant that is gone", func(t *testing.T) {
+		files := moduleFiles(t)
+		path := "modules/installation/catalogcheck.tf"
+		mutated := strings.Replace(files[path],
+			`"catalog_check_log_writer" {
+  count = var.catalog_check == null ? 0 : 1
+
+  project = var.project
+  role    = "roles/logging.logWriter"`,
+			`"catalog_check_log_writer" {
+  count = var.catalog_check == null ? 0 : 1
+
+  project = var.project
+  role    = "roles/logging.viewer"`, 1)
+		if mutated == files[path] {
+			t.Fatal("the mutation changed nothing: this fixture is not reading the grant it means to drop")
+		}
+		files[path] = mutated
+		if !slices.ContainsFunc(scanModuleIAM(files).findings, func(f string) bool {
+			return strings.Contains(f, "which no module grants any more")
+		}) {
+			t.Error("dropping a reviewed grant leaves its allowlist row standing, so the row would admit the grant coming back unreviewed")
+		}
+	})
 	// Task 3.0's rule fires by itself, and not only beside the allowlist.
 	// Every mutation above is also a new grant to a non-people member, which
 	// runAccountGrants refuses whatever it grants — so a mutation being

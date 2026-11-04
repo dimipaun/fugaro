@@ -5,18 +5,28 @@
 # the job exists at all: a scheduled job that decides every entry of a
 # project's image catalog and submits a build per entry that fires is a job
 # that can move every repository's images, so the set of things its account may
-# reach is the thing to read. The second run below pins that set as an exact
-# set — the five grants this module makes (the sixth, the actAs that lets a
-# build run as the entry's own repository's account, is the repository root's:
-# roots/repo/tests/catalog_check.tftest.hcl) — and a sixth grant of any role,
-# on any of these four types, to this account fails it.
+# reach is the thing to read. The second run below pins what the plan carries,
+# grant by grant: the five grants this module makes — role, member and
+# condition title — the argv the job runs, the account it runs as, the spec in
+# its environment, the paused schedule and the account Scheduler calls it as,
+# and the alert's filter. The sixth grant, the actAs that lets a build of an
+# entry run as the entry's own repository's account, is the repository root's
+# (roots/repo/tests/catalog_check.tftest.hcl).
+#
+# The exact-set half is NOT here, and cannot be: a tftest cannot enumerate a
+# module's resources, so a seventh grant resource beside these five is
+# invisible to it. That gate is internal/infra/managed's scan, which pins every
+# grant to a member that is not a set of people whole (runAccountGrants) and
+# reports both a grant no row holds and a row no module grants any more;
+# TestTheModuleScanCatchesTheMutations adds a seventh grant to this account and
+# drops one of the six, so both halves of that gate are shown firing rather
+# than assumed.
 #
 # The names, the argv, the two IAM condition titles and the alert filter are
-# the ones internal/infra writes (gcp.CatalogCheckJobName, gcp.CatalogRead-
-# ConditionTitle, gcp.CatalogRecordsConditionTitle, the mode's argv): the
-# run that asserts them is the run that would have to move if any of those
-# changed, and deploy/terraform's own tests pair the titles with the functions
-# that build them.
+# the ones internal/infra writes (gcp.CatalogReadConditionTitle,
+# gcp.CatalogRecordsConditionTitle, the mode's argv): the run that asserts them
+# is the run that would have to move if any of those changed, and the Go tests
+# beside them pin the same bytes from the side that builds them.
 
 mock_provider "google" {}
 
@@ -76,8 +86,8 @@ run "no_catalog_check_job_without_one" {
     error_message = "without catalog_check the installation must declare no catalog check resource at all"
   }
   assert {
-    condition     = output.catalog_check_service_account == null && output.catalog_check_job == null
-    error_message = "without catalog_check the two outputs must be null, which is what a repository root reads as `grant nobody actAs`"
+    condition     = output.catalog_check_service_account == null
+    error_message = "without catalog_check the output must be null, which is what a repository root reads as `grant nobody actAs`"
   }
   assert {
     condition     = toset(keys(google_monitoring_alert_policy.image)) == toset(["check", "job"])
