@@ -341,6 +341,13 @@ func runImageAdd(cmd *cobra.Command, o cloudOptions, name string, tags []string,
 	if err != nil {
 		return err
 	}
+	// Refused before the entry is written, and with the sentence the build
+	// itself would give: the operator hears it here rather than at `fugaro
+	// image build`, which is after the typed confirmation for a billable
+	// build.
+	if err := catalogUnfetchable(onDisk, e); err != nil {
+		return err
+	}
 	// A file that names no catalog states the whole catalog when it is
 	// written: under the keep rule (D1140) the publisher takes this file's
 	// catalog over the published one, so the first entry written here
@@ -540,6 +547,28 @@ func catalogPointedAt(ctx context.Context, lc *localcfg.Config, cat *config.Cata
 		}
 	}
 	return "", unasked, nil
+}
+
+// catalogUnfetchable refuses a dockerfile source whose repository is on a
+// provider this installation cannot read a file out of (catalog.Readable),
+// with the sentence the build gives (catalog.UnreadableRefusal). It is
+// asked where a dockerfile source is accepted -- `fugaro image add` writes
+// one, and `fugaro validate` reports one already in the catalog -- so the
+// limit is met while the operator is still writing the entry instead of at
+// the build, after the confirmation for a billable one.
+//
+// Only a provider this machine's config names is judged: a repository the
+// config does not list has no kind here (the build takes one from that
+// repository's own checkout), and nothing is refused on a guess.
+func catalogUnfetchable(lc *localcfg.Config, e config.Entry) error {
+	if lc == nil || e.Source.Kind != config.SourceDockerfile {
+		return nil
+	}
+	r, ok := lc.RepoFor(e.Source.Repo)
+	if !ok || r.Provider == "" || catalog.Readable(r.Provider) {
+		return nil
+	}
+	return catalog.UnreadableRefusal(e, r.Provider)
 }
 
 // catalogWith applies edit to a copy of the catalog the config has and

@@ -3115,3 +3115,33 @@ func TestReviewFloorUnpublishableWarns(t *testing.T) {
 		t.Fatalf("floor warnings = %q, want none for a floor this installation can publish (stderr %q)", got, errOut)
 	}
 }
+
+// TestValidateReportsACatalogEntryItsProviderCannotFetch: the catalog is this
+// installation's, and a dockerfile source on a provider with no reader is a
+// build that fails after the operator has confirmed a billable one, so it is
+// reported here instead — while the entry can still be changed. A repository
+// the config does not name has no kind on this machine and is not judged.
+func TestValidateReportsACatalogEntryItsProviderCannotFetch(t *testing.T) {
+	lc := &localcfg.Config{
+		Repos: map[string]localcfg.Repo{
+			"acme/old": {Provider: "gitlab"},
+			"acme/app": {Provider: "bitbucket"},
+		},
+		ImageCatalog: &config.Catalog{Entries: []config.Entry{
+			{Name: "tools", Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/old", Path: "docker/tools.Dockerfile"}},
+			{Name: "app", Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/app", Path: "docker/app.Dockerfile"}},
+			{Name: "unlisted", Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/other", Path: "docker/other.Dockerfile"}},
+			{Name: "inline", Source: config.Source{Kind: config.SourceInline, Inline: "FROM scratch\n"}},
+		}},
+	}
+	ps := catalogSourceProblems(lc)
+	if len(ps) != 1 {
+		t.Fatalf("catalogSourceProblems = %+v, want one problem", ps)
+	}
+	if ps[0].Path != "image_catalog.entries[0].source.repo" || !strings.Contains(ps[0].Message, "cannot read a file out of acme/old") {
+		t.Errorf("the problem = %+v, want the entry's repo and the build's own refusal", ps[0])
+	}
+	if ps := catalogSourceProblems(nil); len(ps) != 0 {
+		t.Errorf("catalogSourceProblems with no config = %+v, want none", ps)
+	}
+}
