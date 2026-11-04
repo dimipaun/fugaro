@@ -1,8 +1,13 @@
 # Launching a run for a repository without its checkout: spec
 
-**Status: design only.** Nothing here is implemented. The numbered decisions this file leans on
-(**D901**–**D919**) are in [reconciliation.md §3](reconciliation.md), each with the cost of the
-alternative; where this file and that one disagree, that one wins.
+**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task approved.**
+
+The numbered decisions this file leans on (**D901**–**D919**) are in
+[reconciliation.md §3](reconciliation.md), each with the cost of the alternative and the owner's answer
+of 2026-11-04 beside it; where this file and that one disagree, that one wins. **The answer this file
+is written around is D902's, and it is not the design's recommendation: the read is made through the
+installation's credentials service, as the operator themselves, so the CLI holds no App key and reads
+no environment variable.**
 
 ## 1. The decision, and what it reads today
 
@@ -31,13 +36,14 @@ from the checkout in the working directory alone:
 Step 1 is the whole problem: without a checkout, the launcher answers "no" to a question that has an
 answer, and the answer is one Cloud Run job's name.
 
-**What the tree does today, and what PR #1477 changes.** On `main` at `432623d9c`, a `co == nil`
-launch returns `(nil, nil)` — the per-repository job, "the job it has always had" — and
-`docs/checkout.md`'s "Known gaps" records the consequence: a `checkout: clone` workflow launched
-with `--repo X` from somewhere else is judged baked. **PR #1477 (open, not on `main`) replaces that
-`return nil, nil` with a refusal** when the project's policy carries at least one profile. The
-refusal is what this spec answers; it is not in the tree this design was reconciled against, and
-`reconciliation.md` F1 records that.
+**What the tree does today.** #1477 has **merged**: a `co == nil` launch returns a **refusal** when the
+project's published policy carries at least one profile, and `(nil, nil)` — the per-repository job,
+"the job it has always had" — only when it carries none. That refusal is what this spec answers, and
+`reconciliation.md` F1 records the state it is in. Its message names both causes of the missing
+checkout ("the working directory is not `X`'s checkout, or its `fugaro.yaml` could not be read") but
+gives one way out for both, and `docs/checkout.md`'s "Known gaps" records the consequence: the console
+has nowhere else to launch from (F9), so on an installation whose policy defines a profile every
+console launch of every repository is refused.
 
 ## 2. Three sources, in this order, and no fourth
 
@@ -49,7 +55,7 @@ not its job, not its messages, not its cost.
 | --- | --- | --- | --- |
 | 1 | The checkout's **object database** at the ref: `git cat-file blob <at>:fugaro.yaml`, the reader `checkoutFugaroYAMLAtRef` already is, promoted from the auth axis to the whole document | A checkout of the repository exists in the working directory (so `checkoutRoot` names one), and the ref's commit carries the file — even when the working tree has another branch checked out, or the file is not in the tree at all | One local `git` call, no network, no credential |
 | 2 | The **job the run being continued recorded**: `runstore.Launch.Job` from the run's own `launch.json`, backfilled from `result.json`'s execution when the CLI died before writing one — `existingLaunch` (`internal/cli/run.go`) already does exactly this backfill | `--retry`, and a follow-up (`--pr`) whose previous run has a launch record | One object read in the runs bucket, which the command already makes |
-| 3 | The **forge**: `fugaro.yaml` at `spec.Ref` of `spec.Repo`, read with the installation's own App credential (§5) | A human session, no checkout of the repository anywhere, and the repository's provider is one a shared job serves (`infra.SharedJobProvider`, today `github`) | One Secret Manager read, one installation-token mint, one API call |
+| 3 | The **forge**: `fugaro.yaml` at `spec.Ref` of `spec.Repo`, read with a read-only installation token the installation's **credentials service** mints for the operator as a person (§5) | A human session, no checkout of the repository anywhere, the installation has opted into the credentials service, and the repository's provider is one a shared job serves (`infra.SharedJobProvider`, today `github`) | One credentials-service call — audited, and answered only for a repository the installation holds — and one API call |
 | — | **The refusal**, in the shape #1477 gives it, naming the cause and the way out (§7) | None of the three answers | — |
 
 Two rules hold the order together.
@@ -60,7 +66,7 @@ runner reading it cannot disagree. It also fixes a case today's code gets wrong 
 has nothing to do with the console: `checkoutParse` returns `nil` both when there is no checkout
 **and when there is one whose working tree has no `fugaro.yaml`** (its `readFugaroYAML` error path
 leaves the result zero). An operator in a checkout of `X`, on a branch whose tree predates the file,
-is told today (and by #1477) to "run it from `X`'s checkout" — which is where they are.
+is told today (by the merged refusal) to "run it from `X`'s checkout" — which is where they are.
 
 **Source 3 is the last resort and only where a shared job is possible at all.** For a repository
 whose provider no shared job serves, there is nothing to learn: step 4 above keeps the
@@ -69,6 +75,13 @@ repository's provider is known without a checkout — `repoSlug` has already ref
 local config does not name it. So the launch without a checkout proceeds on the per-repository job
 with **no read and no credential**, and that is not a guess: it is the same answer the checkout path
 gives for the same repository. (Narrowing, D901.)
+
+**Source 3 is also bounded by the installation's own opt-in, and that is the cost of the owner's answer
+to D902.** The credentials service ships dormant — an installation opts in with `fugaro update
+--provision-credentials`, the owner's own command — and making the read the service's means the
+launcher can read nothing where there is no service: those launches keep the tree's refusal, with the
+checkout as the way out (§7, and reconciliation O4). It is not a regression — the tree refuses them
+today — and it is the trade the answer makes for a launcher that holds no App key at all.
 
 **There is no fourth source, and in particular there is no guessing `standard`.** The project layer
 can carry a workflow's `checkout:` kind (`docs/project-layer.md`, the key's layers are `profile,
@@ -127,40 +140,54 @@ from outside `X`'s checkout gains nothing over `fugaro run --ref <their branch>`
 
 ## 5. The credential
 
-Source 3 is the only part of this design that holds a provider credential in the launcher's process,
-and it uses **the installation's existing GitHub App**, read the way the tree already reads it for
-`--check-github-app` and `project sync --github-app-key`:
+Source 3 is the one part of this design that puts a provider credential in the launcher's process, and
+**the owner's answer to D902 is that it is not the installation's own**: the read is made through the
+installation's **credentials service**, as the person running the command. The design's own
+recommendation was the App's key, read as `--check-github-app` reads it, and the owner did not take it.
 
-- **What it reads:** the App's private key from Secret Manager with the operator's own credentials
-  (`gcp.Secrets.Access`), after a one-line notice to stderr, in memory only, never printed, logged,
-  passed as an argument or put in an error — the rules `internal/cli/githubapp.go`'s header already
-  states, reused rather than restated.
-- **Which App:** `repos.<repo>.github_app_id` (the operator's local config) and the App key secret
-  `config.GitHubAppKeySecret`, project-wide or per repository, exactly as `--check-github-app`
-  resolves them.
-- **Which token:** an installation token minted for `spec.Repo` with the **narrowest** permission
-  set this read needs — `contents:read` and `metadata:read`, a new named set in
-  `internal/gitprov/github` beside `RunTokenPermissions` and `CoordinatorTokenPermissions`. **Not**
-  the run's own set, which is write-capable: a launcher reading one file must not hold a token that
-  could push. The token is not cached anywhere beyond the call, and nothing else is fetched with it.
+- **What the launcher presents:** its own Google ID token, minted with `gcloud auth
+  print-identity-token`. The service verifies it against the installation's own **people list**
+  (`internal/credsvc`'s `VerifyPersonCaller`, the class the read mints admit), and a caller who is not
+  one of them is refused there, by name, before anything is signed.
+- **What the service does:** mints a **read-only** GitHub installation token for exactly one
+  repository, with the service's own permission set — `github.CoordinatorTokenPermissions`, `contents`
+  and `pull requests`, read — from the App key the service's bundle holds. **The launcher never holds
+  that key:** no secret is read, no key material enters the process, and the client has no field in
+  which to ask for another permission (`internal/gitprov/github/serviceread.go`). Every mint writes one
+  audit line the launcher cannot suppress (`internal/credsvc`'s `PurposeGitHubRead`: the person who
+  asked and the repository it was for).
+- **Which repository:** `spec.Repo`, and only it. The service resolves the name through the
+  installation's own inventory and refuses a repository it does not hold, so a refusal to install the
+  App on a repository is a refusal to read it.
+- **Which App:** the App ID travels in the request body and is not a secret — the same number the
+  platform passes to a job as `FUGARO_GITHUB_APP_ID` — and the launcher takes it from the project's own
+  recorded value, `repos.<repo>.github_app_id`. **No environment variable is read**, by the launcher or
+  by the service.
+- **Where the service is:** the installation's published `credentials_service.url` (`internal/localcfg`),
+  the block the credentials stage writes and the shared config carries to every machine of the
+  installation. An installation without that block has no read at all (§2, §7).
 - **One request:** `GET /repos/{owner}/{repo}/contents/fugaro.yaml?ref={spec.Ref}`, through the
   replaceable `githubAPIURL`/`githubAPIClient` seams the package already has, so a test replays it
-  (`internal/gitprov/httpfixture`).
-- **Refused in a coding agent's session, before anything is read** — `refuseKeyReadInAgent`, with
-  the launch named where the flag is named, so the operator reads the same rule in the same words and
-  the value never reaches an agent's process. There, the launch refuses exactly as #1477 refuses it
-  today, and an agent's way out is the right one: run it from the repository's checkout.
-- **No new secret, no new stored token, no new principal, no new IAM binding.** The operator already
-  needs `secretmanager.versions.access` on that secret to run `--check-github-app`; a console launch
-  now uses it on a path that does not pass a flag (D902).
+  (`internal/gitprov/httpfixture`). The token is held for that call and stored nowhere. The mint's
+  client already exists (`github.ServiceReadTokens`, a `gitprov.TokenSource`); what does not exist is
+  the file-at-a-ref reader and the launcher's own person identity (reconciliation F6, F13).
+- **Refused in a coding agent's session, before anything is read** — `refuseKeyReadInAgent`, with the
+  launch named where the flag is named, exactly as `internal/cli/doctor_brokering.go` already refuses
+  the credentials service's bundle. There, the launch refuses as the tree refuses it today, and an
+  agent's way out is the right one: run it from the repository's checkout.
+- **No new secret, no new stored token, no new principal, no new IAM binding, no new operator step.**
+  The service, its people list, its bundle, its route and its audit line are all in the tree (the read
+  mint shipped in 0.18.0); the launcher is one more caller of a route that exists, and the person's own
+  identity is the credential every other command a person runs already reaches the project with. The
+  limit is where the service is not: see §2.
 
-The rejected credentials, with their costs, are D902's alternatives: the credentials service (its
-mint is bound to a `JobAccount` — `internal/credsvc` — so a launcher cannot be its caller, and
-Bitbucket has nothing there), the operator's ambient forge credential (`gh`, a git credential
-helper: Fugaro would read a person's credential out of another tool that may not exist, and
-`docs/git-providers.md`'s "the CLI holds no provider credential" would stop being true in a new
-way), and a new token the operator stores for launches (a new secret to create and rotate that
-duplicates the App).
+The rejected credentials, with their costs, are D902's alternatives, including the one this design
+recommended: the installation's **App key**, read as `--check-github-app` reads it (the launcher would
+hold an installation-wide credential, one that can mint for every repository the App serves, to read
+one file); the operator's ambient forge credential (`gh`, a git credential helper: Fugaro would read a
+person's credential out of another tool that may not exist, and `docs/git-providers.md`'s "the CLI
+holds no provider credential" would stop being true in a new way); and a new token the operator stores
+for launches (a new secret to create and rotate that duplicates the App).
 
 ## 6. Caching
 
@@ -187,9 +214,9 @@ on a job the project's policy did not choose is worse than a refusal (D905).
 
 | Case | What happens |
 | --- | --- |
-| No checkout anywhere, provider is one a shared job serves, **no permission** to read the App key secret | Refused. The message names the secret and the permission: `cannot read owner/repo-a's fugaro.yaml at main through github: ... ; the run's job is decided from that file, so this launch cannot be placed. Run it from owner/repo-a's checkout, or grant secretmanager.versions.access on <secret> and retry` |
-| No checkout, the App is **not installed** on the repository (or the mint is refused) | Refused, cause in one line (`github.CheckInstallation`'s wording already names this), same two ways out |
-| No checkout, **no network** / the forge answers 5xx | Refused, `remote(...)`'s wording for an unreachable service, same two ways out |
+| No checkout anywhere, provider is one a shared job serves, the installation has **no credentials service** (it has not opted in) | Refused. The message says so in one line and keeps the checkout as the way out: `cannot read owner/repo-a's fugaro.yaml at main as yourself: this installation has no credentials service, so the read that decides the run's job cannot be made. Run it from owner/repo-a's checkout` |
+| No checkout, the **caller is not one of the installation's people**, or the repository is **not one the installation holds** | Refused, the service's own refusal relayed (the service names both causes and never the caller's address), same way out |
+| No checkout, **no network**, or the credentials service or the forge answers 5xx | Refused, `remote(...)`'s wording for an unreachable service, same way out |
 | No checkout, the ref does not exist at the forge | Refused, naming the ref: a deleted or never-pushed branch is not a reason to read another one |
 | No checkout, the file **is there but the workflow is not**, or has no `checkout:` kind we can read | Unchanged from today: `resolveWorkflow`'s "cannot tell which workflow of `%s` to run; pass `--workflow`", and the per-repository job for anything but `clone` |
 | No checkout, the file is **not in the repository at all** | The per-repository job. A document that is not there selects no profile and no clone workflow, and the project layer cannot select a profile for it (§2). The project layer's `checkout:` kind is read as always, so a clone workflow the *layer* defines still reaches a shared job |
@@ -198,10 +225,10 @@ on a job the project's policy did not choose is worse than a refusal (D905).
 | `--retry` / `--pr` of a run that has a launch record | The recorded job (§8, D907); no read |
 | `--retry` / `--pr` of a run that never launched | Source 1, then source 3, as for any other launch |
 
-`#1477`'s message stops being the one an operator sees for the last two rows, and stops claiming
-"launched from outside `X`'s checkout" when the cause is a file the checkout does not carry. The
-message is the design's, not a cosmetic afterthought: the two causes have two different remedies,
-and the row above is the one place today's text is simply untrue.
+The tree's message stops being the one an operator sees for the last two rows, and for the launch whose
+checkout simply does not carry the file. The message is the design's, not a cosmetic afterthought: the
+merged text names both causes and then gives one way out for both, and the operator standing in the
+checkout — the row above — is the one it does not help.
 
 ## 8. `--retry` and `--pr`
 
@@ -255,7 +282,7 @@ launcher learns the document or the launch is refused.
   (`console/src/main/launch.ts`; the directory itself is `privateWorkingDirectory`,
   `console/src/main/spawn.ts`), so it is **always** outside every checkout: `checkoutRoot` returns
   `""`, `checkoutParse` returns nil, and source 3 is the only source that can answer. That is why
-  this design is not optional for the GUI — with #1477's refusal and no source 3, *every* console
+  this design is not optional for the GUI — with the merged refusal and no source 3, *every* console
   launch on an installation that has published a profile is refused, the repository the operator is
   looking at included.
 - The five-field argv schema (`--repo`, `--title=`, `--plan-task=`, `--json`, `--task-file -`) is
@@ -265,46 +292,54 @@ launcher learns the document or the launch is refused.
 - The console's launches are at the **base branch** (`--ref` is on `NEVER_REACHABLE`), so the
   document read is the base branch's, and no branch can influence a console launch (§3).
 - The console's child carries the operator's own Google identity already — it writes the task to the
-  runs bucket and starts the execution — so the Secret Manager read is a permission the operator
-  either has (they created the key through `fugaro setup`, which reads the same secret) or is told
-  about in one line (§7). D906's rejected alternative is a sixth field in the launch contract and a
+  runs bucket and starts the execution — and that is the identity the credentials service verifies a
+  person by (D902), so the read needs no new control: the operator is one of the installation's people,
+  or the service refuses the mint and the console renders that refusal (§7). Where the installation has
+  not opted into the service there is nothing to read and the launch keeps the tree's refusal (§2), so
+  D902's answer is what makes the GUI work on an installation that has. D906's rejected alternative is a sixth field in the launch contract and a
   launch-screen control, which buys nothing here: every console launch is from outside a checkout, so
   the control would be permanently on, and the console's release would have to ship before the GUI
   could launch anything at all on a migrated installation.
 
 ## 11. The effect on the refusal
 
-#1477's refusal stays, verbatim in shape, for the launches that genuinely cannot be decided, and it
-is **narrowed** in two places that need no credential: the provider no shared job serves (§2), and
-the checkout whose object database has the file (§2, source 1). Everything else is answered by a
-read the operator's own identity can make, or by the run's own record.
+#1477 is merged, so the refusal is `main`'s own behaviour, and it **stays, verbatim in shape**, for the
+launches that genuinely cannot be decided. This design **narrows** it in one place that needs no
+credential — the provider no shared job serves (§2) — and answers the rest with a read the operator's
+own identity can make through the installation's credentials service, or with the run's own record.
+**Where the installation has no credentials service that read does not exist and the refusal stands**
+(D902's cost, §2).
 
-| Launch | `main` today | #1477 | This design |
-| --- | --- | --- | --- |
-| From `X`'s checkout, `fugaro.yaml` in the tree | decided from the tree | same | same |
-| From `X`'s checkout, tree has no file, ref does | per-repository job (judged baked) | refused, message says "outside X's checkout" | decided from the checkout's objects at the ref |
-| Anywhere, no checkout of `X`, Bitbucket, profiles published | per-repository job | refused | per-repository job — no shared Bitbucket job exists |
-| Anywhere, no checkout of `X`, GitHub, profiles published, human session | per-repository job (the stale judgement `docs/checkout.md` records) | refused | decided by the forge read at the ref |
-| The same, coding agent's session | per-repository job | refused | refused, `refuseKeyReadInAgent`'s wording added |
-| Anywhere, no checkout, **no profiles published** | per-repository job | launch proceeds | unchanged |
-| The console's launch of the repository it is showing | per-repository job (wrong) | refused (broken GUI) | decided by the forge read at the ref |
-| `--retry` / `--pr` outside the checkout | per-repository job (wrong when the run was on a shared job) | refused | the run's recorded job |
-| The read cannot be made (permission, network, no installation) | per-repository job | refused | refused, cause and both ways out named |
+| Launch | `main` (the merged refusal) | This design |
+| --- | --- | --- |
+| From `X`'s checkout, `fugaro.yaml` in the tree | decided from the tree | same |
+| From `X`'s checkout, tree has no file, ref does | refused, one way out and it is where the operator is | decided from the checkout's objects at the ref |
+| Anywhere, no checkout of `X`, Bitbucket, profiles published | refused | per-repository job — no shared Bitbucket job exists |
+| Anywhere, no checkout of `X`, GitHub, profiles published, human session, installation has a credentials service | refused | decided by the read through the service, at the ref |
+| The same, installation has **no** credentials service | refused | refused, unchanged, naming the checkout |
+| The same, coding agent's session | refused | refused, `refuseKeyReadInAgent`'s wording added |
+| Anywhere, no checkout, **no profiles published** | launch proceeds | unchanged |
+| The console's launch of the repository it is showing | refused (broken GUI) | decided by the read at the ref, where the installation has a service |
+| `--retry` / `--pr` outside the checkout | refused | the run's recorded job |
+| The read cannot be made (no service, network, not a person, repository not held) | refused | refused, the cause and the way out named |
 
 ## 12. Threat model
 
-**Assets.** The GitHub App's private key (an installation-wide credential: every repository the App
-is installed on, read and write). The run's own credential. The published policy and its admission
-lists. The budget.
+**Assets.** The GitHub App's private key (an installation-wide credential: every repository the App is
+installed on, read and write) — **which this design keeps out of the launcher's process altogether**
+(D902's answer). The credentials service's bundle, which this design never reads. The run's own
+credential. The published policy and its admission lists. The budget.
 
-**The read's authority.** It is made with the operator's own Google identity, on their machine, for a
-repository their installation serves, and it carries the narrowest installation token GitHub can
-mint (`contents:read`, `metadata:read`) — never the run's write-capable set, never the repository's
-pushed credential. The key is in memory for the duration of the call and is never printed, logged,
-put in an argument, put in an error, or written to disk; the token is not stored. In a coding agent's
-session the read does not happen at all, so the key never enters an agent's process — the rule
-`internal/cli/githubapp.go` states and `refuseKeyReadInAgent` enforces for the tree's two other
-readers.
+**The read's authority, as the owner answered it (D902).** It is made with the operator's own Google
+identity, on their machine, and it is a call to the installation's credentials service: the service
+verifies that identity against the installation's own people list, resolves `spec.Repo` through the
+installation's inventory, mints a **read-only, repository-scoped** installation token from the key in
+its bundle, and writes one audit line for the act. So the launcher holds no App key, reads no secret
+and reads no environment variable; what it holds, for the duration of one API call, is a token that
+can only read one repository — never the run's write-capable set, never the repository's pushed
+credential. In a coding agent's session the read does not happen at all, so the token is never minted
+for one — `refuseKeyReadInAgent`, the shape `internal/cli/doctor_brokering.go` already applies to the
+credentials service's bundle.
 
 **What a hostile branch gains: nothing it does not have.** The document is read at `spec.Ref`, which
 is the ref the run checks out and the ref the runner will re-read; the checkout path already places
@@ -316,23 +351,30 @@ not admitted to.
 
 **What the launcher gains.** Exactly one new power: it can read one file of a repository the
 installation serves, where before it could read only a checkout's objects. The confused-deputy angle
-is pinned to `spec.Repo` and `spec.Ref`: the token is minted *for that repository*, so a refusal to
-install the App on it is a refusal to read it, and nothing in the request can name another
-repository.
+is pinned to `spec.Repo` and `spec.Ref`: the service mints *for that repository*, resolving the name
+through its own inventory, so a repository the installation does not hold is a refusal to read it, and
+nothing in the request can name another repository. The power is not the App's: the key stays where it
+already was, in the service's bundle.
 
 **What must never happen**, and is a test in the plan:
 
-- The launcher never uses the run's own token set for this read.
+- **The launcher never holds the App key** (D902's answer): no Secret Manager read for it, no key
+  material, no environment variable, and no path in which a key could reach the process the job
+  decision runs in.
+- The launcher never uses the run's own token set for this read, and asks for no permission at all:
+  the mint's set is the service's.
 - The launcher never fetches into a checkout: `checkoutFugaroYAMLAtRef` does not fetch today
   ("a fetch is a network write into a repository this command does not own"), and the forge read is
   an API call that does not touch the checkout either.
 - The fetched document is never written to disk, and no document is reused across commands (§6).
-- The launcher never falls back to the per-repository job when a read **fails**: a read that cannot
-  be made — no permission, no network, no installation, a ref the forge does not have — refuses, in
-  §7's first four rows. The per-repository job is the outcome in the two rows below them, and it is
-  a decision rather than a fallback: there the document *was* read (or the ref's commit genuinely
-  carries none, which selects nothing), and nothing in it selects a shared job.
+- The launcher **never falls back to the per-repository job when a read fails** (the owner's answer to
+  D905): a read that cannot be made — no credentials service, no network, a caller the service does not
+  know, a repository it does not hold, a ref the forge does not have — **refuses**, in §7's refusal
+  rows. The per-repository job is the outcome only where the document *was* read, or where the ref's
+  commit genuinely carries none and selects nothing, and it is a decision there rather than a fallback:
+  nothing in such a document selects a shared job.
 - No credential value, token or key appears in an error, a log line or an audit line — the refusal
-  names the secret, never its content.
+  names what was missing (the installation's credentials service, the person, the repository), never a
+  value.
 - The run's recorded job is treated as data from the runs bucket, and its only effect is to name a
   job the runner then re-checks; a name the project did not deploy is refused at run start.
