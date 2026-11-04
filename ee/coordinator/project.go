@@ -97,6 +97,18 @@ type Project struct {
 	// source, because the service mints for ONE repository per call (G11) and
 	// the token it returns must be checked against the repository that asked.
 	ReadTokens func(repo string) gitprov.TokenSource
+	// GitHubReadTokens is where a GitHub repository's token comes from when the
+	// installation's credentials service holds the App's key (the person's
+	// class): the service mints a read-only installation token for the one
+	// repository named, and the process that reads holds no App key at all.
+	//
+	// Nil is a project whose GitHub read is its own — the coordinator job, which
+	// holds the App's key and mints its own read-only token — and the reader
+	// then mints through Mint exactly as it did before the service existed. It
+	// is a function of the repository for the same reason ReadTokens is: the
+	// service mints for ONE repository per call and the answer is checked
+	// against the repository that asked.
+	GitHubReadTokens func(repo string) gitprov.TokenSource
 	// Redact removes the credential values an Opener returned from text
 	// before that text is reported in an error (agent.Redact). Required, and
 	// a missing one panics rather than being skipped: a provider's own error
@@ -174,7 +186,8 @@ func (p *Project) PullRequests(ctx context.Context, kind, repo string, numbers [
 		return nil, nil
 	}
 	mustRedact(p.Redact)
-	prov, secrets, err := p.Open(ctx, kind, repo, p.sourceFor(kind, repo))
+	src := p.sourceFor(kind, repo)
+	prov, secrets, err := p.Open(ctx, kind, repo, src)
 	if err != nil {
 		return nil, redactedError{err: err, text: p.Redact(err.Error(), secrets)}
 	}
@@ -210,7 +223,7 @@ func (p *Project) PullRequests(ctx context.Context, kind, repo string, numbers [
 			continue
 		}
 		if partial == nil {
-			secrets = append(secrets, p.minted(repo)...)
+			secrets = append(secrets, p.held(repo, src)...)
 			partial = &PartialError{err: redactedError{err: err,
 				text: fmt.Sprintf("reading pull request %d of %s: %s", numbers[i], repo, p.Redact(err.Error(), secrets))}}
 		}
@@ -249,13 +262,14 @@ func (p *Project) PullRequest(ctx context.Context, kind, repo string, number int
 		return PRDocument{}, err
 	}
 	mustRedact(p.Redact)
-	prov, secrets, err := p.Open(ctx, kind, repo, p.sourceFor(kind, repo))
+	src := p.sourceFor(kind, repo)
+	prov, secrets, err := p.Open(ctx, kind, repo, src)
 	if err != nil {
 		return PRDocument{}, redactedError{err: err, text: p.Redact(err.Error(), secrets)}
 	}
 	info, err := prov.PullRequest(ctx, number)
 	if err != nil {
-		secrets = append(secrets, p.minted(repo)...)
+		secrets = append(secrets, p.held(repo, src)...)
 		return PRDocument{}, redactedError{err: err,
 			text: fmt.Sprintf("reading pull request %d of %s: %s", number, repo, p.Redact(err.Error(), secrets))}
 	}
@@ -293,10 +307,29 @@ type PartialError struct {
 func (e *PartialError) Error() string { return e.err.Error() }
 func (e *PartialError) Unwrap() error { return e.err }
 
-// minted is the installation token this reader holds for repo, if any. The
-// opener's secrets do not include it — the source mints it on the provider's
-// first call, after Open returned — and a host that echoes its credential back
-// in a failure would otherwise put it in front of whoever reads the failure.
+// held is the installation token a failure's text may carry, and there are two
+// places it can be: the one this reader minted for repo through its own mint
+// (the coordinator job's), which it caches itself, and the one the source
+// minted, which it does not — a read the credentials service mints for (the
+// person's class) never passes the token through this reader's hands, and the
+// source is then the only thing that knows it (gitprov.TokenHolder).
+//
+// The opener's secrets do not include either: both are minted on the provider's
+// first call, after Open returned. A host that echoes its credential back in a
+// failure would otherwise put it in front of whoever reads the failure, which is
+// the whole of what the redaction is against.
+func (p *Project) held(repo string, src gitprov.TokenSource) []string {
+	out := p.minted(repo)
+	if h, ok := src.(gitprov.TokenHolder); ok {
+		if t := h.HeldToken(); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// minted is the installation token this reader minted for repo through its own
+// mint, if any.
 func (p *Project) minted(repo string) []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -326,10 +359,21 @@ const pullWorkers = 4
 //
 // A Bitbucket repository's source is the read mint and not this command's own
 // (BB4): the coordinator holds no Bitbucket credential, and the token a person
-// is handed is one the service minted for the one repository named here.
+// is handed is one the service minted for the one repository named here. A
+// GitHub repository's source is the read mint too, wherever the service holds
+// the App's key and this process holds none (the person's class): the token is
+// read-only, minted for this one repository, and the App's key never leaves the
+// service.
 func (p *Project) sourceFor(kind, repo string) gitprov.TokenSource {
-	if kind == gitprov.KindBitbucket && p.ReadTokens != nil {
-		return p.ReadTokens(repo)
+	switch kind {
+	case gitprov.KindBitbucket:
+		if p.ReadTokens != nil {
+			return p.ReadTokens(repo)
+		}
+	case gitprov.KindGitHub:
+		if p.GitHubReadTokens != nil {
+			return p.GitHubReadTokens(repo)
+		}
 	}
 	return repoSource{p: p, repo: repo}
 }

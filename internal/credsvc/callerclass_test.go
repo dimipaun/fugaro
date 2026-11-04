@@ -14,7 +14,7 @@ package credsvc
 // package green, because each of them only ever presented the token of the
 // class it was about.
 //
-// So this file presents all five to all five routes. The table below is the
+// So this file presents all five to all six routes. The table below is the
 // design written down, cell by cell, and a cell that answers something else —
 // including a route that answers 200 to a caller of another class — is a
 // failure that names itself.
@@ -67,9 +67,10 @@ func classMatrixBundleDoc(t *testing.T, workspace string) (doc []byte, key, secr
 }
 
 // classMatrixTransport is the one client every route of the matrix reaches its
-// fake through, dispatched by the HOST the route itself built: a mint builds
-// api.github.com, the read mint builds bitbucket.org (G10, T2.5), and the
-// model path builds api.anthropic.com. Which fake answers is therefore decided
+// fake through, dispatched by the HOST the route itself built: a mint and the
+// GitHub read mint build api.github.com, the Bitbucket read mint builds
+// bitbucket.org (G10, T2.5), and the model path builds api.anthropic.com. Which
+// fake answers is therefore decided
 // by the route's own destination and by nothing a test passes in, and the two
 // hosts the fixtures stand for are held to their own names here rather than
 // assumed.
@@ -163,42 +164,52 @@ var admitted = classVerdict{status: http.StatusOK}
 // entry here and the test fails on a key it does not hold, so a route or a
 // class added later cannot quietly go unaimed at.
 var classVerdicts = map[string]classVerdict{
-	"job/read-token": {StatusUnverified, ErrorUnverifiedJobIdentity},
-	"job/verify":     {StatusUnverified, ErrorUnverifiedJobIdentity},
-	"job/mint":       admitted,
-	"job/sign":       {StatusUnverified, ErrorUnverifiedRunIdentity},
-	"job/messages":   admitted,
+	"job/read-token":  {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"job/github-read": {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"job/verify":      {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"job/mint":        admitted,
+	"job/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"job/messages":    admitted,
 
-	"review/read-token": {StatusUnverified, ErrorUnverifiedJobIdentity},
-	"review/verify":     {StatusUnverified, ErrorUnverifiedJobIdentity},
-	"review/mint":       admitted,
-	"review/sign":       admitted,
-	"review/messages":   admitted,
+	"review/read-token":  {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"review/github-read": {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"review/verify":      {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"review/mint":        admitted,
+	"review/sign":        admitted,
+	"review/messages":    admitted,
 
-	"verifier/read-token": {StatusUnverified, ErrorUnverifiedJobIdentity},
-	"verifier/verify":     admitted,
-	"verifier/mint":       {StatusUnverified, ErrorUnverifiedRunIdentity},
-	"verifier/sign":       {StatusUnverified, ErrorUnverifiedRunIdentity},
-	"verifier/messages":   {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"verifier/read-token":  {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"verifier/github-read": {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"verifier/verify":      admitted,
+	"verifier/mint":        {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"verifier/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"verifier/messages":    {StatusUnverified, ErrorUnverifiedRunIdentity},
 
-	"person/read-token": admitted,
-	"person/verify":     {StatusUnverified, ErrorUnverifiedJobIdentity},
-	"person/mint":       {StatusUnverified, ErrorUnverifiedRunIdentity},
-	"person/sign":       {StatusUnverified, ErrorUnverifiedRunIdentity},
-	"person/messages":   {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"person/read-token":  admitted,
+	"person/github-read": admitted,
+	"person/verify":      {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"person/mint":        {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"person/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"person/messages":    {StatusUnverified, ErrorUnverifiedRunIdentity},
 
-	// The coordinator's verdicts are the person's and not a class of its own
-	// on any route but the read mint: the same admission answers both, so the
-	// same four cells are refusals and the same one is the 200.
-	"coordinator/read-token": admitted,
-	"coordinator/verify":     {StatusUnverified, ErrorUnverifiedJobIdentity},
-	"coordinator/mint":       {StatusUnverified, ErrorUnverifiedRunIdentity},
-	"coordinator/sign":       {StatusUnverified, ErrorUnverifiedRunIdentity},
-	"coordinator/messages":   {StatusUnverified, ErrorUnverifiedRunIdentity},
+	// The coordinator's verdicts are the person's on the Bitbucket read mint —
+	// the same admission answers both — and they are NOT on the GitHub read
+	// mint, which is the one cell where the two classes part company. The
+	// coordinator job holds the App credential itself and mints its own
+	// read-only token with it (coordinatorAppCredential), so the GitHub read
+	// route is the person's alone and the coordinator is refused there like any
+	// other caller of another class. The rest of its row is the person's: the
+	// same four refusals.
+	"coordinator/read-token":  admitted,
+	"coordinator/github-read": {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"coordinator/verify":      {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"coordinator/mint":        {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"coordinator/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"coordinator/messages":    {StatusUnverified, ErrorUnverifiedRunIdentity},
 }
 
 // TestRouteCallerClassMatrix is the cross-class matrix: five classes against
-// five routes, each cell held to the verdict classVerdicts writes down.
+// six routes, each cell held to the verdict classVerdicts writes down.
 func TestRouteCallerClassMatrix(t *testing.T) {
 	s, _ := classMatrixSvc(t)
 	digest, signature := testDigest(t, "matrix"), strings.Repeat("0", 64)
@@ -251,6 +262,11 @@ func TestRouteCallerClassMatrix(t *testing.T) {
 			name: "read-token",
 			path: readTokenPath,
 			body: func(*svc) string { return `{"repository":"` + testBitbucketRepo + `"}` },
+		},
+		{
+			name: "github-read",
+			path: githubReadPath,
+			body: func(*svc) string { return githubReadBody(testRepoPath, testAppID) },
 		},
 		{
 			name: "verify",

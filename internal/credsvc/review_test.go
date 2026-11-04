@@ -89,14 +89,22 @@ func newReviewSvcSpelled(t *testing.T, verifierEmail, tableEmail string, extra .
 }
 
 // reviewMintSvc is the review fixture behind the mint's fake GitHub, with the
-// bundle a mint needs: a caller the pairing admits, on the one route of this
-// service the class is not admitted to, where the refusal cannot be about the
-// identity, the pairing or the bundle.
+// bundle a mint needs: a caller the pairing admits, on the route whose answer
+// the class decides, where a refusal cannot be about the identity, the pairing
+// or the bundle.
+//
+// Its repository table holds the installation's OTHER repository beside the one
+// the fixture's run identity names, because a mint's repository is only visible
+// against a second row: a table of one row answers the run identity's own
+// repository whichever row a mint read, so a mint that resolved the wrong one
+// would look right. TestReviewMintIsScopedToTheRunIdentitysRepository is what
+// reads the two rows apart.
 func reviewMintSvc(t *testing.T) (*svc, *ghFake) {
 	t.Helper()
 	gh := newGHFake(t)
 	s := newReviewSvcSpelled(t, testReviewSA, testReviewSA, func(s *svc, cfg *Config) {
 		cfg.Client = &http.Client{Transport: ghTransport{srv: gh.srv}}
+		cfg.Repos[testSlug(t, testOtherRepoPath)] = testOtherRepo
 		s.src.docs = [][]byte{mintBundleDoc(t)}
 	})
 	return s, gh
@@ -420,18 +428,23 @@ func TestReviewIdentityWithAnEmptyPRListIsRefused(t *testing.T) {
 	}
 }
 
-// TestReviewCallerIsRefusedTheMint: the mint is the one route of this service
-// the review class is not admitted to, and this is the guard that says so
-// (C3.9b replaces it with CSR1's read-only permission set, and C3.9b must land
-// before anything fills the review set).
+// TestReviewMintServesTheReadOnlySetForTheRunsRepository is C3.9b's red step:
+// the mint admits the review class and serves it CSR1's read-only set, where
+// before this task the class was refused this route whole.
 //
 // The caller here is otherwise perfectly good: its two identities are whole,
 // the pairing admits it, and the bundle holds the App key a mint is issued
-// from — so the class is the only thing that can decide what it is served. The
-// set it must NEVER be served is github.RunTokenPermissions, the WRITE set of
-// the very repository the review is about: the review job mounts no repository
-// and holds no installation token of its own (O1), and this endpoint is where
-// that would be undone.
+// from — so the class decides the SET it is served and the pairing decides the
+// repository. What it must NEVER be served is github.RunTokenPermissions, the
+// WRITE set of the very repository the review is about: the review job mounts
+// no repository and holds no installation token of its own (O1), and this
+// endpoint is where that would be undone.
+//
+// The fixture's table holds a second repository (reviewMintSvc), so the
+// repository this mint is scoped to is a name the answer can be wrong about
+// rather than the table's only row: the run identity's own repository is
+// asserted here, and TestReviewMintIsScopedToTheRunIdentitysRepository asks the
+// same question of the table's other row.
 func TestReviewMintServesTheReadOnlySetForTheRunsRepository(t *testing.T) {
 	s, gh := reviewMintSvc(t)
 	resp, body := s.mintTokens(t, mintBody(testAppID), s.reviewRunToken(), s.reviewJobToken(), s.job)
@@ -465,6 +478,8 @@ func TestReviewMintServesTheReadOnlySetForTheRunsRepository(t *testing.T) {
 	if want := github.ReviewTokenPermissions(); !maps.Equal(sent.Permissions, want) {
 		t.Errorf("the review's mint asked GitHub for %v, want CSR1's read-only set %v", sent.Permissions, want)
 	}
+	// The table holds a second repository, so "aurora" is the row the run
+	// identity resolved to and not the only name the lookup could have answered.
 	if len(sent.Repositories) != 1 || sent.Repositories[0] != "aurora" {
 		t.Errorf("the mint asked for repositories %v, want the run identity's own alone", sent.Repositories)
 	}
@@ -486,6 +501,76 @@ func TestReviewMintServesTheReadOnlySetForTheRunsRepository(t *testing.T) {
 		if got := lines[0][field]; got != want {
 			t.Errorf("the line records %s = %v, want %q", field, got, want)
 		}
+	}
+}
+
+// TestReviewMintIsScopedToTheRunIdentitysRepository: a review caller's token is
+// minted for the repository its RUN IDENTITY names, resolved through the
+// installation's table (D1066) — and the table holds a second repository, so
+// the same call is made for each of its rows and each answer must name the one
+// the caller's run belongs to.
+//
+// This is the test the fixture's second row exists for. Against a table of one
+// row the mint in TestReviewMintServesTheReadOnlySetForTheRunsRepository could
+// not have been seen resolving the wrong one: the row it read and the row it
+// should have read were the same. Here the two rows are asked for in turn, and
+// a mint that answered the other repository names it in the answer, in the
+// installation lookup and in the scope GitHub is asked to mint within.
+//
+// The account is admitted to both repositories — the fixture's shared node
+// offers it both and each repository's own node names it — so the repository is
+// decided by the run identity and by nothing the caller sent, which is the
+// property the mint's whole shape rests on: MintRequest has one field and no
+// repository in it.
+func TestReviewMintIsScopedToTheRunIdentitysRepository(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		repoPath  string
+		canonical string
+		minted    string
+	}{
+		{"the fixture's own repository", testRepoPath, testRepo, "aurora"},
+		{"the table's other repository", testOtherRepoPath, testOtherRepo, "borealis"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, gh := reviewMintSvc(t)
+			slug := testSlug(t, tc.repoPath)
+			// The fixture's admissions hold a node for the repository its own run
+			// is of; the other row gets one naming the same account, so the two
+			// calls differ in nothing but the repository the run identity names.
+			s.policy.admissions[slug] = decodeTestChild(t, testChildDoc("default", testAccount))
+			run := s.reviewRunToken(func(c map[string]any) {
+				c["fs"] = slug
+				c["sub"] = "r~" + slug + "~" + s.run
+				c["user_id"] = c["sub"]
+			})
+			resp, body := s.mintTokens(t, mintBody(testAppID), run, s.reviewJobToken(), s.job)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("the answer is %d, want 200: %s", resp.StatusCode, body)
+			}
+			if ans := mintAnswer(t, body); ans.Repository != tc.canonical {
+				t.Errorf("the answer's repository is %q, want the run identity's own %q", ans.Repository, tc.canonical)
+			}
+			lookup, mint := gh.both(t)
+			if want := "/repos/" + tc.repoPath + "/installation"; lookup.path != want {
+				t.Errorf("the installation lookup was %s, want the run identity's own repository %s", lookup.path, want)
+			}
+			var sent struct {
+				Repositories []string `json:"repositories"`
+			}
+			if err := json.Unmarshal([]byte(mint.body), &sent); err != nil {
+				t.Fatalf("the mint's body is not the JSON this test reads: %v (%s)", err, mint.body)
+			}
+			if want := []string{tc.minted}; !slices.Equal(sent.Repositories, want) {
+				t.Errorf("the mint asked GitHub for repositories %v, want the run identity's own %v alone", sent.Repositories, want)
+			}
+			// The line names the run's own slug and never the canonical name, as
+			// every mint line does (C1.13): the two spellings are different
+			// strings and the line carries the one the run's record is keyed by.
+			if lines := mintAuditLines(t, s); len(lines) != 1 || lines[0]["repository"] != slug {
+				t.Errorf("the mint's audit line = %v, want exactly one naming the run's own slug %q", lines, slug)
+			}
+		})
 	}
 }
 

@@ -207,6 +207,20 @@ type TokenSource interface {
 	Token(ctx context.Context, minValid time.Duration) (string, time.Time, error)
 }
 
+// TokenHolder is implemented by a TokenSource that can name the token it is
+// holding, and it exists for one reason: a host that echoes the credential back
+// in a failure. A reader that mints through a source it does not own -- the
+// credentials service's read mints are the ones (github.ServiceReadTokens,
+// bitbucket.ServiceReadTokens) -- cannot otherwise learn the value to redact,
+// because the token is minted on the provider's first call and never passes
+// through the reader's hands.
+//
+// The empty string is a source holding nothing, which is the state of one that
+// has not minted yet and is not a value to redact.
+type TokenHolder interface {
+	HeldToken() string
+}
+
 // ServiceTokenSetter is implemented by a provider whose installation tokens
 // can be taken from the installation's credentials service instead of a
 // credential of the job's own (C2.2, D145): UseServiceTokens installs the

@@ -1493,24 +1493,22 @@ per record would ride in the document every reader of the view fetches — so
 a console that draws one reads it here. It is untrusted text, and a renderer
 sanitises it before it reaches a line or a cell.
 
-The read is the coordinator's own: one installation token for the
-repository, minted from the GitHub App the environment holds and carrying
-the named read-only permission set — pull requests and metadata (Q3 answered
-(A)) — and revoked when the command is done, so the credential lives for the
-read and no longer. No credential of the host's reaches the output.
-With FUGARO_CREDENTIALS_SERVICE_URL set, the installation's credentials
-service holds the App's key and this command holds none, so it refuses
-(exit 1) before it reads the App's ID or key: the service mints a run's
-token, and this read is not a run.
+The read is the installation's: one read-only token for the repository,
+minted at the project's own published credentials service against the
+caller's own Google ID token and carrying the named read-only permission set
+— pull requests and metadata (Q3 answered (A)). This command holds no GitHub
+App key and no Bitbucket credential, and it reads no environment variable to
+find the service: a project that publishes none is one whose host read is
+refused (exit 1). No credential of the host's reaches the output.
 A repository on a host this read does not serve is refused the way the
-project-wide view refuses it (reconciliation Q12 (A), finding #30): the
-coordinator reads github only, because its bitbucket credential is one
-repository's access token and cannot be widened to a project.
+project-wide view refuses it (reconciliation Q12 (A), finding #30): a
+bitbucket repository is read through the same service, one repository's read
+token at a time, and refused where the project publishes none.
 
 A pull request the host does not have is the host's own failure (exit 2),
 carrying the host's status, and never an empty document: an empty one would
 draw a pull request with no description, which is a different fact.
-Exit codes: 1 for a missing or malformed App credential (or the refusals
+Exit codes: 1 for a project with no credentials service (or the refusals
 above), 2 for a failure of the host.
 
 With --json the document is printed as it is: number, url, title, body,
@@ -1558,22 +1556,21 @@ run names is listed as having none, because it is work somebody has open and
 dropping it is the one thing this view must not do — is not reached by this
 command today.
 
-Every repository is read through the coordinator's own credential: an
-installation token for that repository, minted from the GitHub App the
-environment holds and carrying a named read-only permission set — pull
-requests and metadata, the two reads this view makes (Q3 answered (A)) —
-and cached for the token's life, so a second read of the same repository
-mints nothing. Every token the command minted is revoked when it is done,
-so the credential lives for the read and no longer.
-With FUGARO_CREDENTIALS_SERVICE_URL set, the installation's credentials
-service holds the App's key and this command holds none, so it refuses (exit 1)
-before it reads the App's ID or key: the service mints a run's token, and this
-read is not a run.
-Exit codes: 1 for a missing or malformed App credential (or the refusal above),
-2 for a failure of the host.
-The coordinator reads github only: a bitbucket repository is refused, and the
-refusal names the reason, because its credential is one repository's access
-token and cannot be widened to a project (reconciliation Q12 (A), finding #30).
+Every repository is read through the installation's credentials service: one
+read-only token for that repository, minted there against the caller's own
+Google ID token and carrying a named read-only permission set — pull requests
+and metadata, the two reads this view makes (Q3 answered (A)) — and cached for
+the token's life, so a second read of the same repository mints nothing.
+The service's URL is the project's own published credentials_service block and
+never an environment variable, and this command holds no GitHub App key at
+all: an installation that publishes no service is one whose host read is
+refused (exit 1) rather than made with a key a person's machine does not hold,
+and --from-store is the view to read instead.
+Exit codes: 1 for a project with no credentials service (or the refusals
+above), 2 for a failure of the host.
+A bitbucket repository is read through the same service, one repository's read
+token at a time, and refused where the project publishes none
+(reconciliation Q12 (A), finding #30).
 
 --from-store is a different read of the same view (D364): it prints what the
 sweep already stored, coordinator/repos/<slug>/ in the project's database,
@@ -1581,8 +1578,8 @@ through the caller's own credentials — roles/firebasedatabase.viewer is what
 admits it — and with the same --repo and --all selection as above. It opens no
 host and holds no App ID, no App key and no Bitbucket credential: everything a
 stored view says about a pull request is what the sweep read once. It is the
-read a console makes, and it works with FUGARO_CREDENTIALS_SERVICE_URL set,
-where the read above refuses.
+read a console makes, and it needs no credentials service and no host read at
+all — it works on a project whose installation publishes none.
 With --json, one repository is printed as it is stored: {"repo":
 "owner/name", "stored": true, "view": {the view document}, "stale": {the
 sweep's marker, as stored}}. A repository the coordinator has never
@@ -2332,6 +2329,7 @@ Subcommands:
 
 - `fugaro managed apply` -- Apply the agent-authored Terraform root of a managed project, as the deployer account
 - `fugaro managed flag` -- Flag an existing GCP project as managed (the project's owner)
+- `fugaro managed unflag` -- Remove both marks that make a GCP project managed (the project's owner)
 
 ## `fugaro managed apply`
 
@@ -2408,14 +2406,18 @@ PROJECT_ID must be the exact GCP project ID of the installation selected by
 --project, --config or the checkout: one invocation names one project, and
 there is no bulk form, no wildcard and no prefix.
 
-It records two things in gs://<runs bucket>/fugaro/managed.json: that this
-project is managed, and the monthly budget amount and currency the owner
-states with --budget and --budget-currency. The amount is required, with no
-default (D64), because the marker's amount is what the apply-time budget read
-opens the gate on: a marked project that records no amount is refused by every
-managed apply rather than applied without a budget control. The amount is the
-budget ALERT amount the installation's Terraform creates and nothing else —
-this command does not create or change a budget, and it makes no billing call.
+It records three things in gs://<runs bucket>/fugaro/managed.json: that this
+project is managed, the monthly budget amount and currency the owner states
+with --budget and --budget-currency, and the bound on the billable image
+builds one invocation of fugaro image refresh may start (design D1013). The
+amount is required, with no default (D64), because the marker's amount is what
+the apply-time budget read opens the gate on: a marked project that records no
+amount is refused by every managed apply rather than applied without a budget
+control. The amount is the budget ALERT amount the installation's Terraform
+creates and nothing else — this command does not create or change a budget,
+and it makes no billing call. The bound is not a question: it is the marker's
+own default of one build per invocation, and this command asks the owner for
+no count, exactly as fugaro setup asks for none.
 
 It writes BOTH marks a managed project carries, in one step: that object and
 the label fugaro_managed=true on the GCP project itself (Task 3.0). The read
@@ -2462,6 +2464,57 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for flag |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro managed unflag`
+
+Remove both marks that make a GCP project managed (the project's owner)
+
+Remove the marks that make GCP project PROJECT_ID a managed project.
+
+A managed project carries two marks, written together by the run that created
+it (fugaro setup --create-project --managed) or by fugaro managed flag: the
+creation fact gs://<runs bucket>/fugaro/managed.json in that project's own runs
+bucket, and the label fugaro_managed=true on the GCP project itself. The read
+requires both, so the project is managed only while the two are there — and
+unflagging removes both, in one command, so an owner never has to do the
+deletion and the label write by hand.
+
+A project that is already half-removed — the state a manual removal leaves,
+with the object gone and the label there, or the reverse — is converged rather
+than refused: which half was already gone is said, and the other is removed.
+After this command the project is not managed, and its applies take the typed
+confirmation again.
+
+What it does not remove is the deployer fence. The seven scoped roles and their
+conditioned bindings stay in the project and in the installation, and fugaro
+update --forget stays refused for a fenced installation. This command makes no
+IAM call at all; undoing the fence is not revocation and is not offered here
+(docs/design/managed-projects.md §10.2).
+
+Run it in your own terminal, as an operator, with your own credentials, and
+type the GCP project ID it asks for. A coding agent's session is refused, a
+Fugaro run's own process is refused, and nothing stands in for the typed ID —
+not --yes, not --non-interactive, not a pipe.
+
+PROJECT_ID must be the exact GCP project ID of the installation selected by
+--project, --config or the checkout: one invocation names one project, and
+there is no bulk form, no wildcard and no prefix.
+
+Usage: `fugaro managed unflag PROJECT_ID`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for unflag |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 

@@ -7,8 +7,10 @@ travels in the published policy node under `image_catalog`), **D1146** (a pin ac
 warns), **D1149** (VM/Batch only, and the one Cloud Run rule), **D1150** (the existing workflow-secret
 path; the credentials service unchanged), **D1152** (the shared registry and its retention), **D1155**
 (override plus catalog reference refused, naming both keys) and **D1158** (**the build tasks start in
-0.17.0**, after the 0.16.0 scope cut). **D1148 stays open** with its recommendation (reuse the daily check's triggers), and so do
-the rest of [reconciliation.md](reconciliation.md) §2: each task below says which decision it waits
+0.17.0**, after the 0.16.0 scope cut) — and the owner **answered D1148 on 2026-11-03: build the
+scheduled catalog rebuilds, in 0.18.0** (one project-level scheduled check, one catalog build per
+entry that fires, the same build account and the same BuildKit-secret path). The rest of
+[reconciliation.md](reconciliation.md) §2 stay open: each task below says which decision it waits
 on.
 
 Each task touches at most 10 files, names its tests, starts with a **red step**, and ends at the gates
@@ -61,7 +63,7 @@ Four things this plan does **not** own, and one it reads.
 | D1145 `image add`/`rm`/`promote`, and the build-step collision | PIC6 | D1155 repo override and `needs:` precedence (**answered**) | PIC1 (the config), PIC5 (the selection) |
 | D1146 the tag-cover algorithm and the refusal (**answered**) | PIC5 | D1156 the new key's skew | PIC2 (the node), PIC6 (the gate) |
 | D1147 promote semantics | PIC6 | D1157 core or `ee/` | every task is core; no task touches `ee/` |
-| D1148 scheduled security rebuilds (**open**, recommendation only) | PIC4 | D1158 the build release (**answered**: 0.17.0) | §"Release slot" |
+| D1148 scheduled security rebuilds (**answered** 2026-11-03: build them in 0.18.0) | PIC4 (the check's code), and the schedule the answer adds (0.18.0) | D1158 the build release (**answered**: 0.17.0) | §"Release slot" |
 | D1149 the `docker` tag's backend (**answered**) | PIC5 | D1159 (reserved) | — |
 
 ## Where each finding lands
@@ -195,7 +197,7 @@ widens it to any base; this task runs the smoke that exists), and writes a build
 reads. The image lands in the installation's **shared registry**, named from the entry, tagged by
 content hash with a moving `:latest` (**D1152**), under the registry's existing cleanup posture. The
 daily check (**F4**) gains one trigger, `catalog-definition`, and reuses `base`, `lockfiles` and
-`max-age` per entry — the scheduled security rebuild **D1148 recommends (open)**. **SEC** because it
+`max-age` per entry — the scheduled security rebuild **D1148 answers (2026-11-03)**. **SEC** because it
 mounts secrets:
 the value is a BuildKit **file** secret, never an `ENV`, a build argument, a layer or a log — the rule
 `_SECRET_ENVS` and `render.go`'s `secretMounts` already carry, and `images/scan.sh --secrets` enforces.

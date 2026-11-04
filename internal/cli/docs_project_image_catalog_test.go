@@ -148,7 +148,12 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		"an override and a catalog reference used together are REFUSED, and the error names BOTH keys",
 		"the BUILD TASKS START IN 0.17.0",
 		"ANSWERED by the owner, 2026-11-02: VM/Batch only, and there is ONE rule everywhere.",
-		"**D1148** | Should images be rebuilt on a schedule for base-image security updates? (**open question 2**) | **OPEN.** The recommendation: **yes, and the schedule ALREADY EXISTS.**",
+		"**D1148** | Should images be rebuilt on a schedule for base-image security updates? (**open question 2**) | **ANSWERED by the owner, 2026-11-03: BUILD IT, IN 0.18.0.**",
+		"**one project-level scheduled check** evaluates **every catalog entry**",
+		"**each entry that fires gets one catalog build**: the **same build account**",
+		"**No new account and no broader grant**",
+		"**What is scheduled** (the owner's answer, 2026-11-03): the catalog's rebuilds are **one",
+		"catalog build per entry that fires, as the **same build account**",
 		// The catalog is what a baked image is built from, and it lifts no
 		// refusal.
 		"**The catalog is what a `checkout: baked` image is built FROM; it changes no checkout kind.**",
@@ -175,7 +180,7 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		// The nightly triggers, including the one this work adds.
 		"| `catalog-definition` (**new**) |",
 		"| `max-age` (**exists**) |",
-		"This is the **scheduled security rebuild** D1148 recommends (open)",
+		"This is the **scheduled security rebuild** D1148 answers (2026-11-03)",
 		// The skew is the verifier list's in shape.
 		"the publisher writes NOTHING when the catalog is empty",
 		// Core, not ee.
@@ -248,7 +253,8 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		"then cut 0.16.0's scope and moved it to 0.17.0.",
 		"**Answered by the owner, 2026-11-02** — seven decisions, each as the recommendation:",
 		"**D1140** (catalog definitions live in the published policy node under the key `image_catalog`",
-		"**D1148 stays OPEN**",
+		"**The owner answered D1148 on 2026-11-03: build the",
+		"**D1148** (scheduled security rebuilds, on\n**2026-11-03**: build them, in 0.18.0).",
 		"**D1149** (VM/Batch only, and one rule everywhere: on Cloud Run a docker-tagged entry is",
 		"decisions of D1140–D1159 are **open**",
 		"**Answering a decision is not approving a task**",

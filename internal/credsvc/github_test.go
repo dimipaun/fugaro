@@ -496,18 +496,20 @@ func TestRepositoryMintKeepsNamingTheAccountsRepository(t *testing.T) {
 	}
 }
 
-// TestRepositoryMintKeepsTheRunSet is F5 read for the class C3.9b must leave
-// alone: a repository caller is still issued the run's own set, and CSR1's
-// read-only set is the review class's alone. It is the counterpart of the
-// review class's own test (TestReviewMintServesTheReadOnlySetForTheRunsRepository)
-// — the two sets can only be told apart by asking both classes — and it asserts
-// the two apart as well, because a comparison of the run's set with itself
-// would pass on the day the two spellings became one.
+// TestRepositoryMintKeepsTheRunSet is F5 read for the class C3.9b leaves alone:
+// a repository caller is still issued the run's own set, and CSR1's read-only
+// set is served to the review class alone (mintPermissions, review.go). It is
+// the counterpart of the review class's own test
+// (TestReviewMintServesTheReadOnlySetForTheRunsRepository) — the two sets can
+// only be told apart by asking both classes — and it asserts the two apart as
+// well, because a comparison of the run's set with itself would pass on the day
+// the two spellings became one.
 //
 // The set is chosen from the verified email and the class it lands in, so this
-// is what fails if the chooser ever defaults to the narrow set: the read-only
-// set would take the push and the pull request away from every run of the
-// installation.
+// is what fails if the chooser ever answers a repository caller the narrow set:
+// the read-only set would take the push and the pull request away from every
+// run of the installation, while a class this service does not mint for is
+// refused rather than served either set.
 func TestRepositoryMintKeepsTheRunSet(t *testing.T) {
 	run := github.RunTokenPermissions()
 	if review := github.ReviewTokenPermissions(); maps.Equal(run, review) {

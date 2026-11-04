@@ -132,13 +132,26 @@ const (
 	// purpose whose caller holds no job (see callerWithoutJobPurpose) and the
 	// only one whose line names a repository (see repositoryOnlyPurpose).
 	PurposeBitbucketRead = "bitbucket_read"
+	// PurposeGitHubRead is the read-only GitHub installation token a person
+	// asks the service for (the GitHub read mint, githubread.go). The
+	// credential's name is the App key's (config.GitHubAppKeySecret), which is
+	// what the service signs the mint's JWT with — the same credential a
+	// PurposeMint line names and for the same reason, which is why the purpose
+	// and not the credential is what tells the two acts apart.
+	//
+	// It is not a model credential of the cascade and has no tier, so a line
+	// for it names a credential and no tier (see credentialWithoutTier). Its
+	// line carries a repository and no run, like a Bitbucket read's: the caller
+	// is a person, who holds no run identity (callerWithoutJobPurpose,
+	// repositoryOnlyPurpose).
+	PurposeGitHubRead = "github_read"
 )
 
 // ValidPurpose reports whether purpose is one this service issues a credential
 // for.
 func ValidPurpose(purpose string) bool {
 	switch purpose {
-	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify, PurposeBitbucketRead:
+	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify, PurposeBitbucketRead, PurposeGitHubRead:
 		return true
 	}
 	return false
@@ -158,7 +171,8 @@ func ValidPurpose(purpose string) bool {
 // refused for a credential it correctly carries.
 func credentialWithoutTier(purpose string) bool {
 	return purpose == PurposeMint || purpose == PurposeReviewSign ||
-		purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead
+		purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead ||
+		purpose == PurposeGitHubRead
 }
 
 // callerWithoutJobPurpose reports whether a line records a caller's act rather
@@ -170,7 +184,8 @@ func credentialWithoutTier(purpose string) bool {
 // still refused, which is what TestReadMintAuditShapeRefusedUnderJobPurposes
 // pins for the shape BB4 adds.
 func callerWithoutJobPurpose(purpose string) bool {
-	return purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead
+	return purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead ||
+		purpose == PurposeGitHubRead
 }
 
 // repositoryOnlyPurpose reports whether a line names a repository and no run:
@@ -180,7 +195,7 @@ func callerWithoutJobPurpose(purpose string) bool {
 // for this purpose alone, and a repository recorded under any other purpose is
 // refused exactly as it is today.
 func repositoryOnlyPurpose(purpose string) bool {
-	return purpose == PurposeBitbucketRead
+	return purpose == PurposeBitbucketRead || purpose == PurposeGitHubRead
 }
 
 // StatusOK is the one status that is not a refusal: a credential answered —
