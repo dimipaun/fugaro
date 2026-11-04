@@ -143,6 +143,46 @@ func TestUpdateManagedStageRefusesARemoval(t *testing.T) {
 	}
 }
 
+// The half of the pair the removal above does not reach: a plan the GUARD
+// admits and the COVER refuses is refused all the same, and refused by the
+// gate. The guard is only one of the two gates a managed plan is read by
+// (managed.Spec hands the same document to both), and a step wired to the
+// guard alone would apply a plan the review's own cover would have stopped —
+// a grant to a member the review never listed, which is what this plan is.
+//
+// M1's SEC shape is the same one from the other side: the gate's refusal is
+// what the session reads (never the confirmation the step would have asked),
+// nothing is applied, and the rule that fired is on the record, so an owner
+// can read which rule stopped an unattended run.
+func TestUpdateManagedStageRefusesAPlanTheCoverDoesNotCover(t *testing.T) {
+	const outsider = "user:not-listed@example.com"
+	r := updateManagedRig(t)
+	updating(t, r)
+	r.setPlan(t, grantChange("state", outsider, "roles/storage.objectViewer", "create"))
+
+	got, err := updateRun(t, r, "update", "--yes")
+	if err == nil {
+		t.Fatalf("the run applied a plan the cover of its own review refuses:\n%s", got)
+	}
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("%d terraform apply(s) ran: the gate refused the plan and nothing may be applied", n)
+	}
+	if !strings.Contains(got, managedmode.NotConverged) {
+		t.Errorf("the session does not read the gate's own sentence:\n%s", got)
+	}
+	recs := audits(t, r)
+	if len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
+		t.Fatalf("%d record(s) after a refused plan, want one refused: %+v", len(recs), recs)
+	}
+	rules := strings.Join(recs[0].Rules, "\n")
+	// "cover" is the word internal/managed's own verdict uses for this half of
+	// the gate (its coverGate); it is a literal here because the constant is
+	// that package's.
+	if !strings.Contains(rules, "cover: ") || !strings.Contains(rules, outsider) {
+		t.Errorf("the record does not name the cover as the rule that refused, so an owner cannot audit it: %+v", recs[0])
+	}
+}
+
 // The other side of the same gate, and the one the HARD RULE needs: an
 // additive plan in the same world is admitted, the step proceeds in the
 // session that may confirm nothing, the run's reader sees the sentence that
