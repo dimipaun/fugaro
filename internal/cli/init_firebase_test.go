@@ -1335,7 +1335,7 @@ func updateBudgetRigFor(t *testing.T, fp string) (*initRig, *gcpfake.RTDB) {
 	// two markers, and the plan it shows must carry nothing else.
 	db.Set(budget.PathMode, budget.ModeEnforce)
 	db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5_000_000})
-	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+db.URL+", firebase_project: \""+fp+"\" }\n")
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, max_run_tokens: 100000, rtdb_url: "+db.URL+", firebase_project: \""+fp+"\" }\n")
 	r.save(t)
 	return r, db
 }

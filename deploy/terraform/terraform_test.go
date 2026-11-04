@@ -1543,7 +1543,13 @@ var (
 	// account as the Firebase root reads it (P3): the installation root
 	// outputs it and that root grants it the FP's database admin, as it grants
 	// var.history_account's.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator)\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|installation\.scheduler_service_account)\}")$`)
+	// google_service_account.catalog_check[0] is the project's catalog check
+	// job (D1148): the account its own five installation grants name, and
+	// var.installation.catalog_check_service_account is the same account as a
+	// repository root reads it — the member of the actAs that root makes on its
+	// own build account, which is why it is a variable there and not a
+	// reference: the repository root never sees the installation module.
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator)\[0\]\.member|google_service_account\.catalog_check\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
 
 	// A custom role of one of this run's projects, spelled as the literal path
 	// "projects/${var.<project>}/roles/<id>" rather than read from the role
