@@ -271,14 +271,20 @@ func secretsRmUndo(id, path, name string, old, next []byte, changed bool, cause 
 
 // secretsRmWhat is the sentence the confirmation shows. It names both halves
 // this command removes, because the diff below it shows only one of them.
+//
+// The name reaches a prompt here and nowhere else in this command, so it is
+// wrapped the way every other message of the family wraps it: the shape check
+// above is what makes a stray control character or bidi override impossible
+// today, and this is the one sentence that would carry one if it stopped being.
 func secretsRmWhat(id, name string, held, changed bool) string {
+	key := "project_secrets." + pluginwire.Printable(name)
 	switch {
 	case held && changed:
-		return fmt.Sprintf("delete the Secret Manager container %s with every version in it, and remove project_secrets.%s from this local config", id, name)
+		return fmt.Sprintf("delete the Secret Manager container %s with every version in it, and remove %s from this local config", id, key)
 	case held:
-		return fmt.Sprintf("delete the Secret Manager container %s with every version in it (this local config has no project_secrets.%s entry)", id, name)
+		return fmt.Sprintf("delete the Secret Manager container %s with every version in it (this local config has no %s entry)", id, key)
 	default:
-		return fmt.Sprintf("remove project_secrets.%s from this local config (no Secret Manager container %s exists)", name, id)
+		return fmt.Sprintf("remove %s from this local config (no Secret Manager container %s exists)", key, id)
 	}
 }
 
