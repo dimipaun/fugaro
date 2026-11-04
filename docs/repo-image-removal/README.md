@@ -10,7 +10,7 @@ the cost of every alternative, and the plan's tasks start only when the owner ap
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The design in full: what is removed, what stays, how a repository migrates and in what order so the dogfood pipeline never loses its image, the retirement of the surviving cloud objects, what each removal does to `fugaro.yaml` validation, the schemas and the goldens, the managed gate's rows, and the owner-run live check that gates the 0.18.0 tag. **Where it disagrees with [reconciliation.md](reconciliation.md), the reconciliation wins** |
-| [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `main`: findings **F1–F24**, what exists and what is missing, the decisions **D1190–D1207** (§4) with the recommendation and the cost of each alternative, the number block and how it was read (§3), and the residual this design refuses to hide (§5) |
+| [reconciliation.md](reconciliation.md) | Every claim of the spec against the code on `main`: findings **F1–F25**, what exists and what is missing, the decisions **D1190–D1208** (§4) with the recommendation and the cost of each alternative, the number block and how it was read (§3), and the residual this design refuses to hide (§5) |
 | [implementation-plan.md](implementation-plan.md) | Eleven tasks **R0–R10**, each with its files (at most twelve), its interface, its **red step**, its named tests and its **SEC** flag; the shared-files table (§4) and the order (§2), which migrates the two dogfood repositories **before** anything is removed; and the recommended slot (§7), **0.18.0** |
 | `README.md` | This file: the status, the reading of the number block, what is being asked, and what a reader should not take from here |
 
@@ -79,7 +79,7 @@ on **2026-11-04** by fetching each **branch** and reading it, not by trusting a 
   below D1027, and the managed-mode and settings **code** branches (#1663, #1665, #1666–#1673) write no
   new decision. **D1190 is therefore free.**
 
-**This work takes D1190–D1219: D1190–D1207 are written here, and D1208–D1219 are reserved and
+**This work takes D1190–D1219: D1190–D1208 are written here, and D1209–D1219 are reserved and
 unused.** Every decision in the block is **OPEN, with a recommendation** — none is answered, and the
 owner answers them or the design is not approved. A later task that needs a number re-checks this
 section's facts rather than its conclusion.

@@ -201,6 +201,17 @@ rendered through `internal/image/render.go`, or its `dockerfile:` path — write
 repoints the repository in one commit (`internal/cli/image_promote.go:19`, `:179`). That is exactly the
 migration this design needs, and it exists today.
 
+**What the entry's Dockerfile has to do that a rendered one did for it** (D1208): promote writes the
+entry's **source**, and for a repository whose image bakes its own dependency cache — this one's
+`image.setup` is `go mod download && go build ./...` — the source is a Dockerfile that does the clone
+itself. The build hands it exactly what the renderer used: `REPO_URL`, `BASE_BRANCH` and
+`FUGARO_COMMIT` as build arguments and `git-credentials` as a file secret
+(`images/derived/cloudbuild.yaml:178`), so the entry clones `$REPO_URL` at `$FUGARO_COMMIT`, warms
+the cache, and ends with `finalize-checkout` (`images/derived/Dockerfile.tmpl:130`) — the last step of
+every derived image build (`images/common/finalize-checkout.sh:2`). A Dockerfile source that skips that
+last step produces an image whose checkout still carries a credential setting, which is the one thing
+the migration can get wrong on its own (D1208, reconciliation §5).
+
 **Recommendation: ship no migration command, and remove `fugaro image promote` in the same release as
 the keys it reads.** The migration runs *before* the refusal (step 1 above), with the binary that
 still has promote; after the removal there is no definition left for a migration command to read, and a

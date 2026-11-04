@@ -3,7 +3,7 @@
 **Status: a design, and every decision in it is open.** The owner's ruling of 2026-11-04 —
 *"Completely disable repo-level images for now to make things simpler."* — is reconciled here against
 the tree at `aa034db1`, and **where this file disagrees with [spec.md](spec.md), this file wins**. Each
-decision **D1190–D1207** carries its recommendation, the cost of the alternative and the cost of the
+decision **D1190–D1208** carries its recommendation, the cost of the alternative and the cost of the
 recommendation; the block and how it was read are §3.
 
 ---
@@ -140,6 +140,20 @@ code. A `:line` is a **declaration** line at `aa034db1`; the symbol is what to s
   `image.setup` (`fugaro.yaml:43`), and the sandbox repository's workflows are what the live checks run.
   Nothing in the tree enumerates a third, which is §5's residual.
 
+- **F25: Exists, and it is what makes the migration possible at all. A catalog build hands the entry's
+  Dockerfile every tool the renderer's own clone needs — the repository's URL and branch (the
+  `_REPO_URL`/`_BASE_BRANCH` substitutions, `internal/backend/gcp/catalog.go:286`), the commit the
+  copied definition was read at (the pin step writes it, `internal/backend/gcp/catalog.go:364`), and
+  the `git-credentials` file secret on the shared build step
+  (`images/derived/cloudbuild.yaml:178`, read from `/workspace/out/source-commit`).** So a Dockerfile in
+  a repository can `git clone "$REPO_URL"` at `$FUGARO_COMMIT` with the build's credential and bake the
+  same dependency cache the renderer baked — the covered migration is not a degraded one. What the
+  renderer does that a hand-written Dockerfile does not is the closing step: `finalize-checkout`
+  (`images/derived/Dockerfile.tmpl:130`, whose whole purpose is stated at
+  `images/common/finalize-checkout.sh:2`: *the last step of every derived image build*), listed as a
+  `critical` tool of the base image (`images/base/tools.tsv:14`). A migrated entry has to call it
+  itself, and nothing tests that a third party's Dockerfile does (D1208, §5).
+
 ---
 
 ## 2. Where the brief's own reading was wrong
@@ -184,7 +198,7 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   (#1488) and `docs/run-without-checkout` (#1481) all sit below D1027, and the managed-mode, settings
   and catalog **code** branches (#1663, #1665, #1666–#1673) write no new decision. **D1190 is therefore
   free.**
-- **This work takes D1190–D1219: D1190–D1207 are written here, and D1208–D1219 are reserved and
+- **This work takes D1190–D1219: D1190–D1208 are written here, and D1209–D1219 are reserved and
   unused** — the thirty-wide width `docs/ee-reorg` took for D520–D549. A later task that needs a number
   re-checks this section's facts rather than its conclusion.
 
@@ -408,6 +422,22 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   Cost of the recommendation: `setup` now has to sequence a catalog write and a build around a project
   whose catalog may be empty, which is more states than "submit the first derived image".
 
+- **D1208 (how a migrated entry bakes the repository's own dependency cache) — OPEN, recommended.**
+  Recommendation: **the entry's Dockerfile does it, with what the build already hands it** (F25) —
+  `git clone "$REPO_URL"` at `$FUGARO_COMMIT` under the `git-credentials` secret, then the dependency
+  warm-up, then `finalize-checkout` as the last step, exactly as the renderer's template does today
+  (`images/derived/Dockerfile.tmpl:130`). The engine gains **no bake mode**: a catalog build keeps
+  cloning nothing of its own, which is its stated rule (`internal/backend/gcp/catalog.go:39`), and the
+  dogfood migration of R0 is written as that Dockerfile.
+  Cost of the alternative: an engine-side bake keyed by repository — "clone this repository at this
+  commit before running the entry's Dockerfile" — re-creates a **per-repository build input inside the
+  catalog**, which is the thing the owner's ruling removes, arrived at from the other side; the two
+  paths would differ only in name.
+  Cost of the recommendation: the clone recipe and the `finalize-checkout` call become the
+  **repository's** responsibility, so an engine change to the checkout contract has to be repeated by
+  hand in every entry's Dockerfile, and nothing in this tree tests that a third party's Dockerfile ends
+  with it — which is §5's residual.
+
 ---
 
 ## 5. The residual this design refuses to hide
@@ -416,6 +446,10 @@ The decision block is taken **above every `D<number>` on `main` and in every ope
   reversible and reviewed; destroying the check job, its Scheduler and a repository's registry is not,
   and it is one command away for the owner. This design does not make that command safer — it only keeps
   it owner-run, typed and out of the gate.
+- **The `finalize-checkout` call is the migration's one hand-carried step (F25, D1208).** The renderer
+  ended every derived image with it; a migrated entry's Dockerfile has to, and nothing here tests a
+  third party's Dockerfile for it. An image that omits it is an image whose checkout still holds a
+  credential setting, which is the hazard the script exists for.
 - **A third repository may carry a per-repository image and nobody knows it.** The tree enumerates two
   (F24); nothing enumerates the rest, because a per-repository image is invisible outside its own
   repository. Everyone else meets the refusal at `fugaro.yaml` validation and converts by hand
