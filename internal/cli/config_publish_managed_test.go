@@ -346,27 +346,34 @@ func TestConfigPublishManagedRefusesAnExecutableChangeTheOwnerDidNotName(t *test
 	}
 }
 
-// The same change, named on the owner's own command line: admitted, published,
-// and recorded. The gate narrows the confirmation; it does not take away the
-// flag the owner writes themselves.
-func TestConfigPublishManagedAdmitsAnExecutableChangeTheOwnerNamed(t *testing.T) {
+// The same change with the flag written on the command line — and the command
+// line is the session's own, so the flag is not the owner's consent and the
+// change is refused just the same (D1015(e), D1021(b)). A flag the benefiting
+// session can pass is not a confirmation.
+func TestConfigPublishManagedRefusesAnExecutableChangeTheSessionNamed(t *testing.T) {
 	r := newManagedPublishRig(t)
 	agentSession(t)
 	publishedLayer(t, r.cloudFixture, minimalAnchored)
 	withCommands := minimalAnchored + "profiles:\n  svc:\n    commands: { test: sh test.sh }\n"
 	path := layerFile(t, withCommands)
-	out, errOut, err := execute(t, "config", "publish", "--executable-changes", path)
-	if err != nil {
-		t.Fatalf("a change the owner's own command line named was refused: %v\n%s", err, errOut)
+	out, _, err := execute(t, "config", "publish", "--executable-changes", path)
+	if err == nil {
+		t.Fatalf("--executable-changes admitted a change to what runs as shell in a coding agent's session: %q", out)
 	}
-	if !strings.Contains(out, initflow.AgentProceeded("CLAUDECODE")) {
-		t.Errorf("the session does not read that the step proceeded: %q", out)
+	if !strings.Contains(err.Error(), "shell") {
+		t.Errorf("the refusal does not name what the change would run: %v", err)
 	}
-	if got := bucketText(t, r.cloudFixture, config.LayerKey); got != withCommands {
-		t.Fatalf("the bucket holds %q, want the admitted layer", got)
+	if strings.Contains(err.Error(), "--executable-changes") || strings.Contains(err.Error(), "your own terminal") {
+		t.Errorf("the refusal names a way past the gate, or the marker's own refusal: %v", err)
 	}
-	if n := len(r.audits(t)); n != 1 {
-		t.Errorf("the admission left %d records, want exactly one", n)
+	if got := bucketText(t, r.cloudFixture, config.LayerKey); got != minimalAnchored {
+		t.Fatalf("the published layer moved: %q", got)
+	}
+	if n := len(r.auditKeys(t)); n != 1 {
+		t.Errorf("the refusal left %d audit records, want one (D1025)", n)
+	}
+	if got := r.audits(t); len(got) != 1 || got[0].Verdict != managedmode.AuditRefused {
+		t.Errorf("the record is %v, want one refusal", got)
 	}
 }
 

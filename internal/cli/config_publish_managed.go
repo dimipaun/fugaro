@@ -41,8 +41,12 @@ import (
 // the owner reads the one command they run themselves (its second) — which is
 // this same command, on a layer the owner has reviewed, in their own terminal.
 // Neither sentence may name a flag, a variable or a mark a reader could change
-// to get past the gate; the flag this command takes for executable changes is
-// therefore named in the banner publishLayer already prints and never here.
+// to get past the gate, and `--executable-changes` is exactly such a flag: the
+// command line of the session the gate judges is the session's own, so a flag
+// it can pass is not the owner's consent (D1015(e), D1021(b)). Every
+// executable change is therefore refused here, whatever the flag says, and the
+// flag is never named — the banner publishLayer prints for a person's own run
+// is where it belongs.
 //
 // Why the gate reads the published object itself. Two of the rules are about
 // what the write REPLACES rather than about the new document: an executable key
@@ -103,7 +107,7 @@ func configPublishGate(ctx context.Context, env *cloudEnv, marker string) (*mana
 // The class is YesOrTyped: publishing a layer is an ordinary confirmed step and
 // never a Typed one, so the gate may judge it at all (D1026 — and a Typed step
 // could not be admitted by these rules however clean the document looked).
-func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte, executable bool) managedmode.Converge {
+func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte) managedmode.Converge {
 	rules := layerDocumentRules(data)
 	l, ps := projectLayerProblems(data, env.lc)
 	if len(ps) > 0 {
@@ -133,7 +137,10 @@ func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte, exec
 	if changes, cerr := executableChanges(prev, l); cerr != nil {
 		rules = append(rules, "this fugaro cannot compare the layer's executable keys ("+cerr.Error()+
 			"), so the change cannot be judged")
-	} else if len(changes) > 0 && !executable {
+	} else if len(changes) > 0 {
+		// Whatever --executable-changes says: in a coding agent's session that
+		// flag is the session's own command line, and a change to what runs as
+		// shell is the owner's to make in their own terminal (D1015(e)).
 		rules = append(rules, "the layer changes what runs as shell in every repository that takes a profile ("+
 			safetext.FieldListLine(changes)+"), which is a change the project's owner publishes from their own terminal")
 	}
@@ -155,7 +162,7 @@ var layerAdmittedRules = []string{
 	"every key of the document is one the settings registry knows",
 	"the document names no reserved key",
 	"the document is one this program can publish",
-	"no executable key changes that the owner did not name on this command line",
+	"no key that runs as shell changes, whatever the command line says",
 	"the document widens no model claim, no A/B route and no cap",
 	"this machine's local layer file was written from the published layer's generation",
 }
