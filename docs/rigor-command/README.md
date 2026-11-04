@@ -34,7 +34,7 @@ edit one command, checked before it is written, and closes the `fugaro update` g
 after a second command is not delivered.
 
 **The shape the owner approved (SD4).** There is **one** local layer file,
-`~/.config/fugaro/projects/<project>-layer.yaml`, and no flag and no config key naming it. The first
+`~/.config/fugaro/projects/<project>.layer.yaml`, and no flag and no config key naming it. The first
 `fugaro update` **seeds** it from the published layer when it is absent, and every later `update`
 publishes it after showing the diff; `rigor set` and `unset` edit that one file. The owner's edit is
 therefore one command whose next step is the one documented command, which is the HARD RULE read
@@ -49,7 +49,7 @@ file was last written from, in the local project config's `layer_generation`
 published generation, showing the three-way state and offering a re-seed. The record is also what
 tells the two readings of **`unpublished`** apart in `show` and in doctor: a **local edit** (the
 bytes differ and the recorded generation is still the published one) or a **stale copy from another
-machine** (the published generation has moved past the recorded one), which need different remedies.
+machine** (the recorded generation is not the published one), which need different remedies.
 
 | File | Role |
 | --- | --- |
@@ -83,8 +83,9 @@ not exist.
   the published object's. One word, one comparison, three surfaces. And it is one state with **two
   causes**, which the recorded generation (D854, answered) tells apart: a **local edit**, when the
   recorded generation is still the published one, and a **stale copy from another machine**, when
-  the published generation has moved past it. The surfaces that print the word say which of the two
-  it is, because the remedies differ — publish this file, or re-seed it from the newer object.
+  the recorded generation is not the published one. The surfaces that print the word say which of
+  the two it is, because the remedies differ — publish this file, or re-seed it from the published
+  object.
 - **The no-checkout wording is `unknown (no checkout on this machine)`** in both designs — the
   string `fugaro rigor show` prints for a repository whose own `fugaro.yaml` this machine has no
   checkout for. Neither design guesses a mode it could not read.

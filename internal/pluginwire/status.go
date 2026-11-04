@@ -46,15 +46,15 @@ func (s State) Severity() Severity {
 func (s State) Fix() string {
 	switch s {
 	case Outdated, NotWired, Unpinned:
-		return "run fugaro upgrade --local"
+		return "run fugaro update"
 	case Newer:
 		return "upgrade fugaro (brew upgrade dimipaun/tap/fugaro); fugaro upgrade never moves a pin down"
 	case Foreign:
 		return "check that the marketplace repository is the one you intend; fugaro never rewrites it"
 	case InstalledDiffers:
-		return "run fugaro upgrade --local, or in Claude Code run /plugin marketplace update fugaro"
+		return "run fugaro update, or in Claude Code run /plugin marketplace update fugaro"
 	case NotInstalled:
-		return "run fugaro upgrade --local, or open Claude Code in this folder in a new session and trust it; if the /fugaro: skills are not listed (for example the folder was already trusted), run /plugin marketplace add dimipaun/fugaro and /plugin install fugaro@fugaro in Claude Code, then restart the session"
+		return "run fugaro update, or open Claude Code in this folder in a new session and trust it; if the /fugaro: skills are not listed (for example the folder was already trusted), run /plugin marketplace add dimipaun/fugaro and /plugin install fugaro@fugaro in Claude Code, then restart the session"
 	}
 	return ""
 }

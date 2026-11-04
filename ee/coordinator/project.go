@@ -31,6 +31,14 @@ import (
 // gitprov has no call for today, reconciliation finding #10).
 type Reader interface {
 	PullRequests(ctx context.Context, kind, repo string, numbers []int) ([]PullRequest, error)
+	// PullRequest reads one pull request whole, for the caller that needs the
+	// description the view drops (PRDocument, D816). It is a second method and
+	// not a wider PullRequests, because the two answer different questions:
+	// the view is a join over many pull requests and keeps none of their
+	// bodies, and a read that carried one would put unbounded text written by
+	// whoever opened the pull request into the document every reader of the
+	// view fetches.
+	PullRequest(ctx context.Context, kind, repo string, number int) (PRDocument, error)
 }
 
 // ErrBitbucket is the project-wide read's refusal of a Bitbucket repository
@@ -58,7 +66,11 @@ type TokenMinter func(ctx context.Context, repo string) (string, time.Time, erro
 // provider that minted on its own would ask GitHub for the run's set, which
 // holds two writes, and this read must not be able to reach one (Q3's
 // answer: the credential is a named read-only set, and no `write` anywhere).
-type ProviderOpener func(ctx context.Context, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error)
+// The kind is passed because a project holds repositories of more than one
+// (BB4): the opener is what decides which adapter a kind is read through and,
+// on Bitbucket, which root that adapter is opened on — a fact that must not be
+// derivable from anything the environment can set (G10).
+type ProviderOpener func(ctx context.Context, kind, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error)
 
 // Project is the project-wide read: each repository's pull requests read
 // through a provider opened on a read-only installation token of its own,
@@ -74,6 +86,29 @@ type Project struct {
 	Mint TokenMinter
 	// Open opens repo's provider with the token source installed. Required.
 	Open ProviderOpener
+	// ReadTokens is where a Bitbucket repository's token comes from (BB4):
+	// the installation's credentials service mints it for the person running
+	// the command, and this process holds no Bitbucket credential at all.
+	//
+	// Nil is a project that has no read mint — no installation has published
+	// the service's URL, or the command was not given one — and it is the
+	// state every Bitbucket repository was refused in before BB4
+	// (ErrBitbucket). It is a function of the repository rather than one
+	// source, because the service mints for ONE repository per call (G11) and
+	// the token it returns must be checked against the repository that asked.
+	ReadTokens func(repo string) gitprov.TokenSource
+	// GitHubReadTokens is where a GitHub repository's token comes from when the
+	// installation's credentials service holds the App's key (the person's
+	// class): the service mints a read-only installation token for the one
+	// repository named, and the process that reads holds no App key at all.
+	//
+	// Nil is a project whose GitHub read is its own — the coordinator job, which
+	// holds the App's key and mints its own read-only token — and the reader
+	// then mints through Mint exactly as it did before the service existed. It
+	// is a function of the repository for the same reason ReadTokens is: the
+	// service mints for ONE repository per call and the answer is checked
+	// against the repository that asked.
+	GitHubReadTokens func(repo string) gitprov.TokenSource
 	// Redact removes the credential values an Opener returned from text
 	// before that text is reported in an error (agent.Redact). Required, and
 	// a missing one panics rather than being skipped: a provider's own error
@@ -144,14 +179,15 @@ func (p *Project) now() time.Time {
 // host's is the caller's to decide, and a caller that could only see the text
 // would have to match on it.
 func (p *Project) PullRequests(ctx context.Context, kind, repo string, numbers []int) ([]PullRequest, error) {
-	if err := supported(kind); err != nil {
+	if err := p.supported(kind); err != nil {
 		return nil, err
 	}
 	if len(numbers) == 0 {
 		return nil, nil
 	}
 	mustRedact(p.Redact)
-	prov, secrets, err := p.Open(ctx, repo, p.sourceFor(repo))
+	src := p.sourceFor(kind, repo)
+	prov, secrets, err := p.Open(ctx, kind, repo, src)
 	if err != nil {
 		return nil, redactedError{err: err, text: p.Redact(err.Error(), secrets)}
 	}
@@ -187,7 +223,7 @@ func (p *Project) PullRequests(ctx context.Context, kind, repo string, numbers [
 			continue
 		}
 		if partial == nil {
-			secrets = append(secrets, p.minted(repo)...)
+			secrets = append(secrets, p.held(repo, src)...)
 			partial = &PartialError{err: redactedError{err: err,
 				text: fmt.Sprintf("reading pull request %d of %s: %s", numbers[i], repo, p.Redact(err.Error(), secrets))}}
 		}
@@ -202,6 +238,52 @@ func (p *Project) PullRequests(ctx context.Context, kind, repo string, numbers [
 		return nil, partial
 	}
 	return out, nil
+}
+
+// PullRequest reads one pull request as the host has it, whole, through the
+// same credential and the same rules as PullRequests: the coordinator's own
+// read-only installation token for the repository, minted once and cached for
+// its life, and a failure whose text goes through Redact with the values its
+// Opener held and the token this reader minted.
+//
+// The refusal of a kind this read does not serve comes first, before anything
+// is minted or opened (ErrBitbucket): a repository on a host the coordinator
+// cannot read is refused the same way whether one pull request or a whole view
+// was asked for, and the refusal is about what the project holds rather than
+// about what is in it.
+//
+// A pull request the host does not have is the host's own failure, and it
+// travels as one: what it carries is the provider's error, redacted, and the
+// caller classifies it exactly as it classifies the same failure from
+// PullRequests. Nothing here turns it into an empty document, which would say
+// a pull request exists with no description.
+func (p *Project) PullRequest(ctx context.Context, kind, repo string, number int) (PRDocument, error) {
+	if err := p.supported(kind); err != nil {
+		return PRDocument{}, err
+	}
+	mustRedact(p.Redact)
+	src := p.sourceFor(kind, repo)
+	prov, secrets, err := p.Open(ctx, kind, repo, src)
+	if err != nil {
+		return PRDocument{}, redactedError{err: err, text: p.Redact(err.Error(), secrets)}
+	}
+	info, err := prov.PullRequest(ctx, number)
+	if err != nil {
+		secrets = append(secrets, p.held(repo, src)...)
+		return PRDocument{}, redactedError{err: err,
+			text: fmt.Sprintf("reading pull request %d of %s: %s", number, repo, p.Redact(err.Error(), secrets))}
+	}
+	return PRDocument{
+		Number: info.Number,
+		URL:    info.URL,
+		Title:  info.Title,
+		Body:   info.Body,
+		State:  string(info.State),
+		Draft:  info.Draft,
+		Branch: info.SourceBranch,
+		Base:   info.Base,
+		Author: info.AuthorID,
+	}, nil
 }
 
 // PartialError is PullRequests' failure once the provider was opened: the
@@ -225,10 +307,29 @@ type PartialError struct {
 func (e *PartialError) Error() string { return e.err.Error() }
 func (e *PartialError) Unwrap() error { return e.err }
 
-// minted is the installation token this reader holds for repo, if any. The
-// opener's secrets do not include it — the source mints it on the provider's
-// first call, after Open returned — and a host that echoes its credential back
-// in a failure would otherwise put it in front of whoever reads the failure.
+// held is the installation token a failure's text may carry, and there are two
+// places it can be: the one this reader minted for repo through its own mint
+// (the coordinator job's), which it caches itself, and the one the source
+// minted, which it does not — a read the credentials service mints for (the
+// person's class) never passes the token through this reader's hands, and the
+// source is then the only thing that knows it (gitprov.TokenHolder).
+//
+// The opener's secrets do not include either: both are minted on the provider's
+// first call, after Open returned. A host that echoes its credential back in a
+// failure would otherwise put it in front of whoever reads the failure, which is
+// the whole of what the redaction is against.
+func (p *Project) held(repo string, src gitprov.TokenSource) []string {
+	out := p.minted(repo)
+	if h, ok := src.(gitprov.TokenHolder); ok {
+		if t := h.HeldToken(); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// minted is the installation token this reader minted for repo through its own
+// mint, if any.
 func (p *Project) minted(repo string) []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -255,7 +356,25 @@ const pullWorkers = 4
 // sourceFor is the token source of one repository, which Open installs: every
 // call through it is served from the cache while that repository's token is
 // still valid for the validity asked for, and mints otherwise.
-func (p *Project) sourceFor(repo string) gitprov.TokenSource {
+//
+// A Bitbucket repository's source is the read mint and not this command's own
+// (BB4): the coordinator holds no Bitbucket credential, and the token a person
+// is handed is one the service minted for the one repository named here. A
+// GitHub repository's source is the read mint too, wherever the service holds
+// the App's key and this process holds none (the person's class): the token is
+// read-only, minted for this one repository, and the App's key never leaves the
+// service.
+func (p *Project) sourceFor(kind, repo string) gitprov.TokenSource {
+	switch kind {
+	case gitprov.KindBitbucket:
+		if p.ReadTokens != nil {
+			return p.ReadTokens(repo)
+		}
+	case gitprov.KindGitHub:
+		if p.GitHubReadTokens != nil {
+			return p.GitHubReadTokens(repo)
+		}
+	}
 	return repoSource{p: p, repo: repo}
 }
 
@@ -302,11 +421,19 @@ func (s repoSource) Token(ctx context.Context, minValid time.Duration) (string, 
 }
 
 // supported reports whether the project-wide read serves providers of kind.
-func supported(kind string) error {
+//
+// Bitbucket is served only where the read mint is wired (BB4): with no
+// credentials service to mint at, this reader has no Bitbucket credential and
+// no way to reach one, which is ErrBitbucket's own reason and still the answer
+// a repository gets on a machine that has not opted in (G8).
+func (p *Project) supported(kind string) error {
 	switch kind {
 	case gitprov.KindGitHub:
 		return nil
 	case gitprov.KindBitbucket:
+		if p.ReadTokens != nil {
+			return nil
+		}
 		return ErrBitbucket
 	}
 	return fmt.Errorf("the project-wide view reads %s only: %q is not a git provider kind this repository knows (%s or %s)",

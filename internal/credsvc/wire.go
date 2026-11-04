@@ -840,13 +840,9 @@ func SwitchHeader(h http.Header) (Switch, bool, error) {
 // It does not check the tokens themselves: that is Verify's, which is the only
 // place a presented token is trusted.
 func RequestFromHTTP(r *http.Request) (Request, error) {
-	auth, err := oneHeader(r, "Authorization")
+	bearer, err := bearerFromHTTP(r)
 	if err != nil {
 		return Request{}, err
-	}
-	bearer, ok := strings.CutPrefix(auth, "Bearer ")
-	if !ok {
-		return Request{}, errors.New("credsvc: the Authorization header is not a bearer token")
 	}
 	run, err := oneHeader(r, HeaderRunIdentity)
 	if err != nil {
@@ -856,9 +852,6 @@ func RequestFromHTTP(r *http.Request) (Request, error) {
 	if err != nil {
 		return Request{}, err
 	}
-	if !printableHeaderValue(bearer, maxTokenBytes) {
-		return Request{}, errors.New("credsvc: the Authorization header's token is not one token")
-	}
 	if !printableHeaderValue(run, maxTokenBytes) {
 		return Request{}, fmt.Errorf("credsvc: the %s header is not one token", HeaderRunIdentity)
 	}
@@ -866,6 +859,33 @@ func RequestFromHTTP(r *http.Request) (Request, error) {
 		return Request{}, fmt.Errorf("credsvc: the %s header is not a Cloud Run job name", HeaderRunJob)
 	}
 	return Request{RunIDToken: run, JobIDToken: bearer, Job: job}, nil
+}
+
+// bearerFromHTTP reads the one bearer token a call presents in Authorization,
+// and it is that header's whole rule: exactly one value, the scheme spelled as
+// RFC 6750 spells it, and a token that is non-empty, within maxTokenBytes and
+// one clean header value. The error names the rule and never the value.
+//
+// It is written once because two callers read this header and must read it the
+// same way: RequestFromHTTP, for the job token every other route is admitted
+// by, and the verify route (verdict.go), which is answered ahead of that parse
+// and so reads its verifier's token on its own — a verifier holds no run
+// identity, so the parse that reads three headers cannot run for it at all.
+// Two spellings of this rule is how they would drift: the stricter one would be
+// the rule and the other a way past it.
+func bearerFromHTTP(r *http.Request) (string, error) {
+	auth, err := oneHeader(r, "Authorization")
+	if err != nil {
+		return "", err
+	}
+	bearer, ok := strings.CutPrefix(auth, "Bearer ")
+	if !ok {
+		return "", errors.New("credsvc: the Authorization header is not a bearer token")
+	}
+	if !printableHeaderValue(bearer, maxTokenBytes) {
+		return "", errors.New("credsvc: the Authorization header's token is not one token")
+	}
+	return bearer, nil
 }
 
 // oneHeader returns the single value of a request header, refusing a header

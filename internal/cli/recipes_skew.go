@@ -16,8 +16,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -149,6 +151,30 @@ const catalogSince = "0.7.5"
 // docs/release.md's checklist line for catalogSince in that commit too.
 const catalogShipped = false
 
+// imageCatalogSince names the release that publishes — and reads — the
+// project policy node's image_catalog key (D1140, D1156): the release whose
+// CLI models the key, and therefore the first whose launcher does not refuse
+// a node that carries one (refuseUnknownPolicyKeys). A launcher on an older
+// CLI meets such a node as an unknown key and refuses it, which is why an
+// installation that names a catalog upgrades every launcher before it
+// launches again; a runner tolerates the key and logs it.
+//
+// It is spelled apart from catalogSince/catalogShipped on purpose (F14):
+// those two are the *price* catalog's — a route's require_zdr and
+// price_policy — and the two catalogs ship on their own schedules, so one
+// name for both would judge an image document by the price catalog's
+// knowledge and the other way round. docs/release.md's ("Before you tag")
+// checklist verifies it equals the release that ships the key, the same way
+// it does for catalogSince.
+const imageCatalogSince = "0.17.0"
+
+// imageCatalogShipped is true as of 0.18.0, the first release that ships the
+// flip. 0.17.0 published and read the node's image_catalog key but was tagged
+// with the gate still false, so its readiness held back every job a catalog
+// entry gives its image to. infra's imageCatalogShipped (readiness.go) is the
+// same fact and moves with this one.
+const imageCatalogShipped = true
+
 // managedDeployerShipped is true as of 0.10.0, the release the owner's ruling
 // of 2026-10-22 ships the managed deployer in: managed projects ship enabled.
 // Until then it was false, because the deployer's scoped half could not be
@@ -275,6 +301,66 @@ const recipesV07Since = "0.7.0"
 // verifies the constant against the tag actually cut, the way
 // planTaskSince's bullet records.
 const digestSince = "0.13.0"
+
+// adversarialSince is the first fugaro release whose runner acts on the
+// adversarial step, review level 3 (D720): it runs the step after the senior
+// review, a rejection bounces back to the first-line loop, and the level
+// takes part in readiness (L4.2). A runner before it refuses the recipe
+// outright, at parse: its version 1 step list has no adversarial kind, so the
+// whole recipe is "is not a step type" (recipe.Parse, recipe.UsesAdversarial)
+// and the run dies at bootstrap with the bytes already in the bucket. This
+// gate is what turns that into a refusal at the launcher's terminal, naming
+// fugaro image refresh, so an image that cannot run the step never accepts
+// the launch at all.
+//
+// Like artifactsSince it carries no shipped flag: refusing every image that
+// predates the step is exactly the direction this gate wants, and an image
+// with no release tag (a dev build, a hand-pushed one) only warns, the same
+// as for every other *Since constant here — safe either way, since a runner
+// that cannot run the step refuses the recipe at bootstrap rather than
+// skipping it and opening an ordinary pull request in its place. It names
+// 0.16.0, the release L4.2 ships in: 0.15.0 shipped with the step parsing
+// but no runner running it (a 0.15.0 run stopped at planning), so L4.2
+// missed that tag and the constant moved with it — no image ever accepts an
+// adversarial launch and then refuses the recipe, and docs/release.md's
+// checklist verifies it against the tag actually cut, the way digestSince's
+// bullet records.
+//
+// A repository-sourced recipe is judged by this constant too, the step having
+// no field of its own in the task: the task carries the recipe's name alone,
+// so recipeSinceFor judges the file this checkout holds (repoRecipeForGate,
+// the read recipeForLaunch shares) on the baked path and on the clone one
+// alike — checkCloneRecipeImage takes the context that read needs. A launch
+// whose file cannot be read here — no checkout, an unreadable or invalid one —
+// stays on recipesSince, with the runner's parse refusal as the backstop,
+// exactly as it is for a name this launcher cannot resolve at all.
+const adversarialSince = "0.16.0"
+
+// reviewLevelsSince is the first fugaro release whose runner acts on review
+// levels — the task's review_levels block and fugaro.yaml's agent.levels
+// (L4.2, D720-D727): it inserts the step of an enabled level the recipe lacks
+// (O7), runs the adversarial step, resolves each level's own model and hands
+// the levels to readiness. A runner before it — 0.15.0, the release the field
+// and the keys shipped in — decodes both and acts on neither, so a launch it
+// accepted would run with the levels dropped in silence: no `none`, no level
+// 3, no level's own model or effort, no owner's floor.
+//
+// Like artifactsSince it carries no shipped flag: refusing every image that
+// predates the release is exactly the direction this gate wants, and an image
+// with no release tag (a dev build, a hand-pushed one) only warns, the same
+// as for every other *Since constant here — a refusal there would name a
+// release nothing can compare it with, and the levels are the launcher's to
+// keep off such an image. It names 0.16.0, the same number adversarialSince
+// names and for the same reason: level 3 is the step that made the runner act
+// on levels, so the two ship together, and docs/release.md's checklist
+// verifies it against the tag actually cut, the way digestSince's and
+// adversarialSince's bullets record.
+const reviewLevelsSince = "0.16.0"
+
+// reviewLevelsKnows names, for the gate's messages, what the job image's
+// runner has to know: the field and the configuration keys a runner that acts
+// on levels reads.
+const reviewLevelsKnows = "the review levels (review_levels, agent.levels)"
 
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
@@ -620,11 +706,13 @@ func needsRecipeImage(spec *task.Spec, checkoutRecipe string) bool {
 // embeddedRecipeOf is the recipe spec.Recipe's exact YAML parses to, or nil
 // when there is none to parse: a repository-sourced recipe carries only its
 // name (the runner re-reads the file at the ref), and a bare agent.recipe
-// name is not resolved here either. Both still get the plain recipesSince
-// gate below, unless the task carries a report run's manifest, which is a
-// gate of its own whatever the recipe's source (recipeSinceFor); whether
-// either uses a 0.7.0 construct is for the run itself to find out, the same
-// way an older runner already refuses an unknown key.
+// name is not resolved here either. A repository recipe is judged from the
+// launcher's own read of its file (repoRecipeForGate); a bare agent.recipe
+// name still gets the plain recipesSince gate, unless the task carries a
+// report run's manifest, which is a gate of its own whatever the recipe's
+// source (recipeSinceFor); whether that one uses a 0.7.0 construct is for the
+// run itself to find out, the same way an older runner already refuses an
+// unknown key.
 func embeddedRecipeOf(spec *task.Spec) *recipe.Recipe {
 	if spec.Recipe == nil || spec.Recipe.YAML == "" {
 		return nil
@@ -635,6 +723,13 @@ func embeddedRecipeOf(spec *task.Spec) *recipe.Recipe {
 	}
 	return r
 }
+
+// carriedDefaultAlt is the way out a launch that carries another recipe has:
+// the catalog's own default. It is not a way out of an old image either — a
+// carried default is judged by the constructs it carries, and it carries the
+// adversarial step since adversarialSince — so the sentence names that release
+// rather than sending the user to a second refusal.
+var carriedDefaultAlt = "; or launch with --recipe default, which is the catalog's own loop and needs a " + adversarialSince + " job image itself (it carries the adversarial step)"
 
 // checkRecipeImage refuses a launch whose job image runs a fugaro older than
 // recipesSince (decision D2), or than the newer constant the task's own
@@ -648,17 +743,34 @@ func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 	if spec.Recipe != nil {
 		subject = "recipe " + spec.Recipe.Name
 		if spec.Recipe.Name != recipe.DefaultName { // a carried default cannot be the way out
-			alt = "; or launch with --recipe default to run today's loop"
+			alt = carriedDefaultAlt
 		}
 	}
-	return checkImageSince(ctx, env, slug, spec, kind, recipeSinceFor(spec), subject, "recipes", alt, warn)
+	return checkImageSince(ctx, env, slug, spec, kind, recipeSinceFor(spec, repoRecipeForGate(ctx, spec)), subject, "recipes", alt, warn)
 }
 
-// recipeSinceFor is the release the embedded recipe's own constructs demand,
-// the newest of the gates its text trips (design generic-tool.md §3.1): a
-// recipe the launcher cannot read here — a repository-sourced one, which
-// carries only its name, or a bare agent.recipe name — keeps recipesSince,
-// the same way an older runner refuses its unknown keys at the run.
+// repoRecipeForGate is a repository-sourced task's recipe, read from this
+// checkout the way recipeForLaunch reads it — the working tree, the
+// launcher's own approximation of the ref the runner checks out. Only
+// recipeSinceFor's adversarial arm reads it: that step is the one construct
+// whose gate the task's own fields cannot carry (see recipeSinceFor). nil for
+// every other launch, and for one whose file cannot be read here, which keeps
+// the plain recipesSince it always had; the runner's own parse refusal is the
+// backstop there, exactly as it is for a name this launcher cannot resolve at
+// all.
+func repoRecipeForGate(ctx context.Context, spec *task.Spec) *recipe.Recipe {
+	if spec.Recipe == nil || spec.Recipe.YAML != "" {
+		return nil
+	}
+	return repoRecipeFrom(spec, checkoutRoot(ctx, spec.Repo))
+}
+
+// recipeSinceFor is the release the recipe's own constructs demand, the
+// newest of the gates its text trips (design generic-tool.md §3.1): the
+// task's embedded text when it carries one, else rp, the launcher's own read
+// of a repository recipe's file (repoRecipeForGate). A bare agent.recipe
+// name, which no file here resolves, keeps recipesSince, the same way an
+// older runner refuses its unknown keys at the run.
 //
 // A task carrying digest_runs is judged by the manifest itself, whatever its
 // recipe's source: the field is what says the run executes the digest step
@@ -668,13 +780,29 @@ func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 // launch of a repository's own report recipe would be judged by recipesSince
 // and start a job whose runner refuses the whole task at bootstrap, the
 // manifest being a field it does not know.
-func recipeSinceFor(spec *task.Spec) string {
+//
+// The adversarial step is judged from rp too, and it is the newest construct
+// any recipe can carry (adversarialSince), so its case comes first. Unlike
+// the manifest and mode: artifact — a repository recipe's digest run and its
+// mode both reach the task as fields, which carry their own gates above —
+// the step has nothing in the task behind it, so the launcher's read of the
+// file the recipe names is the only place the gate can see it; one this
+// launcher cannot read keeps recipesSince, with the runner's parse refusal as
+// the backstop. Every older construct keeps the gate it always had, judged
+// from the embedded text alone: a repository recipe trips none of them here,
+// which is what its own tests pin.
+func recipeSinceFor(spec *task.Spec, rp *recipe.Recipe) string {
 	r := embeddedRecipeOf(spec)
+	if len(spec.DigestRuns) == 0 && r == nil && rp != nil && recipe.UsesAdversarial(rp) {
+		return adversarialSince
+	}
 	switch {
 	case len(spec.DigestRuns) > 0:
 		return digestSince
 	case r == nil:
 		return recipesSince
+	case recipe.UsesAdversarial(r):
+		return adversarialSince
 	case recipe.UsesDigest(r):
 		// The digest step is 0.13.0's, newer than every other construct
 		// here, so it is the binding gate; no mode: artifact construct can
@@ -994,17 +1122,259 @@ func sharedImageOf(lock *imagecheck.Lock, repo, job string) (imagecheck.LockedIm
 }
 
 // checkCloneRecipeImage is checkRecipeImage for a checkout: clone workflow
-// (recipesSince, or the newer constant the embedded recipe's constructs
-// need): see checkCloneImageSince.
-func checkCloneRecipeImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer) error {
+// (recipesSince, or the newer constant the recipe's constructs need): see
+// checkCloneImageSince. It reads a repository recipe's own file from this
+// checkout like its derived-image twin, so a checkout: clone launch is
+// judged on the recipe the run will read rather than on the name alone.
+func checkCloneRecipeImage(ctx context.Context, lc *localcfg.Config, spec *task.Spec, warn io.Writer) error {
 	subject, alt := "fugaro.yaml's agent.recipe", ""
 	if spec.Recipe != nil {
 		subject = "recipe " + spec.Recipe.Name
 		if spec.Recipe.Name != recipe.DefaultName { // a carried default cannot be the way out
-			alt = "; or launch with --recipe default to run today's loop"
+			alt = carriedDefaultAlt
 		}
 	}
-	return checkCloneImageSince(lc, spec, recipeSinceFor(spec), subject, "recipes", alt, warn)
+	return checkCloneImageSince(lc, spec, recipeSinceFor(spec, repoRecipeForGate(ctx, spec)), subject, "recipes", alt, warn)
+}
+
+// reviewLevelsAsk is what a launch asks of its job image's runner about
+// review levels, in the terms the refusal names, and "" when it asks nothing
+// at all — a launch every release runs identically.
+//
+// The resolved levels (config.ResolveLevels, L3.1) are the half the flags
+// cannot carry: a level 3 the mode's own row or the owner's floor turns on,
+// and a first-line step the run has to insert in a recipe that lacks one
+// (O7), both reach a run with no task field and no configuration key. A
+// runner that predates reviewLevelsSince runs neither, silently, so the task
+// field alone would let both through.
+//
+// The second half is the blocks only a runner that acts on levels reads: the
+// task's review_levels (L1.1) and the merged configuration's agent.levels
+// (L1.3), each named by the level keys it writes. A block that writes nothing
+// says nothing (config.writesLevel), and a level that merely runs as it
+// always has is not one of these: the model a level resolves to with no
+// per-level key is agent.models' own, which every release reads.
+//
+// The owner's floor (D722, G1) is the third, and it is read from the
+// owner-only policy node by a runner at reviewLevelsSince or later alone.
+//
+// recipeUnknown is whether the launcher could not read the recipe the task
+// names, which leaves the insertion question unanswerable rather than
+// answered: config.ResolveLevels carries no recipe then and reports Inserted
+// false, and a first-line step the run's real recipe turns out to lack would
+// be inserted by a runner at reviewLevelsSince and dropped in silence by one
+// before it. The conservative direction is the one every other gate here
+// takes for a file it cannot read — ask, and let the refusal name the image
+// to refresh — and it costs a refusal only on an image older than the
+// release whose runner acts on levels.
+func reviewLevelsAsk(levels config.Levels, task *config.ReviewLevels, cfg *config.Config, floor []policy.Level, recipeUnknown bool) string {
+	var asks []string
+	if len(floor) > 0 {
+		asks = append(asks, "the owner's review-level floor")
+	}
+	if levels.L3.On {
+		asks = append(asks, "review level 3 (its adversarial step)")
+	}
+	switch {
+	case levels.L1.Inserted:
+		asks = append(asks, "review level 1 (a first-line step the run inserts)")
+	case levels.L1.On && recipeUnknown:
+		asks = append(asks, "review level 1 (a first-line step the run inserts unless its recipe carries one, and this checkout has not got that file)")
+	}
+	if s := levelsBlockAsk("the task's review_levels", task); s != "" {
+		asks = append(asks, s)
+	}
+	if cfg != nil {
+		if s := levelsBlockAsk("fugaro.yaml's agent.levels", &cfg.Agent.Levels); s != "" {
+			asks = append(asks, s)
+		}
+	}
+	return strings.Join(asks, " and ")
+}
+
+// levelsBlockAsk names the level keys one block writes ("the task's
+// review_levels (l1.none, l2.model)"), and "" for a block that writes none:
+// an absent block and one whose levels are all nil say nothing about any
+// level, the same reading config.writesLevel gives them. A level's block is
+// named by its first key alone, because what the refusal is about is the
+// level, not the list.
+func levelsBlockAsk(name string, l *config.ReviewLevels) string {
+	if l == nil {
+		return ""
+	}
+	var keys []string
+	for _, lv := range []struct {
+		name string
+		s    *config.LevelSetting
+	}{{"l1", l.L1}, {"l2", l.L2}, {"l3", l.L3}} {
+		switch {
+		case lv.s == nil:
+		case lv.s.Off:
+			keys = append(keys, lv.name+".none")
+		case lv.s.Model != "":
+			keys = append(keys, lv.name+".model")
+		case lv.s.Effort != "":
+			keys = append(keys, lv.name+".effort")
+		case lv.s.Focus != "":
+			keys = append(keys, lv.name+".focus")
+		}
+	}
+	if len(keys) == 0 {
+		return ""
+	}
+	return name + " (" + strings.Join(keys, ", ") + ")"
+}
+
+// launchReviewLevelsAsk is reviewLevelsAsk for the launch about to be made:
+// the run's levels resolved the way the run resolves them (config.ResolveLevels,
+// the call L4.2's bootstrap makes), from the file the run will read, the mode
+// it resolves and the owner's floor. The second result is that resolution's
+// own refusal: L3.2 refuses the launch on it, before the task is written, so a
+// configuration the run's bootstrap would refuse (L1 = L2, a level a layer
+// turns off under the owner's floor, an effort a provider route would drop)
+// costs no job and leaves nothing in the bucket.
+//
+// A policy node the launcher cannot read is one the launch's own policy gate
+// refuses (launchPolicyGates), and inventing a floor off it would refuse a
+// launch that works: that read fails towards asking nothing. The file's own
+// absence does not — it is not a file the run's bootstrap refuses, it is a
+// launch made from outside the repository's checkout (launchFileConfig), and
+// what this launch knows without it is resolved rather than skipped: the mode
+// --mode asked for, the owner's floor, and the project layer the task carries
+// (launchLayerConfig), which is the configuration half no checkout was needed
+// to read.
+//
+// The mode is the launcher's approximation of the run's: the ref's file with
+// the flag raised over it, as noteRigorRequest reads it, since the
+// authoritative resolution is the runner's at bootstrap. The recipe is the
+// one this launcher can read (launchRecipeForLevels), and recipeUnknown says
+// the one thing that read could not settle: whether that recipe writes a
+// first-line step of its own. CatalogDefault is read as false: it decides
+// level 1's own default alone, which this gate does not judge.
+func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, recipeUnknown bool) (string, error) {
+	if cfg == nil {
+		// No configuration file was read, because the launcher stands
+		// outside the repository's checkout and this run's ref is not in one
+		// either. It is not without configuration all the same: the task
+		// carries the project layer itself, and resolving over that layer
+		// keeps the mode the flag asked for (spec.Rigor), the owner's floor,
+		// and the layer's own defaults — a rigor default of its own, an
+		// agent.levels block — which is the part an empty configuration
+		// would hide, and hidden it is a level a runner older than
+		// reviewLevelsSince drops in silence.
+		cfg = launchLayerConfig(spec)
+	}
+	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}).Mode
+	var floor []policy.Level
+	if p, found, err := env.policy.read(ctx, env.lc); err == nil && found && p != nil {
+		floor = p.ReviewFloor[mode]
+	}
+	levels, _, err := config.ResolveLevels(config.LevelInputs{
+		Config: cfg, Mode: mode, Floor: floor, Task: spec.ReviewLevels, Recipe: rcp, Providers: env.lc.Providers,
+	})
+	if err != nil {
+		// Nothing is asked of the image and no task is written: the launch is
+		// the resolution's to refuse, and a refusal carries no levels to read
+		// an ask off (config.ResolveLevels answers with the zero Levels).
+		// Refusing here rather than leaving it to the run's bootstrap is what
+		// G2 means by "never launches", and the alternative is a job paid for
+		// a run whose first act is to refuse the task it was given.
+		return "", userErr("%v", err)
+	}
+	return reviewLevelsAsk(levels, spec.ReviewLevels, cfg, floor, recipeUnknown), nil
+}
+
+// launchLayerConfig is the configuration a launch from outside the
+// repository's checkout resolves: the project layer the task carries
+// (spec.ProjectLayer, embedProjectLayer), resolved over a fugaro.yaml that
+// is nothing but the anchoring that layer applies to — its own project and
+// gcp_project, which is the whole of what the file the launcher could not
+// read contributes here. Nothing settles whether that layer really applies
+// to the run (the file that would say so is the one that could not be read),
+// and the reading taken is the conservative one: a layer the run turns out
+// not to use can only make this gate ask for an image that acts on levels,
+// where a layer the run does use and this gate ignored is a level the run
+// drops in silence.
+//
+// A layer that does not parse or does not resolve leaves the empty
+// configuration. embedProjectLayer parsed the layer before storing it, so
+// neither happens for a task this launcher wrote; a layer that will not read
+// back is a run's own problem to refuse, not a skew this gate names.
+func launchLayerConfig(spec *task.Spec) *config.Config {
+	if spec.ProjectLayer == nil {
+		return &config.Config{}
+	}
+	l, ps := config.ParseProjectLayer([]byte(spec.ProjectLayer.YAML), config.LayerAnchor{})
+	if len(ps) > 0 {
+		return &config.Config{}
+	}
+	anchor := []byte(fmt.Sprintf("version: 1\nproject: %s\ngcp_project: %s\n", l.Project, l.GCPProject))
+	if c, _, ps := config.Resolve(anchor, l); len(ps) == 0 {
+		return c
+	}
+	return &config.Config{}
+}
+
+// launchRecipeForLevels is the recipe launchReviewLevelsAsk judges the levels
+// on, and whether that read could not settle it.
+//
+// A project or catalog recipe is not a gap here: the launcher embeds its text
+// in the task when it resolves the name (taskRecipeEmbedding), so the task's
+// own bytes are the recipe the run will get — the same bytes the runner reads
+// out of task.json. The task's text comes first for that reason; a repository
+// recipe carries its name alone (the runner reads the file at the ref), so
+// this checkout's copy is the second read (repoRecipeForGate, the same one
+// recipeForLaunch and the recipe gates make).
+//
+// Unknown — the second result — is a repository recipe whose file this
+// checkout has not got (a directory that is not the repository's, a file
+// that lives only at the ref, an unreadable one), and a task whose embedded
+// text does not parse, which is a launch the runner's bootstrap refuses. The
+// steps of a recipe nobody read are unknown, not absent, and the L1 ask says
+// so rather than reading Inserted false as "no first-line step".
+func launchRecipeForLevels(ctx context.Context, spec *task.Spec) (*recipe.Recipe, bool) {
+	if spec.Recipe == nil {
+		// The runner chooses, and only the catalog's own default can come
+		// out of that with no text in the task — the recipe this launcher
+		// would have embedded had it resolved a name itself. Its file is
+		// known here, and it writes a first_line step.
+		return nil, false
+	}
+	if r := embeddedRecipeOf(spec); r != nil {
+		return r, false
+	}
+	if r := repoRecipeForGate(ctx, spec); r != nil {
+		return r, false
+	}
+	return nil, true
+}
+
+// reviewLevelsAlt is the refusal's other way out, and the one a user who has
+// just moved to this release has: the update rebuilds this repository's job
+// images behind its own confirmation, so after a brew upgrade the one command
+// they run — the HARD RULE of the update — is already the rebuild the refusal
+// asks for, and the refresh above is that same rebuild on its own, for one
+// repository, from its checkout.
+const reviewLevelsAlt = "; or run fugaro update, which is the whole upgrade: it brings the installation to this release and rebuilds this repository's job images behind its own confirmation"
+
+// checkReviewLevelsImage refuses a launch whose job image runs a fugaro older
+// than reviewLevelsSince: subject is what reviewLevelsAsk named, and "" —
+// a launch that asks nothing — is never gated. The judge is the build
+// record's base_ref, as every checkImageSince gate's is.
+func checkReviewLevelsImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind, subject string, warn io.Writer) error {
+	if subject == "" {
+		return nil
+	}
+	return checkImageSince(ctx, env, slug, spec, kind, reviewLevelsSince, subject, reviewLevelsKnows, reviewLevelsAlt, warn)
+}
+
+// checkCloneReviewLevelsImage is checkReviewLevelsImage for a checkout: clone
+// workflow: see checkCloneImageSince.
+func checkCloneReviewLevelsImage(lc *localcfg.Config, spec *task.Spec, subject string, warn io.Writer) error {
+	if subject == "" {
+		return nil
+	}
+	return checkCloneImageSince(lc, spec, reviewLevelsSince, subject, reviewLevelsKnows, reviewLevelsAlt, warn)
 }
 
 // refuseClonesNotShipped refuses, before any cloud effect, deploying or
@@ -1546,6 +1916,48 @@ func catalogSwitchSkew(repo string, names []string, ref string, shipped bool, wa
 			"but the installation's base image is %s, release %s. Run fugaro update --base base in your own terminal window to move the "+
 			"installation's base image to a current release, or leave both unset for now",
 			where, repo, catalogSince, pluginwire.Printable(ref), rel)
+	}
+	return nil
+}
+
+// imageCatalogSkew is the image family's own gate for the node's
+// image_catalog key (D1156, F14), the shape catalogSwitchSkew has for the
+// price catalog's switches: it judges the installation's base image, the
+// one the job a catalog image replaces is built from, because a job whose
+// runner predates imageCatalogSince reads a node carrying the key as an
+// unknown document. It is spelled with imageCatalogSince/imageCatalogShipped
+// and never with catalogSince/catalogShipped, which are the price catalog's
+// (F14): the two documents ship on their own schedules.
+//
+// shipped is the constant, passed rather than read so a test can ask both
+// halves of the gate, exactly as catalogSwitchSkew's tests do. While no
+// release reads the key, only a job image this release builds itself is
+// safe: an image that is a release, or one nothing can date, is refused,
+// because no release can be named that reads the key and an operator told
+// otherwise would be sent to a CLI that does not exist. Once it ships, a
+// release older than imageCatalogSince is refused and an undated ref is
+// only warned about, the way checkCloneImageSince judges one.
+//
+// where names what the gate is being asked about, and ref is the
+// installation's base image ("" when the config names none, which passes:
+// infra.Repo then builds the job from this release's own image, which reads
+// the key).
+func imageCatalogSkew(where, ref string, shipped bool, warn io.Writer) error {
+	if ref == "" {
+		return nil
+	}
+	rel, ok := releaseOf(ref)
+	switch {
+	case !ok:
+		if !shipped {
+			return userErr("%s needs a job image whose fugaro reads the project policy's image_catalog key, but no fugaro release reads it yet (it ships at fugaro %s) and the installation's base image %s is not a release image, so nothing can be told about it. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, and fugaro update, before a catalog entry is named",
+				where, imageCatalogSince, pluginwire.Printable(ref))
+		}
+		fmt.Fprintf(warn, "warning: %s needs a job image whose fugaro reads the project policy's image_catalog key, but the installation's base image is %s, which is not a release base image; whether it does is not checked\n",
+			where, pluginwire.Printable(ref))
+	case imagePredates(rel, imageCatalogSince):
+		return userErr("%s needs a job image whose fugaro reads the project policy's image_catalog key (fugaro %s or later), but the installation's base image is %s, release %s. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, then fugaro update",
+			where, imageCatalogSince, pluginwire.Printable(ref), rel)
 	}
 	return nil
 }

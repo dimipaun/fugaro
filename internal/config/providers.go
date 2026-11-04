@@ -628,9 +628,10 @@ func IsServiceHeldSecretEnv(env, name string) bool {
 // the module's own bitbucket_proxied input.
 //
 // It is EMPTY, and it stays empty until the flip. B1.13 part two fills it with
-// "bitbucket-token" in the release after 0.14.0, once B1.12 has passed and the
-// owner has given their go on Check 191 (D500, G1); the module's mirror, the
-// guard test and the tftest runs move in that one commit. Until then no job
+// "bitbucket-token", and the flip is 0.16.0 — the release after B1.12's Check
+// 191 on the released 0.15.0 and the owner's go on it (D500, G1; O7 and the S1
+// row of docs/secrets-brokering/implementation-plan.md). The module's mirror,
+// the guard test and the tftest runs move in that one commit. Until then no job
 // loses an accessor or a mount for it, whatever the node admits, and a proxied
 // repository's run reads its token exactly as it always has.
 var ProxiedGitSecretNames = []string{}
@@ -1061,11 +1062,25 @@ func claimed(providers map[string]ModelProvider, model string) bool {
 // providers it may send code to does not (design docs/design/project-centric.md
 // §6.1). repo "" is an unknown repository, which no provider may serve.
 //
+// A review level's own model is a pin of its own (agent.levels.lN.model,
+// ResolveLevels L3.1): it runs in place of the role slot the level sits in
+// (runner stageModel, L4.5), so the coder, the reviewer and the background do
+// not cover it, and a Claude level model under provider pins is a call to
+// Anthropic this rule has to see. A level that names no model runs its slot's,
+// which the three already judge, and one that is off has no model to read
+// (LevelSetting.validate refuses none beside one).
+//
 // Callers ask this only where the gateway is on and enforcing: without it a
 // provider model is refused (CheckProviderGateway) and every call would go to
 // Anthropic, which AnthropicKeyNeeded decides.
 func NeedsAnthropicKey(a Agent, providers map[string]ModelProvider, repo string) bool {
-	for _, model := range []string{a.ModelFor(RoleCoder), a.ModelFor(RoleReviewer), EffectiveBackground(a, providers)} {
+	models := []string{a.ModelFor(RoleCoder), a.ModelFor(RoleReviewer), EffectiveBackground(a, providers)}
+	for _, l := range []*LevelSetting{a.Levels.L1, a.Levels.L2, a.Levels.L3} {
+		if l != nil && l.Model != "" {
+			models = append(models, l.Model)
+		}
+	}
+	for _, model := range models {
 		if _, p, ok := ProviderFor(providers, model); !ok || !p.AllowsData(repo) {
 			return true
 		}

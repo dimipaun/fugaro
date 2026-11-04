@@ -27,7 +27,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { SPAWN_COMMANDS } from '../../src/main/spawn'
+import { SETTINGS_EDIT_OPERATION, SPAWN_COMMANDS } from '../../src/main/spawn'
 
 /** StubAnswer is what one command does when the stub is asked for it. */
 export interface StubAnswer {
@@ -278,7 +278,9 @@ main()
 
 /** commandKey is the stub's own reading of its argv: the leading words that do
  * not start with a dash, with `logs --url` told apart from `logs` because the
- * console's two log operations differ by exactly that flag.
+ * console's two log operations differ by exactly that flag, and the settings
+ * write told apart from the settings read because the two share the command word
+ * `settings` and differ by whether a subcommand word follows it.
  *
  * It is not a copy of anything: `STUB_COMMAND_KEYS` below is derived from the
  * spawn table by calling *this* function on each row's `words`, and the generated
@@ -292,10 +294,24 @@ export function commandKey(argv: readonly string[]): string {
     if (element.startsWith('-')) break
     words.push(element)
   }
-  const key = words.join(' ')
   if (words[0] === 'logs') return argv.includes('--url') ? 'logs --url' : 'logs'
-  return key
+  // A settings write is the one argv whose leading words are not a stable key:
+  // `set`/`unset` and the key it names are the edit's own, so `settings set
+  // budget.cap_usd` would be a key per edit, and a scenario key that only
+  // sometimes matched is a scenario answered by `default`. The write's key is
+  // therefore the operation, and both spellings answer to it.
+  if (words[0] === 'settings' && (words[1] === 'set' || words[1] === 'unset')) return SETTINGS_EDIT_KEY
+  return words.join(' ')
 }
+
+/** SETTINGS_EDIT_KEY is the settings write's key, and the one a row's own
+ * `words` cannot produce: the write's subcommand is a declared argument of the
+ * row (`settings.edit`'s `op`), so `commandKey([...row.words])` reads `settings`
+ * -- the read's key -- for both rows, and two rows sharing one key would make
+ * one of them unreachable and its scenario silently wrong. The derivation below
+ * names it from the operation, and `stub.test.ts` holds the child's own reader
+ * to it on a real write argv. */
+export const SETTINGS_EDIT_KEY = 'settings edit'
 
 /**
  * STUB_COMMAND_KEYS is every key a scenario may use: the console's one spawn
@@ -309,7 +325,9 @@ export function commandKey(argv: readonly string[]): string {
  * stub can never be asked for (see `refuseUnknownCommands`).
  */
 export const STUB_COMMAND_KEYS: readonly string[] = Object.freeze(
-  SPAWN_COMMANDS.map((row) => commandKey([...row.words])),
+  SPAWN_COMMANDS.map((row) =>
+    row.operation === SETTINGS_EDIT_OPERATION ? SETTINGS_EDIT_KEY : commandKey([...row.words]),
+  ),
 )
 
 /**

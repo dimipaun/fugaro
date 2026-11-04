@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -504,7 +505,16 @@ func TestBudgetPreviewTypicalJSONSubscription(t *testing.T) {
 // history is averaged over must sum to it for every catalog recipe and every
 // way the round knobs can leave a loop out: the mirror of the runner's loop
 // and StageBound must never drift apart.
+//
+// All three numbers are the loops' round counts, and a typical run spends one
+// round of each: the third is the level-3 rounds the run resolved
+// (previewLevel3Rounds), which the count reads as one round and 0/1 on the
+// bound's side says one round or none. The catalog default carries the step
+// since 0.16.0, so this is the arm that prices it, and the last loop below is
+// what keeps the two figures of one line together whatever row a mode
+// resolves: the count does not grow with the row, the bound does.
 func TestBudgetPreviewTypicalCountsMatchTheBound(t *testing.T) {
+	row := rigor.AdversarialDefault(rigor.Critical)
 	for _, name := range recipe.CatalogNames() {
 		t.Run(name, func(t *testing.T) {
 			text, ok := recipe.CatalogText(name)
@@ -517,12 +527,18 @@ func TestBudgetPreviewTypicalCountsMatchTheBound(t *testing.T) {
 			}
 			for _, f := range []int{0, 1} {
 				for _, n := range []int{0, 1} {
-					sum := 0
-					for _, c := range previewTypicalCounts(rp, f, n) {
-						sum += c
-					}
-					if want := recipe.StageBound(rp, f, n); sum != want {
-						t.Errorf("first_line_rounds %d, review_rounds %d: the typical shape has %d stages, the bound has %d", f, n, sum, want)
+					for _, n3 := range []int{0, 1} {
+						counts := previewTypicalCounts(rp, f, n, n3)
+						sum := 0
+						for _, c := range counts {
+							sum += c
+						}
+						if want := recipe.StageBound(rp, f, n, n3); sum != want {
+							t.Errorf("first_line_rounds %d, review_rounds %d, level_3_rounds %d: the typical shape has %d stages, the bound has %d", f, n, n3, sum, want)
+						}
+						if n3 == 1 && row > 1 && !maps.Equal(previewTypicalCounts(rp, f, n, row), counts) {
+							t.Errorf("first_line_rounds %d, review_rounds %d: level 3 at the mode's row %d counts another shape than at one round", f, n, row)
+						}
 					}
 				}
 			}
@@ -545,7 +561,9 @@ func TestBudgetPreviewDigestCountsNoImplementStage(t *testing.T) {
 	if len(problems) > 0 {
 		t.Fatalf("run-digest: %s", recipe.ProblemsText(problems))
 	}
-	counts := previewTypicalCounts(rp, 3, 10)
+	// The level-3 rounds are Critical's own row -- the preview's mode here --
+	// and run-digest carries no adversarial step, so they decide nothing.
+	counts := previewTypicalCounts(rp, 3, 10, rigor.AdversarialDefault(rigor.Critical))
 	if n := counts["implement"]; n != 0 {
 		t.Errorf("implement stages = %d, want none", n)
 	}
@@ -558,6 +576,69 @@ func TestBudgetPreviewDigestCountsNoImplementStage(t *testing.T) {
 	}
 }
 
+// TestBudgetPreviewAdversarialStages: the level-3 step is a review round of
+// its own, so a recipe holding it prices one more review and its fix, plus --
+// when the step bounces, as the senior review's does -- one more pair of cheap
+// stages. The catalog default carries the step since 0.16.0 without a bounce;
+// these shapes are the bouncing arms the catalog has none of, and the pin
+// above reaches the plain one. The mirror is the bound
+// where the step caps itself at the one round a typical run spends, which is
+// the one round the count reads for every step; a step that writes no
+// max_rounds takes the mode's senior row on the bound's side and is still one
+// round on the typical run's, exactly as review_rounds 2 is standard's. That
+// row is the mode's, so one mode's row moves only the bound: the last two
+// cases hold the same shape under Pro and Critical.
+func TestBudgetPreviewAdversarialStages(t *testing.T) {
+	parse := func(t *testing.T, step string) *recipe.Recipe {
+		t.Helper()
+		rp, problems := recipe.Parse([]byte("version: 1\nname: level3\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n  - " + step + "\n"))
+		if len(problems) > 0 {
+			t.Fatalf("level3: %s", recipe.ProblemsText(problems))
+		}
+		return rp
+	}
+	// One round of each loop: without the step this is the catalog's standard
+	// (implement, two cheap stages, one review and its fix), so the counts
+	// below are what level 3 adds to it.
+	for name, tc := range map[string]struct {
+		step string
+		mode rigor.Mode
+		want map[string]int
+		// bound is StageBound(rp, 1, 1, rigor.AdversarialDefault(mode)) here,
+		// and mirrors whether the typical count must be it: it must, where the
+		// step's own cap is the one round a typical run spends.
+		bound   int
+		mirrors bool
+	}{
+		"bouncing": {step: "adversarial: { max_rounds: 1, bounce: first_line }", mode: rigor.Startup,
+			want: map[string]int{"implement": 1, "review_first": 3, "review": 2, "fix": 5}, bound: 11, mirrors: true},
+		"no bounce": {step: "adversarial: { max_rounds: 1 }", mode: rigor.Startup,
+			want: map[string]int{"implement": 1, "review_first": 2, "review": 2, "fix": 4}, bound: 9, mirrors: true},
+		"no max_rounds under Pro": {step: "adversarial: { bounce: first_line }", mode: rigor.Pro,
+			want: map[string]int{"implement": 1, "review_first": 3, "review": 2, "fix": 5}, bound: 19},
+		"no max_rounds under Critical": {step: "adversarial: { bounce: first_line }", mode: rigor.Critical,
+			want: map[string]int{"implement": 1, "review_first": 3, "review": 2, "fix": 5}, bound: 27},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rp := parse(t, tc.step)
+			counts := previewTypicalCounts(rp, 1, 1, rigor.AdversarialDefault(tc.mode))
+			if !maps.Equal(counts, tc.want) {
+				t.Errorf("counts = %v, want %v", counts, tc.want)
+			}
+			if bound := recipe.StageBound(rp, 1, 1, rigor.AdversarialDefault(tc.mode)); bound != tc.bound {
+				t.Errorf("StageBound(rp, 1, 1, rigor.AdversarialDefault(%s)) = %d, want %d", tc.mode, bound, tc.bound)
+			}
+			sum := 0
+			for _, c := range counts {
+				sum += c
+			}
+			if tc.mirrors && sum != tc.bound {
+				t.Errorf("typical stages = %d, the bound = %d", sum, tc.bound)
+			}
+		})
+	}
+}
+
 // TestBudgetPreviewTypicalCountsHonourTheRoundKnobs: the typical run is one
 // round of each loop, but a knob at 0 leaves a loop out of the run
 // altogether, so its stages leave the count too rather than being counted at
@@ -565,7 +646,8 @@ func TestBudgetPreviewDigestCountsNoImplementStage(t *testing.T) {
 // read from a checkout; the count stays the bound's mirror, so a knob that
 // ever does reach 0 (a project layer, say) can never make the preview price
 // stages the runner would not run. A knob above 1 is one round here: the
-// typical run is the one that does not loop.
+// typical run is the one that does not loop. The mode is the preview's, and
+// standard carries no adversarial step, so it decides nothing here.
 func TestBudgetPreviewTypicalCountsHonourTheRoundKnobs(t *testing.T) {
 	text, ok := recipe.CatalogText("standard")
 	if !ok {
@@ -591,7 +673,7 @@ func TestBudgetPreviewTypicalCountsHonourTheRoundKnobs(t *testing.T) {
 			"implement": 1, "review_first": 2, "review": 1, "fix": 3}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := previewTypicalCounts(rp, tc.first, tc.rounds); !maps.Equal(got, tc.want) {
+			if got := previewTypicalCounts(rp, tc.first, tc.rounds, rigor.AdversarialDefault(rigor.Critical)); !maps.Equal(got, tc.want) {
 				t.Errorf("previewTypicalCounts(standard, %d, %d) = %v, want %v", tc.first, tc.rounds, got, tc.want)
 			}
 		})
@@ -1188,6 +1270,178 @@ func TestBudgetPreviewStageShapes(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBudgetPreviewUsesTheProjectsRigorMode: a repository that sets no round
+// knob is previewed at the mode's own row, which is what a run of it spends
+// (the owner's ruling of 2026-10-31, rigor.DefaultRounds) — the project
+// layer's default where it sets one, the repository's own rigor default where
+// it does not, and pro where neither does. Before the ruling the preview
+// counted every repository at one flat 1/2; the stage figures below are the
+// same standard recipe at each row, so a reader sees both the numbers and the
+// mode they came from.
+//
+// One case has no checkout at all (--repo alone, as fugaro run --repo does):
+// there the project layer is still read — it is the installation's own, which
+// is the layer a run without a checkout resolves (embedProjectLayer) — so the
+// mode, and the stage count that follows from it, is the run's.
+func TestBudgetPreviewUsesTheProjectsRigorMode(t *testing.T) {
+	// standard is a first_line loop under a bouncing review: the bound moves
+	// with both knobs at once.
+	const standard = "at most %d stages (mode %s, agent.first_line_rounds %d, agent.review_rounds %d)"
+	for _, tc := range []struct {
+		name       string
+		layer      string
+		repoRigor  string
+		noCheckout bool
+		mode       string
+		first      int
+		rounds     int
+		stages     int
+	}{
+		{name: "no layer and no repository value: pro", mode: "pro", first: 3, rounds: 3, stages: 31},
+		{name: "the repository's own rigor default", repoRigor: "rigor: { default: poc }\n", mode: "poc", first: 1, rounds: 1, stages: 7},
+		{name: "the project layer's default", layer: "critical", mode: "critical", first: 3, rounds: 5, stages: 47},
+		{name: "no checkout: the project layer's default", layer: "startup", noCheckout: true, mode: "startup", first: 2, rounds: 2, stages: 17},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBudgetFixture(t, "")
+			f.SetCaps(100, 3, 20, 3)
+			f.SetSpentToday(0)
+			if tc.layer != "" {
+				f.DefaultRunsBucket(t)
+				testutil.WriteFiles(t, f.runsDir(), map[string]string{config.LayerKey: previewLayer(tc.layer)})
+			}
+			args := []string{"budget", "preview", "--recipe", "standard", "--runs", "1"}
+			agent := "  max_budget_usd: 0.5\n"
+			if tc.repoRigor != "" {
+				agent += tc.repoRigor
+			}
+			if tc.noCheckout {
+				// No checkout of acme/app anywhere: the file that would
+				// anchor the layer is not here, so the layer the project
+				// published under its own name is the one that applies.
+				t.Chdir(t.TempDir())
+				args = append(args, "--repo", "acme/app")
+			} else {
+				f.Checkout(t, agent)
+				if tc.layer != "" {
+					// A layer is read for a repository whose file is anchored:
+					// the project's own name and GCP project, which Checkout's
+					// fugaro.yaml does not carry (minimalAnchored's shape).
+					testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": previewCheckoutYAML(agent)})
+				}
+			}
+			out, _, err := execute(t, args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := fmt.Sprintf(standard, tc.stages, tc.mode, tc.first, tc.rounds)
+			if !strings.Contains(out, want) {
+				t.Fatalf("preview never says %q:\n%s", want, out)
+			}
+		})
+	}
+}
+
+// TestBudgetPreviewCountsLevelThreeOnlyWhereTheLevelsRunIt: the catalog
+// default carries the adversarial step since 0.16.0, and its rounds enter the
+// ceiling only where the levels the run resolves leave level 3 on
+// (previewLevel3Rounds, config.ResolveLevels): Critical's own row does and
+// Pro's does not, and a configuration that turns level 3 on turns the ceiling
+// with it -- at Pro's own row, which is what the run would plan there
+// (rigor.AdversarialDefault). A preview counting the mode's adversarial row at
+// every mode would quote every Pro run of the default one level-3 loop it
+// never runs.
+//
+// The figures are the default's own steps: the first line, then the senior
+// review, each with its fix, and level 3 with its fix and the cheap loop its
+// bounce inserts where it runs. The catalog default's review does not bounce
+// and no step caps itself, so the ceiling is first_line_rounds, review_rounds
+// and the level-3 row, each at their mode's value, and level 3's own term is
+// n₃·(2 + 2·first).
+func TestBudgetPreviewCountsLevelThreeOnlyWhereTheLevelsRunIt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// levels is the agent.levels block the checkout writes, if any.
+		levels string
+		mode   string
+		// want is recipe.StageBound(default, first, rounds, n3) for that mode's
+		// row and the n3 the levels resolve to: 1 + 2*3 + 3*2 = 13 at Pro,
+		// 1 + 2*3 + 5*2 + 5*(2 + 2*3) = 57 at Critical, and 13 + 3*(2 + 2*3) =
+		// 37 at Pro under a configuration that turns level 3 on.
+		want int
+	}{
+		{name: "pro: the row leaves level 3 off", mode: "pro", want: 13},
+		{name: "critical: the row runs level 3", mode: "critical", want: 57},
+		{name: "pro with level 3 turned on over the row", mode: "pro",
+			levels: "  levels: { l3: { focus: the adversarial pass } }\n", want: 37},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBudgetFixture(t, "")
+			f.SetCaps(100, 3, 20, 3)
+			f.SetSpentToday(0)
+			agent := "  max_budget_usd: 0.5\n" + tc.levels
+			f.Checkout(t, agent)
+			// The mode is the repository's own top-level rigor: block
+			// (config.Rigor), which is the one a run reads; Checkout writes
+			// the agent block alone, so the file is rewritten with the anchor
+			// a layer is resolved against (previewCheckoutYAML) plus it.
+			testutil.WriteFiles(t, ".", map[string]string{
+				"fugaro.yaml": previewCheckoutYAML(agent) + "rigor: { default: " + tc.mode + " }\n"})
+			out, _, err := execute(t, "budget", "preview", "--recipe", "default", "--runs", "1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := fmt.Sprintf("at most %d stages (mode %s", tc.want, tc.mode)
+			if !strings.Contains(out, want) {
+				t.Fatalf("preview never says %q:\n%s", want, out)
+			}
+		})
+	}
+}
+
+// TestBudgetPreviewCountsTheLevelThreeKnob: agent.adversarial_rounds is level
+// 3's one round knob, and it wins over the mode's own row wherever it is set
+// (L1.3; the runner's planOf reads it through setRounds). A checkout that sets
+// it above the row therefore runs more level-3 rounds than the row says, so
+// the preview has to quote the run's number: quoting the row would put the
+// ceiling under the run, which is the unsafe direction for a spend estimate.
+func TestBudgetPreviewCountsTheLevelThreeKnob(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 3, 20, 3)
+	f.SetSpentToday(0)
+	agent := "  max_budget_usd: 0.5\n  adversarial_rounds: 7\n"
+	f.Checkout(t, agent)
+	testutil.WriteFiles(t, ".", map[string]string{
+		"fugaro.yaml": previewCheckoutYAML(agent) + "rigor: { default: critical }\n"})
+	out, _, err := execute(t, "budget", "preview", "--recipe", "default", "--runs", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The knob's 7, not Critical's row of 5: 1 + 2*3 + 5*2 + 7*(2 + 2*3) = 73.
+	want := "at most 73 stages (mode critical"
+	if !strings.Contains(out, want) {
+		t.Fatalf("preview never says %q:\n%s", want, out)
+	}
+}
+
+// previewCheckoutYAML is Checkout's fugaro.yaml with the project anchor a
+// layer is resolved against (minimalAnchored): without project and
+// gcp_project an unanchored file reads as "no layer applies".
+func previewCheckoutYAML(agentYAML string) string {
+	return "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github, base_branch: main }\n" +
+		"agent:\n  auth: api-key\n" + agentYAML +
+		"workflows:\n  web: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+}
+
+// previewLayer is the project layer these preview cases read a rigor default
+// from: testProjectLayer's shape with defaults.rigor.default set to mode, at
+// the project and GCP project the budget fixture names.
+func previewLayer(mode string) string {
+	return "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n" +
+		"  git: { provider: github }\n  agent: { auth: api-key }\n  rigor: { default: " + mode + " }\n" +
+		"profiles:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh }\ndefault_profile: svc\n"
 }
 
 // TestBudgetPreviewRecipeNote: resolveRecipe's note explains figures that did

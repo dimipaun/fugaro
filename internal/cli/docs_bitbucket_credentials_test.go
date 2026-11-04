@@ -305,23 +305,14 @@ func bitbucketCitedPaths(doc string) []string {
 //
 // The list shrinks as the tasks land, and the test says so when it does not:
 // T0.1's own file left it in the commit that wrote this guard and T0.2's in the
-// commit that registered the checks, and T1.1's two files left it after T1.1
-// landed, so all of them are checked like every other cited path now.
+// commit that registered the checks, T1.1's two files left it after T1.1 landed
+// and BB1's two after BB1 landed, as did BB3's two, BB4's four and BB5's three
+// — the two Check 146 scripts and the sweep's own test, which is bitbucketMoved's
+// ninth entry below — so every path one of those commits landed is checked the
+// moment it is cited, as a path in the tree or as the old spelling of a move.
 var bitbucketWillCreate = map[string]string{
-	// S2: Bitbucket in the coordinator job, through the service.
-	"internal/gitprov/bitbucket/oauth.go":              "T2.1",
-	"internal/gitprov/bitbucket/oauth_test.go":         "T2.1",
-	"internal/credsvc/bitbucket.go":                    "T2.3",
-	"internal/credsvc/bitbucket_test.go":               "T2.3",
-	"internal/cli/coordinator_sweep_bitbucket_test.go": "T2.5",
-	"internal/gitprov/bitbucket/service.go":            "T2.5",
-	"internal/gitprov/bitbucket/service_test.go":       "T2.5",
-	"internal/cli/docs_bitbucket_runbook_test.go":      "T2.6",
-	"scripts/live-checks/check145.sh":                  "T2.7",
-	"scripts/live-checks/check145_test.sh":             "T2.7",
-	"scripts/live-checks/check146.sh":                  "T2.9",
-	"scripts/live-checks/check146_test.sh":             "T2.9",
-	"internal/cli/docs_bitbucket_security_test.go":     "T2.11",
+	"internal/cli/docs_bitbucket_runbook_test.go":  "T2.6",
+	"internal/cli/docs_bitbucket_security_test.go": "T2.11",
 	// Parked with S3, and still absent for as long as S3 is.
 	"internal/gitprov/bitbucket/comments_test.go": "T3.3 (parked)",
 	"scripts/live-checks/check147.sh":             "T3.5 (parked)",
@@ -337,16 +328,24 @@ var bitbucketWillCreate = map[string]string{
 // or the entry is excusing a citation that is gone.
 //
 // The coordinator's library and command left `internal/` for `ee/` in E2.1b
-// (ee-reorg, D434), the move that put these eight here.
+// (ee-reorg, D434), the move that put these here. `internal/coordinator/project_test.go`
+// was the eighth: the 2026-11-01 retarget rewrote the one S2 task that named it, so
+// the folder cites the live path now and the entry left with the citation.
+//
+// The ninth is BB5's own test file, and it is the one entry that records a move
+// nothing lived through: the plan names it under `internal/cli/`, where it cannot
+// go — the sweep's wiring is in `ee/coordinator/cli`, and a core test may not
+// import `ee/` (internal/eeboundary's TestCoreNeverImportsEE) — so it was written
+// where the code it drives is, beside the command's other tests.
 var bitbucketMoved = map[string]string{
-	"internal/cli/coordinator.go":           "ee/coordinator/cli/coordinator.go",
-	"internal/cli/coordinator_view.go":      "ee/coordinator/cli/coordinator_view.go",
-	"internal/cli/coordinator_view_test.go": "ee/coordinator/cli/coordinator_view_test.go",
-	"internal/coordinator/project.go":       "ee/coordinator/project.go",
-	"internal/coordinator/project_test.go":  "ee/coordinator/project_test.go",
-	"internal/coordinator/state.go":         "ee/coordinator/state.go",
-	"internal/coordinator/state_test.go":    "ee/coordinator/state_test.go",
-	"internal/coordinator/sweep.go":         "ee/coordinator/sweep.go",
+	"internal/cli/coordinator.go":                      "ee/coordinator/cli/coordinator.go",
+	"internal/cli/coordinator_view.go":                 "ee/coordinator/cli/coordinator_view.go",
+	"internal/cli/coordinator_view_test.go":            "ee/coordinator/cli/coordinator_view_test.go",
+	"internal/cli/coordinator_sweep_bitbucket_test.go": "ee/coordinator/cli/coordinator_sweep_bitbucket_test.go",
+	"internal/coordinator/project.go":                  "ee/coordinator/project.go",
+	"internal/coordinator/state.go":                    "ee/coordinator/state.go",
+	"internal/coordinator/state_test.go":               "ee/coordinator/state_test.go",
+	"internal/coordinator/sweep.go":                    "ee/coordinator/sweep.go",
 }
 
 // TestDocsBitbucketCredentialsEveryCitedPathExists: every backticked repository

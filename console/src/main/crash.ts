@@ -1,64 +1,86 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The console's crash reporter: the gate and the scrubber, with nothing wired to
-// either yet (desktop-console plan Task 2.1, first slice; D733, D734; design
-// sections 7.3 and 7.4).
+// either yet (desktop-console plan Task 2.1, first slice; the owner's rulings
+// D733 and D734 of 2026-10-30). The design of record is those two rather than a
+// section: design section 7.4 still carries the promise they supersede -- "no
+// telemetry, no crash reporting to a third party" -- and Task 2.2 is the slice
+// that amends it to describe what this code does.
 //
 // The owner's ruling of 2026-10-30 is that the console gains a crash reporter
-// now and ships **dormant**: nothing is sent, because no DSN is configured, and
-// the switch is **opt-in** -- off unless the installation's setting says on. The
-// window before that setting has been read is a third state rather than a slow
-// "off" (D734): in it, nothing is sent either, which is the whole of the
-// promise that an opted-out operator never sends one report.
+// now and ships **dormant**: nothing is sent while nothing has read the switch,
+// and the switch is **opt-in** -- off unless it has been turned on. The owner's
+// later ruling makes it a **per-user switch, local to the console**: a setting
+// this console keeps for itself rather than a field read out of a document a CLI
+// prints, off by default, and applied at the next launch rather than
+// mid-session. The window before it has been read is a third state rather than a
+// slow "off" (D734): in it, nothing is sent either, which is the whole of the
+// promise that an opted-out operator never sends one report. The DSN is no
+// longer part of the dormancy -- since the owner's ruling of 2026-10-31 it is a
+// constant of every build (`./crash-dsn`) -- so the switch is the one thing that
+// decides, which is what D734 always said it should be.
 //
 // F33 is why the payload is an **allow-list**. A Go panic value, an Electron
 // error message and a JS exception string all carry repository names, branch
 // names, task text, URLs or a credential, and this repository's own redactor is
-// best-effort by its comment -- so a report here is the exception's type and its
-// frames, and the message is dropped rather than filtered.
+// best-effort by its comment -- so a report here is the exception's type, its
+// frames and the debug images a symbolicator looks a frame up by, and the message
+// is dropped rather than filtered. The images are the one field that came back to
+// the payload (the owner's ruling of 2026-11-02: crash symbolication has to work),
+// and they come back reduced: an id, a type and a path cut at the app root, which
+// is what symbolication needs and nothing that names the machine.
 //
 // The module is therefore pure and static, and it is deliberately importless:
 // it reads no environment, opens no file, makes no call, and holds no DSN, no
-// host and no endpoint. The DSN arrives with the SDK slice as a build-time value
-// the owner sets and nobody commits. The types below are structural for the same
+// host and no endpoint. The DSN lives beside it in `./crash-dsn`, which is the
+// one file under `src/` a DSN-shaped string is allowed in, and this file is not
+// told about it at all. The types below are structural for the same
 // reason -- the SDK slice hands `scrubCrashEvent` the very event its own
-// `beforeSend` receives, and sends back what it returns, with no cast between.
+// `beforeSend` receives -- and the event they describe is deliberately not the
+// SDK's own: they are `readonly` where it is mutable, so the hand-off back costs
+// the wiring the one documented assertion in `./crash-electron`'s `toSdkEvent`
+// rather than letting anything downstream write to a scrubbed event in place.
 
 /** CrashOptIn is the operator's switch as this module can see it: `true` when
- * the installation's setting allows reports, and an answer that is not `true`
- * otherwise -- `false`, or a `null` the document holds in the node's place,
- * which are both off. The absence of a value is the third case: nothing has read
- * it yet, not asked, unreadable, or answered by a CLI too old to carry the
- * field. That absence is D734's rule made expressible -- a console that folded it
- * into `false` could not tell "off" from "not known yet", and the two have the
- * same answer here for exactly as long as it takes something to read the setting,
- * but they are different words in a log line, which is the whole of what
- * `CrashReportingReason` is for. JSON has no `undefined`, so the absence is what
- * a settings document with no switch node in it decodes to; a node that is
- * present and empty decodes to `null`, which is an answer. */
+ * the per-user switch is on, and an answer that is not `true` otherwise --
+ * `false`, or a `null` a stored switch may hold in its place, which are both
+ * off. The absence of a value is the third case: nothing has read the switch
+ * yet, or it could not be read at all. That absence is D734's rule made
+ * expressible -- a console that folded it into `false` could not tell "off" from
+ * "not known yet", and the two have the same answer here for exactly as long as
+ * it takes something to read the switch, but they are different words in a log
+ * line, which is the whole of what `CrashReportingReason` is for. The switch is
+ * stored rather than decoded, so the absence is a key that is not there at all;
+ * a key that is present and empty is `null`, which is an answer. */
 export type CrashOptIn = boolean | null | undefined
 
-/** CrashReportingInput is everything the gate is allowed to look at: the DSN the
- * build was given, and the switch. There is deliberately nothing else -- no
- * environment, no clock, no state -- so the decision cannot depend on anything
- * the SDK slice has to remember to pass.
+/** CrashReportingInput is everything the gate is allowed to look at: the switch,
+ * and nothing else. There is deliberately no DSN here since the owner's ruling of
+ * 2026-10-31 -- the value is a constant of the build rather than an input that
+ * can be missing, so a gate that asked about it would be asking a question whose
+ * answer is always yes -- and nothing else either: no environment, no clock, no
+ * state, so the decision cannot depend on anything the SDK slice has to remember
+ * to pass.
  *
  * The switch is typed `unknown` rather than `CrashOptIn` because of where it
- * comes from: a settings node in a document this console did not write, decoded
- * from JSON. `CrashOptIn` is the answer when the document is the one the CLI
- * promises; anything else is a value the gate has to refuse, and a type that
- * admitted only the three good values would move that refusal into a cast at the
- * call site. */
+ * comes from: a value read back from storage, which a hand-edit or a corrupted
+ * file can have left as anything at all. `CrashOptIn` is the answer when the
+ * stored switch is the one this console wrote; anything else is a value the gate
+ * has to refuse, and a type that admitted only the three good values would move
+ * that refusal into a cast at the call site. */
 export interface CrashReportingInput {
-  readonly dsn?: string | null
   readonly optedIn?: unknown
 }
 
 /** CrashReportingReason is the word a log line gets, and it is a word rather
- * than the DSN: a reason ends up pasted into an issue, and a DSN is a URL with a
- * key in it. One word per way of being off, because "off" alone would leave the
- * dormant build indistinguishable from a build whose DSN the owner never set. */
-export type CrashReportingReason = 'enabled' | 'opt-in-not-read' | 'opt-in-off' | 'no-dsn'
+ * than a value: a reason ends up pasted into an issue. One word per way of being
+ * off, because "off" alone could not tell an operator who said no from a console
+ * that has not read the setting yet -- and those are different answers, one of
+ * them being D734's third state. There were four words while the DSN was a build
+ * input and a build without one was a third way of sending nothing; since the
+ * owner's ruling of 2026-10-31 the DSN is a constant of every build, so there is
+ * no such state left to name. */
+export type CrashReportingReason = 'enabled' | 'opt-in-not-read' | 'opt-in-off'
 
 export interface CrashReportingDecision {
   readonly enabled: boolean
@@ -68,41 +90,96 @@ export interface CrashReportingDecision {
 /**
  * crashReportingDecision is the gate, as a question asked afresh each time it
  * matters: the setting can change, and a reporter started under an open gate
- * must not keep sending under a closed one. The switch is read first, so a
- * console that has not read the setting says so rather than blaming the build
- * for the DSN it was never asked about.
+ * must not keep sending under a closed one. The switch is the whole of it -- the
+ * DSN is the build's own constant, so there is nothing beside the switch that
+ * could close this gate, and the gate is therefore exactly "did the operator
+ * turn it on".
  *
- * The gate is strict: `true` and nothing else opens it. The value arrives from a
- * document this console did not write, so `"true"`, `1`, `"yes"` and an object
- * are all things a settings node can hold, and a truthy check would read every
- * one of them as an operator's consent -- which is the one answer this gate may
- * not guess at. Everything that is not `true` is an answer that is off, except
- * the absence of an answer, which is the unread case and says so.
- *
- * A DSN that is only whitespace is no DSN: the value comes from a build the
- * owner configures, and an empty one is what an unset variable looks like.
+ * The gate is strict: `true` and nothing else opens it. The value arrives from
+ * storage rather than from this console's own memory, so `"true"`, `1`, `"yes"`
+ * and an object are all things a stored switch can hold, and a truthy check
+ * would read every one of them as an operator's consent -- which is the one
+ * answer this gate may not guess at. Everything that is not `true` is an answer
+ * that is off, except the absence of an answer, which is the unread case and
+ * says so.
  */
 export function crashReportingDecision(input: CrashReportingInput): CrashReportingDecision {
   if (input.optedIn === undefined) return { enabled: false, reason: 'opt-in-not-read' }
   if (input.optedIn !== true) return { enabled: false, reason: 'opt-in-off' }
-  const dsn = input.dsn
-  if (typeof dsn !== 'string' || dsn.trim() === '') return { enabled: false, reason: 'no-dsn' }
   return { enabled: true, reason: 'enabled' }
+}
+
+/** CRASH_START_FAILED is the one line a start that threw after an open gate is
+ * worth. It names no error and no path: the failure is a library's, its text is
+ * untrusted, and what it means to the operator -- this run reports nothing -- is
+ * the same sentence whatever it was. */
+export const CRASH_START_FAILED = 'the console could not start crash reporting, so this run sends nothing'
+
+/** CrashStarter is the one thing `startCrashReportingSafely` needs of the module
+ * it loads: the function, and nothing else. It is structural so that this module
+ * -- which is importless and stays that way -- never has to name `./crash-electron`
+ * or the SDK's types to describe it. */
+export interface CrashStarter<Handle> {
+  startCrashReporting(input: { readonly optedIn: unknown; readonly appRoot: string }): Handle
+}
+
+/**
+ * startCrashReportingSafely is the gate's yes turned into a client **without
+ * costing the app its startup**: the load and the init are each a thing that can
+ * fail, and a crash reporter that cannot start is not a reason for the console to
+ * fail to open its window. Both are caught here, one line is said, and the answer
+ * is `null` -- which is what leaves the entry point's handle null, its quit path
+ * with nothing to close, and its startup running.
+ *
+ * It is here rather than in the entry point because `src/main/index.ts` cannot be
+ * imported by a unit test (it calls `app.whenReady()` at the top level), so a
+ * guard written there is a guard nothing can execute; written here, the throwing
+ * import, the rejecting import and the throwing `init` are three cases a test can
+ * hand it. The loader arrives as a function rather than as an import so that this
+ * module stays importless and so that the failure is the test's to make.
+ *
+ * It does not ask the gate: the caller has already done that, and a second ask
+ * here would be a second answer to a question whose answer is a file that can
+ * change between the two. Nothing about the failure is reported to anywhere --
+ * there is no client to report it with, and a failure in the crash reporter is
+ * the one thing that cannot be its own payload.
+ */
+export async function startCrashReportingSafely<Handle>(options: {
+  readonly load: () => Promise<CrashStarter<Handle>>
+  readonly input: { readonly optedIn: unknown; readonly appRoot: string }
+  readonly log: (line: string) => void
+}): Promise<Handle | null> {
+  try {
+    const module = await options.load()
+    return module.startCrashReporting(options.input)
+  } catch {
+    options.log(CRASH_START_FAILED)
+    return null
+  }
 }
 
 /**
  * CRASH_CLIENT_OPTIONS is what the SDK slice passes to the client's `init`
  * beside the DSN, and each entry is a decision rather than a default:
  *
- *   - nothing is collected that is about the *person* -- no default PII, no
- *     breadcrumb trail, and no local variables off the stack, which is where a
- *     credential is most likely to be sitting when something throws;
+ *   - nothing is collected that is about the *person* -- no user information
+ *     filled in from the instrumentation, no breadcrumb trail, and no local
+ *     variables off the stack, which is where a credential is most likely to be
+ *     sitting when something throws;
  *   - nothing is collected that is about the *session* -- no session tracking
  *     and no client reports, so the service receives error events and no
  *     account of who was running the app or for how long;
  *   - nothing is added to the events -- no automatic stacktrace attached to a
  *     message that would then be sent, and no default integrations, because the
- *     integrations are the ones that collect what the three lines above refuse.
+ *     integrations are the ones that collect what the three lines above refuse;
+ *   - nothing is done to the *process* -- no runtime channel injection, which on
+ *     the Node the pinned Electron embeds is `Module.registerHooks`: a loader
+ *     hook over every module the process loads from then on, installed by the
+ *     client's own constructor whatever it is handed, and with no unregister
+ *     anywhere in Node to take it back off. It rewrites matching modules in
+ *     place, and what it rewrites is other people's code on its way into this
+ *     process, which is a surface no crash reporter needs and this console does
+ *     not accept.
  *
  * What is left out beyond this object is not an option of the client: **native
  * crash minidumps** (they are process memory, and D733's "stack frames only" is
@@ -112,16 +189,21 @@ export function crashReportingDecision(input: CrashReportingInput): CrashReporti
  *
  * The names are the SDK's own and are not checked here, since this module
  * imports nothing: the slice that adds the dependency confirms each one against
- * the pinned version before it initialises anything.
+ * the pinned version before it initialises anything, and two of them moved in
+ * the two major versions between here and 11.7.0 -- `sendDefaultPii` is
+ * `dataCollection.userInfo` there, and `autoSessionTracking` is gone, because
+ * v8's sessions arrive only through the `mainProcessSessionIntegration` that
+ * `defaultIntegrations: false` refuses to install. Both corrections are the SDK
+ * slice's, and the object below is what is handed to `init`.
  */
 export const CRASH_CLIENT_OPTIONS = Object.freeze({
-  sendDefaultPii: false,
-  autoSessionTracking: false,
+  dataCollection: Object.freeze({ userInfo: false }),
   sendClientReports: false,
   attachStacktrace: false,
   maxBreadcrumbs: 0,
   includeLocalVariables: false,
   defaultIntegrations: false,
+  enableRuntimeChannelInjection: false,
 })
 
 /** CrashFrame is one frame as the reporter hands it over: everything the
@@ -154,16 +236,23 @@ export interface CrashExceptionValue {
 /** CrashEvent is the part of an error event this module reads. The fields it
  * names are the ones it keeps, drops or relativises; a field the reporter also
  * carries and this type does not name (`user`, `contexts`, `tags`, `extra`,
- * `breadcrumbs`, `request`, `server_name`, `modules`, `environment`, `sdk`,
- * `debug_meta`, or a key a later SDK adds) is dropped by the same rule, because
- * the output is built from the allow-list rather than filtered against a
- * deny-list that would always be one key behind. */
+ * `breadcrumbs`, `request`, `server_name`, `modules`, `environment`, `sdk`, or a
+ * key a later SDK adds) is dropped by the same rule, because the output is built
+ * from the allow-list rather than filtered against a deny-list that would always
+ * be one key behind. */
 export interface CrashEvent {
   readonly event_id?: unknown
   readonly timestamp?: unknown
   readonly platform?: unknown
   readonly level?: unknown
   readonly release?: unknown
+  /** `debug_meta` is `unknown` rather than a shape, for the reason the SDK's own
+   * object is wider than this type everywhere: it is the one field whose *inside*
+   * this module has to read, and what a library put there is a list of objects it
+   * built from a stack, a decoded archive or a debug file -- so the module reads
+   * it through guards at both levels rather than through a type that would only
+   * move the refusal into a cast. What it does with it is in `scrubDebugMeta`. */
+  readonly debug_meta?: unknown
   /** The exception is `null`-able and its values may hold holes because the
    * reporter builds this: a library's event is not the shape its own types say
    * it is, and the scrubber reads every level of it through a guard rather than
@@ -192,6 +281,17 @@ export interface ScrubbedExceptionValue {
   readonly stacktrace?: { readonly frames: readonly ScrubbedFrame[] }
 }
 
+/** ScrubbedDebugImage is one debug image as the report carries it: the three
+ * fields a symbolicator looks a frame up by, and no others. The id names the build
+ * the frame came from, the type says what kind of image it is, and the file is
+ * app-relative for the reason a frame's is -- an absolute one names the operator's
+ * disk, and a debug image is a path like any other. */
+export interface ScrubbedDebugImage {
+  readonly type: string
+  readonly code_file: string
+  readonly debug_id: string
+}
+
 export interface ScrubbedCrashEvent {
   readonly event_id?: string
   readonly timestamp?: number
@@ -199,6 +299,9 @@ export interface ScrubbedCrashEvent {
   readonly level?: CrashLevel
   readonly release?: string
   readonly exception?: { readonly values: readonly ScrubbedExceptionValue[] }
+  /** Absent rather than empty when nothing survived: an empty image list is a
+   * claim about the build that no image supports. */
+  readonly debug_meta?: { readonly images: readonly ScrubbedDebugImage[] }
 }
 
 /** EXTERNAL is what a frame outside the app becomes. It is a fixed word rather
@@ -296,17 +399,58 @@ function withoutScheme(source: string): string | null {
 }
 
 /** CONTROL_RE is the characters a file name never carries and a reader always
- * obeys: a newline, a carriage return, a NUL, a tab, a delete, and the ones
- * Unicode spells outside ASCII -- the next-line character, the line and
- * paragraph separators, and the format characters, `\p{Cf}` (a bidi override, a
- * zero-width joiner, a byte-order mark). A control character is not a separator
- * any two readers agree on -- `x\nhome/<x>/secret.js` is one segment to
- * `HOME_PATH_RE` and two to a log line, a terminal or a decoder -- so one inside
- * a path is a way past the check below rather than part of a name. The three
- * Unicode line breaks are that same case spelled elsewhere, and a format
+ * obeys: the control characters, `\p{Cc}` -- ASCII's, and the C1 block above
+ * them, where the next-line character and the control-sequence introducer live
+ * -- the line and paragraph separators, and the format characters, `\p{Cf}` (a
+ * bidi override, a zero-width joiner, a byte-order mark). A control character is
+ * not a separator any two readers agree on -- `x\nhome/<x>/secret.js` is one
+ * segment to `HOME_PATH_RE` and two to a log line, a terminal or a decoder -- so
+ * one inside a path is a way past the check below rather than part of a name.
+ * The Unicode line breaks are that same case spelled elsewhere, and a format
  * character is that case made invisible: a reader that honours a bidi override
- * or a joiner reads a path this check never saw. */
-const CONTROL_RE = /[\x00-\x1f\x7f\x85\u2028\u2029\p{Cf}]/u
+ * or a joiner reads a path this check never saw.
+ *
+ * The family is written as the category rather than as the characters that were
+ * found: `\p{Cc}` is the whole control block, and the list it replaces was the
+ * ASCII half of it plus `\x85`, which is one C1 character among thirty-two. The
+ * line and paragraph separators are named on their own because neither is a
+ * control character -- `\p{Zl}` and `\p{Zp}` are separate categories -- and both
+ * are line breaks to a reader. */
+const CONTROL_RE = /[\p{Cc}\p{Cf}\u2028\u2029]/u
+
+/** SURROGATE_RE is half a code point, which is not a character at all. A lone
+ * surrogate has no UTF-8 encoding, so every reader that has to write one --
+ * a JSON encoder, a terminal, the processor -- substitutes a replacement
+ * character, and two such readers disagree about what the path says without
+ * either of them being wrong. A *pair* is a character and is kept: the test is
+ * the category `\p{Cs}`, which matches a code unit that is not part of one. */
+const SURROGATE_RE = /\p{Cs}/u
+
+/** MAX_DEBUG_IMAGES is how many debug images the report may carry. A real event
+ * cannot name more files than its stack has frames, and the pinned SDK's stack
+ * parser keeps 50 of them (`STACKTRACE_FRAME_LIMIT`) -- so a list longer than this
+ * is not a stack, it is a library's array, and the bound is what stops it from
+ * being forwarded whole. It is above 50 on purpose: a caller may raise the frame
+ * limit, and this is the bound of the *report*, not of the parser. */
+const MAX_DEBUG_IMAGES = 64
+
+/** DEBUG_ID_RE is the one shape a debug id has: a lower-case UUID as
+ * `sentry-cli sourcemaps inject` writes it into a file and its map, or the same
+ * 32 hexadecimal characters without the dashes, which is the form the service
+ * accepts them in. The version and the variant are not pinned -- an id generated
+ * by another tool is still an id, and what matters here is that a path, a sentence
+ * or a credential is not one. Case matters because the injector writes lower case
+ * and an id is a key: an upper-case copy of one is a string from somewhere else,
+ * and a lookup under it finds nothing. */
+const DEBUG_ID_RE = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32})$/
+
+/** IMAGE_TYPES are the image types this report may carry, and the list is
+ * **exact** rather than a shape: a symbolicator is asked to resolve a frame
+ * against an image of one of these six kinds, and a word outside them -- however
+ * well formed -- is a value from somewhere else. A shape would admit every
+ * lowercase word a library, a file name or a sentence could put in the field, and
+ * the report would carry it as though it were a fact about the build. */
+const IMAGE_TYPES: readonly string[] = ['sourcemap', 'macho', 'elf', 'pe', 'wasm', 'proguard']
 
 /** QUERY_MARKERS are where a URL's query and its fragment begin, and neither is
  * part of a file's name: `x.js?token=<x>` is a file name with a credential after
@@ -321,12 +465,12 @@ const QUERY_MARKERS: readonly string[] = ['?', '#']
  * -- leaves a relative path pointing outside the app. What is refused here is
  * every way such a path is still *about* somewhere: a `..` segment, a leading
  * `~`, a colon or a percent-escape that another reader would decode into a
- * separator, a query or a fragment marker, a control character, and the empty
- * string, which is a path with no name in it at all. */
+ * separator, a query or a fragment marker, a control character, half a code
+ * point, and the empty string, which is a path with no name in it at all. */
 function unplaceable(rest: string): boolean {
   if (rest === '' || rest.startsWith('~')) return true
   if (rest.includes(':') || rest.includes('%')) return true
-  if (CONTROL_RE.test(rest)) return true
+  if (CONTROL_RE.test(rest) || SURROGATE_RE.test(rest)) return true
   if (QUERY_MARKERS.some((marker) => rest.includes(marker))) return true
   return rest.split('/').includes('..')
 }
@@ -442,6 +586,65 @@ function scrubValue(
   return { ...kept, stacktrace: { frames: placed } }
 }
 
+/** scrubDebugImage is the image allow-list: the type, the id and the code file,
+ * rebuilt into a new object so that nothing else an image carried is copied --
+ * the SDK's own image has a `debug_file` and a `code_id` on some types and an
+ * `image_addr` and an `image_size` on others, and a `debug_file` is a path like
+ * any other, which is the thing this module exists to keep off the wire.
+ *
+ * An image whose fields are not the shapes above is *dropped* rather than
+ * repaired, and that is the one place this module refuses a value instead of
+ * replacing it with a fixed word. A frame cannot be dropped -- the shape of the
+ * stack is what the processor groups by -- but an image is a lookup key beside the
+ * frames rather than part of one: an image that cannot be placed is an image the
+ * symbolicator would not find anything under, and forwarding it with `<external>`
+ * in place of its path would be this module guessing at a build. The id is the
+ * exception: a wrong id is worse than no id, because it points at somebody else's
+ * build.
+ *
+ * Every field is read once, into a local, for the reason every other field in this
+ * file is: an image is a library's object, and a property of one answers as often
+ * as it is asked. */
+function scrubDebugImage(image: unknown, appRoot: string): ScrubbedDebugImage | undefined {
+  if (image === null || image === undefined || typeof image !== 'object') return undefined
+  const fields = image as { readonly type?: unknown; readonly code_file?: unknown; readonly debug_id?: unknown }
+  const type = fields.type
+  const codeFile = fields.code_file
+  const debugId = fields.debug_id
+  if (typeof type !== 'string' || !IMAGE_TYPES.includes(type)) return undefined
+  if (typeof debugId !== 'string' || !DEBUG_ID_RE.test(debugId)) return undefined
+  if (typeof codeFile !== 'string') return undefined
+  const relative = appRelative(codeFile, appRoot)
+  if (relative === EXTERNAL) return undefined
+  return { type, code_file: relative, debug_id: debugId }
+}
+
+/** scrubDebugMeta is what is left of the reporter's `debug_meta`: the images,
+ * each reduced by `scrubDebugImage`, and nothing else the field carried. It is the
+ * one thing in the payload that exists for symbolication -- the id an uploaded map
+ * is filed under, beside the file the frame was in -- so it is kept rather than
+ * dropped (the owner's ruling of 2026-11-02), and it is kept *reduced*, because
+ * the rest of what an image holds is where a machine's paths live.
+ *
+ * The list is cut at `MAX_DEBUG_IMAGES`, and the cut counts what is *kept* rather
+ * than what arrives: entries this module refuses do not use up the report's room
+ * for the ones it can place, and a real report cannot reach the bound anyway -- its
+ * list is one image per distinct frame file, and the SDK's frames are bounded at
+ * 50. When nothing survives there is no `debug_meta` at all: an empty list is a
+ * claim about the build, and no image supports it. */
+function scrubDebugMeta(meta: unknown, appRoot: string): { readonly images: readonly ScrubbedDebugImage[] } | undefined {
+  if (meta === null || meta === undefined || typeof meta !== 'object') return undefined
+  const images = (meta as { readonly images?: unknown }).images
+  if (!Array.isArray(images)) return undefined
+  const kept: ScrubbedDebugImage[] = []
+  for (const image of images) {
+    if (kept.length === MAX_DEBUG_IMAGES) break
+    const scrubbed = scrubDebugImage(image, appRoot)
+    if (scrubbed !== undefined) kept.push(scrubbed)
+  }
+  return kept.length === 0 ? undefined : { images: kept }
+}
+
 /** scrubCrashEvent is `beforeSend`, with the event the reporter built and the
  * app root as its only inputs. It returns a **new** event built from the kept
  * fields and never edits the one it was handed: the caller's object is the
@@ -472,13 +675,13 @@ export function scrubCrashEvent(event: CrashEvent | null | undefined, appRoot: s
   try {
     if (event === null || event === undefined || typeof event !== 'object') return {}
     const values = event.exception?.values
-    if (!Array.isArray(values)) return scrubFields(event)
+    if (!Array.isArray(values)) return scrubFields(event, appRoot)
     const kept: ScrubbedExceptionValue[] = []
     for (const value of values) {
       const scrubbed = scrubValue(value, appRoot)
       if (scrubbed !== null) kept.push(scrubbed)
     }
-    return { ...scrubFields(event), exception: { values: kept } }
+    return { ...scrubFields(event, appRoot), exception: { values: kept } }
   } catch {
     return {}
   }
@@ -513,16 +716,22 @@ const RELEASE_RE = /^[A-Za-z0-9][A-Za-z0-9.+-]{0,63}$/
  * may not make: the value arrives from a library, and a library that was handed a
  * path, a token or a sentence puts it in whichever field is nearest.
  *
+ * `debug_meta` is the one field here that is not a string or a number: it is the
+ * list of images, and it goes through `scrubDebugMeta`, which is the only part of
+ * this file that reads *inside* a value rather than deciding whether to keep it.
+ *
  * Each field is read exactly once, into a local, and the local is what the
  * allow-list checks and what the output copies -- a property read once for the
  * check and again for the copy is checked as one value and sent as another. */
-function scrubFields(event: CrashEvent): ScrubbedCrashEvent {
+function scrubFields(event: CrashEvent, appRoot: string): ScrubbedCrashEvent {
   const eventId = event.event_id
   const timestamp = event.timestamp
   const platform = event.platform
   const level = event.level
   const release = event.release
+  const debugMeta = scrubDebugMeta(event.debug_meta, appRoot)
   return {
+    ...(debugMeta === undefined ? {} : { debug_meta: debugMeta }),
     ...(typeof eventId === 'string' && EVENT_ID_RE.test(eventId) ? { event_id: eventId } : {}),
     ...(typeof timestamp === 'number' && Number.isFinite(timestamp) ? { timestamp } : {}),
     ...(typeof platform === 'string' && PLATFORM_RE.test(platform) ? { platform } : {}),

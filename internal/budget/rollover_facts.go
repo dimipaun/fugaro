@@ -9,6 +9,7 @@ import (
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/pool"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -24,6 +25,14 @@ const factsWorkers = 32
 // whose record cannot be read (corrupt or oversized, written by the run's own
 // account) is skipped with a warning; any other read error fails the pass,
 // because a day must never be written from a bucket that could not be read.
+//
+// Every read here is a read of the bucket, and it stays one: this pass is a
+// budget check (budget history --rollover writes a day's record from what it
+// returns), so it may not be answered from the CLI's local run cache
+// (internal/runcache) the way a listing's rows are. Its own listing and its
+// own reads are what it counts with, and a pass that took a number from a
+// file on the machine would record a day from something other than the
+// bucket.
 type BucketFacts struct {
 	Bucket *blob.Bucket
 	Warn   func(string)
@@ -32,6 +41,13 @@ type BucketFacts struct {
 	// should not pay for a run listing per repository it will never read.
 	// Empty means every repository in the bucket.
 	Slugs []string
+	// Backend is the compute backend this installation launches runs on, by
+	// name (backend.CloudRun, backend.CloudBatch). It decides how far before
+	// the window's first day the listing starts, because the gap between a
+	// run's mint and its record is that backend's launch latency and not a
+	// constant (backend.MintSkewMargin). Empty is a caller that cannot name
+	// the backend, which takes the longest bound.
+	Backend string
 }
 
 func (b BucketFacts) warnf(format string, a ...any) {
@@ -40,8 +56,13 @@ func (b BucketFacts) warnf(format string, a ...any) {
 	}
 }
 
-// Facts lists, for each day of [from, to], the runs started on it. The run
-// records are read factsWorkers at a time; the walk over them is still one
+// Facts lists, for each day of [from, to], the runs started on it. The runs
+// are listed by the mint time their IDs carry — from the backend's own
+// look-back before the window's first day (backend.MintSkewMargin), since a run
+// minted before the window can be one that started inside it — and each is
+// counted on the day its record's started_at names, which for a run minted
+// inside the window can be a day outside it. The
+// run records are read factsWorkers at a time; the walk over them is still one
 // pass in the order the runs were listed, so a day's facts and the failures
 // that reach the caller are what reading them one at a time gave, with these
 // exceptions, both of them about a pass that stops early rather than about
@@ -75,8 +96,10 @@ func (b BucketFacts) Facts(ctx context.Context, from, to int64) (map[int64][]Run
 		}
 		slugs = keep
 	}
-	// A run ID is minted a little before the run starts: look a day earlier.
-	since := time.UnixMilli((from - 1) * 86_400_000).UTC()
+	// A run ID is minted before the run starts, by however long the backend
+	// takes to start it: look back by that gap and no further
+	// (backend.MintSkewMargin).
+	since := time.UnixMilli(from*86_400_000 - int64(backend.MintSkewMargin(b.Backend)/time.Millisecond)).UTC()
 	type ref struct {
 		slug, id string
 		minted   time.Time

@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -186,6 +188,32 @@ func printConfigShow(w io.Writer, doc configShowDoc, checked time.Time, asJSON b
 	return tw.Flush()
 }
 
+// configLayerAnchor is what fugaro config layer anchors its read on: the
+// working directory's own fugaro.yaml when it sits inside a checkout, else
+// the project: and gcp_project: of the selected project config. The layer
+// hangs off the installation, not off a working tree, so a machine that
+// holds no checkout still learns which layer its project published;
+// inCheckout says which of the two answered, for the messages.
+func configLayerAnchor(ctx context.Context) (data []byte, inCheckout bool, err error) {
+	root, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel")
+	if err == nil {
+		data, err := readFugaroYAML(filepath.Join(root, "fugaro.yaml"))
+		if err != nil {
+			return nil, true, userErr("%v", err)
+		}
+		return data, true, nil
+	}
+	lc := selectedProjectConfig(ctx)
+	if lc == nil || lc.Name == "" || lc.GCPProject == "" {
+		return nil, false, userErr("not inside a git checkout, and no project config is selected: run this from the repository's checkout, or set $FUGARO_PROJECT or $FUGARO_CONFIG to the installation whose published layer you want (fugaro config list names them)")
+	}
+	anchor, err := yaml.Marshal(map[string]string{"project": lc.Name, "gcp_project": lc.GCPProject})
+	if err != nil {
+		return nil, false, err
+	}
+	return anchor, false, nil
+}
+
 // configLayerDoc is fugaro config layer --json's shape, pinned so a script
 // can rely on its exact keys rather than an ad-hoc map.
 type configLayerDoc struct {
@@ -202,13 +230,9 @@ func newConfigLayerCmd() *cobra.Command {
 		Short: "Print the project layer published for this checkout's project",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			root, err := gitRead(cmd.Context(), ".", "rev-parse", "--show-toplevel")
+			data, inCheckout, err := configLayerAnchor(cmd.Context())
 			if err != nil {
-				return userErr("not inside a git checkout; run this from the repository")
-			}
-			data, err := readFugaroYAML(root + "/fugaro.yaml")
-			if err != nil {
-				return userErr("%v", err)
+				return err
 			}
 			fl, err := findLayer(cmd.Context(), getenvOS, data, selectedProjectConfig(cmd.Context()), layerOptions{}, time.Now())
 			if err != nil {
@@ -216,7 +240,11 @@ func newConfigLayerCmd() *cobra.Command {
 			}
 			l := fl.Layer
 			if l == nil {
-				msg := "no project layer applies to this checkout (its fugaro.yaml needs gcp_project:, and the project must publish one with fugaro config publish)"
+				subject, needs := "this checkout", "its fugaro.yaml needs gcp_project:"
+				if !inCheckout {
+					subject, needs = "this project", "the project config needs gcp_project:"
+				}
+				msg := fmt.Sprintf("no project layer applies to %s (%s, and the project must publish one with fugaro config publish)", subject, needs)
 				if fl.Note != "" {
 					msg += "; " + fl.Note
 				}
@@ -228,6 +256,45 @@ func newConfigLayerCmd() *cobra.Command {
 				return enc.Encode(configLayerDoc{Where: fl.Where, Generation: fl.Generation, SHA256: l.SHA256, YAML: string(l.Raw)})
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "# %s, generation %d, sha256 %s\n%s", pluginwire.Printable(fl.Where), fl.Generation, l.SHA256, printableLines(string(l.Raw)))
+			// The one local layer file beside it (D830), and whether it is the
+			// object just printed: the same comparison, and the same word, the
+			// owner's doctor and `fugaro rigor show` make. The record that tells
+			// the two causes of `unpublished` apart (D854) is read here too, so
+			// this door and those two never disagree about why.
+			st := localLayerState(selectedProjectConfig(cmd.Context()), l.Project, l, fl.Generation)
+			if st.Path == "" {
+				return nil
+			}
+			if st.Unreadable != "" {
+				// The file is there but not one this CLI reads (a symlink, an
+				// oversized one), so "does not exist" and its seed remedy would
+				// both be false — and `fugaro update` would refuse the file
+				// rather than replace it.
+				fmt.Fprintf(cmd.OutOrStdout(), "local layer file: %s (not read: %s)\n", pluginwire.Printable(st.Path), pluginwire.Printable(st.Unreadable))
+				return nil
+			}
+			if !st.Exists {
+				// A published layer with no local file is a state with a
+				// remedy, and this door is where the owner reads the state:
+				// without the sentence they would have to know that
+				// `fugaro update` is what writes one (D831). With nothing
+				// published there is nothing to seed it from, and the line
+				// stays the plain statement it was.
+				if st.Published {
+					fmt.Fprintf(cmd.OutOrStdout(), "local layer file: %s (does not exist; run %s, which seeds it from the published project layer)\n", pluginwire.Printable(st.Path), selfCommand()+" update")
+					return nil
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "local layer file: %s (does not exist)\n", pluginwire.Printable(st.Path))
+				return nil
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "local layer file: %s, sha256 %s\n", pluginwire.Printable(st.Path), st.SHA256)
+			if t := st.unpublishedText(); t != "" {
+				// The sentence is this CLI's own words plus a path and two
+				// short sha256s: the bound is wide enough for all of them,
+				// because a remedy cut off at 200 runes is no remedy, and it
+				// still bounds a path a hostile config home could stretch.
+				fmt.Fprintln(cmd.OutOrStdout(), pluginwire.PrintableN(t, 512))
+			}
 			return nil
 		},
 	}

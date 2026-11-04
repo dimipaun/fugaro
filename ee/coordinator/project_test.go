@@ -62,7 +62,7 @@ func (f *projectFixture) project() *Project {
 			return fmt.Sprintf("ghs_fixture_%s_%d", strings.ReplaceAll(repo, "/", "_"), f.mints[repo]),
 				f.now.Add(time.Hour), nil
 		},
-		Open: func(ctx context.Context, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		Open: func(ctx context.Context, kind, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			// A provider asks for its token on its first API call, so the
 			// fixture asks here: a read then mints the way a real one does,
 			// and the cache is exercised by the reads rather than beside them.
@@ -100,13 +100,13 @@ func prState(number int, branch string, state gitprov.PRState) fake.PRState {
 	}
 }
 
-// A project that holds a Bitbucket repository is refused, and the refusal
-// names the reason rather than the repository: the credential is one
-// repository's access token and there is nothing to widen it to (reconciliation
-// Q12 answered (A), finding #30). Nothing is minted or opened on the way to
-// the refusal — the read does not spend a credential to find out it cannot
-// serve the project — and a repository with no work in flight is refused the
-// same way, so a caller may ask about every repository it knows.
+// A project whose reader carries no read mint refuses a Bitbucket repository,
+// and the refusal names the reason rather than the repository: the credential
+// is one repository's access token and there is nothing to widen it to
+// (reconciliation Q12 answered (A), finding #30). Nothing is minted or opened
+// on the way to the refusal — the read does not spend a credential to find out
+// it cannot serve the project — and a repository with no work in flight is
+// refused the same way, so a caller may ask about every repository it knows.
 func TestCoordinatorRefusesABitbucketProject(t *testing.T) {
 	f := newProjectFixture("acme/legacy")
 	p := f.project()
@@ -125,6 +125,74 @@ func TestCoordinatorRefusesABitbucketProject(t *testing.T) {
 	if len(f.opened) != 0 || len(f.mints) != 0 {
 		t.Errorf("the refused read opened %v and minted %v, want neither", f.opened, f.mints)
 	}
+}
+
+// A project whose reader carries the read mint serves a Bitbucket repository
+// (BB4, and BB5 for the sweep that arrives with it): the token is the
+// credentials service's, asked for by the one repository being read (G11) and
+// never the App's, because this command holds no Bitbucket credential at all.
+// The source the mint hands back is the source the provider is opened with, so
+// what a read is served with is what was minted for it.
+func TestCoordinatorServesABitbucketRepositoryThroughTheReadMint(t *testing.T) {
+	f := newProjectFixture("acme/legacy")
+	f.hosts["acme/legacy"].State.PRs = []fake.PRState{{
+		PR:    gitprov.PR{Number: 12, URL: "https://bitbucket.org/acme/legacy/pull-requests/12"},
+		Spec:  gitprov.PRSpec{Branch: "topic/legacy"},
+		State: gitprov.PROpen,
+	}}
+	mint := &readMintFixture{}
+	p := f.project()
+	p.ReadTokens = mint.source
+
+	got, err := p.PullRequests(context.Background(), gitprov.KindBitbucket, "acme/legacy", []int{12})
+	if err != nil {
+		t.Fatalf("PullRequests through the read mint: %v", err)
+	}
+	if len(got) != 1 || got[0].Number != 12 || got[0].Branch != "topic/legacy" || got[0].State != string(gitprov.PROpen) {
+		t.Errorf("the read through the read mint = %+v, want the repository's one pull request", got)
+	}
+	if !slices.Equal(mint.asked, []string{"acme/legacy"}) {
+		t.Errorf("the read mint was asked for %v, want the repository being read and nothing else", mint.asked)
+	}
+	src, ok := f.sources["acme/legacy"]
+	if !ok {
+		t.Fatal("the provider was opened without a token source")
+	}
+	tok, _, err := src.Token(context.Background(), time.Minute)
+	if err != nil || tok != readMintToken("acme/legacy") {
+		t.Errorf("the provider was opened with a source returning (%q, %v), want the read mint's token", tok, err)
+	}
+	if len(f.mints) != 0 {
+		t.Errorf("the read minted %v through the App, want the App's mint untouched: a Bitbucket read is the service's", f.mints)
+	}
+}
+
+// readMintFixture is the read mint a Bitbucket case wires: one source per
+// repository asked for, each handing out the token of that repository.
+type readMintFixture struct {
+	asked []string
+}
+
+func (m *readMintFixture) source(repo string) gitprov.TokenSource {
+	m.asked = append(m.asked, repo)
+	return readSource{repo: repo}
+}
+
+// readSource is one repository's source as the read mint hands it out, and it
+// knows nothing else about the service: what the reader under test decides is
+// whose source a provider is opened with, not what a mint does.
+type readSource struct {
+	repo string
+}
+
+func (s readSource) Token(context.Context, time.Duration) (string, time.Time, error) {
+	return readMintToken(s.repo), time.Date(2026, 10, 24, 10, 0, 0, 0, time.UTC), nil
+}
+
+// readMintToken is the token the read mint hands out for repo, built here and
+// not written down: no fixture carries a credential-shaped literal.
+func readMintToken(repo string) string {
+	return "read-mint-fixture-" + strings.ReplaceAll(repo, "/", "-")
 }
 
 // Two repositories under one App mint two tokens: D193's answer is a token per
@@ -246,10 +314,10 @@ func TestCoordinatorRedactsTheCredentialsAnOpenerHolds(t *testing.T) {
 		name string
 		open ProviderOpener
 	}{
-		{"opening the provider", func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		{"opening the provider", func(context.Context, string, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			return nil, []string{secret}, fmt.Errorf("github: the App credential %s was refused: %w", secret, sentinel)
 		}},
-		{"reading a pull request", func(_ context.Context, repo string, _ gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		{"reading a pull request", func(_ context.Context, kind, repo string, _ gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			return secretHost{Provider: &fake.Provider{Repo: repo, SelfID: "1"}, secret: secret, cause: sentinel}, []string{secret}, nil
 		}},
 	} {
@@ -297,7 +365,7 @@ func TestCoordinatorRedactsItsMintedToken(t *testing.T) {
 		Mint: func(context.Context, string) (string, time.Time, error) {
 			return minted, time.Now().Add(time.Hour), nil
 		},
-		Open: func(_ context.Context, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		Open: func(_ context.Context, kind, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			return tokenHost{Provider: &fake.Provider{Repo: repo, SelfID: "1"}, src: src}, nil, nil
 		},
 		Redact: agent.Redact,
@@ -311,13 +379,58 @@ func TestCoordinatorRedactsItsMintedToken(t *testing.T) {
 	}
 }
 
+// The single read keeps the view's own rule: a failure of the host goes through
+// Redact with the values the opener held and the token this reader minted, so a
+// host that echoes the Authorization header back in its own error body cannot
+// put the installation token in front of whoever reads the failure
+// (Project.PullRequest).
+//
+// The opener hands back no secret at all here, so the only place the value
+// exists is this reader's cache — the half a redactor built from the opener's
+// values alone would miss, and the reason minted() exists.
+func TestCoordinatorRedactsAHostTokenOnTheSingleRead(t *testing.T) {
+	minted := hostToken(t)
+	p := &Project{
+		Mint: func(context.Context, string) (string, time.Time, error) {
+			return minted, time.Now().Add(time.Hour), nil
+		},
+		Open: func(_ context.Context, kind, repo string, src gitprov.TokenSource) (gitprov.Provider, []string, error) {
+			return tokenHost{Provider: &fake.Provider{Repo: repo, SelfID: "1"}, src: src}, nil, nil
+		},
+		Redact: agent.Redact,
+	}
+	doc, err := p.PullRequest(context.Background(), gitprov.KindGitHub, "acme/web", 12)
+	if err == nil {
+		t.Fatal("the host failed the read and PullRequest succeeded")
+	}
+	if strings.Contains(err.Error(), minted) {
+		t.Errorf("the minted token reached the failure: %v", err)
+	}
+	if !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Errorf("the failure is %v, want the token redacted in it", err)
+	}
+	if doc != (PRDocument{}) {
+		t.Errorf("a failed read returned a document: %+v", doc)
+	}
+}
+
+// hostToken is the token-shaped value the redaction tests look for, built at
+// run time from a prefix and the test's own name (Convention 2: no
+// secret-shaped literal, ever). The value a failure must not carry is one this
+// test invented rather than a pattern it guessed at, which is the only claim a
+// search for it can honestly make.
+func hostToken(t *testing.T) string {
+	t.Helper()
+	return "ghs_" + strings.ReplaceAll(t.Name(), "/", "_")
+}
+
 // A reader with no redactor panics rather than reading: a forgotten one would
 // ship the provider's own text, which is where a credential would arrive
 // (internal/followup's rule for the same reason).
 func TestCoordinatorPanicsWithoutARedactor(t *testing.T) {
 	p := &Project{
 		Mint: func(context.Context, string) (string, time.Time, error) { return "ghs_fixture_token", time.Now(), nil },
-		Open: func(context.Context, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
+		Open: func(context.Context, string, string, gitprov.TokenSource) (gitprov.Provider, []string, error) {
 			return &fake.Provider{Repo: "acme/web", SelfID: "1"}, nil, nil
 		},
 	}

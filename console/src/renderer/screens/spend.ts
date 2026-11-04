@@ -234,8 +234,11 @@ export type SpendTheme = (typeof SPEND_THEMES)[number]
 
 /** MICROS_PER_USD is `budget.Micros`' own scale: the contract's `*_micros` are
  * millionths of a dollar (`USD6` formats the same integer as a 6-decimal
- * string). */
-const MICROS_PER_USD = 1_000_000
+ * string). It is exported because it is the scale of **every** `*_micros` on the
+ * wire and not of this screen's: the Coordinator's fleet window draws
+ * `runs summary`'s three money figures through it, and a second copy of the
+ * constant would be a second opinion about what a micro is. */
+export const MICROS_PER_USD = 1_000_000
 
 /**
  * PARTIAL_MARKER is the marker the design draws beside a partial day. It is the
@@ -1892,17 +1895,24 @@ export interface SpendControls {
 }
 
 /**
- * SPEND_DEFAULT_CONTROLS is the screen as it opens, and none of the three
- * defaults is the console's invention: `30d` is `reportDefaultSince` and `day`
- * is `--by`'s own default, so the first read is the read an operator's own
- * `fugaro report --json` would have made, and the person view is off (D15).
+ * SPEND_DEFAULT_CONTROLS is the screen as it opens: the recent week, by day,
+ * with the person view off (D15).
+ *
+ * **`7d` is the owner's choice and not the CLI's default** (console 0.118.0,
+ * "when going to the Spend screen, let's default to 7d/day"): the question this
+ * screen is opened with is what the last few days cost, so the week just gone is
+ * what opens, and a month of days is one click away in the picker.
+ * `report`'s own `--since` default is untouched -- `reportDefaultSince` is 30
+ * days, and this screen still writes `--since` into the read it sends -- and the
+ * picker still offers `30d`, `90d` and `12w` beside the week, so no window the
+ * operator could ask for before is gone: what changed is the one it opens on.
  *
  * `until` is `null` on purpose. The CLI defaults it to today in UTC and this
  * screen cannot know what today is: a date it invented would be a day nobody
  * measured, drawn as if it had been asked for.
  */
 export const SPEND_DEFAULT_CONTROLS: SpendControls = Object.freeze({
-  since: '30d',
+  since: '7d',
   until: null,
   by: 'day',
   persons: false,
@@ -2906,8 +2916,14 @@ function capsBarUnits(share: number): string {
  * the word is never beside numbers that contradict it -- the first needs no cap
  * of the repository's own and therefore no bar. An unavailable headroom is not a
  * zero: a row the document reports no headroom for, under a cap its counted
- * dollars have not reached, draws neither the word nor the tone. */
-function capsAtCap(row: SpendCapRow): boolean {
+ * dollars have not reached, draws neither the word nor the tone.
+ *
+ * It is exported because the Coordinator's action queue draws the same fact as
+ * an alert on its own row (console 0.118.0, K1; D812): a repository at its cap
+ * is the second of the two grounds a budget alert states, and two screens
+ * computing "at cap" out of the same row would be two screens that can
+ * disagree about the same figure. */
+export function capsAtCap(row: SpendCapRow): boolean {
   if (row.headroom.value !== null && row.headroom.value <= 0) return true
   const cap = row.dailyCap.value
   const counted = row.counted.value

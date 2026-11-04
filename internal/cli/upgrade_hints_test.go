@@ -7,16 +7,18 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
-// TestHintsNameUpgrade (decision U15): every hint for a state fugaro upgrade
-// can fix names fugaro upgrade --local and none lists the old update-skills
-// step. The plugin step (pluginStep, Task 6) now backs InstalledDiffers,
-// NotInstalled, pluginFirstRun and pluginRefresh too, so those hints also
-// name it. pluginRefresh and the pluginwire.Status fixes keep their manual
+// TestHintsNameUpdate: every hint for a state fugaro update fixes names
+// fugaro update, and none lists the old update-skills step or sends the owner
+// to fugaro upgrade --local, which a coding agent's session can run and which
+// is the work-around of the refusal the one command does not need. The
+// checkout's plugin step (pluginStep, Task 6) is fugaro update's own, so
+// InstalledDiffers, NotInstalled, pluginFirstRun and pluginRefresh name it
+// too. pluginRefresh and the pluginwire.Status fixes keep their manual
 // /plugin commands as a fallback for a machine with no claude on PATH;
 // pluginFirstRun does not repeat them (code review of upgrade task 9,
-// 2026-10-09): it only ever points at fugaro upgrade --local, whose own
-// claude-less fallback is noClaudeHint.
-func TestHintsNameUpgrade(t *testing.T) {
+// 2026-10-09): it only ever points at the one command, whose own claude-less
+// fallback is noClaudeHint.
+func TestHintsNameUpdate(t *testing.T) {
 	named := map[string]string{
 		"stale outdated":        staleLine(pluginwire.Report{Pin: pluginwire.Outdated, Ref: "v0.1.0", Binary: "0.2.0"}),
 		"pluginFirstRun":        pluginFirstRun,
@@ -29,12 +31,21 @@ func TestHintsNameUpgrade(t *testing.T) {
 		named["fix "+string(s)] = s.Fix()
 	}
 	for name, text := range named {
-		if !strings.Contains(text, "fugaro upgrade --local") {
-			t.Errorf("%s does not name fugaro upgrade --local: %q", name, text)
+		if !strings.Contains(text, "fugaro update") {
+			t.Errorf("%s does not name fugaro update: %q", name, text)
+		}
+		if strings.Contains(text, "upgrade --local") {
+			t.Errorf("%s still sends the owner to fugaro upgrade --local: %q", name, text)
 		}
 		if strings.Contains(text, "update-skills") {
 			t.Errorf("%s still says update-skills: %q", name, text)
 		}
+	}
+	// The warning can land in a coding agent's session, where fugaro update
+	// writes nothing by design: the line says where to run it rather than
+	// leaving a session to find a way around that refusal.
+	if s := named["stale outdated"]; !strings.Contains(s, "in your own terminal") {
+		t.Errorf("the stale-pin line does not say where to run fugaro update: %q", s)
 	}
 	// pluginRefresh and the pluginwire.Status fixes keep their manual /plugin
 	// commands too: a fallback for a machine with no claude on PATH
@@ -50,7 +61,7 @@ func TestHintsNameUpgrade(t *testing.T) {
 		}
 	}
 	if strings.Contains(pluginFirstRun, "/plugin") {
-		t.Errorf("pluginFirstRun repeats the manual /plugin commands instead of pointing at fugaro upgrade --local: %q", pluginFirstRun)
+		t.Errorf("pluginFirstRun repeats the manual /plugin commands instead of pointing at fugaro update: %q", pluginFirstRun)
 	}
 	if s := staleLine(pluginwire.Report{Pin: pluginwire.Newer, Ref: "v0.3.0", Binary: "0.2.0"}); !strings.Contains(s, "brew upgrade dimipaun/tap/fugaro") {
 		t.Errorf("newer: %q", s)

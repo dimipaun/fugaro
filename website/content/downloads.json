@@ -25,7 +25,7 @@
     {
       "id": "no-telemetry",
       "title": "No telemetry",
-      "text": "No telemetry, no crash reporting, no analytics, and an update check that carries no identifier.",
+      "text": "No telemetry, no analytics, no crash reporting unless you opt in, and an update check that carries no identifier. Crash reports go to Sentry, hosted in the European Union, and hold only the exception type and the app's own code frames.",
       "source": "docs/design/desktop-console.md D5"
     },
     {
@@ -37,7 +37,7 @@
   ],
   "release": {
     "tag_prefix": "console-v",
-    "version": "0.116.0",
+    "version": "0.120.0",
     "source": "docs/release.md"
   },
   "downloads": [
@@ -45,25 +45,25 @@
       "id": "macos-dmg",
       "platform": "macOS",
       "file": "Fugaro Console-{version}-universal.dmg",
-      "sha256": "ff7b60dfdcca7f6bf5f15961d6ee09f3b9c5548156230f46b32e944723f2c002"
+      "sha256": "80633c8e017d37094a9c59547568e9aac22a4cc79230e764871d033f1a458d80"
     },
     {
       "id": "macos-zip",
       "platform": "macOS",
       "file": "Fugaro Console-{version}-universal-mac.zip",
-      "sha256": "03cef493b7a67315963b9a49ce2bf7cbd1c52b4e5ebcd1c774416ba8efcc86b1"
+      "sha256": "3cf8a24a46dc55a397f720b58b33189b500f4d7feb7febda30a99a664d743ca5"
     },
     {
       "id": "linux-appimage",
       "platform": "Linux",
       "file": "Fugaro.Console-{version}-linux-x86_64.AppImage",
-      "sha256": "d8f3d5caed57a3ee2f433464c05ae61b19b24a4095710afc4e8fa049e4d8f581"
+      "sha256": "c9ea119e46ca0a22968b87c7bd73d721837f80de5654d97793f366fc4acf5221"
     },
     {
       "id": "linux-deb",
       "platform": "Linux",
       "file": "Fugaro.Console-{version}-linux-amd64.deb",
-      "sha256": "da5f17eba3c212e53c1622b7befc35e82225d4c339fbe2f66de5b889af479ce4"
+      "sha256": "059f415cf24adb0903cc5cb468b97fa839fdc7b8430b18a463e6825dfa6de498"
     }
   ],
   "linux": {

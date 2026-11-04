@@ -194,7 +194,8 @@ variable "credentials_service" {
       repo     = string
       workflow = string
     }))
-    url = optional(string)
+    verifier_accounts = optional(list(string))
+    url               = optional(string)
   })
   # The credentials service (D146, D147), OFF by default: fugaro update's
   # credentials stage (C1.20) is the only writer, and only when the owner runs
@@ -205,13 +206,16 @@ variable "credentials_service" {
   # variable and the loader's own derivation (C1.11) name one secret.
   # firebase_project, rtdb_url and job_accounts are the rest of the service's
   # environment (C1.14: the Firebase project, the database, and the jobs whose
-  # accounts may call it), and url is the service's own URL — the audience its
+  # accounts may call it), url is the service's own URL — the audience its
   # callers' tokens are minted for — which Cloud Run assigns, so the module
   # carries its unassigned placeholder until the apply after the one that
   # creates the service (the module's own output reads the URL back, and the
   # stage that fills this variable applies again in the same run; the type is
   # the module's, and its validations are the ones that hold these four to
-  # their shape).
+  # their shape). verifier_accounts is the one OPTIONAL member, and the module
+  # renders its environment entry only when it is set: null is an installation
+  # that names no verifier, whose service starts with the same seven names and
+  # an empty list (C3.9g1, D1068).
   default = null
 }
 

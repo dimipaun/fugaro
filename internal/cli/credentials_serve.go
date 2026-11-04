@@ -162,6 +162,38 @@ const (
 	// table of emails would be a second derivation that can drift from the
 	// accounts the deployer created.
 	envJobAccounts = "FUGARO_JOB_ACCOUNTS"
+	// envVerifierAccounts is the identities that may ask the verify route
+	// whether a verdict's signature is this service's: a JSON array of bare
+	// addresses (the coordinator's account, and the owner's for a manual
+	// check). It is the ONE name this process reads as optional, and the only
+	// one outside credentialsServiceEnvNames: that list is what the service
+	// REQUIRES, and the module renders this entry only on an installation
+	// that named a verifier, so a name inside it would turn "an installation
+	// that never opted in" into "a service that refuses to start". Absent or
+	// empty is the empty list the verify route already refuses every caller
+	// with (C3.9g2, D1068).
+	envVerifierAccounts = "FUGARO_VERIFIER_ACCOUNTS"
+	// envPersonAccounts is the identities that may ask the read mint for a
+	// read-scoped Bitbucket token: a JSON array of bare addresses, which is
+	// what the module renders from the installation's operators, whose IAM
+	// spellings it strips the "user:" from. Like the verifier list it is
+	// read as OPTIONAL and lives outside credentialsServiceEnvNames, because
+	// the module renders the entry only on an installation that named an
+	// operator and an installation that named none must still start: absent
+	// or empty is the empty list the read mint already refuses every caller
+	// with (BB4).
+	envPersonAccounts = "FUGARO_PERSON_ACCOUNTS"
+	// envCoordinatorAccount is the installation's coordinator service account
+	// (BB5): ONE bare address, which is the read mint's second class — the
+	// identity the scheduled sweep calls with — and not a list, because an
+	// installation has one coordinator. Like the verifier list and the person
+	// list it is read as OPTIONAL and lives outside credentialsServiceEnvNames:
+	// the module renders the entry only on an installation whose coordinator is
+	// on, and one that never opted in must still start, with a read mint that
+	// admits no coordinator at all. Absent or empty is that empty state, and a
+	// value that is present and is not one address is a deployment that is
+	// wrong (F24).
+	envCoordinatorAccount = "FUGARO_COORDINATOR_ACCOUNT"
 )
 
 // credentialsServiceEnvNames is the whole of this command's environment: the
@@ -249,12 +281,28 @@ var credentialsTest *credentialsWiring
 // process's log handler. Nothing is guessed and nothing is defaulted: a
 // missing or malformed name is a refusal that names it.
 //
-// The one set left empty on purpose is the shared project jobs' accounts
-// (AuthConfig.SharedJobAccounts): under Global Constraint 6 this service
-// admits runs in per-repository jobs only until the phase-3 shared-job rules
-// land, and an empty set is that statement rather than a fact the deployment
-// has to make. The day those rules land it is a read of the policy this
-// service already reads (credsvc.SharedJobAccountsFor), not a variable.
+// The sets left empty on purpose are the two project-job ones. The shared
+// project jobs' accounts (AuthConfig.SharedJobAccounts) are empty because
+// under Global Constraint 6 this service admits runs in per-repository jobs
+// only until the phase-3 shared-job rules land, and an empty set is that
+// statement rather than a fact the deployment has to make. The day those rules
+// land it is a read of the policy this service already reads
+// (credsvc.SharedJobAccountsFor), not a variable.
+//
+// The review-only variant's accounts (AuthConfig.ReviewJobAccounts and
+// Config.ReviewAccounts, which are the same list) are empty for a reason that
+// is the deployment's rather than this command's: the accounts are
+// credsvc.ReviewJobAccountsFor over the published policy, and this command
+// reads no policy at all — it builds its configuration from the seven
+// variables above and never touches the database, which is the property that
+// keeps the service's start-up independent of the installation's state (and
+// the reason a policy read here would make the configuration fail for a
+// reason no operator could see in it). An empty set is the fail-closed
+// statement it is for the shared set: this installation admits no review job,
+// and every caller of that class is refused. It is also the state of every
+// installation until the variant's jobs exist at all — CSR7 is the task that
+// deploys them — and the wiring that fills the set belongs with it, where the
+// accounts it names are accounts a deployment has created.
 //
 // A REFUSAL NAMES A VARIABLE, NEVER A VALUE.
 //
@@ -276,12 +324,40 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	// init's cover holds its container to (credentialsServiceEnv). An empty
 	// variable is not a value the module can set: Terraform writes each of
 	// these from an input the installation has, so an empty one is a
-	// deployment that is wrong rather than a deployment with a default.
+	// deployment that is wrong rather than a deployment with a default. The
+	// verifier list below is the one name the service reads as optional and
+	// the rest are not.
 	env := map[string]string{}
 	for _, k := range credentialsServiceEnvNames {
 		if env[k] = getenv(k); env[k] == "" {
 			return credsvc.Config{}, userErr("the credentials service needs %s in its environment (the installation module sets it on the service, and it is the whole of how this process is configured: there is no flag, no config file and no default)", k)
 		}
+	}
+	// Outside that loop, because the module renders this entry only on an
+	// installation that named a verifier: an absent value is the empty list
+	// the verify route already refuses every caller with, not a service that
+	// will not start (C3.9g2, D1068). A value that is present and is not the
+	// list the module renders is a deployment that is wrong, and is refused
+	// here rather than silently read as empty.
+	verifiers, err := credentialsServiceVerifiers(getenv(envVerifierAccounts))
+	if err != nil {
+		return credsvc.Config{}, userErr("%v", err)
+	}
+	// The read mint's own class, read the same way and for the same reason:
+	// the entry is rendered only on an installation that named an operator,
+	// and an installation that named none gets a route that admits nobody
+	// rather than a service that will not bind a port (BB4).
+	persons, err := credentialsServicePersons(getenv(envPersonAccounts))
+	if err != nil {
+		return credsvc.Config{}, userErr("%v", err)
+	}
+	// The read mint's other class (BB5), read the same way and for the same
+	// reason: the entry is rendered only on an installation whose coordinator is
+	// on, and one that never opted in gets a route that admits no coordinator
+	// rather than a service that will not bind a port (F24).
+	coordinator, err := credentialsServiceCoordinator(getenv(envCoordinatorAccount))
+	if err != nil {
+		return credsvc.Config{}, userErr("%v", err)
 	}
 	// The database's shape, then the database itself: a URL that is not a
 	// Firebase Realtime Database at all is a different refusal from one that
@@ -295,7 +371,7 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	if err := credentialsServiceAudience(env[envCredentialsServiceURL]); err != nil {
 		return credsvc.Config{}, userErr("%v", err)
 	}
-	accounts, err := credentialsServiceJobAccounts(env[envJobAccounts], env[envProject], env[envGCPProject])
+	accounts, repos, err := credentialsServiceJobAccounts(env[envJobAccounts], env[envProject], env[envGCPProject])
 	if err != nil {
 		return credsvc.Config{}, userErr("%v", err)
 	}
@@ -339,9 +415,23 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		FirebaseProject: env[envFirebaseFP],
 		Audience:        env[envCredentialsServiceURL],
 		JobAccounts:     emails,
-		Keys:            credsvc.NewGoogleKeys(),
-		JobKeys:         credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
-		Outcomes:        credsvc.RTDBOutcomes{DB: db},
+		// The verify route's own class (C3.9f, D1068): the accounts that may
+		// ask whether a verdict's signature is this service's. Empty is the
+		// state every installation starts in, and the route answers every
+		// caller with the class's refusal rather than the process failing.
+		VerifierAccounts: verifiers,
+		// The read mint's class (BB4): the installation's operators, by the
+		// bare address a Google ID token's email claim carries. Empty is the
+		// state an installation that named no operator starts in, and the
+		// route answers every caller with the class's refusal.
+		PersonAccounts: persons,
+		// ... and its second class (BB5): the coordinator's own service
+		// account, which is the identity the scheduled sweep calls with. Empty
+		// is the state an installation that runs no coordinator starts in.
+		CoordinatorAccount: coordinator,
+		Keys:               credsvc.NewGoogleKeys(),
+		JobKeys:            credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
+		Outcomes:           credsvc.RTDBOutcomes{DB: db},
 	})
 	if err != nil {
 		return credsvc.Config{}, userErr("the credentials service cannot verify its callers, so it will not start: %v", err)
@@ -354,12 +444,23 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		Kills:   credsvc.RTDBKills{DB: db},
 		DB:      db,
 		Probes:  db,
+		// The same client is the create-only write the sign route's
+		// one-signature mark is taken with (C3.9e, D1074): the mark is a node
+		// under creds/ like the probe's lease, read for its ETag and written
+		// back under it, over the service's own identity — which is the only
+		// writer of that subtree (the rules deny every run token it).
+		Signs: db,
 		// Every audited act goes to the process's log, which is the stream
 		// Cloud Logging reads; the one auditor that redacts is built inside
 		// NewServer (NewProbeAuditor arms it with this service's loader).
 		AuditLog:    log.Handler(),
 		JobAccounts: accounts,
-		Log:         log,
+		// The repository table, which is the pairing's second step for a
+		// review caller (C3.9a) and is read from this variable's own input
+		// above rather than from the published policy: the table must be the
+		// one the per-repository bindings are made from.
+		Repos: repos,
+		Log:   log,
 	}, nil
 }
 
@@ -409,10 +510,97 @@ func credentialsServiceAudience(raw string) error {
 	return nil
 }
 
-// credentialsServiceJobAccounts turns FUGARO_JOB_ACCOUNTS into the binding
-// table NewServer is given: one account per (repository, workflow), derived
-// from the triple by the one derivation the deployer used
-// (credsvc.JobAccountsFor over task.Slug and gcp.ServiceAccountID).
+// credentialsServiceVerifiers turns FUGARO_VERIFIER_ACCOUNTS into the verify
+// route's class (C3.9f, D1068): a JSON array of bare addresses, which is what
+// the module renders from the installation's verifier_accounts.
+//
+// An absent or empty value is an EMPTY list and not a refusal, because the
+// module renders the entry only on an installation that named a verifier: a
+// service that would not start without it would be one every installation that
+// never opted in could not run. A value that is present and is not that array
+// is a deployment that is wrong, so it is refused by name — and the refusal
+// names the variable and never an entry, because the entries are accounts of
+// people and the environment is this process's own. Whether an entry is an
+// address at all is credsvc.NewAuthenticator's to say (a verifier is matched
+// against a Google ID token's email claim, and that fold is the one that
+// decides), so this function only holds the document to its shape.
+func credentialsServiceVerifiers(raw string) ([]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var verifiers []string
+	if err := json.Unmarshal([]byte(raw), &verifiers); err != nil {
+		return nil, fmt.Errorf("%s is not the installation's verifier list: it must be a JSON array of the bare email addresses a Google ID token carries, one per identity that may ask the service to verify a signature. Nothing was started and no credential was issued", envVerifierAccounts)
+	}
+	return verifiers, nil
+}
+
+// credentialsServicePersons turns FUGARO_PERSON_ACCOUNTS into the read mint's
+// class (BB4): a JSON array of bare addresses, which is what the module renders
+// from the installation's operators.
+//
+// It is credentialsServiceVerifiers' rule word for word, and for the same
+// reason: an absent or empty value is an EMPTY list and not a refusal, because
+// the module renders the entry only on an installation that named an operator,
+// while a value that is present and is not that array is a deployment that is
+// wrong. The refusal names the variable and never an entry, because the entries
+// are accounts of people.
+func credentialsServicePersons(raw string) ([]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var persons []string
+	if err := json.Unmarshal([]byte(raw), &persons); err != nil {
+		return nil, fmt.Errorf("%s is not the installation's person list: it must be a JSON array of the bare email addresses a Google ID token carries, one per person who may ask the service to mint a read-scoped Bitbucket token. Nothing was started and no credential was issued", envPersonAccounts)
+	}
+	return persons, nil
+}
+
+// credentialsServiceCoordinator turns FUGARO_COORDINATOR_ACCOUNT into the read
+// mint's second class (BB5): the coordinator Cloud Run job's own service
+// account, as the bare address a Google ID token's email claim carries.
+//
+// The two rules the lists above are read by hold here too, and this one adds a
+// third because a single value is not a document:
+//
+//   - absent or empty is the empty account and not a refusal, because the
+//     module renders the entry only on an installation whose coordinator is on
+//     (F24), and a service that would not start without it is one every
+//     installation that never opted in could not run;
+//   - what is present is held to the shape the module renders — one address,
+//     with no space in it and nothing around it — because the value reaches an
+//     authenticator that matches it against a claim, and a value carrying a
+//     quote or a newline is a deployment that is wrong rather than an account
+//     that admits nobody. Whether it is an ADDRESS at all is
+//     credsvc.NewAuthenticator's to say, the rule the verifier list is left to;
+//   - the refusal names the variable and never the value. It is an account, and
+//     the environment is this process's own (the no-echo rule).
+func credentialsServiceCoordinator(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	if raw != strings.TrimSpace(raw) || strings.ContainsAny(raw, " \t\r\n") {
+		return "", fmt.Errorf("%s is not the installation's coordinator account: it must be one bare email address, the one a Google ID token's email claim carries, with no space and nothing else in the value. Nothing was started and no credential was issued", envCoordinatorAccount)
+	}
+	return raw, nil
+}
+
+// credentialsServiceJobAccounts turns FUGARO_JOB_ACCOUNTS into the two things
+// NewServer is given that this variable holds: the binding table, one account
+// per (repository, workflow), derived from the triple by the one derivation
+// the deployer used (credsvc.JobAccountsFor over task.Slug and
+// gcp.ServiceAccountID), and the repository table, which is those same rows
+// read the other way round (credsvc.RepositoryTableFor: the slug a run
+// identity carries to the canonical repository name the published policy
+// speaks).
+//
+// The repository table is what pairs a review caller with a run (C3.9a): a
+// review job's account names no repository, so the run identity's own slug is
+// the only repository the call can be about, and it is resolved here rather
+// than guessed from the slug's own text. Its input is this variable and not
+// the published policy, because the table must be the one the per-repository
+// bindings are made from — a service that resolved a slug another way could
+// pair an account with a repository its own binding table disagrees about.
 //
 // The document is strict: a JSON array of objects with exactly those three
 // fields, all of them non-empty. Terraform writes it from an input the owner
@@ -424,7 +612,7 @@ func credentialsServiceAudience(raw string) error {
 // An empty array is refused here rather than left to NewServer: the two agree
 // (NewServer refuses a table that binds nothing), and refusing it by name says
 // which variable was empty, which is the thing an operator has to fix.
-func credentialsServiceJobAccounts(raw, fugaroProject, gcpProject string) ([]credsvc.JobAccount, error) {
+func credentialsServiceJobAccounts(raw, fugaroProject, gcpProject string) ([]credsvc.JobAccount, map[string]string, error) {
 	var jobs []struct {
 		Provider string `json:"provider"`
 		Repo     string `json:"repo"`
@@ -433,10 +621,10 @@ func credentialsServiceJobAccounts(raw, fugaroProject, gcpProject string) ([]cre
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&jobs); err != nil {
-		return nil, fmt.Errorf("%s is not the installation's job accounts: it must be a JSON array of {\"provider\": ..., \"repo\": ..., \"workflow\": ...} objects, one per job whose service account may call the service. Nothing was started and no credential was issued", envJobAccounts)
+		return nil, nil, fmt.Errorf("%s is not the installation's job accounts: it must be a JSON array of {\"provider\": ..., \"repo\": ..., \"workflow\": ...} objects, one per job whose service account may call the service. Nothing was started and no credential was issued", envJobAccounts)
 	}
 	if len(jobs) == 0 {
-		return nil, fmt.Errorf("%s names no job, so the service would bind no run to a repository: an empty table refuses every caller, and a service that admits nobody is one an operator would read as healthy while every run halted. Nothing was started and no credential was issued", envJobAccounts)
+		return nil, nil, fmt.Errorf("%s names no job, so the service would bind no run to a repository: an empty table refuses every caller, and a service that admits nobody is one an operator would read as healthy while every run halted. Nothing was started and no credential was issued", envJobAccounts)
 	}
 	byProvider := map[string][]credsvc.RepoJob{}
 	for i, j := range jobs {
@@ -445,11 +633,12 @@ func credentialsServiceJobAccounts(raw, fugaroProject, gcpProject string) ([]cre
 			// one value in this environment that can hold a name an operator
 			// would not want in a log, and the refusal has to be actionable
 			// without it.
-			return nil, fmt.Errorf("%s: entry %d has no provider, repository or workflow (all three are required: the account's name is derived from the repository and the workflow, and the repository's slug from the provider and the repository)", envJobAccounts, i)
+			return nil, nil, fmt.Errorf("%s: entry %d has no provider, repository or workflow (all three are required: the account's name is derived from the repository and the workflow, and the repository's slug from the provider and the repository)", envJobAccounts, i)
 		}
 		byProvider[j.Provider] = append(byProvider[j.Provider], credsvc.RepoJob{Repo: j.Repo, Workflow: j.Workflow})
 	}
 	out := make([]credsvc.JobAccount, 0, len(jobs))
+	repos := make(map[string]string, len(jobs))
 	for _, provider := range slices.Sorted(maps.Keys(byProvider)) {
 		accts, err := credsvc.JobAccountsFor(fugaroProject, gcpProject, provider, byProvider[provider])
 		if err != nil {
@@ -457,21 +646,31 @@ func credentialsServiceJobAccounts(raw, fugaroProject, gcpProject string) ([]cre
 			// is left is actionable because the entry above has been checked
 			// for its three fields, so what can be wrong here is the provider
 			// or the repository's shape.
-			return nil, fmt.Errorf("%s names a job whose service account cannot be derived: the provider must be a provider kind (lower case, starting with a letter) and the repository a canonical path this build can name, because the account's name is derived from the two rather than configured. Nothing was started and no credential was issued", envJobAccounts)
+			return nil, nil, fmt.Errorf("%s names a job whose service account cannot be derived: the provider must be a provider kind (lower case, starting with a letter) and the repository a canonical path this build can name, because the account's name is derived from the two rather than configured. Nothing was started and no credential was issued", envJobAccounts)
+		}
+		table, err := credsvc.RepositoryTableFor(fugaroProject, gcpProject, provider, byProvider[provider])
+		if err != nil {
+			// Unreachable: the same input has just been derived above. The
+			// branch is here rather than a second copy of the table's rule,
+			// because a table spelled anywhere but RepositoryTableFor would be
+			// a slug resolved one way for a binding and another for a review.
+			return nil, nil, fmt.Errorf("%s names a job whose repository cannot be derived: the provider must be a provider kind (lower case, starting with a letter) and the repository a canonical path this build can name. Nothing was started and no credential was issued", envJobAccounts)
 		}
 		out = append(out, accts...)
+		maps.Copy(repos, table)
 	}
-	return out, nil
+	return out, repos, nil
 }
 
 // The host's own bounds. A proxied model call is long-lived -- it streams a
 // completion that can take minutes, and Cloud Run's request timeout is set to
 // the hour the module allows (credentials.tf, Check 91 measures what its front
-// end does with one) -- so there is deliberately no WriteTimeout and no
-// ReadTimeout: either would cut a call in flight, which is a run that fails
-// for a reason nothing in its record explains. What is bounded is the part
-// that cannot be long-lived: a client that has opened a connection and not
-// sent its request, and a connection left idle between calls.
+// end does with one) -- and so is a git fetch or push through the same host
+// (B1.5), so there is deliberately no WriteTimeout and no ReadTimeout: either
+// would cut a call in flight, which is a run that fails for a reason nothing
+// in its record explains. What is bounded is the part that cannot be
+// long-lived: a client that has opened a connection and not sent its request,
+// a connection left idle between calls, and a peer that has stopped reading.
 const (
 	// serveReadHeaderTimeout bounds a caller that connects and then says
 	// nothing. Every request the service answers is a small JSON POST or a
@@ -479,8 +678,35 @@ const (
 	serveReadHeaderTimeout = 30 * time.Second
 	// serveIdleTimeout is how long a kept-alive connection with no request on
 	// it is held. The runner's gateway calls the service repeatedly over one
-	// job, so it is generous.
+	// job, so it is generous. It is also what bounds an HTTP/2 connection that
+	// has been opened and has no stream on it -- h2 has no header timeout of
+	// its own, and net/http gives an h2 connection this same field as its idle
+	// timer (server.go: `if idle := sc.hs.IdleTimeout()`), started as soon as
+	// the preface is read.
 	serveIdleTimeout = 2 * time.Minute
+	// serveMaxConcurrentStreams is how many streams one HTTP/2 connection may
+	// hold open at once. It is a bound on how much work one connection may ask
+	// this process for -- each stream is a handler goroutine, and for this
+	// service an upstream call carrying a credential behind it -- and not a
+	// throughput decision: Go's own default is 250, with a TODO in its source
+	// to make it 100 "as the GFE seems to", and the hop in front of this
+	// process is that front end. So 100 is the number a caller already handles
+	// from a peer it cannot tell apart from this one, which means it is never
+	// the limit a legitimate caller hits first, and a caller that wants more
+	// in flight opens another connection.
+	serveMaxConcurrentStreams = 100
+	// serveWriteByteTimeout is the one write bound HTTP/2 offers that a long
+	// streamed push still survives, and it is why it is set where a
+	// WriteTimeout is not: it is not a deadline for the stream but for a
+	// single write attempt with no progress, restarted by every byte written
+	// (net/http's writeWithByteTimeout). Two minutes of a connection that
+	// cannot accept one byte is a peer that has stopped reading -- a runner
+	// that died, a git client on a link that is gone -- and it is holding a
+	// goroutine and an upstream connection that carries a model credential;
+	// without this, the only thing that ends it is Cloud Run's own request
+	// timeout an hour out (credentials.tf). A pack or a model stream that is
+	// still moving is never cut: progress restarts the clock.
+	serveWriteByteTimeout = 2 * time.Minute
 	// serveShutdownGrace is how long a SIGTERM lets the calls in flight finish
 	// before the process returns. Cloud Run sends SIGTERM and then kills the
 	// container ten seconds later, so this is under that: a stream cut off by
@@ -529,18 +755,86 @@ func hostCredentialsService(ctx context.Context, cfg credsvc.Config, getenv func
 	return serveUntilStop(ctx, ln, credentialsHTTPServer(ctx, srv, errw), errw)
 }
 
+// credentialsServeProtocols is what the host speaks on its one listener:
+// HTTP/1.1 and HTTP/2 cleartext (h2c), the second of them with prior
+// knowledge, and no TLS of this process's own -- Cloud Run's front end
+// terminates TLS and then talks to the container, and with the service's port
+// named `h2c` (credentials.tf) it talks HTTP/2 cleartext.
+//
+// h2c is what B1.0 exists for, and B1.0 is conditional on the owner's Check
+// 190 failing a large push (implementation-plan.md, whose entry depends on
+// B0.6 recording one). Nothing in this file rests on a measurement of that
+// check: docs/gcp-live-checklist.md still records it as not run on this tree,
+// and the reconciliation marks the reading it rests on (U2: that HTTP/2's
+// streaming keeps the pack off the HTTP/1 path's buffer) unverified. So what
+// is stated here is the belief the task was planned on and not a result — the
+// hop in front of this process buffers an HTTP/1 request body and refuses one
+// a large git pack exceeds, and an HTTP/2 body is streamed past that buffer,
+// which is the hop the port's name (credentials.tf) turns h2c on for. Check
+// 190's live re-run is the owner's, and it is what would prove it.
+//
+// HTTP/1.1 stays on, and not as a courtesy: it is what every caller this
+// service has today speaks. The runner's gateway is a plain net/http client
+// (internal/gateway, internal/credsvc's own callers), and its requests go out
+// over HTTP/1.1 unless it asks for something else; a server that spoke only
+// h2c would fail every model call this installation makes, which is a whole
+// installation halted by a transport choice.
+//
+// The GODEBUG=http2debug refusal is not weakened by this and does not depend
+// on it: it is the first thing serveCredentials does, before the environment
+// is read and long before a listener exists, and a process that refused under
+// it cannot have started an h2c server (TestCredentialsServeRefusesHTTP2DebugStill).
+func credentialsServeProtocols() *http.Protocols {
+	var protocols http.Protocols
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+	// TLS-based HTTP/2 is deliberately not enabled: this process serves no
+	// TLS. Cloud Run's front end owns the listener's TLS, and an h2 ALPN
+	// negotiation is not something that can happen on a cleartext socket.
+	protocols.SetHTTP2(false)
+	return &protocols
+}
+
 // credentialsHTTPServer is the host's own shape, and a function of the handler
 // rather than of the service so that the bounds below are the same object
 // whoever is served -- and so that a test can drive a real listener, request
 // and shutdown through them without a service's worth of fakes
 // (TestCredentialsServeHostStopsOnSignal).
+//
+// The HTTP/2 half of it is stated rather than left to the library's defaults,
+// because every default here is a decision about this service that nobody
+// made. Two of them are load-bearing in the direction this task is about:
+//
+//   - Server.ReadTimeout and Server.WriteTimeout stay zero, and on HTTP/2 that
+//     is not the same statement as on HTTP/1.1. net/http's h2 server arms a
+//     per-stream timer from ReadTimeout when the stream is created, closing
+//     the request body at that deadline whatever progress the body is making
+//     (internal/http2: `if sc.hs.ReadTimeout() > 0 { st.readDeadline =
+//     time.AfterFunc(...)}`), and another from WriteTimeout for the response.
+//     A non-zero value there would cut a 33 MiB push or a minute-long model
+//     stream mid-flight; the same fields also carry h2's send-ping
+//     health-check interval, which nothing here needs.
+//   - Server.IdleTimeout and Server.MaxHeaderBytes are reused by the h2
+//     server as they are -- the idle timer of a connection with no stream on
+//     it, and MAX_HEADER_LIST_SIZE -- so the bounds above cover both
+//     protocols rather than only the one they were first written for.
+//
+// What is stated is the two the h2 server would otherwise choose for this
+// process: the concurrent-stream limit (serveMaxConcurrentStreams) and the
+// no-progress write bound (serveWriteByteTimeout). Left at its default is the
+// frame size, which is a transport detail neither limit depends on.
 func credentialsHTTPServer(ctx context.Context, h http.Handler, errw io.Writer) *http.Server {
 	return &http.Server{
 		Handler:           h,
+		Protocols:         credentialsServeProtocols(),
 		ReadHeaderTimeout: serveReadHeaderTimeout,
 		IdleTimeout:       serveIdleTimeout,
 		MaxHeaderBytes:    serveMaxHeaderBytes,
-		BaseContext:       func(net.Listener) context.Context { return ctx },
+		HTTP2: &http.HTTP2Config{
+			MaxConcurrentStreams: serveMaxConcurrentStreams,
+			WriteByteTimeout:     serveWriteByteTimeout,
+		},
+		BaseContext: func(net.Listener) context.Context { return ctx },
 		// Nothing here prints a request, a header or a body: this logger
 		// carries Go's own connection-level lines (a client that hung up
 		// mid-request, a TLS handshake failure) and nothing this service

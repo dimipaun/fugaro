@@ -4,8 +4,10 @@ package cli
 
 import (
 	"bytes"
+	"encoding/hex"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
@@ -143,4 +145,64 @@ func TestCredsSetRefusesTheAppKeyAtATerminal(t *testing.T) {
 	if shown := tty.displayed(); strings.Contains(shown, "PRIVATE KEY") {
 		t.Errorf("the terminal displayed a key: %q", shown)
 	}
+}
+
+// TestCredsSetGenerateReadsNothingAtATerminal: the mode an owner actually uses
+// at their own terminal reads no value at all — no hidden prompt, no line typed
+// into it — and the key it writes is one the service's loader reads. The pty is
+// real and nothing is ever written to it: a mode that prompted would hang here,
+// which is what the timeout below catches, and the terminal displays no part of
+// what was written.
+func TestCredsSetGenerateReadsNothingAtATerminal(t *testing.T) {
+	tty := newTTY(t)
+	sm := credsFixtureFor(t)
+	sm.seed(t, nil)
+	name := config.ReviewSigningKeySecret("alice")
+
+	type result struct {
+		out, errOut string
+		err         error
+	}
+	done := make(chan result, 1)
+	go func() {
+		cmd := NewRootCmd()
+		var out, errOut bytes.Buffer
+		cmd.SetIn(tty.tty)
+		cmd.SetOut(&out)
+		cmd.SetErr(&errOut)
+		cmd.SetArgs(NormalizeRepoArgs([]string{"creds", "set", "--generate", name}))
+		err := cmd.Execute()
+		done <- result{out.String(), errOut.String(), err}
+	}()
+	var r result
+	select {
+	case r = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("creds set --generate waited for input: the mode reads no value")
+	}
+	if r.err != nil {
+		t.Fatalf("%v (stderr %q)", r.err, r.errOut)
+	}
+	if strings.Contains(r.errOut, "Paste the value") {
+		t.Errorf("the hidden prompt was printed for a generated key: %q", r.errOut)
+	}
+	if !tty.echo(t) {
+		t.Error("the terminal's ECHO was switched off: nothing was read")
+	}
+
+	b, err := credsvc.ParseBundle(sm.Latest(sm.id))
+	if err != nil {
+		t.Fatalf("the service's loader refuses the document this command wrote: %v", err)
+	}
+	gotName, key, err := b.ReviewSigningKey("alice", false)
+	if err != nil {
+		t.Fatalf("the loader refuses the key this command wrote: %v", err)
+	}
+	if gotName != name || len(key) != credsvc.ReviewSigningKeyBytes {
+		t.Errorf("the entry the loader answers is %q with %d bytes", gotName, len(key))
+	}
+	if shown := tty.displayed(); strings.Contains(shown, hex.EncodeToString(key)) {
+		t.Errorf("the terminal displayed the key: %q", shown)
+	}
+	assertNoValue(t, r.out+r.errOut, hex.EncodeToString(key))
 }
