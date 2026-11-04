@@ -5,14 +5,18 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/budget/rules"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // update_managed_test.go: `fugaro update`'s steps under the managed gate (M1,
@@ -180,12 +184,19 @@ func TestUpdateManagedStageAdmitsAnAdditivePlan(t *testing.T) {
 	}
 }
 
-// markReads is how many calls asked the runs bucket for the managed marker
-// object, however the client spelled the path: the gate's own read is one, and
-// a run that never reads the marks makes none.
+// markReads is how many calls READ the runs bucket's managed marker object,
+// however the client spelled the path: the gate's own read is one, and a run
+// that never reads the marks makes none.
+//
+// Reading, not naming: the rig's own setup uploads the object, and an upload is
+// not a read — counting it would make every world here look like a world in
+// which the gate was consulted.
 func markReads(r *initRig) int {
 	n := 0
 	for _, rq := range r.gcs.Requests() {
+		if rq.Method != http.MethodGet {
+			continue
+		}
 		if strings.Contains(rq.Path, "managed.json") || strings.Contains(rq.Query, "managed.json") {
 			n++
 		}
@@ -429,5 +440,104 @@ func TestUpdateManagedLeavesCredentialsAndComputeOwnerRun(t *testing.T) {
 	}
 	if n := len(r2.ran(t, "apply")); n != 0 {
 		t.Errorf("the run applied %d plan(s) on its way to refusing the compute stage", n)
+	}
+}
+
+// The rules stage is the one judged step of this command whose document is not
+// a Terraform plan (spec §4.2: "it is a document the binary carries, so the plan
+// IS the generation"). In a managed project with a coding agent's session, a
+// stale deployed generation is one the gate admits: the session deploys it, and
+// the admission is recorded with the digest of the generation this binary
+// carries — which is what an owner reads afterwards to check that the rules
+// that landed are the release's own.
+func TestUpdateManagedRulesStageUnderTheGate(t *testing.T) {
+	r, db := updateBudgetRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	t.Setenv("CLAUDECODE", "1")
+	isolateGateCredentials(t)
+	// The rig's world plans an additive change (updating), which is what lets
+	// the installation step run to its apply: a step that plans nothing has no
+	// paper for the gate either, and the run would stop at the installation's
+	// own local-config write — a file write of this machine, not a cloud write,
+	// and one this task deliberately leaves asking.
+	updating(t, r)
+	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	got := out + errOut
+	if err != nil {
+		t.Fatalf("a managed project's agent session did not deploy the rules generation (%v):\n%s", err, got)
+	}
+	if !strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
+		t.Errorf("the admitted rules step did not say it proceeded:\n%s", got)
+	}
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !infra.SameJSON(db.Rules(), gen) {
+		t.Errorf("the rules deployed are not this binary's generation:\n%s", got)
+	}
+	if want := strconv.Itoa(projectpolicy.RulesVersion); rulesMarkerOn(t, db) != want {
+		t.Errorf("the deployed generation marker is %q, want %q:\n%s", rulesMarkerOn(t, db), want, got)
+	}
+	// One record per judged step and not one per run: the installation's plan
+	// and the rules generation are two documents, and each carries its own
+	// digest. The rules' own is the one this test is about.
+	recs := audits(t, r)
+	want := gateDigest(gen)
+	found := false
+	for _, rec := range recs {
+		if rec.Verdict != managedmode.AuditAdmitted {
+			t.Errorf("a step of this run left %+v, want every record admitted", rec)
+		}
+		if rec.Command != "fugaro update" {
+			t.Errorf("the record names the command %q", rec.Command)
+		}
+		if rec.PlanDigest == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no record carries the digest of the generation this binary carries (%s): %+v\n%s", want, recs, got)
+	}
+}
+
+// --plan-only applies nothing, and the gate does not change that: the flag is
+// asked before any mark is read, so an agent's plan-only run in a managed
+// project is the read-only account it has always been — no apply, no record,
+// and the step shown as one that would be applied.
+func TestUpdateManagedPlanOnlyStillAppliesNothing(t *testing.T) {
+	r := updateManagedRig(t)
+	updating(t, r)
+	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
+
+	got, err := updateRun(t, r, "update", "--plan-only")
+	if err != nil {
+		t.Fatalf("--plan-only failed (%v):\n%s", err, got)
+	}
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("--plan-only applied %d plan(s) in a managed project:\n%s", n, got)
+	}
+	if strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
+		t.Errorf("a plan-only run read the coding agent's own admission sentence:\n%s", got)
+	}
+	if n := markReads(r); n != 1 {
+		t.Errorf("--plan-only read the managed marker %d time(s), want the one read the installation has always made: the answer cannot change what a plan-only run does", n)
+	}
+	if recs := audits(t, r); len(recs) != 0 {
+		t.Errorf("a plan-only run left %+v: it applied nothing to record", recs)
+	}
+	// The step is the read-only account it always was: the plan is shown, the
+	// table says it would apply it, and the run ends by naming the plan file
+	// instead of a write. A step that never reached its plan reads as [needs
+	// you] or as blocked, and both fail here.
+	for _, want := range []string{"[will do]", "installation", "1 creates", "--plan-only: nothing applied; the plan is"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the step is not reported as one that would be applied, missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "[needs you]") {
+		t.Errorf("a plan-only run in a managed project left a step for the owner, though it applies nothing:\n%s", got)
 	}
 }

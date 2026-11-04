@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // update_managed.go is `fugaro update` under the managed gate (M1, D1016):
@@ -62,20 +64,30 @@ import (
 // are one entry each, because the gate judges the plan of the step in front of
 // it and not the stage's name.
 //
+// The rules stage is here with them, and it is not a Terraform stage: its
+// document is the generation this binary carries (rules.Generate, D1022's own
+// answer for "a document the binary carries, so the plan IS the generation"),
+// and it is judged in init_rules_stage.go where the database and the
+// classification are in hand.
+//
 // The stages that are NOT here are as much a part of the decision:
-// preflight (it changes nothing), images (it copies and pins images, and what
-// bounds a build is the recorded build bound and not a plan), secrets (spec
-// §3.2: never admitted, and an agent's session is where a secret would have to
-// be typed), plugin (local files), the rules and policy stages (their
-// documents are the binary's own rules generation and the published node, and
-// they are M-tasks of their own), credentials and compute (`noYes` in the
-// stage table today and under a managed project), the layer stage and the
+// preflight (it changes nothing), images (it copies blobs and pins digests
+// through the registry and writes this machine's config — it plans nothing, so
+// the pair this gate judges a Terraform stage with has no document to read),
+// secrets (spec §3.2: never admitted, and an agent's session is where a secret
+// would have to be typed), plugin (local files), the policy stage (its work is
+// three writes with three classes at once — a loosening migration takes its
+// typed confirmation, which D1026 never admits, and the re-seed and the
+// generation record write this machine's own file — so there is no single
+// document for one verdict to be about), credentials and compute (`noYes` in
+// the stage table today and under a managed project), the layer stage and the
 // checkout's own steps.
 var gatedStages = map[string]bool{
 	initflow.Installation:  true,
 	initflow.Firebase:      true,
 	initflow.Installation2: true,
 	initflow.Repository:    true,
+	initflow.Rules:         true,
 }
 
 // initGate is this run's use of the gate: M6's helper, and the one read of the
@@ -106,7 +118,12 @@ type initGate struct {
 // gate.
 func (e *initEngine) managedStage(name string) bool {
 	r := e.r
-	if r.o.door != updateDoor.name || !gatedStages[name] {
+	// --plan-only applies nothing by its own definition, and the loop asks this
+	// before it has looked at the flag: a gate that opened a stage under it
+	// would be the one way an agent's plan-only run writes. The flag is asked
+	// FIRST, beside the door, so no read of a mark is paid for a run that
+	// cannot act on the answer.
+	if r.o.door != updateDoor.name || r.o.planOnly || !gatedStages[name] {
 		return false
 	}
 	if r.gate == nil {
@@ -260,6 +277,57 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	}
 	fmt.Fprintf(r.w, "  %s\n", initflow.AgentProceeded(agentMarker(os.Getenv)))
 	return true, nil
+}
+
+// gateRulesStep judges the security rules generation the stage is about to
+// deploy, and answers whether the gate admitted it: the rules stage's own
+// version of gateStep, for the one stage of this command whose document is not
+// a Terraform plan.
+//
+// The document is the generation this binary carries (spec §4.2: "it is a
+// document the binary carries, so the plan IS the generation"), and the digest
+// D1022 records is of exactly those bytes. The two questions that make it a
+// verdict are the ones the step has already asked of the database by the time
+// this is called — that the database is this installation's (budgetDBUnadopted,
+// D1017) and that the deployed generation is one this binary's own may replace
+// (rulesStageState) — and a stage whose state is neither of those has skipped
+// before reaching here. What this adds is what the rules stage never had: the
+// step is judged and the verdict is recorded, so an owner can read afterwards
+// which generation an agent's session deployed and under which ownership.
+//
+// A generation that cannot be produced is the one failure this call has of its
+// own: rules.Generate failing means the document the gate would judge does not
+// exist, and a step with no document is refused rather than applied (the same
+// direction managed.Gate's unreadable plan falls in).
+func (s *rulesStage) gateStep(ctx context.Context) (bool, error) {
+	r := s.e.r
+	if !r.gateUnderway() {
+		return false, nil
+	}
+	doc, err := rules.Generate()
+	if err != nil {
+		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err}
+	}
+	class := gateClass()
+	m, err := r.gate.g.admit(ctx, class, managedmode.ConvergeAdmitted(doc, class, rulesAdmittedRules))
+	if err != nil {
+		return true, &initflow.GatedError{Reason: err.Error(), Err: err}
+	}
+	if !initflow.CanConfirmManaged(class, r.conditions(), m) {
+		return false, nil
+	}
+	fmt.Fprintf(r.w, "  %s\n", initflow.AgentProceeded(agentMarker(os.Getenv)))
+	return true, nil
+}
+
+// rulesAdmittedRules is what the record says admitted the rules step: the two
+// questions the stage answered before its write, in the order it asked them.
+// The generation is named by the constant and not by a message, because what an
+// owner checks afterwards is which generation landed, and that is the number
+// this binary carries.
+var rulesAdmittedRules = []string{
+	fmt.Sprintf("the rules document is this binary's own generation %d (projectpolicy.RulesVersion)", projectpolicy.RulesVersion),
+	"the database is this installation's: budgetDBUnadopted admitted it (D1017), and the deployed generation is one this binary's own may be deployed over",
 }
 
 // gateApplied records the step the gate admitted, AFTER the step's own write
