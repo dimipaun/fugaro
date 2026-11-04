@@ -14,12 +14,15 @@ package cli
 //
 //  * TestDocsMCPServerIsWritten -- the four files exist, each carries the
 //    folder's status line word for word, and the plan states the two gates
-//    every task waits behind.
+//    every task waits behind, with the amendment's own cuts (M9 out of the
+//    first slice, M4 and M6 cancelled and to be rerun) among them.
 //  * TestDocsMCPServerAnswersAreTheOnesInForce -- the answers of 2026-11-04 are
-//    dated in reconciliation.md §4, every one of them is the recommendation (no
-//    row says otherwise), D922's restatement is recorded rather than the answer
-//    it replaced, and the "D922/D933 tension" the first answer created is gone
-//    from every file.
+//    dated in reconciliation.md §4, no row says an answer was not taken, D922's
+//    restatement is recorded rather than the answer it replaced, the
+//    "D922/D933 tension" the first answer created is gone from every file, and
+//    the one amendment that is NOT the recommendation (H1, accepted and
+//    documented after the security review) is recorded as the amendment it is
+//    rather than as a decision that was taken.
 //  * TestDocsMCPServerNamesWhatItDesigns -- the design's tool is `spawn_task`
 //    where §0's verbatim copy still says `submit_task`, the subtree is
 //    `mcpauth`, and the launch path is `fugaro run`'s own.
@@ -85,15 +88,23 @@ func TestDocsMCPServerIsWritten(t *testing.T) {
 
 	plan := flattenDoc(readDoc(t, mcpPlan))
 	for _, want := range []string{
-		// The two gates §3 of the plan states before the first task: the
-		// review the coordinator runs, and the licence nobody has confirmed.
+		// The two gates the plan states before the first task: the review the
+		// coordinator runs -- which has run, so the gate is the finding each
+		// task now answers -- and the licence, which the review confirmed and
+		// which counsel and the owner's own gate file still stand behind.
 		"independent SECURITY review of [spec.md](spec.md) §8",
 		"**run by the coordinator**",
-		"D921's unconfirmed licence",
-		"the five whose marker says **mandatory** are M3, M4, M5, M7 and M9",
+		"D921's licence",
+		"counsel's clearance of the transitive dependencies",
+		"the M5 gate file the owner is to create",
+		"the four whose marker says **mandatory** are **M3, M4, M5 and M7**",
+		// And the cuts the amendment made: `spawn_task` out of the first slice,
+		// and the two tasks whose drafts predate the answers they now build.
+		"M9 leaves the first slice",
+		"Cancelled on 2026-11-04 and to be rerun from this amended plan",
 	} {
 		if !strings.Contains(plan, want) {
-			t.Errorf("%s does not state %q: the plan gates every task on the security review and on the licence, and it names which tasks are marked mandatory, so a later edit that dropped either would leave a task looking startable",
+			t.Errorf("%s does not state %q: the plan gates every task on the security review and on the licence, it names which tasks are marked mandatory, and it states which tasks the amendment deferred and which it cancelled -- a later edit that dropped any of those would leave a task looking startable",
 				mcpPlan, want)
 		}
 	}
@@ -126,12 +137,18 @@ func TestDocsMCPServerAnswersAreTheOnesInForce(t *testing.T) {
 		}
 	}
 
-	// The answers in force are all the recommendation, and D922's replaced
-	// answer is recorded as replaced rather than as the answer.
+	// D922's replaced answer is recorded as replaced rather than as the answer,
+	// and the one amendment that is not the recommendation -- H1, the paired
+	// device, which the owner accepted and asked to have documented instead of
+	// fixed -- is recorded as exactly that in every file. A file that dropped it
+	// would read as a threat model whose every finding was answered with a
+	// change, which is the one thing this folder's review did not do.
 	for _, path := range mcpDocs() {
 		doc := readDoc(t, path)
-		if strings.Contains(doc, "Not the recommendation") || strings.Contains(doc, "**not the recommendation** is a place") {
-			t.Errorf("%s still marks an answer as not the recommendation: every answer of 2026-11-04 took it, and the one that did not was restated the same day rather than left standing", path)
+		for _, want := range []string{"not the recommendation", "H1", "residual risk"} {
+			if !strings.Contains(doc, want) {
+				t.Errorf("%s does not state %q: the review's finding H1 was answered by accepting and documenting a residual risk rather than by fixing it, and a file that left either half out would read as if every finding of the review had been answered with a change", path, want)
+			}
 		}
 		if strings.Contains(doc, "D922/D933 tension") {
 			t.Errorf("%s still carries the D922/D933 tension text: D922's restatement closed the subtree, so the database rule and D933's tool rule agree and the sentence that said otherwise has to be gone from every file rather than left beside its replacement", path)
