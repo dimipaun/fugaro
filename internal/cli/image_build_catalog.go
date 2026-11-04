@@ -331,11 +331,8 @@ func catalogBuildEntries(cmd *cobra.Command, cat *config.Catalog, name, repo str
 		if !ok {
 			return nil, userErr("this project's image catalog has no entry %s: fugaro image ls lists the entries it has", pluginwire.Printable(name))
 		}
-		switch {
-		case e.Source.Kind == config.SourceImage:
-			return nil, userErr("the catalog entry %s is the prebuilt image %s: there is nothing to build", pluginwire.Printable(e.Name), pluginwire.Printable(e.Source.Image))
-		case e.Source.Kind == config.SourceDockerfile && !sameRepo(e.Source.Repo, repo):
-			return nil, catalogBuildWrongRepo(e, repo)
+		if err := catalogBuildEntryGuard(e, repo); err != nil {
+			return nil, err
 		}
 		return []config.Entry{e}, nil
 	}
@@ -356,6 +353,44 @@ func catalogBuildEntries(cmd *cobra.Command, cat *config.Catalog, name, repo str
 		return nil, userErr("every entry of this project's image catalog either is a prebuilt image or is built from another repository's Dockerfile: fugaro image ls lists them, and a build runs from the checkout of the repository a Dockerfile is in")
 	}
 	return buildable, nil
+}
+
+// catalogEntryGuardKind is the one rule both paths that build a catalog entry
+// answer to, as a value rather than a sentence: an entry a prebuilt image
+// answers has nothing to build, and an entry whose Dockerfile is another
+// repository's is built by that repository's build account or not at all. The
+// rule is one function so the scheduled path cannot drift from the manual one;
+// the two answer it with different routes, because the person reading is in a
+// different place — a checkout, where running from the other repository's
+// checkout is the fix, or the nightly job's log, where fugaro update is.
+type catalogEntryGuardKind int
+
+const (
+	catalogEntryBuildable catalogEntryGuardKind = iota
+	catalogEntryPrebuilt
+	catalogEntryOtherRepo
+)
+
+func catalogEntryGuardOf(e config.Entry, repo string) catalogEntryGuardKind {
+	switch {
+	case e.Source.Kind == config.SourceImage:
+		return catalogEntryPrebuilt
+	case e.Source.Kind == config.SourceDockerfile && !sameRepo(e.Source.Repo, repo):
+		return catalogEntryOtherRepo
+	}
+	return catalogEntryBuildable
+}
+
+// catalogBuildEntryGuard is the manual path's refusal: the operator is at a
+// checkout, so the route it names is the other repository's.
+func catalogBuildEntryGuard(e config.Entry, repo string) error {
+	switch catalogEntryGuardOf(e, repo) {
+	case catalogEntryPrebuilt:
+		return userErr("the catalog entry %s is the prebuilt image %s: there is nothing to build", pluginwire.Printable(e.Name), pluginwire.Printable(e.Source.Image))
+	case catalogEntryOtherRepo:
+		return catalogBuildWrongRepo(e, repo)
+	}
+	return nil
 }
 
 // catalogBuildWrongRepo is the refusal of one entry that this checkout cannot
