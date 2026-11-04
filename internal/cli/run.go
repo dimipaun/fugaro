@@ -2817,10 +2817,9 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 // first docker command.
 //
 // Which jobs the catalog speaks for is catalog.Applies, the same predicate the
-// deploy-time spec builder uses: a workflow that keeps its own image
-// definition, or that runs the base or a shared layer, is not the catalog's,
-// and asking the rule on its behalf would refuse a launch for an entry the job
-// does not run.
+// deploy-time spec builder uses: a workflow that runs the base or a shared
+// layer is not the catalog's, and asking the rule on its behalf would refuse a
+// launch for an entry the job does not run.
 //
 // A catalog that no longer agrees with the deployed image — the entry the
 // image is was removed or renamed, the workflow now pins another one, or the
