@@ -19,6 +19,15 @@ package credsvc
 // including a route that answers 200 to a caller of another class — is a
 // failure that names itself.
 //
+// The matrix is read TWICE, because the audience is the second thing the
+// classes do not share: once with every class presenting a token for the
+// service's own URL (classVerdicts), and once with every class presenting the
+// token a plain `gcloud auth print-identity-token` gives a user account
+// (gcloudVerdicts, GcloudAudience) — which exactly one class, the person, may
+// carry. The second pass is what a mutant that widened the new acceptance to
+// another class fails, and no single-route test could hold it: each of them
+// presents only the class it is about.
+//
 // The refusals a class that holds no run identity gets on the three routes the
 // shared parse reads (mint, sign, messages) are that parse's own
 // (`unverified_run_identity`) and not the class's: a verifier, a person and
@@ -208,8 +217,76 @@ var classVerdicts = map[string]classVerdict{
 	"coordinator/messages":    {StatusUnverified, ErrorUnverifiedRunIdentity},
 }
 
+// gcloudVerdicts is the same matrix read with the OTHER audience a person's ID
+// token can carry: gcloud's own client id, which is what a plain `gcloud auth
+// print-identity-token` mints for a user account (GcloudAudience, the owner's
+// ruling of 2026-11-04).
+//
+// Two cells admit it — the two read mints, whose caller class is the person's —
+// and every other cell refuses it. That is the class restriction the ruling
+// draws, and it is a property of the matrix rather than of one route: the same
+// token that opens the read mints is refused on the model path, on the sign
+// route, on the verify route and on the run mints, whichever class presents it.
+// A mutant that accepted this audience for every class turns the job's and the
+// review job's model cells, the verifier's verify cell and the coordinator's
+// read cell green-where-they-must-be-red, which is what this table exists to
+// catch.
+//
+// The cells that are the same as classVerdicts' are the same for the same
+// reason: the shared parse reads the run identity before any class does, so the
+// three identity routes refuse the three classes that hold no run identity
+// whatever their token's audience is.
+var gcloudVerdicts = map[string]classVerdict{
+	"job/read-token":  {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"job/github-read": {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"job/verify":      {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"job/mint":        {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"job/sign":        {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"job/messages":    {StatusUnverified, ErrorUnverifiedJobIdentity},
+
+	"review/read-token":  {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"review/github-read": {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"review/verify":      {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"review/mint":        {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"review/sign":        {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"review/messages":    {StatusUnverified, ErrorUnverifiedJobIdentity},
+
+	"verifier/read-token":  {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"verifier/github-read": {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"verifier/verify":      {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"verifier/mint":        {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"verifier/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"verifier/messages":    {StatusUnverified, ErrorUnverifiedRunIdentity},
+
+	"person/read-token":  admitted,
+	"person/github-read": admitted,
+	"person/verify":      {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"person/mint":        {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"person/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"person/messages":    {StatusUnverified, ErrorUnverifiedRunIdentity},
+
+	"coordinator/read-token":  {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"coordinator/github-read": {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"coordinator/verify":      {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"coordinator/mint":        {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"coordinator/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"coordinator/messages":    {StatusUnverified, ErrorUnverifiedRunIdentity},
+}
+
+// audienceClaim is the mutation that puts aud on a class's token: the empty
+// string is the class's own, which is the service's URL and what the fixtures
+// mint.
+func audienceClaim(aud string) func(map[string]any) {
+	if aud == "" {
+		return func(map[string]any) {}
+	}
+	return func(c map[string]any) { c["aud"] = aud }
+}
+
 // TestRouteCallerClassMatrix is the cross-class matrix: five classes against
-// six routes, each cell held to the verdict classVerdicts writes down.
+// six routes, each cell held to the verdict classVerdicts writes down — and
+// then the same matrix again with the audience a plain `gcloud auth
+// print-identity-token` gives a person, held to gcloudVerdicts.
 func TestRouteCallerClassMatrix(t *testing.T) {
 	s, _ := classMatrixSvc(t)
 	digest, signature := testDigest(t, "matrix"), strings.Repeat("0", 64)
@@ -217,34 +294,35 @@ func TestRouteCallerClassMatrix(t *testing.T) {
 	callers := []struct {
 		name string
 		// token is the class's own credential: the Google ID token Cloud Run
-		// IAM admitted, naming the account the class's list holds.
-		token func(*svc) string
+		// IAM admitted, naming the account the class's list holds and carrying
+		// aud as its audience.
+		token func(*svc, string) string
 		// run is the run identity, and "" for the two classes that hold none.
 		run func(*svc) string
 	}{
 		{
 			name:  "job",
-			token: func(s *svc) string { return s.jobToken() },
+			token: func(s *svc, aud string) string { return s.jobToken(audienceClaim(aud)) },
 			run:   func(s *svc) string { return s.runToken() },
 		},
 		{
 			name:  "review",
-			token: func(s *svc) string { return s.reviewJobToken() },
+			token: func(s *svc, aud string) string { return s.reviewJobToken(audienceClaim(aud)) },
 			run:   func(s *svc) string { return s.reviewRunToken() },
 		},
 		{
 			name:  "verifier",
-			token: func(s *svc) string { return verifierToken(t, s, testVerifierSA) },
+			token: func(s *svc, aud string) string { return verifierToken(t, s, testVerifierSA, audienceClaim(aud)) },
 			run:   func(*svc) string { return "" },
 		},
 		{
 			name:  "person",
-			token: func(s *svc) string { return s.personToken(testPersonAccount) },
+			token: func(s *svc, aud string) string { return s.personToken(testPersonAccount, audienceClaim(aud)) },
 			run:   func(*svc) string { return "" },
 		},
 		{
 			name:  "coordinator",
-			token: func(s *svc) string { return s.personToken(testCoordinatorAccount) },
+			token: func(s *svc, aud string) string { return s.personToken(testCoordinatorAccount, audienceClaim(aud)) },
 			run:   func(*svc) string { return "" },
 		},
 	}
@@ -293,37 +371,50 @@ func TestRouteCallerClassMatrix(t *testing.T) {
 		},
 	}
 
-	for _, caller := range callers {
-		for _, route := range routes {
-			key := caller.name + "/" + route.name
-			want, ok := classVerdicts[key]
-			if !ok {
-				t.Errorf("the matrix holds no verdict for %s, so nothing aims at that cell", key)
-				continue
+	for _, audience := range []struct {
+		name     string
+		aud      string
+		verdicts map[string]classVerdict
+	}{
+		{name: "the service's own audience", verdicts: classVerdicts},
+		{name: "gcloud's default audience", aud: GcloudAudience, verdicts: gcloudVerdicts},
+	} {
+		t.Run(audience.name, func(t *testing.T) {
+			for _, caller := range callers {
+				for _, route := range routes {
+					key := caller.name + "/" + route.name
+					want, ok := audience.verdicts[key]
+					if !ok {
+						t.Errorf("the matrix holds no verdict for %s, so nothing aims at that cell", key)
+						continue
+					}
+					t.Run(key, func(t *testing.T) {
+						run := ""
+						if route.identity {
+							run = caller.run(s)
+						}
+						resp, body := s.callClass(t, route.path, route.body(s), caller.token(s, audience.aud), run, s.job)
+						if resp.StatusCode != want.status {
+							t.Fatalf("a %s caller was answered %d on %s, want %d: %s", caller.name, resp.StatusCode, route.name, want.status, body)
+						}
+						if want.code == "" {
+							return
+						}
+						if got := refusal(t, resp.StatusCode, body); got.Error != want.code {
+							t.Errorf("the %s caller's refusal on %s is %q, want %q: %s", caller.name, route.name, got.Error, want.code, got.Message)
+						}
+					})
+				}
 			}
-			t.Run(key, func(t *testing.T) {
-				run := ""
-				if route.identity {
-					run = caller.run(s)
-				}
-				resp, body := s.callClass(t, route.path, route.body(s), caller.token(s), run, s.job)
-				if resp.StatusCode != want.status {
-					t.Fatalf("a %s caller was answered %d on %s, want %d: %s", caller.name, resp.StatusCode, route.name, want.status, body)
-				}
-				if want.code == "" {
-					return
-				}
-				if got := refusal(t, resp.StatusCode, body); got.Error != want.code {
-					t.Errorf("the %s caller's refusal on %s is %q, want %q: %s", caller.name, route.name, got.Error, want.code, got.Message)
-				}
-			})
-		}
+		})
 	}
 	// The upstream's own count is the other half of the matrix: the model path
-	// has exactly two admitted callers (the job's and the review job's), so a
-	// cell that admitted a third is a caller that reached the one route whose
-	// reach costs money — which no status this test read would have shown if
-	// the extra call had been answered beside a refusal.
+	// has exactly two admitted callers (the job's and the review job's), and
+	// the second pass admits none at all — the gcloud audience opens the two
+	// read mints and nothing else. A cell that admitted a third is a caller
+	// that reached the one route whose reach costs money, which no status this
+	// test read would have shown if the extra call had been answered beside a
+	// refusal.
 	if n := s.up.Count(); n != 2 {
 		t.Errorf("the upstream saw %d model calls, want the two admitted callers' and no more", n)
 	}

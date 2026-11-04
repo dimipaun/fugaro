@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -688,6 +689,85 @@ func TestReadMintAuditedOnce(t *testing.T) {
 		if got := lines[0][field]; got != want {
 			t.Errorf("the granted mint's audit line %s = %v, want %q", field, got, want)
 		}
+	}
+}
+
+// TestPersonGcloudTokenAdmittedAndAudited: the ID token a person can actually
+// mint — the one plain `gcloud auth print-identity-token` gives a user account,
+// whose audience is gcloud's own client id and not this service's URL — opens
+// the read mint, and the line the mint writes names the account and carries no
+// token.
+//
+// It is the CLI's own form (ee/coordinator/cli's coordinatorPersonIdentity)
+// read from this end: gcloud refuses `--audiences` for a user account, so a
+// person has no way to present this service's URL at all, and the person class
+// would admit nobody without this. The token the caller presented is asserted
+// absent from the audit line by value and not by field: a line that carried it
+// under any name is the leak the no-echo rule is about.
+func TestPersonGcloudTokenAdmittedAndAudited(t *testing.T) {
+	s, f := bitbucketSvc(t, testPersonAccount)
+	tok := s.personToken(testPersonAccount, audienceClaim(GcloudAudience))
+	resp, body := s.callPerson(t, readTokenPath, `{"repository":"`+testBitbucketRepo+`"}`, tok)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the read mint refused a person's own gcloud token: HTTP %d %s", resp.StatusCode, body)
+	}
+	if n := len(f.seen()); n != 1 {
+		t.Errorf("the service exchanged the read consumer %d times, want one", n)
+	}
+	lines := auditLines(t, s.audit)
+	if len(lines) != 1 {
+		t.Fatalf("a granted mint wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+	}
+	checkAuditShape(t, lines[0])
+	for field, want := range map[string]any{
+		"caller":  testPersonAccount,
+		"purpose": PurposeBitbucketRead,
+		"status":  StatusOK,
+		"run":     "",
+		"job":     "",
+	} {
+		if got := lines[0][field]; got != want {
+			t.Errorf("the granted mint's audit line %s = %v, want %q", field, got, want)
+		}
+	}
+	if strings.Contains(s.audit.String(), tok) {
+		t.Error("the audit line carries the identity token the caller presented")
+	}
+}
+
+// TestPersonGcloudTokenRefusals: the person class's other checks are unchanged
+// by the audience it now admits. A token gcloud minted for a person is admitted
+// only when its audience is gcloud's own or this service's, its address is on
+// the people list and its email is verified and unexpired — the four cases
+// below are each one of those failing, and each is refused before the read
+// consumer is exchanged and before any audit line is written.
+func TestPersonGcloudTokenRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{"an audience this service does not admit", func(c map[string]any) { c["aud"] = "https://elsewhere.invalid" }},
+		{"an address that is not on the people list", func(c map[string]any) { c["email"] = testOtherPerson }},
+		{"an unverified email", func(c map[string]any) { c["email_verified"] = false }},
+		{"an expired token", func(c map[string]any) { c["exp"] = testNow().Add(-time.Minute).Unix() }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, f := bitbucketSvc(t, testPersonAccount)
+			tok := s.personToken(testPersonAccount, audienceClaim(GcloudAudience), tc.mutate)
+			resp, body := s.callPerson(t, readTokenPath, `{"repository":"`+testBitbucketRepo+`"}`, tok)
+			if resp.StatusCode != StatusUnverified {
+				t.Fatalf("the read mint admitted a token with %s: HTTP %d %s", tc.name, resp.StatusCode, body)
+			}
+			if e := refusal(t, resp.StatusCode, body); e.Error != ErrorUnverifiedJobIdentity {
+				t.Errorf("the refusal is %q, want %q: %s", e.Error, ErrorUnverifiedJobIdentity, e.Message)
+			}
+			if n := len(f.seen()); n != 0 {
+				t.Errorf("the service exchanged the read consumer %d times for a caller it refused, want none", n)
+			}
+			if got := s.audit.String(); got != "" {
+				t.Errorf("a refusal taken before the caller was verified wrote an audit line: %s", got)
+			}
+		})
 	}
 }
 
