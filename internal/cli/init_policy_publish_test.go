@@ -1,13 +1,18 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -1459,5 +1464,120 @@ func TestPolicyConfigDriftRefusesToCompareAnUnpublishableAccount(t *testing.T) {
 	}
 	if want := []string{"accounts"}; !slices.Equal(got, want) {
 		t.Errorf("policyConfigDrift = %v, want %v: an account the config cannot publish is a member to publish", got, want)
+	}
+}
+
+// TestRecordPublishedGenerationFoldsAnEmptyAllowList is #1658's red step. The
+// generation a publish records is checked against the node read back, and the
+// Realtime Database keeps no member for an empty list — an RTDB list is an
+// object with numeric keys, so `allow_repos: []` is an empty object and is
+// pruned. A publish from a config that lists no repository therefore wrote a
+// member the read-back can never carry, and the comparison reported a concurrent
+// writer that did not exist: no generation was recorded, and the operator was
+// sent looking for a re-seed that never came. The read-back here is the node as
+// the database stores that document, with the empty allow-list member gone.
+func TestRecordPublishedGenerationFoldsAnEmptyAllowList(t *testing.T) {
+	f := newProjectFixture(t, "")
+	db, err := newBudgetClient(t.Context(), f.db.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Load(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The document the publish wrote spells allow_repos as an empty list; the
+	// database keeps no member for it.
+	payload := []byte(fmt.Sprintf(`{"version":%d,"allow_repos":[]}`, projectpolicy.Version))
+	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version})
+
+	if err := recordPublishedGeneration(t.Context(), io.Discard, db, lc, f.path, payload); err != nil {
+		t.Fatalf("the record was refused for a member the database drops: %v", err)
+	}
+	if gen, want := recordedGeneration(t, f), nodeETag(t, f); gen != want {
+		t.Errorf("policy_generation = %q, want the node's own generation %q", gen, want)
+	}
+}
+
+// setConfigWithNoRepos rewrites the fixture's config with an empty repos map: a
+// project whose local config lists no repository, which is the state a publish
+// with an empty allow-list is about.
+func setConfigWithNoRepos(t *testing.T, f *projectFixture) {
+	t.Helper()
+	text := f.configText(t, projectConfigText(f.dir, f.db.URL, projectProvidersYAML, ""))
+	text = strings.Replace(text,
+		"repos:\n  acme/app: { provider: github, workflows: [web] }\n  acme/other: { provider: bitbucket, workflows: [web] }\n",
+		"repos: {}\n", 1)
+	if !strings.Contains(text, "repos: {}\n") {
+		t.Fatal("the fixture's config does not carry the repositories this helper replaces")
+	}
+	if err := os.WriteFile(f.path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestConfirmEmptyAllowListRefusesAnAgentSessionBeforeAnyPrompt pins the guard
+// directly: no route of the publish reaches it from a coding agent's session
+// today (a managed project keeps the published allow-list), so a later route
+// that did would otherwise accept a name the session piped into stdin.
+func TestConfirmEmptyAllowListRefusesAnAgentSessionBeforeAnyPrompt(t *testing.T) {
+	typed(t)
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader("aurora\n"))
+	err := confirmEmptyAllowList(cmd, &localcfg.Config{Name: "aurora"}, "CLAUDECODE")
+	if err == nil {
+		t.Fatal("an agent session's typed name confirmed an empty allow-list")
+	}
+	if strings.Contains(out.String(), "Type ") {
+		t.Errorf("the session was prompted for the name:\n%s", out.String())
+	}
+}
+
+// TestProjectPolicyPublishConfirmsAnEmptyAllowList is #1674's red step: a
+// publish from a config that lists no repository writes an allow-list that
+// admits nothing, and from that moment every run of the project stops before it
+// starts (doctor's allow-list-empty). The diff shows only `+ allow_repos: []`,
+// which reads as harmless, so the consequence is said before the write and a
+// person has to type the project's name; --yes is no stand-in, and a session
+// with no terminal is refused, so an empty allow-list is not written by a
+// script or an agent on the operator's behalf.
+func TestProjectPolicyPublishConfirmsAnEmptyAllowList(t *testing.T) {
+	f := newProjectFixture(t, "")
+	setConfigWithNoRepos(t, f)
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("a publish that admits no repository went through with no terminal:\n%s", out)
+	}
+	for _, want := range []string{"every run stops before it starts", "fugaro project repos add provider/owner/name"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if f.db.Value(projectpolicy.PathShared()) != nil {
+		t.Fatal("the refused publish wrote the node")
+	}
+	// --yes is the delete path's flag, not a stand-in for the typed name.
+	if _, _, err := execute(t, "project", "policy", "publish", "--yes"); err == nil {
+		t.Fatal("--yes confirmed an empty allow-list")
+	}
+	if f.db.Value(projectpolicy.PathShared()) != nil {
+		t.Fatal("--yes wrote the node")
+	}
+
+	// At a terminal the person reads the consequence and types the project's
+	// name, and the publish lands.
+	typed(t)
+	out, _, err = executeStdin(t, "aurora\n", "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("the confirmed publish was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "every run stops before it starts") {
+		t.Errorf("the confirmation does not name the consequence:\n%s", out)
+	}
+	if f.db.Value(projectpolicy.PathShared()) == nil {
+		t.Fatal("the confirmed publish wrote no node")
 	}
 }

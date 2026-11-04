@@ -248,7 +248,11 @@ func TestPolicyPublishKeepsTheCredentialsBlock(t *testing.T) {
 			"concurrency_per_token":            3,
 		},
 	})
-	out, _, err := execute(t, "project", "policy", "publish")
+	// The node carries no allow-list and this publish does not re-seed one
+	// (P4), so the document it would write admits no repository: that is the
+	// confirmation an empty allow-list takes (#1674), typed here.
+	typed(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "policy", "publish")
 	if err != nil {
 		t.Fatalf("publish: %v\n%s", err, out)
 	}
@@ -308,7 +312,9 @@ func TestPolicyPublishKeepsTheCredentialsBlock(t *testing.T) {
 		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
 		"credentials": nil,
 	})
-	out, _, err = execute(t, "project", "policy", "publish")
+	// The node carries no allow-list once more, so the same confirmation:
+	// typed here as above.
+	out, _, err = executeStdin(t, "aurora\n", "project", "policy", "publish")
 	if err != nil {
 		t.Fatalf("a published null credentials member was unpublishable: %v\n%s", err, out)
 	}
@@ -446,7 +452,10 @@ func TestPolicyPublishWarnsBeforeTheMembersOlderReadersRefuse(t *testing.T) {
 		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
 		"credentials": map[string]any{"fallback": "oauth-only"},
 	})
-	out, _, err = execute(t, "project", "policy", "publish")
+	// This node carries no allow-list either, and the publish does not re-seed
+	// one (P4): the empty-allow-list confirmation (#1674), typed here.
+	typed(t)
+	out, _, err = executeStdin(t, "aurora\n", "project", "policy", "publish")
 	if err != nil {
 		t.Fatalf("publish: %v\n%s", err, out)
 	}
