@@ -396,6 +396,37 @@ func TestPolicyPublishManagedAdmitsANarrowerNode(t *testing.T) {
 	}
 }
 
+// A managed project with no node published at all has nothing for a list to be
+// unchanged or narrower than, so every repository the publish names would be
+// admitted where none was — a widening by the same reading --seed-repos is one
+// (spec §4.1 rule 5). The first node is the owner's to write, and a session
+// that could write it could choose the boundary every later run is admitted by.
+func TestPolicyPublishManagedRefusesAFirstPublish(t *testing.T) {
+	f := newManagedPolicyFixture(t, "")
+	before := nodeOf(t, f.db)
+	t.Setenv("CLAUDECODE", "1")
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("a coding agent's session wrote the first node of a managed project:\n%s", out)
+	}
+	gateRefusal(t, err, policyReposRule)
+	if after := nodeOf(t, f.db); after != before {
+		t.Errorf("the refused first publish wrote something:\nbefore %s\nafter  %s", before, after)
+	}
+	refusalRecord(t, f, policyReposRule)
+
+	// And the same world from a person's own terminal: the first node lands,
+	// which is what makes the refusal above a boundary and not a wall.
+	noAgentSession(t)
+	if out, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("the owner of the managed project could not write the first node: %v\n%s", err, out)
+	}
+	if got := f.policyOf(t).AllowRepos; len(got) == 0 {
+		t.Error("the owner's first publish wrote no allow_repos")
+	}
+}
+
 // The other half of the same rule: a publish that would RAISE a cap is
 // refused, whichever command it is (spec §4.1 rule 6). The comparison is the
 // one `settings set` already decides with, so a widening this door refuses is
