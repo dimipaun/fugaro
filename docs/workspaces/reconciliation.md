@@ -240,9 +240,13 @@ that audience is not scoped to the service — is stated there rather than hidde
 that may not overlap the job classes (`:369-375`). Consequence: **D1297's "one workspace service" is
 a service with two admission lists, not one.** Its job class is the workspace's member job service
 accounts; its person class has to be decided, and **D1295 answers it** — the member's own
-launchers/operators lists are the whole of the admission, so the workspace's person list is a
-*derived* set (the union of the members' lists, read from the members' own configs) and not a second
-list an operator maintains. **D1298 is unchanged and is now checkable against real code**: a shared
+launchers/operators lists are the whole of the admission, so the workspace's person list is the
+**workspace owner's own list** and not a second list of members' people an operator maintains. (The
+first two readings called it a *derived* set — the union of the members' lists, read from the
+members' own configs — and the third withdrew that: a member's launcher/operator list is that
+member's own local config, applied as that member's own IAM, so the workspace's service cannot read
+it, and no member's `update` publishes it into the workspace's database, because a member holds no
+grant there. F31 records the correction; the answer is tighter, not looser.) **D1298 is unchanged and is now checkable against real code**: a shared
 credential's per-project allow-list is the same shape as the service's own class lists, and the
 intersection with the member's policy is still the only-tighten rule. **Re-checked, and both
 stand** — with one addition: the workspace service's person class is a new surface
@@ -324,9 +328,9 @@ code, and [implementation-plan.md](implementation-plan.md) §2 and §5 and §7's
 that rather than "still open". Nothing else moves: D921's licence is still unconfirmed there, and
 that design still recommends a slot of its own for its code.
 
-**F31 — The third security re-read, 2026-11-04, at `abc8e09c`. — Three statements the folder made
+**F31 — The third security re-read, 2026-11-04, at `abc8e09c`. — Four statements the folder made
 were not consistent with its own sections, and each was the same kind of miss: a sentence that read
-as if a grant, a pin or a reader existed where the design beside it said it did not.**
+as if a grant, a pin, a reader or a channel existed where the design beside it said it did not.**
 
 - **Who reads `workspaces/<name>`.** §2 called the record the copy a *second* member reads to learn
   who else is in the group, and W2's SEC paragraph called it the record each member's exchange reads
@@ -347,11 +351,23 @@ as if a grant, a pin or a reader existed where the design beside it said it did 
   privileged binding had no owner. The **member's own `fugaro update`** applies both, to the service
   account **its own config pins** and never to one the record supplies; W7 owns the file and the
   test, because W7 is the task that first needs the write.
+- **Who fills the person class, and the channel it would need.** F24 read D1295's answer as making
+  the workspace service's person class a *derived* set — "the union of the members' lists, read from
+  the members' own configs" — and the second re-read (F30) built a **per-route** admission on it: a
+  route about one member admitting that member's people. Neither has a channel. A member's
+  launcher/operator list is that member's **own local config**, applied as that member's own IAM
+  (there is no node of it any other installation reads), and §5 gives a member **no grant** on the
+  workspace's project, so no member's `update` can publish it there either. The class is therefore
+  the **workspace owner's** people and **no member's person is admitted on any route** — the tighter
+  reading, and the one the grants support. A consequence the design now says out loud rather than
+  leaving to be found: a member has no view of its own share of the pool, and this design adds none.
 - **One further statement, corrected in the same read.** §4's person paragraph had a person of any
   member reading the workspace's own figures "through that same class", which would hand one
-  member's people every other member's spend. The class is admitted **per route**: a route about one
-  member admits that member's people, and the workspace-wide read admits no member's person (spec §4,
-  W6).
+  member's people every other member's spend. The class is the **workspace owner's**, admitted route
+  by route and holding no member's person anywhere (spec §4, W6). (This read first wrote that as a
+  **per-route** admission — a route about one member admitting *that member's* people — and the third
+  re-read withdrew the admission half of it: there is no channel by which the service learns a
+  member's people. F31.)
 
 Nothing above changes a decision: **D1290–D1305 stand as answered**, and O1 and O2 remain the only
 two questions this folder reports rather than takes.
@@ -453,7 +469,9 @@ Cost of (B): a second permission model beside the member's, and the only-tighten
 **Answered 2026-11-04: (A), as recommended — nothing beyond the member's own launcher and operator
 lists.** Why: a workspace role that maps to a member role is a second permission model, and the
 only-tighten rule would not hold across it. F24 makes this concrete on current main: the workspace
-service's *person* class is a derived read of the members' own lists, not a list of its own.
+service's *person* class is a list of its own that this design fills with the **workspace owner's**
+people and with no member's person (F31), so "nothing beyond the member's own lists" holds at each
+member's exchange rather than at the workspace's service.
 
 **D1296 — What is stored, and where.**
 - **(A, recommended) Hashes only**, in the workspace's own subtree that no client of its database may

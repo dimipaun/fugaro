@@ -25,7 +25,7 @@ package cli
 //    statements the reviews of 2026-11-04 corrected stay corrected: the grant
 //    that can lift a member's cap, the read the record's readers are limited
 //    to, the issuer pin that lives in the member's own config, and the
-//    per-route person class.
+//    person class the workspace itself fills.
 //  * TestDocsWorkspacesCitationsResolve -- every `path:line` citation resolves to
 //    a file of this tree and a line inside it, measured against an independent
 //    census so a regexp that stopped matching fails rather than passing
@@ -191,9 +191,13 @@ func TestDocsWorkspacesAnswersAreTheOnesInForce(t *testing.T) {
 // pull request after it had merged. The second found three statements the
 // folder's own sections contradicted: that a member reads the workspace's
 // record, that the issuer pin existed anywhere but in a plan's prose, and that
-// the member-side grants were applied by somebody. Every one of them is a
-// statement a reader acts on, and every one had a plausible-sounding wrong
-// version in the folder.
+// the member-side grants were applied by somebody. The third took a fourth: the
+// person class, which the folder had derived from the members' own lists -- a
+// channel no grant supports, since a member's launcher/operator list is that
+// member's own file and the workspace's service reads no member -- so the class
+// is the workspace owner's and no member's person is admitted on any route.
+// Every one of them is a statement a reader acts on, and every one had a
+// plausible-sounding wrong version in the folder.
 func TestDocsWorkspacesNamesWhatItDesigns(t *testing.T) {
 	// The placeholders: a real organisation's example was not recovered, and a
 	// design that reused `workspace-a` would be read as being about the
@@ -238,6 +242,13 @@ func TestDocsWorkspacesNamesWhatItDesigns(t *testing.T) {
 		"**the issuer the member's own config pins**",
 		"**It is read by the workspace's own service and by the workspace owner's CLI, and by nothing else.**",
 		"admits **no member's person**",
+		// Whose the class is. The folder's first two rounds read it as the
+		// members' people -- derived from their own lists, then admitted route by
+		// route -- and no grant gives the workspace's service a way to learn a
+		// member's people, so a reader who finds the derived version acts on an
+		// admission the design cannot make.
+		"it is the **workspace owner's** people",
+		"**the workspace's own figures are the workspace owner's to read**",
 	} {
 		if !strings.Contains(spec, want) {
 			t.Errorf("%s does not state %q: the review of 2026-11-04 corrected this, and the wrong version is the one a reader would otherwise act on", wsSpec, want)
@@ -253,6 +264,9 @@ func TestDocsWorkspacesNamesWhatItDesigns(t *testing.T) {
 		"TestExchangeVerifiesTheMembersPinnedIssuerNotTheRecords",
 		"TestMemberUpdateBindsTheWorkspaceGrantsToThePinnedAccount",
 		"TestWorkspaceServiceRefusesAMembersPersonTheWorkspaceWideRead",
+		// W6 is the task that owns the class, so the pin is stated there too and
+		// not only in the spec: a refusal no task states is a refusal no test holds.
+		"it is the **workspace owner's** people",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s does not carry %q: the pin and the member-side grants are design statements until a task owns them, and this is where a task is named", wsPlan, want)

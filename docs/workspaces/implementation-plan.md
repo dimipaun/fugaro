@@ -143,12 +143,11 @@ type WorkspacePin struct {
 }
 ```
 
-The new
-`fugaro workspace` family (D1303) with `ls`, `show`, `add`, `rm`, `member add`, `member rm`, `cap set`
-— every write a local config edit through the same check, diff, backup and atomic write the `models`
-commands use, and every one ending with `next: fugaro update`. `workspace add` writes the membership
-key **and the pin** — the three values it is given, which is the one place a member decides what it
-trusts — and `workspace rm` removes both.
+The new `fugaro workspace` family (D1303) with `ls`, `show`, `add`, `rm`, `member add`, `member rm`,
+`cap set` — every write a local config edit through the same check, diff, backup and atomic write
+the `models` commands use, and every one ending with `next: fugaro update`. `workspace add` writes
+the membership key **and the pin** — the three values it is given, which is the one place a member
+decides what it trusts — and `workspace rm` removes both.
 
 **`workspace show` reads files and no cloud node**, and the two halves it can therefore see are not
 the same (spec.md §6). The **workspace owner's** machine holds the record it publishes, so its drift
@@ -238,8 +237,8 @@ are both not membership and both are reported as drift).
 
 **SEC:** **yes.** It is the write that decides who is in the group — the record the workspace's own
 service reads for the member list it rolls up and admits against — on a project the publishing
-machine does not own. A publish stage that admitted a member on one
-side's word, or that let the record name the issuer or the service account a member binds its grants
+machine does not own. A publish stage that admitted a member on one side's word, or that let the
+record name the issuer or the service account a member binds its grants
 to, would be the workspace widening a member — the one thing rule 1 forbids. **No member reads this
 node** (spec.md §2): a member's exchange reads its own pin and its own lists, and a member's machine
 holds no grant on the workspace's project at all.
@@ -349,14 +348,16 @@ to `verifyRun`'s pinning and not only to the list it looks the account up in, an
 this task that a reader is most likely to miss.
 
 **Whose people the person class holds, and what each route admits.** The deployment's person class is
-not one installation's people: it is the **members'** people, and a person is a person *of one
-member*, the member whose own lists name them (spec.md §3, §4, D1295). So the class is admitted
-**per route**, and each route names the classes it admits rather than the deployment carrying one
-person list a new route inherits an admission from. A route that answers about **one** member admits
-that member's people; a route that answers about the **workspace** — the member list, the cap, the
-rollup, which is every member's spend at once — admits **no member's person**, because one member's
-people must not be handed every other member's spend by joining a group. The workspace's own figures
-are the workspace owner's to read, and the member-side refusals are tests rather than a convention.
+not the members': it is the **workspace owner's** people, written by the workspace's own `fugaro
+update` from the workspace's own config (spec.md §4). Every route names the classes it admits rather
+than the deployment carrying one person list a new route inherits an admission from, and the
+refusals are tests rather than a convention: the workspace-wide routes — the member list, the cap,
+the rollup, which is every member's spend at once — admit no person but the owner's, and the routes
+that answer about **one** member admit that member's job service account and **no member's person**,
+because one member's people must not be handed every other member's spend by joining a group. That
+is what makes the class checkable at all: the list that names a member's people is that member's own
+launcher/operator file, which this service holds no grant to read (§5), so an admission it cannot
+check is an admission it does not make.
 
 **Files (9):** `internal/credsvc/workspace.go`, `internal/credsvc/workspace_test.go`,
 `internal/credsvc/bundle_workspace.go`, `internal/credsvc/bundle_workspace_test.go`,
@@ -375,9 +376,9 @@ served a credential a member's policy excluded would be a policy bypass.
 and the token's `aud`/`iss`/`fp` name `owner/repo-b`: the call is refused, because the member is
 the account and the pins have to agree with it),
 `TestWorkspaceServiceRefusesAMembersPersonTheWorkspaceWideRead` (one member's person asks for the
-workspace's own figures and is refused by the route's class list, while the same person is admitted
-on the route that answers about that member: the per-route half of the person class, and the refusal
-that stops one member's people seeing every other member's spend),
+workspace's own figures and is refused by the route's class list, and is refused the same way on the
+route that answers about that member: the class holds the workspace owner's people and no member's
+person, which is what stops one member's people seeing every other member's spend),
 `TestWorkspaceServiceNeverReturnsACredentialValue` (the package's rule 2),
 `TestWorkspaceBundleIsOneSecretWithOneGrant` (the Q6 shape, applied to the workspace).
 

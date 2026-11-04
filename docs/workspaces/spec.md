@@ -232,23 +232,29 @@ but the checks around it are pinned to one installation today, and they have to 
   refused. That is a change to the check, not only to the list it looks the account up in, and W6
   owns it.
 
-**The person class is the one the service already has, and who fills it is the one thing this
-deployment changes.** Main's credentials service admits a **person** as a class of its own beside
-the job classes —
+**The person class is the one the service already has, and who fills it, and who is refused, is the
+one thing this deployment fixes.** Main's credentials service admits a **person** as a class of its
+own beside the job classes —
 `PersonAccounts` (`internal/credsvc/auth.go`:375) with `VerifyPersonCaller` (`:968`) for the GitHub
 read mint and `VerifyReadCaller` (`:890`) for the Bitbucket read mint, both taking a token a plain
 `gcloud auth print-identity-token` may have minted (`GcloudAudience`, `:258`, the owner's ruling of
 2026-11-04). **Whose people they are, and what a person may read, does change here.** The
-workspace's person list is not the installation's: a person is a person *of one member* — the member
-whose own lists name them (§3, D1295) — so the class is admitted **per route**
-rather than wholesale. A route that answers about **one** member admits that member's people; a route
-that answers about the **workspace** — the member list, the cap, the rollup, which is every member's
-spend at once — admits **no member's person**, because one member's people must not be handed every
-other member's spend by joining a group. The workspace's own figures are read by the workspace
-owner's installation, whose CLI holds a credential for the workspace's project (§2, W2), and by no
-member's person. A person is never a way to a credential's value (rule 2), the class rule that a
-person may not also be a job (`NewAuthenticator`) holds unchanged, and W6 states the per-route
-refusals as tests rather than leaving the deployment one person list.
+workspace's person list is neither the installation's nor the **members'**: it is the **workspace
+owner's** people, which the workspace's own `fugaro update` writes from the workspace's own config
+the way an installation's list is written today. Every route of the workspace's service therefore
+admits **no member's person** — none is a *person of one member* here, because the list that names a
+member's people is that member's own launcher/operator list, the member's own file, which the
+workspace's service holds no grant to read and no member's `update` publishes into the workspace
+(§2, §5). An admission the service cannot check is not an admission. The consequence is stated
+rather than left to be discovered: **the workspace's own figures are the workspace owner's to read**
+— by that owner's installation, whose CLI holds a credential for the workspace's project (§2, W2),
+and by the owner's people through this class, and by nobody else. One member's people are therefore
+never handed another member's spend, and a member has no view of its own share of the pool through
+the workspace's service at all: a member-readable share is a surface this design does not add, and
+[reconciliation.md](reconciliation.md) F31 records that it is not one. A person is never a way to a
+credential's value (rule 2), the class rule that a person may not also be a job
+(`NewAuthenticator`) holds unchanged, and W6 states the refusals route by route as tests rather than
+leaving the deployment one person list.
 
 **Which credentials may be shared, and with whom** (D1298, **answered 2026-11-04** and **re-read
 against main on that date**: a workspace credential available to every member would be a policy
@@ -395,7 +401,7 @@ carries it, and D1301 stands as answered until the owner says otherwise.
 
 | Verb | What it does |
 | --- | --- |
-| `workspace ls [--json]` | Offline. Every workspace this machine's project configs name, with its members, and which of them this machine has a config for. Versioned JSON with a schema, like every other CLI document |
+| `workspace ls [--json]` | Offline. Every workspace this machine's project configs name, with the members it can see **from its own files** — the owner's machine, which holds the record it publishes, sees the whole list, and a member's sees the memberships its own configs name — and which of them this machine has a config for. Versioned JSON with a schema, like every other CLI document |
 | `workspace show <name> [--json]` | Offline. One workspace from **this machine's own files**: the configs on it and the pin each carries, its cap as last published here, and the drift between what this machine holds and what it last knew the record to say. It reads no cloud node (§2: a member holds no grant on the workspace's project), so on a member it shows the member's own half and says so rather than printing an empty member list; the workspace owner's machine, which holds the record it publishes, shows the whole of it |
 | `workspace add <name>` / `workspace rm <name>` | Edits the **selected local project config** and nothing else: the membership key `workspace: <name>` **and the pin beside it** — the three values of §2, which are the one place a member decides what it trusts — on, or off. Prints the diff, backs up the file, writes atomically, and ends by printing `next: fugaro update` |
 | `workspace member add <name> <project>` / `member rm …` | The same, for the member list of a workspace this machine holds a config for |
@@ -450,8 +456,10 @@ section named only the first — which is the kind of omission a threat model ca
    member's API to anyone who is not already in that member's own lists.
 2. **The workspace's credentials service**, in the workspace's project, reached by every member's job
    service account with a Google ID token (§4), and — for the read mint, not for a credential — by a
-   person (§4's person class). This is the surface that spends the workspace's money, and it is
-   reachable by anything holding one of the member job service accounts.
+   person of the **workspace owner's** people, which is the whole of the class it admits (§4: no
+   route admits a member's person, so a member's people reach no figure of the workspace's). This is
+   the surface that spends the workspace's money, and it is reachable by anything holding one of the
+   member job service accounts.
 3. **The workspace's own Firebase**, which is a public sign-in surface: anybody who can reach it may
    attempt to sign in, and Firebase decides whether they get a token. What that token is worth is the
    member's lists (§3), so the sign-in surface itself grants nothing — but it is a surface, and a
