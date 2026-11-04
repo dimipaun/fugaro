@@ -358,8 +358,9 @@ func printPolicyPublishDiff(w io.Writer, drift []policyDrift, sources map[string
 // the project ever published, and the arrow would point at it — "per_run_usd: 5
 // (this machine) -> 0 (published)" names a node nobody published, in the one
 // confirmation the operator cannot check against a node they do not have. What
-// is shown instead is what the node will carry, member by member, with the
-// members the config is silent about left out: they are the node's own.
+// is shown instead is what the node will carry, member by member; the members
+// the config is silent about carry nothing in this node, so naming them would
+// describe a write that does not happen.
 func printFirstPublishDiff(w io.Writer, drift []policyDrift, sources map[string]string) {
 	if len(drift) == 0 {
 		return
