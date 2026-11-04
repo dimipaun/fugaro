@@ -320,6 +320,10 @@ func TestAutoFailoverRecordsTheNewStagesAccount(t *testing.T) {
 			t.Errorf("stage_accounts[%s] = %q, want %q", stage, got, account)
 		}
 	}
+	// The walk writes the per-stage map and never the run's own account: that
+	// field is the account the run used last, as the answers of its calls
+	// report it (recordCredential), and a local run's calls reach no service
+	// that reports one — so a walk that wrote it would be its only writer here.
 	if rec.OAuthAccount != "" {
 		t.Errorf("oauth_account = %q; want it untouched: the walk writes the per-stage map, not the run's own account", rec.OAuthAccount)
 	}
