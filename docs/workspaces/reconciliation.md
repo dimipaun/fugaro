@@ -369,6 +369,42 @@ as if a grant, a pin, a reader or a channel existed where the design beside it s
   re-read withdrew the admission half of it: there is no channel by which the service learns a
   member's people. F31.)
 
+**F32 — The fourth security re-read, 2026-11-04, at `763ef334`. — Five things the third re-read left
+half-corrected, and four of them are the same shape: a value or a rule that reached one file of the
+folder and not the rest.**
+
+- **The record carried the identity provider the third re-read had removed from the spec.** §2 says
+  the record "holds no identity provider and names no service account", and W0's own type still had
+  an `Identity` field of an `IdentityProvider` type, with a test refusing a second one — i.e. the
+  plan's first task still built the shape the spec had just refused, and a task is what an
+  implementer reads. The field and its type are gone, and W0 keeps a test that the strict decode
+  refuses an `identity` block and a `service_account` key instead.
+- **A removal was stated as one-sided, and the member's side is the one that bites.** §3 said only
+  that a member removed from the workspace "stops being reachable through it". The exchange verifies
+  against the **member's own pin** and reads the member's own lists, so the owner dropping the member
+  from the record changes nothing at that member until the member's own `workspace rm` drops the key
+  and the pin (W1, W4). §3 now says so, and W4 owns the test.
+- **The service's per-member table had no stated source, and no stated answer for a member it does
+  not hold.** The service resolves a caller and reads a ledger from values — the job accounts, the
+  Firebase project and `fp`, the database URL, the bucket — that no section said where they came
+  from; they are the **workspace owner's config**, converged by the owner's `fugaro update`, and not
+  `workspaces/<name>` (spec §2, §5; W6). And a member the record lists but the table does not bind is
+  `stale` and refused, not a member with no spend (spec §5, W7).
+- **The pin's issuer was pinned but never checked against the project, over a phrase about keys that
+  do not exist.** Three paragraphs said the exchange verifies the token "against the keys the pinned
+  Firebase project publishes" — Firebase signing keys are **one global set**
+  (`internal/credsvc/auth.go`:1371-1373 `GoogleKeysURL`), so a project is told from another by its
+  `aud`/`iss` pair and by nothing else, and main already derives the second from the first (`:1072`).
+  W1 now requires the pin's two values to agree (with a test), and every paragraph that named
+  per-project keys is reworded to Google's published set plus the audience and the pinned issuer.
+- **The member-side binding is a loosening the managed gate refuses, and §6 called W2's stage "the
+  one write".** W7's IAM binding grants a role to the workspace's service account, which is not this
+  installation's own: the cover never admits an IAM binding (`internal/infra/tf/cover.go`:860-867)
+  and the managed work puts IAM widening in the set the gate never covers
+  (`docs/managed-agent-converge/spec.md` §3.2), so the stage falls back to its own typed confirmation
+  and is the member's owner's to run. §6 now names **two** cloud writes and says which one the gate
+  admits.
+
 Nothing above changes a decision: **D1290–D1305 stand as answered**, and O1 and O2 remain the only
 two questions this folder reports rather than takes.
 
@@ -704,6 +740,6 @@ administrator** — an Auth administrator can set that flag, so citing it as the
 one misreading this paragraph exists to prevent; it is required for the reason §3 gives, that an
 unverified address is one nobody proved they own. What does bound the administrator is that the
 member's own lists remain the whole of the admission, and that **the member pins the project and the
-issuer it trusts in its own config** (§2, §3, W5) rather than taking either from the workspace's
-record. Neither risk is a defect in the design; both are what the design costs, and they are written
+issuer it trusts in its own config** (§2, §3; the pin's fields are W1's interface, and W4 is the
+exchange that requires them) rather than taking either from the workspace's record. Neither risk is a defect in the design; both are what the design costs, and they are written
 down here so that a release does not ship them unstated.

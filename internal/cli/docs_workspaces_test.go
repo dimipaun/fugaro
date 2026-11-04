@@ -5,7 +5,7 @@ package cli
 // docs/workspaces/ is a design-only folder: README.md (the index, the owner's
 // answers, the reading of the number block and what a reader should not take
 // from here), spec.md (the owner's spec recorded as §0, then the design written
-// to his answers), reconciliation.md (the findings F1-F31, the sixteen
+// to his answers), reconciliation.md (the findings F1-F32, the sixteen
 // decisions D1290-D1305 and the owner's answers of 2026-11-04) and
 // implementation-plan.md (the tasks W0-W9). It adds no code and no task in it is
 // approved, so nothing here pins a command, a flag or an option.
@@ -185,7 +185,7 @@ func TestDocsWorkspacesAnswersAreTheOnesInForce(t *testing.T) {
 // corrected ones.
 //
 // The corrected-statement blocks are the ones this test exists for, and there
-// have been two review rounds of them. The first found the design claiming the
+// have been four review rounds of them. The first found the design claiming the
 // workspace's database grant could not lift a member's cap -- the opposite of
 // what the code says -- and claiming the sign-in half's dependency was an open
 // pull request after it had merged. The second found three statements the
@@ -195,7 +195,13 @@ func TestDocsWorkspacesAnswersAreTheOnesInForce(t *testing.T) {
 // person class, which the folder had derived from the members' own lists -- a
 // channel no grant supports, since a member's launcher/operator list is that
 // member's own file and the workspace's service reads no member -- so the class
-// is the workspace owner's and no member's person is admitted on any route.
+// is the workspace owner's and no member's person is admitted on any route. The
+// fourth found the same shape one level down -- the record W0 builds still
+// carried the identity provider §2 had just refused, a removal was stated as the
+// owner's alone, the service's per-member table had no stated source and no
+// answer for a member it does not hold, the pin's issuer was never checked
+// against its project over a phrase about per-project keys that do not exist, and
+// the member-side binding is a loosening the managed plan gate refuses.
 // Every one of them is a statement a reader acts on, and every one had a
 // plausible-sounding wrong version in the folder.
 func TestDocsWorkspacesNamesWhatItDesigns(t *testing.T) {
@@ -249,6 +255,14 @@ func TestDocsWorkspacesNamesWhatItDesigns(t *testing.T) {
 		// admission the design cannot make.
 		"it is the **workspace owner's** people",
 		"**the workspace's own figures are the workspace owner's to read**",
+		// Round 4. The keys are one global set, so a project is told from another by
+		// its aud/iss pair and never by "the keys it publishes"; a member leaves the
+		// workspace by running its own `workspace rm`, not by the owner editing the
+		// record; and the service's per-member table is the owner's config, not the
+		// record.
+		"Google's published Firebase signing keys",
+		"**Removal takes both sides, like membership itself, and the member's side is the one that",
+		"every value in it comes from the workspace owner's config",
 	} {
 		if !strings.Contains(spec, want) {
 			t.Errorf("%s does not state %q: the review of 2026-11-04 corrected this, and the wrong version is the one a reader would otherwise act on", wsSpec, want)
@@ -267,6 +281,14 @@ func TestDocsWorkspacesNamesWhatItDesigns(t *testing.T) {
 		// W6 is the task that owns the class, so the pin is stated there too and
 		// not only in the spec: a refusal no task states is a refusal no test holds.
 		"it is the **workspace owner's** people",
+		// Round 4: the record carries neither an identity block nor a service
+		// account, the pin's issuer has to agree with its project, a member's own
+		// `workspace rm` is what ends its membership, and an unbound member fails
+		// closed as `stale`.
+		"TestRecordRefusesAnIdentityOrServiceAccountField",
+		"TestPinRefusesAnIssuerThatIsNotTheProjectsSecuretokenIssuer",
+		"TestExchangeRefusesWhenTheMemberPinsNoWorkspace",
+		"TestRollupRecordsAnUnboundMemberAsStale",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s does not carry %q: the pin and the member-side grants are design statements until a task owns them, and this is where a task is named", wsPlan, want)
@@ -283,6 +305,12 @@ func TestDocsWorkspacesNamesWhatItDesigns(t *testing.T) {
 			// the denial is the one the grants support.
 			"member reads when it needs to know who else is in the group",
 			"member's exchange reads for the member list",
+			// An identity provider or a service account back in the record. The
+			// record states the group, not what a member trusts or who a member
+			// binds its grants to, and W0's own type is where the shape would come
+			// back first.
+			"Identity IdentityProvider",
+			"TestRecordRefusesASecondIdentityProvider",
 		} {
 			if strings.Contains(flat, banned) {
 				t.Errorf("%s still claims %q: the folder's own sections say a member holds no grant on the workspace's project and reads no node of its record", path, banned)

@@ -102,7 +102,10 @@ A workspace is declared in **two** places, and the second is derived from the fi
    CLI, and by nothing else.** No member reads it: a member's machine holds no grant on the
    workspace's project at all (§5), and a member's exchange verifies the pin **in its own config**
    and reads **its own** launcher/operator lists (§3). The record is the workspace's own statement
-   about the group; it is not an input any member trusts.
+   about the group; it is not an input any member trusts. **It also does not say how to reach a
+   member** — the job accounts, the Firebase project and `fp`, the database URL and the runs bucket
+   are the service's own per-member table, from the workspace owner's config (§5), and the record
+   only names the members.
 
 The workspace name reuses the project-name grammar (`config.ProjectNameRE`, F21) rather than a second
 one. A workspace's record is validated strictly and strictly decoded, like every other config and
@@ -157,11 +160,13 @@ a member, the person presents the workspace token to that member's own authoriza
 one the MCP design puts inside the coordinator (`docs/mcp-server/spec.md` §3; that design is **on
 `main`** now, merged as #1487 on 2026-11-04, though none of its code is written) — which:
 
-1. verifies the workspace token against the keys the **pinned** Firebase project publishes, against
-   **the issuer the member's own config pins**, and against the audience rule of fact 1, and requires
-   `email_verified` (fact 2). Its issuer is the *member's* pin and never a value read from the
-   workspace's record: §2's record carries none, so a workspace cannot move a member's trust by
-   publishing a different one;
+1. verifies the workspace token's signature against **Google's published Firebase signing keys** —
+   one global set, `GoogleKeysURL` (`internal/credsvc/auth.go`:1371-1373), the same document for every
+   Firebase project — and then against **the audience rule of fact 1** and against **the issuer the
+   member's own config pins**, whose pair has to agree (W1: the issuer is that project's securetoken
+   issuer, `:1072`), and requires `email_verified` (fact 2). Both of those values are the *member's*
+   pin and never values read from the workspace's record: §2's record carries neither, so a workspace
+   cannot move a member's trust by publishing a different one;
 2. maps the identity to the member's own permission lists (`internal/cli/user.go`: the launchers and
    operators `fugaro user` writes), and **refuses when the member's lists do not name the person**;
 3. mints **the member's own token**, short-lived, with the member's own scopes and limits, exactly as
@@ -171,6 +176,18 @@ one the MCP design puts inside the coordinator (`docs/mcp-server/spec.md` §3; t
 token as a bearer, and the workspace token is never a bearer for a member's API. A member that is
 down does not stop a person reaching another member; a member that is removed from the workspace
 stops being reachable through it, and its own sign-in keeps working.
+
+**Removal takes both sides, like membership itself, and the member's side is the one that bites.**
+The exchange verifies against **the pin in the member's own config** and reads **the member's own**
+lists (§3 step 1, §2), so the owner removing the member from `workspaces/<name>` changes nothing at
+that member's exchange: a person holding an unexpired workspace token still reaches it, because the
+exchange never reads the record and the record was never an input. What ends it is the **member's own
+`workspace rm`** (W1), which drops the membership key and the pin, and then there is no pinned project
+or issuer left to verify against and the exchange refuses. The honest statement, which the design
+states rather than implies: **a workspace removal is complete only when both sides have run** — the
+owner's record no longer lists the member and the member's own config no longer names the workspace —
+and until then the two sides disagree, which is exactly what `workspace show`'s drift report names
+(§6, W2). A workspace cannot drop a member unilaterally, and the design does not pretend otherwise.
 
 **What is stored** (D1296). The workspace mints no token of its own, so it stores no token of its
 own: the sign-in record is **Firebase's** (the workspace's Auth user list, which is what a Firebase
@@ -183,8 +200,8 @@ about a node.
 **Revocation waits for the token to expire, and that is stated rather than implied.** "One delete at
 the workspace and the next exchange is refused" would hold only if **every member's exchange read the
 workspace's revocation state** on each call. It does not: the exchange checks the signature against
-the pinned project's keys, the issuer the member's own config pins and the audience rule, and nothing
-else, because a member holds **no grant at all** on
+Google's published keys and the audience and issuer the member's own config pins, and nothing else,
+because a member holds **no grant at all** on
 the workspace's project and reads no node of it (§5 states the grants this design makes, and the
 reverse one is not among them). So the honest statement is that a workspace
 revocation — disabling the person in the workspace's Firebase — takes effect **when the workspace
@@ -312,6 +329,27 @@ the member as unreadable, and it lifts when the rollup next reads the member. Re
 answer consistent with the rest of this folder: serving a call whose cost cannot be counted is
 spending against a cap the service cannot see.
 
+**The service keeps one table of members, and every value in it comes from the workspace owner's
+config.** To resolve a caller and to read a member's ledger the service needs, per member, its **job
+service accounts**, its **Firebase project id and `fp`**, its **database URL** and its **runs
+bucket** — and all five are the workspace owner's own declarations, made once per member on the
+owner's machine (`workspace member add`, W1) and converged by the owner's `fugaro update` (W2's stage
+writes the record; W3's root of the workspace's own project and W6's service carry the table). **They
+are not in
+`workspaces/<name>`**: §2's record names the members and carries the cap, and it carries no identity
+provider and no service account, so the member's Firebase project is not something the record states
+about a member any more than the issuer is. The two directions stay separate — the **member's own**
+config supplies the pin (what the member trusts), and the **workspace owner's** config supplies the
+table (how the workspace reaches each member) — and neither side's value is ever taken from the
+other's.
+
+**A member the table does not bind reads `stale`, and is refused.** The record can list a member the
+table has no entry for, or an entry with a value missing — a member added to the record whose owner
+has not yet declared how to reach it, or one whose project moved. That member is **not** treated as a
+member with no spend: the rollup records it `stale` like any other member it cannot read, and its
+shared-credential calls are refused while it is (the `stale` rule above). An unbound member is an
+unreadable one, and an unreadable member must never look free.
+
 **What the service holds on a member, and what it does not.** The rollup and the enforcement need
 exactly three things, and the design grants exactly those:
 
@@ -404,7 +442,7 @@ carries it, and D1301 stands as answered until the owner says otherwise.
 | `workspace ls [--json]` | Offline. Every workspace this machine's project configs name, with the members it can see **from its own files** — the owner's machine, which holds the record it publishes, sees the whole list, and a member's sees the memberships its own configs name — and which of them this machine has a config for. Versioned JSON with a schema, like every other CLI document |
 | `workspace show <name> [--json]` | Offline. One workspace from **this machine's own files**: the configs on it and the pin each carries, its cap as last published here, and the drift between what this machine holds and what it last knew the record to say. It reads no cloud node (§2: a member holds no grant on the workspace's project), so on a member it shows the member's own half and says so rather than printing an empty member list; the workspace owner's machine, which holds the record it publishes, shows the whole of it |
 | `workspace add <name>` / `workspace rm <name>` | Edits the **selected local project config** and nothing else: the membership key `workspace: <name>` **and the pin beside it** — the three values of §2, which are the one place a member decides what it trusts — on, or off. Prints the diff, backs up the file, writes atomically, and ends by printing `next: fugaro update` |
-| `workspace member add <name> <project>` / `member rm …` | The same, for the member list of a workspace this machine holds a config for |
+| `workspace member add <name> <project>` / `member rm …` | The same, for the member list of a workspace this machine holds a config for — the owner's side of a membership. `member add` is also where the owner records the five per-member values §5's service table is built from (the member's job accounts, its Firebase project and `fp`, its database URL and its runs bucket), because the owner is the side that declares them |
 | `workspace cap set --workspace <name> --monthly <amount>` | Records the workspace's cap in the local config; `fugaro update` publishes it |
 
 **`workspace show` reads files and never a cloud node**, and what "drift" means follows from that.
@@ -423,10 +461,15 @@ coding agent's marker they print the diff and the command for the user to run, a
 (`internal/cli/managed_gate.go`:181 `readManagedGate`, the one helper the cloud writes on main
 already share: `config publish`, `project policy publish`, `image refresh` and `accounts add`).
 `fugaro workspace` adds no new caller of the gate, because it has nothing to gate — its writes never
-leave the machine. The one write this design does add to the cloud is **W2's stage inside `fugaro
-update`**, and `fugaro update` already reads the gate directly for its own stages
-(`internal/cli/update_managed.go`:217 calls `readManagedGate`), so the new stage runs under the gate
-`update` already opens and needs no path of its own.
+leave the machine. **Two writes** do go to the cloud, and both are stages of `fugaro update`, which
+already reads the gate directly for its own stages (`internal/cli/update_managed.go`:217 calls
+`readManagedGate`), so neither needs a path of its own: **W2's publish of `workspaces/<name>`**, on
+the owner's side, which runs under the gate `update` already opens; and **W7's two grants on a
+member**, which the gate **refuses** in a managed project — an IAM binding is a loosening, and the
+cover never admits one (`internal/infra/tf/cover.go`:860-867) — so that stage falls back to its own
+typed confirmation and is run by the member's owner at their own terminal (W7). The distinction is
+the whole reason the two are stated apart: a plan can be read for a document, and it cannot be read
+for an access grant.
 
 ## 7. The console and the mobile app
 
@@ -501,7 +544,7 @@ short-lived.
 
 **Revocation at the workspace ends the person's ability to *exchange*, and nothing else**, and it is
 bounded by the token's lifetime rather than instantaneous: the exchange checks the signature against
-the pinned project's keys, the issuer the member's own config pins and the audience rule, and nothing
+Google's published keys, the audience and the issuer the member's own config pins, and nothing
 else, because no member holds a grant on the workspace's project (§5). A member token already minted
 keeps working until it expires, which is why member
 tokens stay short-lived. The honest statement is that **neither revocation is instantaneous across

@@ -74,18 +74,26 @@ flagged **SEC** is security-sensitive and needs an independent review of its own
 
 ```go
 type Record struct {
-    Name     string
-    Members  []Member
-    Identity IdentityProvider
-    Cap      Cap
+    Name    string
+    Members []Member
+    Cap     Cap
 }
 type Member struct{ Project string; Repos []string }
-type IdentityProvider struct{ FirebaseProject string; Issuer string }
 type Cap struct{ Monthly pricing.Micros; Set bool }
 
 func Parse(raw []byte) (*Record, error) // strict: an unknown field is an error
 func (r *Record) Validate() error
 ```
+
+**The record carries no identity provider and no service account** (spec.md §2). An earlier draft of
+this task gave the record an identity-provider field, with a test refusing a second one beside it,
+and that is the shape the security re-read of round 3 removed: the issuer a member's exchange trusts
+and the account a member's grants bind to are the **member's pin**, in the member's own config (W1),
+and a record that carried either would be a record that could aim every member's
+exchange and every member's database grant at a party of its choosing — the one direction rule 1 does
+not survive. What the record holds is what the workspace states about the group: the members and the
+cap. The per-member values the workspace's own service needs to reach a member are not in it either
+(spec §5's table, which is the workspace owner's config).
 
 **Money is `pricing.Micros`, never a float.** The record holds the cap as integer micro-dollars
 (`internal/pricing/pricing.go:18`), not as the `float64` the config layer's own caps use
@@ -111,7 +119,9 @@ accepted a field nobody decided would be a shape two writers could disagree abou
 **Tests.** `TestRecordRefusesAnUnknownField`,
 `TestRecordRefusesAMemberListThatIsNotSortedUnique`,
 `TestRecordNameUsesTheProjectNameGrammar` (F21: it reuses `config.ProjectNameRE`, not a second
-grammar), `TestRecordRefusesASecondIdentityProvider`,
+grammar), `TestRecordRefusesAnIdentityOrServiceAccountField` (the strict decode refuses an
+`identity` block and a `service_account` key: the record carries neither, so a later writer cannot
+add one back without this test failing first),
 `TestRecordRefusesACapThatIsNotPositiveWhenSet`,
 `TestCapIsExactMicrosAndNotAFloat` (a cap of `0.1` is exactly `100_000` µ$: the parsed field is
 integer micro-dollars, and a `float64` field is the mistake this test exists to make impossible),
@@ -137,17 +147,32 @@ type Config struct {
 }
 
 type WorkspacePin struct {
-    FirebaseProject string `yaml:"firebase_project"` // W4 verifies this project's published keys
+    FirebaseProject string `yaml:"firebase_project"` // W4 requires this project as the token's aud
     Issuer          string `yaml:"issuer"`           // W4 requires exactly this issuer
     ServiceAccount  string `yaml:"service_account"`  // W7 binds the member's two grants to this account
 }
 ```
 
+**The issuer is checked against the project, not trusted on its own.** The signature is verified
+against **Google's published Firebase signing keys**, which are one global set — `GoogleKeysURL`
+(`internal/credsvc/auth.go`:1371-1373) names the one x509 document, and it is the same document for
+every Firebase project, so "the keys the pinned project publishes" is not a thing that exists. What
+distinguishes one project's tokens from another's is the pair `aud`/`iss`, and main derives the
+second from the first: `"https://securetoken.google.com/"+a.cfg.FirebaseProject` (`:1072`). The pin
+therefore carries both values and **`Validate` refuses a pair that disagrees** — the issuer must be
+exactly `https://securetoken.google.com/<firebase_project>` — so a member that mistypes one of the
+two is refused at the write and again at the load, rather than being admitted by one and refused by
+the other for the rest of the installation's life.
+
 The new `fugaro workspace` family (D1303) with `ls`, `show`, `add`, `rm`, `member add`, `member rm`,
 `cap set` — every write a local config edit through the same check, diff, backup and atomic write
 the `models` commands use, and every one ending with `next: fugaro update`. `workspace add` writes
 the membership key **and the pin** — the three values it is given, which is the one place a member
-decides what it trusts — and `workspace rm` removes both.
+decides what it trusts — and `workspace rm` removes both. `workspace member add` is the owner's
+side: it writes the member entry **and the five values the service's per-member table is built from**
+(the member's job accounts, its Firebase project and `fp`, its database URL and its runs bucket,
+spec.md §5), and `member rm` removes the entry. The two commands are the two halves of a
+membership, and neither writes the other's file.
 
 **`workspace show` reads files and no cloud node**, and the two halves it can therefore see are not
 the same (spec.md §6). The **workspace owner's** machine holds the record it publishes, so its drift
@@ -174,7 +199,10 @@ of fields, not a marshalled `localcfg.Config`),
 `TestLocalcfgRefusesASecondWorkspaceKey` (D1291 is a scalar),
 `TestWorkspaceAddWritesThePinTheMemberWasGiven` (spec §2: the project id, the issuer and the service
 account are the member's own values, and no code path reads them from the workspace's record —
-which is the field a later refactor would most plausibly "helpfully" fill in).
+which is the field a later refactor would most plausibly "helpfully" fill in),
+`TestPinRefusesAnIssuerThatIsNotTheProjectsSecuretokenIssuer` (a pin naming `owner/repo-a`'s project
+with another project's issuer, or with an issuer that is not that project's securetoken one, is
+refused: the pair has to agree, because only the pair tells one project's tokens from another's).
 
 **SEC:** no. Local file edits and offline reads.
 
@@ -203,9 +231,10 @@ consequences are the design, not an accident:
   report is what names a half-done membership rather than either half silently winning.
 - **Each member pins what it trusts, in its own config.** A member's config records the workspace's
   Firebase project id, the issuer its exchange requires, and the workspace service account its own
-  `fugaro update` binds §5's grants to (W1's interface). Its exchange verifies **that** issuer and
-  reads **that** project's published keys — never values the workspace's own record supplies, which
-  is why the record carries neither. A record that could name an issuer or a service account would
+  `fugaro update` binds §5's grants to (W1's interface). Its exchange requires **that** project as the
+  token's audience and **that** issuer, and verifies the signature against Google's published keys —
+  never values the workspace's own record supplies, which is why the record carries neither. A record
+  that could name an issuer or a service account would
   be a record that could point every member's exchange, and aim every member's database grant, at a
   party of its choosing, which is the one direction rule 1 does not survive.
 - **`workspace show` reports the halves each side can see.** The owner's machine holds the record it
@@ -272,11 +301,13 @@ converges rather than half-applies).
 ### W4 — the exchange at a member
 
 **Interface.** A member's authorization server (the MCP design's §3) gains the token-exchange grant:
-it verifies a workspace token against **the keys published by the Firebase project the member's own
-config pins, the issuer that same pin names, and the audience rule**, and mints the member's own
-token. **"Its issuer" means the member's pinned issuer and never a value the workspace's record
-supplies** (spec.md §2): the record carries no issuer (W2 publishes none), so the only issuer a
-member's exchange can be pointed at is the one the member wrote down itself. **It depends on the MCP
+it verifies a workspace token's signature against **Google's published Firebase signing keys**
+(`internal/credsvc/auth.go`:1371-1373 — one global set, which is why the pin's project tells tokens
+apart by its `aud`/`iss` pair and not by any per-project keys), then against **the audience rule and
+the issuer that same pin names**, and mints the member's own token. **"Its issuer" means the member's
+pinned issuer and never a value the workspace's record supplies** (spec.md §2): the record carries no
+issuer (W2 publishes none), so the only issuer a member's exchange can be pointed at is the one the
+member wrote down itself. **It depends on the MCP
 design's implementation (its M3)**, and it adds no endpoint to the workspace.
 
 **Files (7):** `ee/coordinator/oauth/workspace.go`, `ee/coordinator/oauth/workspace_test.go`,
@@ -292,10 +323,14 @@ verified the signature without the issuer and the audience would accept any work
 **Tests.** `TestExchangeRefusesAWorkspaceTokenFromAnotherWorkspace`,
 `TestExchangeRefusesAnExpiredWorkspaceToken`, `TestExchangeNeverEchoesTheToken` (the `credsvc`
 rule, applied to the new endpoint),
-`TestExchangeVerifiesTheMembersPinnedIssuerNotTheRecords` (the fixture's record names one workspace
-Firebase project and the member's pin names another: the token from the **record's** project is
-refused, because the member trusts the pin in its own config and the record is not an input — the
-half of this task a "helpful" refactor would remove by reading the record instead),
+`TestExchangeVerifiesTheMembersPinnedIssuerNotTheRecords` (a token from a Firebase project other than
+the member's pin — another workspace's — is refused, and no code path reads the record: the record
+names no project at all (W0), so a "helpful" refactor that reached for it would have nothing to read
+and this test would fail first),
+`TestExchangeRefusesWhenTheMemberPinsNoWorkspace` (the member's own `workspace rm` has dropped the
+key and the pin: there is no project and no issuer left to verify against, so the exchange refuses
+whatever the workspace's record still says about it — the half of a removal that only the member can
+complete, spec §3),
 `TestExchangeRefusalIsIndistinguishableForAnUnknownMember` (spec §8: no member enumeration),
 `TestExchangeMintsAMemberTokenWithTheMembersOwnLimits`,
 `TestExchangeStoresOnlyHashes`.
@@ -346,6 +381,15 @@ the issuer and **each member's** Fugaro project as `fp` and holds all three to t
 account's, the issuer's and the `fp`'s must name one member, or the call is refused. This is a change
 to `verifyRun`'s pinning and not only to the list it looks the account up in, and it is the half of
 this task that a reader is most likely to miss.
+
+**The account table is the workspace's own per-member table, and the owner's config supplies it.**
+Each entry carries the member's job service accounts, its Firebase project id and `fp`, its database
+URL and its runs bucket, and every one of those values is the **workspace owner's** declaration,
+converged by the workspace owner's `fugaro update` (W2's stage writes the record; this task's service
+and W3's root of the workspace's own project carry the table) — never read from a member's machine
+and never taken from `workspaces/<name>`, which names the members and carries the cap and nothing
+else (spec.md §2, §5). A member the table does not bind is refused at this front door and recorded
+`stale` by the rollup (W7, spec §5): an unbound member is an unreadable one.
 
 **Whose people the person class holds, and what each route admits.** The deployment's person class is
 not the members': it is the **workspace owner's** people, written by the workspace's own `fugaro
@@ -424,6 +468,19 @@ issuer — so a member decides which identity is handed access to its own databa
 The Terraform half belongs to the **member's** root rather than the workspace's, which is why it is
 this task's and not W3's: W3 builds the workspace's project, and this is a binding on a member's.
 
+**A managed project's plan gate refuses this binding, and that is the correct answer.** The binding
+grants a role to a principal that is not this installation's own — the workspace's service account,
+which is a Fugaro account of *another* project — so it is a **loosening** of the member's IAM, and
+the cover never admits one: `internal/infra/tf/cover.go`:860-867 says in as many words that it "never
+allows: iam bindings, iam policies, audit configs, service account keys …", and the managed work puts
+IAM widening in the set the gate **never** covers (`docs/managed-agent-converge/spec.md` §3.2) and
+says the gate can only narrow (§2, D1026). So the stage does not run under the
+plan gate's admission: it falls back to its own typed confirmation, which a coding agent's session
+cannot give, and the member's owner runs it at their own terminal — once per member, at the moment
+they join the workspace. That is the design and not a limitation: an IAM binding that widened a
+project's access on the strength of a clean plan is the one thing the gate exists to prevent, and
+this task's binding is exactly that shape.
+
 **Files (11):** `internal/credsvc/workspace_cap.go`, `internal/credsvc/workspace_cap_test.go`,
 `internal/budget/workspace.go`, `internal/budget/workspace_test.go`,
 `internal/budget/workspace_rollup.go`, `internal/budget/workspace_rollup_test.go`,
@@ -439,6 +496,10 @@ its whole cap in the member nobody could see.
 `TestStaleMembersSharedCredentialCallsAreRefused` (the fail-closed half: a member the rollup could
 not read is refused at the front door rather than served and counted, so an unreadable member can
 neither spend the cap nor spend around it),
+`TestRollupRecordsAnUnboundMemberAsStale` (a member the record lists and the per-member table does
+not bind — a job account, a Firebase project, a database URL or a bucket missing — reads `stale`
+rather than zero, and its shared-credential calls are refused: spec §5's rule for the member the
+workspace cannot reach),
 `TestWorkspaceCapRefusesTheCallThatWouldExceedIt`,
 `TestWorkspaceCapIsNotWidenedByAMembersOwnCap` (the merge is min, and the workspace can only
 tighten), `TestHeadroomIsAdvisoryAndTheGatewayNeverDecidesTheCap`,
