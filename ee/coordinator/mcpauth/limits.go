@@ -182,9 +182,16 @@ func (l Limits) scopeVocabulary() error {
 // is the point of the split: Hotfix ranks 0, so a window comparison would
 // admit it at every floor. Everything else is read against the floor and the
 // ceiling, and a mode outside the vocabulary is refused rather than ranked.
+//
+// A window that is not a window is refused before it is read, for the same
+// reason Validate refuses one: a bound off the axis ranks 0, so reading it
+// here would answer as if the token had no bound at all.
 func (l Limits) Admits(mode rigor.Mode) error {
 	if !rigor.Known(mode) {
 		return fmt.Errorf("mcpauth: %q: %w", string(mode), ErrUnknownMode)
+	}
+	if err := l.window(); err != nil {
+		return err
 	}
 	if mode == rigor.Hotfix {
 		if !l.Hotfix {
