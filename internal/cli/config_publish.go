@@ -79,10 +79,7 @@ func newConfigPublishCmd() *cobra.Command {
 			defer env.Close()
 			var gate *managedGate
 			if marker != "" {
-				gate, err = configPublishGate(ctx, env, marker)
-				if err != nil {
-					return err
-				}
+				gate = configPublishGate(ctx, env, marker)
 				if gate == nil {
 					return refuseAgent()
 				}

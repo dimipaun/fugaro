@@ -281,20 +281,74 @@ func newUnmanagedPublishRig(t *testing.T) *cloudFixture {
 // and a mark that cannot be read is not a permission. The first read fails, so
 // nothing is published — a command that read the gate after its write would have
 // published the layer and failed afterwards.
+//
+// The refusal is the one this command has always given a coding agent's session,
+// and it is the SAME sentence a session whose project is simply not managed
+// reads: a failed read is a refusal and not a diagnostic, so the session cannot
+// learn which read broke, which endpoint carries it, or what the Resource
+// Manager error said (the answer accounts_managed.go and
+// image_refresh_managed.go give the same read, for the same reason). The
+// project header is not printed either: no run that ends in this refusal has
+// ever printed one.
 func TestConfigPublishManagedFailsClosedWhenAMarkCannotBeRead(t *testing.T) {
 	r := newManagedPublishRig(t)
 	agentSession(t)
 	publishedLayer(t, r.cloudFixture, "")
 	r.crm.FailGet(managedPublishGCP, 500, "INTERNAL", "the label read failed")
-	_, _, err := execute(t, "config", "publish", layerFile(t, managedLayer))
+	_, errOut, err := execute(t, "config", "publish", layerFile(t, managedLayer))
 	if err == nil {
 		t.Fatal("a project whose mark could not be read was published to in a coding agent's session")
+	}
+	if !strings.Contains(err.Error(), initflow.AgentRefusal("CLAUDECODE")) {
+		t.Errorf("the refusal is not the one this command has always given a coding agent's session: %v", err)
+	}
+	for _, leak := range []string{"the label read failed", "INTERNAL", "500", "resource manager", "cloudresourcemanager", "storage"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Errorf("the refusal carries installation diagnostics (%q), which a session that is refused anyway must not learn: %v", leak, err)
+		}
+	}
+	if strings.Contains(errOut, "project: ") {
+		t.Errorf("a session whose gate was never read printed the project header: %q", errOut)
 	}
 	if got := bucketText(t, r.cloudFixture, config.LayerKey); got != "" {
 		t.Fatalf("a mark that could not be read was a permission: the bucket holds %q", got)
 	}
 	if n := len(r.auditKeys(t)); n != 0 {
 		t.Errorf("a read that never judged a document left %d audit records, want none (a record with an invented digest is a lie about a plan nobody read)", n)
+	}
+}
+
+// The other half of the answer above, read on an installation whose endpoints
+// answer: neither mark is there — the bucket carries no label and no creation
+// fact — so the read SUCCEEDS and answers "not managed". The session is refused
+// in the words it has always been refused in, the header is not printed, nothing
+// is published and nothing is recorded: a project that is not managed is today's
+// behaviour, unchanged (TestManagedZeroValueKeepsEveryRefusal's rule).
+func TestConfigPublishManagedRefusesAnAgentSessionOnAnUnmanagedProject(t *testing.T) {
+	gcs := gcpfake.NewGCS(t)
+	gcs.AddBucket(managedPublishBucket(), managedPublishNumber, nil)
+	crmFake := gcpfake.NewCRM(t)
+	crmFake.AddProject(managedPublishGCP, managedPublishNumber)
+	f := newCloudFixture(t, "storage: "+gcs.URL+"/storage/v1/", "resource_manager: "+crmFake.URL+"/")
+	agentSession(t)
+	publishedLayer(t, f, "")
+	_, errOut, err := execute(t, "config", "publish", layerFile(t, managedLayer))
+	if err == nil {
+		t.Fatal("a coding agent's session published to a project with no mark")
+	}
+	if !strings.Contains(err.Error(), initflow.AgentRefusal("CLAUDECODE")) {
+		t.Errorf("the refusal is not the one this command has always given a coding agent's session: %v", err)
+	}
+	for _, leak := range []string{"creation fact", "storage", "resource manager"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Errorf("the refusal carries installation diagnostics (%q): %v", leak, err)
+		}
+	}
+	if strings.Contains(errOut, "project: ") {
+		t.Errorf("a session the gate never admitted printed the project header: %q", errOut)
+	}
+	if got := bucketText(t, f, config.LayerKey); got != "" {
+		t.Fatalf("a project with no mark admitted a coding agent's session: the bucket holds %q", got)
 	}
 }
 

@@ -62,29 +62,37 @@ import (
 // (`readManagedGate`), so the accept path, the refusal and the audit record are
 // the same four calls every command in the set makes.
 //
-// It answers nil, nil for a project that is not managed, which is the answer
-// that keeps today's refusal exactly: the caller has no gate to consult and
-// refuses the session in the command's own words. A read that failed is an
-// error and stops the command (fail closed): a project this program cannot
-// prove is managed is a project whose confirmations it must not skip.
+// It answers nil for anything but a project this program can PROVE is managed:
+// a project that is not managed, a client that could not be built, a mark that
+// did not answer. The caller then has no gate to consult and refuses the
+// session in the command's own words — the refusal this command gave it before
+// this row landed — and nothing is recorded.
+//
+// A read that failed is a refusal and not a diagnostic, which is the answer the
+// sibling rows give it for the same reason (accounts_managed.go,
+// image_refresh_managed.go): a session that is refused anyway must not learn
+// which read broke, which endpoint carries it or what the Storage or Resource
+// Manager error said. That is the installation's business, and a coding agent's
+// session is not the surface that reads it — the owner's own terminal is, where
+// this command's refusal is not the gate's.
 //
 // The clients are built from the installation's own endpoints when the
 // installation is a fake (a test's), and from Google's otherwise. A
 // no_auth installation that names no storage or Resource Manager endpoint has
 // no cloud to read the marks from at all — there is nothing to be managed
 // there, and no call is attempted.
-func configPublishGate(ctx context.Context, env *cloudEnv, marker string) (*managedGate, error) {
+func configPublishGate(ctx context.Context, env *cloudEnv, marker string) *managedGate {
 	lc := env.lc
 	if lc.Endpoints.NoAuth && (lc.Endpoints.Storage == "" || lc.Endpoints.ResourceManager == "") {
-		return nil, nil
+		return nil
 	}
 	s, err := storage.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.Storage)...)
 	if err != nil {
-		return nil, remote(fmt.Errorf("nothing was published: the managed gate cannot be read: no storage client could be built to read the project's creation fact: %w", err))
+		return nil
 	}
 	c, err := crm.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.ResourceManager)...)
 	if err != nil {
-		return nil, remote(fmt.Errorf("nothing was published: the managed gate cannot be read: no Resource Manager client could be built to read the project's own label: %w", err))
+		return nil
 	}
 	g, err := readManagedGate(ctx, managedGateEnv{lc: lc, s: s, crm: c}, managedGateFacts{
 		Subcommand:  "config publish",
@@ -92,13 +100,10 @@ func configPublishGate(ctx context.Context, env *cloudEnv, marker string) (*mana
 		Declined:    "nothing was published",
 		AgentMarker: marker,
 	})
-	if err != nil {
-		return nil, err
+	if err != nil || !g.managed {
+		return nil
 	}
-	if !g.managed {
-		return nil, nil
-	}
-	return &g, nil
+	return &g
 }
 
 // configPublishConverge judges the layer document an agent's session is about
