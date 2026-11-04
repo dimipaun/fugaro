@@ -55,21 +55,36 @@ var settingsFamilyCommands = map[string]string{
 // refused here until someone decides, deliberately, that the generic path owns
 // it, where a denylist would hand every new row to `settings set` by omission.
 //
-// The names are spec §4.4's. The project layer's own block is spelled with the
-// `layer.` prefix (SD14), so §4.4's `default_profile` is `layer.default_profile`
-// in the registry and its `defaults.git.*` is `layer.defaults.git.*`; the
-// registry's spelling is the one listed, because a name the registry does not
-// hold is refused before this list is reached. §4.4's list is the whole of it,
-// and it names four budget keys: `budget.mode` and `budget.per_day_usd` are the
-// registry's too — the audit (docs/settings-commands/audit.md:81) lists them as
-// user settings, and `fugaro setup` and the local config write them — but the
-// spec does not hand them to the generic path, so they are refused here like
-// any other key outside the list rather than widened in by this list.
+// The names are spec §4.4's, and where they are not, the decision that put
+// them here is named beside them. The project layer's own block is spelled with
+// the `layer.` prefix (SD14), so §4.4's `default_profile` is
+// `layer.default_profile` in the registry and its `defaults.git.*` is
+// `layer.defaults.git.*`; the registry's spelling is the one listed, because a
+// name the registry does not hold is refused before this list is reached.
+//
+// The four budget keys are one block and the generic path's whole (D1179):
+// §4.4's list names two of them, the audit (docs/settings-commands/audit.md:81)
+// finds the other two are user settings too, and until D1179 this list refused
+// them on purpose — a key the read prints, the local config writes and no
+// command owned. What `fugaro budget set` writes is the budget **database**'s
+// caps under its own ETag-guarded write; it owns no registry row, so naming it
+// the owner of these four would refuse two keys this path writes today.
+//
+// The wildcard blocks this design manages are listed by their registry pattern
+// (D1161). A person writes `workflows.web.commands.test`; settingsWriteLookup
+// matches it against the `workflows.*.commands.test` row below and keeps the
+// key as written, which is the path the edit lands on and the name the document
+// and the diff carry. Nothing enumerates a wildcard block's concrete spellings,
+// which is what lets one written key create a block the file does not hold —
+// D1161's stated cost, and the reason the layer a write lands in is still the
+// row's own Layers.
 var settingsGenericKeys = map[string]bool{
 	"budget.per_run_usd":       true,
 	"budget.max_run_tokens":    true,
 	"budget.allowed_models":    true,
 	"budget.unreachable_grace": true,
+	"budget.mode":              true,
+	"budget.per_day_usd":       true,
 	"base_branch":              true,
 	"max_parallel":             true,
 	"update_check":             true,
@@ -82,6 +97,91 @@ var settingsGenericKeys = map[string]bool{
 	"default_claude_account":  true,
 	"claude_account_auto":     true,
 	"stages.*.claude_account": true,
+	// A repository's workflows.* (37 rows) and the project layer's profiles.*
+	// (36), in the registry's own order.
+	"workflows.*.profile":                            true,
+	"workflows.*.job_profile":                        true,
+	"workflows.*.base":                               true,
+	"workflows.*.checkout":                           true,
+	"workflows.*.image.node":                         true,
+	"workflows.*.image.jdk":                          true,
+	"workflows.*.image.apt":                          true,
+	"workflows.*.image.setup":                        true,
+	"workflows.*.image.skip_build_scripts":           true,
+	"workflows.*.image.tools":                        true,
+	"workflows.*.image.key_files":                    true,
+	"workflows.*.dockerfile":                         true,
+	"workflows.*.commands.build":                     true,
+	"workflows.*.commands.test":                      true,
+	"workflows.*.commands.lint":                      true,
+	"workflows.*.commands.fix":                       true,
+	"workflows.*.commands.render":                    true,
+	"workflows.*.commands.probe":                     true,
+	"workflows.*.commands.rerun_failed":              true,
+	"workflows.*.commands.reports":                   true,
+	"workflows.*.cache":                              true,
+	"workflows.*.secrets":                            true,
+	"workflows.*.resources.cpu":                      true,
+	"workflows.*.resources.memory":                   true,
+	"workflows.*.timeouts.total":                     true,
+	"workflows.*.timeouts.stage":                     true,
+	"workflows.*.timeouts.verify":                    true,
+	"workflows.*.timeouts.render":                    true,
+	"workflows.*.timeouts.finalize_reserve":          true,
+	"workflows.*.rebuild.check":                      true,
+	"workflows.*.rebuild.max_age":                    true,
+	"workflows.*.rebuild.lockfiles":                  true,
+	"workflows.*.rebuild.base":                       true,
+	"workflows.*.rebuild.paths":                      true,
+	"workflows.*.inputs.max_files":                   true,
+	"workflows.*.inputs.max_bytes":                   true,
+	"workflows.*.inputs.max_total_bytes":             true,
+	"layer.profiles.*.description":                   true,
+	"layer.profiles.*.base":                          true,
+	"layer.profiles.*.image.node":                    true,
+	"layer.profiles.*.image.jdk":                     true,
+	"layer.profiles.*.image.apt":                     true,
+	"layer.profiles.*.image.setup":                   true,
+	"layer.profiles.*.image.skip_build_scripts":      true,
+	"layer.profiles.*.image.tools":                   true,
+	"layer.profiles.*.image.key_files":               true,
+	"layer.profiles.*.commands.build":                true,
+	"layer.profiles.*.commands.test":                 true,
+	"layer.profiles.*.commands.lint":                 true,
+	"layer.profiles.*.commands.fix":                  true,
+	"layer.profiles.*.commands.render":               true,
+	"layer.profiles.*.commands.probe":                true,
+	"layer.profiles.*.commands.rerun_failed.command": true,
+	"layer.profiles.*.commands.rerun_failed.each":    true,
+	"layer.profiles.*.commands.reports":              true,
+	"layer.profiles.*.cache.*.key":                   true,
+	"layer.profiles.*.cache.*.paths":                 true,
+	"layer.profiles.*.resources.cpu":                 true,
+	"layer.profiles.*.resources.memory":              true,
+	"layer.profiles.*.timeouts.total":                true,
+	"layer.profiles.*.timeouts.stage":                true,
+	"layer.profiles.*.timeouts.verify":               true,
+	"layer.profiles.*.timeouts.render":               true,
+	"layer.profiles.*.timeouts.finalize_reserve":     true,
+	"layer.profiles.*.rebuild.check":                 true,
+	"layer.profiles.*.rebuild.max_age":               true,
+	"layer.profiles.*.rebuild.lockfiles":             true,
+	"layer.profiles.*.rebuild.base":                  true,
+	"layer.profiles.*.rebuild.paths":                 true,
+	"layer.profiles.*.inputs.max_files":              true,
+	"layer.profiles.*.inputs.max_bytes":              true,
+	"layer.profiles.*.inputs.max_total_bytes":        true,
+	"layer.profiles.*.checkout":                      true,
+	// The layer's ab.* is the third block D1161 names. Its rows are the models
+	// family's today, and the family refusal is asked before this list, so
+	// listing them changes no answer: they are here because the block is this
+	// design's to write once the owner column names the generic writer (D1178),
+	// and a block listed in two places is the drift D1161's own cost names.
+	"layer.ab.rate":              true,
+	"layer.ab.max_pairs_per_day": true,
+	"layer.ab.challengers":       true,
+	"layer.ab.judge_model":       true,
+	"layer.ab.exchange_rate":     true,
 }
 
 // settingsGenericPrefixes are the blocks spec §4.4 hands to the generic path
@@ -306,7 +406,7 @@ func settingsWriteRowHinted(key string, list bool) (settings.Row, error) {
 		return settings.Row{}, userErr("%s varies with a name this command does not take: a key with a * is a map entry, and a map has no generic form", key)
 	}
 	if !settingsGenericKey(registry) {
-		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, credentials.*, clone_urls.* and the layer's defaults.*) and the account choice (default_claude_account, claude_account_auto, stages.<stage>.claude_account), and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
+		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, credentials.*, clone_urls.* and the layer's defaults.*), the account choice (default_claude_account, claude_account_auto, stages.<stage>.claude_account) and a repository's workflows.<name>.* and the project layer's profiles.<name>.*, and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
 	}
 	return row, nil
 }
@@ -318,10 +418,12 @@ func settingsWriteRowHinted(key string, list bool) (settings.Row, error) {
 // key as written, because that is the path the edit lands on, and the registry
 // spelling is what the allowlist and the row's own sentences name.
 //
-// Only a wildcard row settingsGenericKeys carries by name is matched, which is
-// how `stages.*.claude_account` is reachable at all. The registry's other
-// wildcard rows — the project layer's `workflows.*.*`, the project family's
-// `repos.*.*`, the models family's `providers.*.*` and the accounts family's
+// Only a wildcard row the allowlist carries is matched, which is how
+// `stages.*.claude_account` and the blocks D1161 hands this path — a
+// repository's `workflows.*.*` and the project layer's `profiles.*.*` — are
+// reachable at all. The registry's other wildcard rows — the project family's
+// `repos.*.*`, the models family's `providers.*.*` and `model_prices.*.*`, the
+// rigor family's `layer.defaults.rigor.areas.*.*` and the accounts family's
 // `claude_accounts.*.allow_data_to` — are other paths' keys: matching one would
 // hand back a row this command does not write, and the refusal a person gets
 // should be the one about the name, not a row that was never theirs.
