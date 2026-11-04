@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -451,6 +452,12 @@ func TestPolicyPublishManagedAdmitsANarrowerNode(t *testing.T) {
 	if len(rec.Rules) == 0 {
 		t.Error("the record names no rule, and it is written for a step whose rules ran")
 	}
+	// And among them the rule that closes the gate over the members no rule
+	// reads: an admission is the record of what was judged, and this is the
+	// rule that says the node held nothing else that moved.
+	if !mentions(rec.Rules, policyUnjudgedRule) {
+		t.Errorf("the record of an admitted publish does not name %q among the rules that passed: %v", policyUnjudgedRule, rec.Rules)
+	}
 }
 
 // A managed project with no node published at all has nothing for a list to be
@@ -610,6 +617,129 @@ func TestPolicyPublishManagedRefusesAWidenedBitbucketToken(t *testing.T) {
 		t.Errorf("the refused publish wrote something:\nbefore %s\nafter  %s", before, after)
 	}
 	refusalRecord(t, f, policyBitbucketRule)
+}
+
+// The rule that closes the gate over everything the rules above do not read.
+// The node carries sixteen members and the rules above judge seven of them, so
+// the shapes below were each admitted in a gated session before this rule
+// existed — a session could write the node's review floor away, point a
+// provider at a host of its own, or hand itself an image catalog, and the only
+// thing that answered was the marker's refusal in a project that is not
+// managed. Each of the tests below is one member of the list.
+//
+// refusedMemberChange is the world they share: the installation publishes its
+// own node, the file changes in one member no rule reads, and a coding agent's
+// session publishes again. The refusal has to be the gate's, has to name the
+// member that changed, and must leave the node exactly as it was.
+func refusedMemberChange(t *testing.T, member, extra string, rewrite func(t *testing.T, f *managedPolicyFixture)) {
+	t.Helper()
+	f := newManagedPolicyFixture(t, extra)
+	if out, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("this installation's own publish was refused: %v\n%s", err, out)
+	}
+	rewrite(t, f)
+	before := nodeOf(t, f.db)
+	t.Setenv("CLAUDECODE", "1")
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("a coding agent's session changed %s, which no rule of this gate reads:\n%s", member, out)
+	}
+	gateRefusal(t, err, policyUnjudgedRule)
+	if want := "a different " + member; !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal does not name the member that changed (%q): %v", want, err)
+	}
+	if after := nodeOf(t, f.db); after != before {
+		t.Errorf("the refused publish wrote something:\nbefore %s\nafter  %s", before, after)
+	}
+	refusalRecord(t, f, policyUnjudgedRule)
+}
+
+// rewriteWith is the second publish of a machine whose file differs from the
+// first's by extra only.
+func rewriteWith(extra string) func(t *testing.T, f *managedPolicyFixture) {
+	return func(t *testing.T, f *managedPolicyFixture) { f.rewriteConfig(t, extra) }
+}
+
+// review_floor: the owner's floor is the member that binds the operator's own
+// runs, and the file takes it away with one written-empty key. The node then
+// reviews to whatever each layer asks, which is the state the floor exists to
+// make unreachable — and an agent that could write it away could turn review
+// off for every run of the project without changing a single repository.
+//
+// The shape is the one D722 makes dangerous rather than a lowered rank: a
+// floor member written empty is no floor at all, and the member is kept by the
+// publisher only when the file says nothing about it.
+func TestPolicyPublishManagedRefusesARemovedReviewFloor(t *testing.T) {
+	refusedMemberChange(t, "review_floor", "review_floor:\n  pro: [l2]\n", rewriteWith("review_floor: {}\n"))
+}
+
+// verifier_accounts: the identities that may ask the credentials service
+// whether a verdict's signature is the service's. One address more is one more
+// identity the session can name to a route that answers questions about the
+// project's signed verdicts.
+func TestPolicyPublishManagedRefusesAWidenedVerifierList(t *testing.T) {
+	refusedMemberChange(t, "verifier_accounts",
+		"verifier_accounts: [ops@example.invalid]\n",
+		rewriteWith("verifier_accounts: [ops@example.invalid, ops-alt@example.invalid]\n"))
+}
+
+// A provider's base_url: the worst of the members no rule reads, because
+// routing still compares equal. The block says where a model call goes and
+// which secret is sent with it, so a base_url the session chose is every
+// routed call of the project — and the provider's secret — sent to a host of
+// the session's, with the routing rule reporting the route as untouched.
+func TestPolicyPublishManagedRefusesAChangedProviderBaseURL(t *testing.T) {
+	refusedMemberChange(t, "providers", "", func(t *testing.T, f *managedPolicyFixture) {
+		f.rewriteConfigWithProviders(t, strings.Replace(projectProvidersYAML,
+			"base_url: https://openrouter.ai/api/v1", "base_url: https://models.example.invalid/api/v1", 1))
+	})
+}
+
+// image_catalog: the named images a repository's runs execute in, each a
+// Dockerfile this installation fetches and builds or a prebuilt image it
+// pulls. A catalog the session wrote is code of the session's choosing running
+// in every job that names an entry — and the sources a Dockerfile entry names
+// are repositories and paths of its own.
+func TestPolicyPublishManagedRefusesAChangedImageCatalog(t *testing.T) {
+	refusedMemberChange(t, "image_catalog", "", rewriteWith(
+		"image_catalog:\n  entries:\n    - name: tools\n      tags: [node]\n      source: { kind: image, image: ghcr.io/acme/tools:1 }\n"))
+}
+
+// bitbucket_api_roots: the roots the runner accepts FUGARO_BITBUCKET_API_URL
+// for, matched exactly. One root more is one more host a run of the project
+// may be told to reach for a token-bearing call.
+func TestPolicyPublishManagedRefusesAWidenedBitbucketAPIRoot(t *testing.T) {
+	refusedMemberChange(t, "bitbucket_api_roots",
+		"bitbucket_api_roots: [https://api.bitbucket.example/2.0]\n",
+		rewriteWith("bitbucket_api_roots: [https://api.bitbucket.example/2.0, https://api.bitbucket-alt.example/2.0]\n"))
+}
+
+// base_branch: what a repository of this project runs against when neither its
+// committed fugaro.yaml nor its local entry names one. Moving it moves the
+// branch every run of the project is made on — and the runs that follow are
+// the ones a review then reads.
+func TestPolicyPublishManagedRefusesAChangedBaseBranch(t *testing.T) {
+	refusedMemberChange(t, "base_branch", "", rewriteWith("base_branch: develop\n"))
+}
+
+// A profile's secrets: the mounts its job carries, and no rule above reads
+// them. One name more is one more credential in the hands of every job that
+// serves the profile, and the name is enough — the value is read from the
+// project's own store at deploy time.
+func TestPolicyPublishManagedRefusesAChangedProfileSecrets(t *testing.T) {
+	const profile = "profiles:\n  standard: { provider: github, cpu: 1, memory: 512Mi, timeout_class: 6h, allow_repos: [github/acme/app], secrets: [%s] }\n"
+	refusedMemberChange(t, "profiles", fmt.Sprintf(profile, "openrouter-key"),
+		rewriteWith(fmt.Sprintf(profile, "openrouter-key, npm-token")))
+}
+
+// model_prices: the owner's price overrides, which are what a run is metered
+// and charged by. A price the session wrote is the figure the project's own
+// budget is kept against and the one its reports carry, so a cheapened model
+// spends the ceiling faster than the owner set it to be spent.
+func TestPolicyPublishManagedRefusesChangedModelPrices(t *testing.T) {
+	refusedMemberChange(t, "model_prices", "", rewriteWith(
+		"model_prices:\n  deepseek/deepseek-v4-flash: { input_per_m: 0.02, output_per_m: 0.08 }\n"))
 }
 
 // The plan's §5 wiring property for this command: the gate is read BEFORE the
