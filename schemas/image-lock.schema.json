@@ -26,7 +26,7 @@
     "image": {
       "type": "object",
       "additionalProperties": false,
-      "$comment": "No property is required here, and that is deliberate: §3.2's strictness is about fields and the version, not presence. TestLockSchemaAgreesWithTheDecoder (internal/imagecheck) holds this schema and the decoder to the same documents; the two differences it pins are that a version written as 1.0 or 1e0 is the number 1 to a schema that reads numbers by value and a type error to encoding/json, and that a null where an array or an object is expected is an absent field to encoding/json and refused here. The writer always writes every property — the Go type has no pointer fields — so a required list would only be met by documents the writer never produces.",
+      "$comment": "No property is required here, and that is deliberate: §3.2's strictness is about fields and the version, not presence. TestLockSchemaAgreesWithTheDecoder (internal/imagecheck) holds this schema and the decoder to the same documents; the three differences it pins are that a version written as 1.0 or 1e0 is the number 1 to a schema that reads numbers by value and a type error to encoding/json, that a null where an array or an object is expected is an absent field to encoding/json and refused here, and that the decoder refuses a lock placing one job on two entries, a rule about two entries at once that no schema validating one entry can state (see jobs). The writer always writes every property — the Go type has no pointer fields — so a required list would only be met by documents the writer never produces.",
       "properties": {
         "key": {
           "type": "string",
@@ -50,7 +50,7 @@
         },
         "packages": {
           "type": "array",
-          "description": "This image's own resolved packages, as name@version. A reuse (§4) is decided from these: an entry holds a repository's set when every one of its packages is here at the same version, and the entry may hold more.",
+          "description": "This image's own resolved packages, one per fact: the name, the version and the integrity the key file stated for that version's artifact, each as a quoted string literal with one space between them (§2.4 of the design), the third written empty when the file stated none. A reuse (§4) is decided from these: an entry holds a repository's set when every one of its packages is here with the same three fields, and the entry may hold more.",
           "items": {
             "type": "string"
           }
@@ -80,7 +80,7 @@
         },
         "jobs": {
           "type": "object",
-          "description": "The same set as repositories, each repository's job name as it was at update time.",
+          "description": "The same set as repositories, each repository's job name as it was at update time. A job — one repository and one workflow — is on at most one entry of the whole lock: the decoder refuses a lock that places one on two (ParseLock's checkOneJobPerEntry, a rule about two entries at once that this schema cannot state), because a launch asking which image a job is on would otherwise answer with whichever entry it met first, and a job runs one image.",
           "additionalProperties": {
             "type": "string"
           }

@@ -1421,7 +1421,7 @@ func TestProjectBaseBranchValidated(t *testing.T) {
 // not know refuses the whole document — so the list is unreadable until the
 // field exists. It is carried as it is written, and it is dropped from the
 // published shared config: the rule a root is held to is the node's
-// (projectpolicy.validBitbucketAPIRoots), applied where the node is built
+// (projectpolicy.ValidBitbucketAPIRoots), applied where the node is built
 // (the publish calls projectpolicy.Decode through checkPolicyBytes), so there
 // is no second copy of it here to drift from that one.
 func TestBitbucketAPIRootsParse(t *testing.T) {
@@ -1442,6 +1442,48 @@ func TestBitbucketAPIRootsParse(t *testing.T) {
 	}
 	if c.BitbucketAPIRoots == nil {
 		t.Error("Shared() cleared the receiver's own list")
+	}
+}
+
+// TestSecretRotationRecordRefused: the operator's rotation record — the period
+// doctor measures against and the dates it reports — is refused at load rather
+// than at doctor. A period or a date this file cannot use would turn into a
+// check that silently says nothing: doctor reads a malformed date as a name it
+// has no fact about, so the secret the operator recorded would drop out of the
+// sweep without a word. Whether the name exists is doctor's to find; the shape
+// is this document's, beside the other shape rules, and the refusal names the
+// entry it read.
+func TestSecretRotationRecordRefused(t *testing.T) {
+	c, err := Parse([]byte(sample + "secret_rotation_days: 30\nsecret_expires:\n  bitbucket-token: \"2026-11-05\"\n"))
+	if err != nil {
+		t.Fatalf("the operator's own record was refused: %v", err)
+	}
+	if c.SecretRotationDays != 30 || c.SecretExpires["bitbucket-token"] != "2026-11-05" || len(c.SecretExpires) != 1 {
+		t.Errorf("the record read as %d day(s) and %v", c.SecretRotationDays, c.SecretExpires)
+	}
+	// Zero is how the record says "no period", and it is what an absent key says
+	// too: only a period doctor could measure against a negative age is refused.
+	for _, ok := range []string{"secret_rotation_days: 0\n", ""} {
+		c, err := Parse([]byte(sample + ok))
+		if err != nil || c.SecretRotationDays != 0 {
+			t.Errorf("%q: (%d, %v), want no period and no error", ok, c.SecretRotationDays, err)
+		}
+	}
+	for _, tc := range []struct{ name, body, want string }{
+		{"a negative period", "secret_rotation_days: -1\n", "secret_rotation_days must be zero or more days"},
+		{"a period no age is outside", "secret_rotation_days: -30\n", "secret_rotation_days must be zero or more days"},
+		{"a date in the operator's own spelling", "secret_expires:\n  bitbucket-token: \"05/11/2026\"\n", `secret_expires.bitbucket-token "05/11/2026" is not a date (YYYY-MM-DD)`},
+		{"a date with a one-digit day", "secret_expires:\n  bitbucket-token: \"2026-11-5\"\n", "is not a date"},
+		{"a date that does not exist", "secret_expires:\n  bitbucket-token: \"2026-02-30\"\n", "is not a date"},
+		{"a date that is a number", "secret_expires:\n  bitbucket-token: 20261105\n", "is not a date"},
+		{"a name with nothing in it", "secret_expires:\n  \"\": \"2026-11-05\"\n", "secret_expires has an entry with no secret name"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Parse([]byte(sample + tc.body))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Parse = (%+v, %v), want an error naming %q", c, err, tc.want)
+			}
+		})
 	}
 }
 
@@ -1549,5 +1591,387 @@ func TestReviewFloorNotInShared(t *testing.T) {
 		t.Fatal(err)
 	} else if strings.Contains(string(b), "review_floor") {
 		t.Errorf("the published file names review_floor:\n%s", b)
+	}
+}
+
+// TestLayerFileIsTheProjectNameUnderProjects: the one local layer file is the
+// project's own name, with .layer.yaml, beside its config (D830) — the path is
+// a convention and nothing records it.
+func TestLayerFileIsTheProjectNameUnderProjects(t *testing.T) {
+	dir := t.TempDir()
+	env := map[string]string{"XDG_CONFIG_HOME": filepath.Join(dir, "xdg")}
+	get := func(k string) string { return env[k] }
+	p, err := LayerFile(get, "aurora")
+	if err != nil || p != filepath.Join(dir, "xdg", "fugaro", "projects", "aurora.layer.yaml") {
+		t.Fatalf("LayerFile = %q, %v", p, err)
+	}
+	// A name that is not a single path element would put the file, which
+	// `fugaro update` writes as the owner's own layer, anywhere on the
+	// machine — the same refusal ProjectPath makes.
+	for _, name := range []string{"../x", "a/b", "", "Aurora", "-x", "x-", strings.Repeat("a", 41)} {
+		if _, err := LayerFile(get, name); err == nil {
+			t.Errorf("LayerFile accepted %q", name)
+		}
+	}
+}
+
+// TestTheLayerFileIsNeverAProject: the layer file sits in the projects/
+// directory beside the project configs, so an installation that ends `fugaro
+// update` with one must still hold exactly one project. A project name cannot
+// contain a dot (config.ProjectNameRE), and the file's stem has one.
+func TestTheLayerFileIsNeverAProject(t *testing.T) {
+	dir := t.TempDir()
+	env := map[string]string{"XDG_CONFIG_HOME": filepath.Join(dir, "xdg")}
+	get := func(k string) string { return env[k] }
+	projects, err := ProjectsDir(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(projects, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projects, "aurora.yaml"), []byte("name: aurora\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	layer, err := LayerFile(get, "aurora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layer, []byte("version: 1\nproject: aurora\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Projects(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "aurora" {
+		t.Errorf("Projects = %q with a layer file beside the project config, want [aurora]", got)
+	}
+}
+
+// TestAProjectNamedLayerIsNotTheLayerFile: `foo-layer` is a project name, so
+// project foo's layer file must not be project `foo-layer`'s config — nor the
+// other way round, with `foo-layer`'s own layer file read as project `foo`'s.
+func TestAProjectNamedLayerIsNotTheLayerFile(t *testing.T) {
+	dir := t.TempDir()
+	env := map[string]string{"XDG_CONFIG_HOME": filepath.Join(dir, "xdg")}
+	get := func(k string) string { return env[k] }
+	projects, err := ProjectsDir(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(projects, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projects, "foo-layer.yaml"), []byte("name: foo-layer\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Projects(get)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "foo-layer" {
+		t.Fatalf("Projects = %q, want [foo-layer]", got)
+	}
+	foo, err := LayerFile(get, "foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	named, err := LayerFile(get, "foo-layer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if foo == named || foo == filepath.Join(projects, "foo-layer.yaml") {
+		t.Errorf("project foo's layer file is %q, which is project foo-layer's config", foo)
+	}
+	if named != filepath.Join(projects, "foo-layer.layer.yaml") {
+		t.Errorf("project foo-layer's layer file is %q", named)
+	}
+}
+
+// TestLocalcfgDecodesTheAccountChoiceBlockStrictly is D873's block (spec
+// §11.1): the project's default account, the per-stage overrides and the auto
+// switch decode by name, and the block is held to the same strict decode as
+// every other one — an unknown field inside it is an error, and so is a value
+// the file's own reference rule refuses, because a key that names an account
+// names a name a profile may carry. A name this file does not define is refused
+// on the same terms, and the valid case below therefore defines the account it
+// names.
+func TestLocalcfgDecodesTheAccountChoiceBlockStrictly(t *testing.T) {
+	defined := "claude_accounts:\n  team-b:\n    allow_data_to: [acme/web]\n"
+	c, err := Parse([]byte(sample + defined + "default_claude_account: team-b\nclaude_account_auto: true\nstages:\n  review:\n    claude_account: team-b\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DefaultClaudeAccount != "team-b" || !c.ClaudeAccountAuto {
+		t.Errorf("decoded = %q, %v", c.DefaultClaudeAccount, c.ClaudeAccountAuto)
+	}
+	if got := c.ClaudeAccountStages["review"].ClaudeAccount; got != "team-b" {
+		t.Errorf("stages.review.claude_account = %q, want team-b", got)
+	}
+	if c, err := Parse([]byte(sample)); err != nil {
+		t.Fatal(err)
+	} else if c.DefaultClaudeAccount != "" || c.ClaudeAccountAuto || len(c.ClaudeAccountStages) != 0 {
+		t.Errorf("unset must stay unset: %q, %v, %v", c.DefaultClaudeAccount, c.ClaudeAccountAuto, c.ClaudeAccountStages)
+	}
+	for name, y := range map[string]string{
+		"unknown field in the block":           "stages:\n  review:\n    account: team-b\n",
+		"unknown field beside the key":         "claude_accounts_auto: true\n",
+		"not a bool":                           "claude_account_auto: maybe\n",
+		"not a reference":                      "default_claude_account: Team-B\n",
+		"a reserved name":                      "stages:\n  review:\n    claude_account: bitbucket-token\n",
+		"an over-long name":                    "default_claude_account: " + strings.Repeat("a", 32) + "\n",
+		"an account this file does not define": "stages:\n  review:\n    claude_account: team-z\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(sample + defined + y))
+			if err == nil {
+				t.Fatal("accepted")
+			}
+			if name == "an account this file does not define" && !strings.Contains(err.Error(), "is not defined here") {
+				t.Errorf("the refusal does not say the account is undefined: %v", err)
+			}
+		})
+	}
+}
+
+// TestVerifierAccountsDecode is the member's own shape: the operator's list of
+// the addresses that may ask the credentials service's verify route, written
+// where the policy node is built from and never in a reviewed repository's
+// fugaro.yaml. The entries are bare addresses, and the node's rule — the one
+// check both writers are held to — refuses the member spellings the
+// installation's IAM lists are written with.
+func TestVerifierAccountsDecode(t *testing.T) {
+	c, err := Parse([]byte(sample + "verifier_accounts: [person-1@example.com, fugaro-coordinator@proj-1234.iam.gserviceaccount.com]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"person-1@example.com", "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"}
+	if !slices.Equal(c.VerifierAccounts, want) {
+		t.Errorf("VerifierAccounts = %v, want %v", c.VerifierAccounts, want)
+	}
+	// The key absent is not the same value as the key written empty: the first
+	// keeps what the node publishes, the second clears it (the rule below).
+	silent, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if silent.VerifierAccounts != nil {
+		t.Errorf("a config that says nothing about the list = %v, want nil", silent.VerifierAccounts)
+	}
+	empty, err := Parse([]byte(sample + "verifier_accounts: []\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.VerifierAccounts == nil || len(empty.VerifierAccounts) != 0 {
+		t.Errorf("VerifierAccounts = %v, want a written empty list", empty.VerifierAccounts)
+	}
+	for _, body := range []string{
+		"verifier_accounts: [serviceAccount:person-1@example.com]\n",
+		"verifier_accounts: [person-1]\n",
+	} {
+		if _, err := Parse([]byte(sample + body)); err == nil || !strings.Contains(err.Error(), "verifier_accounts") {
+			t.Errorf("Parse(%q) = %v, want a refusal naming the entry", body, err)
+		}
+	}
+}
+
+// TestVerifierAccountsRuleKeepsTheNodesListWhenTheConfigIsSilent is one half of
+// the one rule both writers apply (C3.9g1's tfvars writer and C3.9g3's
+// publisher), stated once because the list reaches the service by two paths: a
+// second operator whose config predates the key must neither publish a node
+// without the list nor render the service's variable null, which would empty a
+// route another machine set up. The other half is below: deletion is not how a
+// route is turned off, so a written empty list is the spelling that clears it.
+func TestVerifierAccountsRuleKeepsTheNodesListWhenTheConfigIsSilent(t *testing.T) {
+	published := []string{"person-1@example.com"}
+	silent, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := silent.VerifierAccountsEffective(published); !slices.Equal(got, published) {
+		t.Errorf("a silent config takes %v, want the published %v", got, published)
+	}
+	stated, err := Parse([]byte(sample + "verifier_accounts: [person-2@example.com]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := stated.VerifierAccountsEffective(published), []string{"person-2@example.com"}; !slices.Equal(got, want) {
+		t.Errorf("a config that states a list takes %v, want %v", got, want)
+	}
+}
+
+func TestVerifierAccountsRuleTakesAnExplicitEmptyList(t *testing.T) {
+	empty, err := Parse([]byte(sample + "verifier_accounts: []\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := empty.VerifierAccountsEffective([]string{"person-1@example.com"}); len(got) != 0 {
+		t.Errorf("a written empty list takes %v, want none: it is how the route is turned off on purpose", got)
+	}
+}
+
+// TestVerifierAccountsNotInShared: the list is the operator's own, and the
+// shared config is the file any launcher with objectAdmin on the runs bucket
+// can write — a launcher who could write this list could admit its own address
+// to the verify route. It is dropped here for bitbucket_api_roots' reason, and
+// internal/cli's ParseShared refuses the key besides.
+func TestVerifierAccountsNotInShared(t *testing.T) {
+	c, err := Parse([]byte(sample + "verifier_accounts: [person-1@example.com]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, got := range map[string]*Config{"shared": c.Shared(), "merged": MergeShared(nil, c)} {
+		if got.VerifierAccounts != nil {
+			t.Errorf("%s: verifier_accounts = %v", name, got.VerifierAccounts)
+		}
+		out, err := got.Marshal()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(string(out), "verifier_accounts") {
+			t.Errorf("%s: output carries verifier_accounts:\n%s", name, out)
+		}
+	}
+	if len(c.VerifierAccounts) != 1 {
+		t.Error("Shared/MergeShared cleared the local list")
+	}
+}
+
+// catalogYAML is an operator's image catalog in the shape the spec writes one:
+// two entries, one marked default, so a test can tell which entry it read and
+// whether the marker survived.
+const catalogYAML = `image_catalog:
+  entries:
+    - name: universal
+      tags: [node]
+      default: true
+      source: { kind: image, image: ghcr.io/acme/agent:1.2 }
+    - name: rust
+      tags: [cargo]
+      source: { kind: dockerfile, repo: acme/web, path: docker/agent.Dockerfile }
+`
+
+// TestLocalConfigCatalogIsDecodedAndKept is the other half of this task's red
+// step: the local configuration gains the member, and a config that carries a
+// catalog is decoded rather than dropped or refused by strict decoding. What it
+// carries is the whole entry — the source's kind, the tags and the default
+// marker — because the publisher copies this value into the node and a member
+// lost here is an image no job can be built from.
+func TestLocalConfigCatalogIsDecodedAndKept(t *testing.T) {
+	c, err := Parse([]byte(sample + catalogYAML))
+	if err != nil {
+		t.Fatalf("a config carrying a catalog was refused: %v", err)
+	}
+	if c.ImageCatalog == nil || len(c.ImageCatalog.Entries) != 2 {
+		t.Fatalf("image_catalog = %+v, want the file's two entries", c.ImageCatalog)
+	}
+	universal := c.ImageCatalog.Entries[0]
+	if universal.Name != "universal" || !universal.Default {
+		t.Errorf("entries[0] = %+v, want universal marked default", universal)
+	}
+	if !slices.Equal(universal.Tags, []string{"node"}) {
+		t.Errorf("entries[0].tags = %v, want [node]", universal.Tags)
+	}
+	if universal.Source.Kind != config.SourceImage || universal.Source.Image != "ghcr.io/acme/agent:1.2" {
+		t.Errorf("entries[0].source = %+v, want the prebuilt reference the file names", universal.Source)
+	}
+	rust := c.ImageCatalog.Entries[1]
+	if rust.Source.Kind != config.SourceDockerfile || rust.Source.Repo != "acme/web" {
+		t.Errorf("entries[1].source = %+v, want the repository and path the file names", rust.Source)
+	}
+	// The file's own catalog is what a publish sends, whether the node has one
+	// or not (ImageCatalogEffective): a stated catalog is never silently
+	// replaced by the node's, which is the direction the keep rule must never
+	// move for this shape — the operator who edits the file means the edit.
+	if got := c.ImageCatalogEffective(nil); got != c.ImageCatalog {
+		t.Errorf("a config that states a catalog takes %+v, want its own", got)
+	}
+	if got := c.ImageCatalogEffective(&config.Catalog{Entries: []config.Entry{{Name: "other"}}}); got != c.ImageCatalog {
+		t.Errorf("a config that states a catalog takes %+v, want its own over the node's", got)
+	}
+	// It is written back, so the file the operator reads is the file this
+	// Fugaro parsed.
+	out, err := c.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "image_catalog") {
+		t.Errorf("the marshalled config has no image_catalog:\n%s", out)
+	}
+	// The member is held to the node's own rule, the way the verifier list and
+	// the floor are: config.ValidateCatalog is the one function both carriers
+	// apply, so a file this loader accepts is one the node's decoder accepts.
+	if _, err := Parse([]byte(sample + "image_catalog:\n  entries:\n    - name: Universal\n      source: { kind: image, image: ghcr.io/acme/agent:1.2 }\n")); err == nil {
+		t.Error("a catalog entry with an illegal name was accepted")
+	}
+	if _, err := Parse([]byte(sample + "image_catalog:\n  entries:\n    - name: a\n      source: { kind: image }\n")); err == nil {
+		t.Error("a source with no image was accepted")
+	}
+}
+
+// TestLocalConfigCatalogKeepsThePublishedOneWhenSilent: the keep rule this
+// task is about (D1140, D1156). A machine whose file says nothing about the
+// catalog must not publish a node without the operator's — a teammate's config
+// or a CI box's would leave every repository that names an entry with nothing
+// to run — while a file that writes an empty catalog is how the published one
+// is taken away on purpose, and a project with no catalog at either end
+// publishes no member at all.
+func TestLocalConfigCatalogKeepsThePublishedOneWhenSilent(t *testing.T) {
+	published := &config.Catalog{Entries: []config.Entry{{
+		Name: "universal", Default: true,
+		Source: config.Source{Kind: config.SourceImage, Image: "ghcr.io/acme/agent:1.2"},
+	}}}
+	silent, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := silent.ImageCatalogEffective(published); got != published {
+		t.Errorf("a silent config takes %+v, want the published catalog", got)
+	}
+	if got := silent.ImageCatalogEffective(nil); got != nil {
+		t.Errorf("a silent config beside a node with no catalog takes %+v, want nothing published", got)
+	}
+	stated, err := Parse([]byte(sample + catalogYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stated.ImageCatalogEffective(published); got != stated.ImageCatalog {
+		t.Errorf("a config that states a catalog takes %+v, want its own", got)
+	}
+	empty, err := Parse([]byte(sample + "image_catalog: { entries: [] }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := empty.ImageCatalogEffective(published); got != nil {
+		t.Errorf("a written empty catalog takes %+v, want none: it is how a published catalog is removed on purpose", got)
+	}
+}
+
+// TestImageCatalogNotInShared: the catalog is the owner's and travels the
+// verifier list's way. The shared config is the file any launcher with
+// objectAdmin on the runs bucket can write, and the catalog is what decides
+// which image a run's job executes in and which Dockerfile a build fetches, so
+// a launcher who could write this key would be choosing the code every
+// teammate's runs run. internal/cli's ParseShared refuses the key besides.
+func TestImageCatalogNotInShared(t *testing.T) {
+	c, err := Parse([]byte(sample + catalogYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, got := range map[string]*Config{"shared": c.Shared(), "merged": MergeShared(nil, c)} {
+		if got.ImageCatalog != nil {
+			t.Errorf("%s: image_catalog = %+v", name, got.ImageCatalog)
+		}
+		out, err := got.Marshal()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(string(out), "image_catalog") {
+			t.Errorf("%s: output carries image_catalog:\n%s", name, out)
+		}
+	}
+	if c.ImageCatalog == nil {
+		t.Error("Shared/MergeShared cleared the local catalog")
 	}
 }

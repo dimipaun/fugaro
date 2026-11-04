@@ -451,12 +451,19 @@ func adcInfo() (kind, quota string) {
 
 // readBounded reads a regular file of at most 1 MiB: a FIFO or a device
 // named by the environment is never opened for reading, so it cannot block.
+//
+// The regular-file rule is applied twice, to the path and then to the open
+// descriptor, and the descriptor's answer is the one that governs the read: a
+// path that answered "regular file" a moment ago can name something else by the
+// time it is opened, so what is read has to be what the descriptor says it is
+// rather than what the path said earlier. The check before the open stays
+// because it is the one that keeps a FIFO from being opened at all — os.Open on
+// one waits for a writer — so a path swapped for a FIFO in that gap can still
+// block this read where a caller pointed the environment at one on purpose.
 func readBounded(path string) ([]byte, error) {
-	fi, err := os.Stat(path)
-	if err != nil {
+	if fi, err := os.Stat(path); err != nil {
 		return nil, err
-	}
-	if !fi.Mode().IsRegular() {
+	} else if !fi.Mode().IsRegular() {
 		return nil, errors.New("not a regular file")
 	}
 	f, err := os.Open(path)
@@ -464,6 +471,13 @@ func readBounded(path string) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, errors.New("not a regular file")
+	}
 	return io.ReadAll(io.LimitReader(f, 1<<20))
 }
 

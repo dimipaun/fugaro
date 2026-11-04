@@ -316,3 +316,53 @@ func TestAppTokenCoordinatorPermissionsHoldNoWrite(t *testing.T) {
 		t.Fatalf("MintInstallationToken = %q %s %v", tok, exp, err)
 	}
 }
+
+// TestReviewTokenPermissionsAreReadOnly is CSR1's rule (D883, F2): the review
+// job's installation token carries the reads the reviewer makes -- the head it
+// reads and the pull request it reviews -- and no value that could write
+// anywhere. A write here is a write credential in the container that runs the
+// head's own tests, which is the configuration D883 exists to leave.
+//
+// It is asserted as an equality rather than as "no write" alone, the rule
+// TestAppTokenCoordinatorPermissionsHoldNoWrite keeps for the coordinator's
+// set: a permission asked for and never used is reach a stolen token would have
+// for nothing. The clone is asserted because the caller that builds a mint's
+// request out of what it was handed (the credentials service, C3.9) must not be
+// able to change what the next caller asks GitHub for.
+func TestReviewTokenPermissionsAreReadOnly(t *testing.T) {
+	want := map[string]string{"contents": "read", "pull_requests": "read", "metadata": "read"}
+	perms := ReviewTokenPermissions()
+	if !maps.Equal(perms, want) {
+		t.Fatalf("ReviewTokenPermissions() = %v, want %v", perms, want)
+	}
+	for name, level := range perms {
+		if level != "read" {
+			t.Errorf("the review job's token asks GitHub for %s: %s", name, level)
+		}
+	}
+	perms["contents"] = "write"
+	perms["issues"] = "read"
+	if again := ReviewTokenPermissions(); !maps.Equal(again, want) {
+		t.Errorf("ReviewTokenPermissions() after a caller mutated its copy = %v, want %v", again, want)
+	}
+}
+
+// TestRunTokenPermissionsUnchanged is the SEC half of CSR1: the task adds a
+// fifth set beside the run's, and the run's is not the one it narrows. A run
+// pushes its branch and opens its pull request, so its two writes are
+// load-bearing -- a read-only set that reached the run would fail every push
+// deep in a stage -- and the arrival of the review job's set is exactly when
+// that could happen by accident.
+//
+// The second half is that the two are two declarations and not one map: a
+// fifth set that was the run's with values changed would leave the review job
+// holding the write credential D883 refuses it.
+func TestRunTokenPermissionsUnchanged(t *testing.T) {
+	run := RunTokenPermissions()
+	if run["contents"] != "write" || run["pull_requests"] != "write" {
+		t.Errorf("RunTokenPermissions() = %v: this task adds a read-only set and must not narrow the run's, whose two writes are the push and the pull request it opens", run)
+	}
+	if maps.Equal(run, ReviewTokenPermissions()) {
+		t.Error("the review job's set is the run's set: a fifth declaration that is not one leaves the review job holding the write credential D883 refuses it")
+	}
+}

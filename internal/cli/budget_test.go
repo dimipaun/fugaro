@@ -41,7 +41,10 @@ func newBudgetFixture(t *testing.T, budgetYAML string) *budgetFixture {
 	f := &budgetFixture{db: gcpfake.NewRTDB(t), dir: dir}
 	path := isolateProjects(t, dir)
 	if budgetYAML == "" {
-		budgetYAML = "budget: { mode: observe, per_run_usd: 5, rtdb_url: " + f.db.URL + " }\n"
+		// The ordinary installation's budget block: the database and the
+		// Firebase project it belongs to, which here is the installation's own
+		// GCP project (budget.firebase_project == gcp_project).
+		budgetYAML = "budget: { mode: observe, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: " + f.db.URL + " }\n"
 	}
 	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: unused-bucket\n" +
 		"bucket_url: file://" + filepath.Join(dir, "runs") + "\nuser: someone@example.com\nmax_parallel: 2\n" +
@@ -52,6 +55,7 @@ func newBudgetFixture(t *testing.T, budgetYAML string) *budgetFixture {
 	}
 	t.Setenv("FUGARO_CONFIG", path)
 	f.db.Set("fugaro/project", "aurora")
+	f.db.Set(budget.PathMark, auroraMark())
 	// The installation names its project in the runs bucket, as its
 	// Terraform does (mirrors cloudFixture.writeMarker): watch's queued-run
 	// lookup checks it before trusting the bucket.
@@ -650,6 +654,87 @@ func TestPricesShowsLocalOverrides(t *testing.T) {
 	if !strings.Contains(line, "$3") || !strings.Contains(line, "local") {
 		t.Fatalf("the override is not shown:\n%s", out)
 	}
+}
+
+// TestBudgetPricesJSONPinsTheFigures is the price pin M1 needs: the document
+// `budget prices --json` prints is held against rows written out here, field
+// for field — one embedded Claude row, one row the built-in provider price
+// catalog priced, and one the owner's own model_prices replaced. The figures
+// are the pin; comparing the command against the same builder the test calls
+// would agree with any figure that builder had come to produce.
+//
+// Mutation (run, restored): double CacheReadPerM in priceRowOf and this fails
+// on claude-opus-5-5's cache_read_per_m 0.4 against 0.2.
+func TestBudgetPricesJSONPinsTheFigures(t *testing.T) {
+	modelsFixture(t)
+	// A clock inside the catalog's 30-day window, because the figures below are
+	// the fresh catalog's: past 2026-11-22 the catalog is stale, every
+	// catalog-priced row is charged the dearest end of its tier instead of the
+	// cheapest, and this pin would break on a date no change to the code marked.
+	old := budgetNow
+	t.Cleanup(func() { budgetNow = old })
+	budgetNow = func() time.Time { return time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC) }
+
+	out, _, err := execute(t, "budget", "prices", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var doc pricesDoc
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	byID := map[string]priceRow{}
+	for _, r := range doc.Models {
+		byID[r.ID] = r
+	}
+	for _, want := range []struct{ id, row string }{
+		// The embedded table's own figures: $4/$20 a million, cache reads at
+		// 0.05x and cache writes at 1.25x and 2x, a search at $10 a thousand,
+		// and no source of its own (the document's is the table's).
+		{"claude-opus-5-5", `{"id":"claude-opus-5-5","input_per_m":4,"output_per_m":20,"cache_read_per_m":0.2,"cache_write_5m_per_m":5,"cache_write_1h_per_m":8,"web_search_per_1k":10,"local":false,"unverified":false}`},
+		// The catalog row the openrouter route claims: the zdr tier's cheapest
+		// end, its 15 endpoints (10 of them ZDR-eligible) and the dearest price
+		// the tier carries, which is the most a call it serves can be billed.
+		{"deepseek/deepseek-v4-flash", `{"id":"deepseek/deepseek-v4-flash","input_per_m":0.05,"output_per_m":0.17,"cache_read_per_m":0.013999999999999999,"cache_write_5m_per_m":0.0625,"cache_write_1h_per_m":0.1,"web_search_per_1k":0,"local":false,"unverified":false,"catalog":{"tier":"zdr","bound":"min","endpoints":15,"zdr_endpoints":10,"source":"https://openrouter.ai/api/v1/models","checked_at":"2026-10-23","stale":false,"tier_input_max_per_m":0.7,"tier_output_max_per_m":1.32}}`},
+		// The override: the owner's own numbers, marked local, with the cache
+		// multipliers the table's defaults give them.
+		{"vendor/model-y", `{"id":"vendor/model-y","input_per_m":1,"output_per_m":2,"cache_read_per_m":0.1,"cache_write_5m_per_m":1.25,"cache_write_1h_per_m":2,"web_search_per_1k":10,"local":true,"unverified":false}`},
+	} {
+		row, ok := byID[want.id]
+		if !ok {
+			t.Errorf("no row for %s:\n%s", want.id, out)
+			continue
+		}
+		if got := jsonOf(t, row); got != want.row {
+			t.Errorf("%s reads\n%s\nand the pin is\n%s", want.id, got, want.row)
+		}
+	}
+	// And the whole document is the shared builder's rows, in its order: the
+	// figures above are pinned, and no second row construction can grow beside
+	// the builder both commands call (D794).
+	table, ov, err := priceTable(selectedModelsConfig(t), budgetNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := priceRowsFor(table, ov)
+	if len(want) != len(doc.Models) {
+		t.Fatalf("the command prints %d rows and the shared builder has %d", len(doc.Models), len(want))
+	}
+	for i := range want {
+		got, wantJSON := jsonOf(t, doc.Models[i]), jsonOf(t, want[i])
+		if got != wantJSON {
+			t.Errorf("row %d is %s, and the shared builder makes %s", i, got, wantJSON)
+		}
+	}
+}
+
+func jsonOf(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
 
 func TestBudgetRefusesWithoutFirebaseConfig(t *testing.T) {

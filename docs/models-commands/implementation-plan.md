@@ -55,14 +55,15 @@ can turn a refused `allow_data_to` into "every repository" (F11).
 
 - **Files (9):** `internal/cli/models.go` (new: the command group), `internal/cli/models_ls.go` (new),
   `internal/cli/models_ls_test.go` (new), `internal/cli/budget.go` (the price-row builder moved behind one
-  function both commands call; no output change), `internal/cli/budget_test.go` (pins that `budget prices
-  --json` is byte-identical before and after), `schemas/models-ls.schema.json` (new),
+  function both commands call; no output change), `internal/cli/budget_test.go` (pins `budget prices
+  --json`'s rows figure by figure, so a changed price is red there), `schemas/models-ls.schema.json` (new),
   `schemas/schemas_test.go` (the new schema loads and the command's output validates), `internal/cli/root.go`
   (registration; owned elsewhere, see "Order"), `docs/multi-model.md` (a short "With `fugaro models`" pointer).
 - **Red step:** `TestModelsLsListsRoutesModelsAllowListsAndUsage` fails while the command does not exist.
 - **Tests:** `TestModelsLsListsRoutesModelsAllowListsAndUsage`, `TestModelsLsUnknownWithoutACheckout`,
   `TestModelsLsShowsCatalogAgeAndSpread`, `TestModelsLsJSONMatchesSchema`, `TestModelsLsIsOffline` (the
-  cloud seams panic if reached), `TestBudgetPricesJSONUnchanged`.
+  cloud seams panic if reached), `TestBudgetPricesJSONPinsTheFigures` (the rows pinned by value: the shared
+  builder agreeing with itself cannot catch a changed figure).
 - **Hermetic:** `t.TempDir()` config home, a fake checkout made with `git init` in the temp dir, the embedded
   catalog behind `loadCatalog`.
 
@@ -96,6 +97,10 @@ D783 was answered against the recommendation: `rm` warns and removes, it never r
 
 - **Files (3):** `internal/cli/models_rm.go` (new), `internal/cli/models_rm_test.go` (new),
   `internal/cli/models.go`.
+- **Not in a release without E1 and E2.** Until E2 lands, a route's claim still needs `fugaro update
+  --repo .` in a repository's checkout (a job routes by the copy of the providers block it holds:
+  `jobConfigCopyPolicyNote`), and M3's hand-off says so; the release that carries M3 or M4 carries E2 as
+  well as E1, and with it the single `next: fugaro update` line comes back.
 - **Red step:** `TestModelsRmWarnsNamingEachPinningRepository` fails while the subcommand does not exist.
 - **Tests:** `TestModelsRmWarnsNamingEachPinningRepository` (the warning names repository, role and the no-provider failure; the write still happens), `TestModelsRmWarnsForRepositoriesWithoutACheckout`,
   `TestModelsRmLeavesAClaimingPatternAndSaysSo`, `TestModelsRmRefusesEmptyingTheAllowList`,

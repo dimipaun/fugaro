@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/firestore"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -80,12 +81,15 @@ func (r *initRun) historyJob(ctx context.Context, c *infra.Clients, lc *localcfg
 
 // coordinatorJob completes the installation spec's aggregation job: it is
 // deployed only when the Firebase root's outputs are known (they go into its
-// environment), its image exists and a GitHub App ID is recorded — the sweep
-// mints its own read-only installation token from the App, so a job deployed
-// without one would fail every tick it ran. Otherwise the installation keeps
-// the coordinator's account alone, which is what the Firebase root's grant
-// needs, and a job that is already there is kept by the next run that has all
-// three.
+// environment), its image exists and the credential its repositories need is
+// recorded. Which credential that is depends on what it reconciles (F24): its
+// GitHub path mints the coordinator's own read-only installation token from
+// the App, so a job reconciling a GitHub repository with no App ID would fail
+// every tick it ran, while its Bitbucket path mints a read token at the
+// credentials service (BB5) and asks for no App at all. Otherwise the
+// installation keeps the coordinator's account alone, which is what the
+// Firebase root's grant needs, and a job that is already there is kept by the
+// next run that has everything it needs.
 //
 // A missing image is not said here: it is the history job's own image
 // (infra.Coordinator's spec takes HistoryImage), and historyJob's warning
@@ -102,10 +106,10 @@ func (r *initRun) coordinatorJob(ctx context.Context, c *infra.Clients, lc *loca
 	switch {
 	case cs.FirebaseProject == "" || cs.RTDBURL == "" || len(cs.Repos) == 0:
 		// Nothing to reconcile, or nowhere to write it: the account alone.
-	case cs.GitHubAppID == "":
+	case cs.GitHubAppID == "" && coordinatorReadsGitHub(cs.Repos):
 		if !r.coordinatorNoted {
 			r.coordinatorNoted = true
-			r.warn(fmt.Sprintf("the coordinator's aggregation job is not deployed: the local config records no GitHub App ID, and the sweep reads every repository through a token minted from one. Onboarding a GitHub repository records it (fugaro update --repo <owner/name> --github-app-id <id>), and the next fugaro update --firebase-project %s deploys the job.", firebaseProjectIDWord(lc.GCPProject)))
+			r.warn(fmt.Sprintf("the coordinator's aggregation job is not deployed: the local config records no GitHub App ID, and the sweep reads its GitHub repositories through a token minted from one. Onboarding a GitHub repository records it (fugaro update --repo <owner/name> --github-app-id <id>), and the next fugaro update --firebase-project %s deploys the job.", firebaseProjectIDWord(lc.GCPProject)))
 		}
 	default:
 		ok, err := infra.CoordinatorImageExists(ctx, c, lc, cs)
@@ -116,6 +120,21 @@ func (r *initRun) coordinatorJob(ctx context.Context, c *infra.Clients, lc *loca
 	}
 	spec.Coordinator = &cs
 	return spec, nil
+}
+
+// coordinatorReadsGitHub reports whether the sweep reads a GitHub repository,
+// which is the whole of whether its job needs the App credential (F24). It is
+// asked of the repositories and not of the config, the way the module's own
+// coordinator_github is: a repository the config records no provider for is
+// not in the spec's list at all (infra.CoordinatorRepos), so "is there a
+// github entry" is exactly "does the sweep read GitHub".
+func coordinatorReadsGitHub(repos []infra.CoordinatorRepo) bool {
+	for _, r := range repos {
+		if r.Provider == gitprov.KindGitHub {
+			return true
+		}
+	}
+	return false
 }
 
 // applyRoot plans, shows, guards and (once confirmed) applies the root t

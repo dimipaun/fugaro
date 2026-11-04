@@ -89,7 +89,7 @@ export const BRIDGE_VERSION = 1
  * nothing failing, because the runtime tests in `test/unit/ipc.test.ts` pin the
  * same sets against the table and the object is built from that table anyway.
  * `satisfies` checks each row's shape without widening anything, so a row that
- * is not a name and a method is still a compile error, and the twenty-four names
+ * is not a name and a method is still a compile error, and the thirty names
  * stay literal -- which is what makes `ExposedName`, `ExposedMethod` and
  * `ConsoleBridge` below the closed things their comments say they are.
  *
@@ -157,6 +157,93 @@ export const BRIDGE_VERSION = 1
  * **V2.5.1a added the twenty-fourth** (`run.launch` / `launchRun`, the console's
  * one write, design section 5.1 rule 11) and left the other twenty-three exactly
  * where they were. The twenty-third is above it in this list.
+ *
+ * **Coordinator v2 K2a added the twenty-fifth** (`link.openPullRequest` /
+ * `openPullRequest`, D814 and D815) and left the other twenty-four exactly where
+ * they were. The twenty-fourth is above it in this list.
+ *
+ * **Coordinator v2 C3 added the twenty-sixth** (`coordinator.show` /
+ * `coordinatorShow`, one pull request as the host has it, the description
+ * included -- D816) and left the other twenty-five exactly where they were. It
+ * sits directly under `coordinator.status` because the two are the same subject
+ * asked two ways, and it is the second row here whose child mints a credential
+ * of the host's: the first is `run.launch`, the launch at the end of this list,
+ * whose child is a run that holds the App's private key and pushes and opens the
+ * pull request with a token carrying `contents: write`. This row's is the
+ * coordinator's own read-only installation token, which is what its two
+ * arguments and no third key are for (`src/main/ipc.ts`).
+ *
+ * **Coordinator v2 C4 added the twenty-seventh** (`coordinator.intents` /
+ * `coordinatorIntents`, what the fleet's writers have declared, newest first --
+ * D827) and left the other twenty-six exactly where they were. It sits directly
+ * under `coordinator.show`, the same subject asked a third way. It is the first
+ * row here with **no argument at all**: the whole argv is `src/main/spawn.ts`'s
+ * row, `--all --json`, so no word of it is caller-influenced -- and like the
+ * project view above it, its child mints nothing of the host's: the
+ * declarations are the caller's own database node.
+ *
+ * **Console 0.119.0 added the twenty-eighth** (`runs.summary` / `summaryRuns`,
+ * the jobs-free totals read -- `fugaro runs summary --json`, the CLI half of
+ * which is B4, #1580) and left the other twenty-seven exactly where they were.
+ * It sits directly under `runs.stats`, the other read of the runs family that
+ * answers from the budget rather than from a run record. Its method is the
+ * plainest case of rule 5's shape after the declarations read: the operation
+ * declares **one optional window** and nothing else, so no other word of the
+ * argv is caller-influenced -- and the window is the console's own closed set
+ * (`src/main/ipc.ts`'s `SUMMARY_SINCE_WINDOWS`), which is why a renderer cannot
+ * ask this read for the whole history under another spelling of `--since`.
+ * **The Coordinator's strip calls it** (`src/renderer/entry.ts`, `loadSummary`):
+ * the week is the strip's second region, drawn beside its K1 figures under an
+ * attempt token of its own, so an answer to a window the operator has already
+ * asked again never lands under another.
+ *
+ * **Console 0.119.0 added the twenty-ninth** (`models.list` / `listModels`, the
+ * Project tab's read-only models panel -- `fugaro models ls --json`, the
+ * owner's ruling of 2026-11-02) and left the other twenty-eight exactly where
+ * they were. It sits directly under `accounts.inventory`, the other read of
+ * what this installation's own configuration says. **The panel calls it**
+ * (`src/renderer/entry.ts`, `loadModels`): the tab starts it as a section of its
+ * own, under an attempt token of its own, so a refusal or a document it does not
+ * read leaves that section with its own sentence and nothing else. Its method
+ * takes **no argument at all** -- the command is cobra's
+ * `NoArgs`, and the operation declares no key -- and it is the one row here
+ * whose command belongs to a group the console may otherwise not touch: the
+ * other four words of `fugaro models` (`search`, `add`, `rm`, `use`) are words
+ * of this command on `src/main/ipc.ts`'s never table, so this is the group's
+ * only reachable argv and no models write is on this surface.
+ *
+ * **The settings-edit plan's C1 added the thirtieth** (`settings.read` /
+ * `readSettings`, the Project tab's settings section -- `fugaro settings
+ * --json`) and left the other twenty-nine exactly where they were. It is **not
+ * in 0.119.0**, which shipped without it: it lands in the next console version
+ * (0.120.0). It sits directly under `models.list`, the other read the Project
+ * tab draws from, and **the Project tab's settings section is what calls it**
+ * (`src/renderer/entry.ts`): that section starts this read with the tab's other
+ * reads, on a sequence token of its own, and paints when its own answer lands
+ * (`buildProjectsSettings` / `fillProjectsSettings`), so the section is drawn
+ * whether or not the other two reads have answered. Its method takes **no
+ * argument at all** -- the operation declares no key, and the command's keys,
+ * its globs and its seven flags are all off the argv -- and what the document
+ * adds is the writability half of each row (`writable`, `owner`,
+ * `target_layer`, D1102), which is what lets a screen draw an edit **without a
+ * copy of the generic path's allowlist**.
+ * A `sensitive: true` row carries no value member at all and the screen drops it
+ * whole (D1111), so nothing this operation returns is a credential.
+ *
+ * **The settings-edit plan's C3 added the thirty-first** (`settings.edit` /
+ * `editSetting`, the console's second write -- the Project tab's pencil, rule
+ * 12) and left the other thirty exactly where they were. It is **not in
+ * 0.119.0** either: it lands with C1 in 0.120.0. It sits directly under
+ * `settings.read`, whose document is where the layer it writes at comes from,
+ * and it is the one row here whose argv the table does not fix: the main process
+ * decides the phase (`--dry-run --json` for the classification, `--yes` for
+ * either write -- D1107, which the console passes with the answer it already
+ * got from the operator), and its method takes the subcommand, the
+ * key and the operator's own value. Everything else about the command -- the
+ * layer, the project, the config path, the terminator before the value -- is the
+ * main process's, and the argv the child is started from is the argv the window
+ * drew: a plan that differs from it is refused rather than spawned
+ * (`SETTINGS_EDIT_MOVED`, `src/source/source.ts`).
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -164,17 +251,56 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   ['spend.report', 'runReport'],
   ['runs.list', 'listRuns'],
   ['runs.stats', 'statsRuns'],
+  // The jobs-free totals read (console 0.119.0, B4's console half): `fugaro
+  // runs summary --json`, the window's runs counted by repository and by state
+  // and what they spent, read from the budget database and the spend history
+  // alone -- so no run object and no bucket listing is behind it. One row here
+  // for the reason every other row is one: the read is a command of its own,
+  // and a method that took the operation as an argument is the shape rule 5
+  // forbids. Its one argument is the window, from the closed set
+  // `src/main/ipc.ts` declares; a caller that sends none gets the command's own
+  // default.
+  ['runs.summary', 'summaryRuns'],
   ['plan.status', 'planStatus'],
   ['run.diagnose', 'diagnoseRun'],
   ['run.logs', 'readRunLogs'],
   ['run.logLink', 'runLogLink'],
   ['secrets.inventory', 'listSecrets'],
   ['accounts.inventory', 'listAccounts'],
+  // The read-only models panel (console 0.119.0, the owner's ruling of
+  // 2026-11-02): `fugaro models ls --json`, the project's routes, the models a
+  // run can name and each repository's pins -- offline, so its child opens no
+  // bucket and no host. One row, no argument, and the group's only reachable
+  // word (`src/main/ipc.ts`'s never table refuses `search`, `add`, `rm` and
+  // `use` on this command).
+  ['models.list', 'listModels'],
+  // The settings read (the settings-edit plan's C1, in the console version after
+  // 0.119.0 -- that release shipped without it):
+  // `fugaro settings --json`, the project's settings with the writability facts
+  // the Project tab's settings section draws its pencils from. One row, no
+  // argument, and the group's read alone.
+  ['settings.read', 'readSettings'],
+  // The settings write (the settings-edit plan's C3, D1103): one key set or
+  // unset, at the layer the read's own row named, after the operator has read
+  // the change in the confirmation window (rule 12). Its three arguments are the
+  // subcommand, the key and the operator's own value -- and **no layer**, which
+  // is the main process's own fact out of the document it read (D1105, D1114),
+  // so this method cannot name one. The argv the child is started from is the
+  // argv the window drew, held by the main process and never handed here: the
+  // value is the operator's own text, and nothing else about the command line
+  // comes from this side.
+  ['settings.edit', 'editSetting'],
   ['cli.version', 'cliVersion'],
   ['startup.compatibility', 'getCompatibility'],
   ['installation.current', 'getInstallation'],
   ['environment.report', 'environmentReport'],
   ['link.openExternal', 'openExternal'],
+  // The clickable pull request number (Coordinator v2 K2a, D814/D815). One row,
+  // and the method takes the operation's own three fields: the provider, the
+  // repository and the number. It carries **no URL**, because the main process
+  // builds the link from those three fields -- a `url` a job wrote is drawn as
+  // text and never reaches the browser (rule 2, F2).
+  ['link.openPullRequest', 'openPullRequest'],
   // The installation rail (owner's design ruling of 2026-10-25). The console
   // never shows a picker screen: the rail lists every installation, a click
   // switches the console to one, and a row that cannot be read opens its issue
@@ -197,6 +323,28 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // spawn.ts`'s row, not arguments a renderer sends -- the row here declares
   // none.
   ['coordinator.status', 'coordinatorStatus'],
+  // The pull request read (coordinator v2 C3, D816): `coordinator show --repo
+  // <owner/name> --pr <n> --json`, one pull request as the host has it, the
+  // description included -- which the project view's row above cannot carry,
+  // because the stored view drops a body by design (reconciliation F3). One row
+  // here for the same reason as every other: the two arguments are the
+  // operation's own closed schema (`src/main/ipc.ts`), and a method that took
+  // the operation as an argument is the shape rule 5 forbids. **It is the second
+  // row whose child mints a credential of the host's**, after `run.launch` at
+  // the end of this list -- the coordinator's own read-only installation token,
+  // against a launched run's write set -- so its two arguments are the whole of
+  // what a renderer can influence about the argv, and no credential of the host's
+  // reaches this surface, the reply or a log line.
+  ['coordinator.show', 'coordinatorShow'],
+  // The declarations read (coordinator v2 C4, D827): `coordinator intents --all
+  // --json`, what the fleet's writers have stored, newest first. One row here
+  // for the same reason as every other -- a method that took the operation as
+  // an argument is the shape rule 5 forbids -- and this row's method is the
+  // plainest case of it: the operation has no argument, so the row declares
+  // none and `--all` is a word of the argv rather than a control. `declared_by`
+  // comes back as a **declaration** -- the string a writer put in its own
+  // record -- never as an identity this process establishes.
+  ['coordinator.intents', 'coordinatorIntents'],
   // The launch, and the surface's **one write** (V2.5.1a, design section 5.1
   // rule 11, D22). One row, like every other: the five fields are the
   // operation's own closed schema. What this method *does* is ask the main
@@ -210,7 +358,7 @@ export const EXPOSED_OPERATIONS = Object.freeze([
 
 /**
  * ExposedName is the closed union of the operation names this file exposes --
- * twenty-four string literals, not `string`. It is the type of the `operations` list
+ * thirty string literals, not `string`. It is the type of the `operations` list
  * a screen switches on, so the closure is what lets a screen be exhaustive.
  */
 export type ExposedName = (typeof EXPOSED_OPERATIONS)[number][0]
@@ -330,9 +478,9 @@ async function invokeOperation(
  *
  * The returned object is not cast into `ConsoleBridge`: it is checked against
  * it, like any other value, and that is the point of the accumulator's type. It
- * is `Record<ExposedMethod, ConsoleMethod>` -- twenty-four *named* properties,
+ * is `Record<ExposedMethod, ConsoleMethod>` -- thirty *named* properties,
  * because `ExposedMethod` is a union of literals -- so spreading it gives the
- * object literal those twenty-four properties as properties rather than as an index
+ * object literal those thirty properties as properties rather than as an index
  * signature. (Before that type was literal, this line needed `as ConsoleBridge`
  * to silence the compiler, which is what made the claim untested rather than
  * checked.) The loop is what actually writes them, and a loop is a thing the
@@ -361,7 +509,7 @@ export function createConsoleBridge(ipcRenderer: RendererLike): ConsoleBridge {
  * `exposeInMainWorld` is what keeps rule 5's promise concrete: the renderer gets
  * a copy of this object, in its own world, with `contextIsolation` in between.
  * It cannot reach the preload's scope, `ipcRenderer`, or Node -- only these
- * twenty-four methods.
+ * thirty methods.
  */
 export function exposeConsoleBridge(
   contextBridge: ContextBridgeLike,

@@ -113,18 +113,24 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 		"FUGARO_GCP_PROJECT": b.o.GCPProject,
 		"FUGARO_REGION":      b.o.Region,
 	}
-	// The socket recipe (design §2.2, C2). Both refusals are here rather
-	// than only in New because they are about a *run*: an installation may
-	// legitimately have no gid recorded and no streaming, and only a run
-	// that asked for Docker needs either answer.
+	// The socket recipe (design §2.2, C2), and with it the docker tag's rule
+	// on this backend (D1149): the tag means a Docker daemon, and this is the
+	// backend that has one — the launcher keeps a docker-tagged entry out of
+	// a Cloud Run job's candidates and asks for the socket here, so a run
+	// whose image carries the tag gets it exactly as a workflow that set
+	// docker: true does. Both refusals are here rather than only in New
+	// because they are about a *run*: an installation may legitimately have
+	// no gid recorded and no streaming, and only a run that needs a daemon
+	// needs either answer. They name both ways a run comes to need one,
+	// because which it was is what the operator changes.
 	container := &batch.Container{ImageUri: b.o.Image}
 	if spec.Docker {
 		d := b.o.Docker
 		if d.SocketGID == 0 {
-			return nil, errors.New("this run's workflow asks for docker: true, but this installation has no Docker socket gid recorded: read it off the boot image's VM with `stat -c %g /var/run/docker.sock` (design §2.2). Launching without it would mount a socket the run cannot open, so nothing was created")
+			return nil, errors.New("this run needs a Docker daemon — its workflow asks for docker: true, or the image the project's catalog gave its job carries the docker tag — but this installation has no Docker socket gid recorded: read it off the boot image's VM with `stat -c %g /var/run/docker.sock` (design §2.2). Launching without it would mount a socket the run cannot open, so nothing was created")
 		}
 		if b.o.ImageStreaming {
-			return nil, errors.New("this run's workflow asks for docker: true, and image streaming is on: batch ignores a runnable's options field when streaming an image, so the container would come up without --group-add and could not open the socket (measured 2026-10-15; design §1.1, §1.2), so nothing was created")
+			return nil, errors.New("this run needs a Docker daemon — its workflow asks for docker: true, or the image the project's catalog gave its job carries the docker tag — and image streaming is on: batch ignores a runnable's options field when streaming an image, so the container would come up without --group-add and could not open the socket (measured 2026-10-15; design §1.1, §1.2), so nothing was created")
 		}
 		// The host's socket, at the same path inside the container, plus the
 		// group join. The gid is numeric: --group-add resolves a name inside

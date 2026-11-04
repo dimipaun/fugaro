@@ -113,7 +113,13 @@ import { homedir, tmpdir } from 'node:os'
 import { StringDecoder } from 'node:string_decoder'
 import { dirname, isAbsolute, join } from 'node:path'
 
-import { CONSOLE_OPERATIONS, isNeverReachable } from './ipc'
+import {
+  CONSOLE_OPERATIONS,
+  RUNS_LIST_MAX_LIMIT,
+  SETTINGS_VALUE_MAX_LENGTH,
+  SUMMARY_SINCE_WINDOWS,
+  isNeverReachable,
+} from './ipc'
 import type { ArgumentKind, OperationName, ValidatedArgument, ValidatedArguments } from './ipc'
 import type { SpawnLogWriter } from './spawnlog'
 // The WSL seam, and the one import that closes a cycle: `wsl.ts` imports this
@@ -425,6 +431,14 @@ export const SPAWN_FLAGS: readonly string[] = Object.freeze([
   // the id the main process generated rather than one the CLI would invent.
   '--task-file',
   '--run-id',
+  // The settings write's three, and `settings.edit`'s argv is the only place any
+  // of them can appear (the settings-edit plan's C3): `--layer` is the layer the
+  // read's own row named, and `--dry-run`/`--yes` are the phase the main process
+  // decided -- no renderer argument, and no field of the operation's schema,
+  // spells either (`SETTINGS_EDIT_PHASE_WORDS`).
+  '--layer',
+  '--dry-run',
+  '--yes',
 ])
 
 /** DEFAULT_BACKOFF is the CLI's own stream backoff (`backMin`/`backMax`,
@@ -522,8 +536,51 @@ export interface Backoff {
  * that alphabet for a title would widen it for `--repo` and every other value
  * too. `stdin` is an argument that reaches **no argv word at all**: the task
  * text goes to the child on its standard input (below).
+ *
+ * **`limit` and `after` are the runs list's two** (D818, the console
+ * coordinator-v2 plan's C2): `--limit=<n>` and `--after=<run id>`, one word
+ * each, the form `title` and `planTask` already use and for the same reason --
+ * a value inside the flag's own word cannot be read as a flag. They are kinds
+ * of their own rather than `value` because each spells a value the validator
+ * handed over in a way `value` cannot: `limit` is a *number* the digits have to
+ * come from, the way `pullRequest`'s is, and `after` is the `=` form. The
+ * prefix each one emits is the row's own declared flag, and `EQUALS_FORM_FLAGS`
+ * below is the one table that says which prefixes a row may emit.
+ *
+ * **`summarySince` is the runs summary's one** (console 0.119.0's jobs-free
+ * totals read): `--since=<window>`, one word, the same `=` form and for the
+ * same reason. It is a kind of its own rather than `value` for that reason
+ * alone -- the window itself is `ipc.ts`'s closed set, which is narrower than
+ * any grammar here could be, so what is left for this module is the spelling.
+ *
+ * **`settingOp` and `settingValue` are the settings write's two** (the
+ * settings-edit plan's C3), and both are kinds of their own because neither
+ * emits a flag. `settingOp` is the subcommand the edit is -- `set` or `unset`,
+ * one bare word, the second word of the argv, and the word that decides what
+ * the child does; it is a closed set of two here and in `ipc.ts`'s schema, in
+ * both places, because a third word would be a third subcommand this console
+ * could run. `settingValue` is the operator's new value, and it is the one
+ * argument of this whole console that is passed **behind a `--` terminator**: a
+ * setting's value may be any text at all, and a value spelled `--layer` is the
+ * case the terminator exists for (D1104). It is therefore emitted last, after
+ * the installation's own flags, with `--` before it, and `assertArgvFlags`
+ * reads every word after that terminator as a value rather than as a flag. It
+ * is not `value`: that kind is held to the renderer's own alphabet, which a
+ * value carrying a space or a leading dash is not in.
  */
-export type SpawnArgumentKind = 'value' | 'boolean' | 'secretScope' | 'pullRequest' | 'title' | 'planTask' | 'stdin'
+export type SpawnArgumentKind =
+  | 'value'
+  | 'boolean'
+  | 'secretScope'
+  | 'pullRequest'
+  | 'title'
+  | 'planTask'
+  | 'limit'
+  | 'after'
+  | 'summarySince'
+  | 'settingOp'
+  | 'settingValue'
+  | 'stdin'
 
 /**
  * SPAWN_KIND_FOR is the one place the two kind vocabularies are related: the
@@ -537,16 +594,35 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   day: 'value',
   reportSince: 'value',
   runSince: 'value',
+  // The runs list's page and its cursor: two of the three `=`-form kinds, and
+  // two of the three on a row that is a read (`title`/`planTask` are the
+  // launch's, and the summary's window is the third).
+  runLimit: 'limit',
+  runAfter: 'after',
+  // The runs summary's window: the third `=`-form kind, and the second on a
+  // row that is a read.
+  summarySince: 'summarySince',
   reportDimension: 'value',
   secretScope: 'secretScope',
   pullRequest: 'pullRequest',
   flag: 'boolean',
   link: 'value',
+  // `gitProvider` is the one kind whose operation spawns nothing
+  // (`link.openPullRequest`, K2a): the mapping is total over Task 1.2's kinds,
+  // and `value` is what a bare word would reach an argv as if one ever did.
+  gitProvider: 'value',
   installationName: 'value',
   installationCheckout: 'value',
   launchTask: 'stdin',
   launchTitle: 'title',
   launchPlanTask: 'planTask',
+  // The settings write's three (C3). The key is a `value`: it is a dotted
+  // identifier, which is in the renderer's alphabet, and it is emitted as the
+  // bare positional word `settings set|unset` reads. The other two are the kinds
+  // above.
+  settingKey: 'value',
+  settingOp: 'settingOp',
+  settingValue: 'settingValue',
 })
 
 /** SpawnArgument is one declared argument of one command. `flag` is null for a
@@ -603,6 +679,15 @@ export interface SpawnCommand {
    * it is emitted from `argvFor`'s own `runId`, never from `args`.
    */
   readonly runIdFlag?: string
+  /**
+   * `layerFlag` is the flag the settings edit's **layer** is emitted under, and
+   * it too is present on exactly one row (`settings.edit`). It is a column for
+   * `runIdFlag`'s reason and one more: the layer written is the read's own
+   * `target_layer`, so it is a fact of the main process's copy of the document
+   * rather than of any renderer's payload (D1105, D1114), and it is emitted
+   * from `argvFor`'s own `settingsEdit`, never from `args`.
+   */
+  readonly layerFlag?: string
 }
 
 /**
@@ -648,6 +733,13 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     dirFlag: false,
   },
   {
+    // The run list, and the one read that pages: `--limit=N` and `--after=ID`
+    // are its last two declared arguments, both emitted as **one `=`-form word
+    // each** (D818, the console coordinator-v2 plan's C2). The form is the
+    // point -- a value inside the flag's own word cannot be read as a flag --
+    // and it is why this row is the second entry on `EQUALS_FORM_FLAGS`. What
+    // `--watch` would be is still not here: it is on `NEVER_REACHABLE` as a
+    // flag, refused for every row.
     operation: 'runs.list',
     words: ['runs', 'ls', '--json'],
     takesProject: true,
@@ -657,6 +749,8 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
       { key: 'mine', flag: '--mine', kind: 'boolean' },
       { key: 'pr', flag: '--pr', kind: 'pullRequest' },
       { key: 'all', flag: '--all', kind: 'boolean' },
+      { key: 'limit', flag: '--limit=', kind: 'limit' },
+      { key: 'after', flag: '--after=', kind: 'after' },
     ],
     dirFlag: false,
   },
@@ -671,6 +765,28 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     words: ['runs', 'stats', '--json'],
     takesProject: true,
     args: [{ key: 'since', flag: '--since', kind: 'value' }],
+    dirFlag: false,
+  },
+  {
+    // The Project, Coordinator and Spend tabs' totals read (console 0.119.0,
+    // B4's console half), and the row that reads **neither a run object nor a
+    // listing**: the command answers from the budget database's day counters and
+    // the spend history's daily documents, so its child opens no runs bucket and
+    // no compute backend.
+    //
+    // One declared argument, `--since`, emitted as the `=` form
+    // `--since=<window>`: a window inside the flag's own word cannot be read as
+    // a flag, which is this row's half of what `runs summary --since` accepts
+    // (design §5.1 rule 6). The window is `ipc.ts`'s closed set
+    // (`SUMMARY_SINCE_WINDOWS`) and not `parseSince`'s grammar, so a caller
+    // cannot ask this row for the whole history under another spelling -- and
+    // the argument is optional, because omitting it is the command's own
+    // default (`summaryDefaultSince`, `7d`), which is the window the set leads
+    // with.
+    operation: 'runs.summary',
+    words: ['runs', 'summary', '--json'],
+    takesProject: true,
+    args: [{ key: 'since', flag: '--since=', kind: 'summarySince' }],
     dirFlag: false,
   },
   {
@@ -741,6 +857,118 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     dirFlag: false,
   },
   {
+    // The Project tab's read-only models panel (console 0.119.0, the
+    // `models.list` operation; SECURITY-SENSITIVE, because a new row on this
+    // table always is). `fugaro models ls --json` is **the group's only
+    // reachable word**: `add`, `rm`, `use` and `search` are each on
+    // `src/main/ipc.ts`'s never table as a word of this command, so this row is
+    // the one way into `models` and the words below are the whole of its argv.
+    //
+    // **No argument.** The command is cobra's `NoArgs` with one flag of its own
+    // (`--json`, a fixed word here) plus the cloud group's two, and it has no
+    // positional word and no control a screen sets -- so `args` is empty and no
+    // word of the argv is caller-influenced. It takes `--project`/`--config`
+    // like every other read of a project (rule 3): the document is the
+    // *selected* project's routes, models and repositories.
+    //
+    // The read is offline -- the CLI's own comment says it "reaches no bucket,
+    // no database and no host", so the child opens no provider, mints no
+    // credential of the host's and spends nothing -- which is why this row is
+    // on the table at all rather than being a cloud read a screen must
+    // rate-limit.
+    operation: 'models.list',
+    words: ['models', 'ls', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
+    // **The settings read** (the settings-edit plan's C1, D1102): the project's
+    // settings, each with the value a run gets, the layer that decided it and
+    // the three writability facts the row set draws its pencils from. It is
+    // `fugaro settings --json`, and two of the command's own flags are
+    // deliberately **not** words of this row. `--offline` would answer less and
+    // say less about it: without it the read records the layers it could not
+    // reach as `state: unread: ...`, which the screen draws as an unread row --
+    // the honest answer, and the one an operator can act on. The seven other
+    // flags of the group (`--repo`, `--all-repos`, `--layer`, `--grep`,
+    // `--changed`, `--why`) narrow the table by a rule a renderer would be
+    // choosing, and no screen control sets one, so `args` is empty and the
+    // command's positional keys and globs are a form this table does not
+    // express at all.
+    //
+    // **The group's other words are not on this table either**, and unlike
+    // `models` they are not on `NEVER_REACHABLE` yet: the settings-edit plan's
+    // C3 is the task that adds the write's own operation and its never rows, and
+    // until it lands no operation drives `settings set` or `settings unset`.
+    // `settings get` is a read of one key this screen does not need -- the row
+    // set is the whole document -- so it stays off the surface too.
+    //
+    // The read writes nothing and reaches no host: it reads the registry, the
+    // project layer's cache, the local config and the checkouts this machine
+    // remembers (`newSettingsCmd`'s own comment). It takes `--project`/`--config`
+    // like every other read of a project (rule 3), because the console's child
+    // carries neither `FUGARO_PROJECT` nor `FUGARO_CONFIG` and an unaimed read
+    // would answer for whichever installation the machine happens to have.
+    operation: 'settings.read',
+    words: ['settings', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
+    // **The settings write, and the console's second write** (the settings-edit
+    // plan's C3, D1103, D1104, D1105, D1107). Its argv has two spellings, and
+    // both are the same five pieces in the same order:
+    //
+    //   settings set|unset KEY --layer <L> <phase> --project <name>
+    //     [--config <path>] [-- <VALUE>]
+    //
+    // **`set` or `unset` is a declared argument and not a word of this row**,
+    // because the subcommand is the edit's own first fact and a row's words are
+    // fixed: the `op` argument emits the bare word, and `ipc.ts`'s schema closes
+    // the set to the same two. **`KEY` is the bare positional** the subcommand
+    // reads, and it is the read's own key: a key that is not one of the
+    // document's rows is refused by the CLI, which owns the allow-list (D1102).
+    //
+    // **`--layer <L>` comes from the row's `layerFlag` column**, from the main
+    // process's own copy of the read rather than from any argument: what the
+    // window showed is what is spawned (D1105, and D1114 by the route that
+    // computes the layer here rather than taking an enum from a renderer). The
+    // layer is the read's `target_layer` -- the CLI's answer about where this
+    // key may be written -- so no payload of a renderer's can choose one.
+    //
+    // **`<phase>` is the main process's too, and it is one of three spellings**
+    // (`SETTINGS_EDIT_PHASE_WORDS`): the dry run's `--dry-run --json`, and then
+    // `--yes` for the confirmed write -- for a widening and for a narrowing
+    // alike, because the console's child has no terminal to answer the CLI's
+    // ordinary y/N with. `--yes` answers that confirmation (D1107), and no flag,
+    // marker variable or typed name of the console's exists for it: the
+    // console's extra tick is the window's business and not an argv word.
+    //
+    // **The value is the one word behind a `--` terminator**, and it is emitted
+    // last, after the installation's two flags: `--` is where pflag stops
+    // reading flags, so `--project`/`--config` have to be in front of it, and a
+    // value spelled `--layer` or `-draft` lands after it as a value. There is no
+    // value at all for an unset, and then there is no terminator either.
+    //
+    // **No `--add=`/`--remove=`**: a list edit is a write of one item into a
+    // key's own list, and the read carries no member that says a key is
+    // list-shaped, so nothing on the screen could choose that form. The value
+    // the operator types is the key's whole value, which is what `settings set`
+    // writes for a scalar and for a list alike.
+    operation: 'settings.edit',
+    words: ['settings'],
+    takesProject: true,
+    layerFlag: '--layer',
+    args: [
+      { key: 'op', flag: null, kind: 'settingOp' },
+      { key: 'key', flag: null, kind: 'value' },
+      { key: 'value', flag: null, kind: 'settingValue' },
+    ],
+    dirFlag: false,
+  },
+  {
     // The handshake, and the one row that carries no `--project` (rule 3).
     operation: 'cli.version',
     words: ['version'],
@@ -791,6 +1019,56 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     dirFlag: false,
   },
   {
+    // The pull request read (coordinator v2 C3, D816): `coordinator show --repo
+    // <owner/name> --pr <n> --json`, one pull request as the host has it, the
+    // description included. The two arguments are the operation's own and both
+    // required (`src/main/ipc.ts`): the repository as the CLI's canonical
+    // `owner/name` and the number as the digits `IntVar --pr` reads, which is
+    // what the `pullRequest` kind is for.
+    //
+    // **This is the second row whose child mints a credential of the host's**:
+    // `run.launch` is the first, and its child is a run whose token can write.
+    // This one's is the coordinator's own read-only GitHub App installation
+    // token -- so what the table lets this argv carry is the whole security
+    // question, and the answer
+    // is the two arguments and nothing else: no `--token`, no `--host`, no
+    // `--url`, no `--dir` and no positional word. `--json` is the only flag the
+    // row fixes, and every other word it could emit is refused by
+    // `assertArgvFlags` unless it is on `SPAWN_FLAGS` and off `NEVER_REACHABLE`.
+    // It takes `--project`/`--config` like every other read (rule 3): the CLI
+    // resolves the repository's provider the way the project view does.
+    operation: 'coordinator.show',
+    words: ['coordinator', 'show', '--json'],
+    takesProject: true,
+    args: [
+      { key: 'repo', flag: '--repo', kind: 'value' },
+      { key: 'pr', flag: '--pr', kind: 'pullRequest' },
+    ],
+    dirFlag: false,
+  },
+  {
+    // The declarations read (coordinator v2 C4, D827): `coordinator intents --all
+    // --json`, what the fleet's writers have stored, newest first. It is
+    // `coordinator status`'s shape rather than `coordinator show`'s -- `words`
+    // carries the whole argv and `args` is empty -- and that is the security
+    // answer here: there is no field a renderer could fill, so no word of the
+    // argv is caller-influenced at all.
+    //
+    // `--all` is a fixed word and not a control. The stored view is the caller's
+    // own database node (`declared_by` included) and the command wraps it
+    // project-wide itself; there is no argument that narrows it to one
+    // repository, and `--repo`/`--since` -- which the CLI does have -- are on no
+    // row here. It takes `--project`/`--config` like every other read (rule 3),
+    // because the command resolves the local config the way the project view
+    // does, and it writes nothing: no credential of the host's is minted, no
+    // provider is opened and nothing is sent anywhere.
+    operation: 'coordinator.intents',
+    words: ['coordinator', 'intents', '--all', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
     // **The launch, and the console's only write** (design §5.1 rule 11, D22).
     // The row is rule 11's argv word for word: `run --task-file - --json
     // --run-id <id> --repo <owner/name> [--title=<T>] [--plan-task=<P>]
@@ -825,6 +1103,71 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
 ] as const satisfies readonly SpawnCommand[])
 
 /**
+ * SETTINGS_EDIT_OPERATION is the settings write (C3), and it is named here
+ * rather than inline because three things key off it: the phase words below,
+ * the `layerFlag` assertion and `assertArgvFlags`'s terminator.
+ */
+export const SETTINGS_EDIT_OPERATION = 'settings.edit'
+
+/**
+ * SettingsEditPhase is the three states one settings edit's argv can be in, and
+ * **the phase is the main process's** -- `settingsedit.ts` decides it from the
+ * dry run's own document and never from a payload -- so this is not a renderer
+ * argument and no field of the operation's schema names it.
+ *
+ *   - `dry-run` is the first spawn of the two, and it writes nothing (D1106):
+ *     its document is what the confirmation window draws.
+ *   - `widening` is the second spawn **when the dry run classified the edit a
+ *     widening** -- the CLI's own `widening` field and never the console's
+ *     guess -- and it is the state the confirmation window gates on a tick
+ *     (D1109).
+ *   - `narrowing` is the second spawn otherwise, answered by the window the
+ *     operator read with no tick of its own.
+ *
+ * The two write phases are spawned with **the same argv**: `--yes` is on both
+ * (D1107, the settings-edit plan's C3). What the classification decides is the
+ * console's own question -- the tick, which gates Confirm -- and not a word of
+ * what the child is told, because the console spawns every child with stdin
+ * `'ignore'`: the CLI's ordinary y/N has no terminal to be asked at and refuses
+ * a write without the flag (`confirmSettingsWrite`,
+ * `internal/cli/settings_write.go`), so a narrowing that left it off would fail
+ * every time.
+ *
+ * **The `--yes` word lives here and nowhere else**, which is what keeps it out
+ * of a renderer's reach: no argument, no schema key and no row declares it. A
+ * phase that carried it where it does not belong, or dropped it where it does,
+ * is this table being wrong, and `spawn.test.ts`'s phase-table case is the one
+ * that fails when it is.
+ */
+export type SettingsEditPhase = 'dry-run' | 'widening' | 'narrowing'
+
+/** SETTINGS_EDIT_PHASE_WORDS is, per phase, the whole of what that phase adds
+ * to the argv. It is a table rather than a branch so the three spellings are
+ * read in one place, and `argvFor` refuses a phase this table does not name
+ * (`summarySince`'s rule: membership is asked again here rather than trusted,
+ * because a string off a wire reads as a key of any table). */
+export const SETTINGS_EDIT_PHASE_WORDS: Readonly<Record<SettingsEditPhase, readonly string[]>> = Object.freeze({
+  'dry-run': Object.freeze(['--dry-run', '--json']),
+  widening: Object.freeze(['--yes']),
+  narrowing: Object.freeze(['--yes']),
+})
+
+/** SETTINGS_EDIT_LAYERS is the whole of the layer vocabulary
+ * (`settingsWriteLayers`, `internal/cli/settings_set.go:37`): the three
+ * documents one edit can land in. It is the console's own copy because the
+ * layer reaches an argv, and a word that is not one of the three has no
+ * business in one -- the read's `target_layer` is held to this set before the
+ * dry run is spawned, so a document that named a fourth word is a refusal
+ * rather than an argv the CLI would have to refuse. */
+export const SETTINGS_EDIT_LAYERS: readonly string[] = Object.freeze(['local', 'project', 'repo'])
+
+/** TERMINATOR_WORD is the `--` an argv uses to say "everything after this is a
+ * value": one row emits it (`settings.edit`, in front of its new value), and
+ * `assertArgvFlags` reads every word after it as a value rather than as a
+ * flag. */
+export const TERMINATOR_WORD = '--'
+
+/**
  * ARGUMENT_RE is the alphabet a *renderer* argument may use. It is deliberately
  * a whitelist rather than a blacklist: a repository is `owner/name`, a run id is
  * `YYYYMMDD-HHMMSS-xxxx`, a day is `YYYY-MM-DD`, `--since` is `Nd`/`3h`/`0` or
@@ -837,6 +1180,17 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
  * word, and with `shell: false` there is no shell to spell it for.
  */
 const ARGUMENT_RE = /^[A-Za-z0-9._:@/+-]+$/
+
+/**
+ * sameArgv answers whether two argv arrays are the same command line, element by
+ * element. It is what holds a settings write to the argv its confirmation window
+ * drew (`source.ts`'s `SETTINGS_EDIT_MOVED`): the words, their order and their
+ * count are all of a command line, so a substring test or a set comparison would
+ * pass two different spells.
+ */
+export function sameArgv(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((word, index) => word === right[index])
+}
 
 /**
  * isSafeArgumentValue answers whether one renderer argument may become an argv
@@ -987,6 +1341,13 @@ export function argvFor(
      * required by the one row that carries a `runIdFlag` and refused by every
      * other row, so an id cannot be smuggled into a read's argv. */
     readonly runId?: string | undefined
+    /** `settingsEdit` is the settings write's own two facts (C3): the phase the
+     * main process decided from the dry run's document, and the layer the read's
+     * own row named. Both are required by the one row that carries a
+     * `layerFlag` and refused by every other row, for `runId`'s reason -- the
+     * layer and the `--yes` are the two words a renderer must not be able to
+     * choose (D1105, D1107). */
+    readonly settingsEdit?: { readonly phase: SettingsEditPhase; readonly layer: string } | undefined
   },
 ): readonly string[] {
   const row = spawnCommandFor(operation)
@@ -1007,6 +1368,12 @@ export function argvFor(
   } else if (context.runId !== undefined) {
     refused(`${operation} takes no run id: only the launch's own row carries one`)
   }
+  // The value that is emitted behind the terminator, collected here and pushed
+  // after the installation's flags: pflag stops reading flags at `--`, so the
+  // two project flags have to be in front of it for the child to read them at
+  // all, and the value has to be behind it for a value spelled `--layer` to
+  // stay a value (D1104).
+  const terminated: string[] = []
   for (const spec of row.args) {
     const value: ValidatedArgument | undefined = args[spec.key]
     if (value === undefined) continue
@@ -1055,6 +1422,58 @@ export function argvFor(
         argv.push(value)
         break
       }
+      case 'limit': {
+        // One word, `--limit=<n>`, and the digits come from here. The bound is
+        // checked again rather than trusted: the schema is the renderer's gate
+        // (`ipc.ts`'s `runLimit`), and this is the spelling's -- `String` would
+        // happily render `1e+21` or `1.5`, which cobra's `IntVar` refuses only
+        // after a child exists, which is the one outcome both checks prevent.
+        if (
+          typeof value !== 'number' ||
+          !Number.isInteger(value) ||
+          value < 1 ||
+          value > RUNS_LIST_MAX_LIMIT
+        ) {
+          refused(`${operation}'s ${spec.key} is not a run page size`)
+        }
+        argv.push(`${spec.flag ?? ''}${String(value)}`)
+        break
+      }
+      case 'after': {
+        // One word, `--after=<run id>`: the id stays inside the flag's own
+        // word, so it can never be read as a flag -- the design's reason for
+        // the `=` form on this row (design §5.1 rule 6). The value is held to
+        // `isSafeArgumentValue` as well, which the validator's run-id grammar
+        // is narrower than; what this adds is the refusal of a word the argv
+        // could not carry at all.
+        if (typeof value !== 'string' || value === '' || value.includes('\u0000') || !isSafeArgumentValue(value)) {
+          refused(`${operation}'s ${spec.key} is not a run id this console will pass to the CLI`)
+        }
+        argv.push(`${spec.flag ?? ''}${value}`)
+        break
+      }
+      case 'summarySince': {
+        // One word, `--since=<window>`: the window stays inside the flag's own
+        // word, so it can never be read as a flag -- the design's reason for the
+        // `=` form on this row (design §5.1 rule 6).
+        //
+        // **The membership is asked again here rather than trusted**, the way
+        // the `limit` case re-asks its bound: the schema is the renderer's gate
+        // (`ipc.ts`'s `summarySince`) and this is the argv's, and the window the
+        // two could disagree about is the whole history -- `0` is `parseSince`'s
+        // "no lower bound", which is exactly the read the command exists to make
+        // unnecessary. `isSafeArgumentValue` stays on top of that for the words
+        // no member of the set can be.
+        if (
+          typeof value !== 'string' ||
+          !SUMMARY_SINCE_WINDOWS.includes(value) ||
+          !isSafeArgumentValue(value)
+        ) {
+          refused(`${operation}'s ${spec.key} is not a window this console will pass to the CLI`)
+        }
+        argv.push(`${spec.flag ?? ''}${value}`)
+        break
+      }
       case 'pullRequest': {
         // The validator hands this over as the *number* it checked (ipc.ts's
         // `pullRequest` kind returns it unchanged), and the CLI's `--pr` is an
@@ -1073,7 +1492,58 @@ export function argvFor(
         argv.push(spelled)
         break
       }
+      case 'settingOp': {
+        // The subcommand, as one bare word: `set` or `unset`, and nothing else.
+        // The membership is asked again here rather than trusted, the way
+        // `summarySince`'s is: this is the word that decides what the child
+        // does, `ipc.ts`'s schema closes it to the same two, and a third word
+        // would be a third subcommand this console could run.
+        if (value !== 'set' && value !== 'unset') {
+          refused(`${operation}'s ${spec.key} is not one of the command's two subcommands`)
+        }
+        argv.push(value)
+        break
+      }
+      case 'settingValue': {
+        // The operator's new value, and the one argument of this console that
+        // is passed behind the terminator -- so it emits no word here and is
+        // pushed after the installation's flags (`terminated`, above). What is
+        // checked here is what an argv element can be at all: a non-empty
+        // string, no NUL (execve refuses one), and inside the console's own
+        // bound. **A leading dash, a space and an `=` are not refused**: the
+        // terminator is what makes them values rather than flags, and the WSL
+        // route's own metacharacter check is what refuses a word it cannot
+        // quote (D1104's note).
+        if (
+          typeof value !== 'string' ||
+          value === '' ||
+          value.includes('\u0000') ||
+          value.length > SETTINGS_VALUE_MAX_LENGTH
+        ) {
+          refused(`${operation}'s ${spec.key} is not a value this console will pass to the CLI`)
+        }
+        terminated.push(value)
+        break
+      }
     }
+  }
+
+  if (row.layerFlag !== undefined) {
+    const edit = context.settingsEdit
+    if (edit === undefined) {
+      refused(`${operation} needs the layer the read's own row named: only the main process knows it`)
+    }
+    if (!SETTINGS_EDIT_LAYERS.includes(edit.layer)) {
+      refused(`${operation} would write the ${edit.layer} layer, which is not one of the three documents an edit lands in`)
+    }
+    argv.push(row.layerFlag, edit.layer)
+    const words = SETTINGS_EDIT_PHASE_WORDS[edit.phase]
+    if (words === undefined) {
+      refused(`${operation} was given a phase that is neither a dry run nor a write`)
+    }
+    for (const word of words) argv.push(word)
+  } else if (context.settingsEdit !== undefined) {
+    refused(`${operation} takes no settings phase: only the settings write's own row carries one`)
   }
 
   if (row.takesProject) {
@@ -1098,6 +1568,15 @@ export function argvFor(
     argv.push(DIR_FLAG, context.directory)
   }
 
+  // The terminator and the value behind it, last of all: `--` says every word
+  // after it is a value, and it is emitted only by the one row that has one
+  // (`settings.edit`). A row that produced a terminated word without being that
+  // row is refused by `assertArgvFlags` on the word `--` itself.
+  if (terminated.length > 0) {
+    argv.push(TERMINATOR_WORD)
+    for (const word of terminated) argv.push(word)
+  }
+
   assertArgvFlags(operation, argv)
   return Object.freeze(argv)
 }
@@ -1108,41 +1587,99 @@ export function argvFor(
  * ever printed -- because this one is about the id the *console* makes. */
 const RUN_ID_ARGUMENT_RE = /^\d{8}-\d{6}-[0-9a-f]{4}$/
 
-/** RUN_LAUNCH_OPERATION is the one row whose argv may carry a word that is not
- * on `SPAWN_FLAGS` verbatim: the launch's two `=`-form flags (below). */
+/** RUN_LAUNCH_OPERATION is the launch, and the first of the two rows whose argv
+ * may carry a word that is not on `SPAWN_FLAGS` verbatim: its two `=`-form
+ * flags, which `EQUALS_FORM_FLAGS` (below) is the table of. */
 const RUN_LAUNCH_OPERATION = 'run.launch'
 
 /** RUN_LAUNCH_EQUALS_FLAGS are the two prefixes `assertArgvFlags` admits for
  * that row and no other. They are `spawn.ts`'s own spelling of the two words
- * rule 11 fixes, and the design names this exact list: "the `--title=` and
- * `--plan-task=` prefixes, for the `run.launch` row alone". */
+ * rule 11 fixes, and the design states the same bound in rule 11's words: each
+ * row gets exactly the `=`-form prefixes its own table declares, and no row
+ * gets another's. */
 export const RUN_LAUNCH_EQUALS_FLAGS: readonly string[] = Object.freeze(['--title=', '--plan-task='])
+
+/** RUNS_LIST_EQUALS_FLAGS are `runs.list`'s two `=`-form prefixes: the page and
+ * the cursor D818 adds (`--limit=<n>`, `--after=<run id>`). They are a list of
+ * their own rather than a widening of `RUN_LAUNCH_EQUALS_FLAGS`, because the
+ * two rows' words are two rows' words: this row is a read whose values are a
+ * number and a run id, and the launch's are the two strings rule 11 writes. */
+export const RUNS_LIST_EQUALS_FLAGS: readonly string[] = Object.freeze(['--limit=', '--after='])
+
+/** RUNS_SUMMARY_EQUALS_FLAGS is `runs.summary`'s one `=`-form prefix: the
+ * window. It is the console's own spelling of the word §5.1 rule 6's row
+ * permits, and it is a list of one so that the row and this table stay
+ * two-sided the way the runs list's are. */
+export const RUNS_SUMMARY_EQUALS_FLAGS: readonly string[] = Object.freeze(['--since='])
+
+/**
+ * EQUALS_FORM_FLAGS is, **per operation**, the `=`-form flag prefixes that
+ * operation's argv may carry -- the one place `assertArgvFlags` reads its
+ * exception from. Every other `--`-word must be on `SPAWN_FLAGS` verbatim; a
+ * word here is one word of the form `--flag=value`, which no `SPAWN_FLAGS`
+ * entry can match because those are flag *names*, and the value after the `=`
+ * is therefore never read as a flag.
+ *
+ * **The table is bounded in three ways, and `assertSpawnSurface` asserts all
+ * three.** It is keyed by operation, so an operation absent from it can emit no
+ * `=`-form word at all -- a read cannot grow one by copying another row's. The
+ * entries are exactly the flags the row itself declares with a trailing `=`, so
+ * a prefix here and a row that emits it cannot land apart. And a bare flag or
+ * an `=` with nothing after it is not a match: `isEqualsFormWord` requires a
+ * value.
+ */
+export const EQUALS_FORM_FLAGS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  [RUN_LAUNCH_OPERATION]: RUN_LAUNCH_EQUALS_FLAGS,
+  'runs.list': RUNS_LIST_EQUALS_FLAGS,
+  'runs.summary': RUNS_SUMMARY_EQUALS_FLAGS,
+})
 
 /** assertArgvFlags refuses an argv carrying a flag outside `SPAWN_FLAGS`, and one
  * carrying a flag the design's never-table names. Both checks are here rather
  * than in the callers because this function is the only producer of an argv.
  *
- * **The launch's two `=`-form flags are the one exception, and it is spelled
- * out rather than implied.** `--title=<T>` and `--plan-task=<P>` are one word
- * each -- the design fixes that form because a value inside the flag's own word
- * cannot be read as a flag -- so they can never match a `SPAWN_FLAGS` entry
- * that is a flag *name*. Accepting them here is what makes that form
- * expressible at all, and the exception is bounded in three ways: it is the
- * `run.launch` row alone, it is those two prefixes alone, and the value after
- * the `=` has to be non-empty. A bare `--title` (no `=`) is not on this list,
- * and neither prefix is admitted for any other row -- so a read cannot grow an
- * `=`-form flag by copying it. The value's own rules (its cap, one line, no
- * control character, no format character) are the validator's: `ipc.ts` runs
- * `launchrules.ts`'s checker for the `title` and `planTask` kinds before any of
- * this is reached. */
+ * **The `=`-form flags are the one exception, and it is spelled out rather than
+ * implied.** `--title=<T>`, `--plan-task=<P>` (the launch's), `--limit=<N>`,
+ * `--after=<RUN-ID>` (the runs list's) and `--since=<WINDOW>` (the runs
+ * summary's) are one word each -- the design fixes
+ * that form because a value inside the flag's own word cannot be read as a flag
+ * -- so they can never match a `SPAWN_FLAGS` entry that is a flag *name*.
+ * Accepting them here is what makes that form expressible at all, and the
+ * exception is bounded: `EQUALS_FORM_FLAGS` names the prefixes each operation
+ * may emit and no others, `assertSpawnSurface` holds that table to the rows'
+ * own declared flags, and the value after the `=` has to be non-empty -- so a
+ * bare `--limit` (no `=`) is not on this list, and no operation admits a prefix
+ * it does not declare. Each value's own rules are the validator's: `ipc.ts`
+ * runs `launchrules.ts`'s checker for the `title` and `planTask` kinds, and the
+ * run page size and run-id grammars for the runs list's two, before any of this
+ * is reached.
+ *
+ * **The terminator is the other exception, and it is a word rather than a
+ * prefix.** `--` is emitted by `settings.edit` alone, in front of the operator's
+ * new value, and for that row every word after it is read as a value -- a value
+ * spelled `--layer` is exactly the case the terminator exists for (D1104). For
+ * every other row the word is refused below, because `--` is on no `SPAWN_FLAGS`
+ * entry and this function admits it by operation and by nothing else. */
 export function assertArgvFlags(operation: string, argv: readonly string[]): void {
   const command = commandPathIn(argv)
+  let terminated = false
   for (const element of argv) {
-    if (!element.startsWith('--')) continue
-    if (operation === RUN_LAUNCH_OPERATION) {
-      const equals = RUN_LAUNCH_EQUALS_FLAGS.find((prefix) => element.startsWith(prefix))
-      if (equals !== undefined && element.length > equals.length) continue
+    if (terminated) continue
+    if (element === TERMINATOR_WORD) {
+      // The terminator is admitted **by operation**, like the `=` form above and
+      // for the same reason: it is one row's word (`settings.edit`), and for
+      // every other row `--` is not on `SPAWN_FLAGS` and is refused below. What
+      // follows it is read as a value and not as a flag, which is the whole of
+      // what a terminator means -- and it is what lets the settings edit pass a
+      // value spelled `--layer` without that word being refused here.
+      if (operation !== SETTINGS_EDIT_OPERATION) {
+        refused(`${operation} would emit ${TERMINATOR_WORD}, which only the settings write's own row may emit`)
+      }
+      terminated = true
+      continue
     }
+    if (!element.startsWith('--')) continue
+    if (isEqualsFormWord(operation, element)) continue
     if (!SPAWN_FLAGS.includes(element)) {
       refused(`${operation} would emit ${element}, which is not a flag this console may spawn`)
     }
@@ -1166,6 +1703,19 @@ function commandPathIn(argv: readonly string[]): string {
     words.push(word)
   }
   return words.join(' ')
+}
+
+/** isEqualsFormWord answers whether one argv element is a `--flag=value` word of
+ * the prefixes `EQUALS_FORM_FLAGS` names for this operation -- the whole of the
+ * exception `assertArgvFlags` makes. It is a lookup and not a shape test on
+ * purpose: `--anything=x` is not a word this console may emit, and an operation
+ * the table does not name may emit no `=`-form word at all. The `length` clause
+ * is what keeps the *flag alone* (`--limit`) and an empty value (`--limit=`)
+ * refused: the exception is a prefix **with a value after it**. */
+function isEqualsFormWord(operation: string, element: string): boolean {
+  const prefixes = EQUALS_FORM_FLAGS[operation]
+  if (prefixes === undefined) return false
+  return prefixes.some((prefix) => element.startsWith(prefix) && element.length > prefix.length)
 }
 
 /**
@@ -1367,6 +1917,25 @@ export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
         refused(`${row.operation} would emit ${row.runIdFlag}, which is not a flag this console may spawn`)
       }
     }
+    // The layer column and the terminated value, held the same way: both belong
+    // to the settings write's own row and to no other, and the flag is one this
+    // module may spawn. The two are asserted together because they are the two
+    // halves of one thing -- the edit whose value is passed behind a terminator
+    // is the edit whose layer the main process names.
+    if (row.layerFlag !== undefined) {
+      if (row.operation !== SETTINGS_EDIT_OPERATION) {
+        refused(`${row.operation} carries a layer flag: only the settings write's own row has one`)
+      }
+      if (!SPAWN_FLAGS.includes(row.layerFlag)) {
+        refused(`${row.operation} would emit ${row.layerFlag}, which is not a flag this console may spawn`)
+      }
+    }
+    const terminates = row.args.some((spec) => spec.kind === 'settingValue')
+    if (terminates !== (row.operation === SETTINGS_EDIT_OPERATION)) {
+      refused(
+        `${row.operation} ${terminates ? 'emits a value behind the terminator' : 'has no value behind the terminator'}: only the settings write's own row passes one`,
+      )
+    }
     const declared = new Set<string>(operation.args.map((spec) => spec.key))
     for (const spec of row.args) {
       if (!declared.has(spec.key)) {
@@ -1383,6 +1952,24 @@ export function assertSpawnSurface(rows: readonly SpawnCommand[]): void {
           `${row.operation}'s ${spec.key} is declared ${String(expected)} in the spawn table, but the operation's schema says ${argument?.kind ?? 'nothing'}`,
         )
       }
+    }
+    // The `=`-form words, held two-sided the way the kinds above are: the row's
+    // arguments that emit one (`flag` carrying the trailing `=`) must be exactly
+    // the prefixes `EQUALS_FORM_FLAGS` names for this operation. A row that
+    // grew an `=`-form argument without an entry in that table would be refused
+    // by `assertArgvFlags` at spawn time rather than here -- a refusal a user
+    // sees instead of a build that fails -- and an entry for a prefix no row
+    // declares is a permission nothing uses, which is the shape a later row
+    // could quietly start using.
+    const declaredEquals = row.args
+      .map((spec) => spec.flag)
+      .filter((flag): flag is string => flag !== null && flag.endsWith('='))
+      .sort()
+    const tabledEquals = [...(EQUALS_FORM_FLAGS[row.operation] ?? [])].sort()
+    if (declaredEquals.join(' ') !== tabledEquals.join(' ')) {
+      refused(
+        `${row.operation}'s \`=\`-form arguments and EQUALS_FORM_FLAGS disagree: the row declares ${declaredEquals.join(', ') || 'none'} and the table names ${tabledEquals.join(', ') || 'none'}`,
+      )
     }
     assertArgvFlags(row.operation, row.words)
   }
@@ -2536,6 +3123,12 @@ export function planFor(
      * on `run.launch`'s plan and absent from every read's, so a read cannot
      * carry a run id and the one row that must cannot leave it out. */
     readonly runId?: string | undefined
+    /** `settingsEdit` is the settings write's own two facts (`argvFor`'s
+     * `context.settingsEdit`), for `runId`'s reason: it is present on
+     * `settings.edit`'s two plans -- the dry run's and the write's -- and absent
+     * from every other row's, and it is the **only** way a layer or a phase
+     * reaches an argv. */
+    readonly settingsEdit?: { readonly phase: SettingsEditPhase; readonly layer: string } | undefined
   },
 ): SpawnPlan {
   const wsl = context.wsl
@@ -2544,6 +3137,7 @@ export function planFor(
       target: context.target,
       directory: wsl.directory,
       runId: context.runId,
+      settingsEdit: context.settingsEdit,
     })
     // Both rules of this route, and both before a process exists: the words the
     // distribution's shell would read as syntax, and the paths spelled for the
@@ -2600,6 +3194,7 @@ export function planFor(
     target: context.target,
     directory: context.directory,
     runId: context.runId,
+    settingsEdit: context.settingsEdit,
   })
   return Object.freeze({
     operation,

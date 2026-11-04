@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1616,14 +1618,14 @@ func TestRunsLsParallelOrderStable(t *testing.T) {
 		want = append(want, s.slug+"/"+s.id)
 	}
 	// The listing's order: start time newest first, the full run reference
-	// breaking a tie.
+	// descending breaking a tie.
 	slices.SortStableFunc(want, func(a, b string) int {
 		at, _ := runstore.RunTime(a[strings.Index(a, "/")+1:])
 		bt, _ := runstore.RunTime(b[strings.Index(b, "/")+1:])
 		if c := bt.Compare(at); c != 0 {
 			return c
 		}
-		return strings.Compare(a, b)
+		return strings.Compare(b, a)
 	})
 	have := make([]string, 0, len(got.Runs))
 	for _, r := range got.Runs {
@@ -1656,8 +1658,12 @@ func TestRunsLsParallelOrderStable(t *testing.T) {
 // it rather than at whatever the scheduler happened to overlap.
 type lsWidthDriver struct {
 	stubBucket
-	mu        sync.Mutex
-	objects   map[string][]byte
+	mu      sync.Mutex
+	objects map[string][]byte
+	// readKeys is every object key a read reached, in order, the absence
+	// probes of launch.json included: what a listing prints a page of is read
+	// whole, because the totals line covers the window and not the page.
+	readKeys  []string
 	want      int
 	hold      time.Duration
 	open      int
@@ -1684,6 +1690,13 @@ func (d *lsWidthDriver) peakOpen() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.peak
+}
+
+// keysRead is every object key a read reached.
+func (d *lsWidthDriver) keysRead() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return slices.Clone(d.readKeys)
 }
 
 // ListPaged answers the listing a run listing walks: the directories under the
@@ -1719,6 +1732,7 @@ func (d *lsWidthDriver) ListPaged(_ context.Context, opts *driver.ListOptions) (
 
 func (d *lsWidthDriver) NewRangeReader(_ context.Context, key string, offset, length int64, _ *driver.ReaderOptions) (driver.Reader, error) {
 	d.mu.Lock()
+	d.readKeys = append(d.readKeys, key)
 	body, ok := d.objects[key]
 	d.mu.Unlock()
 	if !ok {
@@ -1766,14 +1780,15 @@ func (r *lsWidthReader) Attributes() *driver.ReaderAttributes {
 	return &driver.ReaderAttributes{ContentType: "application/json", Size: r.size}
 }
 
-// lsWidthRuns writes n runs into a plain bucket and hands back a driver holding
-// the same objects byte for byte: the listing reads the driver, so what the
-// width test measures is runstore's own objects and never a second fixture's.
-func lsWidthRuns(t *testing.T, n int) *lsWidthDriver {
+// lsBucketRuns writes n runs into a fresh in-memory bucket and hands back the
+// bucket and their run IDs, oldest first. From 2026-10-18, a date outside ls's
+// default window, so a listing test passes --since 0 to reach them.
+func lsBucketRuns(t *testing.T, n int) (*blobx.Bucket, []string) {
 	t.Helper()
 	ctx := context.Background()
 	b := blobx.Wrap(memblob.OpenBucket(nil))
 	at := time.Date(2026, 10, 18, 9, 0, 0, 0, time.UTC)
+	ids := make([]string, 0, n)
 	for i := range n {
 		id := at.Add(time.Duration(i)*time.Minute).Format("20060102-150405") + fmt.Sprintf("-%04x", i)
 		s := runstore.Open(b.Bucket, appSlug, id)
@@ -1783,8 +1798,16 @@ func lsWidthRuns(t *testing.T, n int) *lsWidthDriver {
 		if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Status: runstore.StatusSucceeded}); err != nil {
 			t.Fatal(err)
 		}
+		ids = append(ids, id)
 	}
-	d := &lsWidthDriver{objects: map[string][]byte{}, width: make(chan struct{})}
+	return b, ids
+}
+
+// lsDriverObjects copies a bucket's objects into a driver's map: the listing
+// then reads runstore's own objects, never a second fixture's copy of them.
+func lsDriverObjects(t *testing.T, d *lsWidthDriver, b *blobx.Bucket) {
+	t.Helper()
+	ctx := context.Background()
 	for it := b.List(nil); ; {
 		obj, err := it.Next(ctx)
 		if errors.Is(err, io.EOF) {
@@ -1799,6 +1822,16 @@ func lsWidthRuns(t *testing.T, n int) *lsWidthDriver {
 		}
 		d.objects[obj.Key] = body
 	}
+}
+
+// lsWidthRuns writes n runs into a plain bucket and hands back a driver holding
+// the same objects byte for byte: the listing reads the driver, so what the
+// width test measures is runstore's own objects and never a second fixture's.
+func lsWidthRuns(t *testing.T, n int) *lsWidthDriver {
+	t.Helper()
+	b, _ := lsBucketRuns(t, n)
+	d := &lsWidthDriver{objects: map[string][]byte{}, width: make(chan struct{})}
+	lsDriverObjects(t, d, b)
 	return d
 }
 
@@ -1825,5 +1858,462 @@ func TestRunsLsReadsStayWithinLsWorkers(t *testing.T) {
 	}
 	if peak := d.peakOpen(); peak <= 1 || peak > lsWorkers {
 		t.Errorf("runs ls read %d objects at once, want more than one and at most lsWorkers (%d): the listing reads in parallel and within its bound", peak, lsWorkers)
+	}
+}
+
+// lsLimitScheme is the URL scheme the counting runs bucket is opened with
+// (lslimit://), registered below so a fixture can point bucket_url at it and
+// drive the real command over the bucket whose reads it counts.
+const lsLimitScheme = "lslimit"
+
+// lsLimitBucket is the driver that scheme's opener hands out: the test that
+// installs one clears it again. The tests in this package do not run in
+// parallel, so one package-level slot is enough.
+var lsLimitBucket *lsWidthDriver
+
+func init() {
+	blob.DefaultURLMux().RegisterBucket(lsLimitScheme, lsLimitOpener{})
+}
+
+// lsLimitOpener opens the counting runs bucket.
+type lsLimitOpener struct{}
+
+func (lsLimitOpener) OpenBucketURL(context.Context, *url.URL) (*blob.Bucket, error) {
+	if lsLimitBucket == nil {
+		return nil, fmt.Errorf("%s:// opened with no counting bucket installed", lsLimitScheme)
+	}
+	return blob.NewBucket(lsLimitBucket), nil
+}
+
+// lsLimitRuns seeds n runs into the counting bucket, serves the project marker
+// from it (the name check every cloud command makes reads it, and that read is
+// not the one under test) and points the fixture's config at it, so the
+// command under test reads the runs the test seeded and the driver records
+// every object it touches.
+func lsLimitRuns(t *testing.T, f *cloudFixture, n int) (*lsWidthDriver, []string) {
+	t.Helper()
+	b, ids := lsBucketRuns(t, n)
+	d := &lsWidthDriver{objects: map[string][]byte{}, width: make(chan struct{})}
+	lsDriverObjects(t, d, b)
+	marker, err := os.ReadFile(f.markerPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.objects[infra.ProjectMarkerObject] = marker
+	lsLimitBucket = d
+	t.Cleanup(func() { lsLimitBucket = nil })
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(f.bucket)) {
+		t.Fatalf("%s does not name the fixture's runs bucket %q", path, f.bucket)
+	}
+	if err := os.WriteFile(path, bytes.ReplaceAll(data, []byte(f.bucket), []byte(lsLimitScheme+"://runs")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return d, ids
+}
+
+// TestRunsLsLimitReadsTheWholeWindow: --limit shortens what a listing prints
+// and nothing else. The totals line is the window's -- a page is not a total
+// (D818) -- so the page is cut after the sort, over rows every run in the
+// window was read for: the counting bucket is asked which keys the reads
+// reached, and a run the page leaves out is one whose objects were opened
+// anyway, because the totals cover it.
+//
+// Mutation caught: cutting the limit into the refs before they are read
+// (which is what the flag did when it was added) -- the listing prints the
+// same rows and totals the page, so the number beside a page is the page's.
+func TestRunsLsLimitReadsTheWholeWindow(t *testing.T) {
+	f := newCloudFixture(t)
+	const runs, limit = 6, 2
+	d, ids := lsLimitRuns(t, f, runs)
+
+	got, _ := lsJSON(t, "--since", "0", "--limit", strconv.Itoa(limit))
+	if len(got.Runs) != limit {
+		t.Fatalf("ls --limit %d listed %d runs, want %d", limit, len(got.Runs), limit)
+	}
+	newest := slices.Clone(ids[runs-limit:])
+	slices.Reverse(newest)
+	listed := runIDs(got.Runs)
+	if !slices.Equal(listed, newest) {
+		t.Fatalf("ls --limit %d listed %v, want the newest %d runs %v", limit, listed, limit, newest)
+	}
+	if got.Totals.Runs != runs {
+		t.Errorf("ls --limit %d totals %d runs, want the window's %d: a page is not a total", limit, got.Totals.Runs, runs)
+	}
+	for _, id := range ids {
+		if !slices.ContainsFunc(d.keysRead(), func(k string) bool { return strings.HasPrefix(k, "runs/"+appSlug+"/"+id+"/") }) {
+			t.Errorf("the listing read no object of run %s, which its totals cover: --limit prints a page and reads the window", id)
+		}
+	}
+}
+
+// TestRunsLsLimitZeroIsAll: 0 is every run in the window, the listing ls has
+// always given, and it is also what the flag defaults to.
+func TestRunsLsLimitZeroIsAll(t *testing.T) {
+	f := newCloudFixture(t)
+	today := time.Now().UTC().Format("20060102")
+	seedRun(t, f, today+"-090000-aaaa", "", "someone@example.com", false)
+	seedRun(t, f, today+"-091000-bbbb", "", "someone@example.com", false)
+	seedRun(t, f, today+"-092000-cccc", "", "someone@example.com", false)
+
+	all, _ := lsJSON(t, "--since", "0")
+	zero, _ := lsJSON(t, "--since", "0", "--limit", "0")
+	if len(all.Runs) != 3 || len(zero.Runs) != 3 {
+		t.Fatalf("ls listed %d runs, --limit 0 listed %d, want the bucket's 3", len(all.Runs), len(zero.Runs))
+	}
+	if !slices.Equal(runIDs(all.Runs), runIDs(zero.Runs)) {
+		t.Errorf("--limit 0 listed %v, the default listed %v: 0 is every run in the window, not none", runIDs(zero.Runs), runIDs(all.Runs))
+	}
+}
+
+// TestRunsLsLimitJSONShape: --limit narrows which runs the document carries
+// and moves nothing about the document itself -- the same top-level keys, rows
+// with every field they carry without the flag, and a totals block that is
+// still the window's. --json is what the console reads, so a shape that
+// changed with the flag would be a document it does not know.
+func TestRunsLsLimitJSONShape(t *testing.T) {
+	f := newCloudFixture(t)
+	today := time.Now().UTC().Format("20060102")
+	seedRun(t, f, today+"-090000-aaaa", "", "someone@example.com", false)
+	seedRun(t, f, today+"-091000-bbbb", "", "someone@example.com", false)
+	seedRun(t, f, today+"-092000-cccc", "", "someone@example.com", false)
+
+	docKeys, rowKeys := lsJSONKeys(t, "--since", "0")
+	limitedDocKeys, limitedRowKeys := lsJSONKeys(t, "--since", "0", "--limit", "2")
+	if !slices.Equal(docKeys, limitedDocKeys) {
+		t.Errorf("the document's keys are %v with --limit and %v without, want the same document", limitedDocKeys, docKeys)
+	}
+	if !slices.Equal(rowKeys, limitedRowKeys) {
+		t.Errorf("a row's keys are %v with --limit and %v without, want the same rows", limitedRowKeys, rowKeys)
+	}
+	gone, _ := lsJSON(t, "--since", "0", "--limit", "2")
+	if len(gone.Runs) != 2 || gone.Totals.Runs != 3 {
+		t.Errorf("ls --limit 2 lists %d runs and totals %d, want 2 rows and the window's 3", len(gone.Runs), gone.Totals.Runs)
+	}
+}
+
+// lsPagedRuns seeds n runs a minute apart and returns their run IDs newest
+// first, which is the order a listing prints them in. The clock is lsNow's, so
+// the IDs cannot age out of the window under test.
+func lsPagedRuns(t *testing.T, f *cloudFixture, n int) []string {
+	t.Helper()
+	ids := make([]string, 0, n)
+	for i := range n {
+		ids = append(ids, recentRunID(t, time.Duration(i+1)*time.Minute, fmt.Sprintf("%04x", i)))
+	}
+	for _, id := range ids {
+		seedRun(t, f, id, "", "someone@example.com", false)
+	}
+	return ids
+}
+
+// TestRunsLsLimitPrintsAPageAndTotalsTheWindow: --limit N prints the newest N
+// rows, in the text listing and in --json, and the totals are the window's in
+// both. A reader of a page learns what the whole window costs, which is the
+// one thing a page cannot show on its own (D818).
+func TestRunsLsLimitPrintsAPageAndTotalsTheWindow(t *testing.T) {
+	f := newCloudFixture(t)
+	ids := lsPagedRuns(t, f, 5)
+
+	got, _ := lsJSON(t, "--since", "0", "--limit", "2")
+	if want := ids[:2]; !slices.Equal(runIDs(got.Runs), want) {
+		t.Fatalf("ls --limit 2 listed %v, want the newest two %v", runIDs(got.Runs), want)
+	}
+	if got.Totals.Runs != len(ids) {
+		t.Errorf("ls --limit 2 totals %d runs, want the window's %d: --limit shortens what is printed and nothing else", got.Totals.Runs, len(ids))
+	}
+
+	out, errOut, err := execute(t, "runs", "ls", "--since", "0", "--limit", "2")
+	if err != nil {
+		t.Fatalf("ls: %v (%s)", err, errOut)
+	}
+	if !strings.Contains(out, "5 runs") {
+		t.Errorf("the text listing's totals line is not the window's:\n%s", out)
+	}
+	for _, id := range ids[2:] {
+		if strings.Contains(out, id) {
+			t.Errorf("the text listing printed run %s, which --limit 2 left out:\n%s", id, out)
+		}
+	}
+}
+
+// TestRunsLsAfterPagesTheListing: --after RUN-ID starts the listing after that
+// run in the listing's own order, so the same argv with the last id of a page
+// is the next page, and the totals stay the window's on every page. A cursor
+// naming the last row is a page with nothing in it, and it is not a refusal:
+// the id is in the window, there is simply nothing after it.
+func TestRunsLsAfterPagesTheListing(t *testing.T) {
+	f := newCloudFixture(t)
+	ids := lsPagedRuns(t, f, 5)
+
+	first, _ := lsJSON(t, "--since", "0", "--limit", "2")
+	if want := ids[:2]; !slices.Equal(runIDs(first.Runs), want) {
+		t.Fatalf("page one = %v, want %v", runIDs(first.Runs), want)
+	}
+	second, _ := lsJSON(t, "--since", "0", "--limit", "2", "--after", first.Runs[1].RunID)
+	if want := ids[2:4]; !slices.Equal(runIDs(second.Runs), want) {
+		t.Fatalf("page two = %v, want %v", runIDs(second.Runs), want)
+	}
+	if second.Totals.Runs != len(ids) {
+		t.Errorf("page two totals %d runs, want the window's %d", second.Totals.Runs, len(ids))
+	}
+	// The brief's case: a page of two starting after the third row.
+	afterThird, _ := lsJSON(t, "--since", "0", "--limit", "2", "--after", ids[2])
+	if want := ids[3:]; !slices.Equal(runIDs(afterThird.Runs), want) {
+		t.Fatalf("--after the third row = %v, want the next two %v", runIDs(afterThird.Runs), want)
+	}
+	// The cursor names a row and not a time: a cursor on the last row is a
+	// page with nothing after it, which is an answer rather than a refusal.
+	last, _ := lsJSON(t, "--since", "0", "--after", ids[len(ids)-1])
+	if len(last.Runs) != 0 {
+		t.Errorf("--after the last row listed %v, want nothing after it", runIDs(last.Runs))
+	}
+	if last.Totals.Runs != len(ids) {
+		t.Errorf("the empty page totals %d runs, want the window's %d", last.Totals.Runs, len(ids))
+	}
+}
+
+// TestRunsLsAfterAnIDTheWindowDoesNotHoldIsRefused: a cursor is a row of the
+// listing it pages, and an id the window does not hold is exit 1 naming it.
+// The refusal is the point of the flag: an empty page reads as "no more runs",
+// which is the one wrong answer a page can give.
+func TestRunsLsAfterAnIDTheWindowDoesNotHoldIsRefused(t *testing.T) {
+	f := newCloudFixture(t)
+	ids := lsPagedRuns(t, f, 3)
+	elsewhere := recentRunID(t, 10*time.Minute, "beef")
+	seedRun(t, f, elsewhere, "other-batch", "someone@example.com", false)
+
+	for _, tc := range []struct {
+		name string
+		id   string
+		args []string
+	}{
+		// No run of the bucket has this id at all.
+		{"an id no run has", recentRunID(t, 30*24*time.Hour, "dead"), []string{"--since", "0"}},
+		// The bucket holds this one, but the listing's own filter leaves it
+		// out: the window a cursor is defined by is the one the reader sees.
+		{"an id this listing filters out", ids[0], []string{"--since", "0", "--batch", "other-batch"}},
+		// A run of the bucket the window's --since excludes.
+		{"an id outside the window", ids[0], []string{"--since", "30s"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := execute(t, append([]string{"runs", "ls", "--after", tc.id}, tc.args...)...)
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want exit %d", err, ExitUserError)
+			}
+			if !strings.Contains(err.Error(), tc.id) {
+				t.Errorf("the refusal %q does not name the id %s", err, tc.id)
+			}
+		})
+	}
+
+	// The same id in a listing that holds it is not refused.
+	if _, _, err := execute(t, "runs", "ls", "--since", "0", "--after", elsewhere); err != nil {
+		t.Errorf("--after a run of the listing = %v, want a page", err)
+	}
+}
+
+// TestRunsLsPagingFlagsAreRefusedWithWatch: --watch redraws the whole listing
+// until every run has settled, so a page of it is a contradiction rather than
+// a combination, and both paging flags are refused before anything is read.
+// --limit 0 is refused too: it is every row, but the flag is read as typed,
+// the way --pr 0 is a request for a pull request number rather than no flag.
+func TestRunsLsPagingFlagsAreRefusedWithWatch(t *testing.T) {
+	f := newCloudFixture(t)
+	lsPagedRuns(t, f, 3)
+	for _, args := range [][]string{
+		{"runs", "ls", "--since", "0", "--watch", "--limit", "2"},
+		{"runs", "ls", "--since", "0", "--watch", "--limit", "0"},
+		{"runs", "ls", "--since", "0", "--watch", "--after", recentRunID(t, time.Minute, "0000")},
+	} {
+		_, _, err := execute(t, args...)
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--watch") {
+			t.Errorf("%v: err = %v, want exit %d naming --watch", args, err, ExitUserError)
+		}
+	}
+}
+
+// TestRunsLsOrderIsCreatedThenRunDescending: the listing's order is stated
+// because the cursor is defined by it. Two runs minted in the same second are
+// ordered by the run reference, descending -- which within one repository is
+// the run id, so the order is stable and a reader can name the row a cursor
+// stops at.
+func TestRunsLsOrderIsCreatedThenRunDescending(t *testing.T) {
+	f := newCloudFixture(t)
+	same := lsNow().UTC().Add(-time.Hour).Format("20060102-150405")
+	seedRun(t, f, same+"-aaaa", "", "someone@example.com", false)
+	seedRun(t, f, same+"-bbbb", "", "someone@example.com", false)
+	newest := recentRunID(t, time.Minute, "0000")
+	seedRun(t, f, newest, "", "someone@example.com", false)
+
+	got, _ := lsJSON(t, "--since", "0")
+	want := []string{newest, same + "-bbbb", same + "-aaaa"}
+	if !slices.Equal(runIDs(got.Runs), want) {
+		t.Fatalf("ls listed %v, want %v: created descending, then the run reference descending", runIDs(got.Runs), want)
+	}
+}
+
+// lsJSONKeys is a `runs ls --json` document's own keys and its first row's,
+// for the shape check: the field set is what the console parses, so it is
+// asserted as a set rather than as one field at a time.
+func lsJSONKeys(t *testing.T, args ...string) (doc, row []string) {
+	t.Helper()
+	out, errOut, err := execute(t, append([]string{"runs", "ls", "--json"}, args...)...)
+	if err != nil {
+		t.Fatalf("ls: %v (%s)", err, errOut)
+	}
+	var d map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	var rows []map[string]json.RawMessage
+	if err := json.Unmarshal(d["runs"], &rows); err != nil {
+		t.Fatalf("runs: %v: %s", err, out)
+	}
+	if len(rows) == 0 {
+		t.Fatalf("the document lists no run: %s", out)
+	}
+	return slices.Sorted(maps.Keys(d)), slices.Sorted(maps.Keys(rows[0]))
+}
+
+// TestRunsLsStateFilter: --state keeps the runs in one state, and it is the
+// status it matches -- the vocabulary --json carries -- never the decorated
+// cell: a halted run's cell reads `halted (run_cap)` and --state halted keeps
+// it. The filter runs after the reads (the status lives in result.json), which
+// is what it costs, so it narrows what is listed and never what is read.
+func TestRunsLsStateFilter(t *testing.T) {
+	f := newCloudFixture(t)
+	today := time.Now().UTC().Format("20060102")
+	seedRun(t, f, today+"-090000-aaaa", "", "someone@example.com", false) // unlaunched
+	okID := today + "-091000-bbbb"
+	seedRun(t, f, okID, "", "someone@example.com", false)
+	writeRecord(t, f, okID, &runstore.Record{Version: 1, RunID: okID, Repo: "acme/app", Workflow: "web", Status: runstore.StatusSucceeded})
+	haltID := today + "-092000-cccc"
+	seedRun(t, f, haltID, "", "someone@example.com", false)
+	writeRecord(t, f, haltID, &runstore.Record{Version: 1, RunID: haltID, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusHalted, Halt: &runstore.Halt{Reason: runstore.HaltRunCap, Scope: "run"}})
+
+	for state, want := range map[string]string{"succeeded": okID, "halted": haltID} {
+		got, _ := lsJSON(t, "--since", "0", "--state", state)
+		if len(got.Runs) != 1 || got.Runs[0].RunID != want {
+			t.Errorf("ls --state %s listed %v, want the one run %s", state, runIDs(got.Runs), want)
+		}
+	}
+	if got, _ := lsJSON(t, "--since", "0", "--state", "unlaunched"); len(got.Runs) != 1 || got.Runs[0].RunID != today+"-090000-aaaa" {
+		t.Errorf("ls --state unlaunched listed %v, want the run that never launched", runIDs(got.Runs))
+	}
+	if _, _, err := execute(t, "runs", "ls", "--state", "done"); err == nil || !strings.Contains(err.Error(), runview.StatusUnlaunched) {
+		t.Errorf("ls --state done: err = %v, want a refusal naming the states it takes", err)
+	}
+}
+
+// peakExecutionBackend is the compute backend a listing's follow width is
+// measured through: it counts the execution reads the pass has in flight at
+// once, and holds each one open until want of them are open at the same time —
+// one past the width under test — or hold passes, so a pass that widens past
+// its bound is measured widening and a pass at the bound is measured sitting at
+// it rather than at whatever the scheduler happened to overlap.
+type peakExecutionBackend struct {
+	backend.Backend
+	want int
+	hold time.Duration
+
+	mu      sync.Mutex
+	open    int
+	peak    int
+	calls   int
+	reached bool
+	gate    chan struct{}
+}
+
+// peakCalls is how many execution reads the pass made in all, and the most of
+// them that were ever in flight at once.
+func (b *peakExecutionBackend) peakCalls() (calls, peak int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.calls, b.peak
+}
+
+func (b *peakExecutionBackend) Execution(ctx context.Context, name string) (backend.Execution, error) {
+	b.mu.Lock()
+	b.open++
+	b.calls++
+	if b.open > b.peak {
+		b.peak = b.open
+	}
+	// One goroutine widened it, so one closes it: the flag is set inside the
+	// same critical section the reading of it is.
+	widened := b.open >= b.want && !b.reached
+	b.reached = b.reached || widened
+	waiting := !b.reached && b.hold > 0
+	b.mu.Unlock()
+	switch {
+	case widened:
+		close(b.gate)
+	case waiting:
+		select {
+		case <-b.gate:
+		case <-time.After(b.hold):
+		}
+	}
+	b.mu.Lock()
+	b.open--
+	b.mu.Unlock()
+	return b.Backend.Execution(ctx, name)
+}
+
+// TestRunsLsFollowsExecutionsWithinFollowWorkers: the follow pass reads back the
+// execution of every run the listing did not answer for, and it reads no more
+// than followWorkers of them at once. That read leaves the bucket for the
+// compute backend, which is why it has a width of its own rather than following
+// lsWorkers — and a width is the half a peak of one cannot show: a pass with no
+// bound reads every run's execution at once, and one with no fan-out is a queue
+// of round trips.
+// Mutations caught: following one run at a time (a peak of 1), and dropping the
+// bound (a peak that reaches followWorkers+1, which opens the gate and lets the
+// rest of the bucket through).
+func TestRunsLsFollowsExecutionsWithinFollowWorkers(t *testing.T) {
+	f := newCloudFixture(t)
+	const runs = followWorkers * 2
+	ctx := context.Background()
+	bucket, err := blobx.Open(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bucket.Close()
+	at := time.Date(2026, 10, 18, 9, 0, 0, 0, time.UTC)
+	for i := range runs {
+		id := at.Add(time.Duration(i)*time.Minute).Format("20060102-150405") + fmt.Sprintf("-%04x", i)
+		s := runstore.Open(bucket.Bucket, appSlug, id)
+		if err := s.CreateTask(ctx, &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}); err != nil {
+			t.Fatal(err)
+		}
+		// A name of this backend's own shape that nothing ever started: the
+		// listing cannot answer for it (which is what makes the run reach the
+		// backend one by one), and the read that follows it is the one this
+		// pass's width is about.
+		exec := backend.ExecID{GCPProject: "proj-1234", Region: "us-east5", Job: gcp.JobName(appSlug, "web"), Name: fmt.Sprintf("gone-%04x", i)}.String()
+		if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, Execution: exec, LaunchedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := envOn(t, f, bucket)
+	peek := &peakExecutionBackend{Backend: env.be, want: followWorkers + 1, hold: 200 * time.Millisecond, gate: make(chan struct{})}
+	env.be = peek
+
+	rows, err := loadRows(ctx, env, lsFilter{slugs: []string{appSlug}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls, peak := peek.peakCalls()
+	if len(rows) != runs || calls != runs {
+		t.Fatalf("rows = %d and %d execution reads, want %d of each: the width test measured a pass that read something else", len(rows), calls, runs)
+	}
+	if peak != followWorkers {
+		t.Errorf("runs ls followed %d executions at once, want exactly followWorkers (%d): the pass fans out over the runs the listing could not answer for, within its bound", peak, followWorkers)
 	}
 }

@@ -28,9 +28,12 @@
 // A value is written as it stands unless YAML would read those bytes as
 // something else, so the text of a setting and the type its schema gives that
 // setting both survive the edit: `5` is written as the number, and a value that
-// would read as a comment, a mapping or a sequence is quoted. The quoting style
-// of the value already in the document is kept, so a hand-written file does not
-// lose the quotes its author chose.
+// would read as a comment, a mapping or a sequence is quoted. Where the value
+// goes decides what "something else" is — between braces `x, y` is two members
+// and `}` ends the mapping — so a value on its way into a flow mapping is read
+// back there before it is written without quotes. The quoting style of the
+// value already in the document is kept, so a hand-written file does not lose
+// the quotes its author chose.
 //
 // # What it refuses
 //
@@ -47,12 +50,19 @@
 //   - ReasonTabIndentation: a line's indentation holds a tab, which leaves the
 //     column yaml.v3 reports with no byte offset to map to.
 //   - ReasonFlowCollection: the edit would go inside, or would have to measure,
-//     a flow collection. Flow maps and sequences are refused rather than
-//     re-formatted: `settings: {}` is not rewritten into block style. A flow
-//     collection an edit only removes along with the line that holds it is
-//     fine, as long as it stays on one line. A flow collection where a value
-//     would be replaced is this class; a block mapping or sequence there is
-//     ReasonReplacesCollection.
+//     a flow collection this package cannot splice into. A flow mapping written
+//     on one line can be: the value of one of its members is replaced, a member
+//     is added to a mapping that already holds one, and a member is removed
+//     with one of the separators around it, every other byte of the line
+//     staying as it was written. Everything else about flow is refused rather
+//     than re-formatted: a collection that runs across lines or holds a
+//     comment, a member whose own value is a collection, and an empty `{}`,
+//     whose shape the first member written into it would decide. `settings: {}`
+//     is not rewritten into block style, and no edit is written inside a flow
+//     sequence. A flow collection an edit only removes along with the line that
+//     holds it is fine, as long as it stays on one line. A flow collection
+//     where a value would be replaced is this class; a block mapping or
+//     sequence there is ReasonReplacesCollection.
 //   - ReasonReplacesCollection: the value at the path is a mapping or a
 //     sequence, which holds bytes and comments of its own. Replacing it with a
 //     scalar would drop all of them, so the edit is refused; removing the key,
@@ -179,7 +189,7 @@ func SetScalar(src []byte, path []string, value string) ([]byte, error) {
 		return src, err
 	}
 	if err := verified(op, path, out, func(root *yaml.Node) bool {
-		return scalarIs(resolve(root, path), value)
+		return scalarIs(resolve(root, path), value) && d.sameFlowSiblings(path, root)
 	}); err != nil {
 		return src, err
 	}
@@ -211,7 +221,7 @@ func RemoveKeyWithOptions(src []byte, path []string, opts RemoveOptions) ([]byte
 		return src, err
 	}
 	if err := verified(op, path, out, func(root *yaml.Node) bool {
-		return resolve(root, path) == nil
+		return resolve(root, path) == nil && d.sameFlowSiblings(path, root)
 	}); err != nil {
 		return src, err
 	}
@@ -387,7 +397,7 @@ func (d *doc) setScalar(op string, path []string, value string) ([]byte, error) 
 		}
 		cur = next
 	}
-	if err := d.expectMapping(op, cur, pathString(path)); err != nil {
+	if err := d.mappingHolding(op, cur, pathString(path)); err != nil {
 		return nil, err
 	}
 	return d.setKey(op, cur, path[len(path)-1], value, pathString(path))
@@ -426,8 +436,12 @@ func (d *doc) descend(op string, cur *yaml.Node, path []string, i int, leaf leaf
 	return nil, e.value, false, nil
 }
 
-// setKey writes one key of an existing block mapping.
+// setKey writes one key of an existing mapping, which is a flow mapping when
+// the document wrote it as one.
 func (d *doc) setKey(op string, m *yaml.Node, key, value, path string) ([]byte, error) {
+	if m.Style&yaml.FlowStyle != 0 {
+		return d.setFlowKey(op, m, key, value, path)
+	}
 	e, err := d.find(op, m, key, path)
 	if err != nil {
 		return nil, err
@@ -493,22 +507,41 @@ func (d *doc) removeKey(op string, path []string, opts RemoveOptions) ([]byte, e
 	if err := d.anchorFree(op, target.e, pathString(path)); err != nil {
 		return nil, err
 	}
-	start, end, err := d.entrySpan(op, target.e)
+	var start, end int
+	if target.parent.Style&yaml.FlowStyle != 0 {
+		start, end, err = d.flowMemberSpan(op, target.parent, target.e)
+	} else {
+		start, end, err = d.entrySpan(op, target.e)
+	}
 	if err != nil {
 		return nil, err
 	}
-	if opts.DropEmptyParents {
-		for i := len(chain) - 1; i > 0 && len(chain[i].parent.Content) == 2; i-- {
-			up := chain[i-1]
-			if err := d.expandable(op, up, pathString(path)); err != nil {
-				return nil, err
-			}
-			if start, end, err = d.entrySpan(op, up.e); err != nil {
-				return nil, err
-			}
-		}
+	if start, end, err = d.dropEmptyMappings(op, pathString(path), chain, start, end, opts); err != nil {
+		return nil, err
 	}
 	return splice(d.src, start, end, nil), nil
+}
+
+// dropEmptyMappings extends a removal to the keys whose mappings it leaves
+// empty, and on up to the root, when RemoveOptions asks for it. Every key the
+// cascade reaches is held to the rules the named one was: an entry carrying an
+// anchor, an alias or a tag, or sitting in a mapping that carries `<<`, is
+// refused rather than taken along, and the whole edit is refused with it.
+func (d *doc) dropEmptyMappings(op, path string, chain []step, start, end int, opts RemoveOptions) (int, int, error) {
+	if !opts.DropEmptyParents {
+		return start, end, nil
+	}
+	for i := len(chain) - 1; i > 0 && len(chain[i].parent.Content) == 2; i-- {
+		up := chain[i-1]
+		if err := d.expandable(op, up, path); err != nil {
+			return 0, 0, err
+		}
+		var err error
+		if start, end, err = d.entrySpan(op, up.e); err != nil {
+			return 0, 0, err
+		}
+	}
+	return start, end, nil
 }
 
 // addItem appends to the sequence at path, writing the sequence when the
@@ -774,7 +807,13 @@ func (d *doc) walk(op string, path []string) ([]step, bool, error) {
 	cur := d.root
 	for i, key := range path {
 		here := pathString(path[:i+1])
-		if err := d.expectMapping(op, cur, here); err != nil {
+		check := d.expectMapping
+		if i == len(path)-1 {
+			// The mapping an edit names its key in may be a flow mapping: the
+			// splice goes inside it, not through it.
+			check = d.mappingHolding
+		}
+		if err := check(op, cur, here); err != nil {
 			return nil, false, err
 		}
 		e, err := d.find(op, cur, key, here)

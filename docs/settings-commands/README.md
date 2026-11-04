@@ -37,7 +37,7 @@ This work adds:
 1. **`fugaro settings`**, a read over every layer — default, repository `fugaro.yaml`, project
    layer, profile, local project config, shared config, published policy node, Realtime Database
    caps and kills, environment variables — as one row per (key, scope) with the columns
-   `KEY VALUE WINS DEFAULT STATE`, and with `--why`, `--changed`, `--repo`, `--all-repos`,
+   `KEY SCOPE VALUE WINS DEFAULT STATE`, and with `--why`, `--changed`, `--repo`, `--all-repos`,
    `--layer`, `--grep`, `--offline` and a versioned `--json`.
 2. **A key and defaults registry**, one machine-readable row per setting, which is where the
    DEFAULT column, `--changed`, the JSON Schema `default` keywords and the scope table all come
@@ -97,8 +97,8 @@ three READMEs share.
 - **One sentence for the repository with no checkout**: `unknown (no checkout on this machine)`
   (the `rigor` design's D839), everywhere it is printed.
 - **One write path.** The diff, the confirmation, the backup and the atomic write are the same five
-  helpers everywhere; the sensitive directions ask for the typed project name, `--yes` never covers
-  it, and in a coding agent's session a write outside a repository prints the command and writes
+  helpers everywhere; the sensitive directions ask for the typed project name, `set` and `unset` take `--yes` for it
+  outside a coding agent's session (D1107), and in a coding agent's session a write outside a repository prints the command and writes
   nothing (SD9, D846).
 
 ## How this was reconciled

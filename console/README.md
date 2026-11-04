@@ -206,6 +206,130 @@ directory — and both appear only after a download, are replaced or removed by 
 install, and hold no identifier (owner rulings D768 and D770; design sections
 5.1 rule 10, 7.3 and 7.4).
 
+## Crash reporting, and the switch that decides it (Tasks 2.1 and 2.2)
+
+The console sends nothing about a crash unless the person whose machine it is
+says so. That is the whole shape of the feature, and it is the one place this
+app's traffic differs from the update check's: an update is the console's own
+business, and a crash report is not.
+
+**The switch is per user, local, and off until it is ticked.** It is the
+application menu's **Send Crash Reports (applies at the next launch)**, beside
+**Check for Updates Automatically** and **Check for Updates Now**, on macOS and
+on Linux; its state is the one bare boolean `<userData>/crash.json` holds
+(`src/main/crashstore.ts`, over the shared bare-boolean store in
+`src/main/boolstore.ts` that `updatestore.ts` uses too). Off is the default and
+the safe direction: no file, a file that cannot be read, or a file that is not a
+JSON boolean all read as **off**, with one constant line
+(`the console could not read its crash-reporting setting, so nothing is sent`)
+and never a repair or a deletion. The file is read with the safe-open rules the
+other stores use — a regular file only, `O_NOFOLLOW | O_NONBLOCK`, eight bytes
+at most, so a symbolic link, a FIFO, a directory or an oversized file sends
+nothing — written atomically (`0600` in a `0700` directory, a temporary file and
+a `rename`) **only when the switch changes**, and never at all when the value
+already in it is the value asked for.
+
+**It applies at the next launch, and the label says so.** `src/main/index.ts`
+reads `crash.json` **before the app's first `await`** and starts the reporter
+only when that read answered `true`, so unticking the switch stops the run after
+the one in front of the person rather than that one. The menu says which, rather
+than leaving a reader to guess whether the tick did anything yet. A write that
+fails is caught, logged once (`the console could not write its crash-reporting
+setting, so the switch did not move`) and the menu is **redrawn from disk**, so
+the checkbox shows the value in force rather than the one the click asked for.
+
+**What is sent, and what is never sent.** The client is `@sentry/electron`
+`8.2.0` (`src/main/crash-electron.ts`, the only file that imports it; design
+§7.4). A report holds the **exception's type and the frames it was thrown
+from** — each an app-relative file with its function name, its line, its column
+and its `in_app` flag — and
+**no message, no path, no user name, no environment and no host name**. It also
+names the console's own version as its **`release`** and carries the build's
+**debug images** — an image type, a debug id and an app-relative code file each
+(owner's ruling of 2026-11-02: a stack a maintainer cannot symbolicate is not
+readable, and these are the build's own identifiers rather than anything about
+the machine). A debug image's file is cut at the app root exactly as a frame's
+is, an image whose id or path fails its shape is **refused rather than sent**,
+and every other field an image arrived with is dropped. Nothing
+else is attached: no session, no breadcrumb, no minidump (`defaultIntegrations:
+false` installs none of the SDK's own, and two are named by hand below), no
+renderer event, no preload and no IPC channel; and a report that cannot be sent
+is **dropped rather than queued**, so the console keeps no crash file of its own
+under `userData`. The scrubbing is `beforeSend` (`scrubCrashEvent` in
+`src/main/crash.ts`) and it is the whole of the payload rule. The DSN is **one
+embedded public constant** in `src/main/crash-dsn.ts` — a Sentry client key can
+only send events, so it is not a secret and not a build input — and **the switch
+is the only gate**: a yes is a yes, and nothing else can refuse a report the
+person asked for.
+
+**Two captures, and neither decides anything else.** The two integrations named
+by hand are the SDK's own uncaught-exception and unhandled-rejection ones, and
+nothing is added beside them: no minidump, no session, no preload, no
+breadcrumbs. The Electron SDK's `onUncaughtExceptionIntegration` takes **no
+options at all** — it is not `@sentry/node`'s, whose
+`exitEvenIfOtherHandlersAreRegistered` and `onFatalError` are what would let a
+reporter call `process.exit` — and the rejection integration is installed with
+`mode: 'none'` against its `'warn'` default, so neither writes to the console
+nor ends the process. What happens after an uncaught error is what happened
+before the reporter existed: Electron's own handler, and the console's
+`reportAndQuit` for the paths it owns. `test/unit/crash-electron.test.ts` pins
+both absences.
+
+**A reporter that cannot start does not stop the console.** `index.ts` reaches
+the module through a lazy `import('./crash-electron.js')` behind the gate, and
+both that import and `startCrashReporting` are wrapped by
+`startCrashReportingSafely` (`src/main/crash.ts`): an import or an init that
+throws or rejects is caught, logged as one constant line
+(`the console could not start crash reporting, so this run sends nothing`) and
+answered with `null`, which leaves `crashReporting` unset and the app on its
+ready path. A crash reporter that took the console down with it would be the
+worst trade this feature could make.
+
+### The symbols, stamped before the pack and uploaded after it
+
+The main process's source maps and the packaged app's native debug files are
+what turn a scrubbed frame back into a name and a line, and
+`scripts/upload-sentry-symbols.mjs` is the one script that handles both — in
+**two runs, with the pack between them**. The first is `node
+scripts/upload-sentry-symbols.mjs inject` (`npm run symbols:inject`, which `npm
+run package` runs between its own build and its packer): it rewrites each file
+of `console/dist/main` and the map beside it with a **debug id**, and that is
+the only order that works — a build after it throws the ids away, and a pack
+before it ships files that carry none, which is why the release job packs with
+`npm run package:targets` and never `npm run package` after the stamp. The
+second run, with no argument, comes after the pack: `debug-files upload` for the
+packaged app's native debug files, then `sourcemaps upload` for the main
+process's JavaScript and the maps beside them, to the `fugaro`/`fugaro-console`
+project in the EU region. Only the two `sourcemaps` commands carry the console
+version — the string every event now names as its `release` — because a native
+debug file is matched by the debug id inside it, so `debug-files upload` takes
+the bundle and no release at all. The upload reads the maps out of
+`console/dist/main`, the tree the stamp wrote: source maps are deliberately
+**not inside the app** (`build.files` carries `dist/main/**/*.js` and no
+`.map`, which `test/unit/build-files.test.ts` pins). Both runs are **dormant by
+default**: with `SENTRY_AUTH_TOKEN` unset or empty either one prints one constant
+line (`Sentry symbol upload skipped: no auth token configured`) and exits 0
+without invoking the CLI at all, so a checkout, a fork's CI and a release before
+the secret exists stamp nothing and upload nothing and fail nothing. `npm run
+package` runs the **stamp** between its own build and its packer, and needs no
+token for it; the **upload** is the staged release step's, or a person's by
+hand. The token is
+**never read, printed, logged or passed on an argv**: it reaches `sentry-cli`
+through the inherited environment and nowhere else, and the `sentry-cli` package
+is a **devDependency** — it is not a runtime dependency and `build.files` does
+not pack it, so no shipped app carries the uploader. **It needs no install step
+of its own**: the pinned `@sentry/cli` ships its binary as a per-platform
+optional dependency (`@sentry/cli-darwin` on the release runner), which its own
+launcher resolves at run time, so the job's `npm ci --ignore-scripts` — whose
+skipped postinstall is a download for platforms that package no binary — still
+leaves a `sentry-cli` that runs. The release workflow's **two steps** for it —
+the build-and-stamp step before the packer, and the upload after the artifacts
+have been verified — are staged in
+`docs/pending-workflows/console-release-symbols.yml`, which is the owner's to
+copy in over the staged `console-release.yml` and into `.github/workflows/`
+(the file's header carries the order and the one changed pack line); until the
+repository secret exists both steps are no-ops.
+
 ## The hardened window (Task 1.1)
 
 The console's shell is one window, and everything it is allowed to do is
@@ -635,16 +759,21 @@ the last as scans over `console/src/`, so a screen, a source or an IPC handler
 that started reading it would fail a named test. It is what Check 59's
 assertion (4) reads and what Task 4.3's FACT commands read the key names from.
 
-**It is one of the two files the app ever writes to disk, and the other one is
-off by default too.** The other write in this task is a directory rather than a
-record: `privateWorkingDirectory()` creates an empty `0700` directory under the
-system temporary directory for an installation that has no checkout, so that
-`doctor --dir` is a directory and the child's `cwd` is not `/`. Section 5.1 rule
+**It is one of the four things the app ever writes to disk, and the two switches
+beside it are off by default too.** The other write in this task is a directory
+rather than a record: `privateWorkingDirectory()` creates an empty `0700`
+directory under the system temporary directory for an installation that has no
+checkout, so that `doctor --dir` is a directory and the child's `cwd` is not `/`.
+Section 5.1 rule
 10 is about *records* — no history, no cached document, no crash dump, nothing
-that outlives the process — and this holds nothing at all. The **other record**
-is the installation list, `installations.json`, which the owner ruled in on
-2026-10-18 (C8) and which is documented in its own section below: rule 10 was
-amended to name it rather than having it grow by accident.
+that outlives the process — and this holds nothing at all. The **other records**
+are the installation list, `installations.json`, which the owner ruled in on
+2026-10-18 (**C8**); the update off switch's one boolean, `<userData>/updates.json`
+(**D768**, 2026-10-30); and the crash-reporting switch's one boolean,
+`<userData>/crash.json` (the owner's ruling of 2026-10-31 and design §5.1 rule
+10's fourth write). Each is documented in its own section below, and each was
+named by rule 10 in the commit that added it rather than left to grow by
+accident.
 
 ### The spawn properties are tests, and each one fails under a mutation
 
@@ -1531,7 +1660,7 @@ truncated.
 
 **One key is drawn in a class other than the one `WIRE_TEXT_CLASSES` gives it,
 and it is deliberate.** `launched_by` — who started a run — is classified
-`person`, and the Live and Projects rows draw its **short form** (the CLI's own
+`person`, and the Live and Project rows draw its **short form** (the CLI's own
 cut, `runview.LauncherShort`: the part before an address's first `@`, the whole
 value for anything else — the cut `fugaro runs ls`'s own `BY` column makes)
 through the **`label`** class. `person` is a validating class: it draws a login
@@ -1548,7 +1677,7 @@ address is the console's marker there and **no address is drawn anywhere**.
 `docs/design/desktop-console.md` §6.2 records the decision. This is not a
 narrowing of **D15**: that decision is about `report --by person`'s cost
 breakdown on the Spend screen, and the console already names people on Live and
-Projects without a switch — a killed repository's row reads `KILLED by <who>`.
+Project without a switch — a killed repository's row reads `KILLED by <who>`.
 
 **The trade-off in the path, said out loud.** A path segment is not held to the
 high-entropy rule, because a commit link's 40-hex digest is a path segment and
@@ -2863,7 +2992,7 @@ under `test/e2e/__screenshots__/` (`playwright.config.ts`'s
 |---|---|---|
 | Live | `test/e2e/live.spec.ts` | `live-light-<platform>.png`, `live-dark-<platform>.png` |
 | Spend | `test/e2e/spend.spec.ts` | `spend/light-<platform>.png`, `spend/dark-<platform>.png` |
-| Projects | `test/e2e/projects.spec.ts` | `projects/light-<platform>.png`, `projects/dark-<platform>.png` |
+| Project | `test/e2e/projects.spec.ts` | `projects/light-<platform>.png`, `projects/dark-<platform>.png` |
 | Run detail | `test/e2e/run.spec.ts` | `run/light-<platform>.png`, `run/dark-<platform>.png` |
 | Graph | `test/e2e/graph.spec.ts` | `graph/light-<platform>.png`, `graph/dark-<platform>.png` |
 | Coordinator | `test/e2e/coordinator.spec.ts` | `coordinator/light-<platform>.png`, `coordinator/dark-<platform>.png` |
@@ -2920,7 +3049,7 @@ fails legibly rather than with a bare pixel diff:
   theme travels as a `data-theme` attribute the renderer stamps.)
 
 **What is committed today is darwin only, and it is superseded.** The eight
-`*-darwin.png` files — the Live, Spend, Projects and Run pairs; the Graph and the
+`*-darwin.png` files — the Live, Spend, Project and Run pairs; the Graph and the
 Coordinator have **no** baseline on either platform, their cases having landed
 after this recording — are the recording of **2026-10-18**: macOS 26.7 (Darwin
 25.6.0, x64), Node 22.23.3, `@playwright/test` 1.64.1, Electron 44.7.2 (the
@@ -2932,7 +3061,7 @@ documents (`example-owner/...`, `acme/...`, `redacted@example.invalid`); none
 holds a real name. **They are pictures of the unstyled tree**: they were taken
 before `src/renderer/theme/` existed, so no frame carries a rule of CSS. Three of
 the four light/dark pairs say so in the plainest way — the two themes' frames of
-the Live, Spend and Projects screens are the **same file byte for byte**
+the Live, Spend and Project screens are the **same file byte for byte**
 (`live-light-darwin.png` and `live-dark-darwin.png` are both 38305 bytes of
 `f4b55fed…`, and so on) — while the Run screen's pair differs
 (`run/light-darwin.png` 129088 bytes, `run/dark-darwin.png` 129359) for a reason
@@ -3424,7 +3553,7 @@ and a read at mount would be a fourth. The two figures the row
 carries come from reads the console was already making:
 
 - the **state** from the Live feed (`rail.setState`), which is the same read the panel draws;
-- the **spend** from the console's own `budget.show` reads — the Spend and Projects paths —
+- the **spend** from the console's own `budget.show` reads — the Spend and Project paths —
   through `rail.setSpend`, so the rail shows `n/a` with the caps panel's own sentence
   (`no budget show document was read`) until one of those screens has been opened.
 
@@ -3529,7 +3658,7 @@ whole styling work makes** — the fifth number hook.
 
 ### The five number hooks, and the one that did not exist
 
-Design §2.10 is the licence for the only code change here: Live, Spend, Projects and Run each
+Design §2.10 is the licence for the only code change here: Live, Spend, Project and Run each
 have a `numberCell` that prepends `live-num`, `spend-num`, `projects-number` or `run-number`,
 and the degraded screen's prepended **nothing** — so its feed age, its counts and its money
 were the only figures in the console with no tabular-figures and no right-align hook. It
@@ -3624,7 +3753,7 @@ that mistake would have to get past.
 
 **That case held a third entry, and the follow-up to this task removed it.** The list of
 licensed selectors carried `section.projects-panel[data-state='read']` — the rule that painted
-a read Projects panel's left border `--ok` — so the case whose whole purpose is to keep `--ok`
+a read Project panel's left border `--ok` — so the case whose whole purpose is to keep `--ok`
 to the readings §3.5 rule 4 names accepted a reading the design licenses nowhere: a read panel
 is not "measured and inside the cap" and is not the rail's `running` row, and §6.1 rule 3
 forbids the tone decoratively. The list had been transcribed from the stylesheet rather than

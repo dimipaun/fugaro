@@ -27,6 +27,34 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 )
 
+// The two things every request built from the embedded cloudbuild.yaml
+// needs it to state, and neither a derived nor a catalog build may do
+// without.
+var (
+	errNoGitTokenSecret = errors.New("the embedded cloudbuild.yaml does not declare exactly the git token secret")
+	errNoCredentialStep = errors.New("the embedded cloudbuild.yaml has no build step, or no credential step in its Bitbucket form")
+)
+
+// embeddedBuild is images/derived/cloudbuild.yaml as a Cloud Build request,
+// before any substitution is set or any step is chosen: the derived build
+// (BuildRequest) runs it as it stands, and a catalog build
+// (CatalogBuildRequest) reuses its steps.
+func embeddedBuild() (*cloudbuild.Build, error) {
+	var raw map[string]any
+	if err := yaml.Unmarshal(images.CloudBuild, &raw); err != nil {
+		return nil, fmt.Errorf("parsing the embedded cloudbuild.yaml: %w", err)
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("converting the embedded cloudbuild.yaml: %w", err)
+	}
+	var b cloudbuild.Build
+	if err := json.Unmarshal(data, &b); err != nil {
+		return nil, fmt.Errorf("converting the embedded cloudbuild.yaml: %w", err)
+	}
+	return &b, nil
+}
+
 // BuildSpec is one derived-image build of (repository, workflow).
 type BuildSpec struct {
 	Slug        string // the repository's storage slug, for its workflow secrets' IDs
@@ -98,6 +126,17 @@ var (
 	bucketURLRE = regexp.MustCompile(`^gs://[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$`)
 	// digestRE is an image digest.
 	digestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	// imageRefRE is a container image reference: an optional registry host
+	// with an optional port, a repository path of lower-case components, an
+	// optional tag and an optional sha256 digest — the grammar
+	// internal/config's catalogImageRE holds a prebuilt catalog entry's
+	// reference to. A base image reaches a build's substitutions, the
+	// image's own labels and, for a catalog build, a record the record step
+	// composes with printf and no escaping, so the base is checked against
+	// this allowlist: a value carrying a quote, a backslash, a newline or
+	// any other control character would rewrite one of those instead of
+	// naming an image.
+	imageRefRE = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*(?::[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(?:@sha256:[a-f0-9]{64})?$`)
 	// registryHostRE is <region>-docker.pkg.dev/<project>.
 	registryHostRE = regexp.MustCompile(`^([a-z]+-[a-z]+[0-9]+)-docker\.pkg\.dev/([a-z][a-z0-9-]{4,28}[a-z0-9])$`)
 	// sha256HexRE is a sha256 sum as 64 hex digits.
@@ -128,20 +167,12 @@ var credentialSecretEnv = map[string]string{gitprov.KindBitbucket: gitTokenEnv, 
 // account: a request without one would run as the project's default build
 // identity. It makes no calls.
 func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
-	var raw map[string]any
-	if err := yaml.Unmarshal(images.CloudBuild, &raw); err != nil {
-		return nil, fmt.Errorf("parsing the embedded cloudbuild.yaml: %w", err)
-	}
-	data, err := json.Marshal(raw)
+	b, err := embeddedBuild()
 	if err != nil {
-		return nil, fmt.Errorf("converting the embedded cloudbuild.yaml: %w", err)
-	}
-	var b cloudbuild.Build
-	if err := json.Unmarshal(data, &b); err != nil {
-		return nil, fmt.Errorf("converting the embedded cloudbuild.yaml: %w", err)
+		return nil, err
 	}
 	if b.AvailableSecrets == nil || len(b.AvailableSecrets.SecretManager) != 1 || b.AvailableSecrets.SecretManager[0].Env != gitTokenEnv {
-		return nil, errors.New("the embedded cloudbuild.yaml does not declare exactly the git token secret")
+		return nil, errNoGitTokenSecret
 	}
 	var build, cred *cloudbuild.BuildStep
 	for _, st := range b.Steps {
@@ -153,7 +184,7 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 		}
 	}
 	if build == nil || cred == nil || !slices.Equal(cred.SecretEnv, []string{gitTokenEnv}) || !slices.Equal(cred.Env, credentialEnv[gitprov.KindBitbucket]) {
-		return nil, errors.New("the embedded cloudbuild.yaml has no build step, or no credential step in its Bitbucket form")
+		return nil, errNoCredentialStep
 	}
 	if err := s.check(project, reservedEnv(build)); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrBadBuildSpec, err)
@@ -200,7 +231,7 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 	b.Options.MachineType = s.MachineType
 	b.Options.Logging = "CLOUD_LOGGING_ONLY"
 	b.Timeout = "3600s"
-	return &b, nil
+	return b, nil
 }
 
 // reservedEnv is every variable a workflow secret may not reuse: the build
@@ -220,6 +251,55 @@ func reservedEnv(build *cloudbuild.BuildStep) map[string]bool {
 		used[e] = true
 	}
 	return used
+}
+
+// catalogDockerfileStepID is the id of the step below, in the build a
+// catalog entry's image is built by (PIC4).
+const catalogDockerfileStepID = "dockerfile"
+
+// CatalogDockerfileStep is the step a catalog build starts with: it copies
+// the Dockerfile the catalog copy left in the runs bucket — at
+// config.CatalogDockerfileKey, builds/catalog/<name>/Dockerfile (PIC3) — into
+// the build's context, so a catalog build reads one object instead of a
+// checkout and the record of what was built names exactly that object
+// (D1140, spec.md §Where Dockerfiles live).
+//
+// bucket is the runs bucket as gs://<name>, the form BuildSpec.Bucket
+// carries, and name the entry's own name. The key is derived here through
+// the helper the copy used and never taken from a request: a request cannot
+// point the step at another object, and the name's grammar keeps the key
+// inside builds/catalog/. The step runs as the build's own service account,
+// like every step of the build, so it reads the bucket with that account's
+// grants and nothing wider. It makes no calls.
+func CatalogDockerfileStep(bucket, name string) (*cloudbuild.BuildStep, error) {
+	if !bucketURLRE.MatchString(bucket) {
+		return nil, fmt.Errorf("the runs bucket %q is not gs://<bucket>; a catalog build reads its Dockerfile there", bucket)
+	}
+	key, err := config.CatalogDockerfileKey(name)
+	if err != nil {
+		return nil, err
+	}
+	// The bucket and the key reach the script through env: and are read as
+	// quoted "$$VAR" (the rule images/derived/cloudbuild.yaml states:
+	// substitution is textual, so no ${_…} ever appears in a shell script).
+	// /workspace/context is created here because a catalog build has no
+	// source step to create it: 0755, not the 0777 the source step uses,
+	// because nothing here writes into the directory as another user — this
+	// step writes the Dockerfile as itself and every later step reads it —
+	// so the directory needs no write bit beyond its owner's. A catalog step
+	// that does write there as the image's user needs the source step's mode
+	// and not this one.
+	return &cloudbuild.BuildStep{
+		Id:         catalogDockerfileStepID,
+		Name:       "gcr.io/google.com/cloudsdktool/cloud-sdk:slim",
+		Entrypoint: "bash",
+		Env:        []string{"BUCKET=" + bucket, "KEY=" + key},
+		Args: []string{"-c", `set -eu
+case "$$BUCKET" in gs://*) ;; *) echo "the runs bucket must be a gs:// URL" >&2; exit 1 ;; esac
+install -d -m 0755 /workspace/context
+gcloud storage cp --quiet "$$BUCKET/$$KEY" /workspace/context/Dockerfile
+echo "read $$KEY"`},
+	}, nil
 }
 
 // CheckRepoURL refuses a clone URL the provider's credential must not be
@@ -252,6 +332,9 @@ func (s BuildSpec) check(project string, reserved map[string]bool) error {
 		if f.v == "" {
 			return fmt.Errorf("the Cloud Build request has no %s", f.name)
 		}
+	}
+	if !imageRefRE.MatchString(s.Base) {
+		return fmt.Errorf("the base image %q is not a container image reference such as ghcr.io/owner/image:1.2", s.Base)
 	}
 	switch s.GitProvider {
 	case gitprov.KindBitbucket:
@@ -402,15 +485,24 @@ func (b *Builder) Submit(ctx context.Context, s BuildSpec) (BuildResult, error) 
 	if err != nil {
 		return BuildResult{}, err
 	}
+	return b.create(ctx, s.Image, req)
+}
+
+// create posts req to Cloud Build and returns the started build as queued.
+// image is the untagged image the request builds, which names the build in
+// the messages here and in the result: a catalog build's request comes from
+// CatalogBuildRequest (catalog.go) and is submitted with it, so a
+// submission, its errors and its result cannot drift between the two paths.
+func (b *Builder) create(ctx context.Context, image string, req *cloudbuild.Build) (BuildResult, error) {
 	op, err := b.svc.Projects.Locations.Builds.Create(b.parent(), req).Context(ctx).Do()
 	if err != nil {
-		return BuildResult{}, fmt.Errorf("submitting the Cloud Build build of %s: %w", s.Image, err)
+		return BuildResult{}, fmt.Errorf("submitting the Cloud Build build of %s: %w", image, err)
 	}
 	var md cloudbuild.BuildOperationMetadata
 	if err := json.Unmarshal(op.Metadata, &md); err != nil || md.Build == nil || md.Build.Id == "" {
-		return BuildResult{}, fmt.Errorf("Cloud Build accepted the build of %s but returned no build ID (operation %s)", s.Image, op.Name)
+		return BuildResult{}, fmt.Errorf("Cloud Build accepted the build of %s but returned no build ID (operation %s)", image, op.Name)
 	}
-	return BuildResult{ID: md.Build.Id, Status: md.Build.Status, Image: s.Image + ":latest", LogURL: md.Build.LogUrl}, nil
+	return BuildResult{ID: md.Build.Id, Status: md.Build.Status, Image: image + ":latest", LogURL: md.Build.LogUrl}, nil
 }
 
 // waitRetries and waitRetryBase bound Wait's retries of a failed status
