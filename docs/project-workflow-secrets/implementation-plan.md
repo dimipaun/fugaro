@@ -1,7 +1,7 @@
 # The project workflow secret: implementation plan
 
 **Status: a design, and nothing is built, and nothing here is approved.** Every task below is written
-to a **recommendation** in [reconciliation.md](reconciliation.md) §3, and **no decision is answered**:
+to a **recommendation** in [reconciliation.md](reconciliation.md) §4, and **no decision is answered**:
 the tasks exist so the owner can price the build, not because it may start. **Where this plan and
 [reconciliation.md](reconciliation.md) disagree, the reconciliation wins**; where a task and the
 reconciliation disagree, the reconciliation wins.
@@ -34,6 +34,9 @@ edits `deploy/terraform/**`, `internal/credsvc/**`, `docs/secrets-brokering/**` 
 - **The live checks.** No task adds, runs or edits one, and `docs/gcp-live-checklist.md` is
   untouched. Every test here is hermetic (`internal/gcpfake`, `internal/testutil`, `t.TempDir()`), and
   the 65-repository scale the issue names is not reproduced by any of them.
+- **The config-management work's G8** (`fugaro secrets rm` and the secret policy flags, D1171, PR
+  #1691). That design owns the command; this one depends on it and extends it to the new block (§2,
+  W3). No task here writes `rm` from scratch, and no task here may land before it.
 
 ## 2. Order, and what forces it
 
@@ -45,7 +48,7 @@ reviewed on its own.**
 | 0 | **W0** | nothing |
 | 1 | **W1** | W0 |
 | 2 | **W2**, **W5** | W0, W1 for W2; W0 for W5 |
-| 3 | **W3**, **W4** | W0–W2 for W3; W2 for W4 |
+| 3 | **W3**, **W4** | W0–W2 for W3, and **G8 merged**; W2 for W4 |
 | 4 | **W6** | W3 (the pinned help sentences) |
 | 5 | **W7** | W0–W6 |
 
@@ -61,6 +64,12 @@ Three ordering facts are load-bearing:
   `initsecrets.go:414`'s own comment names.
 - **W3 lands before W6** because W6's docs test pins the help text and the store-time note W3
   writes, and a documentation task that guessed those sentences would pin nothing.
+- **W3 lands after G8** — the config-management work's `fugaro secrets rm` and the secret policy
+  flags (PR #1691, `internal/cli/secrets_rm.go`) — because both tasks edit `internal/cli/secrets.go`
+  and because `rm` is the command that has to withdraw the new block's entry: a `rm` that knows only
+  `project_secrets.<name>` would delete the container and leave `workflow_secrets.<name>` standing,
+  which is the pair D1171 exists to remove together. Landing W3 first makes that a conflict someone
+  resolves by hand; landing it after makes it a task W3 owns.
 
 **Critical path: W0 → W1 → W2 → W3 → W6 → W7** (six tasks). W4 and W5 are off it: W4 is tests over
 behaviour W2 already gives, and W5 is a refusal in a package nothing else in this plan imports.
@@ -93,9 +102,10 @@ owner landed.
 | `internal/config/project_secrets.go` | **none** | **Untouched.** D1260's whole argument is that this block's key rule is not weakened; W0 adds a sibling file in the same package and reads these helpers (`invalidAllowDataToEntry`, `matchRepoPattern`) without editing them. A task that finds itself editing this file has chosen D1260's first alternative by accident and **stops and reports** |
 | `internal/localcfg/localcfg.go` | W1 | One field and one validation call, beside `ProjectSecrets` (`:186`, `:1605`) |
 | `internal/localcfg/shared.go` | W1 | The publish path drops the new block, the way it drops `ProjectSecrets` (`:79`) — an operator-local allow-list never reaches the shared config |
-| `internal/infra/spec.go` | W2 | `ProjectSecretCandidate` (`:1344`) gains the block as a source through `config.AllowedForProjectSecret`'s shape. It is the only eligibility edit |
+| `internal/infra/spec.go` | W2 | `ProjectSecretCandidate` (`:1356`) gains the block as a source through `config.AllowedForProjectSecret`'s shape. It is the only eligibility edit |
 | `internal/infra/tfvars.go` | W2 | `projectSecretContainers` (`:852`) derives the container from the new block's entries |
-| `internal/cli/secrets.go` | W3 | The store path: `projectWideAccepted`, `projectWideRefusal`, `projectWideHint`, `projectScopeName`, `projectSecretAllowed`, and the `set` help (`:308`) and store-time note (`:859`) |
+| `internal/cli/secrets.go` | **G8**, then W3 | G8 adds the secret policy flags (`--allow-data-to`, `--proxy`); W3 adds the store path: `projectWideAccepted`, `projectWideRefusal`, `projectWideHint`, `projectScopeName`, `projectSecretAllowed`, and the `set` help (`:308`) and store-time note (`:859`). Two tasks, one file, and **W3 lands second** |
+| `internal/cli/secrets_rm.go` | **G8**, then W3 | G8's file, on an open branch (#1691): `fugaro secrets rm NAME` deletes the container and removes the `project_secrets.NAME` entry. W3 extends it to the new block once G8 has merged — `workflow_secrets.<name>` is the key `rm` drops for a project-scoped workflow secret, and `secretsRmWhat`'s sentence, the dry run's `key` and the `rm` help all name the block the entry lives in |
 | `internal/settings/registry.go` + `schemas/settings.schema.json` | W0 | One row and one key for `workflow_secrets.*.allow_data_to` (F13), plus the count pins their own tests hold |
 | `SECURITY.md` | W6 | Two sentences amended (`:28`, `:38`) and one section extended (D1273) |
 | `docs/project-workflow-secrets/` | W7 | W7 is the only task that edits this folder, and it changes a *status* line, never a decision |
@@ -149,7 +159,7 @@ Without it every later task would invent its own key rule, which is the drift D1
 
 The one function every reader of the decision shares (F3), plus the container the plan derives.
 
-- **Interface.** `ProjectSecretCandidate` (`spec.go:1344`) gains one source: `config.AllowedForWorkflowSecret(lc.WorkflowSecrets, logical, repo)`, read **before** the D2 sweep and with **no
+- **Interface.** `ProjectSecretCandidate` (`spec.go:1356`) gains one source: `config.AllowedForWorkflowSecret(lc.WorkflowSecrets, logical, repo)`, read **before** the D2 sweep and with **no
   sweep for a workflow secret** (D1262 — absent or empty means nobody). `projectSecretContainers`
   (`tfvars.go:852`) iterates the new block's entries with a non-empty `allow_data_to`, exactly as it
   iterates `lc.ProjectSecrets` today (D1263). `resolveSecretID` is **read and never edited** (D1264).
@@ -170,7 +180,7 @@ The one function every reader of the decision shares (F3), plus the container th
 - **Not in this task:** the repository's own copy winning (D1264) is `resolveSecretID`'s existing
   behaviour; the task adds the test that holds it for a workflow secret and no line of code.
 
-## W3. `internal/cli/secrets.go`: the store path and the two sentences (D1265, D1273). **SEC**
+## W3. `internal/cli/secrets.go`: the store path, the two sentences and the `rm` half (D1265, D1273). **SEC**
 
 - **Rules.** `projectWideAccepted` gains branch 1's shape for the new block (an entry present with a
   non-empty `allow_data_to`), **not** a new branch at the end: a workflow secret is refused with
@@ -181,8 +191,20 @@ The one function every reader of the decision shares (F3), plus the container th
   `projectSecretAllowed` (`:1145`) gains the new block as its first source for the ALLOWED column.
   The `set` help (`:308`) and the store-time note (`:859`) get D1273's reach sentence: the note names
   the reach through `repoMayUseProject`, never a fixed "every enrolled repository".
+- **G8, and what `rm` owes the new block.** `fugaro secrets rm NAME` (the config-management work's,
+  PR #1691) already accepts a workflow secret's name — its name check is
+  `config.SecretNameRE` — and already deletes the right container, because the container's ID is
+  name-agnostic (F2). What it does **not** know is the new block, so the task extends it: for a
+  project-scoped workflow secret `rm` removes `workflow_secrets.<name>`, not `project_secrets.<name>`,
+  and says so in the three places that name the entry — `secretsRmWhat`'s confirmation sentence, the
+  dry run's `key`, and the `rm` help's "stored once for the whole project (`project_secrets.NAME`)".
+  Deleting the container and leaving the entry standing is the failure D1171's own comment says the
+  command exists to prevent, and it is the same failure with the new block's key. **W3 lands after G8**
+  (§2), so this is an extension of a merged file, not a conflict.
 - **What must not change.** The value path, the name-vs-value refusals, `CheckSecretName`, the
-  `--repo` path's `declares` check, and the precedence note's `repoMayUseProject` call.
+  `--repo` path's `declares` check, and the precedence note's `repoMayUseProject` call. `rm`'s two
+  halves stay together — one diff, one confirmation, the deletion last — and its note about a
+  repository's own copy winning is D1264's fact and is not amended.
 - **Red step.** `TestSecretsSetRefusesAWorkflowSecretWithoutAnEntry` (today's sentence, kept word for
   word for a name with no entry) and `TestSecretsSetStoresAWorkflowSecretTheEntryLists` (a checkout
   whose origin the entry lists, with no flag, writes the project container) — the first passes today
@@ -190,10 +212,14 @@ The one function every reader of the decision shares (F3), plus the container th
   `TestSecretsSetRefusesAWorkflowSecretForAnUnlistedRepository` (the bare command in a checkout the
   entry excludes writes the repository's own copy and says so), and
   `TestSecretsSetNeverStoresTheValueAsAnArgument` (unchanged behaviour, held so this task cannot
-  weaken it by accident).
-- **Files (≤6).** `internal/cli/secrets.go`, `internal/cli/secrets_test.go`, and the pty and
-  bitbucket-text test files the help text's edits touch (`secrets_pty_test.go`,
-  `secrets_bitbucket_text_test.go`), named at implementation time by the pin gate.
+  weaken it by accident). For the `rm` half, `TestSecretsRmRemovesTheWorkflowBlockEntry` (a project
+  container and a `workflow_secrets.<name>` entry: `rm` deletes the container **and** drops that key,
+  and the dry run's `key` reads `workflow_secrets.<name>`) fails against G8's `rm`, which drops
+  `project_secrets.<name>`.
+- **Files (≤7).** `internal/cli/secrets.go`, `internal/cli/secrets_test.go`,
+  `internal/cli/secrets_rm.go`, `internal/cli/secrets_rm_test.go`, and the pty and bitbucket-text
+  test files the help text's edits touch (`secrets_pty_test.go`, `secrets_bitbucket_text_test.go`),
+  named at implementation time by the pin gate.
 - **SEC.** It is the write path for a credential's project copy. Its refusals must be fail-closed on
   the three shapes D1261 names: an unknown name, a reserved name, and an entry that is present and
   empty.
@@ -277,4 +303,4 @@ person decides whether storing one value for sixty-five repositories is safe.
 - It touches **no Terraform**, so no installation has anything to converge beyond the container the
   first store creates (D1263).
 - It **promises nothing about a hostile run**: the allow-list decides which jobs mount a value, not
-  what a run does with it (reconciliation §5).
+  what a run does with it (reconciliation §6).

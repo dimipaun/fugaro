@@ -19,7 +19,7 @@ package cli
 //     owner never made.
 //   - **The decision block is exactly D1260–D1277, with D1278–D1289 held.**
 //     Taken above D1189 on `main` and above the blocks #1676 and the
-//     stateless-orchestrator work hold (reconciliation §4). A number written
+//     stateless-orchestrator work hold (reconciliation §5). A number written
 //     twice in two work streams is the collision the block exists to avoid,
 //     and a number *reused* would draw a wrong figure with no error.
 //   - **Every decision costs its alternatives.** The point of the folder is
@@ -76,7 +76,7 @@ func readProjectWorkflowSecrets(t *testing.T, name string) string {
 	return string(data)
 }
 
-// TestProjectWorkflowSecretsFolderIsComplete: the four documents, none empty,
+// TestDocsProjectWorkflowSecretsFolderIsComplete: the four documents, none empty,
 // and each carrying a status line — the fact docs/managed-agent-converge/
 // carries in its README and this folder carries in each file, because a
 // reader who lands on reconciliation.md directly must be able to see that
@@ -107,7 +107,7 @@ func TestDocsProjectWorkflowSecretsFolderIsComplete(t *testing.T) {
 	}
 }
 
-// TestProjectWorkflowSecretsSpecIsTheIssueVerbatim: the issue's own headings,
+// TestDocsProjectWorkflowSecretsSpecIsTheIssueVerbatim: the issue's own headings,
 // the three sentences the design is answerable to, and the checklist line the
 // issue ends with. The assertions are made byte for byte rather than
 // whitespace-normalized, because the point of the file is that it is a copy.
@@ -150,10 +150,10 @@ func TestDocsProjectWorkflowSecretsSpecIsTheIssueVerbatim(t *testing.T) {
 	}
 }
 
-// TestProjectWorkflowSecretsDecisionsAreD1260ToD1277AndNoFurther: the numbers
+// TestDocsProjectWorkflowSecretsDecisionsAreD1260ToD1277AndNoFurther: the numbers
 // the reconciliation writes, in order, with none skipped and none outside the
 // block. D1278–D1289 are reserved and unused, so a decision heading there is
-// a number taken twice (reconciliation §4).
+// a number taken twice (reconciliation §5).
 func TestDocsProjectWorkflowSecretsDecisionsAreD1260ToD1277AndNoFurther(t *testing.T) {
 	doc := readProjectWorkflowSecrets(t, pwsReconcile)
 	var got []int
@@ -185,7 +185,7 @@ func TestDocsProjectWorkflowSecretsDecisionsAreD1260ToD1277AndNoFurther(t *testi
 	}
 }
 
-// TestProjectWorkflowSecretsNumberBlockIsReadAboveTheOpenWork: §4's facts. The
+// TestDocsProjectWorkflowSecretsNumberBlockIsReadAboveTheOpenWork: §5's facts. The
 // numbers are read by grepping the trees, and the block is taken above the
 // highest one claimed anywhere — so the file must name the ceiling it was
 // taken above, and the two work streams that hold the numbers under it. A
@@ -202,7 +202,7 @@ func TestDocsProjectWorkflowSecretsNumberBlockIsReadAboveTheOpenWork(t *testing.
 		"b41709ea",
 	} {
 		if !strings.Contains(doc, want) {
-			t.Errorf("reconciliation.md §4 does not carry %q: the number block must name what it was read above", want)
+			t.Errorf("reconciliation.md §5 does not carry %q: the number block must name what it was read above", want)
 		}
 	}
 	// The README states the same block, and a reader arriving there must not
@@ -215,7 +215,7 @@ func TestDocsProjectWorkflowSecretsNumberBlockIsReadAboveTheOpenWork(t *testing.
 	}
 }
 
-// TestProjectWorkflowSecretsEveryDecisionIsAnswerable: each decision section
+// TestDocsProjectWorkflowSecretsEveryDecisionIsAnswerable: each decision section
 // must carry a recommendation and the cost of at least one alternative. The
 // owner answers these; a decision that recommends nothing, or that costs
 // nothing, is not one a reader can answer.
@@ -240,7 +240,7 @@ func TestDocsProjectWorkflowSecretsEveryDecisionIsAnswerable(t *testing.T) {
 	}
 }
 
-// TestProjectWorkflowSecretsFindingsRunF1ToF20: the findings are contiguous
+// TestDocsProjectWorkflowSecretsFindingsRunF1ToF20: the findings are contiguous
 // and each states its claim and what the code does. A finding that is a
 // paragraph about the design rather than a reading of the tree is what the
 // reconciliation exists not to be.
@@ -282,7 +282,7 @@ func TestDocsProjectWorkflowSecretsFindingsRunF1ToF20(t *testing.T) {
 	}
 }
 
-// TestProjectWorkflowSecretsPlanNamesItsEightTasks: W0–W7, each with a red
+// TestDocsProjectWorkflowSecretsPlanNamesItsEightTasks: W0–W7, each with a red
 // step, an interface or a rule, a named-test line and a file budget at or
 // under the brief's twelve. The file budget is parsed rather than asserted
 // by eye: a task that grew past twelve files would otherwise be a plan that
@@ -340,7 +340,7 @@ func TestDocsProjectWorkflowSecretsPlanNamesItsEightTasks(t *testing.T) {
 	}
 }
 
-// TestProjectWorkflowSecretsPlanProtectsTheTwoPropertiesTheIssueNames: the
+// TestDocsProjectWorkflowSecretsPlanProtectsTheTwoPropertiesTheIssueNames: the
 // issue asks for two things that are not negotiable — the list is
 // operator-local, and a repository's own copy still wins. Both are decisions
 // in the reconciliation (D1260's alternatives and D1264) and both must be
@@ -370,7 +370,7 @@ func TestDocsProjectWorkflowSecretsPlanProtectsTheTwoPropertiesTheIssueNames(t *
 	}
 }
 
-// TestProjectWorkflowSecretsReadmeLinksItsSiblings: every document the README
+// TestDocsProjectWorkflowSecretsReadmeLinksItsSiblings: every document the README
 // describes must exist, and the folder must not have grown a fifth document
 // nobody describes. A design folder whose README is stale is one whose table
 // of contents lies.
@@ -396,7 +396,7 @@ func TestDocsProjectWorkflowSecretsReadmeLinksItsSiblings(t *testing.T) {
 	}
 }
 
-// TestProjectWorkflowSecretsFolderCarriesNoSecretShapedLiteral: the folder's
+// TestDocsProjectWorkflowSecretsFolderCarriesNoSecretShapedLiteral: the folder's
 // subject is a credential stored once for many repositories, which is exactly
 // where a real value would be pasted as an illustration. The patterns are the
 // shapes a value takes, not a list of vendors: a PEM header, a well-known
@@ -422,6 +422,142 @@ func TestDocsProjectWorkflowSecretsFolderCarriesNoSecretShapedLiteral(t *testing
 			}
 		}
 	}
+}
+
+// TestDocsProjectWorkflowSecretsSectionsAreNumberedAndOrdered: the
+// reconciliation's numbered sections, in order. The threat model sits between
+// what the design leaves alone and the questions it asks, so the decisions are
+// §4 — a reader following a "§3" from another document has to land on the
+// section they meant, and the folder's cross-references are written to it.
+func TestDocsProjectWorkflowSecretsSectionsAreNumberedAndOrdered(t *testing.T) {
+	doc := readProjectWorkflowSecrets(t, pwsReconcile)
+	want := []string{
+		"Findings: what exists",
+		"What this design leaves alone",
+		"The threat model",
+		"Decisions",
+		"The number block",
+		"The residual this design refuses to hide",
+	}
+	ms := regexp.MustCompile(`(?m)^## (\d+)\. (.+)$`).FindAllStringSubmatch(doc, -1)
+	if len(ms) != len(want) {
+		t.Fatalf("reconciliation.md carries %d numbered sections, want %d", len(ms), len(want))
+	}
+	for i, m := range ms {
+		if n := strconv.Itoa(i + 1); m[1] != n {
+			t.Errorf("section %d is numbered %s, want %s", i+1, m[1], n)
+		}
+		if got := strings.TrimSpace(m[2]); got != want[i] {
+			t.Errorf("section %s is %q, want %q", m[1], got, want[i])
+		}
+	}
+}
+
+// TestDocsProjectWorkflowSecretsThreatModelAnswersWhoCanReadTheValue: the
+// threat model §3 carries, and the three questions a security reviewer asks of
+// this design before any decision is answered — what a rotation reaches, what
+// the doctor says about a shadowed name, and who can read the value.
+//
+// Each is pinned to the code that answers it rather than to a sentence: a
+// threat model whose claims cannot be re-read against the tree is the prose
+// the folder exists not to be. The last of the three is an explicit statement
+// that enforcement is the plan-time candidate map and **not** an independent
+// Terraform check, because that is the claim a reader would otherwise supply
+// from the shape of the Terraform and be wrong about.
+func TestDocsProjectWorkflowSecretsThreatModelAnswersWhoCanReadTheValue(t *testing.T) {
+	doc := readProjectWorkflowSecrets(t, pwsReconcile)
+	model := sectionBody(t, doc, "3. The threat model")
+	for _, want := range []string{
+		// Rotation: one version add, resolved at container start.
+		"ROTATION",
+		`version = "latest"`,
+		"deploy/terraform/gcp/modules/workflow/job.tf:67",
+		// The doctor check, and why "no new doctor check" is not an omission.
+		"secret-scope-shadowed",
+		"internal/cli/doctor.go:1000",
+		"no new doctor check",
+		// Who can read the value, and where the one decision point is.
+		"secretAccessor",
+		"local.secrets",
+		"internal/infra/spec.go:1356",
+		"not an independent Terraform check",
+	} {
+		if !strings.Contains(model, want) {
+			t.Errorf("reconciliation.md §3 does not carry %q: the threat model has to answer it against the code", want)
+		}
+	}
+	// The section has to be a section, not three sentences folded into §2: a
+	// reviewer who cannot find it has not been given a threat model.
+	if !strings.Contains(model, "**Recommendation.**") && !strings.Contains(model, "**Claim.") {
+		t.Error("reconciliation.md §3 states no claim of its own: a threat model reads as claims, each answerable against the tree")
+	}
+}
+
+// TestDocsProjectWorkflowSecretsPlanSequencesAfterTheSecretsRmWork: the plan's
+// dependency on the config-management work's G8 (`fugaro secrets rm` and the
+// secret policy flags, `internal/cli/secrets_rm.go`). W3 edits
+// `internal/cli/secrets.go`, which G8 edits for the same family's flags, and
+// `rm` is the command that has to withdraw a project-scoped workflow secret:
+// a plan that landed W3 first would leave `rm` removing the wrong block's entry
+// and the design silent about it.
+func TestDocsProjectWorkflowSecretsPlanSequencesAfterTheSecretsRmWork(t *testing.T) {
+	plan := readProjectWorkflowSecrets(t, pwsPlan)
+	order := sectionBody(t, plan, "2. Order, and what forces it")
+	for _, want := range []string{"G8", "internal/cli/secrets_rm.go", "fugaro secrets rm"} {
+		if !strings.Contains(order, want) {
+			t.Errorf("implementation-plan.md §2 does not name %q: the dependency is what decides the order", want)
+		}
+	}
+	w3 := taskBody(t, plan, "W3")
+	for _, want := range []string{
+		"G8",
+		// What `rm` does for the new block, said rather than left to the task.
+		"workflow_secrets.<name>",
+		"secrets rm",
+	} {
+		if !strings.Contains(w3, want) {
+			t.Errorf("implementation-plan.md W3 does not carry %q: the task that edits secrets.go owns the rm half too", want)
+		}
+	}
+	// The shared-files table is what tells a task which file another task owns.
+	shared := sectionBody(t, plan, "4. The shared-files table")
+	for _, want := range []string{"`internal/cli/secrets_rm.go`", "`internal/cli/secrets.go`", "G8"} {
+		if !strings.Contains(shared, want) {
+			t.Errorf("implementation-plan.md §4 carries no %q row: a shared file no table names is the merge the table exists to prevent", want)
+		}
+	}
+}
+
+// sectionBody returns the text under a `## <heading>` line, up to the next
+// `## ` line, failing the test when no such heading exists.
+func sectionBody(t *testing.T, doc, heading string) string {
+	t.Helper()
+	re := regexp.MustCompile(`(?m)^## ` + regexp.QuoteMeta(heading) + `\n`)
+	loc := re.FindStringIndex(doc)
+	if loc == nil {
+		t.Fatalf("no `## %s` section was found", heading)
+	}
+	rest := doc[loc[1]:]
+	if next := regexp.MustCompile(`(?m)^## `).FindStringIndex(rest); next != nil {
+		return rest[:next[0]]
+	}
+	return rest
+}
+
+// taskBody returns the text under a `## <id>. ...` task heading, up to the next
+// task heading, failing the test when the plan names no such task.
+func taskBody(t *testing.T, doc, id string) string {
+	t.Helper()
+	re := regexp.MustCompile(`(?m)^## ` + regexp.QuoteMeta(id) + `\. .*$`)
+	loc := re.FindStringIndex(doc)
+	if loc == nil {
+		t.Fatalf("implementation-plan.md names no %s task", id)
+	}
+	rest := doc[loc[1]:]
+	if next := regexp.MustCompile(`(?m)^## `).FindStringIndex(rest); next != nil {
+		return rest[:next[0]]
+	}
+	return rest
 }
 
 // decision is one decision section of the reconciliation: its heading and the

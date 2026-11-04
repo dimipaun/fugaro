@@ -1,6 +1,6 @@
 # Reconciliation: every claim of the design against the code, and the decisions this design needs
 
-**Status: a design, and nothing is built.** The decisions are **D1260–D1277** (§3), each with a
+**Status: a design, and nothing is built.** The decisions are **D1260–D1277** (§4), each with a
 recommendation and the cost of every alternative; **D1278–D1289 are reserved and unused**. **None of
 them is answered** — this pull request asks, it does not decide (the issue's own ask is one paragraph,
 and the owner has not ruled on any of the eighteen). **Where this file and [README.md](README.md) or
@@ -8,6 +8,13 @@ and the owner has not ruled on any of the eighteen). **Where this file and [READ
 
 Reconciled against `origin/main` at **`b41709ea`**, on 2026-11-04, by reading the files rather than
 the designs that describe them. Line numbers are that head.
+
+**Re-read on 2026-11-04 after merging `b3ed1842`**, which moved two of the citations below
+(`ProjectSecretCandidate` `spec.go:1344` → `:1356`, `projectSecretCandidates` `:1311` → `:1323`) and
+nothing else this file reads; the line numbers here are the merged head's. The threat model (§3) was
+written in the same round, and the config-management work's `fugaro secrets rm` — unscheduled when
+this file was first written and now an open branch, #1691 — moved the plan's order (§2 of
+[implementation-plan.md](implementation-plan.md)) and its shared-files table (§4 of it).
 
 **The shape of the reading: the mechanism the issue asks for is already built, end to end, and the
 only thing standing in its way is one branch of one predicate.** A project-wide secret today is a
@@ -45,7 +52,7 @@ value (*"A workflow's own secret (workflows.<n>.secrets) cannot be shared this w
 repository copy"*).
 
 **Consequence.** The issue's ask is one clause added to branch 4 and one to branch 1's key rule —
-but *where* the clause reads its answer from is the whole design, and §3 is about that and nothing
+but *where* the clause reads its answer from is the whole design, and §4 is about that and nothing
 else. A design that only edited `projectWideAccepted` would ship a store path with no plan-time
 predicate behind it: F3 is the function that decides the mount, and it must give the same answer.
 
@@ -76,11 +83,11 @@ The design's job is to say so plainly rather than propose a mechanism the tree a
 **Claim of the design:** that one predicate decides both "may be stored" and "may be mounted", so the
 two cannot drift.
 
-**What the code does.** `internal/infra/spec.go:1344`'s `ProjectSecretCandidate(lc, logical, repo)`
+**What the code does.** `internal/infra/spec.go:1356`'s `ProjectSecretCandidate(lc, logical, repo)`
 returns the project secret ID when the repository may mount a project copy of `logical`, and it reads
 `config.AllowedForProjectSecret` (the `project_secrets` entry), `config.ProjectScopeByDefault` (D2's
 sweep), `ClaudeAccountBySecret` and `ProviderBySecret` in that order. Its callers are
-`spec.go:1311`'s `projectSecretCandidates` (the per-repository candidate map),
+`spec.go:1323`'s `projectSecretCandidates` (the per-repository candidate map),
 `internal/cli/secrets.go:1103`'s `repoMayUseProject` (the store-time note and the listing),
 `internal/cli/initsecrets.go:424`'s `projectScope` and `:447`'s `find` (init's stage: where to store,
 and what not to prompt for), `internal/cli/secrets.go:1267` and `:1341` (the listing paths) and
@@ -137,7 +144,7 @@ S2 pre-apply store needs, so a container `fugaro secrets set --project-wide` cre
 is adopted rather than conflicted with.
 
 **Consequence.** An entry the operator typed wrong creates a container that is never mounted and
-never destroyed. That is the cost D1260's recommendation is weighed against, and §5 states it rather
+never destroyed. That is the cost D1260's recommendation is weighed against, and §6 states it rather
 than hiding it.
 
 ### F7. The per-repository grant already exists and is name-agnostic
@@ -208,7 +215,7 @@ reader *class* is unchanged by this design — what changes is which container t
 `SecretMounts` already emits a logical name and a variable, never an ID.
 
 **Consequence.** B0.2's guard, whose exceptions table keys on these IDs, needs **no new row** and no
-edit. That is a finding the design states rather than a task it owes — and it is the reason §5 can
+edit. That is a finding the design states rather than a task it owes — and it is the reason §6 can
 say the brokering work is untouched.
 
 ### F12. The allow-list matcher already does "wildcards within a segment", and one matcher serves both lists
@@ -327,12 +334,12 @@ inherited, and that the store-time note names the reach (F3's `repoMayUseProject
 
 **Claim of the design:** D1260–D1289 is free.
 
-**What the code does.** See §4. On `main`, the highest written decision is **D1189**; **#1676**'s
+**What the code does.** See §5. On `main`, the highest written decision is **D1189**; **#1676**'s
 branch writes **D1190–D1209** and names **D1219** as its block's top; the stateless-orchestrator
 work (#1682) writes no decision yet and is to take **D1220–D1259**.
 
 **Consequence.** This work takes **D1260–D1289**, writes **D1260–D1277** and reserves
-**D1278–D1289**. A later task re-runs §4's commands rather than trusting this paragraph.
+**D1278–D1289**. A later task re-runs §5's commands rather than trusting this paragraph.
 
 ---
 
@@ -360,7 +367,80 @@ work (#1682) writes no decision yet and is to take **D1220–D1259**.
 
 ---
 
-## 3. Decisions
+## 3. The threat model
+
+The three questions a security reviewer asks of this design before any decision is answered — what a
+rotation reaches, what `doctor` says about a shadowed name, and who can read the value — each read
+against the tree rather than against the shape of the code around it.
+
+### ROTATION. One version add reaches every job the entry lists
+
+**Claim.** A rotation is `secrets set`'s existing add-a-version path, and it reaches every repository
+the entry names with nothing else to run: no apply, no re-grant, no prompt.
+
+**What the code does.** The mount is by container, not by version:
+`deploy/terraform/gcp/modules/workflow/job.tf:67` writes `version = "latest"` into the job's
+`secret_key_ref`, so a job resolves the newest enabled version when its container starts and the
+**next run** of every job that mounts the container reads the new value. The container's ID is
+`gcp.ProjectSecretID(lc.Name, logical)` — the same ID whatever the name is (F2) — so a rotated
+workflow secret travels the path the reserved names already travel. The grant is on the container
+(`secret_accessor` on the secret, F7), not on a version, so it survives the rotation untouched.
+
+**What a rotation does not reach, which is D1264's fact seen from the other side.** A repository that
+holds its own copy with an enabled version resolves *its own* copy (`resolveSecretID`, F5), so
+rotating the project's value leaves that repository on its own value — silently and by design.
+`doctor`'s `secret-scope-shadowed` is where that is readable from a checkout, and the store-time note
+and `secrets rm`'s own note say it at the moment a value is stored or withdrawn. So the issue's 130
+rotation prompts collapse to **one** `secrets set` for the repositories the entry lists, and to
+**nothing** for a repository that keeps its own copy: that one rotates its own, which is the cost of
+keeping it.
+
+### The doctor check. The two existing scope checks already iterate the candidate map
+
+**Claim.** D1270 says **no new doctor check**. This is why, rather than an omission.
+
+**What the code does.** `doctorRepoSecretsOf` walks every logical name a checkout's workflows declare
+and asks `infra.ProjectSecretCandidate(lc, logical, repo)` for each (`internal/cli/doctor.go:1000`),
+filling `facts.candidates` — the map `doctorSecretScopeChecks` iterates to build `secret-scope` and
+`secret-scope-shadowed`. The predicate is the one function this design changes (F3), so the moment it
+answers for a listed repository, both checks cover the name with **no doctor code change at all**:
+`secret-scope` prints which copy a name resolves to (project scope, repository copy, both, or
+neither), and `secret-scope-shadowed` names the repository copy that wins over the project's, with the
+`secrets set --repo` command that fixes it. A new check could only restate either.
+
+### Who can read the value
+
+**Claim.** The repositories that can read a project-scoped workflow secret are exactly the ones the
+entry's `allow_data_to` names, and the one place that set is computed is the **plan-time** candidate
+map.
+
+**What the code does — three steps, because the claim is only true as the three together.**
+
+- **The grant is the job account's, per mounted secret.** `deploy/terraform/gcp/modules/workflow/sa.tf:196`
+  writes `roles/secretmanager.secretAccessor` for `google_service_account.job` on
+  `var.secrets[each.value]` — one member per secret the job mounts, at the secret level, never at the
+  project's. The map it indexes is `local.secrets`
+  (`deploy/terraform/gcp/modules/repo/workflows.tf:9`): the repository's own containers **overlaid
+  with `var.repo.project_secrets`**, which is the plan's resolution and nothing else.
+- **Only a repository the entry lists ever gets a project candidate.**
+  `internal/infra/spec.go:1356`'s `ProjectSecretCandidate(lc, logical, repo)` is the single function
+  that answers, and it is where an entry's list is read (F3). A name it refuses produces no entry in
+  `repo.project_secrets`, so there is no ID for the grant to name.
+- **Enforcement is that map, and it is not an independent Terraform check.** Nothing under
+  `deploy/terraform/` reads `allow_data_to`: the module grants what the plan hands it. The boundary is
+  therefore a **plan-time** one — a candidate the function returns becomes a grant, and a name it
+  refuses never becomes one — and a reader who assumed a second, Terraform-side check exists would be
+  assuming an enforcement point this design does not have. That is why W2, the task that changes the
+  predicate, carries a **SEC** flag and is the task that changes who can read the value.
+
+**What this does not claim.** A value mounted by a repository the entry lists is readable by
+everything that repository's job is: its runs' agents, and its launchers. The allow-list decides which
+repositories mount a value, never what a run does with it once mounted — the sentence `SECURITY.md`
+already carries for the Bitbucket token, and §6 states for this subject rather than softening it.
+
+---
+
+## 4. Decisions
 
 Each decision carries the question, the **recommendation**, and the cost of every alternative.
 **None is answered**: this pull request asks.
@@ -408,7 +488,7 @@ conventional name or its own `secret:`, either harness OAuth namespace
 (`claude-oauth-token*`, `codex-oauth-token*`), or `config.CredentialsBundleSecret`. The refusals
 reuse the sentences the tree already has (`providerConventionRefusal`, `codexOAuthRefusal`,
 `credentialsBundleRefusal`) rather than wording new ones. **No declaration check**: a name no
-repository declares is accepted and inert (§5).
+repository declares is accepted and inert (§6).
 
 **Cost of the alternatives.**
 
@@ -497,7 +577,7 @@ does each require?
   entry for `NAME` with a non-empty `allow_data_to`, and refused with the entry's own field named
   otherwise (present-and-empty means nobody, exactly as for a reserved name). **No checkout
   required**, because the entry is the gate and a value stored before any repository declares the
-  name is inert (§5).
+  name is inert (§6).
 - `fugaro secrets set NAME` (bare) — stores project-wide when the entry lists *this repository*
   (today's `projectScopeName` rule, through `ProjectSecretCandidate`), and this repository's own copy
   otherwise, with the note at `:859` naming which it was.
@@ -615,7 +695,7 @@ source — no new column, no `--json` field, no format version (F17). One settin
 schema key land in the same task that adds the block (F13). **No new doctor check**: a check that the
 entry names a repository that declares the name would need every repository's `fugaro.yaml` (F8), and
 one that reads only the checkout in hand would print a clean bill of health for the other sixty-four.
-The stray-container case (§5) is stated, not checked.
+The stray-container case (§6) is stated, not checked.
 
 **Cost of the alternatives.**
 
@@ -759,7 +839,7 @@ the CLI at `current: 0.17.0`, `next: Ocelot` (0.18.0), so 0.19.0 is free and its
 
 ---
 
-## 4. The number block
+## 5. The number block
 
 **D1260–D1289 is taken above every `D<number>` on `main` and in every open work stream**, read on
 2026-11-04 by grepping the trees rather than inheriting a neighbour's block.
@@ -786,7 +866,7 @@ the CLI at `current: 0.17.0`, `next: Ocelot` (0.18.0), so 0.19.0 is free and its
 
 ---
 
-## 5. The residual this design refuses to hide
+## 6. The residual this design refuses to hide
 
 - **An entry the operator typed wrong creates a container that nothing mounts** (§D1274, F6). The
   design cannot catch it before the container exists, because no validation can tie an entry to a

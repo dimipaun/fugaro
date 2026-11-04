@@ -2,7 +2,7 @@
 
 **Status: a design, and nothing is built and nothing is approved.** This folder answers **issue
 #1678**, which the owner opened on 2026-11-04 and which is reproduced **verbatim** in
-[spec.md](spec.md). No decision below is answered: [reconciliation.md](reconciliation.md) §3 asks
+[spec.md](spec.md). No decision below is answered: [reconciliation.md](reconciliation.md) §4 asks
 **eighteen questions (D1260–D1277)**, each with a recommendation and the cost of every alternative,
 and the build [implementation-plan.md](implementation-plan.md) prices is written to the
 recommendations and may not start until the owner rules.
@@ -13,7 +13,7 @@ schema, no `go.mod`.
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The issue, **byte for byte** — its headings, its checklist box and its em dashes — with a status line and nothing else |
-| [reconciliation.md](reconciliation.md) | Each claim read against the code on `main` at `b41709ea`: findings **F1–F20**, what already exists and what is missing, the decisions **D1260–D1277** (§3) with the recommendation and the cost of each alternative, the number block and how it was read (§4), and the residual this design refuses to hide (§5). **Where it disagrees with this file, it wins** |
+| [reconciliation.md](reconciliation.md) | Each claim read against the code on `main` at `b41709ea`, re-read after merging `b3ed1842`: findings **F1–F20**, what already exists and what is missing; the threat model (§3) — rotation, the two doctor checks and who can read the value; the decisions **D1260–D1277** (§4) with the recommendation and the cost of each alternative; the number block and how it was read (§5); and the residual this design refuses to hide (§6). **Where it disagrees with this file, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Eight tasks **W0–W7**, each with its files (at most twelve), its interface, its **red step**, its named tests and its **SEC** flag; the shared-files table (§4); the order and the critical path (§2); the recommended slot (D1277 of the reconciliation) |
 | `README.md` | This file: the status, the reading of the issue, the number block, and what a reader should not take from here |
 
@@ -64,7 +64,7 @@ The block is taken **above every `D<number>` on `main` and in every open work st
 - **The highest number claimed anywhere is `D1259`**, and the next free block above it is
   **D1260–D1289**, the thirty-wide width `docs/ee-reorg` took for D520–D549.
 - **This work takes D1260–D1289: D1260–D1277 are written here and D1278–D1289 are reserved and
-  unused.** A later task re-checks §4's facts rather than its conclusion; that section carries the
+  unused.** A later task re-checks §5's facts rather than its conclusion; that section carries the
   four commands.
 
 ## What this design does not do
@@ -83,7 +83,7 @@ The block is taken **above every `D<number>` on `main` and in every open work st
 - **It does not move a value.** `fugaro secrets set`'s stdin-only contract, its hidden prompt, its
   bounds and its refusals are untouched; only *which container* a name resolves to changes.
 - **It does not make a shared value narrow.** The allow-list decides which jobs mount a value, never
-  what a run does with it once mounted — `SECURITY.md` says as much, and §5 of
+  what a run does with it once mounted — `SECURITY.md` says as much, and §6 of
   [reconciliation.md](reconciliation.md) repeats it rather than softening it.
 - **It is not a release plan.** No release notes, no `### For operators` step (there is none: the
   build adds no operator command and no migration) and no live check. Every test the plan names is
