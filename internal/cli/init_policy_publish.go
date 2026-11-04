@@ -282,9 +282,29 @@ func policyLoosening(old, new *projectpolicy.Policy) []policyCeiling {
 // is empty for every run that publishes nothing: Migrate moves a version and
 // derives the members the config states, and a member it derives is not a
 // ceiling the operator's config states.
+//
+// A FIRST publish is the one publish with no node to measure against, and it is
+// a widening by its own name rather than an empty comparison: the document it
+// writes is what every run of the project is admitted by, chosen where none was,
+// so its allow-list admits repositories nothing admitted before — M3's own
+// reading of a first node (`policyReposRefusal`), which is what makes the first
+// node the owner's to write. The comparison below cannot see that:
+// settingsLoosens reads a member the node did not carry as no loosening, which
+// is right when an operator edits a ceiling that is there and wrong when the
+// ceiling is created. The entry is named here for that reason, and its Member is
+// the node itself — looseningWhy words the first publish as the widening of the
+// whole node, so it never prints the two empty values.
+//
+// It is what gives a first publish the Typed class: the typed name rather than
+// --yes, and a coding agent's session refused by the gate's own D1026 rule
+// rather than admitted to the boundary every later run of the project is
+// admitted by.
 func (m *policyMigration) loosening() []policyCeiling {
 	if m.pub == nil {
 		return nil
+	}
+	if m.firstPublish {
+		return []policyCeiling{{Member: projectpolicy.PathShared()}}
 	}
 	return policyLoosening(m.node, m.pub.pol)
 }
@@ -295,7 +315,16 @@ func (m *policyMigration) loosening() []policyCeiling {
 // that does not stand in rather than passed over, because the operator reading
 // this from a script has just passed it and would otherwise take it for the
 // answer.
+//
+// The first publish has no member to compare and no value to name on either
+// side, so it says what it widens instead: a project with nothing published is
+// a project every run reaches through its job's environment, and the node
+// written now is the one every run of the project is admitted by from here on.
 func (m *policyMigration) looseningWhy(loosening []policyCeiling) string {
+	if m.firstPublish {
+		return fmt.Sprintf("the project has no published policy node at %s, and this run writes the one every run of the project is admitted by — its allow-list, its ceilings and its catalog are chosen here for the first time. The project's own name is what confirms it and --yes does not stand in; run this yourself at your own terminal: %s",
+			projectpolicy.PathShared(), selfCommand()+" update")
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "this publish loosens %s, which every run of the project is admitted by: ", projectpolicy.PathShared())
 	for i, c := range loosening {
@@ -317,6 +346,33 @@ func printPolicyPublishDiff(w io.Writer, drift []policyDrift, sources map[string
 	}
 	fmt.Fprintf(w, "%s: the local config states what the node does not carry\n", projectpolicy.PathShared())
 	printPolicyDrift(w, drift)
+	if len(sources) > 0 {
+		fmt.Fprintf(w, "  allow_repos is seeded from this machine's repositories: %s\n", entryListText(sources))
+	}
+}
+
+// printFirstPublishDiff is printPolicyPublishDiff for a project whose node does
+// not exist yet (#1656), and it is a renderer of its own because there is no
+// published side to render: the drift is measured against an empty document, so
+// every member's right-hand value is that document's zero rather than anything
+// the project ever published, and the arrow would point at it — "per_run_usd: 5
+// (this machine) -> 0 (published)" names a node nobody published, in the one
+// confirmation the operator cannot check against a node they do not have. What
+// is shown instead is what the node will carry, member by member; the members
+// the config is silent about carry nothing in this node, so naming them would
+// describe a write that does not happen.
+func printFirstPublishDiff(w io.Writer, drift []policyDrift, sources map[string]string) {
+	if len(drift) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "%s: this publish creates the node, carrying what the local config states\n", projectpolicy.PathShared())
+	for _, d := range drift {
+		if d.File == "" {
+			fmt.Fprintf(w, "  %s differs\n", d.Member)
+			continue
+		}
+		fmt.Fprintf(w, "  %s: %s\n", d.Member, d.File)
+	}
 	if len(sources) > 0 {
 		fmt.Fprintf(w, "  allow_repos is seeded from this machine's repositories: %s\n", entryListText(sources))
 	}
