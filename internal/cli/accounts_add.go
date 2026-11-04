@@ -151,13 +151,13 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	command := accountsAddCommand(name, repos, profile, o.claude)
 	changed := yamledit.Changed(old, next)
 
-	// The managed gate, before anything is screened or written (accounts_managed.go
-	// and the managed plan's §2 accounts row): in a managed project's coding
-	// agent's session this decides whether the declaration is a step the session
-	// may write, and it refuses a widening and a token entry here — before the
-	// login is screened and before the diff is shown — so a refusal leaves the
-	// file exactly as it was. Everywhere else it answers the zero Managed, which
-	// is every fence below unchanged.
+	// The managed gate, before anything is screened or written
+	// (accounts_managed.go; the managed plan's §2 accounts row): in a managed
+	// project's coding agent's session it decides whether this declaration is a
+	// step the session may write, and it refuses a widening and a token entry
+	// here — before the login is screened and before the diff is shown — so a
+	// refusal leaves the file exactly as it was. Everywhere else it answers the
+	// zero Managed, which is every fence below unchanged.
 	m, gate, err := accountsAddGate(cmd.Context(), lc, o, name, profile, beyond, next)
 	if err != nil {
 		return err
@@ -180,15 +180,15 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 		what += fmt.Sprintf("; run %s setup-token on this terminal", pluginwire.Printable(claudeBin))
 	}
 
+	// Managed is the gate's answer above, passed into the one write path: its
+	// zero value is what every other caller of that helper passes, and it is the
+	// refusal this file has always made, byte for byte.
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
-		Path: sel.Path,
-		Old:  old,
-		New:  next,
-		What: what,
-		Kind: settingsDocLocal,
-		// The managed gate's answer for the step this edit is: its zero value is
-		// what every other caller of this helper passes, and it is the refusal
-		// this file has always made, byte for byte.
+		Path:    sel.Path,
+		Old:     old,
+		New:     next,
+		What:    what,
+		Kind:    settingsDocLocal,
 		Managed: m,
 		Command: command,
 		Yes:     o.yes,
