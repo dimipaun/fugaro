@@ -191,35 +191,28 @@ func (f *managedPolicyFixture) policyOf(t *testing.T) *projectpolicy.Policy {
 	return p
 }
 
-// policyNodeOracle is the node a publish of this fixture would write, read and
-// built by a test's own hands rather than by the code under test: the bytes
-// the gate's record has to name are these, so a gate that hashed something
-// else — the node it read, the diff it printed, the arguments of the write —
-// is caught by the assertion rather than by a reader of the record.
-func policyNodeOracle(t *testing.T, f *managedPolicyFixture) []byte {
+// appliedNodeBytes is the document the publish put on the database's own wire,
+// taken off the fake's record of the requests it received: the client marshals
+// the node's bytes verbatim into the PUT body, so the body IS the document that
+// was applied, and hashing it with the test's own sha256 is a question the code
+// under test cannot answer for itself. An oracle that BUILT the expected bytes —
+// by loading the config and calling readPolicyNode, publishedPolicyOf and
+// policyNodeForPublish, as this one first did — moves with the pipeline it is
+// supposed to check: a digest taken over the wrong document would satisfy it
+// exactly as well as the right one.
+func appliedNodeBytes(t *testing.T, f *managedPolicyFixture) []byte {
 	t.Helper()
-	ctx := context.Background()
-	lc, err := localcfg.Load(f.cfg)
-	if err != nil {
-		t.Fatal(err)
+	want := "/" + projectpolicy.PathShared() + ".json"
+	var applied []byte
+	for _, r := range f.db.Requests() {
+		if r.Method == http.MethodPut && r.Path == want {
+			applied = r.Body
+		}
 	}
-	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, true)
-	if err != nil {
-		t.Fatal(err)
+	if applied == nil {
+		t.Fatalf("no PUT of %s reached the database, so nothing was applied for the record to name", projectpolicy.PathShared())
 	}
-	_, exists, raw, err := readPolicyNode(ctx, db, lc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	old, err := publishedPolicyOf(raw, exists)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _, _, err := policyNodeForPublish(ctx, lc, old, raw, exists, false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return body
+	return applied
 }
 
 // gateRefusal fails the test unless err is the managed gate's own refusal
@@ -366,7 +359,6 @@ func TestPolicyPublishManagedRefusesRemoveRouting(t *testing.T) {
 func TestPolicyPublishManagedAdmitsANarrowerNode(t *testing.T) {
 	f := newManagedPolicyFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
-	want := policyNodeOracle(t, f)
 	t.Setenv("CLAUDECODE", "1")
 
 	out, errOut, err := execute(t, "project", "policy", "publish")
@@ -388,8 +380,28 @@ func TestPolicyPublishManagedAdmitsANarrowerNode(t *testing.T) {
 	if rec.Verdict != managedmode.AuditAdmitted {
 		t.Errorf("the record's verdict is %q, want %q", rec.Verdict, managedmode.AuditAdmitted)
 	}
-	if rec.PlanDigest != gateDigest(want) {
-		t.Errorf("the record's plan_digest is %s, and the document this publish wrote hashes to %s: the record has to name the document that was judged (D1022)", rec.PlanDigest, gateDigest(want))
+	// The record names the bytes that were APPLIED, read back off the wire and
+	// hashed by the test rather than built by the pipeline under test (D1022:
+	// the judged document and the applied document are provably one artifact).
+	applied := appliedNodeBytes(t, f)
+	if rec.PlanDigest != gateDigest(applied) {
+		t.Errorf("the record's plan_digest is %s, and the document this publish put on the wire hashes to %s: the record has to name the bytes that were written (D1022)", rec.PlanDigest, gateDigest(applied))
+	}
+	// And those bytes are the node this publish built, not the one it replaced:
+	// the published node held per_run_usd 9 and the config states 5, so a digest
+	// taken over the document the command READ — or over the diff it printed, or
+	// over its own arguments — is a different artifact, and the two assertions
+	// together are what tell them apart.
+	var doc struct {
+		Budget struct {
+			PerRunUSD float64 `json:"per_run_usd"`
+		} `json:"budget"`
+	}
+	if err := json.Unmarshal(applied, &doc); err != nil {
+		t.Fatalf("the applied document does not decode: %v\n%s", err, applied)
+	}
+	if doc.Budget.PerRunUSD != 5 {
+		t.Errorf("the document the record names carries per_run_usd %v, want the config's 5: the document that was judged is the one that was written", doc.Budget.PerRunUSD)
 	}
 	if len(rec.Rules) == 0 {
 		t.Error("the record names no rule, and it is written for a step whose rules ran")
@@ -481,6 +493,78 @@ func TestPolicyPublishManagedRefusesAWidenedProfileScope(t *testing.T) {
 		t.Errorf("the refused publish wrote something:\nbefore %s\nafter  %s", before, after)
 	}
 	refusalRecord(t, f, policyProfileRule)
+}
+
+// The same rule over the accounts block, which is the other list a layer change
+// can grow: an account's allow_repos is which repositories may hold that
+// token, so one more entry is one more repository whose runs hold it. The
+// project's own allow_repos is untouched by the second publish — without
+// --seed-repos a publish keeps the node's list — so the accounts rule is the
+// only one that fires, and the refusal is what says so.
+func TestPolicyPublishManagedRefusesAWidenedAccountScope(t *testing.T) {
+	one := "claude_accounts:\n  ops: { allow_data_to: [acme/app] }\n" +
+		"profiles:\n  standard: { provider: github, cpu: 1, memory: 512Mi, timeout_class: 6h, claude_accounts: [ops], allow_repos: [github/acme/app] }\n"
+	two := strings.Replace(one, "allow_data_to: [acme/app]", "allow_data_to: [acme/app, acme/lib]", 1)
+	f := newManagedPolicyFixture(t, one)
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+	if out, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("a person's own publish was refused: %v\n%s", err, out)
+	}
+	bt := f.policyOf(t).Accounts["ops"]
+	if len(bt.AllowRepos) != 1 || bt.AllowRepos[0] != "github/acme/app" {
+		t.Fatalf("the first publish wrote accounts.ops.allow_repos = %v, want the file's one entry", bt.AllowRepos)
+	}
+	f.rewriteConfig(t, two)
+	before := nodeOf(t, f.db)
+	t.Setenv("CLAUDECODE", "1")
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("a coding agent's session widened an account's scope:\n%s", out)
+	}
+	gateRefusal(t, err, policyAccountsRule)
+	if !strings.Contains(err.Error(), "accounts.ops") {
+		t.Errorf("the refusal does not name the block that grew: %v", err)
+	}
+	if after := nodeOf(t, f.db); after != before {
+		t.Errorf("the refused publish wrote something:\nbefore %s\nafter  %s", before, after)
+	}
+	refusalRecord(t, f, policyAccountsRule)
+}
+
+// And the third list: project_secrets.bitbucket-token's allow_data_to, which
+// the node's bitbucket_token block is derived from. The block is a proxied
+// per-repository job's whole admission (D493), so an entry that grew is a
+// credential that reaches one more repository, and the block is derived with
+// no profile mounting it — the derivation is not a statement about a mount.
+func TestPolicyPublishManagedRefusesAWidenedBitbucketToken(t *testing.T) {
+	one := "project_secrets:\n  bitbucket-token: { allow_data_to: [workspace-a/repo-a] }\n"
+	two := strings.Replace(one, "allow_data_to: [workspace-a/repo-a]", "allow_data_to: [workspace-a/repo-a, workspace-a/repo-b]", 1)
+	f := newManagedPolicyFixture(t, one)
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+	if out, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("a person's own publish was refused: %v\n%s", err, out)
+	}
+	token := f.policyOf(t).BitbucketToken
+	if token == nil || len(token.AllowRepos) != 1 {
+		t.Fatalf("the first publish wrote bitbucket_token = %+v, want the block the file's one entry derives", token)
+	}
+	f.rewriteConfig(t, two)
+	before := nodeOf(t, f.db)
+	t.Setenv("CLAUDECODE", "1")
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("a coding agent's session widened the Bitbucket token's reach:\n%s", out)
+	}
+	gateRefusal(t, err, policyBitbucketRule)
+	if !strings.Contains(err.Error(), "bitbucket/workspace-a/repo-b") {
+		t.Errorf("the refusal does not name the repository the block would newly admit: %v", err)
+	}
+	if after := nodeOf(t, f.db); after != before {
+		t.Errorf("the refused publish wrote something:\nbefore %s\nafter  %s", before, after)
+	}
+	refusalRecord(t, f, policyBitbucketRule)
 }
 
 // The plan's §5 wiring property for this command: the gate is read BEFORE the
@@ -637,5 +721,38 @@ func TestPolicyPublishOwnerOfAManagedProjectPaysNothingForTheGate(t *testing.T) 
 	}
 	if got := f.audits(t); len(got) != 0 {
 		t.Errorf("a person's own publish left %d audit records, want none: the record family is the gate's", len(got))
+	}
+}
+
+// The other half of the same property, and the half a failed read cannot
+// state: a person's session skips readManagedGate even when the marks ARE
+// there and readable. The test above shows a person's run is unaffected by a
+// read that fails; this one shows the read is never made — the world is a
+// managed project whose marks answer, and a person's publish still sends the
+// storage and Resource Manager fakes nothing at all. A gate read that only
+// happened to work would be a read this installation pays for on every
+// publish, for a property that is the coding agent's session's business.
+func TestPolicyPublishOwnersOwnSessionReadsNoMark(t *testing.T) {
+	f := newManagedPolicyFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+	// The fixture has just written the marks, which is itself a call to each
+	// fake: what this test counts is the calls THIS publish adds.
+	gcsBefore, crmBefore := len(f.gcs.Requests()), len(f.crm.Requests())
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("a person's own publish of a managed project was refused: %v\n%s", err, out)
+	}
+	if got := f.policyOf(t).Budget.PerRunUSD; got != 5 {
+		t.Errorf("the published per-run ceiling is %v, want the config's", got)
+	}
+	if got := len(f.gcs.Requests()); got != gcsBefore {
+		t.Errorf("a person's own publish made %d storage calls, want none: the marks are the gate's, and the gate is not read for a session that gives its own confirmation", got-gcsBefore)
+	}
+	if got := len(f.crm.Requests()); got != crmBefore {
+		t.Errorf("a person's own publish made %d Resource Manager calls, want none: the labels are read by the gate, which a person's session does not reach", got-crmBefore)
+	}
+	if got := f.audits(t); len(got) != 0 {
+		t.Errorf("a person's own publish left %d audit records, want none: a write nothing was admitted for has nothing to file", len(got))
 	}
 }

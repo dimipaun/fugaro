@@ -252,7 +252,18 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 			if err := policyPublishProceed(agent, out, m); err != nil {
 				return err
 			}
-			return deleteProjectPolicy(cmd, lc, db, out, exists, etag, o)
+			if err := deleteProjectPolicy(cmd, lc, db, out, exists, etag, o); err != nil {
+				return err
+			}
+			// The record of an admitted removal, where a removal that was ever
+			// admitted would have one: policyDeleteVerdict refuses by construction,
+			// so today this call is answered by the gate that admitted nothing and
+			// writes nothing. It is here rather than nowhere because the two halves
+			// of the gate's contract are one rule — an admission is recorded AFTER
+			// the write (spec §6, D1014) — and a door whose verdict changed would
+			// otherwise remove the node every run is admitted by and leave no trail
+			// of it, which is the one thing a record exists to prevent.
+			return gate.recorded(ctx)
 		}
 		old, err := publishedPolicyOf(raw, exists)
 		if err != nil {
