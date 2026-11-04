@@ -170,7 +170,10 @@ load-bearing:
 - **D928's three tightenings** — refusal at registration, the redirect host on the consent page, and
   a CSRF-bound flow — are in §3's registration rules, §3's flow and §8's redirect-URI paragraph.
 
-**D921's unconfirmed licence** added the first owner check in §6 and a build gate in the plan. The
+**D921's licence, unconfirmed when the answers were given,** added the first owner check in §6 and a
+build gate in the plan — **the review of the same day confirmed Apache-2.0**, and §4a records what
+still stands behind that check (counsel's clearance of the transitive dependencies, and the gate file
+the owner creates). The
 **status of the whole folder** moved from "design only, nothing approved" to the line every file now
 carries — **design answered by the owner 2026-11-04; plan only; nothing implemented; no task
 approved.**
@@ -544,7 +547,11 @@ code task starts:
    comparisons, from a token minted by the installation's own signer.
 6. **One client-credentials caller, end to end**, against a real installation: D929's shape is the
    one this design is least able to exercise hermetically, because a client secret and a token
-   rotation are both things a fake proves nothing about.
+   rotation are both things a fake proves nothing about. **M-f's amendment decides when**: an
+   unattended client is not a `user:` entry, so D933 refuses it, **`client_credentials` stays off
+   until it has its own owner**, and pre-registration is refused inside a coding agent's session —
+   so this check is about a mechanism the first slice does **not** turn on, and it is here so the
+   day somebody turns it on they know what could not be tested hermetically.
 7. **The independent SECURITY review of spec.md §8** — **it ran on 2026-11-04** and its findings are
    answered in **§4a**, which is the section every document in this folder is now written to. It was
    **run by the coordinator**, not by this folder's authors, and it read the threat model, every
@@ -601,9 +608,10 @@ discover:
 5. **`fugaro upgrade` still exists** (`internal/cli/upgrade.go`), and no finding here assumed
    otherwise: M4's operator path is `fugaro update` for the reason CLAUDE.md's HARD RULE gives, and
    `upgrade` is not part of it.
-6. **0.17.0 "Narwhal" has shipped** (`docs/release-streams.yaml`'s cli stream: `current: "0.17.0"`,
-   `next: Ocelot`), which is what §5 of the plan is re-slotted against — see
-   [implementation-plan.md](implementation-plan.md) §5.
+6. **0.18.0 "Ocelot" has shipped** (`docs/release-streams.yaml`'s cli stream: `current: "0.18.0"`,
+   `next: Panda`), which is what §5 of the plan is re-slotted against — see
+   [implementation-plan.md](implementation-plan.md) §5. 0.17.0 "Narwhal" was the version at this
+   section's first reading, on the same day; 0.18.0 landed before the amendment round's own read.
 7. **`internal/runner/stray.go` (#1476) is on `main`.** Finalize now refuses to commit a binary the
    run left untracked (`internal/runner/stray.go:29`, `strayArtifacts`). Nothing in this design
    reads the run's leftovers, so no finding moves; it is recorded because a reader of F14's "a run's

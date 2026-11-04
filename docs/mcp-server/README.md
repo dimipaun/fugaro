@@ -59,7 +59,7 @@ reading was taken with the seventeen pull requests open then — most closely #1
 (`internal/rigor/rounds.go`). Every citation in [reconciliation.md](reconciliation.md) is a path and a
 line at the latest commit, and its §7 records the eight things `main` had overtaken in between:
 **managed mode, the person-class reads, `settings`/`rigor`/`accounts`, the project image catalog and
-#1676, `fugaro upgrade`, 0.17.0 shipped, `stray.go`, and the paired device** (`fugaro pair` and the
+#1676, `fugaro upgrade`, 0.18.0 shipped, `stray.go`, and the paired device** (`fugaro pair` and the
 device allowlist, which is what D923's answer signs a person in with).
 
 **SECURITY-SENSITIVE.** Two things about this folder are not ordinary design text:
