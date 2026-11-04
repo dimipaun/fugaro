@@ -316,6 +316,9 @@ function heldConfirmer(): LaunchConfirmer & {
   return {
     opened,
     open(view, answer) {
+      // The launch window's own subject is the only one this seam ever sees for
+      // a launch: a settings edit is another test's window (`settingsedit`).
+      if (view.kind !== 'launch') return
       opened.push(view)
       waiting.set(view.runId, answer)
     },
@@ -342,6 +345,7 @@ function answeringConfirmer(yes: boolean): LaunchConfirmer & { readonly opened: 
   return {
     opened,
     open(view, decide) {
+      if (view.kind !== 'launch') return
       opened.push(view)
       decide(yes)
     },
@@ -383,6 +387,7 @@ function closingConfirmer(): {
     decideWindow,
     confirmer: {
       open(view, decide) {
+        if (view.kind !== 'launch') return
         opened.push(view)
         waiting.set(view.runId, decide)
       },

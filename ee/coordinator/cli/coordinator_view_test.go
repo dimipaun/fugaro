@@ -4,15 +4,18 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"reflect"
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -36,6 +40,12 @@ import (
 //   - TestCoordinatorStatusFromStoreNeedsNoKey: no App credential is in the
 //     environment and no provider is ever opened, and the view printed is the
 //     stored one — pull requests and all.
+//   - TestCoordinatorStatusFromStoreNamesTheProvider: the document says which
+//     host the repository is on, which is what a reader builds a pull request
+//     link from, and the human table gains no column for it.
+//   - TestCoordinatorStoredViewCarriesTheProviderKeyWhenThereIsNone: the key
+//     is written even with nothing to put in it, so a reader can tell a
+//     repository with no provider from a document older than the field.
 //   - TestCoordinatorStatusFromStoreWithService: the same read with the
 //     installation's credentials service in the environment, where the
 //     project-wide read refuses (coordinatorAppCredential). The fixture's runs
@@ -133,7 +143,7 @@ func storedView() coordinator.View {
 // with, and an opener that was reached is the read going somewhere it must not.
 func noStoreOpens(t *testing.T) {
 	t.Helper()
-	setCoordinatorHost(t, func([]string, func(string)) (coordinator.ProviderOpener, error) {
+	setCoordinatorHost(t, func([]string, func(string) string, func(string)) (coordinator.ProviderOpener, error) {
 		t.Error("--from-store opened a provider: this read holds no App credential and reads no host")
 		return nil, errors.New("no provider")
 	})
@@ -178,6 +188,57 @@ func TestCoordinatorStatusFromStoreNeedsNoKey(t *testing.T) {
 	}
 }
 
+// TestCoordinatorStatusFromStoreNamesTheProvider: the document answers which
+// host the repository is on (D814), because a reader that builds a pull
+// request's link needs one and this document is the only place it can come
+// from — the URL the sweep stored is a field a job wrote, not a fact about the
+// repository. The fixture's config records provider: github for acme/app.
+func TestCoordinatorStatusFromStoreNamesTheProvider(t *testing.T) {
+	f := newCoordinatorStoreFixture(t, coordinatorSeeds())
+	f.writeStoredView(t, storedView(), nil)
+	noStoreOpens(t)
+
+	got := storedJSON(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--since", "0", "--json")
+	if got.Provider != "github" {
+		t.Errorf("provider = %q, want github, which is what the fixture's repos entry records for acme/app", got.Provider)
+	}
+
+	// The provider is a reader's field and not a person's: the table the same
+	// read draws has the columns it always had, and no host is added to them.
+	out, errOut, err := execute(t, "coordinator", "status", "--from-store", "--repo", "acme/app", "--since", "0")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	if strings.Contains(out, "github") {
+		t.Errorf("the human table names the provider, and the field is one for readers:\n%s", out)
+	}
+}
+
+// TestCoordinatorStoredViewCarriesTheProviderKeyWhenThereIsNone: the key is
+// written even when there is no provider to put in it. A repository whose
+// config records no provider and which has no checkout is refused earlier, for
+// the slug's sake (repoSlug), so the empty answer is pinned where it is made:
+// the document the command writes carries "provider": "", and a reader can
+// therefore tell "no provider" from a document older than this field, which
+// would carry no key at all.
+func TestCoordinatorStoredViewCarriesTheProviderKeyWhenThereIsNone(t *testing.T) {
+	var buf bytes.Buffer
+	if err := writeCoordinatorJSON(&buf, coordinator.RepoView{Repo: "acme/app"}); err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+		t.Fatalf("%v: %s", err, buf.String())
+	}
+	raw, ok := doc["provider"]
+	if !ok {
+		t.Fatalf("the document drops the provider key when there is no provider, so a reader cannot tell that from an older CLI: %s", buf.String())
+	}
+	if string(raw) != `""` {
+		t.Errorf("provider = %s, want \"\"", raw)
+	}
+}
+
 func TestCoordinatorStatusFromStoreWithService(t *testing.T) {
 	// The opener a machine with the credentials service in its environment
 	// has: the fixture replaces it, and this test puts it back, because the
@@ -186,11 +247,12 @@ func TestCoordinatorStatusFromStoreWithService(t *testing.T) {
 	f := newCoordinatorStoreFixture(t, coordinatorSeeds())
 	openCoordinatorProvider = real
 	f.writeStoredView(t, storedView(), nil)
-	// The installation's credentials service holds the App's key (C2.2,
-	// D145), so the project-wide read refuses here rather than reaching for a
-	// key the platform withheld — and the fixture's runs name pull requests,
-	// so a read that delegated to coordinatorReader would reach that refusal
-	// rather than return before it.
+	// A person's read resolves its service from the project's own published
+	// block and from nothing else (the owner's ruling of 2026-11-03), so this
+	// variable is set to hold that: the fixture's project publishes no block,
+	// and the run's own name for the service cannot stand in for one. The
+	// fixture's runs name pull requests, so a read that delegated to
+	// coordinatorReader would reach the refusal rather than return before it.
 	t.Setenv(providers.EnvCredentialsServiceURL, "https://credentials.example.com/")
 
 	// --since 0 so that the whole fixture is in the window: a read that
@@ -204,11 +266,14 @@ func TestCoordinatorStatusFromStoreWithService(t *testing.T) {
 		t.Errorf("the view printed is not the stored one:\n%+v\nwant\n%+v", got.View, want)
 	}
 	// The other half of the same rule: without --from-store the command is
-	// still the one that refuses, so this is the flag that decides and not
-	// the environment.
-	if _, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0", "--json"); fcli.ExitCode(err) != fcli.ExitUserError ||
-		err == nil || !strings.Contains(err.Error(), providers.EnvCredentialsServiceURL) {
+	// still the one that refuses, and it refuses on the project's own
+	// configuration — so this is the flag that decides, and the environment
+	// decides nothing.
+	if _, _, err := execute(t, "coordinator", "status", "--repo", "acme/app", "--since", "0", "--json"); err == nil ||
+		fcli.ExitCode(err) != fcli.ExitUserError || !strings.Contains(err.Error(), "credentials service") {
 		t.Errorf("status without --from-store: exit %d, err %v; want the credentials-service refusal", fcli.ExitCode(err), err)
+	} else if strings.Contains(err.Error(), providers.EnvCredentialsServiceURL) {
+		t.Errorf("the refusal names the run's own variable rather than the project's configuration: %v", err)
 	}
 }
 
@@ -400,6 +465,121 @@ func TestCoordinatorReposInParallelKeepOrder(t *testing.T) {
 		if !slices.Equal(labels, []string{run[v.Repo]}) {
 			t.Errorf("%s's view = %v, want the run seeded for it, %s", v.Repo, labels, run[v.Repo])
 		}
+	}
+}
+
+// peakRequestTransport is the database a width test reads through: it counts
+// the requests a pass has in flight at once, and holds each open until want of
+// them are open at the same time — one past the width under test — or hold
+// passes, so a pass that widens past its bound is measured widening and a pass
+// at the bound is measured sitting at it rather than at whatever the scheduler
+// happened to overlap.
+type peakRequestTransport struct {
+	inner http.RoundTripper
+	want  int
+	hold  time.Duration
+
+	mu      sync.Mutex
+	open    int
+	peak    int
+	calls   int
+	reached bool
+	gate    chan struct{}
+}
+
+// peakOpen is the most requests that were ever in flight at once, and calls is
+// how many the pass made in all.
+func (p *peakRequestTransport) peakOpen() (calls, peak int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls, p.peak
+}
+
+func (p *peakRequestTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	p.mu.Lock()
+	p.open++
+	p.calls++
+	if p.open > p.peak {
+		p.peak = p.open
+	}
+	// One request widened it, so one closes it: the flag is set in the critical
+	// section the reading of it is in.
+	widened := p.open >= p.want && !p.reached
+	p.reached = p.reached || widened
+	waiting := !p.reached && p.hold > 0
+	p.mu.Unlock()
+	switch {
+	case widened:
+		close(p.gate)
+	case waiting:
+		select {
+		case <-p.gate:
+		case <-time.After(p.hold):
+		}
+	}
+	p.mu.Lock()
+	p.open--
+	p.mu.Unlock()
+	return p.inner.RoundTrip(r)
+}
+
+// TestCoordinatorStatusFromStoreAllWithinCoordinatorViewRepos: --all reads the
+// repositories' stored views a few at a time, and no more than
+// coordinatorViewRepos of them at once. That width is the one multiplied by
+// what a single repository's read costs — a repository with nothing stored
+// falls back to its runs, read at lsWorkers — so it is the number that decides
+// what a project with twenty repositories asks of the bucket and the database
+// at any moment. A width is also the half a peak of one cannot show: a pass
+// with no bound reads every repository at once.
+//
+// Measured at the database, where the read of a stored view is: the requests
+// the pass has in flight are the repositories it is reading.
+// Mutations caught: reading the repositories one at a time (a peak of 1), and
+// dropping the bound (a peak that reaches coordinatorViewRepos+1, which opens
+// the gate and lets the rest through).
+func TestCoordinatorStatusFromStoreAllWithinCoordinatorViewRepos(t *testing.T) {
+	repos := []string{"acme/a", "acme/b", "acme/c", "acme/d", "acme/e", "acme/f", "acme/g", "acme/h"}
+	if len(repos) != coordinatorViewRepos*2 {
+		t.Fatalf("this test seeds %d repositories, want twice the width under test (%d)", len(repos), coordinatorViewRepos)
+	}
+	var seeds []coordinatorRunSeed
+	for i, repo := range repos {
+		seeds = append(seeds, coordinatorRunSeed{
+			id: fmt.Sprintf("20261013-1%04d-%04x", i, i), repo: repo,
+			who: "someone@example.com", status: runstore.StatusRunning, base: "main",
+		})
+	}
+	f := newCoordinatorStoreFixture(t, seeds)
+	fixtureRepos(t, f.cloudFixture, repos...)
+	noStoreOpens(t)
+	peek := &peakRequestTransport{inner: http.DefaultTransport, want: coordinatorViewRepos + 1, hold: 200 * time.Millisecond, gate: make(chan struct{})}
+	prev := openCoordinatorStore
+	openCoordinatorStore = func(ctx context.Context, lc *localcfg.Config) (*coordinator.Store, error) {
+		db, err := rtdb.New(lc.Budget.RTDBURL, rtdb.Auth{IDToken: func() string { return "" }}, rtdb.WithHTTPClient(&http.Client{Transport: peek}))
+		if err != nil {
+			return nil, err
+		}
+		return coordinator.NewStore(db), nil
+	}
+	t.Cleanup(func() { openCoordinatorStore = prev })
+
+	out, errOut, err := execute(t, "coordinator", "status", "--from-store", "--all", "--since", "0", "--json")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	var got coordinator.StoredProjectView
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if len(got.Repos) != len(repos) {
+		t.Fatalf("--all read %d repositories, want %d: the width test measured a pass that read something else", len(got.Repos), len(repos))
+	}
+	calls, peak := peek.peakOpen()
+	if calls < len(repos) {
+		t.Fatalf("the pass made %d database reads for %d repositories: the width test measured a pass that read something else", calls, len(repos))
+	}
+	if peak != coordinatorViewRepos {
+		t.Errorf("--all read %d repositories' views at once, want exactly coordinatorViewRepos (%d): the pass fans out over the project's repositories, within its bound", peak, coordinatorViewRepos)
 	}
 }
 

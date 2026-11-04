@@ -92,6 +92,11 @@ import {
   SWITCHER_MENU_CLASS,
   SWITCHER_NAME_CLASS,
   SWITCHER_VERSION_CLASS,
+  COORDINATOR_SUMMARY_SINCE,
+  GRAPH_BUSY,
+  RUNS_SINCE,
+  SETTINGS_EDITOR_CLASS,
+  SETTINGS_EDIT_OUTCOME_CLASS,
   VIEW_PANEL_CLASS,
   VIEWS,
   bootDashboard,
@@ -102,14 +107,18 @@ import {
   tabTarget,
 } from '../../src/renderer/entry'
 import { decodeSnapshot } from '../../src/shared/schema'
+import { ADDRESS_PLACEHOLDER } from '../../src/shared/sanitize'
 import { NO_PLAN_CHECKOUT } from '../../src/source/source'
 import { READING_STILL, READING_STILL_MS, READING_WORDS } from '../../src/renderer/screens/reading'
 import {
+  NO_CHECKOUT_AUTO_SENTENCE,
   NO_CHECKOUT_CHOICE_LABEL,
   NO_CHECKOUT_EMPTY_SENTENCE,
   NO_CHECKOUT_HEADLINE,
   NO_CHECKOUT_KIND,
+  NO_CHECKOUT_USE_LABEL,
 } from '../../src/renderer/screens/nocheckout'
+import { CHECKOUT_SELECT_CLASS } from '../../src/renderer/checkout'
 import {
   BUSY_ATTRIBUTE,
   BUSY_BUSY_ATTRIBUTE,
@@ -121,12 +130,69 @@ import {
   STAMP_AT_CLASS,
   STAMP_CLASS,
   STAMP_REFRESH_CLASS,
+  STAMP_REFRESH_LABEL,
 } from '../../src/renderer/section'
+import {
+  COORDINATOR_SHAPE,
+  PROJECTS_SHAPE,
+  PROJECTS_MODELS_SHAPE,
+  SKELETON_BLOCK_CLASS,
+  SKELETON_CLASS,
+  SKELETON_SHAPES,
+} from '../../src/renderer/skeleton'
+import {
+  COORDINATOR_BUSY,
+  COORDINATOR_DESCRIPTION_BUSY,
+  COORDINATOR_DESCRIPTION_CLASS,
+  COORDINATOR_DESCRIPTION_HIDE_WORD,
+  COORDINATOR_DESCRIPTION_LINE_CLASS,
+  COORDINATOR_DESCRIPTION_SHOW_WORD,
+  COORDINATOR_LAUNCH_WORD,
+  COORDINATOR_NO_AGE_WORD,
+  COORDINATOR_OPEN_SPEND_WORD,
+  COORDINATOR_QUEUE_BUSY,
+  COORDINATOR_QUEUE_JOBS_CLASS,
+  COORDINATOR_QUEUE_JOBS_WORD,
+  COORDINATOR_QUEUE_PART_CLASS,
+  COORDINATOR_QUEUE_REPO_KILL_WORD,
+  COORDINATOR_RETRY_WORD,
+  COORDINATOR_SOURCE_LINE,
+  COORDINATOR_TOTALS_BUSY,
+  COORDINATOR_TRANSCRIPT_BUSY,
+  COORDINATOR_WINDOW_BUSY,
+  COORDINATOR_WINDOW_FLOOR_WORD,
+  COORDINATOR_WINDOW_RUNS_WORD,
+  COORDINATOR_WINDOW_SLOT_CLASS,
+  COORDINATOR_WINDOW_SUCCEEDED_WORD,
+  COORDINATOR_TRANSCRIPT_CLASS,
+  COORDINATOR_TRANSCRIPT_WORD,
+  COORDINATOR_JOBS_BUSY,
+  COORDINATOR_JOBS_CLASS,
+  COORDINATOR_JOBS_EMPTY_WORD,
+  COORDINATOR_JOBS_FLOOR_WORD,
+  COORDINATOR_JOBS_HEAD_CLASS,
+  COORDINATOR_JOBS_LIST_CLASS,
+  COORDINATOR_JOBS_LOAD_WORD,
+  COORDINATOR_JOBS_OLDER_WORD,
+  COORDINATOR_JOBS_PAGE,
+  COORDINATOR_JOBS_RUNS_WORD,
+  COORDINATOR_JOBS_WINDOW_WORD,
+  COORDINATOR_JOB_DETAIL_CLASS,
+} from '../../src/renderer/screens/coordinator'
+import {
+  PROJECTS_BUSY,
+  PROJECTS_MODELS_BUSY,
+  PROJECTS_SETTINGS_BUSY,
+  SETTINGS_PENCIL_CLASS,
+} from '../../src/renderer/screens/projects'
+import type { SkeletonShape } from '../../src/renderer/skeleton'
 import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
 import {
   LAUNCH_FORM_CLASS,
   LAUNCH_OPEN_CLASS,
+  LAUNCH_PLAN_TASK_CLASS,
   LAUNCH_REPOSITORY_CLASS,
+  LAUNCH_SUBMIT_CLASS,
   LAUNCH_TASK_CLASS,
   LAUNCH_TITLE_CLASS,
 } from '../../src/renderer/screens/launch'
@@ -145,17 +211,22 @@ import {
  * and the built tree are read from. */
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
-/** READ_METHODS is the ten reads `entry.ts` may reach for (`ReadBridge`, the
- * same ten), by the name the preload exposes. Every one of them is on the fake
- * bridge below, and every one records its call -- so "this read was never made"
- * is a claim this suite can make about any of them. */
+/** READ_METHODS is the fourteen reads `entry.ts` may reach for (`ReadBridge`'s
+ * own list less `summaryRuns`, which `queueBridge` answers with its own
+ * recorder), by the name the preload exposes. Every one of them is on the
+ * fake bridge below, and every one records its call -- so "this read was never
+ * made" is a claim this suite can make about any of them. */
 const READ_METHODS = [
   'subscribeLive',
   'showBudget',
   'runReport',
   'listRuns',
   'statsRuns',
+  'listModels',
+  'readSettings',
   'coordinatorStatus',
+  'coordinatorShow',
+  'coordinatorIntents',
   'diagnoseRun',
   'readRunLogs',
   'runLogLink',
@@ -166,8 +237,8 @@ const READ_METHODS = [
 type AReply = (args: unknown) => unknown
 
 /** FakeBridge is the preload seam, recorded: the handshake, the installation,
- * and the nine reads, each answering what the case told it to and appending its
- * own call to `calls`. */
+ * and the fourteen reads (`READ_METHODS`), each answering what the case told it to
+ * and appending its own call to `calls`. */
 interface FakeBridge {
   readonly bridge: Record<string, unknown>
   readonly calls: readonly { readonly name: string; readonly args: unknown }[]
@@ -552,11 +623,12 @@ describe('the dashboard the entry mounts', () => {
     },
   )
 
-  it('draws the refusal, not an empty run, when a run’s own record refuses', async () => {
-    // `diagnose` and `logs` are the run's own record: a refused read of either
-    // is a run this console cannot draw, and handing the screen `null` would
-    // draw an empty log window and a ledger of `n/a` -- which reads as "this run
-    // logged nothing and spent nothing" when the console could not ask.
+  it('draws the refusal in the section that refused, not over the run’s own screen', async () => {
+    // `diagnose` and `logs` are two reads of a run's own record, and each has
+    // its own section: one refusing says nothing about the other. The log read
+    // refusing here must not take the diagnosis down with it -- and it must
+    // not be drawn as an empty window either, which would read as "this run
+    // logged nothing" when the console could not ask.
     const frame = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
     const { bridge } = fakeBridge({
       replies: {
@@ -574,15 +646,219 @@ describe('the dashboard the entry mounts', () => {
     const row = classed(panel, 'live-run')[0] as FakeNode
     row.click()
     await flush()
-    const drawn = panel.children[0] as FakeNode
-    expect(drawn.attributes.get('class')).toBe('console-unavailable')
+    // The screen is still the run's: this is a section's refusal, not the
+    // screen's.
+    expect((panel.children[0] as FakeNode).attributes.get('class')).toBe('run')
+    // The diagnosis the other read answered is up, and the column is no longer
+    // reading.
+    expect(classed(panel, 'run-stages')).toHaveLength(1)
+    expect(classed(panel, 'run-main')[0]?.attributes.get('data-busy')).toBeUndefined()
+    // The refusal is the log section's own, naming the read it came from.
+    const logs = classed(panel, 'run-logs')[0] as FakeNode
+    const drawn = classed(logs, 'console-unavailable')[0] as FakeNode
+    expect(drawn, 'the refusal was not drawn in the log section').toBeDefined()
     expect(drawn.attributes.get('data-kind')).toBe('refused')
-    // The CLI's own sentence, and the operation it came from.
     expect(textOf(drawn)).toContain('no such run 20261015-120000-aa01')
-    expect(classed(panel, 'unavailable-operation')[0]?.textContent).toBe('run.logs')
-    // And nothing of the run was drawn: no log window that would read as an
-    // empty one.
+    expect(classed(logs, 'unavailable-operation')[0]?.textContent).toBe('run.logs')
+    // And nothing of the window was drawn: no log line that would read as an
+    // empty one, and no replay figures about a window nobody read.
     expect(classed(panel, 'run-log-line')).toEqual([])
+    expect(classed(panel, 'run-replay')).toEqual([])
+  })
+
+  it('draws a refused diagnosis over the log window the other read drew', async () => {
+    // The same rule the other way round: the record read is the one that
+    // refuses, and the log window that arrived before it stays on screen.
+    const frame = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(frame),
+        diagnoseRun: () => ({ ok: false, reason: 'no such run 20261015-120000-aa01' }),
+        readRunLogs: () => ({
+          ok: true,
+          data: { document: { entries: [{ time: '2026-10-15T12:00:00Z', severity: 'info', stage: 'implement', message: 'the run started' }], total: 1, refused: 0 } },
+        }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const panel = panelOf(document)
+    ;(classed(panel, 'live-run')[0] as FakeNode).click()
+    await flush()
+    expect((panel.children[0] as FakeNode).attributes.get('class')).toBe('run')
+    expect(classed(panel, 'run-stages'), 'the empty ledger was drawn under a refused diagnosis').toEqual([])
+    expect(classed(panel, 'unavailable-operation').map((node) => node.textContent)).toEqual(['run.diagnose'])
+    expect(classed(panel, 'run-log-line')).toHaveLength(1)
+    // The log read answered, so its replay panel is up -- the refused diagnosis
+    // is the record's and has no say over what the window's read drew.
+    expect(classed(panel, 'run-replay')).toHaveLength(1)
+    expect(classed(panel, 'run-logs')[0]?.attributes.get('data-busy')).toBeUndefined()
+  })
+
+  describe('the frame a run is opened in', () => {
+    /** opened boots the committed frame and clicks its first run row. The two
+     * reads that draw a run answer what the case told them to, so a case can
+     * hold them, land them in either order, or refuse one. */
+    async function opened(replies: Readonly<Record<string, AReply>>): Promise<{
+      readonly document: FakeDocument
+      readonly panel: FakeNode
+      readonly calls: readonly { readonly name: string; readonly args: unknown }[]
+    }> {
+      const frame = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
+      const fake = fakeBridge({ replies: { subscribeLive: () => snapshotReply(frame), ...replies } })
+      const document = await boot(fake.bridge, new FakeDocument())
+      const panel = panelOf(document)
+      ;(classed(panel, 'live-run')[0] as FakeNode).click()
+      return { document, panel, calls: fake.calls }
+    }
+
+    it('draws the run’s frame in the click’s own turn, before either read answers', async () => {
+      // The owner's report of 2026-11-01: a click on a run id looked like it had
+      // not registered, because the screen waited for both reads before drawing
+      // anything. Neither read answers in this case at all -- and there is no
+      // `await` between the click above and the assertions below, so what they
+      // see is what the click itself drew.
+      const diagnosis = holding()
+      const logs = holding()
+      const frame = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
+      const fake = fakeBridge({
+        replies: {
+          subscribeLive: () => snapshotReply(frame),
+          diagnoseRun: diagnosis.reply,
+          readRunLogs: logs.reply,
+          runLogLink: () => ({ ok: false, reason: 'this run has no transcript link' }),
+        },
+      })
+      const document = await boot(fake.bridge, new FakeDocument())
+      const panel = panelOf(document)
+      ;(classed(panel, 'live-run')[0] as FakeNode).click()
+      // **Nothing is awaited between the click above and the assertions
+      // below.** A case that flushed first would pass against a screen that
+      // drew a turn later, and drawing a turn later is the whole of the
+      // owner's complaint.
+      expect(panel.children[0]?.attributes.get('class'), 'the click drew no run screen').toBe('run')
+      // The run the operator clicked, and the way back from it.
+      expect(classed(panel, 'run-id')[0]?.textContent).toBe('20261015-120000-aa01')
+      expect(classed(panel, 'run-crumb-live')[0]?.tagName).toBe('BUTTON')
+      // Both sections wear their own mark and say what they are reading.
+      const main = classed(panel, 'run-record')[0] as FakeNode
+      const logsSection = classed(panel, 'run-logs')[0] as FakeNode
+      expect(main?.attributes.get('data-busy'), 'the record’s host does not say it is reading').toBe('true')
+      expect(main?.attributes.get('aria-busy')).toBe('true')
+      expect(logsSection?.attributes.get('aria-busy')).toBe('true')
+      const labels = classed(panel, 'console-busy-label').map((node) => node.textContent)
+      expect(labels).toContain('Reading the diagnosis of 20261015-120000-aa01')
+      expect(labels).toContain('Reading the log window of 20261015-120000-aa01')
+      // A skeleton stands in each section, so the frame is a shape rather than
+      // blank space.
+      expect(classed(panel, 'console-skeleton')).toHaveLength(2)
+      // And no figure is drawn: nothing has arrived yet.
+      expect(classed(panel, 'run-stages')).toEqual([])
+      expect(classed(panel, 'run-log-line')).toEqual([])
+      expect(classed(panel, 'run-log-link-note')).toEqual([])
+    })
+
+    it('fills each section when its own read answers, whichever order they land in', async () => {
+      // The log window answers first: its section paints, and the diagnosis is
+      // still marked as reading -- the screen is never held until the last read.
+      const diagnosis = holding()
+      const logs = holding()
+      const { panel } = await opened({
+        diagnoseRun: diagnosis.reply,
+        readRunLogs: logs.reply,
+        runLogLink: () => ({ ok: false, reason: 'this run has no transcript link' }),
+      })
+      logs.release({
+        ok: true,
+        data: { document: { entries: [{ time: '2026-10-15T12:00:00Z', severity: 'info', stage: 'implement', message: 'the run started' }], total: 1, refused: 0 } },
+      })
+      await flush()
+      expect(classed(panel, 'run-log-line')).toHaveLength(1)
+      // The replay panel is the log read's own arrival, drawn with the window it
+      // replays: it is up as soon as that read lands, before the record's has.
+      expect(classed(panel, 'run-replay')).toHaveLength(1)
+      expect(classed(panel, 'run-logs')[0]?.attributes.get('data-busy')).toBeUndefined()
+      expect(classed(panel, 'run-record')[0]?.attributes.get('data-busy')).toBe('true')
+      expect(classed(panel, 'console-busy-label').map((node) => node.textContent)).toEqual([
+        'Reading the diagnosis of 20261015-120000-aa01',
+      ])
+
+      // Then the record lands, and the window is still there: the two fills are
+      // written into the same column without either taking the other's place.
+      diagnosis.release({ ok: true, data: { document: {} } })
+      await flush()
+      expect(classed(panel, 'run-stages')).toHaveLength(1)
+      expect(classed(panel, 'run-log-line')).toHaveLength(1)
+      expect(classed(panel, 'run-tolerated-absent')).toHaveLength(1)
+      // And the record's fill left the other read's replay panel exactly where
+      // the log read drew it: one panel, never two.
+      expect(classed(panel, 'run-replay')).toHaveLength(1)
+      // Neither section is reading any more, and neither kept a placeholder.
+      expect(classed(panel, 'console-busy-label')).toEqual([])
+      expect(classed(panel, 'console-skeleton')).toEqual([])
+      expect(classed(panel, 'run-main')[0]?.attributes.get('data-busy')).toBeUndefined()
+      expect(classed(panel, 'run-logs')[0]?.attributes.get('data-busy')).toBeUndefined()
+      // The way back is still bound after both fills.
+      const crumb = classed(panel, 'run-crumb-live')[0] as FakeNode
+      crumb.click()
+      await flush()
+      expect((panel.children[0] as FakeNode).attributes.get('class')).toBe('live')
+    })
+
+    it('keeps the log read’s replay panel when the diagnosis refuses after it', async () => {
+      // The replay panel is what the *log* read draws, and the diagnosis is the
+      // record read's: a record that refuses says nothing about the window that
+      // arrived before it, so the panel stays under it. The log read answers
+      // first here, so the refusal is landing on a column that already holds it.
+      const diagnosis = holding()
+      const { panel } = await opened({
+        diagnoseRun: diagnosis.reply,
+        readRunLogs: () => ({
+          ok: true,
+          data: { document: { entries: [{ time: '2026-10-15T12:00:00Z', severity: 'info', stage: 'implement', message: 'the run started' }], total: 1, refused: 0 } },
+        }),
+        runLogLink: () => ({ ok: false, reason: 'this run has no transcript link' }),
+      })
+      await flush()
+      expect(classed(panel, 'run-log-line')).toHaveLength(1)
+      expect(classed(panel, 'run-replay')).toHaveLength(1)
+
+      diagnosis.release({ ok: false, reason: 'no such run 20261015-120000-aa01' })
+      await flush()
+      expect(classed(panel, 'unavailable-operation').map((node) => node.textContent)).toEqual(['run.diagnose'])
+      expect(classed(panel, 'run-stages'), 'the timeline was drawn under a refused diagnosis').toEqual([])
+      expect(classed(panel, 'run-log-line')).toHaveLength(1)
+      expect(
+        classed(panel, 'run-replay'),
+        'the refused diagnosis took the log read’s replay panel with it',
+      ).toHaveLength(1)
+    })
+
+    it('rewrites the window’s sentence when the transcript link lands after it', async () => {
+      // The window's own note -- "no `logs RUN --url` line arrived" -- is a
+      // sentence about a read that had not answered yet. A link that arrives
+      // after the window must replace it, or the log section would claim the
+      // CLI printed no link when the console had simply not been told.
+      const link = holding()
+      const { panel } = await opened({
+        diagnoseRun: () => ({ ok: true, data: { document: {} } }),
+        readRunLogs: () => ({
+          ok: true,
+          data: { document: { entries: [{ time: '2026-10-15T12:00:00Z', severity: 'info', stage: 'implement', message: 'the run started' }], total: 1, refused: 0 } },
+        }),
+        runLogLink: link.reply,
+      })
+      await flush()
+      const note = classed(panel, 'run-log-link-note')[0] as FakeNode
+      expect(note?.textContent, 'the window never said its link was missing').toContain('logs RUN --url')
+      expect(classed(panel, 'run-log-link')).toEqual([])
+
+      link.release({ ok: true, data: 'https://console.cloud.google.com/logs/query' })
+      await flush()
+      expect(classed(panel, 'run-log-link-note'), 'the missing-link sentence outlived the link').toEqual([])
+      expect(classed(panel, 'run-log-link')).toHaveLength(1)
+      // And the window itself was redrawn, not lost with the sentence.
+      expect(classed(panel, 'run-log-line')).toHaveLength(1)
+    })
   })
 
   describe('the Live poll', () => {
@@ -862,7 +1138,9 @@ describe('the dashboard the entry mounts', () => {
       // Neither is the range the read above answered: a range this session has
       // already read is drawn from the cache and starts no read at all, so a
       // case about two reads in flight has to pick two it has not read.
-      const first = windows[0]
+      // `windows[0]` is the range the opening read answered, which the cache
+      // would serve without a read.
+      const first = windows[1]
       const second = windows[2]
       expect(first?.textContent).not.toBe(second?.textContent)
       first?.click()
@@ -981,7 +1259,7 @@ describe('the by-person read the entry wires', () => {
   it('reads `statsRuns` with the picker’s window once the knob is on, and draws its document', async () => {
     const { panel, calls } = await spendWithPeople(() => ({ ok: true, data: { document: STATS } }))
     expect(calls.filter((call) => call.name === 'statsRuns').map((call) => call.args)).toEqual([
-      { since: '30d' },
+      { since: '7d' },
     ])
     const people = classed(panel, 'spend-people')
     expect(people).toHaveLength(1)
@@ -1164,9 +1442,16 @@ describe('the launch the entry wires', () => {
     // the one the surface and the cancel paths read.
     expect(withoutComments(index).match(/createLaunchRunner\(/g) ?? []).toHaveLength(2)
 
-    // And the runner built in `main` is over the window's own confirmer, never
-    // over the declining one.
-    expect(body).toContain('confirmer: createConfirmWindow(')
+    // And **both** of `main`'s flows are over that one window's confirmer, never
+    // over the declining one: D1115's "one window, two questions" is one
+    // `createConfirmWindow` call in this whole file and two runners built over
+    // it -- a second window would be a second implementation of the tick, the
+    // delay and the sender gate.
+    const asked = /const confirmer = createConfirmWindow\(\{[\s\S]*?\n  \}\)\n/.exec(body)
+    if (asked === null) throw new Error('the entry builds no confirmer to read')
+    expect(withoutComments(index).match(/createConfirmWindow\(/g) ?? []).toHaveLength(1)
+    expect(body).toContain('launchRunner = createLaunchRunner(')
+    expect(body).toContain('settingsEditRunner = createSettingsEdit(')
     expect(body).not.toContain('DECLINING_CONFIRMER')
 
     // Both places the entry learns an installation moved cancel the launch its
@@ -1181,10 +1466,16 @@ describe('the launch the entry wires', () => {
       chosen[0].indexOf('lifecycle.choose'),
     )
     expect(chosen[0]).toContain('lifecycle.choose')
+    // **And the settings edit with it** (D1115): an installation that moved
+    // closes the edit's window too, and one already read for that installation
+    // must not write. Both flows are named, in both places, because the mark the
+    // edit leaves is only reachable while its window is not.
+    expect(chosen[0]).toContain('settingsEditRunner.cancelFor(chosen.project)')
 
     const removed = /onRecordRemoved: \(project\) => \{[\s\S]*?\n    \},\n/.exec(body)
     if (removed === null) throw new Error('the entry has no onRecordRemoved to read')
     expect(removed[0]).toContain('launchRunner.cancelFor(project)')
+    expect(removed[0]).toContain('settingsEditRunner.cancelFor(project)')
   })
 
   it('brings the update policy up with the launcher it defers to, and stops it on the way out', () => {
@@ -1941,6 +2232,7 @@ function listRow(
     readonly command?: string
     readonly details?: readonly string[]
     readonly checkouts?: readonly string[]
+    readonly checkoutChoices?: readonly Record<string, unknown>[]
   } = {},
 ): Record<string, unknown> {
   return {
@@ -1949,6 +2241,7 @@ function listRow(
     active: options.open ?? false,
     saved: true,
     checkouts: options.checkouts ?? [],
+    checkoutChoices: options.checkoutChoices ?? [],
     state: {
       issue: options.issue ?? 'none',
       readable: options.readable ?? true,
@@ -1971,6 +2264,10 @@ function orbitRow(open = false): Record<string, unknown> {
     command: 'fugaro doctor --project orbit',
     details: [ORBIT_LINE],
     checkouts: ['/home/operator/src/orbit'],
+    // The menu is the main process's own list -- one entry per repository the
+    // CLI re-validated and enrolled -- and it is not the picker window's
+    // `checkouts`, which carries a path with no repository to label it by.
+    checkoutChoices: [{ repository: 'github/owner/orbit', path: '/home/operator/src/orbit', more: 0 }],
   })
 }
 
@@ -2003,6 +2300,74 @@ function railBridge(
   return { ...base, rail }
 }
 
+/**
+ * queueBridge is the fake bridge for the Coordinator's action queue (console
+ * 0.118.0, K1): one open installation that records a checkout and offers the
+ * repositories the case gives it -- `QUEUE_OFFER` alone unless a case about the
+ * prefill's match needs another -- and the runs, plan and budget reads answered
+ * by the case.
+ *
+ * **Every call is recorded in the order it was made**, which is what lets a case
+ * say that the queue's four reads went out in the turn the tab was opened in --
+ * the claim the owner's rule of 2026-10-31 is about. `launchRun` is the
+ * console's one write and is recorded here too, so "the queue spawned nothing"
+ * is a claim about the same list.
+ */
+function queueBridge(
+  answers: Readonly<Record<string, AReply>>,
+  repositories: readonly string[] = [QUEUE_OFFER],
+): FakeBridge {
+  const base = railBridge([
+    {
+      ...listRow('acme', { open: true }),
+      checkout: '/home/operator/src/acme',
+      repositories,
+    },
+  ])
+  // The base's list is the same array its own reads append to; it is typed
+  // `readonly` because a case reads it, and this helper is the one writer.
+  const calls = base.calls as { name: string; args: unknown }[]
+  for (const name of [
+    'coordinatorStatus',
+    'coordinatorShow',
+    'listRuns',
+    'planStatus',
+    'showBudget',
+    'launchRun',
+    'openPullRequest',
+  ]) {
+    base.bridge[name] = (args: unknown): unknown => {
+      calls.push({ name, args })
+      const answer = answers[name]
+      return answer === undefined
+        ? { ok: false, reason: `the console did not read ${name} in this case` }
+        : answer(args)
+    }
+  }
+  // The pane's own read (K5) is the one that answers with a document rather
+  // than a refusal when a case says nothing about it: every case in this file
+  // that opens the Coordinator is a case about something else, and a refusal by
+  // default would put a second refusal -- naming `coordinator.intents` -- on a
+  // page whose own case asserts it has one.
+  const intents = answers['coordinatorIntents']
+  base.bridge['coordinatorIntents'] = (args: unknown): unknown => {
+    calls.push({ name: 'coordinatorIntents', args })
+    return intents === undefined ? { ok: true, data: { document: { repos: [] } } } : intents(args)
+  }
+  // The strip's window (0.119.0) answers with a document for the same reason and
+  // one of its own: the read is a *second* section of a panel whose own cases
+  // assert on what the first one drew, and an empty window draws figures that
+  // belong to no read a case named.
+  const summary = answers['summaryRuns']
+  base.bridge['summaryRuns'] = (args: unknown): unknown => {
+    calls.push({ name: 'summaryRuns', args })
+    return summary === undefined
+      ? { ok: true, data: { document: AN_EMPTY_WINDOW } }
+      : summary(args)
+  }
+  return base
+}
+
 function rowsOf(document: FakeDocument): readonly FakeNode[] {
   return classed(railOf(document), RAIL_ROW_CLASS)
 }
@@ -2011,6 +2376,21 @@ function rowNamed(document: FakeDocument, project: string): FakeNode {
   const row = rowsOf(document).find((each) => classed(each, RAIL_NAME_CLASS)[0]?.textContent === project)
   if (row === undefined) throw new Error(`the rail drew no row for ${project}`)
   return row
+}
+
+/** askForJobs presses the queue's jobs control and lets its answer land: the
+ * jobs are the one read the Coordinator does not make on entry (rule 5 of §6.2's
+ * opening), so a case about a job item is a case that asked for it. */
+async function askForJobs(document: FakeDocument): Promise<void> {
+  buttonLabelled(panelOf(document), COORDINATOR_QUEUE_JOBS_WORD).click()
+  await flush()
+}
+
+/** pullButtons is one class of the numbers the screen drew as **buttons**, in
+ * document order. A number whose triple the screen could not form is a span of
+ * text, so this is also what tells the two apart. */
+function pullButtons(root: FakeNode, className: string): readonly FakeNode[] {
+  return classed(root, className).filter((node) => node.tagName === 'BUTTON')
 }
 
 function buttonLabelled(root: FakeNode, label: string): FakeNode {
@@ -2063,9 +2443,18 @@ describe('the rail over the installation list', () => {
     expect(rowNamed(document, 'orbit').attributes.get('aria-selected')).toBe('true')
     expect(rowNamed(document, 'aurora').attributes.get('aria-selected')).toBe('false')
 
-    buttonLabelled(view, `${ISSUE_CHECKOUT_LABEL}: /home/operator/src/orbit`).click()
+    // The chooser is a menu of the installation's own checkouts and one button
+    // beside it, and the directory it sends is the entry the menu carries: the
+    // control's value is what the main process matches against its own list.
+    const menu = classed(view, CHECKOUT_SELECT_CLASS)[0] as FakeNode
+    expect(menu.tagName).toBe('SELECT')
+    expect(menu.children.map((option) => option.attributes.get('value'))).toEqual(['/home/operator/src/orbit'])
+    // A real `select` reports its first option as its value before anyone
+    // touches it; the fake node derives nothing, so the case writes it.
+    ;(menu as unknown as { value: string }).value = '/home/operator/src/orbit'
+    buttonLabelled(view, ISSUE_CHECKOUT_LABEL).click()
     await flush()
-    expect(rail.at(-1)).toEqual({
+    expect(rail.at(-1), 'the menu sent a directory it was not offering').toEqual({
       name: 'setInstallationCheckout',
       args: { project: 'orbit', checkout: '/home/operator/src/orbit' },
     })
@@ -2408,6 +2797,19 @@ function planStatusReply(document: unknown = PLAN_STATUS): Record<string, unknow
   }
 }
 
+/** withFinishedRelease is the fixture with its first release finished: the two
+ * tasks of that release leave the canvas until their chip is opened, which is the
+ * one way a task the model holds has no card to select. */
+function withFinishedRelease(): unknown {
+  const document = JSON.parse(JSON.stringify(PLAN_STATUS)) as {
+    plans: { releases: { version: string; finished: boolean }[] }[]
+  }
+  const release = document.plans[0]?.releases.find((each) => each.version === '1.4.0')
+  if (release === undefined) throw new Error('the fixture no longer carries release 1.4.0')
+  release.finished = true
+  return document
+}
+
 /** runsReply is the console's run list, in the shape `runIdsIn` reads. */
 function runsReply(): Record<string, unknown> {
   return { ok: true, data: { document: { runs: GRAPH_RUNS.map((run) => ({ run })) } } }
@@ -2525,7 +2927,7 @@ describe('the graph view’s keyboard', () => {
     ).toEqual([next])
   })
 
-  it('drives the graph’s tablist with the arrows, and takes the focus to the tab it chose', async () => {
+  it('drives the graph’s stream filter with the arrows, and takes the focus to the segment it chose', async () => {
     const { bridge } = graphBridge()
     const document = await openGraph(bridge)
     const tabs = classed(panelOf(document), 'graph-tab')
@@ -2539,7 +2941,7 @@ describe('the graph view’s keyboard', () => {
     await flush()
     expect(right.defaultPrevented, 'the graph left its own arrow key to the window').toBe(true)
     const after = classed(panelOf(document), 'graph-tab')
-    expect(after.map((tab) => tab.attributes.get('aria-selected'))).toEqual(['true', 'false', 'false'])
+    expect(after.map((tab) => tab.attributes.get('aria-pressed'))).toEqual(['true', 'false', 'false'])
     expect(after.map((tab) => tab.attributes.get('tabindex'))).toEqual(['0', '-1', '-1'])
     expect(document.activeElement, 'the ring did not follow the tab the arrow chose').toBe(after[0])
 
@@ -2549,9 +2951,105 @@ describe('the graph view’s keyboard', () => {
     await flush()
     expect(end.defaultPrevented).toBe(true)
     const back = classed(panelOf(document), 'graph-tab')
-    expect(back.map((tab) => tab.attributes.get('aria-selected'))).toEqual(['false', 'false', 'true'])
+    expect(back.map((tab) => tab.attributes.get('aria-pressed'))).toEqual(['false', 'false', 'true'])
     expect(document.activeElement).toBe(back[2])
     expect((back[2] as FakeNode).press('ArrowDown').defaultPrevented).toBe(false)
+  })
+
+  it('opens the inspector on a click and closes it on Escape, with the keyboard back on the card', async () => {
+    const { bridge } = graphBridge()
+    const document = await openGraph(bridge)
+    const key = firstKeyed(document)
+
+    // Nothing is selected when the graph opens, and the panel is a panel of a
+    // selection: there is nothing to draw beside a canvas nobody has chosen a
+    // task in.
+    expect(classed(panelOf(document), 'graph-inspector')).toEqual([])
+
+    const card = nodeNamed(document, key)
+    if (card === undefined) throw new Error('the graph drew no node to select')
+    card.click()
+    await flush()
+
+    const panel = classed(panelOf(document), 'graph-inspector')[0]
+    expect(panel, 'the click selected the task and drew no inspector').toBeDefined()
+    // Beside the canvas and not instead of it: the picture is still the picture.
+    expect(classed(panelOf(document), 'graph-canvas')).toHaveLength(1)
+    expect(
+      [...classed(panel as FakeNode, 'graph-inspector-need'), ...classed(panel as FakeNode, 'graph-inspector-unblock')].length,
+      'the panel listed neither what the task waits on nor what it unblocks',
+    ).toBeGreaterThan(0)
+
+    // Escape closes it, and the keyboard goes back to the card the panel was
+    // opened from rather than to `<body>` (design section 4.3).
+    const selected = nodeNamed(document, key)
+    if (selected === undefined) throw new Error('the redraw lost the card the click selected')
+    expect(selected.press('Escape').defaultPrevented, 'the graph left Escape to the window').toBe(true)
+    await flush()
+    expect(classed(panelOf(document), 'graph-inspector')).toEqual([])
+    const back = nodeNamed(document, key)
+    expect(document.activeElement, 'the panel closed and dropped the keyboard').toBe(back)
+  })
+
+  it('opens the inspector on Enter where the card has no run to open', async () => {
+    // Enter is the card's own key and it opens the card's run -- except where
+    // there is no run, and the card is exactly the one a keyboard reader needs
+    // the panel for: `task-three` is the fixture's ready task with no run, which
+    // is the only task a keyboard can reach the inspector through.
+    const { bridge } = graphBridge()
+    const document = await openGraph(bridge)
+    const card = nodeForTask(document, 'task-three')
+    if (card === undefined) throw new Error('the graph drew no card for the fixture’s runless task')
+    expect(card.attributes.get('data-run-id'), 'the fixture’s runless task carries a run').toBeUndefined()
+    expect(card.press('Enter').defaultPrevented).toBe(true)
+    await flush()
+    const panel = classed(panelOf(document), 'graph-inspector')[0]
+    if (panel === undefined) throw new Error('Enter on a card with no run opened nothing')
+    expect(textOf(panel)).toContain('A task nothing depends on')
+  })
+
+  it('selects the task an inspector button names, and keeps the keyboard in the drawing either way', async () => {
+    // **The one press that can name a card the drawing does not have.** Release
+    // 1.4.0 is finished here, so the canvas leaves its two tasks out until the
+    // chip is open (`visibleNodes`) -- and `task-five`, which is in the open
+    // release, waits on one task of each kind: `task-three` is on the canvas and
+    // `task-two` is not. The press selects either of them, and the keyboard has
+    // to end up somewhere it can go on from in both cases.
+    const { bridge } = graphBridge({ planStatus: () => planStatusReply(withFinishedRelease()) })
+    const document = await openGraph(bridge)
+    const card = nodeForTask(document, 'task-five')
+    if (card === undefined) throw new Error('the graph drew no card for task-five')
+    card.click()
+    await flush()
+
+    const needs = classed(panelOf(document), 'graph-inspector-need')
+    expect(needs.map((need) => need.attributes.get('data-key')?.endsWith(':task-three'))).toEqual([true, false])
+
+    // `task-two` is not drawn: the keyboard goes to the panel, which is drawn and
+    // is now about the task the press chose.
+    const hidden = needs[1]
+    if (hidden === undefined) throw new Error('the panel listed nothing this task waits on')
+    hidden.click()
+    await flush()
+    const after = classed(panelOf(document), 'graph-inspector')[0]
+    if (after === undefined) throw new Error('the panel closed under the task it was selecting')
+    expect(textOf(after)).toContain('The second task of the example plan')
+    expect(
+      document.activeElement,
+      'the press named a card that is not drawn and dropped the keyboard',
+    ).toBe(after)
+
+    // And where the card **is** drawn, the keyboard lands on it: the panel is
+    // about `task-two` now, and what that task unblocks is `task-five`, which is
+    // in the open release and on the canvas.
+    const drawnTask = classed(panelOf(document), 'graph-inspector-unblock')[0]
+    if (drawnTask === undefined) throw new Error('the panel listed nothing this task unblocks')
+    drawnTask.click()
+    await flush()
+    const landed = nodeForTask(document, 'task-five')
+    if (landed === undefined) throw new Error('the redraw lost the card the press selected')
+    expect(landed.attributes.get('data-selected')).toBe('true')
+    expect(document.activeElement, 'the keyboard did not land on the card the press selected').toBe(landed)
   })
 
   it('keeps the keyboard on the control a key pressed, and leaves it alone when it is elsewhere', async () => {
@@ -2796,6 +3294,48 @@ function holdsText(root: FakeNode, text: string): boolean {
   return everyNode(root).some((node) => node.textContent === text)
 }
 
+/** controlUnder is the one drawn button carrying exactly this label under a
+ * root. The settings editor's controls carry words rather than class hooks --
+ * they are drawn by the entry into a row a screen drew -- so a case finds the
+ * one it means by the word the operator reads. */
+function controlUnder(root: FakeNode, label: string): FakeNode {
+  const found = everyNode(root).filter((node) => node.tagName === 'BUTTON' && node.textContent === label)
+  expect(found, `expected exactly one control labelled ${JSON.stringify(label)}`).toHaveLength(1)
+  return found[0] as FakeNode
+}
+
+/** theBox is the one input under a root: the settings editor's value box. A
+ * screen's interfaces carry text and attributes and never a value, so a case
+ * writes one on the node behind the drawn element, exactly as `valueOf` reads
+ * it. */
+function theBox(root: FakeNode): FakeNode {
+  const found = everyNode(root).filter((node) => node.tagName === 'INPUT')
+  expect(found, 'expected exactly one box').toHaveLength(1)
+  return found[0] as FakeNode
+}
+
+/** typeValue writes what an operator would type into one control. */
+function typeValue(box: FakeNode, value: string): void {
+  ;(box as unknown as { value: string }).value = value
+}
+
+/** textIn is the text of the single node carrying one class under a root: the
+ * drawn value of one cell of a screen this suite is reading. */
+function textIn(root: FakeNode, className: string): string {
+  const found = classed(root, className)
+  expect(found, `expected exactly one .${className}`).toHaveLength(1)
+  return found[0]?.textContent ?? ''
+}
+
+/** figureOfIn is one count cell's word and its drawn figure, in the order they
+ * are drawn: the two halves are one cell, and a case reads them as a reader
+ * does -- together. */
+function figureOfIn(root: FakeNode, className: string): readonly [string, string] {
+  const cell = classed(root, className)[0]
+  if (cell === undefined) throw new Error(`no .${className}`)
+  return [textIn(cell, 'coordinator-count-word'), textIn(cell, 'coordinator-count-value')]
+}
+
 /** readingOf is the panel's placeholder sentence, or `null` when the panel holds
  * something else: the one observable that says a tab is waiting rather than
  * showing an answer. */
@@ -2810,6 +3350,35 @@ const BUDGET_REFUSAL = 'the budget read refused, in the CLI’s own words'
 const REPORT_REFUSAL = 'the report read refused, in the CLI’s own words'
 const RUNS_REFUSAL = 'the run list refused, in the CLI’s own words'
 const COORDINATOR_REFUSAL = 'the coordinator read refused, in the CLI’s own words'
+const INTENTS_REFUSAL = 'the declared intents read refused, in the CLI’s own words'
+/** WINDOW_REFUSAL is a refused `runs summary --json`, in the CLI's own words: the
+ * sentence the strip draws beside the figures that are not its read's. */
+const WINDOW_REFUSAL = 'the window’s read refused, in the CLI’s own words'
+
+/** AN_INTENTS_DOCUMENT is one stored declaration in the `--all` shape the
+ * pane's own read prints (`coordinator intents --all --json`, K5). The person
+ * who declared it is a value the store holds and never an identity anything is
+ * admitted by (reconciliation finding #11), which is why the case reads it back
+ * as the text it is. */
+const AN_INTENTS_DOCUMENT = {
+  repos: [
+    {
+      repo: 'owner/repo-a',
+      provider: 'github',
+      intents: [
+        {
+          id: '0123456789abcdef0123456789abcdef',
+          declared_by: 'person-1',
+          at: '2026-11-02T08:00:00Z',
+          branch: 'feat/a-thing',
+          release: '0.119.0',
+          files: ['console/src/renderer/entry.ts'],
+          services: [],
+        },
+      ],
+    },
+  ],
+}
 
 describe('the placeholder a tab switch draws', () => {
   beforeEach(() => {
@@ -2824,14 +3393,17 @@ describe('the placeholder a tab switch draws', () => {
     // The defect this fix is for: `show` marked the tab and started its read,
     // and the panel kept the Graph's refusal -- a screen naming one read, under
     // a tab that asked for another -- for as long as the new read took.
+    const runs = holding()
     const budget = holding()
     const report = holding()
-    const runs = holding()
     const coordinator = holding()
     const { bridge } = graphBridge({
       planStatus: () => ({ ok: false, reason: GRAPH_REFUSAL }),
       showBudget: () => budget.reply(),
       runReport: () => report.reply(),
+      // The run list is **held and never released**: no tab of this case may
+      // read it, so a screen that did would answer its own refusal below rather
+      // than the sentence this case is about.
       listRuns: () => runs.reply(),
       coordinatorStatus: () => coordinator.reply(),
       statsRuns: () => ({ ok: false, reason: REPORT_REFUSAL }),
@@ -2864,45 +3436,103 @@ describe('the placeholder a tab switch draws', () => {
     expect(holdsText(panelOf(document), READING_STILL)).toBe(false)
 
     // ---- Projects --------------------------------------------------------
+    // Projects draws its own frame in the click's frame and reads one document,
+    // `budget show` -- which this session has already refused, so the refusal is
+    // the whole of what the tab has to draw. What matters here is that the
+    // Graph's sentence is not on it and that the run list is not one of the reads
+    // it names (`the Projects screen reads` below holds the read it makes).
     buttonFor(document, 'projects').click()
     await flush()
-    expect(readingOf(document)).toContain('Reading Projects…')
-    expect(operationOf(document)).toBe(null)
-    await vi.advanceTimersByTimeAsync(READING_STILL_MS)
-    expect(readingOf(document)).toContain(READING_STILL)
-
-    runs.release({ ok: false, reason: RUNS_REFUSAL })
-    await flush()
-    expect(readingOf(document), 'the Projects screen never landed').toBe(null)
-    expect(holdsText(panelOf(document), RUNS_REFUSAL), 'the run list’s own sentence is missing').toBe(true)
+    expect(operationOf(document), 'the Projects screen drew no refusal of its own').toBe('budget.show')
+    expect(holdsText(panelOf(document), BUDGET_REFUSAL)).toBe(true)
     expect(holdsText(panelOf(document), GRAPH_REFUSAL)).toBe(false)
     // The panel names the reads the screen made and no other read.
     expect(holdsText(panelOf(document), 'plan.status')).toBe(false)
+    expect(holdsText(panelOf(document), 'runs.list'), 'the run list is not a read of this screen').toBe(
+      false,
+    )
 
     // ---- Coordinator -----------------------------------------------------
+    // The Coordinator is the one tab of these that draws a frame of its own with
+    // reads still out: the source line and the console's sentence about the
+    // view's age are up in the click's frame, and its sections wear the mark and
+    // the shape of what is coming. The installation records no checkout, so two
+    // of its four reads are made at all -- the stored view and `budget show` --
+    // and the budget's answer is already in hand: this case released that holder
+    // under Spend, so the part it owns is drawn from a refusal while the stored
+    // view is still on its way. The jobs are the read the tab does not make on
+    // entry (rule 5), so this case asks for them below, before they can refuse.
     buttonFor(document, 'coordinator').click()
     await flush()
-    expect(readingOf(document)).toContain('Reading Coordinator…')
+    expect(busyLabels(document), 'the Coordinator drew no mark of its own').toContain(COORDINATOR_BUSY)
+    // The Graph's sentence is gone, and what names a command on this panel is
+    // the **Coordinator's own** reads: the budget read whose refusal Spend
+    // released above landed in the queue's budget part, and it names
+    // `budget.show` -- the command, not the tab that asked for it. The run list
+    // is the one read still out, and it is the read the queue's mark is for.
+    expect(operationOf(document), 'the Graph’s refusal outlived its tab').toBe('budget.show')
+    expect(holdsText(panelOf(document), GRAPH_REFUSAL)).toBe(false)
     await vi.advanceTimersByTimeAsync(READING_STILL_MS)
-    expect(readingOf(document)).toContain(READING_STILL)
+    expect(holdsText(panelOf(document), READING_STILL), 'the mark never said the read was slow').toBe(true)
 
     coordinator.release({ ok: false, reason: COORDINATOR_REFUSAL })
     await flush()
     expect(operationOf(document), 'the coordinator read draws its own refusal').toBe('coordinator.status')
+    // ...and the budget's refusal did not go with it: they are two reads, and
+    // the queue draws one part each.
+    expect(classed(panelOf(document), 'unavailable-operation').map((node) => node.textContent)).toContain(
+      'budget.show',
+    )
     expect(holdsText(panelOf(document), COORDINATOR_REFUSAL)).toBe(true)
     expect(holdsText(panelOf(document), GRAPH_REFUSAL)).toBe(false)
+
+    // The jobs are read when the operator asks for them and not before: the
+    // press is what makes `runs ls` go out, and its refusal is drawn in the part
+    // the control was drawn in.
+    buttonLabelled(panelOf(document), COORDINATOR_QUEUE_JOBS_WORD).click()
+    runs.release({ ok: false, reason: RUNS_REFUSAL })
+    await flush()
+    // The run list was the last read made, and each refusal is where its own
+    // read belongs: the document's in the queue's first part, the run list's in
+    // the second, the budget's in the fourth. The third -- the plan tasks -- is
+    // **not a refusal but a note**: this installation records no checkout, so
+    // `plan status` was never asked and the part says the tasks are not known.
+    const parts = classed(panelOf(document), COORDINATOR_QUEUE_PART_CLASS)
+    expect(
+      parts.map((part) => classed(part, 'unavailable-operation')[0]?.textContent ?? null),
+      'a part drew a refusal for a read that is not its own',
+    ).toEqual(['coordinator.status', 'runs.list', null, 'budget.show'])
+    expect(holdsText(panelOf(document), COORDINATOR_REFUSAL)).toBe(true)
+    expect(holdsText(panelOf(document), RUNS_REFUSAL)).toBe(true)
+    // Every read behind every section has answered, so no section is waiting:
+    // there is no spinner left on a queue the console has finished reading.
+    expect(busyLabels(document)).toEqual([])
   })
 
   it('asks the operator to read the tab by the word the navigation gave it', () => {
     // The placeholder names the tab the operator just pressed, so the word is
     // the button's own and not a second name for the same view: "Reading Caps…"
-    // under a tab labelled Projects would be the console asking its reader to
+    // under a tab labelled Project would be the console asking its reader to
     // check a name it drew itself.
     const words: Readonly<Record<string, string>> = READING_WORDS
     expect(Object.keys(words)).toHaveLength(VIEWS.length)
     for (const entry of VIEWS) {
       expect(words[entry.id], `the ${entry.id} view has no placeholder word`).toBe(entry.label)
     }
+  })
+
+  it('names the projects tab Project, the settings of this one project', async () => {
+    // A Fugaro project is one installation -- many repositories and people, one
+    // GCP project, one Firebase -- and this screen is the settings of *this*
+    // one, so the tab and the word it reads by say Project (the owner's ruling
+    // of 2026-10-31). What is renamed is the visible word alone: the view's own
+    // id is `projects`, and so are the module, the classes and the `data-view`
+    // this test finds the button by.
+    const { bridge } = everyReadHeld()
+    const document = await boot(bridge, new FakeDocument())
+    expect(buttonFor(document, 'projects').textContent).toBe('Project')
+    expect(navButtons(document).map((button) => button.textContent)).not.toContain('Projects')
+    expect(READING_WORDS.projects).toBe('Project')
   })
 
   it('draws the placeholder for the Graph only when there is nothing to redraw', async () => {
@@ -2970,6 +3600,203 @@ describe('the placeholder a tab switch draws', () => {
     const rail = railBridge([listRow('aurora', { open: true }), orbitRow()])
     void rail
     expect(readingOf(document), 'the Live screen this console holds is not a placeholder').toBe(null)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The skeleton a tab draws while its data is on its way (console 0.116.1).
+//
+// The owner, 2026-10-31: "when changing tabs in the Console we should show a
+// skeleton while we load the data, no?" The placeholder's own sentence says a
+// tab is waiting, and the shapes beside it are what the panel is going to be:
+// one wrapper per section of that tab (`renderer/skeleton.ts`'s
+// `SKELETON_SHAPES`), replaced section by section as the reads land. The
+// helper's own claims -- what a block is, that the tree says nothing to a reader
+// and that the heights are the vocabulary's -- are `skeleton.test.ts`'s, and the
+// shimmer's two arms are `graph-motion.test.ts`'s.
+// ---------------------------------------------------------------------------
+
+/** skeletonsOf is the panel's skeletons in document order, as the section each
+ * one stands in for. */
+function skeletonsOf(document: FakeDocument): readonly string[] {
+  return classed(panelOf(document), SKELETON_CLASS).map((node) => node.attributes.get('data-section') ?? '')
+}
+
+/** skeletonOf is one section's skeleton, or `null` when that section is not
+ * waiting on anything. */
+function skeletonOf(document: FakeDocument, section: string): FakeNode | null {
+  return (
+    classed(panelOf(document), SKELETON_CLASS).find(
+      (node) => node.attributes.get('data-section') === section,
+    ) ?? null
+  )
+}
+
+/** blocksOf is one section's blocks, as the kind each one is drawn as. */
+function blocksOf(document: FakeDocument, section: string): readonly string[] {
+  const wrapper = skeletonOf(document, section)
+  if (wrapper === null) return []
+  return classed(wrapper, SKELETON_BLOCK_CLASS).map((node) => node.attributes.get('data-shape') ?? '')
+}
+
+/** everyReadHeld is a bridge whose reads all hold, which is what a case about a
+ * wait needs: a tab that has just been clicked stays on its placeholder for as
+ * long as the case says. */
+function everyReadHeld(): FakeBridge {
+  return graphBridge({
+    planStatus: () => holding().reply(),
+    showBudget: () => holding().reply(),
+    runReport: () => holding().reply(),
+    listRuns: () => holding().reply(),
+    listModels: () => holding().reply(),
+    coordinatorStatus: () => holding().reply(),
+  })
+}
+
+describe('the skeleton a tab draws while its data is on its way', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  /** ownShape is the one section of a tab that draws **its own frame** in the
+   * click's frame rather than the panel's placeholder: Projects (`budget show`)
+   * and the Coordinator (the stored view), which have something true to draw
+   * before their read answers -- the command the panel is reading and, for the
+   * Coordinator, the console's sentence about the view's age -- so a placeholder
+   * standing in for the whole screen would be a shape over a header the console
+   * already knows. The other three wait as a panel, and their sections are
+   * `SKELETON_SHAPES[tab]`.
+   *
+   * **The Coordinator is a list and not one shape** (console 0.118.0, K1): its
+   * frame holds three sections, each with a read of its own -- the action queue,
+   * the fleet's totals and the panel of repositories -- and all three are empty
+   * in the click's frame, so all three wear the shape of what is coming. That is
+   * the owner's rule of 2026-10-31 drawn: four reads that start together and a
+   * section per read, rather than the whole tab behind its slowest. */
+  const ownShape = (tab: string): readonly SkeletonShape[] | null => {
+    if (tab === 'projects') return [PROJECTS_SHAPE, PROJECTS_MODELS_SHAPE]
+    if (tab === 'coordinator') return SKELETON_SHAPES.coordinator
+    return null
+  }
+
+  it('draws each tab’s sections, in the order the tab draws them, in the click’s own frame', async () => {
+    for (const tab of Object.keys(READING_WORDS) as readonly (keyof typeof READING_WORDS)[]) {
+      const { bridge } = everyReadHeld()
+      const document = await boot(bridge, new FakeDocument())
+      buttonFor(document, tab).click()
+      // **Nothing is awaited**: the whole point of the shape is that it is up in
+      // the frame the click happened in, not a turn later when the read the
+      // click started has already answered in a test.
+      const own = ownShape(tab)
+      expect(skeletonsOf(document), `the ${tab} tab drew no skeleton in the click’s own frame`).toEqual(
+        (own ?? SKELETON_SHAPES[tab]).map((shape) => shape.section),
+      )
+      // The sentence a reader is told is still drawn -- visually hidden beside
+      // the shapes rather than printed over them -- and the blocks hold the shape
+      // of the section they stand in for. A tab that draws its own frame says
+      // what it is reading in that frame's own mark instead: the mark's label is
+      // the sentence, and the frame's source line is above it.
+      if (own === null) {
+        expect(readingOf(document), `the ${tab} placeholder lost its sentence`).toContain(
+          `Reading ${READING_WORDS[tab]}…`,
+        )
+      } else {
+        expect(busyLabels(document), `the ${tab} tab drew no mark of its own`).toContain(
+          tab === 'projects' ? PROJECTS_BUSY : COORDINATOR_BUSY,
+        )
+        const root = classed(panelOf(document), tab)[0]
+        expect(root, `the ${tab} tab drew no screen of its own`).toBeDefined()
+        expect(
+          everyNode(root as FakeNode).some(
+            (node) => node.attributes.get(BUSY_BUSY_ATTRIBUTE) === 'true',
+          ),
+          `the ${tab} screen’s own section is not marked busy`,
+        ).toBe(true)
+      }
+      for (const shape of own ?? SKELETON_SHAPES[tab]) {
+        expect(blocksOf(document, shape.section), `${tab}'s ${shape.section} drew the wrong blocks`).toEqual([
+          ...shape.blocks,
+        ])
+      }
+      await flush()
+    }
+  })
+
+  it('replaces one section’s skeleton the moment that section’s read lands, and no other', async () => {
+    // Spend is the tab whose two reads answer apart, which is what makes the
+    // per-section half of the owner's rule visible: the caps are drawn from their
+    // own answer while the report is still waiting, and the report's shape -- and
+    // its mark -- stay exactly where they were.
+    const caps = holding()
+    const report = holding()
+    const { bridge } = graphBridge({
+      planStatus: () => holding().reply(),
+      showBudget: () => caps.reply(),
+      runReport: () => report.reply(),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'spend').click()
+    expect(skeletonsOf(document)).toEqual(['caps', 'report'])
+
+    caps.release({ ok: true, data: { document: {} } })
+    await flush()
+    // The caps landed: their section is the shell's own, drawn from the answer,
+    // and its skeleton is gone with the wait it stood for.
+    expect(sectionOf(document, 'spend-caps').getAttribute('data-available')).toBe('true')
+    expect(skeletonOf(document, 'caps')).toBeNull()
+    // The report is still waiting, and that is the whole difference: one
+    // section's answer is not the other section's, and a panel that replaced
+    // both when the first landed would be the all-or-nothing redraw the owner's
+    // rule of 2026-10-31 refuses.
+    expect(skeletonsOf(document), 'the report’s skeleton went with the caps’ answer').toEqual(['report'])
+    expect(blocksOf(document, 'report')).toEqual([...SKELETON_SHAPES.spend[1]!.blocks])
+    expect(sectionOf(document, 'spend-report').getAttribute(BUSY_ATTRIBUTE)).toBe('true')
+
+    report.release({ ok: true, data: { document: reportDoc('2026-10-01') } })
+    await flush()
+    expect(skeletonsOf(document)).toEqual([])
+    expect(theSpendView(document)).toEqual(['2026-10-01'])
+  })
+
+  it('draws a refused section’s own sentence instead of a skeleton', async () => {
+    // A refusal is the section's answer: the read was made and it failed, so
+    // there is nothing coming and nothing to hold the shape of.
+    const report = holding()
+    const { bridge } = graphBridge({
+      planStatus: () => holding().reply(),
+      showBudget: () => ({ ok: false, reason: BUDGET_REFUSAL }),
+      runReport: () => report.reply(),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'spend').click()
+    expect(skeletonsOf(document)).toEqual(['caps', 'report'])
+
+    await flush()
+    expect(holdsText(sectionOf(document, 'spend-caps'), BUDGET_REFUSAL)).toBe(true)
+    expect(skeletonOf(document, 'caps'), 'a section that refused is not a section that is waiting').toBeNull()
+    expect(skeletonsOf(document)).toEqual(['report'])
+  })
+
+  it('takes the shape down with the placeholder when the tab’s whole read lands', async () => {
+    const plan = holding()
+    const { bridge } = graphBridge({
+      planStatus: () => plan.reply(),
+      showBudget: () => holding().reply(),
+      runReport: () => holding().reply(),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'graph').click()
+    expect(skeletonsOf(document)).toEqual(SKELETON_SHAPES.graph.map((shape) => shape.section))
+
+    plan.release(planStatusReply())
+    await flush()
+    expect(readingOf(document), 'the Graph landed and the placeholder is still up').toBe(null)
+    expect(skeletonsOf(document), 'the skeleton outlived the placeholder it was drawn for').toEqual([])
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
   })
 })
 
@@ -3125,23 +3952,53 @@ describe('the sections Spend fills as their own reads land', () => {
     vi.useRealTimers()
   })
 
+  it('opens on the recent week by day, and offers the wider windows beside it', async () => {
+    // The owner's choice for 0.118.0: Spend opens on 7d rather than on the
+    // month the CLI's own `--since` defaults to. The picker keeps every window
+    // it offered, so the wider ranges are one click away.
+    const windows = windowReads()
+    const { bridge, calls } = spendBridge({ runReport: windows.reply })
+    const document = await openSpend(bridge)
+    expect(
+      calls.filter((call) => call.name === 'runReport').map((call) => call.args),
+      'the screen did not open on the recent week by day',
+    ).toEqual([{ by: 'day', since: '7d' }])
+    windows.release('7d', reportDoc('2026-10-24'))
+    await flush()
+    expect(theSpendView(document)).toEqual(['2026-10-24'])
+    expect(classed(panelOf(document), 'spend-window').map((node) => node.textContent)).toEqual([
+      '7d',
+      '30d',
+      '90d',
+      '12w',
+    ])
+
+    // And 30d is still read as 30d: the default moved, the picker's windows did
+    // not.
+    windowButton(document, '30d').click()
+    await flush()
+    expect(
+      calls.filter((call) => call.name === 'runReport').map((call) => call.args),
+    ).toContainEqual({ by: 'day', since: '30d' })
+  })
+
   it('marks the report section in the click’s own frame, over the figures it already drew', async () => {
     const windows = windowReads()
     const { bridge } = spendBridge({ runReport: windows.reply })
     const document = await openSpend(bridge)
-    windows.release('30d', reportDoc('2026-10-01'))
+    windows.release('7d', reportDoc('2026-10-01'))
     await flush()
     expect(theSpendView(document)).toEqual(['2026-10-01'])
     expect(classed(panelOf(document), BUSY_CLASS)).toEqual([])
 
-    windowButton(document, '7d').click()
+    windowButton(document, '90d').click()
     // Nothing is awaited: this is the frame the click happened in, which is the
     // whole of the owner's complaint -- "it feels like nothing happens".
     const report = sectionOf(document, 'spend-report')
     expect(report.getAttribute(BUSY_ATTRIBUTE)).toBe('true')
     expect(report.getAttribute(BUSY_BUSY_ATTRIBUTE)).toBe('true')
     expect(classed(report, BUSY_SPINNER_CLASS)).toHaveLength(1)
-    expect(busyLabels(document)).toEqual(['Reading spend for 7d, by day…'])
+    expect(busyLabels(document)).toEqual(['Reading spend for 90d, by day…'])
     // The figures already drawn stay under the mark: a section that blanked
     // would lose its answer to say it is reading another.
     expect(theSpendView(document)).toEqual(['2026-10-01'])
@@ -3149,28 +4006,28 @@ describe('the sections Spend fills as their own reads land', () => {
     // section that has already answered look busy.
     expect(sectionOf(document, 'spend-caps').getAttribute(BUSY_ATTRIBUTE)).toBeNull()
 
-    windows.release('7d', reportDoc('2026-10-24'))
+    windows.release('90d', reportDoc('2026-08-02'))
     await flush()
     expect(report.getAttribute(BUSY_ATTRIBUTE)).toBeNull()
     expect(classed(panelOf(document), BUSY_CLASS)).toEqual([])
-    expect(theSpendView(document)).toEqual(['2026-10-24'])
+    expect(theSpendView(document)).toEqual(['2026-08-02'])
   })
 
   it('keeps the second view when the read asked for first answers last', async () => {
     const windows = windowReads()
     const { bridge } = spendBridge({ runReport: windows.reply })
     const document = await openSpend(bridge)
-    windows.release('30d', reportDoc('2026-10-01'))
+    windows.release('7d', reportDoc('2026-10-01'))
     await flush()
 
-    windowButton(document, '7d').click()
+    windowButton(document, '30d').click()
     windowButton(document, '90d').click()
     expect(busyLabels(document)).toEqual(['Reading spend for 90d, by day…'])
 
     // The earlier read answers last. It is not this section's any more, and
     // drawing it would put the window the operator has already replaced under a
     // picker that marks the later one.
-    windows.release('7d', reportDoc('2026-10-24'))
+    windows.release('30d', reportDoc('2026-10-01'))
     await flush()
     expect(busyLabels(document), 'the superseded read took the latest change’s mark down').toEqual([
       'Reading spend for 90d, by day…',
@@ -3188,7 +4045,7 @@ describe('the sections Spend fills as their own reads land', () => {
     const windows = windowReads()
     const { bridge } = spendBridge({ runReport: windows.reply })
     const document = await openSpend(bridge)
-    windows.release('30d', reportDoc('2026-10-01'))
+    windows.release('7d', reportDoc('2026-10-01'))
     await flush()
 
     windowButton(document, '90d').click()
@@ -3219,7 +4076,7 @@ describe('the sections Spend fills as their own reads land', () => {
     // The report's section is the one that is busy, and it names the read that
     // is running rather than only that one is.
     expect(sectionOf(document, 'spend-report').getAttribute(BUSY_ATTRIBUTE)).toBe('true')
-    expect(busyLabels(document)).toEqual(['Reading spend for 30d, by day…'])
+    expect(busyLabels(document)).toEqual(['Reading spend for 7d, by day…'])
     expect(theSpendView(document)).toEqual([])
   })
 
@@ -3333,7 +4190,7 @@ describe('the sections Spend fills as their own reads land', () => {
     expect(report.getAttribute(BUSY_ATTRIBUTE), 'the second visit is not reading: the case proves nothing').toBe(
       'true',
     )
-    expect(busyLabels(document)).toEqual(['Reading spend for 30d, by day…'])
+    expect(busyLabels(document)).toEqual(['Reading spend for 7d, by day…'])
 
     reads.release(0, { ok: true, data: { document: reportDoc('2026-10-01') } })
     await flush()
@@ -3408,7 +4265,7 @@ describe('the sections Spend fills as their own reads land', () => {
     await flush()
     const stats = fake.calls.filter((call) => call.name === 'statsRuns')
     expect(stats).toHaveLength(1)
-    expect((stats[0]?.args as { readonly since?: unknown }).since).toBe('30d')
+    expect((stats[0]?.args as { readonly since?: unknown }).since).toBe('7d')
   })
 })
 
@@ -3426,7 +4283,7 @@ describe('the view a session already read', () => {
     const windows = windowReads()
     const fake = spendBridge({ runReport: windows.reply })
     const document = await openSpend(fake.bridge)
-    windows.release('30d', reportDoc('2026-10-01'))
+    windows.release('7d', reportDoc('2026-10-01'))
     await flush()
     expect(theSpendView(document)).toEqual(['2026-10-01'])
     return { fake, document, windows }
@@ -3464,7 +4321,7 @@ describe('the view a session already read', () => {
       fake.calls
         .filter((call) => call.name === 'runReport')
         .map((call) => (call.args as { readonly since?: unknown }).since),
-    ).toEqual(['30d', '30d'])
+    ).toEqual(['7d', '7d'])
     expect(stamped(document), 'the re-read view is still stamped as a cached one').toBeNull()
   })
 
@@ -3504,11 +4361,11 @@ describe('the view a session already read', () => {
     ).toHaveLength(offered)
 
     const before = fake.calls.filter((call) => call.name === 'runReport').length
-    windowButton(document, '7d').click()
+    windowButton(document, '90d').click()
     await flush()
     const reads = fake.calls.filter((call) => call.name === 'runReport')
     expect(reads.length - before, 'one click started more than one read').toBe(1)
-    expect((reads[reads.length - 1]?.args as { readonly since?: unknown }).since).toBe('7d')
+    expect((reads[reads.length - 1]?.args as { readonly since?: unknown }).since).toBe('90d')
   })
 
   it('draws a view older than five minutes and reads it again at once', async () => {
@@ -3532,17 +4389,17 @@ describe('the view a session already read', () => {
   })
 
   it('answers a control change from the cache, and reads again only what is older than five minutes', async () => {
-    // 30d → 7d → 30d is a round trip the three controls make easy and an
+    // 7d → 30d → 7d is a round trip the three controls make easy and an
     // operator makes without meaning to ask the CLI anything. The view is in
-    // this session's cache, so the second 30d is drawn stamped in the click's own
+    // this session's cache, so the second 7d is drawn stamped in the click's own
     // frame and no report is read for it.
     const { fake, document, windows } = await readSpendOnce()
     const reads = (): number => fake.calls.filter((call) => call.name === 'runReport').length
     const before = reads()
 
-    // 7d is asked for and does not answer, and the operator comes straight back.
-    windowButton(document, '7d').click()
+    // 30d is asked for and does not answer, and the operator comes straight back.
     windowButton(document, '30d').click()
+    windowButton(document, '7d').click()
     expect(theSpendView(document), 'the change was not answered from the cache').toEqual(['2026-10-01'])
     expect(stamped(document)).toMatch(/^as of \d\d:\d\d$/)
     expect(busyLabels(document), 'the cached view was left under the mark of the read it replaced').toEqual([])
@@ -3551,14 +4408,14 @@ describe('the view a session already read', () => {
 
     // The read the operator left behind is not drawn over the view they chose:
     // the cached view is the newest answer for the controls on screen.
-    windows.release('7d', reportDoc('2026-10-24'))
+    windows.release('30d', reportDoc('2026-09-01'))
     await flush()
     expect(theSpendView(document), 'a read for a range the operator left was drawn').toEqual(['2026-10-01'])
 
     // A cached view older than five minutes is drawn **and** read again, exactly
     // as it is on entering the tab: a change is not a door around that rule.
     vi.setSystemTime(Date.now() + CACHE_FRESH_MS)
-    windowButton(document, '30d').click()
+    windowButton(document, '7d').click()
     expect(stamped(document), 'the stale cached view was served without its stamp').not.toBeNull()
     await flush()
     expect(reads()).toBe(before + 2)
@@ -3669,9 +4526,15 @@ describe('a read that lands after the operator left its tab', () => {
     const document = await boot(bridge, new FakeDocument())
     buttonFor(document, view).click()
     await flush()
-    expect(readingOf(document), `the ${view} tab drew no placeholder: the case proves nothing`).toContain(
-      'Reading',
-    )
+    // The non-vacuity guard: the tab the case opens has drawn something of its
+    // own before the late read lands -- the panel's placeholder for a tab that
+    // waits that way, or the screen's own frame with a section marked busy for
+    // one that draws its frame in the click's frame (Projects, the Coordinator).
+    const drew =
+      readingOf(document) !== null ||
+      everyNode(panelOf(document)).some((node) => node.attributes.get(BUSY_ATTRIBUTE) === 'true') ||
+      operationOf(document) !== null
+    expect(drew, `the ${view} tab drew nothing of its own: the case proves nothing`).toBe(true)
     buttonFor(document, 'live').click()
     await flush()
     const chosen = panelOf(document).children[0] as FakeNode
@@ -3694,15 +4557,19 @@ describe('a read that lands after the operator left its tab', () => {
   })
 
   it('never draws the Projects screen over the tab the operator moved to', async () => {
-    const runs = holding()
+    // The read is `budget show` and it is the tab's **only** one: the run list
+    // this case used to hold is not a read of this screen any more (the owner's
+    // report of 2026-10-31), so what can land after the operator has moved on is
+    // the budget's own answer.
+    const budget = holding()
     const { bridge } = graphBridge({
       subscribeLive: () => snapshotReply(liveFrame()),
-      listRuns: () => runs.reply(),
+      showBudget: () => budget.reply(),
     })
     const { document, chosen } = await leftBehind(bridge, 'projects')
-    runs.release(runsReply())
+    budget.release({ ok: true, data: { document: {} } })
     await flush()
-    expect(panelOf(document).children[0], 'a late run list replaced the view on screen').toBe(chosen)
+    expect(panelOf(document).children[0], 'a late budget read replaced the view on screen').toBe(chosen)
   })
 
   it('never draws the plan over the tab the operator moved to', async () => {
@@ -3770,12 +4637,17 @@ describe('a read that lands after the operator left its tab', () => {
     // its worker in its constructor (`GraphLayoutClient`). This suite would
     // otherwise never get there: every case that draws a graph stubs the worker
     // in. Both halves are pinned here, the sentence and the generation.
-    const runs = holding()
+    //
+    // The throw is in the same turn as the plan it follows -- the canvas is drawn
+    // from the plan alone, so there is no second read between the two -- and what
+    // can land after the operator has left is therefore the plan itself: the
+    // first half pins the guard in front of the catch, which is the reason the
+    // sentence is not drawn for a generation that has passed.
+    const plan = holding()
     const { bridge } = fakeBridge({
       replies: {
         subscribeLive: () => snapshotReply(liveFrame()),
-        planStatus: () => planStatusReply(),
-        listRuns: () => runs.reply(),
+        planStatus: () => plan.reply(),
       },
     })
     const document = await boot(bridge, new FakeDocument())
@@ -3788,11 +4660,12 @@ describe('a read that lands after the operator left its tab', () => {
       'live',
     )
 
-    runs.release(runsReply())
+    plan.release(planStatusReply())
     await flush()
     expect(panelOf(document).children[0], 'a build nobody is waiting for replaced the view on screen').toBe(
       chosen,
     )
+    expect(holdsText(panelOf(document), READ_UNREADABLE)).toBe(false)
     expect(operationOf(document)).toBe(null)
 
     // The same throw under the operator's own tab: the console's sentence, and
@@ -3805,43 +4678,43 @@ describe('a read that lands after the operator left its tab', () => {
     expect(holdsText(panelOf(document), READ_UNREADABLE)).toBe(true)
   })
 
-  it('never lets a plan read from an earlier visit answer for the one that is out', async () => {
-    // The run list is the await the second guard stands behind, and the read it
-    // belongs to is finished with by the time it answers. Guard 3 drops that
-    // read's *drawing* -- but the screen keeps what a load installs, so without
-    // this guard the plan of a generation nobody is on is the picture the next
-    // visit redraws, under a read that has not answered yet.
+  it('draws the plan it already read the moment the operator comes back', async () => {
+    // The session cache, and the other half of answering in the click's frame: a
+    // plan this console has already read is drawn again the moment the tab comes
+    // back, **before** anything is awaited but the layout -- stamped `as of
+    // HH:MM` with the door to read it again beside it. The read the return makes
+    // is the layout engine's cache, not a second `plan status`.
     const plans = readQueue()
-    const runs = holding()
+    let reads = 0
     const { bridge } = graphBridge({
       subscribeLive: () => snapshotReply(liveFrame()),
-      planStatus: plans.reply,
-      listRuns: () => runs.reply(),
+      planStatus: () => {
+        reads += 1
+        return plans.reply()
+      },
     })
     const document = await boot(bridge, new FakeDocument())
     buttonFor(document, 'graph').click()
     await flush()
     plans.release(0, planStatusReply())
     await flush()
+    expect(
+      classed(panelOf(document), 'graph-canvas').length,
+      'the first read drew no canvas: the case proves nothing',
+    ).toBeGreaterThan(0)
 
     buttonFor(document, 'live').click()
     await flush()
-    runs.release(runsReply())
-    await flush()
-    expect(
-      classed(panelOf(document), 'graph-canvas'),
-      'the stale read drew after all: the case proves nothing',
-    ).toEqual([])
-
-    // The next visit has nothing of its own yet, and what the screen holds is
-    // what this guard kept out of it.
     buttonFor(document, 'graph').click()
     await flush()
     expect(
-      readingOf(document),
-      'the screen redrew a plan from a read nobody was waiting for',
-    ).toContain('Reading')
-    expect(classed(panelOf(document), 'graph-canvas')).toEqual([])
+      classed(panelOf(document), 'graph-canvas').length,
+      'the return drew nothing from the cache',
+    ).toBeGreaterThan(0)
+    const stamp = classed(panelOf(document), 'console-stamp')[0]
+    expect(stamp, 'the cached view was drawn with no stamp').toBeDefined()
+    expect(textOf(stamp as FakeNode)).toContain('as of')
+    expect(reads, 'the return read the plan again instead of drawing what it held').toBe(1)
   })
 
   it('never mounts the Spend frame from a caps read that landed after the operator left', async () => {
@@ -3880,9 +4753,9 @@ describe('a read that lands after the operator left its tab', () => {
     await flush()
     const chosen = panelOf(document).children[0] as FakeNode
     expect(
-      chosen.attributes.get('data-kind'),
-      'the Projects tab drew no placeholder: the case proves nothing',
-    ).toBe('reading')
+      chosen.attributes.get('class'),
+      'the Projects tab drew nothing of its own: the case proves nothing',
+    ).toBe('projects')
 
     diagnosis.release({ ok: true, data: { document: {} } })
     await flush()
@@ -3915,15 +4788,2125 @@ describe('a read that lands after the operator left its tab', () => {
     await flush()
     const chosen = panelOf(document).children[0] as FakeNode
     expect(
-      chosen.attributes.get('data-kind'),
-      'the Projects tab drew no placeholder: the case proves nothing',
-    ).toBe('reading')
+      chosen.attributes.get('class'),
+      'the Projects tab drew nothing of its own: the case proves nothing',
+    ).toBe('projects')
 
     link.release({ ok: true, data: 'https://logs.example/one-run' })
     await flush()
     expect(panelOf(document).children[0], 'a late log link drew the run over the view on screen').toBe(
       chosen,
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Each tab answers in the frame it was opened in, and the reads it does not
+// wait for (the owner's rule of 2026-10-31, `CLAUDE.md`'s console rules 1-5).
+//
+// Every read here is measured on the owner's installation: `coordinator status
+// --from-store --all` about thirteen seconds and 724 KB, `budget show` about
+// one, `runs ls --json` about six and 248 KB for a day. A tab that waited for
+// all of them answered a click with nothing for twenty seconds, which is the
+// report these cases are the fix for.
+// ---------------------------------------------------------------------------
+
+/** BUDGET_DOC is `budget show --json` as the Projects screen reads it: one
+ * repository with a kill switch that is on. Invented, like the fixture next
+ * door. */
+const BUDGET_DOC = Object.freeze({
+  project: 'example-project',
+  mode: 'enforce',
+  day: '2026-10-15',
+  global: { daily_cap_usd: 40, per_run_cap_usd: 8, counted_usd: 12.5, kill: null },
+  defaults: { repo_daily_cap_usd: 10, repo_per_run_cap_usd: 2 },
+  repos: [
+    {
+      slug: 'example-owner/example-repo',
+      repo: 'example-owner/example-repo',
+      daily_cap_usd: 20,
+      daily_cap_source: 'repo',
+      per_run_cap_usd: 4,
+      per_run_cap_source: 'global',
+      counted_usd: 12.5,
+      kill: { by: 'operator@example.test', at: '2026-10-15T11:30:00Z', reason: 'spend rate' },
+      running: [],
+    },
+  ],
+  running: [],
+  warnings: [],
+})
+
+/** MODELS_DOC is `models ls --json` (contract section 6.18), invented: one
+ * route and one model with a price. It is the Projects tab's second read. */
+const MODELS_DOC = Object.freeze({
+  version: 1,
+  project: 'example-project',
+  catalog: { source: 'built-in', checked_at: '2026-10-01', age_days: 33, stale: false },
+  routes: [
+    {
+      name: 'anthropic',
+      kind: 'direct',
+      base_url: 'https://api.anthropic.com',
+      host: 'api.anthropic.com',
+      models: ['claude-*'],
+      route_fee_pct: 0,
+      allow_data_to: ['*'],
+      open_to_every_repo: true,
+      note: '',
+    },
+  ],
+  models: [
+    {
+      id: 'deepseek-v4.1-flash',
+      route: 'anthropic',
+      source: 'catalog',
+      input_per_m: 0.14,
+      output_per_m: 0.28,
+      catalog: null,
+      allowed_to: ['*'],
+      refused: '',
+      note: '',
+    },
+  ],
+  repositories: [],
+})
+
+/** SETTINGS_DOC is `settings --json` (the settings-edit plan's C1), invented:
+ * two rows -- a writable one with a target layer, and one the generic path does
+ * not write. It is the Projects tab's third read. */
+const SETTINGS_DOC = Object.freeze({
+  version: 1,
+  project: 'example-project',
+  generated_at: '2026-11-03T06:00:00Z',
+  sources: [{ layer: 'default', read_at: '2026-11-03T06:00:00Z', duration_ms: 0, status: 'ok' }],
+  settings: [
+    {
+      key: 'budget.per_run_usd',
+      scope: 'project',
+      value: '5',
+      wins: 'project',
+      default: { value: '3', source: 'registry' },
+      state: 'set',
+      writable: true,
+      owner: '',
+      target_layer: 'project',
+    },
+    {
+      key: 'agent.models.coder',
+      scope: 'repo',
+      value: 'claude-*',
+      wins: 'repo',
+      default: { unset: 'the recipe’s own coder model' },
+      state: 'set',
+      writable: false,
+      owner: 'fugaro models',
+      target_layer: '',
+    },
+  ],
+})
+
+/** QUEUE_OFFER is the one repository identity the open installation offers: the
+ * `<provider>/<owner>/<name>` string the launch form's `select` holds as an
+ * option's value, and the value the form sends. */
+const QUEUE_OFFER = 'github/owner/repo-a'
+
+/** QUEUE_REPO is how the queue's **own documents** spell that repository, and it
+ * is deliberately not `QUEUE_OFFER`: `runs ls --json` and `plan status` both
+ * carry a repository as `owner/name`, with no provider, while the form offers
+ * the installation's identity. The two are different strings for the same
+ * repository, and joining them is the whole of what the prefill does. */
+const QUEUE_REPO = 'owner/repo-a'
+
+/** QUEUE_RUN_ID and QUEUE_RUN_PLAN_TASK are the two strings the run the queue
+ * offers to retry carries: the id the console draws and opens, and the plan task
+ * its own launch recorded, which the console keeps as stored. */
+const QUEUE_RUN_ID = '20261031-101502-9f00'
+const QUEUE_RUN_PLAN_TASK = 'plans/2026-10-01-a/task-one'
+
+/** QUEUE_RUN is one `runs ls --json` row the action queue takes: a run that
+ * ended without succeeding, with the plan task its launch recorded. */
+const QUEUE_RUN: Readonly<Record<string, unknown>> = {
+  run: QUEUE_RUN_ID,
+  repo: QUEUE_REPO,
+  status: 'failed',
+  terminal: true,
+  title: 'the job that did not finish',
+  plan_task: QUEUE_RUN_PLAN_TASK,
+}
+
+/**
+ * k2Status is the committed stored view with the two things the K2 cases need
+ * and the fixture predates: the `provider` C1 added to every node (D814), and a
+ * run behind the open pull request the queue waits for -- the fixture's `#11` is
+ * open and is not a draft, but the queue takes only a pull request a run stands
+ * behind, and its own `runs` is empty.
+ *
+ * `url` is written on that pull request and is the value the console may never
+ * use: whatever the document says, the destination is built by main from the
+ * triple, so a hostile `url` here is a case that can only pass by the console
+ * sending the triple and nothing else.
+ */
+function k2Status(provider: string, url: string): unknown {
+  type Node = {
+    provider?: string
+    view: { records: { pr: { number: number; url: string } | null; runs: Record<string, unknown>[] }[] }
+  }
+  const status = JSON.parse(JSON.stringify(COORDINATOR_STATUS)) as { repos: Node[] }
+  for (const repo of status.repos) {
+    if (provider === '') delete repo.provider
+    else repo.provider = provider
+  }
+  const first = status.repos[0]
+  const held = first?.view.records[0]
+  const waits = first?.view.records[1]
+  const run = held?.runs[0]
+  if (waits === undefined || waits.pr === null || run === undefined) {
+    throw new Error('the fixture no longer holds the two records and the run this case is written against')
+  }
+  waits.pr.url = url
+  waits.runs = [{ ...run, id: '20261031-101502-9f11', pr: waits.pr.number }]
+  return status
+}
+
+/** QUEUE_PLAN_TASK is the plan task of the one item `QUEUE_PLAN` holds: the
+ * plan's own id and the task's own id, joined the way the flag spells it. */
+const QUEUE_PLAN_TASK = 'plans/2026-10-01-example-graph/task-three'
+
+/** QUEUE_PLAN is the plan read's own document -- the committed plan-status
+ * fixture, with its repository the one `QUEUE_REPO` names, spelled the way the
+ * read spells it. Its `task-three` is the CLI's own `state == "ready"`, so it is
+ * one item of the queue and one press of Launch. */
+const QUEUE_PLAN: unknown = {
+  ...(PLAN_STATUS as Record<string, unknown>),
+  repo: QUEUE_REPO,
+}
+
+/** aWindow is one `runs summary --json` document (console 0.119.0): the window
+ * the fleet strip reads, its runs counted by state and what they spent. The
+ * defaults are a window every source answered for whose compute the CLI priced
+ * in full, so a case that is about something else draws no unknown-day line and
+ * no lower bound. */
+function aWindow(
+  options: {
+    readonly runs?: number
+    readonly succeeded?: number
+    readonly failed?: number
+    readonly computeMicros?: number | null
+    readonly computeRuns?: number
+    readonly daysUnknown?: readonly string[]
+  } = {},
+): Readonly<Record<string, unknown>> {
+  const runs = options.runs ?? 4
+  return {
+    v: 1,
+    project: 'acme',
+    since: '2026-10-27',
+    until: '2026-11-02',
+    repositories: [],
+    totals: {
+      runs,
+      states: {
+        succeeded: options.succeeded ?? 0,
+        failed: options.failed ?? 0,
+        halted: 0,
+        cancelled: 0,
+        infra_error: 0,
+        other: 0,
+      },
+      spent_micros: 0,
+      notional_micros: 0,
+      compute_micros: options.computeMicros === undefined ? 0 : options.computeMicros,
+      compute_runs: options.computeRuns ?? runs,
+    },
+    days_unknown: options.daysUnknown ?? [],
+    notes: [],
+  }
+}
+
+/** AN_EMPTY_WINDOW is the window `queueBridge` answers with when a case says
+ * nothing about it: a read that succeeded and counted nothing. It is a document
+ * and not a refusal for the pane's own reason -- a case about the queue or the
+ * job list must not find a second refusal on the page it asserts about -- and it
+ * is empty rather than populated so the strip's own six figures stay the only
+ * ones a case has to know. */
+const AN_EMPTY_WINDOW = aWindow({ runs: 0 })
+
+/** jobsBridge is `queueBridge` with one thing a case about the job list's floor
+ * needs and it cannot give: **the CLI version line the handshake answered with**.
+ * The paged read is gated on `RUNS_LIST_PAGE_CLI_FLOOR`, so both sides of that
+ * gate are cases about the handshake's own answer. */
+function jobsBridge(
+  answers: Readonly<Record<string, AReply>>,
+  cliVersion = '1.2.3',
+): FakeBridge {
+  const base = queueBridge(answers)
+  base.bridge['getCompatibility'] = (): unknown => ({
+    ok: true,
+    data: { ...anOkCompatibility(), cliVersion },
+  })
+  return base
+}
+
+/** LS_ROWS is the id suffix the job list's fixture rows carry, so the fixture's
+ * rows are distinguishable in a claim about which page drew which row. */
+const LS_ROW_A = '20261101-090000-aa01'
+const LS_LAST_ID = '20261101-090000-zz50'
+
+/** HOSTILE_CLI_VERSION is a handshake version line that carries markup: the
+ * console draws it as the text it is, and this is the string a case reads back
+ * out of the drawing rather than the element it names. */
+const HOSTILE_CLI_VERSION = '0.15.3<img src=x onerror=alert(1)>'
+
+/** lsRow is one `runs ls --json` row of the job list: a run the CLI printed. */
+function lsRow(run: string): Readonly<Record<string, unknown>> {
+  return {
+    run,
+    repo: QUEUE_REPO,
+    status: 'succeeded',
+    stage: 'implement',
+    outcome: 'implemented',
+    title: 'a job somebody ran',
+    created: '2026-11-01T09:00:00Z',
+    terminal: true,
+    cost: { total_usd: 1.25, model_usd: 1, compute_usd: 0.25, compute_estimated: true },
+  }
+}
+
+/** lsPage is one page of the job list: the rows the CLI printed and the
+ * **window's** own `totals`. `window` is deliberately far above the row count in
+ * every case that uses it -- the CLI cuts what it prints and sums what it read. */
+function lsPage(window: number, spent: number, rows: readonly string[]): Readonly<Record<string, unknown>> {
+  return {
+    project: 'acme',
+    runs: rows.map(lsRow),
+    totals: { runs: window, model_usd: spent, model_notional_usd: 0, compute_usd: 0, total_usd: spent },
+    warnings: [],
+  }
+}
+
+/** aFullPage is `COORDINATOR_JOBS_PAGE` rows, the last of them `LS_LAST_ID`: the
+ * only page length on which the console knows the window is longer than what it
+ * drew, and therefore the only one that offers the Older control. */
+function aFullPage(): readonly string[] {
+  const rows: string[] = []
+  for (let index = 0; index < COORDINATOR_JOBS_PAGE - 1; index += 1) {
+    rows.push(`20261101-090000-${String(index).padStart(4, '0')}`)
+  }
+  rows.push(LS_LAST_ID)
+  return rows
+}
+
+/** aPullRequest is one `coordinator show --json` document: one pull request as
+ * the host has it, whole. `body` is the field the read exists for. */
+function aPullRequest(body: string): Readonly<Record<string, unknown>> {
+  return {
+    number: 7,
+    url: 'https://example.invalid/owner/repo-a/pull/7',
+    title: 'a title someone wrote',
+    body,
+    state: 'open',
+    draft: true,
+    branch: 'feat/a-thing',
+    base: 'main',
+    author: 'person-1',
+  }
+}
+
+/** descriptionBlock is the block one record's row drew, which is the element the
+ * description is painted into. */
+function descriptionBlock(document: FakeDocument): FakeNode {
+  const block = classed(panelOf(document), COORDINATOR_DESCRIPTION_CLASS)[0]
+  if (block === undefined) throw new Error('the row drew no description block')
+  return block
+}
+
+/** coordinatorBridge is the Coordinator screen's own reads, with the description
+ * read answered by the case: the committed fixture's one pull request is
+ * `owner/repo-a`'s #7. */
+function coordinatorBridge(answers: Readonly<Record<string, AReply>>): FakeBridge {
+  return queueBridge({
+    coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+    planStatus: () => planStatusReply(QUEUE_PLAN),
+    showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+    ...answers,
+  })
+}
+
+describe('the description the entry reads on demand (K3)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** land is one read and the chunk the screen draws its records on: the
+   * microtasks a landing settles, and then the clock the queued detail runs on
+   * (a `setTimeout(…, 0)` per repository, which is the freeze the chunks are
+   * for). */
+  async function land(): Promise<void> {
+    await flush()
+    await vi.advanceTimersByTimeAsync(10)
+    await flush()
+  }
+
+  it('reads one pull request on the first expand, and draws what it read on the second', async () => {
+    const asked: Record<string, unknown>[] = []
+    const { bridge } = coordinatorBridge({
+      coordinatorShow: (args) => {
+        asked.push(args as Record<string, unknown>)
+        return { ok: true, data: { document: aPullRequest('the first line\nthe second line') } }
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await land()
+
+    // Nothing is read until the operator asks: the row is drawn with its
+    // disclosure and the block that disclosure opens, hidden.
+    expect(asked, 'the description was read without being asked for').toEqual([])
+    const block = descriptionBlock(document)
+    expect(block.attributes.get('hidden')).toBe('')
+    expect(classed(block, COORDINATOR_DESCRIPTION_LINE_CLASS)).toEqual([])
+
+    // The press is the read, and the pair is the row's own repository and number
+    // -- nothing the console read back out of the DOM.
+    const head = buttonLabelled(panelOf(document), COORDINATOR_DESCRIPTION_SHOW_WORD)
+    head.click()
+    expect(asked).toEqual([{ repo: 'owner/repo-a', pr: 7 }])
+    // A press is answered in the frame it happened in: the block is revealed and
+    // the section's own mark is up in it.
+    expect(block.attributes.get('hidden')).toBeUndefined()
+    expect(head.textContent).toBe(COORDINATOR_DESCRIPTION_HIDE_WORD)
+    expect(holdsText(block, COORDINATOR_DESCRIPTION_BUSY)).toBe(true)
+
+    await land()
+    // The description, one line at a time, in the block the row already drew --
+    // with the stamp that says when it was read.
+    expect(classed(block, COORDINATOR_DESCRIPTION_LINE_CLASS).map((line) => line.textContent)).toEqual([
+      'the first line',
+      'the second line',
+    ])
+    expect(classed(block, STAMP_CLASS)).toHaveLength(1)
+    expect(holdsText(block, COORDINATOR_DESCRIPTION_BUSY)).toBe(false)
+
+    // An expand/collapse cycle is not a second read: the second expand draws the
+    // document the first one read.
+    head.click()
+    expect(block.attributes.get('hidden')).toBe('')
+    expect(head.textContent).toBe(COORDINATOR_DESCRIPTION_SHOW_WORD)
+    head.click()
+    expect(asked, 'the second expand read the description again').toHaveLength(1)
+    expect(block.attributes.get('hidden')).toBeUndefined()
+    expect(classed(block, COORDINATOR_DESCRIPTION_LINE_CLASS)).toHaveLength(2)
+  })
+
+  it('draws a refused description read as its own sentence, naming the operation it refused', async () => {
+    // The credentials-service refusal is the CLI's own sentence
+    // (`ee/coordinator/cli/coordinator.go`), and this block draws it as it came:
+    // the console adds no words of its own to a refusal, and what names the read
+    // is the operation id every `refusedScreen` draws -- `coordinator.show`, not
+    // the command line and not the console's word for either.
+    const credentials = 'the credentials service holds the GitHub App key and this command holds none'
+    const { bridge } = coordinatorBridge({ coordinatorShow: () => ({ ok: false, reason: credentials }) })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await land()
+    buttonLabelled(panelOf(document), COORDINATOR_DESCRIPTION_SHOW_WORD).click()
+    await land()
+
+    const block = descriptionBlock(document)
+    expect(classed(block, 'unavailable-operation')[0]?.textContent).toBe('coordinator.show')
+    expect(holdsText(block, credentials)).toBe(true)
+    // A refusal is not a block with an empty description in it.
+    expect(classed(block, COORDINATOR_DESCRIPTION_LINE_CLASS)).toEqual([])
+  })
+})
+
+describe('the frame a tab answers in, and the read it does not wait for', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('reads the run list never on Projects, and paints the kills out of `budget show` alone', async () => {
+    // The owner's measured read (`runs ls --json`, about six seconds for a day)
+    // used to start before this screen could draw anything, which is the twenty
+    // seconds the tab took with no feedback. It is not this screen's read at all
+    // any more: `budget show` is.
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const before = calls.length
+    buttonFor(document, 'projects').click()
+    await flush()
+    expect(
+      calls.slice(before).map((call) => call.name),
+      'the Projects tab made a read that is not its own',
+    ).toEqual(['showBudget', 'listModels', 'readSettings'])
+    expect(
+      calls.slice(before).some((call) => call.name === 'listRuns'),
+      'the Projects tab read the run list, which is the read the owner measured at six seconds',
+    ).toBe(false)
+    // What is on the screen is the budget document's own: the kill switch, its
+    // operator and its reason, and no figure any run list could add.
+    expect(classed(panelOf(document), 'projects-kill-row').length).toBeGreaterThan(0)
+    expect(holdsText(panelOf(document), 'spend rate')).toBe(true)
+    // The operator is a person, and the console draws one through the
+    // sanitizer's own class: the address loses its local part (`sanitize.ts`).
+    expect(classed(panelOf(document), 'projects-kill-by')[0]?.textContent).toBe(ADDRESS_PLACEHOLDER)
+  })
+
+  it('starts the models and settings reads with the tab’s others and lets none of them wait', async () => {
+    // The three reads of this tab are independent documents: `models ls` is
+    // offline and cheap and does not wait on `budget show`, and neither waits on
+    // `settings --json` (the settings-edit plan's C1). All three go out in the
+    // click's own turn -- nothing is awaited before the second and third calls --
+    // which is what the assertion on the order says.
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const before = calls.length
+    buttonFor(document, 'projects').click()
+    // **Nothing is awaited**: the click's own turn is where all three calls are,
+    // so a tab that serialised them would show fewer than three here.
+    expect(
+      calls
+        .slice(before)
+        .map((call) => call.name)
+        .filter(
+          (name) => name === 'showBudget' || name === 'listModels' || name === 'readSettings',
+        ),
+    ).toEqual(['showBudget', 'listModels', 'readSettings'])
+    // While all three are out, the tab says which read each of its marks is.
+    expect(busyLabels(document)).toEqual([PROJECTS_BUSY, PROJECTS_MODELS_BUSY, PROJECTS_SETTINGS_BUSY])
+    await flush()
+    // Each section paints its own answer, and the models section paints the
+    // document's own routes and models and not the budget's.
+    const models = classed(panelOf(document), 'projects-models')[0]
+    expect(models, 'the tab drew no models section').toBeDefined()
+    expect(holdsText(models as FakeNode, 'anthropic')).toBe(true)
+    expect(holdsText(models as FakeNode, 'deepseek-v4.1-flash')).toBe(true)
+    // And the settings section paints the settings document's own rows.
+    const settings = classed(panelOf(document), 'projects-settings')[0]
+    expect(settings, 'the tab drew no settings section').toBeDefined()
+    expect(holdsText(settings as FakeNode, 'budget.per_run_usd')).toBe(true)
+    expect(holdsText(settings as FakeNode, 'fugaro models')).toBe(true)
+    expect(busyLabels(document)).toEqual([])
+  })
+
+  it('paints the settings section on its own token, and a document of another version is its own sentence', async () => {
+    // **The section's own lifecycle**, which is the whole of the progressive
+    // rendering rule (the owner's rule of 2026-10-31, `.claude/rules/console.md`):
+    // the settings read is the third of three, and it is held by its own token
+    // rather than by the tab's. The case shows both halves -- a document of
+    // version 2 draws the console's own sentence and no table, and the read that
+    // answers afterwards is the one that ends the mark.
+    const settings = holding()
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => settings.reply(),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+    // The budget and the models have painted; the settings section is still out,
+    // and it is the only mark left.
+    expect(busyLabels(document)).toEqual([PROJECTS_SETTINGS_BUSY])
+    settings.release({ ok: true, data: { document: { ...SETTINGS_DOC, version: 2 } } })
+    await flush()
+    expect(busyLabels(document)).toEqual([])
+    const section = classed(panelOf(document), 'projects-settings')[0]
+    expect(section, 'the tab drew no settings section').toBeDefined()
+    expect(
+      holdsText(section as FakeNode, 'settings --json is version 2 and this console reads version 1'),
+    ).toBe(true)
+    // A document this build does not read draws no table: the rows of the
+    // document that did arrive are not on screen.
+    expect(classed(section as FakeNode, 'projects-settings-row')).toEqual([])
+    expect(calls.some((call) => call.name === 'readSettings')).toBe(true)
+  })
+
+  it('opens the row’s own editor on a pencil press, and sends only what the operator’s control asks', async () => {
+    // The press draws the editor and sends nothing: an edit is the operator's
+    // value, and the pencil is a control that opens a box (C3). What leaves the
+    // renderer is the three members `settings.edit`'s schema closes -- the
+    // subcommand, the key and the value -- and the layer, the dry run, the
+    // window and the `--yes` are the main process's.
+    const sent: unknown[] = []
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+      },
+    })
+    bridge['editSetting'] = (args: unknown): unknown => {
+      sent.push(args)
+      return {
+        ok: true,
+        data: { ok: true, sentence: 'wrote layers/project.yaml (backup at layers/project.yaml.bak)' },
+      }
+    }
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+
+    const pencil = classed(panelOf(document), SETTINGS_PENCIL_CLASS)[0] as FakeNode
+    expect(pencil, 'the settings table drew no pencil').toBeDefined()
+    const row = pencil.closest('li')
+    expect(row, 'the pencil is not inside a row').not.toBeNull()
+
+    pencil.click()
+    await flush()
+    expect(sent, 'a pencil press sent an edit').toEqual([])
+
+    const editor = classed(panelOf(document), SETTINGS_EDITOR_CLASS)[0] as FakeNode
+    expect(editor, 'the pencil drew no editor').toBeDefined()
+    // The editor is drawn **inside the row it edits**, so the key, the layer
+    // that decides it and the value a run gets stay on the screen around the
+    // box the operator is typing in.
+    expect(editor.closest('li')).toBe(row)
+    expect(holdsText(editor, 'New value for budget.per_run_usd')).toBe(true)
+    expect(holdsText(editor, 'Leave the box empty to remove the key.')).toBe(true)
+    // The sentence the flow ends with is an announced region, like the launch
+    // form's: a refusal can arrive while the operator is looking elsewhere.
+    expect(classed(editor, SETTINGS_EDIT_OUTCOME_CLASS)[0]?.getAttribute('aria-live')).toBe('polite')
+
+    typeValue(theBox(editor), '25')
+    controlUnder(editor, 'Review and write').click()
+    await flush()
+    expect(sent).toEqual([{ op: 'set', key: 'budget.per_run_usd', value: '25' }])
+    expect(holdsText(editor, 'wrote layers/project.yaml (backup at layers/project.yaml.bak)')).toBe(true)
+
+    // The empty box is the **unset** subcommand and never a value of `""`.
+    controlUnder(editor, 'Cancel').click()
+    await flush()
+    expect(classed(panelOf(document), SETTINGS_EDITOR_CLASS)).toEqual([])
+
+    pencil.click()
+    await flush()
+    const reopened = classed(panelOf(document), SETTINGS_EDITOR_CLASS)[0] as FakeNode
+    controlUnder(reopened, 'Review and write').click()
+    await flush()
+    expect(sent).toEqual([
+      { op: 'set', key: 'budget.per_run_usd', value: '25' },
+      { op: 'unset', key: 'budget.per_run_usd' },
+    ])
+  })
+
+  it('disables the control that starts an edit while one is in flight', async () => {
+    // A double press is not two flows over one row: the control that sends is
+    // disabled and the editor says it is busy for as long as the edit takes --
+    // the dry run, the window and, on a yes, the write.
+    const held = holding()
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+      },
+    })
+    bridge['editSetting'] = () => held.reply()
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+
+    ;(classed(panelOf(document), SETTINGS_PENCIL_CLASS)[0] as FakeNode).click()
+    await flush()
+    const editor = classed(panelOf(document), SETTINGS_EDITOR_CLASS)[0] as FakeNode
+    typeValue(theBox(editor), '25')
+    const submit = controlUnder(editor, 'Review and write')
+    submit.click()
+    await flush()
+
+    expect((submit as unknown as { readonly disabled: boolean }).disabled).toBe(true)
+    expect(editor.getAttribute('aria-busy')).toBe('true')
+
+    held.release({ ok: true, data: { ok: true, sentence: 'wrote layers/project.yaml (backup at layers/project.yaml.bak)' } })
+    await flush()
+    expect(editor.getAttribute('aria-busy')).toBe('false')
+    expect((submit as unknown as { readonly disabled: boolean }).disabled).toBe(true)
+  })
+
+  it('draws the refusal’s own sentence and offers a read, and never sends the edit again', async () => {
+    // D1112: the CLI's compare-and-swap refuses an edit built on bytes that
+    // moved, and the console shows that sentence and offers the section's own
+    // `settings --json` again. A silent second write would be this console
+    // deciding an edit it was told not to make.
+    const sent: unknown[] = []
+    const stale =
+      'layers/project.yaml changed since it was read: nothing was written; read it again and repeat the edit'
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+      },
+    })
+    bridge['editSetting'] = (args: unknown): unknown => {
+      sent.push(args)
+      return { ok: true, data: { ok: false, sentence: stale } }
+    }
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+
+    ;(classed(panelOf(document), SETTINGS_PENCIL_CLASS)[0] as FakeNode).click()
+    await flush()
+    const editor = classed(panelOf(document), SETTINGS_EDITOR_CLASS)[0] as FakeNode
+    typeValue(theBox(editor), '25')
+    controlUnder(editor, 'Review and write').click()
+    await flush()
+
+    expect(holdsText(editor, stale), 'the refusal’s sentence is not drawn').toBe(true)
+    const reads = calls.filter((call) => call.name === 'readSettings').length
+
+    controlUnder(editor, 'Read again').click()
+    await flush()
+    // The control is a **read**, and the edit went out once.
+    expect(calls.filter((call) => call.name === 'readSettings')).toHaveLength(reads + 1)
+    expect(sent).toHaveLength(1)
+    // The editor goes with the read: the row it was drawn into is one of the
+    // rows that read's repaint replaces.
+    expect(classed(panelOf(document), SETTINGS_EDITOR_CLASS)).toEqual([])
+  })
+
+  it('asks for no models read at all below the command’s floor, and says which version it needs', async () => {
+    // `models ls` landed after v0.15.0: a 0.15.x CLI answers `unknown command
+    // "ls"`, which is a failure the operator can do nothing about. The floor is
+    // asked **before** the read goes out, and below it the panel draws the
+    // console's own sentence instead.
+    const { bridge, calls } = fakeBridge({
+      compatibility: { ...anOkCompatibility(), cliVersion: '0.15.3' },
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const before = calls.length
+    buttonFor(document, 'projects').click()
+    await flush()
+    expect(
+      calls.slice(before).some((call) => call.name === 'listModels'),
+      'the tab asked a CLI below the floor for `models ls`',
+    ).toBe(false)
+    const models = classed(panelOf(document), 'projects-models')[0]
+    expect(models, 'the tab drew no models section').toBeDefined()
+    expect(holdsText(models as FakeNode, 'the models read needs fugaro 0.16.0 and this CLI is 0.15.3')).toBe(true)
+    expect(classed(models as FakeNode, 'projects-models-route-list')).toEqual([])
+  })
+
+  it('draws the Coordinator’s own header in the click’s frame, and its summary the moment the view lands', async () => {
+    // The longest read of any tab: the header is the console's own words and
+    // needs no document, so it is drawn before the read is awaited -- and the
+    // summary follows the document in the same turn, while each repository's
+    // records are laid out in a chunk of their own (a 724 KB document read in
+    // one turn is the freeze the chunks are for).
+    const status = holding()
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        coordinatorStatus: () => status.reply(),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    // Nothing is awaited: this is the frame the click happened in.
+    const source = classed(panelOf(document), 'coordinator-source')[0]
+    expect(source?.textContent, 'the Coordinator drew no source line before its read').toBe(
+      COORDINATOR_SOURCE_LINE,
+    )
+    expect(classed(panelOf(document), 'coordinator-age')[0]?.textContent).toBe(COORDINATOR_NO_AGE_WORD)
+    // One mark per section the frame holds, in the order the frame draws them --
+    // the queue, the fleet's totals, the panel of repositories -- because each
+    // is a read of its own and none of them waits for another (the owner's rule
+    // of 2026-10-31, drawn).
+    expect(busyLabels(document)).toEqual([
+      COORDINATOR_QUEUE_BUSY,
+      COORDINATOR_WINDOW_BUSY,
+      COORDINATOR_TOTALS_BUSY,
+      COORDINATOR_BUSY,
+      COORDINATOR_TRANSCRIPT_BUSY,
+    ])
+    expect(skeletonsOf(document)).toEqual(SKELETON_SHAPES.coordinator.map((shape) => shape.section))
+    expect(classed(panelOf(document), 'coordinator-detail')).toEqual([])
+
+    status.release({ ok: true, data: { document: COORDINATOR_STATUS } })
+    await flush()
+    // The summary is up and the mark is gone; the details are queued, one
+    // repository per chunk.
+    expect(busyLabels(document)).toEqual([])
+    expect(skeletonsOf(document)).toEqual([])
+    const details = classed(panelOf(document), 'coordinator-detail')
+    expect(details.length, 'the summary drew no repository detail host').toBeGreaterThan(0)
+    expect(classed(panelOf(document), 'coordinator-record'), 'the detail was drawn in the summary’s own turn').toEqual([])
+
+    await vi.advanceTimersByTimeAsync(10)
+    expect(
+      classed(panelOf(document), 'coordinator-record').length,
+      'the queued chunks never drew the records',
+    ).toBeGreaterThan(0)
+  })
+
+  it('draws the Coordinator’s cached view at once, stamped, and reads it again only past five minutes', async () => {
+    const statuses: ReturnType<typeof holding>[] = []
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        coordinatorStatus: () => {
+          const answer = holding()
+          statuses.push(answer)
+          return answer.reply()
+        },
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    statuses[0]?.release({ ok: true, data: { document: COORDINATOR_STATUS } })
+    await flush()
+    await vi.advanceTimersByTimeAsync(10)
+
+    buttonFor(document, 'live').click()
+    await flush()
+    buttonFor(document, 'coordinator').click()
+    // Nothing is awaited: the view this session already read is drawn in the
+    // click's own frame -- summary and all -- and it says when it was read.
+    expect(
+      classed(panelOf(document), 'coordinator-detail').length,
+      'the cached view drew nothing in the click’s own frame',
+    ).toBeGreaterThan(0)
+    expect(stamped(document)).toMatch(/^as of \d\d:\d\d$/)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(classed(panelOf(document), 'coordinator-record').length).toBeGreaterThan(0)
+    await flush()
+    expect(
+      calls.filter((call) => call.name === 'coordinatorStatus').length,
+      'a view that came out of the cache was read again',
+    ).toBe(1)
+
+    // Five minutes old, and it is drawn **and** read again: a view is never
+    // silently older than the rule allows.
+    vi.setSystemTime(Date.now() + CACHE_FRESH_MS)
+    buttonFor(document, 'live').click()
+    await flush()
+    buttonFor(document, 'coordinator').click()
+    expect(stamped(document), 'the stale view was served without its stamp').not.toBeNull()
+    expect(busyLabels(document)).toEqual([
+      COORDINATOR_QUEUE_BUSY,
+      COORDINATOR_WINDOW_BUSY,
+      COORDINATOR_TOTALS_BUSY,
+      COORDINATOR_BUSY,
+      COORDINATOR_TRANSCRIPT_BUSY,
+    ])
+    await flush()
+    expect(calls.filter((call) => call.name === 'coordinatorStatus').length).toBe(2)
+  })
+
+  it('starts the Coordinator’s own reads in the click’s own turn, and reads the jobs only when the queue is asked for them', async () => {
+    // Two rules meet on the screen with the most reads of any tab. The owner's
+    // rule of 2026-10-31: the stored view, the plan tasks and the budget are
+    // three independent documents, so all three are asked for in the turn the
+    // tab was opened in and each part of the queue is painted the moment its own
+    // answer lands -- never one spinner held until the last of them. And rule 5
+    // of §6.2's opening: jobs are never part of a first paint, so `runs ls --json`
+    // is the one read the tab does not make on entry -- the part the jobs fill
+    // carries the control that asks for them, and the read goes out on the press.
+    const status = holding()
+    const runs = holding()
+    const plans = holding()
+    const caps = holding()
+    const { bridge, calls } = queueBridge({
+      coordinatorStatus: () => status.reply(),
+      listRuns: () => runs.reply(),
+      planStatus: () => plans.reply(),
+      showBudget: () => caps.reply(),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const before = calls.length
+    buttonFor(document, 'coordinator').click()
+    // **Nothing is awaited, and that is the claim**: the five calls went out in
+    // the click's own turn, so none of them is a consequence of another. A
+    // screen that asked for the plan tasks after the stored view had answered
+    // would show one call here, and the queue would be behind the slowest read
+    // of the page. `listRuns` is not among them: the jobs are the read this tab
+    // does not make until the operator asks. The pane's own read is the fourth
+    // (K5): the declarations it draws first are a document of their own, and a
+    // pane that waited for the stored view would be the all-or-nothing redraw
+    // the same rule forbids. The fifth is the fleet strip's window (0.119.0):
+    // `runs summary` is a command of its own -- its document is the runs counted
+    // by day, not the run objects `runs ls` lists -- so it is the strip's second
+    // read and never a consequence of the sweep's.
+    expect(calls.slice(before).map((call) => call.name)).toEqual([
+      'coordinatorStatus',
+      'planStatus',
+      'showBudget',
+      'summaryRuns',
+      'coordinatorIntents',
+    ])
+    // While they are all out, each section says what it is reading.
+    expect(busyLabels(document)).toEqual([
+      COORDINATOR_QUEUE_BUSY,
+      COORDINATOR_WINDOW_BUSY,
+      COORDINATOR_TOTALS_BUSY,
+      COORDINATOR_BUSY,
+      COORDINATOR_TRANSCRIPT_BUSY,
+    ])
+
+    // The budget is the smallest of the three and answers first: its refusal is
+    // on the screen while the pull requests and the plan tasks -- the two reads
+    // this page is mostly about -- are still coming.
+    caps.release({ ok: false, reason: BUDGET_REFUSAL })
+    await flush()
+    const parts = classed(panelOf(document), COORDINATOR_QUEUE_PART_CLASS)
+    expect(
+      parts.map((part) => classed(part, 'unavailable-operation')[0]?.textContent ?? null),
+      'an answer painted a part that is not its own',
+    ).toEqual([null, null, null, 'budget.show'])
+    expect(busyLabels(document), 'the queue stopped saying it is reading one answer in').toContain(
+      COORDINATOR_QUEUE_BUSY,
+    )
+
+    // The other two, and every read this visit makes has answered: the item the
+    // plan read carried is drawn, the section's mark comes down -- a queue
+    // waiting on a press is not a queue being read -- and the jobs have not been
+    // asked for at all.
+    plans.release(planStatusReply(QUEUE_PLAN))
+    status.release({ ok: true, data: { document: COORDINATOR_STATUS } })
+    await flush()
+    expect(holdsText(panelOf(document), 'task-three')).toBe(true)
+    expect(busyLabels(document)).toEqual([])
+    // The queue has read nothing of the run list: the Live screen's own join
+    // asked for it (`maybeRefreshRigor`), and this tab has not.
+    const readForTheQueue = calls.filter((call) => call.name === 'listRuns').length
+
+    // The press is the read, and it is one read: the control says it was pressed
+    // and the section says it is reading again.
+    buttonLabelled(panelOf(document), COORDINATOR_QUEUE_JOBS_WORD).click()
+    expect(calls.filter((call) => call.name === 'listRuns').length - readForTheQueue).toBe(1)
+    expect(
+      buttonLabelled(panelOf(document), COORDINATOR_QUEUE_JOBS_WORD).attributes.get('aria-expanded'),
+    ).toBe('true')
+    expect(busyLabels(document)).toContain(COORDINATOR_QUEUE_BUSY)
+
+    runs.release({ ok: true, data: { document: { runs: [QUEUE_RUN] } } })
+    await flush()
+    expect(holdsText(panelOf(document), QUEUE_RUN_ID)).toBe(true)
+    // One button per item: the job's Retry and the ready task's Launch.
+    expect(
+      classed(panelOf(document), 'coordinator-queue-button').length,
+      'the queue drew no button for the two items it found',
+    ).toBe(2)
+    // The control is gone, replaced by the items it asked for: a second press
+    // has nothing to press.
+    expect(classed(panelOf(document), COORDINATOR_QUEUE_JOBS_CLASS)).toEqual([])
+    // Every read has answered, so no section is waiting any more -- and the
+    // budget's refusal is still where it belongs, drawn in its own part: the
+    // reads that answered are not taken down for it, and it is not taken down
+    // for them.
+    expect(busyLabels(document)).toEqual([])
+    expect(
+      classed(panelOf(document), COORDINATOR_QUEUE_PART_CLASS).map(
+        (part) => classed(part, 'unavailable-operation')[0]?.textContent ?? null,
+      ),
+    ).toEqual([null, null, null, 'budget.show'])
+  })
+
+  it('draws a queue it cannot decode as `runs ls`’s own refusal, with no item and no button', async () => {
+    // The queue's reader refuses a page holding a row it cannot read -- here a
+    // `terminal` that is a word where the struct writes a boolean -- and it
+    // refuses it **whole**: what is drawn is the section's own refusal, the
+    // state a read that failed already draws, naming `runs ls`, rather than the
+    // rows around it. A queue that dropped the row it could not read would draw
+    // a shorter list than the document holds, and the operator would have no way
+    // to tell that from a shorter day.
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: () => ({
+        ok: true,
+        data: { document: { runs: [{ ...QUEUE_RUN, terminal: 'yes' }] } },
+      }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    await askForJobs(document)
+    const job = classed(panelOf(document), COORDINATOR_QUEUE_PART_CLASS)[1]
+    if (job === undefined) throw new Error('the queue drew no runs part')
+    expect(classed(job, 'unavailable-operation')[0]?.textContent).toBe('runs.list')
+    expect(classed(job, 'unavailable-sentence')[0]?.textContent).toBe(
+      'the runs list document is not one the console reads: runs[0].terminal is not-a-boolean',
+    )
+    // The row the decoder refused reached neither the drawing nor an act: the
+    // runs part holds no item and no button, and the run's own id is nowhere on
+    // the screen. The plan read's ready task is still the one item drawn -- it
+    // was never the document that was refused.
+    expect(classed(job, 'coordinator-queue-item')).toEqual([])
+    expect(classed(job, 'coordinator-queue-button')).toEqual([])
+    expect(holdsText(panelOf(document), QUEUE_RUN_ID)).toBe(false)
+    expect(holdsText(panelOf(document), 'task-three')).toBe(true)
+  })
+
+
+  it('reads the fleet’s window with the tab’s other first-paint reads, and never with `runs ls`', async () => {
+    // Console 0.119.0. The strip's window is a read of its own -- `runs summary
+    // --json` counts runs by day and lists no run object -- so it goes out in the
+    // click's own turn beside the three K1 documents, and **never** waits on or
+    // triggers `runs ls`: the jobs are rule 5's read and this section does not
+    // draw a figure from them (D819).
+    const window = holding()
+    const { bridge, calls } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      summaryRuns: () => window.reply(),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const before = calls.length
+    buttonFor(document, 'coordinator').click()
+    const made = calls.slice(before)
+    expect(made.map((call) => call.name)).toContain('summaryRuns')
+    expect(
+      made.filter((call) => call.name === 'listRuns'),
+      'the Coordinator made the job list’s read as part of its first paint',
+    ).toEqual([])
+    // The window is asked for the console's own window and nothing else: the
+    // surface admits two words, and this page opens on the week.
+    expect(made.find((call) => call.name === 'summaryRuns')?.args).toEqual({ since: COORDINATOR_SUMMARY_SINCE })
+    // The strip says both of its reads out: the window's mark is its own, beside
+    // the one the K1 documents wear.
+    expect(busyLabels(document)).toEqual([
+      COORDINATOR_QUEUE_BUSY,
+      COORDINATOR_WINDOW_BUSY,
+      COORDINATOR_TOTALS_BUSY,
+      COORDINATOR_BUSY,
+      COORDINATOR_TRANSCRIPT_BUSY,
+    ])
+    // A read that has not answered draws no window, and no zero in its place --
+    // and the host its mark goes on is in the strip, because this visit reads it.
+    expect(classed(panelOf(document), 'coordinator-window-runs')).toEqual([])
+    expect(classed(panelOf(document), COORDINATOR_WINDOW_SLOT_CLASS).length).toBe(1)
+
+    window.release({ ok: true, data: { document: aWindow({ runs: 9, succeeded: 6, failed: 2 }) } })
+    await flush()
+    expect(busyLabels(document)).toEqual([])
+    expect(figureOfIn(panelOf(document), 'coordinator-window-runs')).toEqual([COORDINATOR_WINDOW_RUNS_WORD, '9'])
+    expect(figureOfIn(panelOf(document), 'coordinator-window-succeeded')).toEqual([
+      COORDINATOR_WINDOW_SUCCEEDED_WORD,
+      '6',
+    ])
+    // The strip's own figures are still there: the window is a second region of
+    // the panel, drawn beside the sweep's counts and never instead of them.
+    expect(classed(panelOf(document), 'coordinator-total-repos').length).toBe(1)
+  })
+
+  it('asks no CLI below the window’s floor for it, and draws the sentence naming the version it needs', async () => {
+    // `runs summary` landed after v0.15.0, so a CLI below `RUNS_SUMMARY_CLI_FLOOR`
+    // has no such verb and answers `unknown command "summary"`. Asking anyway
+    // would draw that failure as the fleet's week, which is a broken project
+    // rather than a fact, so the floor is asked before anything goes out.
+    const { bridge, calls } = jobsBridge(
+      {
+        coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+        planStatus: () => planStatusReply(QUEUE_PLAN),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      },
+      '0.15.3',
+    )
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    expect(calls.filter((call) => call.name === 'summaryRuns')).toEqual([])
+    expect(textIn(panelOf(document), 'coordinator-window-floor-word')).toBe(COORDINATOR_WINDOW_FLOOR_WORD)
+    expect(textIn(panelOf(document), 'coordinator-window-floor-version')).toBe('0.15.3')
+    // The sentence is the whole of what the window says: no figures behind a
+    // read that was never made, and no mark left up for one either.
+    expect(classed(panelOf(document), 'coordinator-window-runs')).toEqual([])
+    expect(busyLabels(document)).not.toContain(COORDINATOR_WINDOW_BUSY)
+    // The host the window's mark would have gone on is not kept either: a slot
+    // is a flex item of the strip, and one no read on this visit can fill is a
+    // line held open for nothing.
+    expect(classed(panelOf(document), COORDINATOR_WINDOW_SLOT_CLASS)).toEqual([])
+    // ...and the strip's own six figures are untouched by it: two reads of one
+    // panel, and only one of them is below its floor.
+    expect(classed(panelOf(document), 'coordinator-total-repos').length).toBe(1)
+  })
+
+  it('names `runs.summary` when the window’s own read is refused, and keeps the strip’s figures', async () => {
+    const window = holding()
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      summaryRuns: () => window.reply(),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    window.release({ ok: false, reason: WINDOW_REFUSAL })
+    await flush()
+    // A refusal names its own command and nothing else -- `runs.summary`, the
+    // operation's id on this surface, beside the `runs.list` and `budget.show`
+    // the same screen draws.
+    expect(classed(panelOf(document), 'unavailable-operation').map((node) => node.textContent)).toContain(
+      'runs.summary',
+    )
+    expect(holdsText(panelOf(document), WINDOW_REFUSAL)).toBe(true)
+    expect(busyLabels(document)).toEqual([])
+    // The window is gone rather than stale, and the strip's own figures are not
+    // taken down for a read that is not theirs.
+    expect(classed(panelOf(document), 'coordinator-window-runs')).toEqual([])
+    expect(classed(panelOf(document), 'coordinator-total-repos').length).toBe(1)
+  })
+
+  it('treats a window read that fails to answer at all as a refusal, and takes its mark down', async () => {
+    // `readBridgeFrom` answers `null` for a read that failed to answer -- a
+    // member that threw, or a promise that rejected, which is what `invoke` does
+    // on a channel with nothing behind it -- so a rejection reaching the entry is
+    // a bridge built by something other than that function. Left uncaught it
+    // takes the visit's `summaryOut` with it: the strip would wear the window's
+    // mark for the rest of the visit with no read left to answer it, which is a
+    // section that never settles rather than one that refused.
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      summaryRuns: () => Promise.reject(new Error('the channel is gone')),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    // The read is drawn as the refusal a reply nobody could read gets: its own
+    // command named, and the mark down.
+    expect(classed(panelOf(document), 'unavailable-operation').map((node) => node.textContent)).toContain(
+      'runs.summary',
+    )
+    expect(busyLabels(document)).not.toContain(COORDINATOR_WINDOW_BUSY)
+    // ...and the strip's own figures are not taken down for a read that is not
+    // theirs.
+    expect(classed(panelOf(document), 'coordinator-total-repos').length).toBe(1)
+  })
+
+  it('draws the pane’s declared intents when the pane’s own read lands, and says when it read them', async () => {
+    // K5: the pane has a read of its own -- `coordinator intents --all --json`
+    // -- so it draws nothing until that read answers, and what it draws then
+    // carries the console's own clock. The stored view is answered here and the
+    // declarations are held, which is what tells the two halves apart: the
+    // questions under them are the view's and are already up, and the lines
+    // above them are the document that has not landed.
+    const intents = holding()
+    const { bridge, calls } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      coordinatorIntents: () => intents.reply(),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const before = calls.length
+    buttonFor(document, 'coordinator').click()
+    expect(
+      calls.slice(before).map((call) => call.name),
+      'the pane’s own read did not go out with the tab’s other reads',
+    ).toContain('coordinatorIntents')
+    expect(busyLabels(document)).toContain(COORDINATOR_TRANSCRIPT_BUSY)
+    await flush()
+    // The stored view answered and the declarations have not: the three
+    // questions are up, answered off the view, and the lines above them are not
+    // -- a read that has not answered draws no declaration at all, and the pane
+    // never draws the empty store's own sentence for a document it does not
+    // have.
+    expect(classed(panelOf(document), 'coordinator-transcript-question')).toHaveLength(3)
+    expect(classed(panelOf(document), 'coordinator-transcript-intent')).toEqual([])
+    expect(classed(panelOf(document), 'coordinator-transcript-repo')).toEqual([])
+    expect(holdsText(panelOf(document), COORDINATOR_TRANSCRIPT_WORD)).toBe(true)
+    // And the pane still says it is reading: every other section's landing
+    // repaints the pane, and a repaint that took the mark down with the drawing
+    // would leave a read in flight looking like a pane that had answered with
+    // nothing.
+    expect(
+      busyLabels(document),
+      'another section’s landing took the pane’s mark down',
+    ).toContain(COORDINATOR_TRANSCRIPT_BUSY)
+
+    intents.release({ ok: true, data: { document: AN_INTENTS_DOCUMENT } })
+    await flush()
+    expect(classed(panelOf(document), 'coordinator-transcript-repo')[0]?.textContent).toBe('owner/repo-a')
+    expect(classed(panelOf(document), 'coordinator-transcript-intent')).toHaveLength(1)
+    expect(classed(panelOf(document), 'coordinator-transcript-declaration')[0]?.textContent).toBe('person-1')
+    expect(stamped(document), 'the pane drew no clock of its own').toMatch(/^as of \d\d:\d\d$/)
+    expect(busyLabels(document)).toEqual([])
+  })
+
+  it('names `coordinator intents` when the pane’s own read is refused', async () => {
+    // The pane is a read of its own, so a refusal is its own section's and
+    // names its own command: the stored view answered, and its panels are not
+    // taken down for a read that is not theirs.
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      coordinatorIntents: () => ({ ok: false, reason: INTENTS_REFUSAL }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    const pane = classed(panelOf(document), COORDINATOR_TRANSCRIPT_CLASS)[0]
+    if (pane === undefined) throw new Error('the Coordinator drew no transcript pane')
+    expect(classed(pane, 'unavailable-operation')[0]?.textContent).toBe('coordinator.intents')
+    expect(holdsText(pane, INTENTS_REFUSAL)).toBe(true)
+    expect(classed(panelOf(document), 'coordinator-detail').length).toBeGreaterThan(0)
+    expect(busyLabels(document)).toEqual([])
+  })
+
+  it('reads the declarations again from the pane’s own Refresh, and keeps them under the mark', async () => {
+    // `reReadIntents` is the pane's own press, and it is not the tab's Refresh:
+    // the questions under the declarations are the stored view's and are read by
+    // that view's own control, so this one reads `coordinator intents` and
+    // nothing else -- one read, of the same kind the tab made on entry.
+    const first = holding()
+    const again = holding()
+    const asked: unknown[] = []
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      coordinatorIntents: (args) => {
+        asked.push(args)
+        return asked.length === 1 ? first.reply() : again.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    first.release({ ok: true, data: { document: AN_INTENTS_DOCUMENT } })
+    await flush()
+    const pane = classed(panelOf(document), COORDINATOR_TRANSCRIPT_CLASS)[0]
+    if (pane === undefined) throw new Error('the Coordinator drew no transcript pane')
+    expect(classed(pane, 'coordinator-transcript-intent')).toHaveLength(1)
+
+    const refresh = classed(pane, STAMP_REFRESH_CLASS)[0]
+    if (refresh === undefined) throw new Error('the pane drew no refresh control')
+    refresh.click()
+    expect(asked, 'the pane’s own Refresh read something other than the declarations').toHaveLength(2)
+    // The press is answered where it happened: the mark goes up over the pane
+    // whose read it is, and the declarations the last answer drew stay under it
+    // rather than blanking.
+    expect(busyLabels(document)).toContain(COORDINATOR_TRANSCRIPT_BUSY)
+    expect(classed(pane, 'coordinator-transcript-intent')).toHaveLength(1)
+
+    again.release({ ok: true, data: { document: AN_INTENTS_DOCUMENT } })
+    await flush()
+    expect(classed(pane, 'coordinator-transcript-intent')).toHaveLength(1)
+    expect(textIn(pane, STAMP_AT_CLASS)).toMatch(/^as of \d\d:\d\d$/)
+    expect(busyLabels(document)).toEqual([])
+  })
+
+  it('drops the pane’s clock when its own read is refused, and keeps the one press', async () => {
+    // K5's follow-up, on the #1581 review. The declarations are dropped the
+    // moment a read is refused -- a refusal is the whole of what the pane has to
+    // say -- and the clock the stamp carried was the **previous** success's, so a
+    // pane that drew it beside the sentence would be dating the CLI's refusal
+    // with a read that has nothing to do with it. The time goes, and the pane's
+    // one press stays: without it the operator's doubt has nowhere to go.
+    const first = holding()
+    const refused = holding()
+    const asked: unknown[] = []
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      coordinatorIntents: (args) => {
+        asked.push(args)
+        return asked.length === 1 ? first.reply() : refused.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    first.release({ ok: true, data: { document: AN_INTENTS_DOCUMENT } })
+    await flush()
+    const pane = classed(panelOf(document), COORDINATOR_TRANSCRIPT_CLASS)[0]
+    if (pane === undefined) throw new Error('the Coordinator drew no transcript pane')
+    expect(textIn(pane, STAMP_AT_CLASS)).toMatch(/^as of \d\d:\d\d$/)
+
+    const refresh = classed(pane, STAMP_REFRESH_CLASS)[0]
+    if (refresh === undefined) throw new Error('the pane drew no refresh control')
+    refresh.click()
+    // While the read is out the declarations on screen are still the ones that
+    // read answered, and the clock beside them is still theirs.
+    expect(textIn(pane, STAMP_AT_CLASS)).toMatch(/^as of \d\d:\d\d$/)
+    refused.release({ ok: false, reason: INTENTS_REFUSAL })
+    await flush()
+
+    expect(classed(pane, 'unavailable-operation')[0]?.textContent).toBe('coordinator.intents')
+    expect(holdsText(pane, INTENTS_REFUSAL)).toBe(true)
+    expect(
+      classed(pane, STAMP_AT_CLASS),
+      'a refused read dated itself with the previous success’s clock',
+    ).toEqual([])
+    const left = classed(pane, STAMP_REFRESH_CLASS)[0]
+    if (left === undefined) throw new Error('the refused pane drew no press at all')
+    expect(left.textContent).toBe(STAMP_REFRESH_LABEL)
+    expect(busyLabels(document)).toEqual([])
+  })
+
+  it('spawns no runs ls for the job list until Load jobs is pressed, and pages from the last row it drew', async () => {
+    // The jobs rule, twice over (rule 5 of §6.2's opening). **No `runs ls` of
+    // this tab's own goes out on entry**: the job list is a section of its own
+    // with a read the operator asks for, so a screen that warmed it would be the
+    // one change that breaks this. And the page after the first is asked with
+    // **the last row the console drew** -- D818's cursor -- so the console never
+    // holds a list of ids to page from.
+    const first = holding()
+    const second = holding()
+    const asked: unknown[] = []
+    const { bridge, calls } = jobsBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: (args) => {
+        // The Live screen makes a `runs ls` read of its own; the job list's is
+        // the only one that passes a page, which is what this case counts.
+        if ((args as Record<string, unknown>)['limit'] === undefined) {
+          return { ok: true, data: { document: { runs: [] } } }
+        }
+        asked.push(args)
+        return asked.length === 1 ? first.reply() : second.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    const before = calls.length
+    buttonFor(document, 'coordinator').click()
+    await flush()
+
+    expect(
+      calls.slice(before).filter((call) => call.name === 'listRuns'),
+      'the job list read the run list without being asked',
+    ).toEqual([])
+    expect(busyLabels(document)).toEqual([])
+    // The section is on screen with exactly one control: the one that asks.
+    expect(classed(panelOf(document), COORDINATOR_JOBS_LIST_CLASS)).toHaveLength(1)
+    expect(classed(panelOf(document), 'coordinator-jobs-older')).toEqual([])
+
+    // The press is the read, and it is one read, carrying the page the console
+    // asks for and nothing else: no cursor yet, because there is no row drawn.
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_LOAD_WORD).click()
+    expect(asked).toEqual([{ since: RUNS_SINCE, limit: COORDINATOR_JOBS_PAGE }])
+    // A press is answered in the frame it happened in: the section's own mark is
+    // up over the control that asked.
+    expect(busyLabels(document)).toContain(COORDINATOR_JOBS_BUSY)
+
+    first.release({ ok: true, data: { document: lsPage(41, 12.5, [LS_ROW_A]) } })
+    await flush()
+    // The head is the **window's** own figure and the list is the page's: the two
+    // numbers are different in this fixture, which is what tells a section that
+    // drew `totals` from one that summed its rows.
+    expect(textIn(panelOf(document), 'coordinator-jobs-window-word')).toBe(COORDINATOR_JOBS_WINDOW_WORD)
+    expect(figureOfIn(panelOf(document), 'coordinator-jobs-window-runs')).toEqual([
+      COORDINATOR_JOBS_RUNS_WORD,
+      '41',
+    ])
+    expect(classed(panelOf(document), 'coordinator-job')).toHaveLength(1)
+    expect(busyLabels(document)).toEqual([])
+
+    // The row expands in place, and the press is a toggle rather than a read:
+    // nothing is spawned by opening a row.
+    const row = classed(panelOf(document), 'coordinator-job')[0]
+    if (row === undefined) throw new Error('the list drew no row')
+    const head = classed(row, 'coordinator-job-head')[0]
+    if (head === undefined) throw new Error('the row drew no head')
+    const detail = classed(row, COORDINATOR_JOB_DETAIL_CLASS)[0]
+    expect(detail?.attributes.get('hidden')).toBe('')
+    head.click()
+    expect(detail?.attributes.get('hidden')).toBeUndefined()
+    expect(asked).toHaveLength(1)
+
+    // A page that came back short is the state in which the console knows the
+    // window ends where the drawing does, so the control that asked is gone and
+    // the one that asks for more is not offered: `Older 50` is a button for a
+    // page there may be, and this page says there is not.
+    expect(classed(panelOf(document), 'coordinator-jobs-load')).toEqual([])
+    expect(classed(panelOf(document), 'coordinator-jobs-older')).toEqual([])
+  })
+
+  it('asks for the page after the one on screen with --after the last row it drew, and stops when a page comes back short', async () => {
+    const first = holding()
+    const second = holding()
+    const asked: Record<string, unknown>[] = []
+    const { bridge } = jobsBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: (args) => {
+        const page = args as Record<string, unknown>
+        if (page['limit'] === undefined) return { ok: true, data: { document: { runs: [] } } }
+        asked.push(page)
+        return asked.length === 1 ? first.reply() : second.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_LOAD_WORD).click()
+    // A full page: `COORDINATOR_JOBS_PAGE` rows, so the Older control is offered.
+    first.release({ ok: true, data: { document: lsPage(41, 12.5, aFullPage()) } })
+    await flush()
+
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_OLDER_WORD).click()
+    // The cursor is **the last row's own id** (`LS_LAST_ID`) and nothing the
+    // console computed: the two words are the page's and the cursor's.
+    expect(asked).toHaveLength(2)
+    expect(asked[1]).toEqual({ since: RUNS_SINCE, limit: COORDINATOR_JOBS_PAGE, after: LS_LAST_ID })
+    expect(busyLabels(document)).toContain(COORDINATOR_JOBS_BUSY)
+
+    // A short page: the window ends where the drawing does, so the control that
+    // asked for more is not offered again -- and the rows already read stay.
+    second.release({ ok: true, data: { document: lsPage(41, 12.5, [LS_ROW_A]) } })
+    await flush()
+    expect(classed(panelOf(document), 'coordinator-job')).toHaveLength(COORDINATOR_JOBS_PAGE + 1)
+    expect(classed(panelOf(document), 'coordinator-jobs-older')).toEqual([])
+    // The head is still the window's, and it was not rewritten from the second
+    // page's own `totals`.
+    expect(figureOfIn(panelOf(document), 'coordinator-jobs-window-runs')).toEqual([
+      COORDINATOR_JOBS_RUNS_WORD,
+      '41',
+    ])
+  })
+
+  it('keeps the rows already drawn when the page after them is refused', async () => {
+    // The rows are **appended, never redrawn**, and a refusal is no exception: the
+    // page the operator asked for failed, and the page they were reading did not.
+    // Taking the list down to say so would take their own reading of it -- the
+    // rows they had expanded -- down with the sentence.
+    const first = holding()
+    const second = holding()
+    const asked: Record<string, unknown>[] = []
+    const { bridge } = jobsBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: (args) => {
+        const page = args as Record<string, unknown>
+        if (page['limit'] === undefined) return { ok: true, data: { document: { runs: [] } } }
+        asked.push(page)
+        return asked.length === 1 ? first.reply() : second.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_LOAD_WORD).click()
+    first.release({ ok: true, data: { document: lsPage(41, 12.5, aFullPage()) } })
+    await flush()
+    expect(classed(panelOf(document), 'coordinator-job')).toHaveLength(COORDINATOR_JOBS_PAGE)
+
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_OLDER_WORD).click()
+    second.release({ ok: false, reason: RUNS_REFUSAL })
+    await flush()
+
+    // The rows the first page drew are still there, one refusal and no more is
+    // drawn beside them, and the sentence is the CLI's own words for the read
+    // that failed -- the section's refusal names the operation it made.
+    expect(classed(panelOf(document), 'coordinator-job')).toHaveLength(COORDINATOR_JOBS_PAGE)
+    const refusals = classed(panelOf(document), 'unavailable-operation')
+    expect(refusals).toHaveLength(1)
+    expect(refusals.map((node) => node.textContent)).toContain('runs.list')
+    expect(holdsText(panelOf(document), RUNS_REFUSAL)).toBe(true)
+    expect(busyLabels(document)).toEqual([])
+    // No control offers the same failure again; the head's own refresh is the one
+    // press left, and it reads the window from the top.
+    expect(classed(panelOf(document), 'coordinator-jobs-load')).toEqual([])
+    expect(classed(panelOf(document), 'coordinator-jobs-older')).toEqual([])
+  })
+
+  it('stamps the page it drew, and reads the window again from the top when the stamp’s Refresh is pressed', async () => {
+    const first = holding()
+    const again = holding()
+    const asked: Record<string, unknown>[] = []
+    const { bridge } = jobsBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: (args) => {
+        const page = args as Record<string, unknown>
+        if (page['limit'] === undefined) return { ok: true, data: { document: { runs: [] } } }
+        asked.push(page)
+        return asked.length === 1 ? first.reply() : again.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+
+    // Nothing has been read of the window, so the head has nothing to stamp: the
+    // line says when a page was read, and a section nothing answered draws
+    // neither it nor a figure. The stamp is read inside the head and not across
+    // the panel, because the transcript pane below it holds a clock of its own
+    // (K5), which is that read's and not this one's.
+    const jobsHead = classed(panelOf(document), COORDINATOR_JOBS_HEAD_CLASS)[0]
+    if (jobsHead === undefined) throw new Error('the job list drew no head')
+    expect(classed(jobsHead, STAMP_AT_CLASS)).toEqual([])
+
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_LOAD_WORD).click()
+    first.release({ ok: true, data: { document: lsPage(41, 12.5, aFullPage()) } })
+    await flush()
+
+    // The head says when the list on screen was read -- a page of a moving
+    // `--since 24h` window is a snapshot, and the words are the console's.
+    const head = classed(panelOf(document), COORDINATOR_JOBS_HEAD_CLASS)[0]
+    if (head === undefined) throw new Error('the section drew no head')
+    expect(textIn(head, STAMP_AT_CLASS)).toMatch(/^as of \d\d:\d\d$/)
+
+    // Its own control reads the window **again from the top**: the pages drawn
+    // and the cursor go with it, because a cursor belongs to the window those
+    // rows came from, and the read that replaces it is the first page's.
+    const refresh = classed(head, STAMP_REFRESH_CLASS)[0]
+    if (refresh === undefined) throw new Error('the stamp drew no refresh control')
+    refresh.click()
+    expect(asked).toHaveLength(2)
+    expect(asked[1]).toEqual({ since: RUNS_SINCE, limit: COORDINATOR_JOBS_PAGE })
+    expect(classed(panelOf(document), 'coordinator-job')).toEqual([])
+
+    again.release({ ok: true, data: { document: lsPage(41, 12.5, [LS_ROW_A]) } })
+    await flush()
+    expect(classed(panelOf(document), 'coordinator-job')).toHaveLength(1)
+  })
+
+  it('draws a refused job list as the CLI’s own sentence for runs ls, with no control beside it', async () => {
+    const { bridge } = jobsBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: () => ({ ok: false, reason: RUNS_REFUSAL }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_LOAD_WORD).click()
+    await flush()
+    // The refusal names its own command -- `runs ls`, which is the operation this
+    // read is -- in the section that read owns, and the reads that answered are
+    // not taken down for it.
+    // The refusal names the operation this read is, which is the console's own
+    // name for `runs ls` -- the same name the queue's runs part draws.
+    const refusals = classed(panelOf(document), 'unavailable-operation')
+    expect(refusals.map((node) => node.textContent)).toContain('runs.list')
+    expect(holdsText(panelOf(document), RUNS_REFUSAL)).toBe(true)
+    // Neither paging control is offered again -- `Load jobs` asked for a first
+    // page and `Older 50` for a page under a window nothing landed -- and the
+    // press the section holds instead is the stamp's own line in the head, which
+    // is drawn with no `as of` beside it because no page was ever read (the case
+    // below).
+    expect(classed(panelOf(document), 'coordinator-jobs-load')).toEqual([])
+    expect(classed(panelOf(document), 'coordinator-jobs-older')).toEqual([])
+    expect(busyLabels(document)).toEqual([])
+    // The queue's own read is a different one and its parts are still drawn.
+    expect(classed(panelOf(document), COORDINATOR_QUEUE_PART_CLASS).length).toBeGreaterThan(0)
+  })
+
+  it('reads the window again from the head’s own line when the first page was refused', async () => {
+    // K4's follow-up. A refused **first** page draws the sentence where the rows
+    // would be, and the head's stamp is drawn with the figures of a page that
+    // landed -- so with no page ever landed there is no head, and a section that
+    // stopped there would hold the CLI's sentence and **no press at all**: the
+    // operator's own doubt would have nowhere to go. The line drawn instead is
+    // the stamp's, with its one control and no time, because the console has read
+    // no page to put a clock on.
+    const asked: Record<string, unknown>[] = []
+    const retry = holding()
+    const { bridge } = jobsBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: (args) => {
+        const page = args as Record<string, unknown>
+        if (page['limit'] === undefined) return { ok: true, data: { document: { runs: [] } } }
+        asked.push(page)
+        return asked.length === 1 ? { ok: false, reason: RUNS_REFUSAL } : retry.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_LOAD_WORD).click()
+    await flush()
+
+    const jobsHead = classed(panelOf(document), COORDINATOR_JOBS_HEAD_CLASS)[0]
+    if (jobsHead === undefined) throw new Error('the job list drew no head')
+    expect(classed(jobsHead, STAMP_AT_CLASS), 'a refused first page claimed a time').toEqual([])
+    const refresh = classed(jobsHead, STAMP_REFRESH_CLASS)[0]
+    if (refresh === undefined) throw new Error('the refused list drew no press at all')
+    expect(refresh.textContent).toBe(STAMP_REFRESH_LABEL)
+
+    // The press is the first page's own read and not a second kind of it: no
+    // cursor, because no row was drawn to page from.
+    refresh.click()
+    expect(asked).toHaveLength(2)
+    expect(asked[1]).toEqual({ since: RUNS_SINCE, limit: COORDINATOR_JOBS_PAGE })
+    expect(busyLabels(document)).toContain(COORDINATOR_JOBS_BUSY)
+
+    retry.release({ ok: true, data: { document: lsPage(41, 12.5, [LS_ROW_A]) } })
+    await flush()
+    // The refusal went with the list the press dropped, the page's rows are
+    // drawn, and the head now carries the clock of the read that answered.
+    expect(classed(panelOf(document), 'unavailable-operation')).toEqual([])
+    expect(classed(panelOf(document), 'coordinator-job')).toHaveLength(1)
+    expect(textIn(jobsHead, STAMP_AT_CLASS)).toMatch(/^as of \d\d:\d\d$/)
+  })
+
+  it('draws the console’s own sentence, naming the version, for a CLI older than the paged read', async () => {
+    // `runs ls --limit` cut after the sort and `--after` are both #1545's, in
+    // 0.16.0. Below the floor the console spawns nothing at all: a `--after` the
+    // CLI refuses is a failure the operator cannot act on, and a `--limit` whose
+    // `totals` are the page's would draw the page's count under the window's
+    // word -- the one wrong number this section could draw.
+    const { bridge, calls } = jobsBridge(
+      {
+        coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+        planStatus: () => planStatusReply(QUEUE_PLAN),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      },
+      '0.15.3',
+    )
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    const before = calls.length
+    expect(textIn(panelOf(document), 'coordinator-jobs-floor-word')).toBe(COORDINATOR_JOBS_FLOOR_WORD)
+    expect(textIn(panelOf(document), 'coordinator-jobs-floor-version')).toBe('0.15.3')
+    // No control to press, and no read behind one: the sentence is the whole of
+    // what this section can say.
+    expect(classed(panelOf(document), 'coordinator-jobs-load')).toEqual([])
+    expect(classed(panelOf(document), 'coordinator-job')).toEqual([])
+    expect(calls.slice(before).filter((call) => call.name === 'listRuns')).toEqual([])
+
+    // The version line is **main's own answer** and it is text wherever it came
+    // from. `coordinator.test.ts` makes that claim about the note itself; this is
+    // the handshake's string through the whole round trip -- the bridge's answer,
+    // the entry's decode and the drawing -- so a version line carrying markup is
+    // the characters on the screen and no element of the tag it names, and the
+    // floor is read the same way for it as for a well-formed one.
+    const hostile = jobsBridge(
+      {
+        coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+        planStatus: () => planStatusReply(QUEUE_PLAN),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      },
+      HOSTILE_CLI_VERSION,
+    )
+    const planted = await boot(hostile.bridge, new FakeDocument())
+    buttonFor(planted, 'coordinator').click()
+    await flush()
+    const section = classed(panelOf(planted), COORDINATOR_JOBS_CLASS)[0]
+    if (section === undefined) throw new Error('the job list drew no section')
+    expect(textIn(section, 'coordinator-jobs-floor-version')).toBe(HOSTILE_CLI_VERSION)
+    expect(
+      everyNode(section).map((node) => node.tagName).filter((tag) => tag === 'IMG'),
+      'the version line was drawn as an element',
+    ).toEqual([])
+    expect(classed(section, 'coordinator-jobs-load')).toEqual([])
+
+    // At the floor the section is the one it is built to be: a control, a read on
+    // the press, and the window's figures when it answers.
+    const at = jobsBridge(
+      {
+        coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+        planStatus: () => planStatusReply(QUEUE_PLAN),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listRuns: () => ({ ok: true, data: { document: lsPage(41, 12.5, [LS_ROW_A]) } }),
+      },
+      '0.16.0',
+    )
+    const floored = await boot(at.bridge, new FakeDocument())
+    buttonFor(floored, 'coordinator').click()
+    await flush()
+    expect(classed(panelOf(floored), 'coordinator-jobs-floor-word')).toEqual([])
+    buttonLabelled(panelOf(floored), COORDINATOR_JOBS_LOAD_WORD).click()
+    await flush()
+    expect(figureOfIn(panelOf(floored), 'coordinator-jobs-window-runs')).toEqual([
+      COORDINATOR_JOBS_RUNS_WORD,
+      '41',
+    ])
+  })
+
+  it('draws the console’s own sentence for a window a read answered with no run', async () => {
+    const { bridge } = jobsBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: (args) =>
+        (args as Record<string, unknown>)['limit'] === undefined
+          ? { ok: true, data: { document: { runs: [] } } }
+          : { ok: true, data: { document: { runs: [], totals: { runs: 0, total_usd: 0 } } } },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_LOAD_WORD).click()
+    await flush()
+    expect(holdsText(panelOf(document), COORDINATOR_JOBS_EMPTY_WORD)).toBe(true)
+    expect(classed(panelOf(document), 'coordinator-jobs-older')).toEqual([])
+  })
+
+  it('opens the launch confirmation on a queue item’s own repository and plan task, and spawns nothing until the operator submits', async () => {
+    // Retry and Launch lead to the console's **one** write (V2.5.1, rule 11):
+    // the item's repository and plan task are filled into the form the operator
+    // already confirms in the main process's own window, and this file sends
+    // nothing until they press that form's submit. No run id is written here and
+    // none is passed: main mints it when the launch is confirmed, and this file
+    // has no argv to put one in -- the prefill is a value on a control, not a
+    // call.
+    const { bridge, calls } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      listRuns: () => ({ ok: true, data: { document: { runs: [QUEUE_RUN] } } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    await askForJobs(document)
+
+    // The job item's Retry, which is the queue's button for a run that ended
+    // without succeeding.
+    buttonLabelled(panelOf(document), COORDINATOR_RETRY_WORD).click()
+    // Nothing is awaited: the Live screen the form lives on is drawn in the
+    // click's own frame, and the item's two values are already in it.
+    expect(
+      valueOf(launchField(document, LAUNCH_REPOSITORY_CLASS)),
+      'the form was not given the item’s repository',
+    ).toBe(QUEUE_OFFER)
+    expect(valueOf(launchField(document, LAUNCH_PLAN_TASK_CLASS))).toBe(QUEUE_RUN_PLAN_TASK)
+    // The form is revealed, and the control that hides it says so: a form filled
+    // out of sight would be a press that appears to do nothing.
+    expect(launchField(document, LAUNCH_FORM_CLASS).attributes.get('hidden')).toBeUndefined()
+    expect(launchField(document, LAUNCH_OPEN_CLASS).attributes.get('aria-expanded')).toBe('true')
+    // Nothing is spawned by opening the form: this file's one write is the
+    // form's own submit, and the operator has not pressed it.
+    expect(calls.filter((call) => call.name === 'launchRun')).toEqual([])
+
+    typeInto(document, LAUNCH_TASK_CLASS, 'try the nightly job again')
+    launchField(document, LAUNCH_SUBMIT_CLASS).click()
+    await flush()
+    const launched = calls.filter((call) => call.name === 'launchRun').map((call) => call.args)
+    expect(launched, 'the confirmation was asked for more than once').toHaveLength(1)
+    // Rule 11's five fields and nothing else: no run id, no flag, no path. The
+    // item's repository and plan task are *values* of those fields, and the key
+    // set is the schema's.
+    expect(launched[0]).toEqual({
+      installation: 'acme',
+      repository: QUEUE_OFFER,
+      task: 'try the nightly job again',
+      planTask: QUEUE_RUN_PLAN_TASK,
+    })
+  })
+
+  it('opens the pull request a number names, with the triple the console formed and nothing a document wrote', async () => {
+    // K2: every pull request number the Coordinator draws is a button, and a
+    // press hands `link.openPullRequest` the three values the main process
+    // builds the destination from -- the provider, the repository's `owner/name`
+    // and the number. **The pull request's own `url` is not one of them**: the
+    // document below carries a `javascript:` one, and the presses are the whole
+    // of what this console may send.
+    const { bridge, calls } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: k2Status('github', 'javascript:alert(1)') } }),
+      listRuns: () => ({ ok: true, data: { document: {} } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+
+    // The queue's own item: the pull request waiting for a person, whose one
+    // button opens the run -- and whose number is a second button, this one
+    // opening the pull request itself.
+    const inQueue = pullButtons(panelOf(document), 'coordinator-queue-subject')
+    expect(inQueue.map((node) => node.textContent), 'the queue’s pull request is not a button').toEqual(['#11'])
+    expect(inQueue[0]?.attributes.get('aria-label')).toBe('open pull request #11 in owner/repo-a')
+    inQueue[0]?.click()
+    await flush()
+
+    // And the record rows, drawn by the other half of the screen once its chunks
+    // have run: `#7` is the draft no queue item stands for and `#11` the open
+    // one, and both are numbers a person can open.
+    await vi.advanceTimersByTimeAsync(10)
+    const rows = pullButtons(panelOf(document), 'coordinator-record-label')
+    expect(rows.map((node) => node.textContent), 'a record’s number is not a button').toEqual(['#7', '#11'])
+    rows[1]?.click()
+    await flush()
+
+    const opened = calls.filter((call) => call.name === 'openPullRequest').map((call) => call.args)
+    expect(opened, 'the two presses did not send the two triples').toEqual([
+      { provider: 'github', repo: 'owner/repo-a', number: 11 },
+      { provider: 'github', repo: 'owner/repo-a', number: 11 },
+    ])
+    // Nothing the document wrote is in what was sent: the case's own url is a
+    // `javascript:` one, and no part of it reached the operation.
+    expect(JSON.stringify(opened)).not.toContain('javascript')
+  })
+
+  it('clears the repository when two of the installation’s identities name the item’s repository', async () => {
+    // The same repository can be recorded on two providers -- a provider is part
+    // of the identity and not of the `owner/name` the documents carry -- and
+    // there is then no one identity the item's repository is. The choice the
+    // prefill may not make is the operator's earlier one: a Retry that kept the
+    // GitHub identity standing would launch on a host nobody asked for, with
+    // this item's plan task.
+    const { bridge } = queueBridge(
+      {
+        coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+        listRuns: () => ({ ok: true, data: { document: { runs: [QUEUE_RUN] } } }),
+        planStatus: () => planStatusReply(QUEUE_PLAN),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      },
+      ['github/owner/repo-a', 'bitbucket/owner/repo-a'],
+    )
+    const document = await boot(bridge, new FakeDocument())
+    typeInto(document, LAUNCH_REPOSITORY_CLASS, 'github/owner/repo-a')
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    await askForJobs(document)
+
+    buttonLabelled(panelOf(document), COORDINATOR_RETRY_WORD).click()
+    expect(
+      valueOf(launchField(document, LAUNCH_REPOSITORY_CLASS)),
+      'the form kept a repository the item’s own document does not single out',
+    ).toBe('')
+    // The rest of the item is still handed over: it is the repository that has
+    // no single answer, and the operator is left to choose one.
+    expect(valueOf(launchField(document, LAUNCH_PLAN_TASK_CLASS))).toBe(QUEUE_RUN_PLAN_TASK)
+  })
+
+  it('clears the repository when the item names one the installation does not record', async () => {
+    // A queue item's repository is not re-validated against the installation's
+    // own list: the plan read is the one the session opened on, and the run list
+    // is the installation's runs, but neither is a promise that this form has an
+    // option for what the item carries. Nothing is written for a repository the
+    // form does not offer -- and what the select held is cleared rather than
+    // kept, for the reason above.
+    const elsewhere: unknown = { ...(PLAN_STATUS as Record<string, unknown>), repo: 'someone-else/repo-z' }
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      listRuns: () => ({ ok: true, data: { document: {} } }),
+      planStatus: () => planStatusReply(elsewhere),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    typeInto(document, LAUNCH_REPOSITORY_CLASS, QUEUE_OFFER)
+    buttonFor(document, 'coordinator').click()
+    await flush()
+
+    buttonLabelled(panelOf(document), COORDINATOR_LAUNCH_WORD).click()
+    expect(
+      valueOf(launchField(document, LAUNCH_REPOSITORY_CLASS)),
+      'the form kept the repository of an item it has no option for',
+    ).toBe('')
+    expect(valueOf(launchField(document, LAUNCH_PLAN_TASK_CLASS))).toBe(QUEUE_PLAN_TASK)
+  })
+
+  it('reads an item’s repository as the installation’s own when the two differ only in ASCII case', async () => {
+    // The prefill joins two spellings of one repository: the documents carry
+    // `owner/name` and the form offers the installation's `provider/owner/name`,
+    // and the fold they are compared under is the CLI's own -- `task.ASCIILower`,
+    // behind `CanonicalRepo`, which folds A-Z and nothing else. A run that
+    // recorded `Owner/Repo-A` therefore names the identity the installation
+    // holds, and the form is filled rather than cleared.
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      listRuns: () => ({ ok: true, data: { document: { runs: [{ ...QUEUE_RUN, repo: 'Owner/Repo-A' }] } } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    await askForJobs(document)
+
+    buttonLabelled(panelOf(document), COORDINATOR_RETRY_WORD).click()
+    expect(
+      valueOf(launchField(document, LAUNCH_REPOSITORY_CLASS)),
+      'the same repository in another case was read as a repository the installation does not record',
+    ).toBe(QUEUE_OFFER)
+    expect(valueOf(launchField(document, LAUNCH_PLAN_TASK_CLASS))).toBe(QUEUE_RUN_PLAN_TASK)
+  })
+
+  it('does not fold a Kelvin sign to a `k`, which would launch on a repository nobody named', async () => {
+    // U+212A KELVIN SIGN is `k` to `toLowerCase` and is **not** `k` to the CLI,
+    // so an item naming `owner/Key` with a Kelvin sign names a repository the
+    // installation does not record: the form is cleared, and the GitHub identity
+    // a Unicode fold would have matched it to is left alone. The case is the
+    // half of the fold above that a `toLowerCase` would pass while breaking.
+    const { bridge } = queueBridge(
+      {
+        coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+        // Spelled as an escape rather than as the character: U+212A is a `k` to
+        // the eye as well as to `toLowerCase`, and a case about a fold that must
+        // not happen is one whose input a reader has to be able to check.
+        listRuns: () => ({ ok: true, data: { document: { runs: [{ ...QUEUE_RUN, repo: 'owner/\u212Aey' }] } } }),
+        planStatus: () => planStatusReply(QUEUE_PLAN),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      },
+      ['github/owner/key'],
+    )
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    await askForJobs(document)
+
+    buttonLabelled(panelOf(document), COORDINATOR_RETRY_WORD).click()
+    expect(
+      valueOf(launchField(document, LAUNCH_REPOSITORY_CLASS)),
+      'a Kelvin sign was folded to a `k`, and the form was given an identity the item does not name',
+    ).toBe('')
+  })
+
+  it('answers a budget alert by opening Spend, and names the ground the alert stands on', async () => {
+    // A BUDGET item's one button is a navigation (D812): the queue never calls
+    // `budget kill` or `budget resume` -- those are the CLI's, behind a typed
+    // confirmation -- so what the alert does is take the operator to the screen
+    // that draws the fleet's money and its caps.
+    const { bridge } = queueBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      listRuns: () => ({ ok: true, data: { document: {} } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      // The committed budget document's one repository is killed, which is a
+      // ground the operator can see and act on -- and one this screen does not
+      // act on itself.
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    expect(holdsText(panelOf(document), COORDINATOR_QUEUE_REPO_KILL_WORD)).toBe(true)
+
+    buttonLabelled(panelOf(document), COORDINATOR_OPEN_SPEND_WORD).click()
+    // The navigation is answered in the frame it happened in: Spend's button is
+    // the current page before any read of that screen has answered.
+    expect(
+      buttonFor(document, 'spend').attributes.get('aria-current'),
+      'the alert did not move the console to Spend',
+    ).toBe('page')
+    await flush()
+    // And the screen behind it is Spend's own: this session has read the budget
+    // it draws its caps from, and its report read is the refusal the fake bridge
+    // answers with -- named by the screen that asked for it.
+    expect(operationOf(document), 'the alert left the Coordinator’s screen on the panel').toBe(
+      'spend.report',
+    )
+  })
+
+  it('draws the Graph’s canvas while the run list never answers, and asks for that list only afterwards', async () => {
+    // The canvas is the plan. `runs ls --json` is what a node's door is resolved
+    // against -- four characters of a run id -- so it decorates a picture that is
+    // already true without it, and the Graph is drawn, and readable, before the
+    // list is even asked for.
+    const runs = holding()
+    const { bridge, calls } = graphBridge({
+      planStatus: () => planStatusReply(),
+      listRuns: () => runs.reply(),
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'graph').click()
+    await flush()
+    expect(
+      classed(panelOf(document), 'graph-canvas').length,
+      'the canvas waited for the run list',
+    ).toBeGreaterThan(0)
+    expect(
+      classed(panelOf(document), 'graph-node').length,
+      'the canvas was drawn from the plan alone',
+    ).toBeGreaterThan(0)
+    const asked = calls.filter((call) => call.name === 'listRuns')
+    expect(asked.length, 'the Graph never asked for the run list at all').toBeGreaterThan(0)
+
+    // And the list never answering changes nothing about what is on screen: no
+    // mark, no refusal, no empty panel.
+    expect(busyLabels(document)).toEqual([])
+    expect(operationOf(document)).toBe(null)
+  })
+
+  it('reads the run list for a day, on every read it makes of it', async () => {
+    // The window is the rule, not a detail: a console that read the whole run
+    // log would pay for the reads of every installation the owner has ever run.
+    const { bridge, calls } = fakeBridge({
+      replies: { subscribeLive: () => snapshotReply(liveFrame()), listRuns: () => runsReply() },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'graph').click()
+    await flush()
+    await flush()
+    const asked = calls.filter((call) => call.name === 'listRuns')
+    expect(asked.length, 'no run list was read: the case proves nothing').toBeGreaterThan(0)
+    for (const call of asked) {
+      expect((call.args as { readonly since?: unknown }).since, 'a run list was read for all time').toBe(
+        RUNS_SINCE,
+      )
+    }
+  })
+
+  it('fills the Live rows’ mode column when the join lands, without the frame ever waiting for it', async () => {
+    // The mode on a Live row is not in the live document: it is joined from
+    // `runs ls --json` by run id (`shared/rigor.ts`). The rows are drawn without
+    // it and the column fills in the moment it lands -- a join that never
+    // answered would leave the frame exactly as it is, which is a screen about
+    // what is running now rather than a screen holding a read.
+    const join = holding()
+    const { bridge } = fakeBridge({
+      replies: { subscribeLive: () => snapshotReply(liveFrame()), listRuns: () => join.reply() },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    expect(
+      classed(panelOf(document), 'live-run').length,
+      'the frame drew no rows: the case proves nothing',
+    ).toBeGreaterThan(0)
+    expect(classed(panelOf(document), 'live-run-mode')).toEqual([])
+
+    join.release({
+      ok: true,
+      data: {
+        document: {
+          project: 'example-project',
+          runs: [{ run: '20261015-120000-aa01', rigor: { mode: 'pro', from: 'repo' } }],
+          warnings: [],
+        },
+      },
+    })
+    await flush()
+    expect(
+      classed(panelOf(document), 'live-run-mode').map((node) => node.textContent),
+      'the join landed and the mode column stayed empty',
+    ).toEqual(['Pro'])
+  })
+
+  it('keeps the stream filter the operator pressed last when the first press draws after it', async () => {
+    // Two presses in one turn -- a click and a mis-click, or the arrow key after
+    // the mouse -- and each of them is a layout the engine answers on its own
+    // time. The drawing that answers the press the operator has already replaced
+    // is `null` and must not be drawn: the tab that stays is the one they chose
+    // last, whatever order the two answers arrive in.
+    const { bridge } = graphBridge()
+    const document = await openGraph(bridge)
+    const tabs = classed(panelOf(document), 'graph-tab')
+    expect(tabs.map((tab) => tab.attributes.get('data-tab'))).toEqual(['stream:example', 'stream:', 'all'])
+    ;(tabs[0] as FakeNode).click()
+    ;(tabs[1] as FakeNode).click()
+    await flush()
+    expect(
+      classed(panelOf(document), 'graph-tab').map((tab) => tab.attributes.get('aria-pressed')),
+      'the stream the operator pressed first is the one that is showing',
+    ).toEqual(['false', 'true', 'false'])
+  })
+
+  it('never draws the run list a read the operator left over the tab they moved to', async () => {
+    // The decoration is the read that arrives after the one the operator is
+    // waiting for, and it has no mark of its own: it is the **sequence check** on
+    // the Graph that keeps it off a tab nobody is on. **The mutation this case is
+    // proven against is that check -- the two `stale(mine)` guards
+    // `decorateRuns` stands on, the one after the read and the one after the
+    // drawing -- and dropping them fails this case**: the older picture is drawn
+    // over the Live tab the operator moved to. Each guard alone survives the
+    // mutation, which is why the case names the pair.
+    const lists: ReturnType<typeof holding>[] = []
+    const { bridge } = graphBridge({
+      subscribeLive: () => snapshotReply(liveFrame()),
+      listRuns: () => {
+        const answer = holding()
+        lists.push(answer)
+        return answer.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    expect(lists, 'the Live rigor join is not in flight: the case proves nothing').toHaveLength(1)
+    buttonFor(document, 'graph').click()
+    await flush()
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+
+    buttonFor(document, 'live').click()
+    await flush()
+    const chosen = panelOf(document).children[0] as FakeNode
+    expect(chosen.attributes.get('class'), 'the operator never left the Graph: the case proves nothing').toBe(
+      'live',
+    )
+
+    lists[1]?.release(runsReply())
+    await flush()
+    expect(panelOf(document).children[0], 'a run list nobody waited for replaced the view on screen').toBe(
+      chosen,
+    )
+    expect(classed(panelOf(document), 'graph-canvas')).toEqual([])
+  })
+
+  it('never lets a read the operator has replaced draw over the picture they kept', async () => {
+    // Two quick presses of the Graph's own Refresh, and the read the first one
+    // started answers last: it is not the newest read's and must not be drawn.
+    // This is the Graph's half of "the latest change's view is the one that
+    // stays, whatever order the answers arrive in", and it is the second press's
+    // mark that is on screen while the earlier answer lands under it -- a
+    // refusal drawn there would take the canvas down for a read nobody asked
+    // for. Two guards stand between the two (the section's token and the read's
+    // generation), and either one alone is enough: the case is the behaviour,
+    // and `decorateRuns`' case below is the one that is proven against a
+    // mutation.
+    const plans = readQueue()
+    const { bridge } = graphBridge({
+      planStatus: plans.reply,
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'graph').click()
+    await flush()
+    plans.release(0, planStatusReply())
+    await flush()
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+
+    const refresh = classed(panelOf(document), 'graph-refresh')[0]
+    expect(refresh, 'the Graph drew no Refresh control: the case proves nothing').toBeDefined()
+    refresh?.click()
+    refresh?.click()
+    // The first press's read answers with a refusal, and it is nobody's read any
+    // more: the picture stays, the mark stays up for the read the operator asked
+    // for last, and no refusal screen is drawn.
+    plans.release(1, { ok: false, reason: GRAPH_REFUSAL })
+    await flush()
+    expect(operationOf(document), 'a read the operator had replaced drew its refusal').toBe(null)
+    expect(holdsText(panelOf(document), GRAPH_REFUSAL)).toBe(false)
+    expect(
+      classed(panelOf(document), 'graph-canvas').length,
+      'a read the operator had replaced took the canvas down',
+    ).toBeGreaterThan(0)
+    expect(busyLabels(document)).toEqual([GRAPH_BUSY])
+
+    // The read the operator asked for last is drawn when it lands.
+    plans.release(2, planStatusReply())
+    await flush()
+    expect(busyLabels(document)).toEqual([])
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
   })
 })
 
@@ -3974,15 +6957,28 @@ describe('the Graph’s no-checkout state', () => {
   })
 
   /** checkoutBridge is a console whose rail read answered with one row and
-   * whose plan read refused for want of a checkout: the two facts the card's
-   * action depends on. `checkouts` is what the CLI listed for that row, which is
-   * what the picker's own `Use <dir>` buttons are drawn from. */
-  function checkoutBridge(checkouts: readonly string[]): FakeBridge & {
+   * whose plan read refused for want of a checkout until a checkout is
+   * recorded: the two facts the card's action depends on. `choices` is the menu
+   * the main process built for that row, which is what the card's control is
+   * drawn from and what the write is matched against. */
+  function checkoutBridge(choices: readonly Record<string, unknown>[]): FakeBridge & {
     readonly rail: readonly { readonly name: string; readonly args: unknown }[]
+    readonly release: (value: unknown) => void
   } {
-    const base = railBridge([listRow('acme', { open: true, checkouts })])
-    base.bridge['planStatus'] = () => ({ ok: false, reason: NO_PLAN_CHECKOUT })
-    return base
+    vi.stubGlobal('Worker', FakeWorker)
+    const write = holding()
+    let recorded = false
+    const base = railBridge([listRow('acme', { open: true, checkoutChoices: choices })], {
+      setInstallationCheckout: () => {
+        recorded = true
+        return write.reply()
+      },
+    })
+    // The write is **held**, so a case can look at the card the console drew
+    // before the answer lands and at the plan read that follows it: the two are
+    // the whole of what this card does.
+    base.bridge['planStatus'] = () => (recorded ? planStatusReply() : { ok: false, reason: NO_PLAN_CHECKOUT })
+    return { ...base, release: (value) => write.release(value) }
   }
 
   it('says what to do instead of drawing an action for an installation that lists no checkout', async () => {
@@ -3990,29 +6986,76 @@ describe('the Graph’s no-checkout state', () => {
     const document = await openGraph(bridge)
     const card = panelOf(document).children[0] as FakeNode
     expect(card.attributes.get('data-kind')).toBe(NO_CHECKOUT_KIND)
-    // The picker's only word about a checkout is one `Use <dir>` per checkout
-    // the CLI listed, so for a row with none the card offers no action and says
-    // what records one instead.
+    // The action is a menu drawn from the CLI's own list, so for a row with
+    // nothing in that list the card offers no action and says what records one.
     expect(holdsText(card, NO_CHECKOUT_EMPTY_SENTENCE)).toBe(true)
     expect(
-      everyNode(card).some((node) => node.tagName === 'BUTTON' && node.textContent === NO_CHECKOUT_CHOICE_LABEL),
+      everyNode(card).some(
+        (node) =>
+          (node.tagName === 'BUTTON' && node.textContent === NO_CHECKOUT_USE_LABEL) ||
+          node.attributes.get('class') === CHECKOUT_SELECT_CLASS,
+      ),
       'the card drew an action that leads nowhere',
     ).toBe(false)
-    expect(rail.map((call) => call.name), 'the card opened the picker for a row it has no action for').toEqual([
+    expect(rail.map((call) => call.name), 'the card wrote a checkout for a row it has no action for').toEqual([
       'listInstallations',
     ])
   })
 
-  it('draws the action, and opens the picker, when the CLI listed a checkout', async () => {
-    const { bridge, rail } = checkoutBridge(['/home/operator/src/acme'])
+  it('sends the directory the menu has selected, and draws the plan it then reads', async () => {
+    const { bridge, rail, release } = checkoutBridge([
+      { repository: 'github/owner/acme', path: '/home/operator/src/acme', more: 0 },
+      { repository: 'github/owner/acme', path: '/home/operator/src/scratch', more: 0 },
+    ])
     const document = await openGraph(bridge)
     const card = panelOf(document).children[0] as FakeNode
     expect(holdsText(card, NO_CHECKOUT_EMPTY_SENTENCE)).toBe(false)
-    buttonLabelled(card, NO_CHECKOUT_CHOICE_LABEL).click()
-    expect(rail.at(-1), 'the card’s button does not open the picker').toEqual({
-      name: 'openInstallations',
-      args: {},
+    const menu = classed(card, CHECKOUT_SELECT_CLASS)[0] as FakeNode
+    expect(menu.children.map((option) => option.attributes.get('value'))).toEqual([
+      '/home/operator/src/acme',
+      '/home/operator/src/scratch',
+    ])
+    ;(menu as unknown as { value: string }).value = '/home/operator/src/scratch'
+    buttonLabelled(card, NO_CHECKOUT_USE_LABEL).click()
+    await flush()
+    expect(rail.at(-1), 'the menu sent a directory it was not offering').toEqual({
+      name: 'setInstallationCheckout',
+      args: { project: 'acme', checkout: '/home/operator/src/scratch' },
     })
+    // The write is not the answer: the plan read after it is, and it is what
+    // replaces the card with the picture -- in the frame the operator is in,
+    // never by walking off to the issue view the rail's own actions leave for.
+    expect(panelOf(document).children[0]?.attributes.get('data-kind')).toBe(NO_CHECKOUT_KIND)
+    release({ ok: true, data: null })
+    await flush()
+    expect(classed(panelOf(document), 'graph-canvas').length, 'the card did not give way to the plan').toBeGreaterThan(0)
+  })
+
+  it('chooses the installation’s one checkout by itself, says so once, and draws the plan', async () => {
+    const { bridge, rail, release } = checkoutBridge([
+      { repository: 'github/owner/acme', path: '/home/operator/src/acme', more: 0 },
+    ])
+    const document = await openGraph(bridge)
+    const card = panelOf(document).children[0] as FakeNode
+    // A menu of one entry is a control with nothing to choose, so the console
+    // presses it: the card says which directory the Graph is reading, in the
+    // entry's own words for it, and draws no control at all.
+    expect(holdsText(card, `${NO_CHECKOUT_AUTO_SENTENCE} github/owner/acme — …/src/acme`)).toBe(true)
+    expect(classed(card, CHECKOUT_SELECT_CLASS)).toEqual([])
+    expect(everyNode(card).some((node) => node.tagName === 'BUTTON' && node.textContent === NO_CHECKOUT_USE_LABEL)).toBe(
+      false,
+    )
+    expect(rail.at(-1), 'the card did not choose the one checkout it was offered').toEqual({
+      name: 'setInstallationCheckout',
+      args: { project: 'acme', checkout: '/home/operator/src/acme' },
+    })
+    release({ ok: true, data: null })
+    await flush()
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+    // Once: the same directory is never sent twice for one installation, so a
+    // card drawn again for it -- a cadence read, another visit -- offers the
+    // menu rather than claiming a read it is not making.
+    expect(rail.filter((call) => call.name === 'setInstallationCheckout')).toHaveLength(1)
   })
 
   it('draws the refusal screen for every other sentence the plan read refuses with', async () => {

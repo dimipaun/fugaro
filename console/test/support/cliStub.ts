@@ -181,6 +181,17 @@ export interface SeededSpend {
   readonly budget?: SeededSpendRead
 }
 
+/** SeededModels is the Project tab's models read, as a spec seeds it: the
+ * document the stub answers `models ls --json` with, and the seconds it waits
+ * first. It is `SeededSpendRead`'s shape under its own name because the read
+ * belongs to a different view, and a spec should not have to read "spend" to
+ * seed it. Unseeded, the read is refused with exit 2 rather than answered with
+ * an empty document -- see `CliStub.seedModels`. */
+export interface SeededModels {
+  readonly document: unknown
+  readonly delaySeconds?: number
+}
+
 /** CliStub is an installed stub, and the environment that makes the console
  * find it. */
 export interface CliStub {
@@ -304,6 +315,15 @@ export interface CliStub {
    * exit 2, which is the state `test/e2e/no-checkout.spec.ts` relies on: the
    * specs that are not about Spend must keep seeing a refused report. */
   seedSpend(spend: SeededSpend): void
+  /** seedModels seeds the Project tab's models read (console 0.119.0): the one
+   * `models ls --json` document, in `models-ls.json` beside both copies of the
+   * stub, with `models-ls-delay.txt` holding the seconds to sleep first when a
+   * spec is about the two reads of that tab landing in a chosen order.
+   *
+   * Unseeded, the read is refused with exit 2, the way an unsupported command
+   * is: the panel's own refusal is then drawn from a real refusal rather than
+   * from a document claiming something no installation said. */
+  seedModels(models: SeededModels): void
   /** answeredReads is the reads the stub has answered, in the order it printed
    * them: `report 7d`, `budget`, one line per answer, from `reads.log` beside
    * the stub. It is what a spec waits on for an answer that draws **nothing** --
@@ -533,6 +553,14 @@ export function installCliStub(line: string): CliStub {
         writeFileSync(join(where, 'spend-budget.json'), `${JSON.stringify(spend.budget.document)}\n`)
         if (spend.budget.delaySeconds !== undefined) {
           writeFileSync(join(where, 'spend-budget-delay.txt'), `${spend.budget.delaySeconds}\n`)
+        }
+      }
+    },
+    seedModels(models: SeededModels): void {
+      for (const where of [dir, wellKnown]) {
+        writeFileSync(join(where, 'models-ls.json'), `${JSON.stringify(models.document)}\n`)
+        if (models.delaySeconds !== undefined) {
+          writeFileSync(join(where, 'models-ls-delay.txt'), `${models.delaySeconds}\n`)
         }
       }
     },

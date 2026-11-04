@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	terraform "github.com/dimipaun/fugaro/deploy/terraform"
 )
 
 // The installation root's credentials_service key and the two functions that
@@ -19,9 +21,7 @@ import (
 // credsVarsImage is a digest-pinned reference in the form the stage verifies
 // (mirror.RemoteRef); nothing here calls the registry, so its value only has
 // to be the shape the module's own validation admits.
-func credsVarsImage() string {
-	return "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3@sha256:" + strings.Repeat("ab", 32)
-}
+func credsVarsImage() string { return credsVarsImageAt("1.2.3") }
 
 func credsVarsSpec() CredentialsServiceSpec {
 	return CredentialsServiceSpec{
@@ -260,4 +260,181 @@ func mapsEqual(a, b map[string]any) bool {
 		return false
 	}
 	return string(ja) == string(jb)
+}
+
+// CredentialsServiceImageOf answers the ONE question the re-pin asks of an
+// installation's document — is there an opted-in service here, and which image
+// does it run — and it answers it off the DISK, which is not the same
+// question CarriedCredentialsService answers: this one distinguishes "no
+// service" (nothing to move, and no registry call) from "a service", and it
+// errs where a document it cannot read would otherwise read as "no service"
+// and leave the opt-in behind.
+//
+// Mutation (verified, run and restored): treat an unreadable document as "no
+// service" (return "", false, nil on a decode failure): this test fails.
+func TestCredentialsServiceImageOfReadsTheOptedInImage(t *testing.T) {
+	optedIn, err := SetCredentialsService([]byte(credsVarsDiscovered), credsVarsSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	image, ok, err := CredentialsServiceImageOf(optedIn)
+	if err != nil {
+		t.Fatalf("reading the image of an opted-in installation: %v", err)
+	}
+	if !ok || image != credsVarsImage() {
+		t.Errorf("CredentialsServiceImageOf = %q, %v, want %q, true", image, ok, credsVarsImage())
+	}
+
+	// The four "no service to move here" answers, none of which is an error:
+	// a first run (no document at all), an installation that never opted in,
+	// and an entry an operator's own hand left without an image.
+	for name, vars := range map[string][]byte{
+		"a first run":                         nil,
+		"an installation that never opted in": []byte(credsVarsDiscovered),
+		"an entry with no image":              []byte(`{"credentials_service": {"service": "fugaro-credentials"}}`),
+		"an entry whose image is empty":       []byte(`{"credentials_service": {"image": ""}}`),
+	} {
+		image, ok, err := CredentialsServiceImageOf(vars)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+		if ok || image != "" {
+			t.Errorf("%s: = %q, %v, want nothing to move", name, image, ok)
+		}
+	}
+
+	// A document this program cannot read is an ERROR and not "nothing to
+	// move": the carry fails closed for the same reason (an installation whose
+	// opt-in this run cannot see is not an installation without one), and a
+	// re-pin that read it as "no service" would apply the root on whatever
+	// prepare made of the unreadable document.
+	for _, vars := range [][]byte{[]byte("not json"), []byte("[1,2]"), []byte("")} {
+		if _, _, err := CredentialsServiceImageOf(vars); err == nil {
+			t.Errorf("CredentialsServiceImageOf(%q) = no error, want a refusal", vars)
+		}
+	}
+}
+
+// SetCredentialsServiceImage changes the image and NOTHING else: not the
+// service's other facts (its account, its bundle, the Firebase database it
+// reads, the audience its callers mint their ID tokens for — a rebuild would
+// replace the audience with the module's placeholder and admit nobody), and
+// not the document's other keys (the discovery's secret containers, which a
+// rebuild plans away).
+//
+// The two refusals are the ones that keep it from being a way to turn the
+// service on or to write an image the module refuses at plan time.
+//
+// Mutation (verified, run and restored): rebuild the entry from the spec
+// (marshal CredentialsServiceSpec{Image: image}) instead of setting one key of
+// it: this test fails, the entry losing its audience.
+func TestSetCredentialsServiceImageChangesOnlyTheImage(t *testing.T) {
+	svc := credsVarsSpec()
+	optedIn, err := SetCredentialsService([]byte(credsVarsDiscovered), svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:1.2.4@sha256:" + strings.Repeat("cd", 32)
+	got, err := SetCredentialsServiceImage(optedIn, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		CredentialsService map[string]any `json:"credentials_service"`
+	}
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatalf("the result is not a tfvars document: %v\n%s", err, got)
+	}
+	if doc.CredentialsService["image"] != next {
+		t.Errorf("credentials_service.image = %v, want %q", doc.CredentialsService["image"], next)
+	}
+	want := map[string]any{
+		"account_id":       svc.AccountID,
+		"service":          svc.Service,
+		"bundle_secret":    svc.BundleSecret,
+		"firebase_project": svc.FirebaseProject,
+		"rtdb_url":         svc.RTDBURL,
+		"url":              svc.URL,
+	}
+	for k, v := range want {
+		if doc.CredentialsService[k] != any(v) {
+			t.Errorf("credentials_service.%s = %v, want %v kept: the re-pin changes the image and nothing else", k, doc.CredentialsService[k], v)
+		}
+	}
+	if jobs, _ := doc.CredentialsService["job_accounts"].([]any); len(jobs) != len(svc.JobAccounts) {
+		t.Errorf("credentials_service.job_accounts = %v, want the %d rows the opt-in wrote", doc.CredentialsService["job_accounts"], len(svc.JobAccounts))
+	}
+	if wantDoc, have := credsVarsDoc(t, optedIn), credsVarsDoc(t, got); !mapsEqual(wantDoc, have) {
+		t.Errorf("the document changed beyond the one key:\nwant %v\ngot  %v", wantDoc, have)
+	}
+
+	// An image that is not pinned by digest is refused, as the module's own
+	// variable refuses it: a tag is mutable, and this service reads every model
+	// credential the installation holds.
+	for _, image := range []string{
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:1.2.4",
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:1.2.4@sha256:",
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:1.2.4@sha256:" + strings.Repeat("AB", 32),
+		"",
+	} {
+		if _, err := SetCredentialsServiceImage(optedIn, image); err == nil {
+			t.Errorf("SetCredentialsServiceImage(%q) = no error, want a refusal", image)
+		}
+	}
+
+	// A document with no service is refused rather than given one: writing the
+	// image there would turn the service on — account, bundle, grant and all —
+	// for an installation whose owner never opted in.
+	if _, err := SetCredentialsServiceImage([]byte(credsVarsDiscovered), next); err == nil {
+		t.Error("SetCredentialsServiceImage gave a document with no credentials_service one: the image is a release's, and writing it there turns the service on for an owner who never asked")
+	}
+	if _, err := SetCredentialsServiceImage([]byte("not json"), next); err == nil {
+		t.Error("SetCredentialsServiceImage rewrote a document it could not read")
+	}
+}
+
+// The release an image reference names is read by BOTH sides out of the same
+// string: this program, which decides whether the installation needs the
+// re-pin, and the module's credentials.tf (credentials_image_release), which
+// decides whether the process in that image serves HTTP/2 cleartext and
+// therefore whether the Cloud Run container's port is named h2c. The two
+// patterns must move together — a reference whose version one side can read
+// and the other cannot is an installation whose image and port disagree — so
+// the module is read here, from the embedded tree the binary actually plans
+// with.
+//
+// Mutation (verified, run and restored): change either pattern (drop the
+// trailing colon from this one, or the doubled backslash from the module's):
+// this test fails.
+func TestCredentialsServiceImageReleaseIsTheModulesOwnReading(t *testing.T) {
+	mod, err := terraform.FS.ReadFile("gcp/modules/installation/credentials.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// HCL escapes a backslash in a string literal, so the module writes the
+	// pattern with two of them where Go writes one.
+	hcl := strings.ReplaceAll(credsImageReleaseRE.String(), `\`, `\\`)
+	if !strings.Contains(string(mod), `regex("`+hcl+`"`) {
+		t.Errorf("the module does not read the release with this program's pattern (%s): the version one side reads and the other cannot is an installation whose container port and image disagree", credsImageReleaseRE.String())
+	}
+
+	for _, tc := range []struct{ ref, want string }{
+		{credsVarsImage(), "1.2.3"},
+		{credsVarsImageAt("1.10.0"), "1.10.0"},
+		// A digest with no release tag, and a mutable tag: neither names a
+		// release, on either side, and the re-pin treats both as "move it".
+		{"ghcr.io/dimipaun/fugaro-credentials@sha256:" + strings.Repeat("ab", 32), ""},
+		{"ghcr.io/dimipaun/fugaro-credentials:latest@sha256:" + strings.Repeat("ab", 32), ""},
+		{"ghcr.io/dimipaun/fugaro-credentials:v1.2.3@sha256:" + strings.Repeat("ab", 32), ""},
+		{"", ""},
+	} {
+		if got := CredentialsServiceImageRelease(tc.ref); got != tc.want {
+			t.Errorf("CredentialsServiceImageRelease(%q) = %q, want %q", tc.ref, got, tc.want)
+		}
+	}
+}
+
+// credsVarsImageAt is credsVarsImage for another release.
+func credsVarsImageAt(version string) string {
+	return "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:" + version + "@sha256:" + strings.Repeat("ab", 32)
 }

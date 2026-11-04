@@ -38,6 +38,11 @@ import (
 // appSlug is the storage slug of the fixture's repository, GitHub's acme/app.
 var appSlug = mustSlug("github", "acme/app")
 
+// appIDFixture is the App ID the fixture's local config records for acme/app: a
+// number of the shape localcfg admits, and not a secret — the platform passes
+// the same kind of value to a run as FUGARO_GITHUB_APP_ID.
+const appIDFixture = "1234"
+
 func mustSlug(provider, repo string) string {
 	s, err := task.Slug(provider, repo)
 	if err != nil {
@@ -112,7 +117,12 @@ func newCloudFixture(t *testing.T, extraEndpoints ...string) *cloudFixture {
 	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: unused-bucket\nbucket_url: " + f.bucket +
 		"\nuser: someone@example.com\nmax_parallel: 2\n" +
 		"endpoints: { run: " + f.run.URL + "/, logging: " + f.logging.URL + "/, " + extra(extraEndpoints) + "no_auth: true }\n" +
-		"repos:\n  acme/app: { provider: github, base_branch: main, workflows: [web] }\n"
+		// The App ID is the project's own recorded value (localcfg.Repo.GitHubAppID)
+		// and the one field of a person's GitHub read that is neither the repository
+		// nor an identity: the credentials service mints the token as that App, and
+		// a project that records none for a repository is refused rather than asked
+		// for a mint nothing could sign.
+		"repos:\n  acme/app: { provider: github, base_branch: main, workflows: [web], github_app_id: \"" + appIDFixture + "\" }\n"
 	// The project config is aurora's, in a config directory of the test's
 	// own; FUGARO_CONFIG names it too, as tests append to it.
 	path := isolateProjects(t, f.dir)
@@ -146,6 +156,20 @@ func (f *cloudFixture) writeMarker(t *testing.T, name, gcpProject string) {
 	if err := os.WriteFile(f.markerPath(), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// publishService makes the fixture's project an installation that has opted
+// into the credentials service, naming url — which is where the person's read
+// mints, and the only source of that URL there is (no environment variable
+// stands behind it).
+//
+// url must be the https URL localcfg's own validation admits
+// (validCredentialsServiceURL): a hermetic test's fake service is therefore a
+// TLS server, and the client that reaches it is the seam the tests set
+// (coordinatorServiceClient).
+func (f *cloudFixture) publishService(t *testing.T, url string) {
+	t.Helper()
+	f.appendConfig(t, "credentials_service:\n  url: "+url+"\n")
 }
 
 // appendConfig adds top-level YAML (such as budget: …) to the local config.

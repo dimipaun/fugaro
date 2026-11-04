@@ -91,6 +91,27 @@ resource "google_service_account_iam_member" "operator_build" {
   member             = each.value
 }
 
+# The copied catalog definitions (builds/catalog/), read-only: a build reads
+# the definition PIC3 copied for the entry it is building, and never writes
+# one. The condition is computed here from the bucket's own name rather than
+# passed in, because it has no slug: every repository's build account reads
+# the same project-wide copy, so the prefix is the constant
+# gcp.CatalogBucketPrefix and the clause gcp.CatalogReadCondition builds (the
+# roots/repo test pins this expression, and internal/infra/tf refuses the
+# binding if it changes). objectViewer and not objectUser is the property
+# that matters: a build account that could write a definition could make
+# every other repository's jobs run an image of its choosing.
+resource "google_storage_bucket_iam_member" "catalog_read" {
+  bucket = var.installation.runs_bucket
+  role   = "roles/storage.objectViewer"
+  member = google_service_account.build.member
+
+  condition {
+    title      = "fugaro-catalog-read-${google_service_account.build.account_id}"
+    expression = "resource.name.startsWith(\"projects/_/buckets/${var.installation.runs_bucket}/objects/builds/catalog/\")"
+  }
+}
+
 # builds/<slug>/ only: the build records and the check's decisions. The
 # condition is the input byte for byte.
 resource "google_storage_bucket_iam_member" "build" {

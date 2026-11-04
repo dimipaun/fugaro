@@ -252,6 +252,54 @@ type Policy struct {
 	// existed.
 	ReviewFloor map[rigor.Mode][]policy.Level `json:"review_floor,omitempty"`
 
+	// VerifierAccounts are the identities that may ask the credentials
+	// service's verify route whether a verdict's signature is that service's
+	// (C3.9g3, D1068, D1075): the coordinator's own account once it exists,
+	// and the owner's for a manual check. Each entry is a bare address — the
+	// `email` claim a Google ID token carries — and never one of the IAM
+	// member spellings (user:, serviceAccount:) the installation's launcher
+	// and operator lists are written with, which are bindings rather than
+	// claims about who may verify.
+	//
+	// It sits in this node for every member's reason — the owner writes it and
+	// the runner fails closed on it — plus the one bitbucket_api_roots has: the
+	// shared config in the runs bucket is writable by any launcher, and a
+	// launcher who could write this list could admit its own address to the
+	// verify route, so the list travels here and `sharedForbidden` refuses it
+	// there. `fugaro update`'s policy stage copies it out of the local
+	// configuration, and its credentials stage reads it back from this node as
+	// the service's own variable, which is why a config that states no list
+	// keeps this one rather than emptying the route (localcfg's keep rule).
+	//
+	// An absent member and a written empty one are the same list: the
+	// publisher writes nothing at all for a project that names no verifier, so
+	// the node of such a project is byte for byte what it was before this
+	// member existed — and no reader of it meets the key's skew (a CLI older
+	// than the key refuses a node that carries it).
+	VerifierAccounts []string `json:"verifier_accounts,omitempty"`
+
+	// ImageCatalog is the project's image catalog: the named images a
+	// repository's workflow runs, each a Dockerfile definition or a reference
+	// to a prebuilt image (D1140). It travels the verifier list's way and for
+	// the verifier list's reason — the catalog decides what code a job runs
+	// and which Dockerfile is fetched to build it, so it is the owner's policy
+	// written by `fugaro project policy publish` and read by the runner, never
+	// a key the shared config in the runs bucket (which any launcher can
+	// write) may carry — plus one of its own: a catalog in the shared file
+	// would let a launcher choose the image every teammate's runs execute in.
+	// `sharedForbidden` refuses it there, and localcfg's keep rule is what
+	// stops a machine whose config is silent emptying a published catalog.
+	//
+	// It is a pointer because the D1156 promise is about the bytes: omitempty
+	// is a no-op on a struct, so a value would write "image_catalog":{} for
+	// every project that names no entry and make the key's skew every
+	// launcher's. An absent member and a written empty one are the same
+	// catalog — Decode normalizes an empty one to nil (decodeImageCatalog) and
+	// the publisher writes nothing at all for a project that names no entry —
+	// so the node of such a project is byte for byte what it was before this
+	// member existed.
+	ImageCatalog *ImageCatalog `json:"image_catalog,omitempty"`
+
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
 	// know, sorted. Decode fills it in and never writes it back (json:"-"):
 	// the keys are tolerated so that a policy a newer Fugaro wrote does not
@@ -272,7 +320,8 @@ var knownTopLevelKeys = map[string]bool{
 	"profiles": true, "clone_urls": true, "accounts": true,
 	"credentials": true, "base_branch": true,
 	"bitbucket_token": true, "bitbucket_api_roots": true,
-	"review_floor": true,
+	"review_floor": true, "verifier_accounts": true,
+	"image_catalog": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -377,6 +426,29 @@ type Routing = config.Routing
 // ClaudeRoute is the Claude routing switch: an explicit list of Claude IDs,
 // never a pattern (D1a). config.RoutingClaude, by the alias above.
 type ClaudeRoute = config.RoutingClaude
+
+// ImageCatalog is the project's image catalog, the definitions its jobs are
+// built from (D1140, spec.md §Catalog entry). It is config.Catalog, aliased
+// rather than respelled, for the reason Routing and Provider are: one
+// document, one declaration — the catalog is written and validated by
+// internal/config's loader, and this package only delivers it, so a second
+// declaration would be a second spelling of it and the reader would then hold
+// it to a rule the writer never applied. That loader's own ValidateCatalog is
+// what a node's block is checked by, which is what keeps the local
+// configuration and the published node from disagreeing about a catalog.
+type ImageCatalog = config.Catalog
+
+// catalogEntryMembers and catalogSourceMembers are the member names an entry
+// and a source are spelled with, in the node's own json spelling: an entry is
+// decoded by encoding/json, which folds a member name before matching it, so
+// {"default": true, "Default": false} is one member the decoder reads twice
+// and this reader would take the last of — the check below holds every name
+// to the documented spelling, as the budget block's and a model_prices
+// entry's are held.
+var (
+	catalogEntryMembers  = []string{"name", "tags", "source", "description", "default"}
+	catalogSourceMembers = []string{"kind", "repo", "path", "branch", "inline", "image"}
+)
 
 // RouteCascade is routing.claude's cascade value (O3, D150): the switch that
 // turns the credentials cascade on for a `cascade` workflow. It is config's own
@@ -694,6 +766,17 @@ const MaxPolicyBytes = 64 << 10
 // Unknown JSON keys are ignored; version is not (see VersionError), and the
 // budget block is strict (see the package comment).
 func Decode(raw []byte) (*Policy, bool, error) {
+	return decodeWithKeys(raw, knownTopLevelKeys)
+}
+
+// decodeWithKeys is Decode under a named key set: the top-level keys the reader
+// being modelled knows. It is a parameter rather than the constant so that a
+// test can decode one node twice — once under this binary's keys and once under
+// the set a reader that predates a key carried — because no fixture can reach
+// the older reader's answer any other way: knownTopLevelKeys holds every key
+// this release writes, so a key spelled here is never one this reader does not
+// know.
+func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 	if IsNull(raw) {
 		return nil, false, nil
 	}
@@ -720,7 +803,7 @@ func Decode(raw []byte) (*Policy, bool, error) {
 
 	var p Policy
 	for k := range doc {
-		if !knownTopLevelKeys[k] {
+		if !keys[k] {
 			p.UnknownKeys = append(p.UnknownKeys, k)
 		}
 	}
@@ -891,7 +974,7 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		if err := json.Unmarshal(rraw, &p.BitbucketAPIRoots); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: bitbucket_api_roots: %w", err)
 		}
-		if err := validBitbucketAPIRoots(p.BitbucketAPIRoots); err != nil {
+		if err := ValidBitbucketAPIRoots(p.BitbucketAPIRoots); err != nil {
 			return nil, true, err
 		}
 	}
@@ -901,6 +984,21 @@ func Decode(raw []byte) (*Policy, bool, error) {
 			return nil, true, err
 		}
 		p.ReviewFloor = floor
+	}
+	if vraw, ok := doc["verifier_accounts"]; ok && !IsNull(vraw) {
+		if err := json.Unmarshal(vraw, &p.VerifierAccounts); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: verifier_accounts: %w", err)
+		}
+		if err := ValidVerifierAccounts(p.VerifierAccounts); err != nil {
+			return nil, true, err
+		}
+	}
+	if iraw, ok := doc["image_catalog"]; ok && !IsNull(iraw) {
+		catalog, err := decodeImageCatalog(iraw)
+		if err != nil {
+			return nil, true, err
+		}
+		p.ImageCatalog = catalog
 	}
 	if craw, ok := doc["clone_urls"]; ok && !IsNull(craw) {
 		if err := json.Unmarshal(craw, &p.CloneURLs); err != nil {
@@ -964,6 +1062,91 @@ func decodeReviewFloor(raw json.RawMessage) (map[rigor.Mode][]policy.Level, erro
 		return nil, fmt.Errorf("projectpolicy: %w", err)
 	}
 	return floor, nil
+}
+
+// decodeImageCatalog reads the node's image_catalog block, strict inside the
+// way the budget and the credentials blocks are, and nil for a block that
+// names no entry — the written empty block and the absent member are one
+// catalog, which is what the publisher's own omission (and D1156's
+// byte-for-byte promise) needs to hold at both ends.
+//
+// Strictness is this package's rule wherever a mistake would be silently
+// enforced rather than merely dropped, and the catalog is exactly that: an
+// entry whose source is misread is an image a job runs that nobody defined.
+// Unknown member names are refused by the decoder; a member spelled in another
+// case is refused by checkMemberNames, because the decoder folds one name onto
+// another and {"default": true, "Default": false} is one member this reader
+// would take the last of; and the whole document is checked by
+// internal/config's own ValidateCatalog, the one function the local
+// configuration's loader applies to the same value, so the file the operator
+// writes and the node a run reads cannot disagree about what an entry is.
+func decodeImageCatalog(raw json.RawMessage) (*ImageCatalog, error) {
+	blockNames, err := objectMemberNames(raw)
+	if err != nil {
+		return nil, fmt.Errorf("projectpolicy: image_catalog: %w", err)
+	}
+	if err := checkMemberNames("image_catalog", blockNames, []string{"entries"}); err != nil {
+		return nil, fmt.Errorf("projectpolicy: %w", err)
+	}
+	// The entries and their sources are held to the same spelling check
+	// before the decoder has folded them, which is the only order that works:
+	// after it, two spellings of one member are one value.
+	var written struct {
+		Entries []json.RawMessage `json:"entries"`
+	}
+	if err := json.Unmarshal(raw, &written); err != nil {
+		return nil, fmt.Errorf("projectpolicy: image_catalog: %w", err)
+	}
+	for i, eraw := range written.Entries {
+		prefix := fmt.Sprintf("image_catalog.entries[%d]", i)
+		names, err := objectMemberNames(eraw)
+		if err != nil {
+			return nil, fmt.Errorf("projectpolicy: %s: %w", prefix, err)
+		}
+		if err := checkMemberNames(prefix, names, catalogEntryMembers); err != nil {
+			return nil, fmt.Errorf("projectpolicy: %w", err)
+		}
+		var entry map[string]json.RawMessage
+		if err := json.Unmarshal(eraw, &entry); err != nil {
+			continue
+		}
+		sraw, ok := entry["source"]
+		if !ok || IsNull(sraw) {
+			continue
+		}
+		snames, err := objectMemberNames(sraw)
+		if err != nil {
+			return nil, fmt.Errorf("projectpolicy: %s.source: %w", prefix, err)
+		}
+		if err := checkMemberNames(prefix+".source", snames, catalogSourceMembers); err != nil {
+			return nil, fmt.Errorf("projectpolicy: %w", err)
+		}
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var catalog ImageCatalog
+	if err := dec.Decode(&catalog); err != nil {
+		return nil, fmt.Errorf("projectpolicy: image_catalog: %w", err)
+	}
+	if ps := config.ValidateCatalog("image_catalog", catalog); len(ps) > 0 {
+		msgs := make([]string, len(ps))
+		for i, problem := range ps {
+			msgs[i] = problem.String()
+		}
+		return nil, fmt.Errorf("projectpolicy: %s", strings.Join(msgs, "; "))
+	}
+	if len(catalog.Entries) == 0 {
+		return nil, nil
+	}
+	return &catalog, nil
+}
+
+// ValidVerifierAccounts holds the node's verifier list to policy.ValidVerifierAccounts,
+// the one rule the local config's loader shares: it lives in internal/policy
+// because the loader cannot import this package without a cycle in the live
+// tests of internal/backend/gcp.
+func ValidVerifierAccounts(accounts []string) error {
+	return policy.ValidVerifierAccounts(accounts)
 }
 
 // validCloneURLs checks the clone_urls block, entry by entry: each key a

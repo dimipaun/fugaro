@@ -45,6 +45,7 @@ import {
 } from '../../src/renderer/section'
 import type { SectionElement } from '../../src/renderer/section'
 import { READING_STILL, READING_STILL_MS } from '../../src/renderer/screens/reading'
+import { SKELETON_BLOCK_CLASS, SKELETON_CLASS, SPEND_REPORT_SHAPE } from '../../src/renderer/skeleton'
 
 /** FakeSection is one drawn element: a tag, a text slot, its attributes and its
  * children, which is the whole of `SectionElement`. */
@@ -119,6 +120,32 @@ describe('the busy mark', () => {
     expect(classed(root, BUSY_STILL_CLASS)).toEqual([])
     expect(drawn.still.textContent).toBe(READING_STILL)
   })
+
+  it('draws the shape of what is coming only where the caller says the section is empty', () => {
+    // The two halves of the owner's complaint of 2026-10-31 are told apart by
+    // the caller, which is the only place that knows whether a read has ever
+    // landed for this section: a section **being re-read** keeps the figures it
+    // already has under the mark, and a section that has never been filled holds
+    // the shape of what it is waiting for.
+    const bare = renderBusy(factory, 'Reading spend for 7d, by day…', 'dark') as { root: SectionElement }
+    expect(classed(bare.root, SKELETON_CLASS), 'a mark over figures drew a second drawing of the section').toEqual([])
+
+    const shaped = renderBusy(factory, 'Reading spend for 7d, by day…', 'dark', SPEND_REPORT_SHAPE)
+    const root = shaped.root as FakeSection
+    // Under the label and not beside it: the mark is a wrapping row, and the
+    // skeleton is the section's own height rather than one more word in the line.
+    expect(root.children.map((child) => child.attributes.get('class'))).toEqual([
+      BUSY_SPINNER_CLASS,
+      BUSY_STILL_MARK_CLASS,
+      BUSY_LABEL_CLASS,
+      SKELETON_CLASS,
+    ])
+    const skeleton = classed(root, SKELETON_CLASS)[0]
+    expect(skeleton?.attributes.get('data-section')).toBe(SPEND_REPORT_SHAPE.section)
+    expect(classed(root, SKELETON_BLOCK_CLASS).map((one) => one.attributes.get('data-shape'))).toEqual([
+      ...SPEND_REPORT_SHAPE.blocks,
+    ])
+  })
 })
 
 describe('one section’s read', () => {
@@ -157,6 +184,46 @@ describe('one section’s read', () => {
     expect(classed(host, BUSY_STILL_CLASS), 'the still line arrived early').toEqual([])
     vi.advanceTimersByTime(1)
     expect(classed(host, BUSY_STILL_CLASS).map((one) => one.textContent)).toEqual([READING_STILL])
+  })
+
+  it('puts the shape of a section that has never been filled into that section’s own slot', () => {
+    const read = sectionRead({ factory, theme: 'light' })
+    const { host, slot } = drawnSection()
+    read.mark(read.start(), host, slot, 'Reading spend for 7d, by day…', SPEND_REPORT_SHAPE)
+    // In the slot and not on the section: the slot is the section's own first
+    // child, which is where the mark and a cached view's stamp go, and a
+    // skeleton anywhere else would be a block drawn under a table nobody
+    // scrolls to.
+    expect(slot.children.map((child) => child.attributes.get('class'))).toEqual([BUSY_CLASS])
+    expect(classed(slot, SKELETON_CLASS).map((one) => one.attributes.get('data-section'))).toEqual([
+      SPEND_REPORT_SHAPE.section,
+    ])
+
+    // A second change to the same section rewrites the label rather than
+    // stacking a second mark: one section, one mark, one skeleton -- the shape
+    // the section is still waiting for is the same shape.
+    read.mark(read.start(), host, slot, 'Reading spend for 30d, by day…', SPEND_REPORT_SHAPE)
+    expect(classed(slot, BUSY_CLASS)).toHaveLength(1)
+    expect(classed(slot, SKELETON_CLASS)).toHaveLength(1)
+    expect(classed(slot, BUSY_LABEL_CLASS).map((one) => one.textContent)).toEqual(['Reading spend for 30d, by day…'])
+  })
+
+  it('draws no skeleton over a section that has already answered', () => {
+    // The caller's half of the same rule: a change to a section that holds
+    // figures marks it over them, and the shape of what is coming is drawn only
+    // where nothing has landed.
+    const read = sectionRead({ factory, theme: 'light' })
+    const { host, slot } = drawnSection()
+    const first = read.start()
+    read.mark(first, host, slot, 'Reading spend for 7d, by day…', SPEND_REPORT_SHAPE)
+    read.settle(first)
+    // The read landed, and the caller drew its answer over the section: the slot
+    // the mark was in is empty again, and this section now holds figures.
+    slot.children.length = 0
+
+    read.mark(read.start(), host, slot, 'Reading spend for 30d, by day…')
+    expect(classed(slot, BUSY_CLASS)).toHaveLength(1)
+    expect(classed(slot, SKELETON_CLASS), 'a section being re-read was drawn as if it were empty').toEqual([])
   })
 
   it('settles only the newest token, and drops an answer whose token is older', () => {

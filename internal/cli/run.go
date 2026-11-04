@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
+	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -210,6 +211,18 @@ type runOptions struct {
 	// lower: areas are defaults, not floors (docs/project-layer.md §2), and
 	// finalize resolves again from the paths the run really changed.
 	paths []string
+	// reviewLevelsPath is --review-levels: a YAML document naming the review
+	// levels this run asks for (D724), or - for stdin. Empty (the default)
+	// is no request at all: the launch writes no field and the run resolves
+	// its levels from its own configuration, exactly as before the flag
+	// existed.
+	reviewLevelsPath string
+	// reviewLevels is reviewLevelsPath's document, decoded once
+	// (reviewLevelsFlag) into the block the task stores, or nil when the
+	// flag is not given. Kept parsed rather than as text so the refusal a
+	// near miss gets is this package's (config.ParseReviewLevelsYAML), not
+	// the runner's at bootstrap after the launch was paid for.
+	reviewLevels *config.ReviewLevels
 }
 
 func newRunCmd() *cobra.Command {
@@ -281,6 +294,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.ModeList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it, and takes no hotfix; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
 	f.StringArrayVar(&o.paths, "path", nil, "declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule")
 	f.StringVar(&o.tier, "tier", "", "the expectation tier to dispatch this run at: "+tier.List()+". It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all")
+	f.StringVar(&o.reviewLevelsPath, "review-levels", "", "read the run's own review levels from this YAML file, or - for stdin: the block the task stores as review_levels (l1, l2, l3, each of model, effort, none and focus), decoded strictly, with no key on no level meaning the configuration decides it. Asking for levels needs a job image whose runner acts on them, so a launch on an older one is refused and names fugaro image refresh; without the flag the run resolves its levels from its configuration and its mode alone")
 	f.IntVar(&o.attempts, "attempts", 0, "launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe")
 	f.BoolVar(&o.noCompression, "no-compression", false, "turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
@@ -290,7 +304,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "tier", "no-compression"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "tier", "no-compression", "review-levels"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -359,6 +373,16 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			return err
 		}
 		if text, err = taskText(cmd, o.tf, args, prSet); err != nil {
+			return err
+		}
+		// --review-levels, after the task text: - reads stdin, and the task
+		// may not have it too (an empty document would be the only thing the
+		// levels read got). Resolved here, before openCloud, so a document
+		// this launcher refuses costs no cloud call and leaves nothing.
+		if o.reviewLevelsPath == "-" && o.tf == "-" {
+			return userErr("--review-levels - and --task-file - both read stdin; pass one of them as a file")
+		}
+		if err = reviewLevelsFlag(cmd, o); err != nil {
 			return err
 		}
 		if o.totalTimeout != "" {
@@ -525,6 +549,19 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	if o.noCompression && compression {
 		spec.CompressionOff = true
 	}
+	// --review-levels writes the task's own block, on every launch shape
+	// below (a first run, each attempt of a batch, a review, a follow-up):
+	// the flag is this launcher's request for the run about to start, and a
+	// follow-up that gives it asks for its own levels rather than inheriting
+	// the run it continues — nothing else carries them, the chain being read
+	// for the title, the tier and the account alone. Written before
+	// createTask below, like --no-compression, so a repeated --run-id with a
+	// flag the stored task does not carry is refused as a different task
+	// rather than silently dropped. A --retry takes no such flag (taskFlags),
+	// so a stored task keeps the block it was launched with.
+	if o.reviewLevels != nil {
+		spec.ReviewLevels = o.reviewLevels
+	}
 	// The compression image gate's own condition, resolved here beside the
 	// write and used by both launch branches below. It is the field's as much
 	// as the configuration's, and the two halves catch different failures: a
@@ -625,6 +662,20 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// (baseBranchSkew). Here, and not with the gates below, because it
 		// decides what the task createTask writes.
 		baseBranchSkew(ctx, env, slug, spec, mode, warn)
+		// What this launch asks of its job image's runner about review
+		// levels, resolved once for the two branches below (a derived image
+		// and a checkout: clone workflow), the way compressionGate is: a
+		// launch that asks nothing is never gated, whatever its image is.
+		levelsRecipe, levelsRecipeUnknown := launchRecipeForLevels(ctx, spec)
+		// The launch is refused on the resolution's own refusal (L3.2): a run
+		// whose levels cannot be resolved — the same model at level 1 and 2, a
+		// level turned off under the owner's floor, an effort a provider route
+		// would drop — is refused here, before the task is written, rather
+		// than by the job it was launched into (G2, D721, D722).
+		levelsAsk, err := launchReviewLevelsAsk(ctx, env, spec, launchFileConfig(ctx, env, spec), levelsRecipe, levelsRecipeUnknown)
+		if err != nil {
+			return launchResult{}, err
+		}
 		// checkRecipeImage and checkImageSince judge a workflow's derived
 		// image by its build record, which a checkout: clone workflow never
 		// has (it runs the installation's base image directly, not a
@@ -640,7 +691,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 				return launchResult{}, err
 			}
 			if needsRecipeImage(spec, agentRecipe) {
-				if err := checkCloneRecipeImage(env.lc, spec, warn); err != nil {
+				if err := checkCloneRecipeImage(ctx, env.lc, spec, warn); err != nil {
 					return launchResult{}, err
 				}
 			}
@@ -716,6 +767,15 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 					tierGateSubject(o, spec), "the tier", "", warn); err != nil {
 					return launchResult{}, err
 				}
+			}
+			// The review levels' gate, judged on the run this launch
+			// resolves rather than on a task field: a mode's own level 3, a
+			// level the run inserts (O7) and the owner's floor all reach a
+			// run with no field and no configuration key, and a runner older
+			// than reviewLevelsSince drops every one of them in silence
+			// (reviewLevelsAsk).
+			if err := checkCloneReviewLevelsImage(env.lc, spec, levelsAsk, warn); err != nil {
+				return launchResult{}, err
 			}
 		} else {
 			if needsRecipeImage(spec, agentRecipe) {
@@ -802,6 +862,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 					tierGateSubject(o, spec), "the tier", "", warn); err != nil {
 					return launchResult{}, err
 				}
+			}
+			// The review levels' gate, the same as the clone branch's above
+			// and for the same reason: see reviewLevelsAsk.
+			if err := checkReviewLevelsImage(ctx, env, slug, spec, kind, levelsAsk, warn); err != nil {
+				return launchResult{}, err
 			}
 			// The digest drift, last of this branch's image reads, and the
 			// only one that never refuses: a checkout: clone workflow has no
@@ -1075,6 +1140,47 @@ func titleFlag(cmd *cobra.Command, o *runOptions) error {
 	if o.title = safetext.Field(title); strings.TrimSpace(o.title) == "" {
 		return userErr("--title: %s", "is empty (or nothing but whitespace and invisible characters)")
 	}
+	return nil
+}
+
+// reviewLevelsFlag resolves fugaro run --review-levels into the block the
+// task stores, in o.reviewLevels, and nil when the flag is not given: the
+// document is read (the file, or stdin for -) and decoded by
+// config.ParseReviewLevelsYAML — strictly, and validated — so an unknown key,
+// an effort outside the closed set, a focus over its bound or `none: true`
+// beside another key is refused here, by the launcher, rather than by the
+// runner at bootstrap after the launch was paid for.
+//
+// The flag's absence is not a block, and leaves o.reviewLevels nil: the
+// launch writes no field and the run resolves its levels from its own
+// configuration and its mode, exactly as before the flag existed (L3.1's
+// resolver is then the only writer). Its presence with nothing readable in it
+// is refused, like an empty --title: a launch that meant to ask for levels
+// and asked for none would otherwise be indistinguishable from one that did
+// not use the flag.
+func reviewLevelsFlag(cmd *cobra.Command, o *runOptions) error {
+	if !cmd.Flags().Changed("review-levels") {
+		return nil
+	}
+	var data []byte
+	var err error
+	switch o.reviewLevelsPath {
+	case "":
+		return userErr("--review-levels: pass a file, or - for stdin")
+	case "-":
+		if data, err = io.ReadAll(cmd.InOrStdin()); err != nil {
+			return userErr("reading the review levels from stdin: %v", err)
+		}
+	default:
+		if data, err = os.ReadFile(o.reviewLevelsPath); err != nil {
+			return userErr("reading the review levels: %v", err)
+		}
+	}
+	levels, err := config.ParseReviewLevelsYAML(data)
+	if err != nil {
+		return userErr("--review-levels: %v", err)
+	}
+	o.reviewLevels = levels
 	return nil
 }
 
@@ -2056,7 +2162,7 @@ func cascadeLaunchRefusal(ctx context.Context, env *cloudEnv, spec *task.Spec) e
 		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s records generation %d, below the generation %d this Fugaro's credentials rules carry, so the deployed document predates the credentials family and the first credential this run records would be refused (C1.17); re-run 'fugaro update --firebase-project <gcp-project-id>' in your own terminal from this Fugaro (%s), then launch again",
 			marker, gen, rules.CredsRulesVersion, credsServiceSince)
 	case gen > rules.CredsRulesVersion:
-		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s records generation %d, above the generation %d this Fugaro's credentials rules carry, so a newer Fugaro deployed them and this release refuses to deploy its own rules over a newer marker; upgrade Fugaro first ('fugaro upgrade') and re-run 'fugaro update --firebase-project <gcp-project-id>' with the newer binary, then launch again",
+		return userErr("agent.auth: cascade cannot run here: the credentials rules marker at %s records generation %d, above the generation %d this Fugaro's credentials rules carry, so a newer Fugaro deployed them and this release refuses to deploy its own rules over a newer marker; upgrade Fugaro first (brew upgrade dimipaun/tap/fugaro) and re-run 'fugaro update --firebase-project <gcp-project-id>' with the newer binary, then launch again",
 			marker, gen, rules.CredsRulesVersion)
 	}
 	return nil
@@ -2288,17 +2394,29 @@ func recipeForLaunch(ctx context.Context, cfg *config.Config, spec *task.Spec) *
 	}
 	data := []byte(spec.Recipe.YAML)
 	if len(data) == 0 {
-		// A repository recipe: task.json carries its name alone (the
-		// runner reads the file at the task's ref), so the launcher reads
-		// the same file from its own checkout of the repository.
-		if root == "" {
-			return nil
-		}
-		var found bool
-		var err error
-		if data, found, err = recipe.ReadRepoFile(root, spec.Recipe.Name); err != nil || !found {
-			return nil
-		}
+		return repoRecipeFrom(spec, root)
+	}
+	rcp, ps := recipe.Parse(data)
+	if len(ps) > 0 {
+		return nil
+	}
+	return rcp
+}
+
+// repoRecipeFrom is a repository recipe's own file: task.json carries its
+// name alone (the runner reads the file at the task's ref), so the launcher
+// reads the same file from its own checkout of the repository. nil when this
+// checkout is not the repository's, the file is not there, or it does not
+// parse — the runner's bootstrap is the backstop for all three, and the
+// image gates judge what it returns the same way they judge an embedded
+// recipe (repoRecipeForGate).
+func repoRecipeFrom(spec *task.Spec, root string) *recipe.Recipe {
+	if root == "" {
+		return nil
+	}
+	data, found, err := recipe.ReadRepoFile(root, spec.Recipe.Name)
+	if err != nil || !found {
+		return nil
 	}
 	rcp, ps := recipe.Parse(data)
 	if len(ps) > 0 {
@@ -2674,6 +2792,165 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 	return l, nil
 }
 
+// catalogDockerAsk answers whether this run needs a Docker daemon because the
+// image the job it is about to start IS DEPLOYED WITH carries the docker tag
+// (D1149), and refuses the launch where the backend that job would run on
+// cannot give it one.
+//
+// The image is the deployed job's own and never a fresh selection. A job's
+// image is fixed when the job is deployed (F7) — Cloud Run cannot vary it per
+// execution — so a catalog.Choose run here would answer about an image the
+// run does not start on: the catalog may have been edited, or the published
+// policy republished, between the deploy and this launch. The entry is
+// therefore read back from the deployed image (CatalogImageEntry of the
+// shared registry's catalog-<entry>:latest, or the entry's own reference when
+// the catalog uses a prebuilt image), and the tag's rule is asked of that
+// entry.
+//
+// It is the tag's own rule and not the workflow's `docker: true`, which the
+// backend refuses by itself (LaunchSpec.Docker is that ask, and the workflow
+// key reaches it through the task): a docker-tagged entry is an ordinary
+// candidate on the VM backend and never one on Cloud Run, which is decided
+// where the job's image is chosen (internal/infra) and judged here again
+// because the launcher is what picks the backend — a job deployed for one
+// backend, launched onto the other, would otherwise start and die on its
+// first docker command.
+//
+// Which jobs the catalog speaks for is catalog.Applies, the same predicate the
+// deploy-time spec builder uses: a workflow that keeps its own image
+// definition, or that runs the base or a shared layer, is not the catalog's,
+// and asking the rule on its behalf would refuse a launch for an entry the job
+// does not run.
+//
+// A catalog that no longer agrees with the deployed image — the entry the
+// image is was removed or renamed, the workflow now pins another one, or the
+// entry no longer covers what the workflow needs — is refused, naming `fugaro
+// update`: the launcher cannot change a deployed job's image, and going on
+// would apply the tag's rule to an entry the run does not have. Nothing else
+// the ask can say refuses a launch: a backend that has no deployed job to
+// read (Cloud Batch starts one per run and keeps none) cannot be asked at all,
+// a job not deployed yet is refused by the launch's own step, and a catalog
+// the launcher cannot read — no checkout of this repository, no fugaro.yaml, a
+// file this binary cannot parse — is the deploy-time arm's to refuse (F7).
+//
+// The workflow it judges is the one in this launcher's working tree, as the
+// artifact gate's recipe is (recipeForLaunch) and for the same reason: the
+// launcher has the operator's checkout and the runner reads the task's ref. A
+// launch whose ref says something else is therefore judged by the tree, which
+// is the residual the deploy-time arm does not have — that arm builds the spec
+// the job is deployed with, from the same file (F7).
+func catalogDockerAsk(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (bool, error) {
+	co := checkoutConfig(ctx, spec.Repo)
+	if co == nil {
+		return false, nil
+	}
+	w, ok := co.Workflows[spec.Workflow]
+	if !ok {
+		return false, nil
+	}
+	var published *config.Catalog
+	if p, found, err := env.policy.read(ctx, env.lc); err != nil {
+		return false, remote(policyReadErr(err))
+	} else if found {
+		published = p.ImageCatalog
+	}
+	cat := env.lc.ImageCatalogEffective(published)
+	if cat == nil || !catalog.Applies(*cat, w) {
+		return false, nil
+	}
+	// The job is the workflow's own: the catalog's jobs are per-repository
+	// ones, and the sole kind a shared project job runs — a clone workflow
+	// (launchProjectJobFor) — is the kind catalog.Applies has just taken out
+	// of this rule.
+	variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken)
+	if !ok {
+		// Not a job name: the launch itself refuses the variant a few lines
+		// on.
+		return false, nil
+	}
+	name := gcp.JobName(slug, variant)
+	be, ok := env.be.(jobImageReader)
+	if !ok {
+		// A backend that keeps no deployed job to read (Cloud Batch starts
+		// one per run and keeps none) cannot say what image the run starts
+		// on, so the tag's rule has nothing to judge here.
+		return false, nil
+	}
+	image, deployed, err := be.JobImage(ctx, name)
+	if err != nil {
+		return false, remote(err)
+	}
+	if !deployed {
+		// Not deployed: nothing can start on an image this rule has not seen,
+		// and the launch's own step refuses the missing job.
+		return false, nil
+	}
+	entry, ok := catalogEntryOf(*cat, image)
+	if !ok {
+		return false, catalogMovedErr(spec.Workflow, name, image)
+	}
+	// A pin is the repository's own claim about which entry its job runs, and
+	// it is a claim about the deployed image too (D1155): a repository that
+	// now names another entry has a job deployed with an image this catalog
+	// does not give it.
+	if w.ImageName != "" && w.ImageName != entry.Name {
+		return false, catalogMovedErr(spec.Workflow, name, image)
+	}
+	// The tags the workflow needs, against the entry the job actually runs:
+	// the deploy refused an uncovered needed set before the job existed, so
+	// this one changed under it.
+	if !catalog.Covers(entry.Tags, w.Needs) {
+		return false, catalogMovedErr(spec.Workflow, name, image)
+	}
+	if !slices.Contains(entry.Tags, catalog.DockerTag) {
+		return false, nil
+	}
+	if catalog.Backend(launchBackend(env.be)) == catalog.Batch {
+		return true, nil
+	}
+	// The deployed image carries the tag on a backend with no daemon.
+	return false, userErr("workflow %s: %v", spec.Workflow, catalog.DockerOnCloudRunError())
+}
+
+// jobImageReader is the backend's deployment read (gcp.Backend.JobImage): the
+// image a job is deployed with. Declared where it is used, like the optional
+// backend methods the warnings take (installedChecks): a backend whose jobs
+// exist only for the length of a run answers it not at all.
+type jobImageReader interface {
+	JobImage(ctx context.Context, job string) (string, bool, error)
+}
+
+// catalogEntryOf is the one catalog entry whose image image is, and whether
+// the catalog holds exactly one: the deployed image read against the
+// spellings the deploy gives a job's image (internal/infra's repoCtx.
+// catalogImage) — an entry the catalog builds is the shared registry's
+// catalog-<entry>:latest (D1152), and one whose source is a prebuilt
+// reference is that reference itself. No entry is a catalog that no longer
+// gives this job its image, and two would make the tag rule's answer a guess.
+func catalogEntryOf(cat config.Catalog, image string) (config.Entry, bool) {
+	built, shared := gcp.CatalogImageEntry(image)
+	var found config.Entry
+	n := 0
+	for _, e := range cat.Entries {
+		matches := e.Source.Kind == config.SourceImage && e.Source.Image == image
+		if !matches && shared && e.Source.Kind != config.SourceImage {
+			matches = e.Name == built
+		}
+		if matches {
+			found, n = e, n+1
+		}
+	}
+	return found, n == 1
+}
+
+// catalogMovedErr refuses a launch whose job was deployed with an image this
+// catalog no longer gives its workflow. The job keeps the image it was
+// deployed with (F7), so the fix is to deploy it again, and the message names
+// the one command that does.
+func catalogMovedErr(workflow, job, image string) error {
+	return userErr("workflow %s: the job %s is deployed with the image %s, which this project's image catalog no longer gives it; a job keeps the image it was deployed with, so run `fugaro update` to deploy it again with this project's catalog", workflow, job, image)
+}
+
 // launchRun starts spec's execution, stored under slug, at most once, however many CLIs race
 // on the same run ID (design §4.7, Review Focus 1):
 //
@@ -2781,6 +3058,20 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		rcancel()
 		return res, userErr("run %s was cancelled; start a new one", res.Run)
 	}
+	// The docker tag's rule, before anything of this launch is written or
+	// reported (D1149): a run whose DEPLOYED job image carries the docker tag
+	// is refused here on a backend with no daemon, and on the VM backend the
+	// answer asks the backend for the socket. Before the mint below, so a
+	// refused launch has no token to drop, and before the declaration, which
+	// is the coordinator's record that this run is about to work — a refusal
+	// must leave nothing behind that says otherwise.
+	docker, err := catalogDockerAsk(hctx, env, slug, spec)
+	if err != nil {
+		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		releaseClaim(rctx, env, s, holder)
+		rcancel()
+		return res, err
+	}
 	// The launch declares itself to the coordinator's record (P4), beside the
 	// claim it just won: the caller the task already names, the branch the run
 	// is about to work on and the release that branch targets. It is a
@@ -2830,7 +3121,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, userErr("workflow %s is not a plain workflow name, so it can't be combined with Claude account %s; nothing started", oneLineCLI(spec.Workflow), pluginwire.Printable(spec.OAuthToken))
 	}
 	lctx, cancel := context.WithTimeout(hctx, launchTimeout)
-	lspec := backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: variant, RunID: spec.RunID, Timeout: launchTimeoutOf(spec)}
+	lspec := backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: variant, RunID: spec.RunID, Timeout: launchTimeoutOf(spec), Docker: docker}
 	if job != nil {
 		// The shared project job, by its own name. FUGARO_RUN is still set
 		// (backend/gcp's Launch): on a job every repository shares it is the

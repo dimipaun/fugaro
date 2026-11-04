@@ -17,15 +17,28 @@ import (
 // lockKeyHex is a key of the shape Key returns, and not a real one.
 const lockKeyHex = "9f2c1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f"
 
-// lockEntry is one image as §3.1 writes it.
-func lockEntry() string {
-	return `"` + lockKeyHex + `":{"key":"` + lockKeyHex + `",` +
-		`"image":"registry.example/fugaro-shared/img-9f2c1a2b3c4d",` +
+// otherLockKeyHex is a second key of that shape: two of them are what the
+// one-job rule is about.
+const otherLockKeyHex = "0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9"
+
+// entryUnder is one image as §3.1 writes it, keyed by key.
+func entryUnder(key string) string {
+	return `"` + key + `":{"key":"` + key + `",` +
+		`"image":"registry.example/fugaro-shared/img-` + key[:12] + `",` +
 		`"digest":"` + baseDigest + `","base_ref":"web","base_digest":"` + baseDigest + `",` +
-		`"packages":["left-pad@1.3.0"],"tools":["node@22.11.0"],` +
+		`"packages":["\"left-pad\" \"1.3.0\" \"\""],"tools":["node@22.11.0"],` +
 		`"built_at":"2026-10-29T09:12:04Z","build_id":"1234",` +
 		`"repositories":["owner/repo-a"],"jobs":{"owner/repo-a":"fugaro-repo-a-web"},` +
 		`"last_used_at":"2026-10-29T09:40:11Z"}`
+}
+
+// lockEntry is one image, under the key these tests' locks store it.
+func lockEntry() string { return entryUnder(lockKeyHex) }
+
+// twoImagesOneJob is one repository's job placed on two images: each entry is
+// one the writer could have written, and the pair of them is not.
+func twoImagesOneJob() string {
+	return `{"version":1,"images":{` + entryUnder(lockKeyHex) + `,` + entryUnder(otherLockKeyHex) + `}}`
 }
 
 // nullIsAbsent is why the four null fixtures below read differently: a JSON
@@ -86,6 +99,12 @@ func lockFixtures() []lockFixture {
 		{name: "a null tools list", doc: `{"version":1,"images":{"` + lockKeyHex + `":{"tools":null}}}`, ok: true, schema: false, why: nullIsAbsent},
 		{name: "a null repositories list", doc: `{"version":1,"images":{"` + lockKeyHex + `":{"repositories":null}}}`, ok: true, schema: false, why: nullIsAbsent},
 		{name: "a null jobs object", doc: `{"version":1,"images":{"` + lockKeyHex + `":{"jobs":null}}}`, ok: true, schema: false, why: nullIsAbsent},
+		// A rule about two entries at once, and the one difference the
+		// schema cannot state: each entry of this lock is one the writer
+		// could have written, and the pair of them is not (see
+		// TestLockRefusesTwoKeysForOneRepositoryWorkflow).
+		{name: "one job on two images", doc: twoImagesOneJob(), ok: false, schema: true,
+			why: "one job on two entries is a rule about two entries at once, and a schema that validates one entry has no way to state it"},
 	}
 }
 
@@ -116,7 +135,7 @@ func TestLockDecodesStrictly(t *testing.T) {
 
 // TestLockSchemaAgreesWithTheDecoder: the published schema
 // (schemas/image-lock.schema.json) and the decoder accept and refuse the
-// same documents, and the two differences that exist are the fixtures'
+// same documents, and the three differences that exist are the fixtures'
 // stated ones rather than a hole. Neither can be widened alone — a document
 // the decoder takes and the schema rejects, or the other way round, is one
 // of the two lying about what the lock is.
@@ -158,6 +177,82 @@ func TestLockSchemaAgreesWithTheDecoder(t *testing.T) {
 				t.Errorf("the decoder says ok=%v and the schema says ok=%v for:\n%s\nand the fixture gives no reason", tc.ok, tc.schema, tc.doc)
 			}
 		})
+	}
+}
+
+// TestLockRefusesTwoKeysForOneRepositoryWorkflow: a job is one repository and
+// one workflow, and it runs one image. Were a lock to place one job on two
+// entries, a launch asking which image a job is on (§9's question) would
+// answer with whichever entry it met first — and so would the job's image
+// depend on map order — so the decoder refuses such a lock and names the job
+// and both keys it found it on.
+func TestLockRefusesTwoKeysForOneRepositoryWorkflow(t *testing.T) {
+	_, err := ParseLock([]byte(twoImagesOneJob()))
+	if err == nil {
+		t.Fatal("ParseLock read a lock placing one job on two images")
+	}
+	for _, want := range []string{"fugaro-repo-a-web", "owner/repo-a", lockKeyHex, otherLockKeyHex} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error %q does not name %q", err, want)
+		}
+	}
+	// One repository with two workflows is two jobs on two images, which is
+	// the ordinary case: the rule is about a job, not about a repository.
+	two := `{"version":1,"images":{` + entryUnder(lockKeyHex) + `,` +
+		strings.Replace(entryUnder(otherLockKeyHex), "fugaro-repo-a-web", "fugaro-repo-a-api", 1) + `}}`
+	if _, err := ParseLock([]byte(two)); err != nil {
+		t.Errorf("ParseLock refused one repository's two workflows on two images: %v", err)
+	}
+	// Two repositories whose jobs happen to carry the SAME name are two jobs
+	// too, and they may be on two images: a repository's job names are its own,
+	// so reading the name alone would refuse this lock. One job RENAMED between
+	// two entries is what neither reading catches — §3.1 names that as the
+	// refresh's job, C8b1b — because a name is all the lock states of a job.
+	twoRepos := `{"version":1,"images":{` + entryUnder(lockKeyHex) + `,` +
+		strings.ReplaceAll(entryUnder(otherLockKeyHex), "owner/repo-a", "owner/repo-b") + `}}`
+	if _, err := ParseLock([]byte(twoRepos)); err != nil {
+		t.Errorf("ParseLock refused two repositories' same-named jobs on two images: %v", err)
+	}
+}
+
+// TestLockReadForbiddenIsAnError: the lock's read is strict, so a refusal is
+// an error naming the remedy and never an absent lock. The two answers send a
+// caller opposite ways — one is a permissions fault to fix, the other is an
+// installation that may simply not use the shared images yet — and a caller
+// that read a 403 as absence would permit what it cannot see.
+func TestLockReadForbiddenIsAnError(t *testing.T) {
+	ctx := context.Background()
+	refused := &fakeLockBucket{readErr: blobx.ErrForbidden}
+	lock, err := ReadLock(ctx, refused)
+	if lock != nil || err == nil {
+		t.Fatalf("ReadLock on a refused read: lock=%+v err=%v", lock, err)
+	}
+	if !errors.Is(err, blobx.ErrForbidden) {
+		t.Errorf("the error %q does not wrap the bucket's refusal", err)
+	}
+	for _, want := range []string{LockKey, "403", "read access"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error %q does not name %q", err, want)
+		}
+	}
+
+	// An installation with no lock is not an error, and the lock comes back
+	// when it is there.
+	none := &fakeLockBucket{}
+	if lock, err = ReadLock(ctx, none); lock != nil || err != nil {
+		t.Errorf("ReadLock with no object: lock=%+v err=%v", lock, err)
+	}
+	if none.key != LockKey {
+		t.Errorf("ReadLock read %q, want %q", none.key, LockKey)
+	}
+	there := &fakeLockBucket{exists: true, data: []byte(`{"version":1,"images":{` + lockEntry() + `}}`)}
+	if lock, err = ReadLock(ctx, there); err != nil || lock == nil || len(lock.Images) != 1 {
+		t.Errorf("ReadLock of a lock that is there: lock=%+v err=%v", lock, err)
+	}
+	// A lock this build cannot read is that error, not an absent one.
+	older := &fakeLockBucket{exists: true, data: []byte(`{"version":2,"images":{}}`)}
+	if _, err = ReadLock(ctx, older); err == nil || !strings.Contains(err.Error(), "version 2") {
+		t.Errorf("ReadLock of a lock from a newer fugaro: %v", err)
 	}
 }
 

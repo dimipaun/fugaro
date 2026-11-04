@@ -151,6 +151,30 @@ func CoordinatorTokenPermissions() map[string]string {
 // GitHub for different reaches on the same run.
 func RunTokenPermissions() map[string]string { return maps.Clone(tokenPermissions) }
 
+// reviewTokenPermissions is what a review job's installation token asks for
+// (CSR1 of docs/cloud-senior-review/implementation-plan.md, D883): the head it
+// reads and the pull request it reviews, and no value carrying a write
+// anywhere. It is the fifth set, beside the run's, the build's, the challenger
+// arm's and the coordinator's, and a set of its own rather than a level taken
+// off the run's for the coordinator's reason: a review job is not a run, so a
+// later change to either must not silently widen the other.
+//
+// A write here would be a write credential in the container that runs the head
+// under review -- and the read-only set is not a boundary by itself (F3): what
+// makes it one is the job that holds it, which mounts no App key, so the token
+// is minted by the credentials service and fetched by the job (D893 (c)).
+// This package builds no caller for this set, because every mint in this tree
+// happens where the App key is mounted and a review job holds no key (F16).
+var reviewTokenPermissions = map[string]string{
+	"contents": "read", "pull_requests": "read", "metadata": "read",
+}
+
+// ReviewTokenPermissions are the permissions of a review job's installation
+// token, a copy the caller may keep: the read-only set the credentials
+// service's mint must serve for a review identity (C3.9). Nothing here asks to
+// write anything, and the set's own test holds it to exactly these three.
+func ReviewTokenPermissions() map[string]string { return maps.Clone(reviewTokenPermissions) }
+
 // GitUsername is the HTTPS username git uses with an installation token.
 const GitUsername = gitUsername
 

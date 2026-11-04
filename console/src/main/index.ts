@@ -61,14 +61,24 @@ import type { SpawnLogWriter } from './spawnlog'
 import { parseInstallationsDocument } from './installlist'
 import { createLaunchRunner, DECLINING_CONFIRMER } from './launch'
 import type { FrozenLaunch, LaunchRequest, TargetLookup } from './launch'
+import type { CrashReportingHandle } from './crash-electron'
+import { startCrashReportingSafely } from './crash'
+import { createCrashSettings, readCrashSwitch } from './crashstore'
 import { startUpdates } from './updater-electron'
 import { createUpdateSettings } from './updatestore'
 import type { UpdateController } from './updates'
 import { CONFIRM_ENTRY_URL, createConfirmWindow } from './confirm'
+import { createSettingsEdit, DECLINING_SETTINGS_EDITOR } from './settingsedit'
+import type { SettingsEditRunner } from './settingsedit'
 import { launchFingerprint } from './launchrules'
 import type { LaunchRecordFacts } from './launchrules'
 import type { InstallationsListReply } from './onboarding'
-import { reducedModeHandlers, registerConsoleHandlers, startupCompatibility } from './ipc'
+import {
+  openPullRequestHandler,
+  reducedModeHandlers,
+  registerConsoleHandlers,
+  startupCompatibility,
+} from './ipc'
 import type { ConsoleHandlers, ValidatedArguments } from './ipc'
 import { handlersFor } from '../source/source'
 import { createBoundSource } from '../source/cli'
@@ -435,16 +445,28 @@ const resolvedBinaries = new Map<string, string>()
 const boundSource = createBoundSource({ installation: activeBinding, appEnv: process.env })
 
 /**
- * openExternalFromShell is the surface's one operation that is not a read of the
- * CLI: it hands the URL to `openExternalValidated`, which is the console's one
+ * openExternalFromShell is the surface's operation that hands over a URL it was
+ * given: it passes it to `openExternalValidated`, which is the console's one
  * call to `shell.openExternal` and its own allow-list (`src/main/window.ts`). The
  * argument is narrowed here and validated there; a value that is not a string
  * cannot be a URL this console opens, so it is refused by the same function
  * rather than by a second check written here.
+ *
+ * `openPullRequestFromShell` is the other half, and the reason the two are not
+ * one operation: that one is handed a URL, and this one is handed the three
+ * fields a URL is built from. It passes the shell in as the opener, so the
+ * build and the refusal are `openPullRequestHandler`'s (`src/main/ipc.ts`) --
+ * a rule that security-sensitive is written where a test can reach it rather
+ * than in this file, which loads Electron's runtime and so cannot be imported
+ * under a test at all.
  */
 async function openExternalFromShell(raw: unknown): Promise<void> {
   await openExternalValidated(shell, typeof raw === 'string' ? raw : '')
 }
+
+/** openPullRequestFromShell is `link.openPullRequest`'s wiring: the built URL,
+ * and nothing else, reaches `openExternalValidated`. */
+const openPullRequestFromShell = openPullRequestHandler((url) => openExternalValidated(shell, url))
 
 /**
  * launchRequest narrows the operation's five validated fields to the launcher's
@@ -725,14 +747,29 @@ let launchRunner = createLaunchRunner({
 })
 
 /**
+ * settingsEditRunner is the settings edit's flow, and its default declines for
+ * `launchRunner`'s reason: before `main` has built the confirmation window and
+ * the source, an edit has nothing to read, nothing to show and nowhere to write,
+ * and `DECLINING_SETTINGS_EDITOR` says so rather than leaving a half-built flow
+ * reachable. `main` replaces it with the real one over the **same** window the
+ * launcher uses (D1115: one window, two questions).
+ *
+ * Its `cancelFor` is called from the two places the rail learns an installation
+ * moved, beside the launcher's.
+ */
+let settingsEditRunner: SettingsEditRunner = DECLINING_SETTINGS_EDITOR
+
+/**
  * gated is the whole surface, and it is the join the two modules describe:
  * `handlersFor` answers the twelve operations that read the CLI -- eleven
  * before console L5b added `runs.stats` (`src/source/source.ts`'s
  * `FugaroSource` lists them) -- over
  * `boundSource`, so each of them reaches the active installation's own binary
- * and nothing else), and `startup.compatibility` is joined in here because it is
- * the one operation whose answer is the console's own state rather than a read
- * (`CliBackedHandlers` in `src/source/source.ts` says so from the other side).
+ * and nothing else), and the three operations that are not reads of the CLI are
+ * joined in here -- `startup.compatibility`, whose answer is the console's own
+ * state, and the launch and the pull request link, which are the console's one
+ * write and its one built link (`CliBackedHandlers` in `src/source/source.ts`
+ * says so from the other side).
  *
  * `reducedModeHandlers` wraps the result in `registerHandlers` below rather than
  * here, so that what this constant holds is the surface and what the wrapper
@@ -768,6 +805,28 @@ const gated: ConsoleHandlers = {
   // declining launcher above answers every launch with `DECLINED_UNBUILT`, and
   // this operation has no way to a child at all.
   'run.launch': (args) => launchRunner.launch(launchRequest(args)),
+  // **The pull request link, and the one URL this console builds** (K2a, D814
+  // and D815). Joined here for the same reason the two above are: it reads no
+  // CLI, so `handlersFor` leaves it out. What it is handed is three fields of a
+  // document and no URL at all, and what reaches `shell.openExternal` is the
+  // URL `pullRequestUrl` built from them -- the first gate is the build, and
+  // `openExternalValidated` inside the opener is the second.
+  'link.openPullRequest': openPullRequestFromShell,
+  // **The settings edit, and the console's other write** (the settings-edit
+  // plan's C3, design section 5.1 rule 12, D1115). It is joined here for the
+  // same reason the launch is: it is not a read of the active installation's
+  // source, `handlersFor` leaves it out (`CliBackedHandlers` in
+  // `src/source/source.ts` says so from the other side), and what it needs is
+  // the confirmation window -- which is built in `main`, after this constant.
+  // So the runner is read at message time: before `main` an edit meets
+  // `DECLINING_SETTINGS_EDITOR` and writes nothing.
+  //
+  // **The layer and the value are not the renderer's to name.** The request the
+  // renderer sends is a subcommand, a key and a value (`settings.edit`'s schema
+  // closes exactly those), and the layer is read out of a settings document this
+  // process fetched (`settingsedit.ts`). The argv a write spawns is the argv the
+  // window drew, and the source refuses a plan that differs from it.
+  'settings.edit': (args) => settingsEditRunner.edit(args),
 }
 
 /**
@@ -877,10 +936,62 @@ const lifecycle = createConsoleLifecycle({
 let picker: InstallationPicker | null = null
 
 /**
+ * crashReporting is the handle `startCrashReporting` answered, and it is null
+ * until `main` runs -- and stays null when the gate is shut, which is every
+ * start today. The quit path below is the one thing that needs it.
+ */
+let crashReporting: CrashReportingHandle | null = null
+
+/**
  * main is what `whenReady` resolves into: serve the bundle once, then run the
  * startup. Everything a second call would repeat is in `lifecycle.activate`.
  */
 async function main(): Promise<void> {
+  // **The crash reporter comes up before anything it could report on, and the
+  // module that holds the SDK comes up with it and not before.** The switch is
+  // the console's own per-user file (`crash.json`), read here -- before this
+  // function's first `await`, so the answer is the file's at the moment the app
+  // is ready rather than one a later stage could have moved -- and it is handed
+  // to the gate as a **value**. The gate is an allow test rather than a list of
+  // the answers that shut it: only the file's own `true` reaches the reporter, so
+  // `"true"`, `1` and a file that cannot be read are off because they are not a
+  // yes rather than because this file knows their names (`./crashstore` refuses
+  // them once and `crashReportingDecision` refuses them again). What follows from
+  // it is the whole of this slice's cost: in a console whose switch is not a yes,
+  // `./crash-electron` and the fourteen packages `@sentry/electron/main` reaches
+  // are never loaded and no client exists to start -- so a start that reports
+  // nothing pays nothing for the wiring that would.
+  //
+  // **A start that fails after the yes is a console that still starts.** The load
+  // and the client are two things that can fail -- an import that rejects (a
+  // damaged archive, a file the build did not carry) and an `init` that throws --
+  // and neither may keep the window from opening. Both are caught by
+  // `startCrashReportingSafely`, which answers `null` and says one constant line:
+  // `crashReporting` stays null, the quit path below has nothing to close, and
+  // this function carries on to the rest of the startup. Everything after that is
+  // `startCrashReporting`'s own: the DSN constant of every build (`./crash-dsn`)
+  // and the app root the frames are cut at.
+  //
+  // The reporter is wired here rather than beside the window because a crash
+  // before the window opens is the one an operator most wants back, and because
+  // the handle has to be closed on the way out.
+  const optedIn: unknown = readCrashSwitch(app.getPath('userData'))
+  if (optedIn === true) {
+    // The `.js` is the CommonJS build's spelling rather than a file this source
+    // tree has: `dist/main/index.js` carries this `import()` as `tsc` emitted it
+    // (`module: Node16` keeps the real dynamic import in CommonJS output), and
+    // `dist/main/crash-electron.js` is the file it resolves to --
+    // `test/e2e/crash-init.spec.ts` resolves the emitted specifier and loads it
+    // for that reason. The type-checking config resolves either spelling, so it
+    // is the build that decides.
+    crashReporting = await startCrashReportingSafely({
+      load: () => import('./crash-electron.js'),
+      input: { optedIn, appRoot: app.getAppPath() },
+      log: (line) => {
+        console.error(line)
+      },
+    })
+  }
   // The icon first, and before any window exists: an unpackaged console has no
   // bundle to carry `build/icon.png`, so until this runs the dock shows
   // Electron's own icon rather than the website's mark (the owner's brief of
@@ -908,19 +1019,38 @@ async function main(): Promise<void> {
   // every launch would be declined. `dashboardWindow` is the parent, so the
   // window is modal over the dashboard and never over the picker or over another
   // confirmation.
+  // **One confirmation window, two questions** (D1115). It is built once, here,
+  // and both flows are built over it: the launcher (rule 11) and the settings
+  // edit (rule 12). Its `open` decides its own subject's shape, its own preload
+  // and its own sender gate, so neither flow has a window of its own -- which is
+  // the whole of what "one implementation" means for a modal over the dashboard.
+  const confirmer = createConfirmWindow({
+    BrowserWindow,
+    ipcMain,
+    parent: dashboardWindow,
+    appPath: app.getAppPath(),
+    entryUrl: CONFIRM_ENTRY_URL,
+    session: session.defaultSession,
+  })
   launchRunner = createLaunchRunner({
     lookUp: launchLookUp,
     stillRecorded: launchStillRecorded,
-    confirmer: createConfirmWindow({
-      BrowserWindow,
-      ipcMain,
-      parent: dashboardWindow,
-      appPath: app.getAppPath(),
-      entryUrl: CONFIRM_ENTRY_URL,
-      session: session.defaultSession,
-    }),
+    confirmer,
     appEnv: process.env,
     log: createSpawnLog(process.env),
+  })
+  // **The settings edit's flow, over the same window.** Its three reads are the
+  // bound source's own: the read that names the layer and the row is
+  // `settings.read` (C1's operation), and the dry run and the write are
+  // `settings.edit`'s two phases (`src/source/source.ts`), so every child an
+  // edit spawns is one the source's plan built for the active installation and
+  // nothing else. Built only from `main`, so the runner the surface reads is
+  // either this one or the declining default and never a half-built pair.
+  settingsEditRunner = createSettingsEdit({
+    readSettings: async () => ({ document: (await boundSource.readSettings({})).document }),
+    argvForEdit: (args, phase, layer) => boundSource.settingsEditArgv(args, phase, layer),
+    spawnEdit: (args, phase, layer, shown) => boundSource.settingsEdit(args, phase, layer, shown),
+    confirmer,
   })
   // **The update policy comes up with the launcher it defers to**, and before
   // the surface exists: `startUpdates` answers null on anything but a packaged
@@ -942,6 +1072,12 @@ async function main(): Promise<void> {
     directory: app.getPath('userData'),
     controller: () => updates,
   })
+  // **The crash switch's one source is `crash.json`**, and it is the same file
+  // the startup above read: the menu item writes it and answers with what the
+  // file says afterwards, and the next launch's read is what the change applies
+  // to. Nothing is started or stopped here -- the reporter is created once, in
+  // `main`, and this is the setting that decides whether it is.
+  const crashSettings = createCrashSettings({ directory: app.getPath('userData') })
   updates = startUpdates({
     isLaunchFlowIdle: () => launchRunner.isIdle(),
     switchOn: () => updateSettings.auto,
@@ -966,8 +1102,12 @@ async function main(): Promise<void> {
       // Rule 11's "re-chosen": a launch names its own installation rather than
       // the active one, so the installation being chosen again is the window
       // that must close. Before `lifecycle.choose`, so the cancel is decided
-      // while the old installation's window is still the only one open.
+      // while the old installation's window is still the only one open. The
+      // settings edit's window is the same window (D1115), so the same move
+      // cancels it: an edit read from a project that is no longer the active one
+      // would write to the wrong installation.
       launchRunner.cancelFor(chosen.project)
+      settingsEditRunner.cancelFor(chosen.project)
       resolvedBinaries.set(chosen.project, chosen.resolvedBinaryPath)
       return lifecycle.choose(chosen.compatibility).catch(reportAndQuit)
     },
@@ -988,7 +1128,22 @@ async function main(): Promise<void> {
     // launch that project has open, active row or not.
     onRecordRemoved: (project) => {
       launchRunner.cancelFor(project)
+      settingsEditRunner.cancelFor(project)
     },
+    // The crash reporter's checkbox, on the platforms the owner's ruling of
+    // 2026-10-30 gives it (`darwin` and `linux`) and not on Windows. It is the
+    // console's own setting rather than the updater's, so it is handed over
+    // whether or not a controller is running: the Linux build has no updater and
+    // still has this item, which is why it is not inside the `updates === null`
+    // test below.
+    ...(process.platform === 'darwin' || process.platform === 'linux'
+      ? {
+          crashMenu: {
+            send: crashSettings.send,
+            setSend: (on) => crashSettings.setSend(on),
+          },
+        }
+      : {}),
     // The two update items, handed over **only while a controller is running**:
     // `startUpdates` answered null on everything that is not a packaged macOS
     // app, so the menu carries neither item off a Mac and in development, and
@@ -1055,10 +1210,18 @@ app.on('before-quit', (event) => {
   // it running would leave a check that finishes -- and prompts -- into a
   // process on its way out.
   updates?.stop()
-  void boundSource
-    .close()
-    .catch(() => undefined)
-    .finally(() => app.quit())
+  // The reporter goes with the child, and the quit waits for both: `close`
+  // gives up on the request the transport has in flight after
+  // `CLOSE_TIMEOUT_MS` -- the console's own bound, because neither the client's
+  // `close` nor the electron-net transport carries one -- so a report that was on
+  // its way is not cut off by the process ending, and a stalled endpoint is not
+  // a quit that never happens. The two run together rather than one after the
+  // other, because neither has anything to do with the other -- one is a socket
+  // and one is a `SIGTERM`.
+  void Promise.all([
+    crashReporting?.close() ?? Promise.resolve(),
+    boundSource.close().catch(() => undefined),
+  ]).finally(() => app.quit())
 })
 
 // Note which of the two halves this calls. `serveBundle` here would re-register

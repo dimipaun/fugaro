@@ -539,23 +539,27 @@ func TestValidateWarnsOnLooserThanCeiling(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatal(err)
 	}
-	// 4, not 3: workflows.app also warns that the image installs no
+	// 5, not 3: workflows.app also warns that the image installs no
 	// language runtime (no mise.toml, .tool-versions or image.tools),
-	// unrelated to the ceiling checks this test is about.
-	if !got.Valid || len(got.Problems) != 0 || len(got.Warnings) != 4 {
+	// unrelated to the ceiling checks this test is about, and the review-level
+	// resolver warns that the senior review names the coder's own model
+	// (pinnedAgent's model is both roles', L3.1/L3.2).
+	if !got.Valid || len(got.Problems) != 0 || len(got.Warnings) != 5 {
 		t.Fatalf("json = %+v", got)
 	}
-	// A tighter file says nothing about the ceilings. Two ceiling-unrelated
+	// A tighter file says nothing about the ceilings. Three ceiling-unrelated
 	// lines still fire — the pinned Claude model needs a stored Anthropic key
 	// (the file's enforce is the effective mode), which is a note, not a
-	// warning, and cliMinimalYAML's workflow installs no language runtime
-	// either way — and both are stripped out by their own exact text before
-	// asserting no warning at all remains, so a ceiling-unrelated warning this
-	// test does not expect (a clamp, say) would still be caught.
+	// warning, cliMinimalYAML's workflow installs no language runtime either
+	// way, and the review-level resolver's coder-model warning above — and all
+	// are stripped out by their own exact text before asserting no warning at
+	// all remains, so a ceiling-unrelated warning this test does not expect (a
+	// clamp, say) would still be caught.
 	path = fileWithBudget(t, "budget: { mode: observe, per_run_usd: 5 }\n", "budget: { mode: enforce, per_run_usd: 2 }\n", pinnedAgent)
 	_, errOut, err = execute(t, "validate", path)
 	stripped := strings.Replace(errOut, "note: agent.auth: "+anthropicKeyNeeded+"\n", "", 1)
 	stripped = strings.Replace(stripped, "warning: workflows.app: no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)\n", "", 1)
+	stripped = strings.Replace(stripped, "warning: agent.levels: l2: l2.model claude-sonnet-5-5 is the coder's own model: a review by the model that wrote the change is the first-line review's job, not the senior one\n", "", 1)
 	if err != nil || strings.Contains(stripped, "warning") {
 		t.Fatalf("tightening warned: %v %q", err, stripped)
 	}
@@ -595,12 +599,15 @@ func TestValidateWithoutProjectConfigChecksShapeOnly(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	t.Chdir(t.TempDir())
 	// Nothing of the ceiling is known, so nothing is simulated: a clamp, a
-	// missing pin or an allow-list is not judged. The one warning that does
-	// fire (cliMinimalYAML's workflow has no mise config) is unrelated to
-	// the ceiling.
+	// missing pin or an allow-list is not judged. Two lines do fire, both
+	// unrelated to the ceiling: cliMinimalYAML's workflow has no mise config,
+	// and the review-level resolver warns that the senior review names the
+	// coder's own model (one model serves both roles here, L3.1/L3.2).
 	body := strings.Replace(cliMinimalYAML, "workflows:", "agent: { auth: api-key, model: sonnet }\nbudget: { mode: enforce, per_run_usd: 20, allowed_models: [claude-haiku-4-5] }\nworkflows:", 1)
 	out, errOut, err := execute(t, "validate", writeConfig(t, body))
-	if err != nil || errOut != "warning: workflows.app: no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)\n" {
+	want := "warning: workflows.app: no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)\n" +
+		"warning: agent.levels: l2: l2.model sonnet is the coder's own model: a review by the model that wrote the change is the first-line review's job, not the senior one\n"
+	if err != nil || errOut != want {
 		t.Fatalf("no project config, nothing to simulate: %v %q %q", err, out, errOut)
 	}
 	// The shape is still checked.
@@ -2930,5 +2937,181 @@ func TestValidateTellsAViaDirectSwitchFromAnUnnamedModel(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "routing.claude: claude-sonnet-5-5 -> direct (no switch names it: D1b's default)") {
 		t.Errorf("the unnamed pin's line is missing or wrong:\n%s", errOut)
+	}
+}
+
+// TestValidateLevelsSameModel pins the review-level resolver (L3.1) wired into
+// `fugaro validate` (L3.2, G2): a file whose first-line review and senior
+// review would run the same exact model is refused here, naming both settings,
+// before a launch is paid for. The run's bootstrap refuses the same task
+// (config.ResolveLevels is L4.2's check too), and a repository that only finds
+// out there has already spent a job.
+//
+// Mutation (drop the review_levels check from the checks newValidateCmd runs):
+// this test fails, finding the same-model configuration valid.
+func TestValidateLevelsSameModel(t *testing.T) {
+	path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:",
+		"agent: { auth: api-key, first_line_review: on, models: { coder: deepseek/deepseek-v4-flash, reviewer: deepseek/deepseek-v4-flash } }\nworkflows:", 1))
+	out, _, err := execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "l2.model and l1.model are both deepseek/deepseek-v4-flash") {
+		t.Fatalf("out = %q, err = %v", out, err)
+	}
+	// --json carries the refusal as a problem, at the key the operator fixes.
+	out, _, err = execute(t, "validate", "--json", path)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("--json: err = %v (out %q)", err, out)
+	}
+	var got validateOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Valid || len(got.Problems) != 1 || got.Problems[0].Path != "agent.levels" || !strings.Contains(got.Problems[0].Message, "D721") {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+// TestValidateLevelsRefusalIsSanitised: the resolver's refusal names the model
+// the file wrote, and no other validate check echoes that value, so this path
+// is the one that would carry a terminal escape from a hand-written model id
+// to the operator's screen. The launch path cleans it (ErrorText); validate
+// prints the problem itself, so the problem's text is cleaned where it is built.
+//
+// Mutation (drop oneLine from the two messages in reviewLevelProblems): this
+// test fails, finding the escape byte in validate's output.
+func TestValidateLevelsRefusalIsSanitised(t *testing.T) {
+	path := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:",
+		"agent: { auth: api-key, first_line_review: on, models: { coder: \"a\\u001b[31mb\", reviewer: \"a\\u001b[31mb\" } }\nworkflows:", 1))
+	out, _, err := execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "l2.model and l1.model are both") {
+		t.Fatalf("out = %q, err = %v", out, err)
+	}
+	if strings.ContainsRune(out, 0x1b) {
+		t.Errorf("validate printed an escape byte: %q", out)
+	}
+}
+
+// TestValidateLevelsRefusesProviderEffort pins D725 at the launcher (L3.2):
+// a level whose model a provider route claims and which sets an effort is
+// refused before a launch is paid for. The two keys are written by separate
+// commands — `fugaro models use` names the reviewer, `fugaro settings set`
+// writes agent.levels.l2.effort — so the file is one an installation can
+// reach without ever seeing the refusal, and the run's own ResolveLevels was
+// the only place that caught it, once a job had already started. The effort
+// would look applied and do nothing there: a provider stage runs with
+// MAX_THINKING_TOKENS=0 (G5), so the reviewer would run at its own default and
+// the operator would never know.
+//
+// Mutation (drop reviewLevelProblems from the checks newValidateCmd runs):
+// this test fails, finding the provider-served effort valid.
+func TestValidateLevelsRefusesProviderEffort(t *testing.T) {
+	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n" + validateProviderBlock
+	const coder = "  auth: api-key\n" +
+		"  models: { coder: claude-sonnet-5-5, reviewer: deepseek/deepseek-v4.1-flash, background: claude-haiku-4-5 }\n" +
+		"  levels: { l2: { effort: high } }"
+	path := budgetProject(t, budget, coder)
+	inCheckoutOf(t, "acme/sandbox")
+	out, _, err := execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit = %d, want the D725 refusal (out %q)", ExitCode(err), out)
+	}
+	// The D725 refusal is the only thing wrong with this file: the coder, the
+	// reviewer, the background model and the budget are all in order, so an
+	// operator reading the output is pointed at the effort and nothing else.
+	if !strings.Contains(err.Error(), "has 1 problem(s)") {
+		t.Errorf("err = %v, want the effort refusal alone (out %q)", err, out)
+	}
+	for _, want := range []string{"l2.effort", `"high"`, "openrouter", "MAX_THINKING_TOKENS=0", "D725"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("validate's refusal lacks %q:\n%s", want, out)
+		}
+	}
+	// --json carries the refusal as a problem at the key the operator fixes.
+	out, _, err = execute(t, "validate", "--json", path)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("--json: err = %v (out %q)", err, out)
+	}
+	var got validateOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Valid || len(got.Problems) != 1 || got.Problems[0].Path != "agent.levels" || !strings.Contains(got.Problems[0].Message, "D725") {
+		t.Fatalf("json = %+v, want one problem at agent.levels naming D725", got)
+	}
+	// What is refused is the effort on a provider route, not the effort
+	// itself: D725 accepts it for a Claude model, where the stage applies it
+	// (L4.3, agent.EffortVars), so the same file with a Claude reviewer is
+	// valid. Without this half a change that refused every agent.levels
+	// effort would leave the test above passing.
+	claude := budgetProject(t, budget, strings.Replace(coder, "deepseek/deepseek-v4.1-flash", "claude-sonnet-5-5", 1))
+	out, _, err = execute(t, "validate", claude)
+	if err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("a Claude reviewer with an effort is valid: %v (%q)", err, out)
+	}
+}
+
+// TestReviewFloorUnpublishableWarns: the owner's review-level floor lives in
+// the owner-only policy node, and `fugaro project policy publish` is the only
+// thing that puts it there — a publish that needs a budget.mode for the node's
+// budget block and the project's Realtime Database to write it into (L1.4).
+// An installation without them can publish no floor at all, and its runs then
+// resolve their levels from the rigor defaults alone, which is less review
+// than the operator wrote: validate warns, naming the half that is missing and
+// the command that publishes, and the file stays valid.
+//
+// Mutation (drop reviewFloorUnpublishable from newValidateCmd's warnings):
+// this test fails, finding no warning for a floor nothing can publish.
+func TestReviewFloorUnpublishableWarns(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	projectRouting(t, "review_floor: {pro: [l2]}\n")
+	floorWarnings := func(errOut string) []string {
+		t.Helper()
+		var got []string
+		for _, line := range strings.Split(errOut, "\n") {
+			if rest, ok := strings.CutPrefix(line, "warning: review_floor: "); ok {
+				got = append(got, rest)
+			}
+		}
+		return got
+	}
+	_, errOut, err := execute(t, "validate", writeConfig(t, cliMinimalYAML))
+	if err != nil {
+		t.Fatalf("a floor nothing can publish is valid: %v (%q)", err, errOut)
+	}
+	got := floorWarnings(errOut)
+	if len(got) != 1 || !strings.Contains(got[0], "no budget.mode") || !strings.Contains(got[0], "fugaro project policy publish") {
+		t.Fatalf("floor warnings = %q (stderr %q)", got, errOut)
+	}
+	// --json carries it as a warning, never a problem.
+	out, _, err := execute(t, "validate", "--json", writeConfig(t, cliMinimalYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var js validateOutput
+	if err := json.Unmarshal([]byte(out), &js); err != nil {
+		t.Fatal(err)
+	}
+	if !js.Valid {
+		t.Fatalf("json = %+v", js)
+	}
+	var named bool
+	for _, w := range js.Warnings {
+		if w.Path == "review_floor" {
+			named = true
+		}
+	}
+	if !named {
+		t.Fatalf("json warnings = %+v, want one at review_floor", js.Warnings)
+	}
+	// A config with both halves publishes the floor, and validate says nothing
+	// about it: the database is the one fugaro update --firebase-project writes.
+	isolateProjects(t, t.TempDir())
+	projectRouting(t, "budget: { mode: observe, rtdb_url: https://proj-1234-default-rtdb.firebaseio.com }\nreview_floor: {pro: [l2]}\n")
+	pinned := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", "agent:\n"+pinnedAgent+"\nworkflows:", 1))
+	_, errOut, err = execute(t, "validate", pinned)
+	if err != nil {
+		t.Fatalf("a publishable floor is valid: %v (%q)", err, errOut)
+	}
+	if got := floorWarnings(errOut); len(got) != 0 {
+		t.Fatalf("floor warnings = %q, want none for a floor this installation can publish (stderr %q)", got, errOut)
 	}
 }

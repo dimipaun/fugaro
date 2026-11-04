@@ -10,6 +10,14 @@
 // not-built, the source lines and the binding scopes are drawn, and there is a
 // golden for each theme.
 //
+// **The screen reads one document and no run list** (console 0.117.0's fix,
+// owner's report of 2026-10-31: this tab "also takes about 20 s with no
+// feedback"). The jobs table is gone from the screen and with it the
+// `runs ls --json` read that fed it, so the corpus here is three documents --
+// `budget show`, `accounts ls` and `secrets ls` -- and the dashboard case at the
+// foot of this file asserts the other half of that: the real window's Projects
+// view drives `budget show` and no `runs` read at all.
+//
 // **Why the screen is drawn through `executeJavaScript` rather than by a script
 // tag or a page.** This task's file list is the screen and its two tests: the
 // entry point (`src/renderer/index.html`, `src/renderer/app.js`) and the place
@@ -23,8 +31,8 @@
 // `spend.spec.ts` use, for the same reasons.
 //
 // **There is no recorded corpus for these documents.** `test/fixtures/` holds
-// the watch feed and nothing else, and neither `budget show --json`, `runs ls
-// --json`, `accounts ls --json` nor `secrets ls --json` is recorded anywhere, so
+// the watch feed and nothing else, and neither `budget show --json`,
+// `accounts ls --json` nor `secrets ls --json` is recorded anywhere, so
 // the documents below are written here in the shapes the contract describes
 // (`console/docs/json-contract.md`), the same corpus `projects.test.ts` builds.
 // `secrets ls --json` is a **bare array** and not an object, which is why it is
@@ -75,14 +83,21 @@
 // `FUGARO_CONSOLE_GOLDENS=skip`, which skips exactly the golden tests and says
 // so in the report; nothing skips them silently.
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
+import { CONFIRM_ENTRY_URL } from '../../src/main/confirm'
+import { SPAWN_LOG_ENV } from '../../src/main/spawnlog'
+import type { SpawnLogEntry } from '../../src/main/spawnlog'
+import { SETTINGS_TICK_LABEL } from '../../src/main/settingsview'
 import type { JSONDoc } from '../../src/source/source'
-import { PROJECT_PANEL_KEYS, PROJECTS_THEMES } from '../../src/renderer/screens/projects'
+import { CANCEL_LABEL, SAVE_LABEL, TICK_ID, TITLE_SETTINGS } from '../../src/renderer/confirm'
+import { PROJECT_PANEL_KEYS, PROJECTS_BUSY, PROJECTS_THEMES } from '../../src/renderer/screens/projects'
+import { CLI_VERSION_BUILT_AGAINST, MODELS_LIST_CLI_FLOOR } from '../../src/shared/version'
 import { inRangeCliStub } from '../support/cliStub'
 import type { CliStub } from '../support/cliStub'
 import { expectGolden, expectGrounded } from '../support/goldens'
@@ -115,19 +130,31 @@ const SPEC = 'projects.spec.ts'
 
 /** The compiled modules the screen is made of, in dependency order: the screen
  * and the writers in `renderer/app.js`, and the shared modules those writers
- * use. `src/main/ipc.ts` is imported by the screen for a **type** only, which
- * the compiler erases, so nothing of the main process is reachable from here --
- * and the registry below refuses a specifier that is not a relative path, so a
- * bundle that grew an import of `node:` or of a package fails here rather than
- * in a window with no Node in it. */
+ * use. The list follows the compiled `require` calls and nothing else -- the
+ * section helper the screen draws its busy mark through (`renderer/section.js`)
+ * and the reading words and skeleton beside it are here for that reason, while
+ * `shared/launcher.js` and `shared/rigor.js` are gone with the run list that
+ * used them -- `shared/notice.js` stays, because `shared/version.js` reads the
+ * reduced-mode notice it carries, and `shared/schema.js` is here as the one
+ * **deliberate** addition to the compiled requires: the models panel's document
+ * arrives as a raw `models ls --json` object and the entry decodes it before the
+ * model builder sees it (`decodeModelsList`), so the spec decodes it in the page
+ * the same way rather than hand-writing a view the decoder is the judge of.
+ * `src/main/ipc.ts` is imported by the screen
+ * for a **type** only, which the compiler erases, so nothing of the main
+ * process is reachable from here -- and the registry below refuses a specifier
+ * that is not a relative path, so a bundle that grew an import of `node:` or of
+ * a package fails here rather than in a window with no Node in it. */
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
-  'shared/launcher.js',
-  'shared/rigor.js',
   'shared/notice.js',
   'shared/version.js',
+  'shared/schema.js',
   'renderer/app.js',
+  'renderer/skeleton.js',
+  'renderer/screens/reading.js',
+  'renderer/section.js',
   'renderer/writes.js',
   'renderer/screens/projects.js',
 ])
@@ -202,20 +229,36 @@ function domFactory() {
 `
 
 /** draw is the expression the window evaluates: load the compiled screen, build
- * the model from the four documents, and mount what it draws. */
-function draw(budget: JSONDoc, runs: JSONDoc, accounts: JSONDoc, secrets: readonly JSONDoc[], theme: string): string {
+ * the model from the documents, and mount what it draws. */
+function draw(
+  budget: JSONDoc,
+  accounts: JSONDoc,
+  secrets: readonly JSONDoc[],
+  theme: string,
+  models: JSONDoc | null = MODELS,
+  settings: JSONDoc | null = SETTINGS,
+): string {
   return `(function () {
 ${LOADER}${MODULES.map(moduleSource).join('\n')}${FACTORY}
 var projects = load('/renderer/screens/projects.js');
 var factory = domFactory();
 var model = projects.buildProjectsModel({
   budget: ${JSON.stringify(budget)},
-  runs: ${JSON.stringify(runs)},
   accounts: ${JSON.stringify(accounts)},
   secrets: ${JSON.stringify(secrets)},
   sentences: {}
 });
-var tree = projects.renderProjects(factory, model, ${JSON.stringify(theme)});
+var raw = ${JSON.stringify(models)};
+var decoded = raw === null ? null : load('/shared/schema.js').decodeModelsList(raw, 'models ls --json');
+var modelsModel = projects.buildProjectsModels({
+  document: decoded !== null && decoded.ok ? decoded.value : null,
+  because: decoded !== null && !decoded.ok ? decoded.skew.because : null,
+  tooOld: false,
+  version: '1.2.3'
+});
+var settingsRaw = ${JSON.stringify(settings)};
+var settingsModel = projects.buildProjectsSettings({ raw: settingsRaw, because: null });
+var tree = projects.renderProjects(factory, model, ${JSON.stringify(theme)}, modelsModel, settingsModel);
 var previous = document.getElementById('projects-mount');
 if (previous) previous.remove();
 var host = document.createElement('div');
@@ -247,16 +290,21 @@ interface Screen {
   readonly killedRows: number
   readonly repoKinds: readonly (string | null)[]
   readonly repoNotes: readonly string[]
-  readonly both: readonly string[]
-  readonly onlySeen: readonly string[]
-  readonly onlyEnrolled: readonly string[]
+  // The repository entries the cap document reports: one card, and one entry per
+  // repository it has a cap row for.
+  readonly enrolled: readonly string[]
   readonly repoWrites: readonly string[]
-  readonly jobs: number
-  readonly firstJobMoney: readonly string[]
-  // The MODE column's cells, in row order: empty when no listed run carries a
-  // rigor block, which is the column's own rule.
-  readonly modes: readonly string[]
   readonly secretNames: readonly string[]
+  // The models panel (console 0.119.0): the routes' names and hosts, the
+  // repositories an allow-list names, the models a run can name and their
+  // prices as drawn, and every control of any kind under the panel -- which is
+  // an empty list, because the panel is read-only.
+  readonly modelsRoutes: readonly string[]
+  readonly modelsHosts: readonly string[]
+  readonly modelsAllowed: readonly string[]
+  readonly modelsIds: readonly string[]
+  readonly modelsPrices: readonly string[]
+  readonly modelsControls: readonly string[]
   readonly anchors: number
   readonly hrefs: number
   readonly text: string
@@ -295,23 +343,21 @@ function screen(page: Page): Promise<Screen> {
       killedRows: all('li.projects-kill-row[data-killed="true"]').length,
       repoKinds: attributes('.projects-repo-card', 'data-kind'),
       repoNotes: texts('.projects-repo-card-note'),
-      both: texts('.projects-repo-both'),
-      onlySeen: texts('.projects-only-seen-repo'),
-      onlyEnrolled: texts('.projects-only-enrolled-repo'),
+      enrolled: texts('.projects-repo-enrolled'),
       repoWrites: texts('button.projects-repo-add'),
-      jobs: all('.projects-job').length,
-      // The first row's three cost cells, in the order the table draws them:
-      // the model dollars, the compute dollars and their total, each carrying
-      // its own reading's mark.
-      firstJobMoney: (() => {
-        const row = scope.querySelector('tr.projects-job')
-        if (row === null) return []
-        return ['projects-job-model', 'projects-job-compute', 'projects-job-total'].map(
-          (one) => row.querySelector(`td.${one}`)?.textContent ?? '',
-        )
-      })(),
-      modes: texts('.projects-job-mode'),
       secretNames: texts('.projects-secret-name'),
+      modelsRoutes: texts('.projects-models-route-name'),
+      modelsHosts: texts('.projects-models-route-host'),
+      modelsAllowed: texts('.projects-models-allow'),
+      modelsIds: texts('.projects-models-id'),
+      modelsPrices: texts('.projects-models-input, .projects-models-output'),
+      // The whole panel, for anything a reader could operate: the models read
+      // is read-only, so an `input`, a `select`, a `button`, a `form` or a
+      // contenteditable under it would be a control no operation backs.
+      modelsControls: all(
+        '.projects-models input, .projects-models textarea, .projects-models select, ' +
+          '.projects-models button, .projects-models form, .projects-models [contenteditable]',
+      ).map((one) => one.tagName.toLowerCase()),
       // A screen may offer no navigation at all, and no destination attribute
       // either: this console draws text, and the main process owns opening.
       anchors: all('a').length,
@@ -381,88 +427,6 @@ const BUDGET: JSONDoc = {
   warnings: [],
 }
 
-/**
- * RUNS is `runs ls --json`: one job for an enrolled repository, and one for a
- * repository no cap row knows (`unenrolled-repo`) -- the "seen but not
- * enrolled" case the screen exists to show. `BUDGET`'s second cap row
- * (`other-repo`) has no run, so the fixture holds the opposite case too.
- */
-const RUNS: JSONDoc = {
-  project: 'example-project',
-  runs: [
-    {
-      run: '20261015-110030-4a5b',
-      run_id: '4a5b',
-      repo: 'example-owner/example-repo',
-      workflow: 'default',
-      status: 'running',
-      stage: 'verify',
-      branch: 'fugaro/20261015-110030-4a5b',
-      requested_by: 'operator@example.test',
-      pr: 42,
-      pr_url: 'https://bitbucket.org/example-owner/example-repo/pull-requests/42',
-      created: '2026-10-15T11:00:00Z',
-      cost: { model_usd: 1.25, compute_usd: 0.5, compute_estimated: true, total_usd: 1.75, model_basis: 'api-list' },
-    },
-    {
-      run: '20261015-100000-1122',
-      run_id: '1122',
-      repo: 'example-owner/unenrolled-repo',
-      workflow: 'default',
-      status: 'finished',
-      stage: 'done',
-      outcome: 'success',
-      created: '2026-10-15T10:00:00Z',
-      cost: { model_usd: 0.5, compute_usd: 0, compute_estimated: false, total_usd: 0.5, model_basis: 'subscription' },
-    },
-  ],
-  totals: {
-    runs: 2,
-    model_usd: 1.75,
-    model_notional_usd: 0.5,
-    compute_usd: 0.5,
-    total_usd: 2.25,
-    compute_not_estimated: 1,
-  },
-  warnings: [],
-}
-
-/** RUNS_ROWS is `RUNS`'s two rows, so a case can add a key to one of them. */
-const RUNS_ROWS = RUNS['runs'] as readonly JSONDoc[]
-
-/**
- * RUNS_WITH_RIGOR is `RUNS` as a 0.11.0 runner writes it: the first run's record
- * carries the `rigor` block (`runstore.RigorRecord`, docs/rigor-modes D24, D25)
- * -- the mode, the layer that decided it, the areas that matched with the mode
- * each sets and the moment it was applied, the moment of the block and the
- * revision the configuration was read from -- and the second carries none, which
- * is what a run from before the field, or one that died before bootstrap, looks
- * like. The two together are the MODE column's whole rule: one row with a block
- * turns the column on for every row, and the row without one says so.
- *
- * The stamps (`at`, `revision`) are in the block because a real record carries
- * them; the screen draws neither, which is why they are distinctive here.
- */
-const RUNS_WITH_RIGOR: JSONDoc = {
-  ...RUNS,
-  runs: [
-    {
-      ...RUNS_ROWS[0],
-      rigor: {
-        mode: 'critical',
-        from: 'area',
-        areas: [
-          { name: 'payments', mode: 'critical', at: '2026-10-15T11:00:05Z' },
-          { name: 'billing', mode: 'pro', at: '2026-10-15T11:00:05Z' },
-        ],
-        at: '2026-10-15T11:00:05Z',
-        revision: 'origin/main',
-      },
-    },
-    RUNS_ROWS[1],
-  ],
-}
-
 /** ACCOUNTS is `accounts ls --json`, complete: the names are drawn, and the
  * address in one is drawn as the `person` class's marker rather than as itself. */
 const ACCOUNTS: JSONDoc = {
@@ -508,6 +472,76 @@ const SECRETS: readonly JSONDoc[] = [
   },
 ]
 
+/**
+ * MODELS is `models ls --json` (contract section 6.18), the read the tab's
+ * **second** section draws from (console 0.119.0): the routes a launch may send
+ * data through, the models a run can name today, and the price catalog's age.
+ * It is one document per project and it is offline -- no bucket, no host -- so
+ * nothing here is a run's spend.
+ *
+ * The two routes are the screen's two states in one document: `anthropic` is
+ * open to every repository (`open_to_every_repo`, drawn in words) and `gateway`
+ * names the one repository it may send data to and carries a fee. One model is
+ * priced and one is not: `claude-sonnet-5` has no `input_per_m` at all, which is
+ * unknown and never zero, and no route -- the two cases the panel must not draw
+ * as `$0.00` and as a blank.
+ *
+ * The catalog is stale, so the panel's age marker has something to say: a
+ * catalog's age is what makes its prices a claim about a date.
+ */
+const MODELS: JSONDoc = {
+  version: 1,
+  project: 'example-project',
+  catalog: {
+    source: 'https://catalog.example.test/models.json',
+    checked_at: '2026-10-01',
+    age_days: 33,
+    stale: true,
+  },
+  routes: [
+    {
+      name: 'anthropic',
+      kind: 'direct',
+      base_url: 'https://api.anthropic.com',
+      host: 'api.anthropic.com',
+      models: ['claude-*'],
+      route_fee_pct: 0,
+      allow_data_to: ['*'],
+      open_to_every_repo: true,
+      note: '',
+    },
+    {
+      name: 'gateway',
+      kind: 'openai',
+      base_url: 'https://gateway.example.test/v1',
+      host: 'gateway.example.test',
+      models: ['deepseek-v4.1-flash'],
+      route_fee_pct: 12.5,
+      allow_data_to: ['example-owner/example-repo'],
+      open_to_every_repo: false,
+      note: 'the provider margin is added on this route',
+    },
+  ],
+  models: [
+    { id: 'deepseek-v4.1-flash', route: 'gateway', source: 'catalog', input_per_m: 0.14, output_per_m: 0.28, catalog: null, allowed_to: ['*'], refused: '', note: '' },
+    { id: 'claude-sonnet-5', route: '', source: 'unpriced', input_per_m: null, output_per_m: null, catalog: null, allowed_to: [], refused: 'no route serves it', note: '' },
+  ],
+  repositories: [],
+}
+
+/**
+ * SETTINGS is `settings --json` (the settings-edit plan's C4), and it is the
+ * committed fixture read from disk rather than restated here: the e2e stub
+ * answers the same read with the same file (`test/fixtures/bin/fugaro`), and a
+ * second copy in this spec would be a second document to keep in step. Its four
+ * rows are the four the screen's rules are about -- a narrowing the generic path
+ * writes, a widening it writes, a key another writer owns, and a sensitive one
+ * that is drawn nowhere at all (D1111).
+ */
+const SETTINGS: JSONDoc = JSON.parse(
+  readFileSync(join(consoleDir, 'test', 'fixtures', 'settings.json'), 'utf8'),
+) as JSONDoc
+
 test.describe('the Projects screen', () => {
   // One window, one page, and the tests in order: each draws the screen it is
   // about into the same document, and the goldens are taken from what the test
@@ -540,11 +574,10 @@ test.describe('the Projects screen', () => {
     cli.remove()
   })
 
-  /** mount draws the four documents and fails with the window's own words if
+  /** mount draws the three documents and fails with the window's own words if
    * the bundle could not be loaded or the screen refused to draw. */
   async function mount(
     budget: JSONDoc,
-    runs: JSONDoc,
     accounts: JSONDoc,
     secrets: readonly JSONDoc[],
     theme: string,
@@ -553,39 +586,40 @@ test.describe('the Projects screen', () => {
       const window = BrowserWindow.getAllWindows()[0]
       if (window === undefined) return { error: 'the console has no window' }
       return (await window.webContents.executeJavaScript(source, true)) as { error?: string }
-    }, draw(budget, runs, accounts, secrets, theme))
+    }, draw(budget, accounts, secrets, theme))
     expect(result.error).toBeUndefined()
   }
 
   test('draws one panel per section, each naming its source and its state', async () => {
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     const drawn = await screen(page)
 
     expect(drawn.theme).toBe('light')
-    expect(drawn.panels).toEqual([...PROJECT_PANEL_KEYS])
-    expect(drawn.states).toEqual([
-      'read',
-      'read',
-      'read',
-      'read',
-      'read',
-      'read',
-      'not-built',
-      'not-built',
-    ])
+    // The eighth panel is the models panel (console 0.119.0): the tab's second
+    // read, drawn by `fillProjectsModels` rather than by the seven-panel model,
+    // and last in the tree because it is a sibling of the body those seven are
+    // filled into. The ninth is the settings panel (the settings-edit plan's C1
+    // and this task's C4), a third sibling drawn the same way -- which is what
+    // these two frames gain: the settings section (D1118).
+    expect(drawn.panels).toEqual([...PROJECT_PANEL_KEYS, 'models', 'settings'])
+    expect(drawn.states).toEqual(['read', 'read', 'read', 'read', 'read', 'not-built', 'not-built', 'read', 'read'])
     // Every panel names the command it read, drawn on the panel itself: a panel
-    // whose source is nowhere is a panel a reader cannot check.
+    // whose source is nowhere is a panel a reader cannot check. There is one
+    // command behind the three panels that read the cap document -- `budget show`
+    // -- and `runs ls` is not among the sources at all, which is the screen's
+    // half of the read that was taken off this tab.
     for (const source of drawn.sources) expect(source.length).toBeGreaterThan(0)
     expect(drawn.sources).toContain('fugaro budget show --json')
-    expect(drawn.sources).toContain('fugaro runs ls --json')
+    expect(drawn.sources).not.toContain('fugaro runs ls --json')
     // And every panel says its state in words, so the frame's tone is never the
-    // only channel: `read` on the six that read a document, the design's
-    // `locked` on the two cards this CLI cannot read at all.
-    expect(drawn.stateWords).toEqual(['read', 'read', 'read', 'read', 'read', 'read', 'locked', 'locked'])
+    // only channel: `read` on the six that read a document (the models panel
+    // among them), the design's `locked` on the two cards this CLI cannot read
+    // at all.
+    expect(drawn.stateWords).toEqual(['read', 'read', 'read', 'read', 'read', 'locked', 'locked', 'read', 'read'])
   })
 
   test('renders the two sections with no command as not-built, and never as a zero', async () => {
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     const drawn = await screen(page)
     const text = drawn.text
 
@@ -598,14 +632,15 @@ test.describe('the Projects screen', () => {
     // The two panels say *why* they have nothing, with the design's own phrase
     // for the state: "not readable with this CLI".
     expect(text).toContain('not readable with this CLI')
-    // The six panels that read a document have a count; the two that did not
-    // have none. This is the mechanism behind "never as a zero": there is no
-    // reading to format, so nothing can render as `0`.
-    expect(drawn.counts.length).toBe(6)
+    // The seven panels that read a document have a count (the models panel
+    // counts its routes and models, the settings panel its rows); the two that
+    // did not have none. This is the mechanism behind "never as a zero": there
+    // is no reading to format, so nothing can render as `0`.
+    expect(drawn.counts.length).toBe(7)
   })
 
   test('names the binding scope of every cap', async () => {
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     const drawn = await screen(page)
 
     // A cap with no scope is a number a reader cannot act on: whether it is the
@@ -623,7 +658,7 @@ test.describe('the Projects screen', () => {
   })
 
   test('draws the kill state as a fact, including the repositories that are not killed', async () => {
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     const drawn = await screen(page)
 
     // The state is a word on the row and the attribute beside it, so a tone is
@@ -641,62 +676,30 @@ test.describe('the Projects screen', () => {
     expect(drawn.killActions).toEqual(['Kill', 'Kill', 'Revive'])
   })
 
-  test('shows the enrolled and the seen repositories, and names which is which', async () => {
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+  test('draws the repository set the cap document reports, and claims nothing beyond it', async () => {
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     const drawn = await screen(page)
 
-    // Enrolled is the cap document's set and seen is the run list's. They
-    // overlap in one repository and differ in one each, and the three cards are
-    // exactly that crossing -- so a screen that drew one set twice, or that
-    // dropped a difference, fails here.
-    expect(drawn.repoKinds).toEqual(['both', 'enrolled', 'seen'])
-    expect(drawn.both).toEqual(['example-owner/example-repo'])
-    expect(drawn.onlyEnrolled).toEqual(['example-owner/other-repo'])
-    expect(drawn.onlySeen).toEqual(['example-owner/unenrolled-repo'])
-    // Each card says which case it is, in words: the title names the set and the
-    // note says what the document's shape means for it.
-    expect(drawn.text).toContain('enrolled and seen')
-    expect(drawn.text).toContain('enrolled, no run yet')
-    expect(drawn.text).toContain('seen, not enrolled')
-    expect(drawn.repoNotes).toEqual(['Cap row, no run yet.', 'Running with no cap row.'])
-    // The repository running with no cap row above it is the case worth an
-    // action, and the console draws it refused like every other write.
-    expect(drawn.repoWrites).toEqual(['Add cap'])
-  })
-
-  test('shows the project jobs, with the three cost accounts apart', async () => {
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
-    const drawn = await screen(page)
-
-    expect(drawn.jobs).toBe(2)
-    // A subscription's model dollars are notional, and the job's model, compute
-    // and total are never added into one figure: the three accounts are three
-    // cells, and each carries the mark its own reading has.
-    expect(drawn.firstJobMoney).toEqual(['$1.25', 'est. $0.50', '$1.75'])
-    expect(drawn.text).toContain('~$')
-    expect(drawn.text).toContain('$1.75')
-  })
-
-  test('draws a run\'s rigor mode in the jobs list, and the dash for a run with no block', async () => {
-    // Owner request 2026-10-25: the mode in the run screens. The column is the
-    // conditional one `runs ls` writes for its own MODE cell
-    // (`internal/cli/runs.go`'s `showMode`): with no block anywhere in the list
-    // there is no cell at all, and one block turns it on for every row.
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
-    expect((await screen(page)).modes).toEqual([])
-
-    await mount(BUDGET, RUNS_WITH_RIGOR, ACCOUNTS, SECRETS, 'light')
-    const drawn = await screen(page)
-    expect(drawn.modes).toEqual(['Critical', '-'])
-    // The mode is this build's own word for the record's enum, and the block's
-    // other keys -- the layer, the areas, the moment, the revision -- are not
-    // this column's: it is the mode and nothing else.
-    expect(drawn.text).not.toContain('origin/main')
-    expect(drawn.text).not.toContain('2026-10-15T11:00:05Z')
+    // **One card, and one entry per cap row.** The panel used to be the crossing
+    // of two sets -- the cap document's repositories and the run list's -- and
+    // each of its three cards needed `runs ls` to say anything. The run list is
+    // not read on this tab at all now, so the panel draws the one set the
+    // document itself reports and makes no claim about which of these
+    // repositories have run: the sentences about the crossing are gone with the
+    // read that could support them.
+    expect(drawn.repoKinds).toEqual(['enrolled'])
+    expect(drawn.enrolled).toEqual(['example-owner/example-repo', 'example-owner/other-repo'])
+    expect(drawn.text).toContain('enrolled')
+    expect(drawn.text).not.toContain('seen, not enrolled')
+    expect(drawn.text).not.toContain('Running with no cap row.')
+    // Nothing on the card is a write either: the "Add cap" action belonged to
+    // the seen-not-enrolled case, which no longer exists here.
+    expect(drawn.repoNotes).toEqual([])
+    expect(drawn.repoWrites).toEqual([])
   })
 
   test('draws the secrets inventory as names, labels and version counts, and no value', async () => {
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     const drawn = await screen(page)
 
     expect(drawn.secretNames).toEqual(['fugaro-github-token', 'fugaro-slack-webhook'])
@@ -709,12 +712,48 @@ test.describe('the Projects screen', () => {
     expect(drawn.text).toContain('bare JSON array')
   })
 
+  test('draws the models read-only: the routes, the open-to-every words and no price as a zero', async () => {
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
+    const drawn = await screen(page)
+
+    // **The panel is read-only, and that is asserted on the drawn tree rather
+    // than on the model**: there is no control under it of any kind -- nothing to
+    // add a model, remove one or point a role at one -- and no navigation
+    // either, so the `base_url` below is text and not a destination.
+    expect(drawn.modelsControls).toEqual([])
+    expect(drawn.anchors).toBe(0)
+    expect(drawn.hrefs).toBe(0)
+    // The route's own words: which repositories may send data to it is a
+    // sentence (`may send data to`) and never a bare list, and the route open to
+    // every repository says so in words rather than by an empty allow-list.
+    expect(drawn.modelsRoutes).toEqual(['anthropic', 'gateway'])
+    // **The host here is the console's marker for a machine name and not the
+    // name the document wrote.** `routes[].host` is the `host` class in the
+    // decoder's own table (`WIRE_TEXT_CLASSES`, `src/shared/schema.ts`), and that
+    // class draws `HOST_PLACEHOLDER` for every machine name, valid or not --
+    // which is the recorder's rule as well (`src/source/redact.ts`). No other
+    // class draws the name either: `label` and `sentence` run the free-text
+    // rules, whose hostname rule replaces one before any class branch reads the
+    // value. The hostname the route points at is not hidden by this: it is drawn
+    // whole inside the `base_url` below, which is a `url`.
+    expect(drawn.modelsHosts).toEqual(['<host>', '<host>'])
+    expect(drawn.text).toContain('open to every repository')
+    expect(drawn.modelsAllowed).toEqual(['example-owner/example-repo'])
+    // The models: one priced, one not. A price the document does not carry is
+    // `n/a` -- unknown -- and never `$0.00`, which would say the model is free.
+    expect(drawn.modelsIds).toEqual(['deepseek-v4.1-flash', 'claude-sonnet-5'])
+    expect(drawn.modelsPrices).toContain('n/a')
+    expect(drawn.modelsPrices).not.toContain('$0.00')
+    // The catalog's age and its stale marker, as words on the panel.
+    expect(drawn.text).toContain('2026-10-01')
+    expect(drawn.text).toContain('stale')
+  })
+
   test('draws an incomplete accounts document as unavailable rather than as an empty list', async () => {
-    await mount(BUDGET, RUNS, ACCOUNTS_INCOMPLETE, SECRETS, 'light')
+    await mount(BUDGET, ACCOUNTS_INCOMPLETE, SECRETS, 'light')
     const drawn = await screen(page)
 
     expect(drawn.states).toEqual([
-      'read',
       'read',
       'read',
       'read',
@@ -722,15 +761,19 @@ test.describe('the Projects screen', () => {
       'read',
       'not-built',
       'not-built',
+      'read',
+      'read',
     ])
     expect(drawn.text).toContain('the project could not be selected')
     // An incomplete inventory has no count: `0 accounts` would be a false
-    // statement about the project, not a missing one.
-    expect(drawn.counts.length).toBe(5)
+    // statement about the project, not a missing one. The models panel and the
+    // settings panel are reads of their own and are unaffected by this document
+    // either way.
+    expect(drawn.counts.length).toBe(6)
   })
 
   test('offers no link, and nothing to click', async () => {
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     const drawn = await screen(page)
 
     expect(drawn.anchors).toBe(0)
@@ -747,7 +790,7 @@ test.describe('the Projects screen', () => {
     // NOT a golden test, deliberately: `FUGARO_CONSOLE_GOLDENS=skip` does not skip
     // it. Nothing here reads a PNG, so an unstyled tree is red on its own account
     // rather than recorded as a fresh baseline nobody compared.
-    await expectGrounded(page, (theme) => mount(BUDGET, RUNS, ACCOUNTS, SECRETS, theme), {
+    await expectGrounded(page, (theme) => mount(BUDGET, ACCOUNTS, SECRETS, theme), {
       themes: PROJECTS_THEMES,
       mount: THE_MOUNT,
       text: 'h1.projects-project',
@@ -757,12 +800,12 @@ test.describe('the Projects screen', () => {
 
   test('draws the projects screen', async ({}, testInfo) => {
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     await expectGolden(page.locator(THE_MOUNT), GOLDEN_NAMES.light, { spec: SPEC, consoleDir, testInfo })
   })
 
   test('draws the projects screen in the dark theme', async ({}, testInfo) => {
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'dark')
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'dark')
     const drawn = await screen(page)
     expect(drawn.theme).toBe('dark')
     test.skip(SKIP_GOLDENS, 'FUGARO_CONSOLE_GOLDENS=skip: goldens not recorded yet')
@@ -801,7 +844,7 @@ test.describe('the Projects screen', () => {
     // fewest colours: every panel carries `data-state`, the two with no command say
     // "not readable with this CLI" in a sentence, and neither may become a colour the
     // system takes away. The chrome's half is `entry.spec.ts`'s; a smoke, not a golden.
-    await mount(BUDGET, RUNS, ACCOUNTS, SECRETS, 'light')
+    await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     await page.emulateMedia({ forcedColors: 'active', colorScheme: 'light' })
     expect(await page.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(true)
 
@@ -809,7 +852,9 @@ test.describe('the Projects screen', () => {
       const scope: ParentNode = document.getElementById('projects-mount') ?? document.createDocumentFragment()
       const all = (selector: string): HTMLElement[] =>
         Array.from(scope.querySelectorAll<HTMLElement>(selector))
-      const row = scope.querySelector('tr.projects-job') ?? scope.querySelector('tr.projects-cap')
+      // The caps table is the only table this screen draws now: the jobs table
+      // and its `tr.projects-job` rows went with the run list.
+      const row = scope.querySelector('tr.projects-cap')
       const computed = row === null ? null : getComputedStyle(row)
       const number = scope.querySelector('.projects-number')
       return {
@@ -829,7 +874,7 @@ test.describe('the Projects screen', () => {
     // The state is in the DOM twice over: as the attribute a reader's tools read, and
     // as the sentence a reader reads.
     expect(forced.states).toContain('not-built')
-    expect(forced.words).toEqual(['read', 'read', 'read', 'read', 'read', 'read', 'locked', 'locked'])
+    expect(forced.words).toEqual(['read', 'read', 'read', 'read', 'read', 'locked', 'locked', 'read', 'read'])
     // The switches' state words survive too, `KILLED` among them.
     expect(forced.killWords).toEqual(['live', 'live', 'KILLED'])
     expect(forced.because.join(' '), 'a panel with no document lost its reason').toContain(
@@ -841,5 +886,522 @@ test.describe('the Projects screen', () => {
     expect(forced.tabular, 'the numbers lost their tabular figures').toContain('tabular-nums')
 
     await page.emulateMedia({ forcedColors: 'none' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The Projects view in the dashboard, reading through the stub CLI.
+// ---------------------------------------------------------------------------
+
+/** THE_PANEL is the dashboard's own panel, which is where the view is drawn:
+ * this file mounts a screen of its own into `#projects-mount` above, so a bare
+ * `section.projects` would be ambiguous between the two. */
+const THE_PANEL = 'div.console-panel'
+
+/** THE_PROJECTS is the dashboard's Projects view, and the scope every reading
+ * below is taken in. */
+const THE_PROJECTS = `${THE_PANEL} section.projects`
+
+/** THE_BODY is the section the read belongs to: the element the busy mark is
+ * put on, and the one the screen is filled into when the answer lands. */
+const THE_BODY = `${THE_PROJECTS} div.projects-body`
+
+/** tab is one button of the dashboard's navigation. */
+function tab(view: string): string {
+  return `nav.console-views button.console-view[data-view="${view}"]`
+}
+
+/** readsOf is a spawn log as records: one line per child the console ran,
+ * written by `src/main/spawn.ts` before the child prints anything. It is the
+ * only place a read that should not have happened is visible from outside. */
+function readsOf(where: string): readonly SpawnLogEntry[] {
+  let text: string
+  try {
+    text = readFileSync(where, 'utf8')
+  } catch {
+    return []
+  }
+  return text
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => JSON.parse(line) as SpawnLogEntry)
+}
+
+/** SETTINGS_KEY is the row the narrowing below edits, and SETTINGS_WIDENING_KEY
+ * the one the widening edits: both are rows of `test/fixtures/settings.json`,
+ * whose `target_layer` the console takes the `--layer` word from (D1102). The
+ * first writes the layer that wins and the second a layer the CLI's dry run
+ * classifies as a widening, which is the whole of the difference between the two
+ * windows. */
+const SETTINGS_KEY = 'agent.review_rounds'
+const SETTINGS_WIDENING_KEY = 'claude_account_auto'
+
+/** DRY_RUNS are the documents the stub answers the dry run with, one per key, as
+ * `settings set --dry-run --json` prints them (`settingsWriteDoc`,
+ * `internal/cli/settings_set.go`): the key, the layer written, the file written,
+ * whether the edit changes anything, whether it widens, the CLI's own `why`, the
+ * two values, and the `refusal` member a real document always carries empty. */
+const DRY_RUNS: Readonly<Record<string, JSONDoc>> = {
+  [SETTINGS_KEY]: {
+    version: 1,
+    key: SETTINGS_KEY,
+    layer: 'project',
+    path: '/home/owner/.config/fugaro/projects/example.yaml',
+    changed: true,
+    widening: false,
+    why: '',
+    old: '2',
+    new: '3',
+    refusal: '',
+  },
+  [SETTINGS_WIDENING_KEY]: {
+    version: 1,
+    key: SETTINGS_WIDENING_KEY,
+    layer: 'local',
+    path: '/home/owner/.config/fugaro/local.yaml',
+    changed: true,
+    widening: true,
+    why: 'this raises the per-run ceiling the project layer sets',
+    old: 'false',
+    new: 'true',
+    refusal: '',
+  },
+}
+
+/** seedSettings writes the settings documents beside **every** copy of the stub,
+ * the way `cliStub`'s own seeders do: either copy can be the one the console's
+ * resolution runs, and the stub answers a read from the files beside itself. The
+ * read is the committed fixture; the dry runs are keyed the way the stub looks
+ * them up (`settings-dryrun-<KEY>.json`). Hermetic: three files in a scratch
+ * directory, and no CLI but the stub. */
+function seedSettings(cli: CliStub): void {
+  const read = readFileSync(join(consoleDir, 'test', 'fixtures', 'settings.json'), 'utf8')
+  for (const where of [join(cli.home, '.local', 'bin'), cli.dir]) {
+    mkdirSync(where, { recursive: true })
+    writeFileSync(join(where, 'settings.json'), read)
+    for (const [key, document] of Object.entries(DRY_RUNS)) {
+      writeFileSync(join(where, `settings-dryrun-${key}.json`), `${JSON.stringify(document)}\n`)
+    }
+  }
+}
+
+/** confirmWindow is the settings window the edit flow opens, found the way the
+ * operator finds it: the window whose URL is the confirmation document. It is
+ * the second window this app has, so the first one is never it. */
+async function confirmWindow(app: ElectronApplication): Promise<Page> {
+  let found: Page | null = null
+  await expect
+    .poll(
+      () => {
+        found = app.windows().find((page) => page.url() === CONFIRM_ENTRY_URL) ?? null
+        return found === null ? 'none' : 'there'
+      },
+      { timeout: 15_000, message: 'the confirmation window never opened' },
+    )
+    .toBe('there')
+  if (found === null) throw new Error('the confirmation window went away between the poll and this line')
+  return found
+}
+
+/** shownArgv is the command line the window draws: the `Command` row's own
+ * values, field by field and in order -- which is the argv and not a summary of
+ * it, and therefore the thing this spec compares the stub's record against. */
+function shownArgv(confirm: Page): Promise<readonly string[]> {
+  return confirm.evaluate(() => {
+    const fields = document.getElementById('confirm-fields')
+    const nodes = Array.from(fields?.children ?? [])
+    const at = nodes.findIndex((node) => node.tagName.toLowerCase() === 'dt' && node.textContent === 'Command')
+    if (at < 0) return []
+    const words: string[] = []
+    for (const node of nodes.slice(at + 1)) {
+      if (node.tagName.toLowerCase() !== 'dd') break
+      words.push(node.textContent ?? '')
+    }
+    return words
+  })
+}
+
+/** pressWhenReady presses one of the window's two buttons until the window is
+ * gone. It is `launch.spec.ts`'s rule for the other question, one window over: a
+ * press that lands inside the main process's readiness delay is refused with
+ * `CONFIRM_NOT_YET`, so the spec waits on the state -- the window closed --
+ * rather than on a sleep, and a press the window took is the one that closed it.
+ */
+async function pressWhenReady(confirm: Page, label: string): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        if (confirm.isClosed()) return 'answered'
+        await confirm
+          .getByRole('button', { name: label })
+          .click({ timeout: 3_000 })
+          .catch((error: unknown) => {
+            // A press that arrived before the button existed is the poll's to
+            // retry; a window that went away is the answer itself.
+            if (error instanceof Error && (error.name === 'TimeoutError' || /has been closed|Target closed/.test(error.message))) {
+              return undefined
+            }
+            throw error
+          })
+        return confirm.isClosed() ? 'answered' : 'waiting'
+      },
+      { timeout: 20_000, intervals: [100], message: `the ${label} press was never taken by the window` },
+    )
+    .toBe('answered')
+}
+
+/** settingsWrites is the argv of every settings write the console has run so far,
+ * read from the spawn log: the record of what was spawned, and the second
+ * reading of "the console ran the command line it showed". */
+function settingsWrites(where: string): readonly (readonly string[])[] {
+  return readsOf(where)
+    .map((record) => record.argv)
+    .filter((argv) => argv[1] === 'settings' && argv.includes('--yes'))
+}
+
+/** stubWrites is the stub's own record of every settings line it was handed,
+ * phase by phase: the dry run's line and the write's, in the order it answered
+ * them. It is what a case waits on for a write that must have happened, and for
+ * one that must not. */
+function stubWrites(cli: CliStub): readonly string[] {
+  return cli.answeredReads().filter((line) => line.includes(' settings set '))
+}
+
+test.describe('the Projects view in the dashboard', () => {
+  test.describe.configure({ mode: 'serial' })
+
+  let app: ElectronApplication
+  let page: Page
+  let cli: CliStub
+  let scratch: string
+  let spawnLog: string
+
+  test.beforeAll(async () => {
+    cli = inRangeCliStub()
+    cli.seedActiveInstallation()
+    // The one document this view reads, handed to the stub the way the Spend
+    // specs hand it their own: the stub answers `budget show --json` with
+    // `spend-budget.json`, and refuses the read when no document is seeded.
+    cli.seedSpend({ budget: { document: BUDGET } })
+    // The tab's **second** read, seeded the same way: the models panel is drawn
+    // from `models ls --json`, and the stub refuses that read when no document
+    // is seeded -- which is what makes the panel's own refusal path reachable
+    // here without a second stub.
+    cli.seedModels({ document: MODELS })
+    // The tab's **third** read and its two write phases (the settings-edit
+    // plan's C4): `settings --json` is answered from the committed fixture, and
+    // the dry run from the document seeded for the key the console names --
+    // which is why the cases below can drive a narrowing and a widening without
+    // a second stub. Unseeded, both are refused with exit 2 rather than answered
+    // with a document claiming something no installation said.
+    seedSettings(cli)
+    // **The stub's own line is below the models read's floor**
+    // (`CLI_VERSION_BUILT_AGAINST` is 0.13.0 and `MODELS_LIST_CLI_FLOOR` is
+    // 0.16.0), so a view on it draws the console's floor sentence for the panel
+    // and spawns nothing at all: the `models ls --json` argv asserted below would
+    // then be a read this view never makes. The version the console reads is the
+    // stub's own `version.txt`, so this case raises it rather than installing a
+    // second stub -- and the case that asserts the floor sentence, below, is the
+    // one that leaves it where it is.
+    cli.setVersion(MODELS_LIST_CLI_FLOOR)
+    // The spawn log is the operator's own opt-in (`SPAWN_LOG_ENV`) and the only
+    // place a read that should not have happened is visible from outside: the
+    // case below reads it to say which commands this view drove.
+    scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-projects-'))
+    spawnLog = join(scratch, 'spawn.jsonl')
+    app = await launchConsole({
+      args: cli.launchArgs(consoleDir),
+      env: { ...cli.env, [SPAWN_LOG_ENV]: spawnLog },
+    })
+    page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+  })
+
+  test.afterAll(async () => {
+    await app?.close()
+    cli.remove()
+    rmSync(scratch, { recursive: true, force: true })
+  })
+
+  test('answers the tab in the frame it was opened in, and reads one command', async () => {
+    // Live, the view this console opens on, makes one `runs ls --json` of its own
+    // -- the rigor join -- and that read is not this case's subject. Waiting for
+    // it to land is what makes the count below a count of *this view's* reads: a
+    // console that asked for a run list when Projects was opened would add a
+    // second record here, and one that asked as the tab was opened would be
+    // seen whatever the boot had done.
+    await expect
+      .poll(() => readsOf(spawnLog).filter((record) => record.argv[1] === 'runs').length, {
+        message: 'the Live view never made its rigor join',
+      })
+      .toBeGreaterThan(0)
+    const before = readsOf(spawnLog).length
+
+    // **The click's own frame.** The tab is pressed and the section drawn in the
+    // same turn of the event loop, with nothing awaited in between: the mark,
+    // the shape it holds and the absence of the header are all read from the
+    // frame the click happened in, before any answer can have arrived.
+    const inTheFrame = await page.evaluate(
+      ({ button: selector, body: bodySelector }) => {
+        const pressed = document.querySelector<HTMLElement>(selector)
+        pressed?.click()
+        const body = document.querySelector(bodySelector)
+        const section = document.querySelector('div.console-panel section.projects')
+        return {
+          mounted: section !== null,
+          busy: body?.getAttribute('aria-busy') ?? null,
+          marked: body?.hasAttribute('data-busy') ?? null,
+          label: body?.querySelector('.console-busy-label')?.textContent ?? null,
+          // Both halves of the mark are drawn and the stylesheet picks one, so
+          // the ring being here is the drawing rather than a claim about the
+          // machine's motion preference.
+          spinner: body?.querySelector('.console-busy-spinner') !== null,
+          // The shape of what is coming, because this section has never been
+          // filled: the read is the whole screen here.
+          skeleton: body?.querySelector('.console-skeleton') !== null,
+          // And nothing of the document: the header names the project, which is
+          // the read's own, so a header before the answer would be a screen
+          // naming something the console has not read.
+          header: section?.querySelector('h1.projects-project') !== null,
+          jobs: section?.querySelectorAll('.projects-job').length ?? -1,
+        }
+      },
+      { button: tab('projects'), body: THE_BODY },
+    )
+    expect(inTheFrame).toEqual({
+      mounted: true,
+      busy: 'true',
+      marked: true,
+      label: PROJECTS_BUSY,
+      spinner: true,
+      skeleton: true,
+      header: false,
+      jobs: 0,
+    })
+
+    // Then the content, drawn from the document the stub answered with.
+    await expect(page.locator(`${THE_PROJECTS} h1.projects-project`)).toHaveText('example-project')
+    await expect(page.locator(`${THE_PROJECTS} tr.projects-cap`).first()).toBeVisible()
+    await expect(page.locator(THE_BODY)).not.toHaveAttribute('aria-busy', 'true')
+    // The models panel is the tab's own second section, and it holds the
+    // document the stub answered with: a route of it is drawn, which is what
+    // says this read landed and was painted rather than merely asked for.
+    await expect(page.locator(`${THE_PROJECTS} .projects-models-route-name`).first()).toHaveText('anthropic')
+    // The jobs table is not there to be drawn: this screen has no run list and
+    // no panel built from one, which is the owner's report of 2026-10-31
+    // answered on the tab itself.
+    await expect(page.locator(`${THE_PROJECTS} .projects-job`)).toHaveCount(0)
+
+    // And the reads behind that drawing: `budget show` and `models ls`, the two
+    // commands this tab's two sections name, and **no `runs` read at all**
+    // since this view was opened.
+    const asked = readsOf(spawnLog)
+      .slice(before)
+      .map((record) => record.argv.slice(1))
+    expect(asked).toContainEqual(['budget', 'show', '--json', '--project', 'e2e'])
+    // The models read is the group's one reachable word and takes no argument
+    // of its own: the argv is the command, the row's `--json` and the
+    // installation's `--project`, and nothing a renderer chose.
+    expect(asked).toContainEqual(['models', 'ls', '--json', '--project', 'e2e'])
+    expect(asked.filter((argv) => argv[0] === 'runs')).toEqual([])
+  })
+
+  test('draws the settings section from the read, and records that read', async () => {
+    // The tab's third section, drawn from the document the stub answered
+    // `settings --json` with: three rows, because the fixture's fourth is
+    // sensitive and a sensitive row is drawn nowhere (D1111).
+    const rows = page.locator(`${THE_PROJECTS} li.projects-settings-row`)
+    await expect(rows).toHaveCount(3)
+    await expect(rows.first()).toContainText(SETTINGS_KEY)
+
+    const asked = readsOf(spawnLog).map((record) => record.argv.slice(1))
+    expect(asked).toContainEqual(['settings', '--json', '--project', 'e2e'])
+  })
+
+  test('writes a narrowing with the argv it showed, and records that same argv', async () => {
+    // The first edit this spec drives, so the stub's record holds this flow's two
+    // phases and nothing else: the dry run's line and the write's.
+    expect(stubWrites(cli)).toEqual([])
+    const row = page.locator(`${THE_PROJECTS} li.projects-settings-row`).filter({ hasText: SETTINGS_KEY })
+    await row.locator('button.projects-settings-pencil').click()
+    const editor = page.locator(`${THE_PROJECTS} .projects-settings-editor`)
+    await expect(editor).toBeVisible()
+    // The value is typed into the row's own box; an empty box is the unset, and
+    // this case is the write of one value (the terminator is C3's unit test).
+    await editor.locator('input').fill('3')
+    await editor.getByRole('button', { name: 'Review and write' }).click()
+
+    const confirm = await confirmWindow(app)
+    await expect(confirm.locator('#confirm-title')).toHaveText(TITLE_SETTINGS)
+    // The window is the settings question and not the launch's: its confirming
+    // button is the settings window's word, and a narrowing has no tick at all
+    // (D1109) -- the tick is the widening's.
+    await expect(confirm.getByRole('button', { name: SAVE_LABEL })).toBeVisible()
+    await expect(confirm.locator(`#${TICK_ID}`)).toHaveCount(0)
+
+    const shown = await shownArgv(confirm)
+    expect(shown.slice(1)).toEqual([
+      'settings', 'set', SETTINGS_KEY, '--layer', 'project', '--yes', '--project', 'e2e', '--', '3',
+    ])
+    await pressWhenReady(confirm, SAVE_LABEL)
+
+    // The write's own outcome, in the CLI's words, and the row it leaves behind:
+    // an edit does not change a run until `fugaro update` publishes it (D1119).
+    await expect(editor.locator('.projects-settings-editor-outcome')).toContainText('next: fugaro update')
+    // **The property this spec exists for**, from outside the process: the stub's
+    // own record of the command line it was handed -- written by the stub, from
+    // `$0` and every argument -- is the command line the window drew, word for
+    // word, for both phases of the flow. The dry run's is the spelling that
+    // carries **no** `--yes`: the CLI's confirmation is its own question and
+    // `--yes` is the console's answer to it (D1107).
+    const dryLine = [
+      shown[0], 'settings', 'set', SETTINGS_KEY, '--layer', 'project', '--dry-run', '--json', '--project', 'e2e', '--', '3',
+    ].join(' ')
+    await expect
+      .poll(() => stubWrites(cli).length, { message: 'the write never reached the stub' })
+      .toBe(2)
+    expect(stubWrites(cli)).toEqual([dryLine, shown.join(' ')])
+    // And the spawn log agrees from the other side: the write the console ran is
+    // that argv, and not a second spelling built for the spawn.
+    await expect.poll(() => settingsWrites(spawnLog).length).toBeGreaterThan(0)
+    expect(settingsWrites(spawnLog).at(-1)).toEqual(shown)
+  })
+
+  test('asks for the tick on a widening, and writes the argv the ticked window showed', async () => {
+    const row = page.locator(`${THE_PROJECTS} li.projects-settings-row`).filter({ hasText: SETTINGS_WIDENING_KEY })
+    await row.locator('button.projects-settings-pencil').click()
+    const editor = page.locator(`${THE_PROJECTS} .projects-settings-editor`)
+    await expect(editor).toBeVisible()
+    await editor.locator('input').fill('true')
+    await editor.getByRole('button', { name: 'Review and write' }).click()
+
+    const confirm = await confirmWindow(app)
+    await expect(confirm.locator('#confirm-title')).toHaveText(TITLE_SETTINGS)
+    // A widening draws the console's own extra confirmation (D1101): the tick is
+    // a real checkbox with the owner's own words, and Confirm is disabled until
+    // it is set. The tick is not an argv word -- the window below carries the
+    // same argv ticked or not.
+    const tick = confirm.locator(`#${TICK_ID}`)
+    await expect(tick).toBeVisible()
+    await expect(confirm.locator(`label[for="${TICK_ID}"]`)).toHaveText(SETTINGS_TICK_LABEL)
+    await expect(confirm.getByRole('button', { name: SAVE_LABEL })).toBeDisabled()
+
+    const shown = await shownArgv(confirm)
+    expect(shown.slice(1)).toEqual([
+      'settings', 'set', SETTINGS_WIDENING_KEY, '--layer', 'local', '--yes', '--project', 'e2e', '--', 'true',
+    ])
+    await tick.check()
+    await expect(confirm.getByRole('button', { name: SAVE_LABEL })).toBeEnabled()
+    const before = stubWrites(cli).length
+    await pressWhenReady(confirm, SAVE_LABEL)
+
+    await expect.poll(() => stubWrites(cli).length, { message: 'the widened write never reached the stub' }).toBe(before + 1)
+    expect(stubWrites(cli).at(-1)).toBe(shown.join(' '))
+    await expect.poll(() => settingsWrites(spawnLog).length).toBeGreaterThan(1)
+    expect(settingsWrites(spawnLog).at(-1)).toEqual(shown)
+  })
+
+  test('spawns no write when the window is cancelled', async () => {
+    const writes = settingsWrites(spawnLog).length
+    const before = stubWrites(cli).length
+    const row = page.locator(`${THE_PROJECTS} li.projects-settings-row`).filter({ hasText: SETTINGS_KEY })
+    await row.locator('button.projects-settings-pencil').click()
+    const editor = page.locator(`${THE_PROJECTS} .projects-settings-editor`)
+    await expect(editor).toBeVisible()
+    await editor.locator('input').fill('5')
+    await editor.getByRole('button', { name: 'Review and write' }).click()
+
+    const confirm = await confirmWindow(app)
+    await pressWhenReady(confirm, CANCEL_LABEL)
+
+    // The dry run went out -- the window was drawn from its answer -- and the
+    // write did not: a no is the operator's, and the only argv this case may
+    // add to either record is the dry run's.
+    await expect.poll(() => stubWrites(cli).length, { message: 'the cancelled edit’s dry run never reached the stub' }).toBe(
+      before + 1,
+    )
+    expect(stubWrites(cli).at(-1)).toContain('--dry-run')
+    expect(stubWrites(cli).at(-1)).not.toContain('--yes')
+    expect(settingsWrites(spawnLog)).toHaveLength(writes)
+  })
+
+  test('draws an owned row without a pencil, and never draws a sensitive row', async () => {
+    const rows = page.locator(`${THE_PROJECTS} li.projects-settings-row`)
+    // A row the generic path does not write is drawn -- with the family the
+    // read's `owner` names -- and offers no pencil (D1111).
+    const owned = rows.filter({ hasText: 'mailbox.keychain_item' })
+    await expect(owned).toHaveCount(1)
+    await expect(owned.locator('button.projects-settings-pencil')).toHaveCount(0)
+    // A sensitive row is not drawn at all: the fixture carries
+    // `budget.firebase_api_key`, and neither its key nor a pencil for it is
+    // anywhere on the tab. The console keeps no list of its own -- the field is
+    // the CLI's (D1102).
+    const text = (await page.locator(THE_PROJECTS).textContent()) ?? ''
+    expect(text).not.toContain('budget.firebase_api_key')
+    await expect(rows.locator('button.projects-settings-pencil')).toHaveCount(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The models panel below the models read's floor.
+// ---------------------------------------------------------------------------
+
+/** The case below is the other half of the version the case above seeds: a view
+ * whose CLI has no `models ls` at all. `inRangeCliStub` prints
+ * `CLI_VERSION_BUILT_AGAINST` (0.13.0), which is inside the console's supported
+ * range and below `MODELS_LIST_CLI_FLOOR` (0.16.0), so this is the state the
+ * panel's floor sentence was written for -- a 0.15.x CLI, which would answer
+ * `unknown command "ls"`, is the same state one minor up. */
+test.describe('the models panel below the models read floor', () => {
+  test.describe.configure({ mode: 'serial' })
+
+  let app: ElectronApplication
+  let page: Page
+  let cli: CliStub
+  let scratch: string
+  let spawnLog: string
+
+  test.beforeAll(async () => {
+    cli = inRangeCliStub()
+    cli.seedActiveInstallation()
+    cli.seedSpend({ budget: { document: BUDGET } })
+    // **No models document is seeded, and none is needed**: the floor is asked
+    // before the read goes out, so the panel must never reach the stub.
+    scratch = mkdtempSync(join(tmpdir(), 'fugaro-console-models-floor-'))
+    spawnLog = join(scratch, 'spawn.jsonl')
+    app = await launchConsole({
+      args: cli.launchArgs(consoleDir),
+      env: { ...cli.env, [SPAWN_LOG_ENV]: spawnLog },
+    })
+    page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+  })
+
+  test.afterAll(async () => {
+    await app?.close()
+    cli.remove()
+    rmSync(scratch, { recursive: true, force: true })
+  })
+
+  test('draws the console’s own floor sentence, and spawns no models read', async () => {
+    await page.click(tab('projects'))
+    // The tab is up -- the caps panel's own read landed -- and the models panel
+    // is the one part of it that is not read.
+    await expect(page.locator(`${THE_PROJECTS} h1.projects-project`)).toHaveText('example-project')
+    const panel = page.locator(`${THE_PROJECTS} section.projects-panel[data-panel="models"]`)
+    await expect(panel).toHaveAttribute('data-state', 'unavailable')
+    // The sentence is the console's own and names both versions: what the read
+    // needs and what this CLI is.
+    await expect(panel.locator('p.projects-because')).toHaveText(
+      `the models read needs fugaro ${MODELS_LIST_CLI_FLOOR} and this CLI is ${CLI_VERSION_BUILT_AGAINST}`,
+    )
+    // Nothing of a document, because there was no read to draw one from.
+    await expect(page.locator(`${THE_PROJECTS} .projects-models-route`)).toHaveCount(0)
+    // And the spawn log says the same from outside: this view drove no `models`
+    // child at all, so a panel that drew the sentence *after* asking would be a
+    // read this case sees.
+    const asked = readsOf(spawnLog).map((record) => record.argv.slice(1))
+    expect(asked).toContainEqual(['budget', 'show', '--json', '--project', 'e2e'])
+    expect(asked.filter((argv) => argv[0] === 'models')).toEqual([])
   })
 })

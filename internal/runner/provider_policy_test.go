@@ -129,7 +129,10 @@ func wireRoutes(t *testing.T, g *gw, models []string, pricesJSON string, script 
 // review is off, which `auto` would turn on (providerFirstLine): the tests
 // that use it script one review.
 func providerPinned(t *testing.T) string {
-	return strings.Replace(gwConfig(t, "  first_line_review: off\n"), "coder: "+sonnet, "coder: "+deepseek, 1)
+	// first_line_rounds comes with the first line: the cases built on this
+	// fixture script one cheap round, and an unset knob would take the
+	// resolved mode's row instead (internal/rigor's DefaultRounds).
+	return strings.Replace(gwConfig(t, "  first_line_review: off\n  first_line_rounds: 1\n"), "coder: "+sonnet, "coder: "+deepseek, 1)
 }
 
 // providerFirstLine is providerPinned with first_line_review set to mode

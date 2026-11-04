@@ -69,7 +69,9 @@ func TestFollowUpRefusesALowerMode(t *testing.T) {
 func TestFollowUpRaisesTheRecordedMode(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRootRigor(t, f, rootID, rigor.POC)
-	writeBuildRecord(t, f, appSlug, "web", release0111)
+	// The raise below resolves level 3, so the image has to be one whose
+	// runner acts on levels (reviewLevelsSince).
+	writeBuildRecord(t, f, appSlug, "web", release0160)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--mode", "critical", "also rename x"); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +86,9 @@ func TestFollowUpRaisesTheRecordedMode(t *testing.T) {
 func TestFollowUpKeepsTheRecordedMode(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRootRigor(t, f, rootID, rigor.Critical)
-	writeBuildRecord(t, f, appSlug, "web", release0111)
+	// The mode the follow-up keeps is critical, so the image has to be one
+	// whose runner acts on levels (reviewLevelsSince).
+	writeBuildRecord(t, f, appSlug, "web", release0160)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "also rename x"); err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +205,9 @@ func TestStoredFollowUpReappliesTheRaiseOnlyRule(t *testing.T) {
 func TestStoredFollowUpKeepsARaise(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRootRigor(t, f, rootID, rigor.POC)
-	writeBuildRecord(t, f, appSlug, "web", release0111)
+	// The stored task asks for critical, which resolves level 3: the image
+	// has to be one whose runner acts on levels (reviewLevelsSince).
+	writeBuildRecord(t, f, appSlug, "web", release0160)
 	fu := followUpSpec(fuID, rootID, rootID, 7)
 	fu.Rigor = rigor.Critical
 	seedSpec(t, f, fu, false)

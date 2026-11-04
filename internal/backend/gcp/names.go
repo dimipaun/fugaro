@@ -579,6 +579,37 @@ const BucketConditionTitlePrefix = "fugaro-"
 // saID, as the bootstrap set it.
 func BucketConditionTitle(saID string) string { return BucketConditionTitlePrefix + saID }
 
+// CatalogBucketPrefix is the runs bucket area the project image catalog's
+// copied Dockerfiles live under (PIC3's config.CatalogDockerfileKey puts one
+// at builds/catalog/<entry>/Dockerfile), and the one area of the bucket a
+// build reads that its own repository's prefix does not cover.
+const CatalogBucketPrefix = "builds/catalog"
+
+// CatalogReadCondition is the condition of the read-only (objectViewer)
+// grant every repository's build account holds on the runs bucket: the
+// copied catalog definitions, builds/catalog/, and nothing else.
+//
+// It has no slug because a catalog entry is the project's, not a
+// repository's: every repository's build and daily check read the same copy,
+// whichever repository the entry's definition came from. That the grant is
+// objectViewer and not objectUser is the property that matters: the copies
+// are written by the operator alone, and a build account that could write
+// one could make every other repository's jobs run an image built from a
+// definition of its choosing (docs/design/bucket-iam.md, PIC4).
+func CatalogReadCondition(bucket string) string {
+	return projectBucketPrefixClause(bucket, CatalogBucketPrefix)
+}
+
+// CatalogReadConditionTitlePrefix is the fixed part of
+// CatalogReadConditionTitle: a caller that must recognise the title rather
+// than build it (internal/infra/tf reads a plan's condition titles) takes it
+// from here, so the two spellings cannot drift apart.
+const CatalogReadConditionTitlePrefix = "fugaro-catalog-read-"
+
+// CatalogReadConditionTitle is the title of the catalog read condition of
+// the build account saID, as the repository module sets it.
+func CatalogReadConditionTitle(saID string) string { return CatalogReadConditionTitlePrefix + saID }
+
 // TokenBucketPrefix is the runs bucket prefix the budget token objects live
 // under (internal/budget/token's ObjectPrefix, pinned equal by a test): out of
 // runs/, so that a job account, which may write runs/, may only read it

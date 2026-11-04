@@ -616,6 +616,31 @@ const PEM_RE = shape([
   String.raw`PRIVATE KEY-----`,
 ])
 
+/**
+ * maskCredentialBlocks masks the one credential shape that is a **whole block
+ * and not a run** (K3's review round 1).
+ *
+ * **It exists because a screen may split a value into lines before it draws it,
+ * and the class then reads one line at a time.** `PEM_RE` needs the BEGIN and
+ * END lines of a block in the value it is given, so a body split on its
+ * newlines first gives it nothing to match: the markers are drawn as the text
+ * they are and the body's own lines are left to the entropy net, which keeps any
+ * run under its floor -- a wrapped body's short last line is key material drawn
+ * whole. The body of a pull request is untrusted text and many lines long, so
+ * the Coordinator is the caller this is for.
+ *
+ * **A line split is the caller's and the newlines are the caller's to keep.**
+ * This masks the blocks and changes nothing else -- every newline the value
+ * carried is still there, in its place -- so a screen still gets the author's
+ * own lines out of the value afterwards. It is deliberately not a sanitizer: it
+ * reports nothing, it strips no invisible character and it replaces no URL, and
+ * what it hands back is still untrusted text that every line must still go
+ * through `sanitizeText` before it is drawn.
+ */
+export function maskCredentialBlocks(raw: string): string {
+  return raw.replace(PEM_RE, TOKEN_PLACEHOLDER)
+}
+
 /** GIT_FORGE, ANTHROPIC_STYLE and the rest are the fragments the family patterns
  * below are built around, so that no line here spells a prefix out. */
 const GIT_FORGE = 'gh'
@@ -1989,6 +2014,37 @@ function withRules(
 export function isMarkerText(text: string): boolean {
   if (MARKERS.includes(text)) return true
   return REPO_PSEUDONYM_RE.test(text) || SLUG_PSEUDONYM_RE.test(text) || PERSON_PSEUDONYM_RE.test(text)
+}
+
+/**
+ * nameableText says whether a **sentence-style attribution** -- "declared by X",
+ * "KILLED by X" -- has anybody to name.
+ *
+ * The owner's ruling of 2026-10-31: "when we don't have the email, let's simply
+ * not display the 'declared by ...'". A value that is absent, empty, one of the
+ * redactions the CLI itself made (`isMarkerText`: the fixed markers and the
+ * pseudonym grammars), or an address with nothing before the `@` is not a name,
+ * and a sentence introducing one would tell the operator who did something out
+ * of a placeholder. The **whole phrase** goes rather than the value alone:
+ * "declared by n/a" names nobody either, and it is the phrase the owner asked
+ * for.
+ *
+ * The address test reads past leading whitespace (`trimStart`): a value has the
+ * same nothing before its `@` whatever a caller did with the space in front of
+ * it, and a bare `startsWith('@')` would call `' @ana'` a name and draw the
+ * phrase over a placeholder.
+ *
+ * It is a predicate of the *string* and not of a screen: the Coordinator's
+ * "declared by" and the Projects kill banner's "KILLED by" are the two sentences
+ * this console writes in that shape, and both read this one rule rather than
+ * spelling it twice. Launcher **cells** (`shared/launcher.ts`) are not one of
+ * them: a column cell names its own field, and the mark a cell draws for an
+ * absent value is that column's own vocabulary.
+ */
+export function nameableText(text: string): boolean {
+  if (text.trim() === '') return false
+  if (isMarkerText(text)) return false
+  return !text.trimStart().startsWith('@')
 }
 
 // ---------------------------------------------------------------------------

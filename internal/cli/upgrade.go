@@ -162,7 +162,7 @@ checkout's steps and, for one that stopped, the line to rerun.`,
 	f := cmd.Flags()
 	f.BoolVar(&o.check, "check", false, "write nothing, run no claude command, make no cloud call: print what each step would do and exit 1 when anything is stale")
 	f.BoolVar(&o.local, "local", false, "run the pin and plugin steps only, and skip the cloud, rules and policy steps (the only mode that does everything it can inside a coding agent's session)")
-	f.BoolVar(&o.yes, "yes", false, "confirm every step that asks without a terminal, and without asking: the cloud step's base copy, check-job update and each billable build (with no cap), and the security rules and published policy deployments; never in a coding agent's session")
+	f.BoolVar(&o.yes, "yes", false, "confirm every step that asks without a terminal, and without asking: the cloud step's base copy, check-job update and each billable build (with no cap), the security rules deployment, and a policy migration or publish that does not loosen the published node (a publish that would loosen it is typed at your own terminal and this flag does not stand in); never in a coding agent's session")
 	f.BoolVar(&o.allowFork, "allow-fork", false, "move the ref of a marketplace repository other than dimipaun/fugaro (a fork you host) to this release's tag, and add it to Claude Code")
 	f.StringVar(&o.refresh.repo, "repo", "", "owner/name of the repository; it must be the checkout's origin (one PATH only)")
 	f.StringArrayVar(&o.refresh.workflows, "workflow", nil, "a workflow to refresh (repeatable; default: every workflow in fugaro.yaml; one PATH only)")
@@ -557,7 +557,12 @@ func policyStep(ctx context.Context, u *upgradeCtx) stepResult {
 	if err := policyMigrationConfirm(ctx, u.cmd, m, u.o.yes, u.w); err != nil {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
 	}
-	return stepResult{state: stepDone, reason: fmt.Sprintf("the published policy was migrated from version %d to %d in place", m.from, projectpolicy.Version)}
+	// The line is the write's own (doneDetail): this step migrates an older node,
+	// publishes what the local config states, or records the generation of a node
+	// that already carries it — and a sentence that said "migrated from version X
+	// to Y" over a publish-only or record-only run would report a migration that
+	// did not happen between two versions that are the same number.
+	return stepResult{state: stepDone, reason: oneLine(m.doneDetail())}
 }
 
 // checkRulesCaveat is what --check says for the rules step, for the same reason

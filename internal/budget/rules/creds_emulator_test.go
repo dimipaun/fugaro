@@ -37,6 +37,10 @@ import (
 // of data is not mistaken for a refusal.
 var credsMark = map[string]any{"state": "exhausted", "until": int64(4_000_000_000_000), "since": int64(3_000_000_000_000), "backoff": 2}
 
+// credsSign is a seeded one-signature mark under /creds: the shape the sign
+// route writes (C3.9e, D1074) — which run holds it, and when it was taken.
+var credsSign = map[string]any{"slug": "aurora", "run": "r1", "at": "2026-10-20T09:00:00Z"}
+
 // credsSeed is what the admin writes before each denial case: a mark, a lease,
 // the run's sticky credential and the round-robin counter, so every location
 // under /creds a reader of the plan would name holds something.
@@ -46,10 +50,12 @@ func (h *harness) credsSeed() {
 	h.set("creds/leases/r1", map[string]any{"credential": "a1", "expires": int64(4_000_000_000_000)})
 	h.set("creds/current/aurora/r1", "a1")
 	h.set("creds/roundrobin", map[string]any{"a1": 3, "a2": 1})
+	h.set("creds/review-signs/aurora/r1", credsSign)
 }
 
 // credsPaths are the locations the cases walk: every node /creds is expected to
-// hold, at the depth the service reads and writes them (C1.9).
+// hold, at the depth the service reads and writes them (C1.9, and the sign
+// route's own mark with C3.9e).
 func credsPaths() []string {
 	return []string{
 		"creds/marks/a1",
@@ -57,6 +63,7 @@ func credsPaths() []string {
 		"creds/leases/r1",
 		"creds/current/aurora/r1",
 		"creds/roundrobin",
+		"creds/review-signs/aurora/r1",
 	}
 }
 
@@ -135,6 +142,32 @@ func TestCredsTokenOfAnotherRepositoryDenied(t *testing.T) {
 		}
 		h.mustDeny(c, name+" writing a mark", map[string]any{"creds/marks/a1": credsMark})
 	}
+}
+
+// TestRunTokenCannotReadOrWriteTheReviewSignMark: the one-signature mark is the
+// node that makes a second sign refusable (C3.9e, D1074), so a run that could
+// read it or clear it could obtain the second signature the mark exists to
+// refuse. The template needs no rule of its own for that: /creds' own
+// `.read: false, .write: false` denies a run token the whole subtree, and this
+// case holds the mark to it — because the property is the service's create-only
+// WRITE's and not a rule's (the service writes over IAM, which bypasses the
+// rules), the rules' whole part is that nobody else can touch the node.
+func TestRunTokenCannotReadOrWriteTheReviewSignMark(t *testing.T) {
+	h := newHarness(t)
+	h.credsSeed()
+	c := h.run("aurora", "r1")
+	h.mustReadDenied(c, "creds/review-signs/aurora/r1")
+	h.mustReadDenied(c, "creds/review-signs")
+	for _, u := range []map[string]any{
+		{"creds/review-signs/aurora/r1": credsSign},
+		{"creds/review-signs/aurora/r2": credsSign},
+		{"creds/review-signs/other/r1": credsSign},
+		{"creds/review-signs/aurora/r1/at": "2026-10-21T09:00:00Z"},
+	} {
+		h.mustDeny(c, "a run writing a one-signature mark", u)
+	}
+	h.mustDeny(c, "a run deleting its own one-signature mark", map[string]any{"creds/review-signs/aurora/r1": nil})
+	h.rawDenied(claims{slug: "aurora", run: "r1"}, "DELETE", "creds/review-signs/aurora/r1", "")
 }
 
 // TestRunTokenCannotWriteTheCredsRulesMarkers: neither generation marker is a

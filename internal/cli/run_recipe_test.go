@@ -62,7 +62,9 @@ func TestRunWithoutCheckoutLetsTheRunnerChoose(t *testing.T) {
 func TestRunExplicitDefaultWithoutCheckoutEmbeds(t *testing.T) {
 	f := newCloudFixture(t)
 	wantRefused(t, f, "has no build record", "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "default", "x")
-	writeBuildRecord(t, f, appSlug, "web", release050)
+	// release0160, not release050: the carried default holds the adversarial
+	// step, which needs a runner that acts on it (adversarialSince).
+	writeBuildRecord(t, f, appSlug, "web", release0160)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "default", "x"); err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +396,8 @@ func TestRunExplicitDefaultOverridesAgentRecipe(t *testing.T) {
 	f := newCloudFixture(t)
 	recipeCheckout(t, f, "  recipe: solo\n", nil)
 	other := mustSlug("github", "acme/other")
-	writeBuildRecord(t, f, other, "svc", release050)
+	// The carried default's adversarial step needs this image, not release050.
+	writeBuildRecord(t, f, other, "svc", release0160)
 	out, errOut, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "--recipe", "default", "--json", "A task")
 	if err != nil {
 		t.Fatal(err)
@@ -488,10 +491,14 @@ func TestRunPlainWithDefaultNamedBucket(t *testing.T) {
 func TestRunNoteOnlyForExplicitNonDefault(t *testing.T) {
 	f := newCloudFixture(t) // custom runs bucket
 	writeBuildRecord(t, f, appSlug, "web", release050)
+	// The implicit default carries no recipe, so a 0.5.0 image is not in its
+	// way; the explicit one below is carried and holds the adversarial step,
+	// which is why the record moves to release0160 first.
 	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "x")
 	if err != nil || strings.Contains(errOut, "note:") {
 		t.Fatalf("implicit default: %v, stderr %q", err, errOut)
 	}
+	writeBuildRecord(t, f, appSlug, "web", release0160)
 	_, errOut, err = execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100001-abcd", "--recipe", "default", "x")
 	if err != nil || strings.Contains(errOut, "note:") {
 		t.Fatalf("explicit default: %v, stderr %q", err, errOut)

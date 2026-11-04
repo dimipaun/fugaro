@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -439,11 +440,54 @@ func inlineText(s string) string {
 	return out
 }
 
+// shortSHA shortens a digest the harness's own records state -- a verify
+// record's HeadSHA -- to seven characters. It checks nothing about the text: a
+// verify record may carry a placeholder rather than a commit ("abc" is what this
+// package's own fixtures write), so this is a cut and not an abbreviation of an
+// object id. A head a run records goes through shortGitHead instead.
 func shortSHA(sha string) string {
 	if len(sha) > 7 {
 		return sha[:7]
 	}
 	return sha
+}
+
+// validGitHead reports whether s is a git object id: 40 lowercase hex
+// characters, the SHA-1 a `git rev-parse` writes, or 64, the SHA-256 of a
+// repository created with --object-format=sha256.
+func validGitHead(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// shortGitHead shortens a head a record states for the section: 7 characters of
+// a SHA-1 object id and 12 of a SHA-256 one, git's own abbreviated length for
+// each, and "(invalid)" for anything that is not an object id.
+//
+// It rejects rather than cuts because the section is Markdown in a pull request
+// body and the record is launcher-writable: a hand can put a backtick, a line
+// break or a whole forged status marker in Head or PushedHead, and seven bytes
+// of that would land in the body. A head that is not an object id is one no run
+// can have written, so the section says so instead of printing it — the answer
+// diagnose gives a record's head too (internal/cli/diagnose.go's shortGitHead,
+// which this cannot share: the CLI's diagnosis and the runner's section read the
+// same record field from two packages, neither of which imports the other).
+func shortGitHead(s string) string {
+	if !validGitHead(s) {
+		return "(invalid)"
+	}
+	if len(s) == 40 {
+		return s[:7]
+	}
+	return s[:12]
 }
 
 // verifyPart is the section's account of the latest test record.
@@ -467,9 +511,12 @@ func verifyPart(records []verify.Record) string {
 
 // reviewsPart is the section's account of the review rounds, or "". With a
 // first line, it says which tier the latest review is: the first line only
-// advises, the senior review decides. pol is the mode's findings policy for
-// the round the line reports (finalSection); a round the mode let through
-// names each finding it tolerated beside the count (T3.3).
+// advises, the senior review decides and level 3 decides over both (D723). pol
+// is the mode's findings policy for the round the line reports (finalSection);
+// a round the mode let through names each finding it tolerated beside the count
+// (T3.3). The line ends with what reviewed the round — its model, its effort
+// and the commit it read (reviewFactsPart, CLI 0.16.0) — so a reader of the
+// pull request can tell which model shipped which head.
 func reviewsPart(rs []runstore.ReviewSummary, pol FindingsPolicy) string {
 	if len(rs) == 0 {
 		return ""
@@ -481,14 +528,113 @@ func reviewsPart(rs []runstore.ReviewSummary, pol FindingsPolicy) string {
 		who = "first-line "
 	case runstore.TierSenior:
 		who = "senior "
+	case runstore.TierAdversarial:
+		who = "adversarial "
 	}
 	switch last.Verdict {
 	case "ship":
-		return fmt.Sprintf("%sreview: ship in round %d", who, last.Round)
+		return fmt.Sprintf("%sreview: ship in round %d%s", who, last.Round, reviewFactsPart(last))
 	case "none":
-		return fmt.Sprintf("%sreview round %d: skipped, no verdict", who, last.Round)
+		if last.Tier == runstore.TierFirst {
+			return fmt.Sprintf("first-line review round %d: skipped, no verdict%s", last.Round, reviewFactsPart(last))
+		}
+		// An outer round is never skipped: this is one whose answer carried no
+		// parseable verdict, retried once and then left the run with no verdict
+		// at all (seniorLoop, adversarialLoop), and the line is the reason Decide
+		// gave for keeping the pull request a draft.
+		return fmt.Sprintf("%sreview round %d returned no parseable verdict after a retry%s", who, last.Round, reviewFactsPart(last))
 	}
-	return fmt.Sprintf("%sreview round %d: %s%s", who, last.Round, Plural(last.Findings, "finding"), toleratedPart(pol, last))
+	return fmt.Sprintf("%sreview round %d: %s%s%s", who, last.Round, Plural(last.Findings, "finding"), toleratedPart(pol, last), reviewFactsPart(last))
+}
+
+// reviewFactsPart is what reviewed the round the section's line reports — the
+// model it ran on, the reasoning effort it ran at and the commit it read — as
+// the parenthetical the line carries (CLI 0.16.0): "senior review: ship in
+// round 1 (model X, effort Y, at abc1234)". Each part is written only when the
+// round recorded it, so a record written before the fields existed, a level
+// that named no effort and a run with no head to read all leave the
+// parenthetical out rather than printing an empty claim, and "" is what every
+// line of a record that carries none ends with.
+//
+// It is appended last on every line, tolerated part included, so the verdict,
+// the count and the policy that let a round through read as one clause and the
+// reviewer's own facts stand apart from them.
+//
+// The model and the effort are the runner's own vocabulary, but they are the
+// record's bytes: a hand can edit result.json, so both go through inlineText
+// like every other string the section prints. The head is the record's bytes
+// too, and shortGitHead is what keeps it to an object id.
+func reviewFactsPart(last runstore.ReviewSummary) string {
+	parts := make([]string, 0, 3)
+	if m := inlineText(last.Model); m != "" {
+		parts = append(parts, "model "+m)
+	}
+	if e := inlineText(last.Effort); e != "" {
+		parts = append(parts, "effort "+e)
+	}
+	if last.Head != "" {
+		parts = append(parts, "at "+shortGitHead(last.Head))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (recorded: " + strings.Join(parts, ", ") + ")"
+}
+
+// levelNames are the levels as the section's own line names them, in the order
+// a run holds them. The index is the level's own number, so the three read
+// together as the ladder they are.
+var levelNames = map[policy.Level]string{policy.LevelL1: "level 1", policy.LevelL2: "level 2", policy.LevelL3: "level 3"}
+
+// levelsPart is the section's line per review level the run held: the level,
+// its last round's verdict, the head that round approved and the focus the
+// level was asked to look at (D727, L4.2). It exists beside reviewsPart, which
+// reports the last round of all, because the levels can approve different
+// commits: after an adversarial rejection the cheap loop runs and level 2 is
+// never reviewed again, so a run that ships carries a level 2 verdict about an
+// earlier head than the one it ships. A reader of the pull request has to be
+// able to see that.
+//
+// The focus is shown beside every level whose reviewer was given one, so the
+// line says which level was asked to look at what: each of the three levels'
+// reviewer reads its own focus (reviewPromptWithFocus, AdversarialPrompt,
+// levelFocus), and a level no layer gave one to shows none.
+//
+// The focus is the same sanitiser's business as the verdict beside it, and the
+// two agree on every value that can reach here: the resolver refuses a focus
+// carrying a control, a bidi or a zero-width character at every layer that may
+// write one (config.LevelSetting.validate), so there is nothing left for
+// safetext to escape that inlineText does not already handle.
+//
+// "" for a run that resolved no levels (levelsResolved) and for one whose
+// levels left no round at all: reviewsPart's own line is then the whole
+// account, and an empty line would only repeat it.
+func (r *run) levelsPart() string {
+	if !r.levelsResolved() {
+		return ""
+	}
+	var lines []string
+	for _, l := range []policy.Level{policy.LevelL1, policy.LevelL2, policy.LevelL3} {
+		if !levelOn(r.levels, l) {
+			continue
+		}
+		rs := lastRoundOf(r.rec.Reviews, l)
+		if rs == nil {
+			continue
+		}
+		line := fmt.Sprintf("%s: %s in round %d", levelNames[l], inlineText(rs.Verdict), rs.Round)
+		if rs.Head != "" {
+			line += fmt.Sprintf(" on `%s`", shortGitHead(rs.Head))
+		}
+		if f := inlineText(r.levelFocus(l)); f != "" {
+			line += fmt.Sprintf(" (focus: %s)", f)
+		}
+		lines = append(lines, line)
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "review levels: " + strings.Join(lines, "; ")
 }
 
 // toleratedPart is the rest of a review line whose round the run's mode let
@@ -569,32 +715,6 @@ func (r *run) checkpointValue() *runstore.Checkpoint {
 	}
 	cp := *r.rec.Checkpoint
 	return &cp
-}
-
-// backlogPart is the section's account of the items the run wrote: the ids it
-// filed and the ids it closed as the follow-up that fixed them, beside the
-// review line that says what was left open, so a reader of the pull request can
-// cite an item without opening the tree (D9, D26, D27, D31 — the closing rule's
-// "names the item id in its body"). "" for a run that wrote neither, which is
-// most of them.
-func (r *run) backlogPart() string {
-	var parts []string
-	if len(r.rec.Backlog) > 0 {
-		parts = append(parts, "filed "+backlogIDs(r.rec.Backlog))
-	}
-	if len(r.rec.BacklogClosed) > 0 {
-		parts = append(parts, "closed "+backlogIDs(r.rec.BacklogClosed))
-	}
-	return strings.Join(parts, ", ")
-}
-
-// backlogIDs renders ids as the section cites them, one code span each.
-func backlogIDs(ids []string) string {
-	out := make([]string, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, "`"+inlineText(id)+"`")
-	}
-	return strings.Join(out, ", ")
 }
 
 // rigorPart is the section's line for the mode the run resolved (D18, D24):
@@ -689,7 +809,7 @@ func (r *run) runningSection(stage string, during bool) string {
 	what := fmt.Sprintf("after stage `%s`", inlineText(stage))
 	if during {
 		what = fmt.Sprintf("checkpoint during stage `%s`", inlineText(stage))
-	} else if stage == "review" || stage == "review_first" {
+	} else if _, ok := reviewStageOf(stage); ok {
 		// The zero policy: mid-run nothing has been tolerated yet, and the
 		// section names what the round left rather than what a mode would do
 		// with it once the run reaches Decide (T3.3).
@@ -714,14 +834,16 @@ func (r *run) pushedPart(records []verify.Record) string {
 		return ""
 	}
 	if pushedVerified(records, sha) {
-		return fmt.Sprintf("branch at `%s`: verified", shortSHA(sha))
+		return fmt.Sprintf("branch at `%s`: verified", shortGitHead(sha))
 	}
-	return fmt.Sprintf("branch at `%s`: not verified", shortSHA(sha))
+	return fmt.Sprintf("branch at `%s`: not verified", shortGitHead(sha))
 }
 
 // finalSection is the section when the run ended: outcome, reason, tests,
 // reviews and cost. A review round the run's mode let through names each
-// finding it tolerated and the mode that tolerated it (T3.3, D7, D18).
+// finding it tolerated and the mode that tolerated it (T3.3, D7, D18), and a
+// run that held more than one review level lists each level's verdict and the
+// head it approved (levelsPart, D727).
 func (r *run) finalSection(ready bool, reason string, records []verify.Record) string {
 	head, why := "**Draft**", inlineText(reason)
 	switch {
@@ -732,7 +854,7 @@ func (r *run) finalSection(ready bool, reason string, records []verify.Record) s
 	case r.rec.Status == runstore.StatusCancelled:
 		head = "**Cancelled**"
 	}
-	return r.sectionLines(head, why, r.checkpointReportPart(), r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.narrowText, r.backlogPart(), r.costPart(), r.updated("finished"))
+	return r.sectionLines(head, why, r.checkpointReportPart(), r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.levelsPart(), r.narrowText, r.costPart(), r.updated("finished"))
 }
 
 // ---- finalize ----
