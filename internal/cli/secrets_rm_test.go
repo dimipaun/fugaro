@@ -1,19 +1,30 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 )
 
-// TestSecretsRmRemovesTheVersionAndTheEntry: `secrets rm NAME` withdraws a
-// project secret — the Secret Manager container with every version it holds,
-// and the local config's project_secrets.NAME entry that made it
-// project-wide — which is the pair D1171 says a secret with no `rm` leaves
-// standing forever.
-func TestSecretsRmRemovesTheVersionAndTheEntry(t *testing.T) {
+// secretsRmFugaro stubs the binary's own name, so a refusal's sentence can be
+// read as the person reads it: the tests' argv[0] is a test binary path.
+func secretsRmFugaro(t *testing.T) {
+	t.Helper()
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+}
+
+// secretsRmFixture is a project secret that is both reachable project-wide and
+// stored: the project_secrets entry in the local config, and the Secret
+// Manager container the entry promises. Both halves exist so a test can pin
+// that a refusal leaves both of them standing.
+func secretsRmFixture(t *testing.T) (*gcpfake.Secrets, string, string) {
+	t.Helper()
 	sm := secretsFixture(t)
 	projectSecretFixture(t, "project_secrets:\n  bitbucket-token: { allow_data_to: [\"acme/app\"] }\n")
 	id := gcp.ProjectSecretID("aurora", "bitbucket-token")
@@ -22,6 +33,16 @@ func TestSecretsRmRemovesTheVersionAndTheEntry(t *testing.T) {
 		gcp.LabelProject: "aurora",
 		gcp.LabelSecret:  "bitbucket-token",
 	}, []byte(tokenValue))
+	return sm, id, os.Getenv("FUGARO_CONFIG")
+}
+
+// TestSecretsRmRemovesTheVersionAndTheEntry: `secrets rm NAME` withdraws a
+// project secret — the Secret Manager container with every version it holds,
+// and the local config's project_secrets.NAME entry that made it
+// project-wide — which is the pair D1171 says a secret with no `rm` leaves
+// standing forever.
+func TestSecretsRmRemovesTheVersionAndTheEntry(t *testing.T) {
+	sm, id, path := secretsRmFixture(t)
 
 	out, errOut, err := execute(t, "secrets", "rm", "bitbucket-token", "--yes")
 	if err != nil {
@@ -33,11 +54,150 @@ func TestSecretsRmRemovesTheVersionAndTheEntry(t *testing.T) {
 	if got := sm.Latest(id); got != nil {
 		t.Fatalf("the container still holds %q", got)
 	}
-	after := readFileString(t, os.Getenv("FUGARO_CONFIG"))
+	after := readFileString(t, path)
 	if strings.Contains(after, "project_secrets") || strings.Contains(after, "bitbucket-token") {
 		t.Fatalf("the config entry is still there:\n%s", after)
 	}
 	if strings.Contains(out+errOut, tokenValue) {
 		t.Fatalf("the value leaked: %q %q", out, errOut)
+	}
+}
+
+// TestSecretsRmRefusesAnAgentSession: the whole family is refused in a coding
+// agent's session, --yes included and whatever the managed gate would say
+// (spec §5, D1171). The refusal is the FIRST thing this command does — before
+// the config is read and before the container is looked up — because the
+// deletion is not the settings write path's and its fence would arrive after
+// the value was already gone. Nothing is removed, and the container and the
+// entry both survive.
+func TestSecretsRmRefusesAnAgentSession(t *testing.T) {
+	secretsRmFugaro(t)
+	sm, id, path := secretsRmFixture(t)
+	before := readFileString(t, path)
+	t.Setenv(accountsAddAgent, "1") // a coding agent's session
+
+	out, errOut, err := execute(t, "secrets", "rm", "bitbucket-token", "--yes")
+	if err == nil {
+		t.Fatalf("a coding agent's session removed a secret:\nstdout %s\nstderr %s", out, errOut)
+	}
+	for _, want := range []string{
+		accountsAddAgent,      // the marker that made it a session
+		"fugaro secrets rm",   // the command the person runs instead
+		"bitbucket-token",     // what it refused to remove
+		"nothing was removed", // that the refusal is total
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not carry %q:\n%v", want, err)
+		}
+	}
+	if got := sm.Deleted(); len(got) != 0 {
+		t.Fatalf("the session deleted %v", got)
+	}
+	if got := sm.Latest(id); got == nil {
+		t.Fatal("the session took the container away")
+	}
+	if after := readFileString(t, path); after != before {
+		t.Fatalf("the session wrote the config:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	if strings.Contains(out+errOut, tokenValue) {
+		t.Fatalf("the value leaked: %q %q", out, errOut)
+	}
+}
+
+// TestSecretsRmDryRunNamesBothHalves: the dry run's document describes the
+// config half, because the settings write contract has no member for a Secret
+// Manager container — so the half it cannot carry is said on stderr, and
+// neither half is touched.
+func TestSecretsRmDryRunNamesBothHalves(t *testing.T) {
+	secretsRmFugaro(t)
+	sm, id, path := secretsRmFixture(t)
+	before := readFileString(t, path)
+
+	out, errOut, err := execute(t, "secrets", "rm", "bitbucket-token", "--dry-run", "--json")
+	if err != nil {
+		t.Fatalf("secrets rm --dry-run: %v\nstdout %s\nstderr %s", err, out, errOut)
+	}
+	var doc struct {
+		Version   int    `json:"version"`
+		Key       string `json:"key"`
+		Layer     string `json:"layer"`
+		Changed   bool   `json:"changed"`
+		Widening  bool   `json:"widening"`
+		Old       string `json:"old"`
+		New       string `json:"new"`
+		Operation string `json:"operation"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("the document does not read back: %v\n%s", err, out)
+	}
+	if doc.Version != settingsWriteDocVersion {
+		t.Errorf("version = %d, want %d: the document stays at the version the console pins", doc.Version, settingsWriteDocVersion)
+	}
+	if doc.Key != "project_secrets.bitbucket-token" || doc.Layer != settingsLayerLocal {
+		t.Errorf("key/layer = %q/%q", doc.Key, doc.Layer)
+	}
+	if doc.Operation != "remove-secret" {
+		t.Errorf("operation = %q, want remove-secret", doc.Operation)
+	}
+	if !doc.Changed || doc.Widening {
+		t.Errorf("changed/widening = %t/%t, want true/false: a removal asks for nothing", doc.Changed, doc.Widening)
+	}
+	if doc.Old != "allow_data_to=acme/app" || doc.New != "" {
+		t.Errorf("old/new = %q/%q, want the entry's own members and nothing", doc.Old, doc.New)
+	}
+	if !strings.Contains(errOut, id) || !strings.Contains(errOut, "would be deleted") {
+		t.Errorf("stderr does not name the container the same run would delete: %q", errOut)
+	}
+	if got := sm.Deleted(); len(got) != 0 {
+		t.Fatalf("a dry run deleted %v", got)
+	}
+	if after := readFileString(t, path); after != before {
+		t.Fatalf("a dry run wrote the config:\n%s", after)
+	}
+}
+
+// TestSecretsRmReportsNothingToRemove: a name this project never stored and
+// whose entry the config does not hold is a state to report, not an error to
+// hand back — and nothing is deleted, because a delete of a derived ID that
+// carries no Fugaro label would take a container this program never made.
+func TestSecretsRmReportsNothingToRemove(t *testing.T) {
+	secretsRmFugaro(t)
+	sm := secretsFixture(t)
+	projectSecretFixture(t, "project_secrets: {}\n")
+	foreign := gcp.ProjectSecretID("aurora", "bitbucket-token")
+	// A container with that ID but not this program's labels: the lookup must
+	// not take it, and its presence must not turn the run into a success.
+	sm.Seed(foreign, map[string]string{"owner": "someone-else"}, []byte(tokenValue))
+
+	_, _, err := execute(t, "secrets", "rm", "bitbucket-token", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "nothing to remove") {
+		t.Fatalf("err = %v, want the nothing-to-remove sentence", err)
+	}
+	if got := sm.Deleted(); len(got) != 0 {
+		t.Fatalf("deleted %v, want nothing: the container is not this program's", got)
+	}
+	if got := sm.Latest(foreign); got == nil {
+		t.Fatal("the container this program never made was taken away")
+	}
+}
+
+// TestSecretsRmRefusesAValueInTheNamesPlace: a value typed where the NAME
+// belongs must not be echoed, and the refusal names the shape the name has to
+// have rather than repeating what was typed.
+func TestSecretsRmRefusesAValueInTheNamesPlace(t *testing.T) {
+	secretsRmFugaro(t)
+	secretsFixture(t)
+	projectSecretFixture(t, "project_secrets: {}\n")
+	const typed = "not-a-secret-name-because-of-the-!-and-the-length"
+
+	_, _, err := execute(t, "secrets", "rm", typed, "--yes")
+	if err == nil {
+		t.Fatal("secrets rm accepted a name that is not one")
+	}
+	if strings.Contains(err.Error(), typed) {
+		t.Fatalf("the refusal echoed what was typed: %v", err)
+	}
+	if !strings.Contains(err.Error(), "the secret NAME must be one of") {
+		t.Fatalf("err = %v, want the name-shape refusal", err)
 	}
 }

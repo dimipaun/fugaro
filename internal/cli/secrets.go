@@ -555,13 +555,15 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	if o.policyWrite(cmd) {
 		return secretsSetPolicy(cmd, o, name)
 	}
-	if o.dryRun || o.asJSON {
+	if o.dryRun || o.yes {
 		// A value is not a setting (D1171): it has no registry row, no diff
 		// shows it and no document carries it, so there is nothing for either
-		// flag to print here. Refused rather than answered with an empty
-		// document, because an empty one would read as "the value is not
-		// stored" when the write below stores it.
-		return userErr("--dry-run and --json are the policy write's flags: a value is not a setting, so storing one has no diff and no document (D1171); pass --allow-data-to or --proxy to write project_secrets.%s, or run this command without them to store a value", pluginwire.Printable(name))
+		// flag to answer here — and a dry run answered with an empty document
+		// would read as "the value is not stored" when the write below stores
+		// it. --json is not among them: the store's own result document is
+		// what it prints, and it has printed it since before the policy write
+		// existed.
+		return userErr("--dry-run and --yes are the policy write's flags: a value is not a setting, so storing one has no diff and no confirmation to answer (D1171); pass --allow-data-to or --proxy to write project_secrets.%s, or run this command without them to store a value", pluginwire.Printable(name))
 	}
 	ctx := cmd.Context()
 	env, err := openCloud(ctx, o.cloud)
@@ -758,10 +760,8 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 	next := old
 	switch {
 	case len(o.allowDataTo) > 0:
-		for _, repo := range o.allowDataTo {
-			if next, err = yamledit.AddListItem(next, []string{"project_secrets", name, "allow_data_to"}, repo); err != nil {
-				return userErr("%s: %v", pluginwire.Printable(key), err)
-			}
+		if next, err = secretsPolicyAddRepos(old, name, o.allowDataTo); err != nil {
+			return userErr("%s: %v", pluginwire.Printable(key), err)
 		}
 	case o.proxy:
 		if next, err = yamledit.SetScalar(next, []string{"project_secrets", name, "proxy"}, "true"); err != nil {
@@ -809,6 +809,79 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 		return err
 	}
 	return nil
+}
+
+// secretsPolicyAddRepos adds each repository to the entry's allow_data_to and
+// returns the bytes that would hold them. AddListItem is the edit and is tried
+// first: it is the one that keeps the file's comments and the shape the operator
+// gave the block.
+//
+// A flow-style list is the one shape it refuses, and it is the shape
+// docs/git-providers.md teaches the operator to write — project_secrets:
+// { bitbucket-token: { allow_data_to: [myworkspace/*] } }. No command of this
+// program wrote that block before this one, so a flow list in it is the
+// operator's own hand, and a refusal here would leave the flag unable to reach
+// the entry the documentation names. The entry is written again instead, in the
+// block style this program writes a list in; the diff and the confirmation show
+// that, so the reformatting is never silent.
+func secretsPolicyAddRepos(old []byte, name string, repos []string) ([]byte, error) {
+	lc, err := localcfg.Parse(old)
+	if err != nil {
+		return nil, fmt.Errorf("the local config does not read back: %w", err)
+	}
+	entry := lc.ProjectSecrets[name]
+	var add []string
+	for _, repo := range repos {
+		if !slices.Contains(entry.AllowDataTo, repo) {
+			add = append(add, repo)
+		}
+	}
+	if len(add) == 0 {
+		// The entry already names every repository the run asked for. There is
+		// nothing to add, and a rewrite here would reformat a list the run does
+		// not change — the refusal below would otherwise be reached for a value
+		// AddListItem never refuses for, because it answers a value that is
+		// already there before it looks at the list's shape.
+		return old, nil
+	}
+	next := old
+	for _, repo := range add {
+		out, err := yamledit.AddListItem(next, []string{"project_secrets", name, "allow_data_to"}, repo)
+		if err == nil {
+			next = out
+			continue
+		}
+		if yamledit.ReasonOf(err) != yamledit.ReasonFlowCollection {
+			return nil, err
+		}
+		return secretsPolicyRewriteEntry(old, name, entry, add)
+	}
+	return next, nil
+}
+
+// secretsPolicyRewriteEntry writes project_secrets.NAME again with add added to
+// its allow_data_to: the entry's own repositories first, in the order the file
+// had them, then the flag's, and proxy written back only when the entry carried
+// it. The entry is taken away and written whole because a member cannot be
+// spliced into a flow sequence — the one edit yamledit refuses — and the values
+// come from the parsed entry rather than from the flag, so a repository the
+// entry already named is not lost with the shape it was spelled in.
+func secretsPolicyRewriteEntry(old []byte, name string, entry config.ProjectSecret, add []string) ([]byte, error) {
+	next, err := yamledit.RemoveKeyWithOptions(old, []string{"project_secrets", name}, yamledit.RemoveOptions{DropEmptyParents: true})
+	if err != nil {
+		return nil, err
+	}
+	for _, repo := range append(slices.Clone(entry.AllowDataTo), add...) {
+		if next, err = yamledit.AddListItem(next, []string{"project_secrets", name, "allow_data_to"}, repo); err != nil {
+			return nil, err
+		}
+	}
+	if entry.Proxy {
+		if next, err = yamledit.SetScalar(next, []string{"project_secrets", name, "proxy"}, "true"); err != nil {
+			return nil, err
+		}
+	}
+	return next, nil
 }
 
 // secretsPolicyTyped classifies the policy write (D1165, D1171): naming one
