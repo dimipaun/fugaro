@@ -58,6 +58,14 @@ var readAppKey = func(ctx context.Context, lc *localcfg.Config, secretID string)
 // checkGitHubAppFlag is the flag that allows the key's Secret Manager read.
 const checkGitHubAppFlag = "--check-github-app"
 
+// appKeyReadNotice is the one line every path that reads the App's private key
+// from Secret Manager with the person's own credentials prints before the read:
+// the --check-github-app pre-check, and the catalog build's own read of it
+// (catalogProviderEnv, whose key is the same secret and whose JWT mints the
+// same installation token). Stated once, so the two cannot describe one read
+// two ways.
+const appKeyReadNotice = "reads the App's private key with your own credentials and holds it in memory only to sign a 9-minute token; only the PEM byte copy is cleared afterwards (the encoded payload and the parsed key live until garbage collection); GODEBUG=http2debug in your own environment would print the token's Authorization header, so unset it first"
+
 // refuseAppKeyReadInAgent is the refusal of the flag under a coding agent's
 // environment, before anything is read.
 func refuseAppKeyReadInAgent(getenv func(string) string) error {
@@ -139,7 +147,7 @@ func checkGitHubApp(ctx context.Context, lc *localcfg.Config, repo, appID string
 		pem = append([]byte(nil), src.Mem...)
 	case src.Read:
 		if src.Notice != nil {
-			fmt.Fprintln(src.Notice, "reads the App's private key with your own credentials and holds it in memory only to sign a 9-minute token; only the PEM byte copy is cleared afterwards (the encoded payload and the parsed key live until garbage collection); GODEBUG=http2debug in your own environment would print the token's Authorization header, so unset it first")
+			fmt.Fprintln(src.Notice, appKeyReadNotice)
 		}
 		var err error
 		pem, err = readAppKey(ctx, lc, src.SecretID)
