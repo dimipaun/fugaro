@@ -27,12 +27,15 @@ what the correction changes), and **§3**, which now names the build account amo
 project-scoped value. The three decisions the owner answered by name are marked in their own sections,
 as are the fifteen answered as recommended.
 
-**Read back once more on 2026-11-04 after merging `1c390bcb`**, which added no citation this file
-reads, and **after the owner answered the whole block**: all eighteen decisions are closed, each
-section carries its own answer, and the build is written to them. Two corrections rode with the
-answer: **D1270** now cites the write path's unknown-key refusal at `settings_set.go:412` (it moved
-when `fugaro settings set` grew the managed gate), and **§6** states the managed-mode exposure the
-allow-list does not close.
+**Read back once more on 2026-11-04 after merging `1c390bcb`**, which moved the two `spec.go`
+citations the `b3ed1842` paragraph records, because the project catalog check's spec landed in that
+file: `ProjectSecretCandidate` `:1356` → **`:1374`** and `projectSecretCandidates` `:1323` →
+**`:1341`**. That merge is also where **the owner answered the whole block**: all eighteen decisions
+are closed, every section carries its own answer, and the build is written to them. Three corrections
+rode with it: **D1270** now cites the write path's unknown-key refusal at `settings_set.go:412` (the
+read path's is `settings.go:170`; the earlier `:410` was right before `fugaro settings set` grew the
+managed gate), **F15's `providerProblems` citation** moved to `validate.go:350`, and **§6** states the
+managed-mode exposure the allow-list does not close.
 
 **The shape of the reading: the mechanism the issue asks for is already built, end to end, and the
 only thing standing in its way is one branch of one predicate.** A project-wide secret today is a
@@ -102,11 +105,11 @@ The design's job is to say so plainly rather than propose a mechanism the tree a
 **Claim of the design:** that one predicate decides both "may be stored" and "may be mounted", so the
 two cannot drift.
 
-**What the code does.** `internal/infra/spec.go:1356`'s `ProjectSecretCandidate(lc, logical, repo)`
+**What the code does.** `internal/infra/spec.go:1374`'s `ProjectSecretCandidate(lc, logical, repo)`
 returns the project secret ID when the repository may mount a project copy of `logical`, and it reads
 `config.AllowedForProjectSecret` (the `project_secrets` entry), `config.ProjectScopeByDefault` (D2's
 sweep), `ClaudeAccountBySecret` and `ProviderBySecret` in that order. Its callers are
-`spec.go:1323`'s `projectSecretCandidates` (the per-repository candidate map),
+`spec.go:1341`'s `projectSecretCandidates` (the per-repository candidate map),
 `internal/cli/secrets.go:1103`'s `repoMayUseProject` (the store-time note and the listing),
 `internal/cli/initsecrets.go:424`'s `projectScope` and `:447`'s `find` (init's stage: where to store,
 and what not to prompt for), `internal/cli/secrets.go:1267` and `:1341` (the listing paths) and
@@ -303,7 +306,7 @@ and each carries a test (the docs tests, and `plugin/`'s own gate on the skill's
 **Claim of the design:** that a repository's own `validate` could, but should not, mention the
 project copy.
 
-**What the code does.** `internal/cli/validate.go:355`'s `providerProblems` returns early unless
+**What the code does.** `internal/cli/validate.go:350`'s `providerProblems` returns early unless
 `lc.Name == cfg.Project` — so a checkout whose `project:` names the operator's own project *does*
 read the local config, and `CheckWorkflowProviderSecrets` already judges a workflow's secret names
 against it.
@@ -459,7 +462,7 @@ account that reads the value after them.**
   (`deploy/terraform/gcp/modules/repo/workflows.tf:9`): the repository's own containers **overlaid
   with `var.repo.project_secrets`**, which is the plan's resolution and nothing else.
 - **Only a repository the entry lists ever gets a project candidate.**
-  `internal/infra/spec.go:1356`'s `ProjectSecretCandidate(lc, logical, repo)` is the single function
+  `internal/infra/spec.go:1374`'s `ProjectSecretCandidate(lc, logical, repo)` is the single function
   that answers, and it is where an entry's list is read (F3). A name it refuses produces no entry in
   `repo.project_secrets`, so there is no ID for the grant to name.
 - **Enforcement is that map, and it is not an independent Terraform check.** Nothing under
@@ -861,7 +864,7 @@ workflow secrets?
 from a repository's `validate` — so the section is the build's specification rather than an open
 question.
 
-**Recommendation.** **No new output.** `providerProblems` (`validate.go:355`) may read the
+**Recommendation.** **No new output.** `providerProblems` (`validate.go:350`) may read the
 operator's local config, but the answer is per-machine (F15): the same checkout would carry a note on
 the operator's laptop and none in CI or on a colleague's, which teaches a reader to distrust the
 notes that do appear.

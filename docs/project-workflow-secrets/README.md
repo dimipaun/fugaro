@@ -15,8 +15,8 @@ schema, no `go.mod`.
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The issue, **byte for byte** — its headings, its checklist box and its em dashes — with a status line and nothing else |
-| [reconciliation.md](reconciliation.md) | Each claim read against the code on `main` at `b41709ea`, re-read after merging `b3ed1842` and again at `b4b8e008`: findings **F1–F20**, what already exists and what is missing; the threat model (§3) — rotation, the two doctor checks, and who can read the value (the job accounts and the build account); the decisions **D1260–D1277** (§4) with the recommendation and the cost of each alternative, **three of them answered on 2026-11-04 and marked in their own sections**; the number block and how it was read (§5); and the residual this design refuses to hide (§6). **Where it disagrees with this file, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Eight tasks **W0–W7**, each with its files (at most twelve), its interface, its **red step**, its named tests and its **SEC** flag; the shared-files table (§4); the order and the critical path (§2); the recommended slot (D1277 of the reconciliation) |
+| [reconciliation.md](reconciliation.md) | Each claim read against the code on `main` at `b41709ea`, re-read after merging `b3ed1842`, again at `b4b8e008`, and again at `1c390bcb`: findings **F1–F20**, what already exists and what is missing; the threat model (§3) — rotation, the two doctor checks, and who can read the value (the job accounts and the build account); the decisions **D1260–D1277** (§4) with the recommendation, the cost of each alternative and **the owner's answer of 2026-11-04**, all eighteen marked in their own sections; the number block and how it was read (§5); and the residual this design refuses to hide (§6). **Where it disagrees with this file, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Eight tasks **W0–W7**, each with its files (at most twelve), its interface, its **red step**, its named tests and its **SEC** flag; the shared-files table (§4); the order and the critical path (§2); the slot (D1277 of the reconciliation) |
 | `README.md` | This file: the status, the reading of the issue, the number block, and what a reader should not take from here |
 
 ## What is being asked
@@ -45,7 +45,7 @@ word on the two properties that are not negotiable: the list is **operator-local
    "declared by more than one repository" heuristic (D1262). A repository the entry does not name
    mounts nothing.
 2. **The block is new, and the reserved names' block is not weakened** (D1260, D1261). That is the
-   design's most arguable recommendation and the one whose alternatives are costed in full: relaxing
+   design's most arguable decision and the one whose alternatives are costed in full: relaxing
    `project_secrets` is the smaller diff and it costs the typo check for every name in it.
 3. **A shared project job may not mount one** (D1266), and the refusal is **the deployer's, where it
    already is**: `internal/infra/projectjobs.go`'s `projectJobSecrets` refuses every profile secret
@@ -74,9 +74,10 @@ The block is taken **above every `D<number>` on `main` and in every open work st
 
 ## What this design does not do
 
-- **It does not build anything, and it does not approve anything.** Six of the eight tasks carry a
-  **SEC** flag; the build is security-sensitive and its recommended slot is **0.19.0** (D1277),
-  deliberately not the 0.18.0 release that carries the managed-agent-converge theme.
+- **It does not build anything.** The owner has answered every decision, so the build may start, and
+  this pull request still contains no code. Six of the eight tasks carry a **SEC** flag; the build is
+  security-sensitive and its slot is **0.19.0** (D1277), deliberately not the 0.18.0 release that
+  carries the managed-agent-converge theme.
 - **It does not weaken the reserved names' block.** `project_secrets`' key rule, D2's sweep,
   `PerRepositorySecret`, the provider convention, the two harness OAuth namespaces and the
   `creds-bundle` refusal are read by this design and amended by none of it.

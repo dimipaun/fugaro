@@ -568,7 +568,7 @@ func TestDocsProjectWorkflowSecretsThreatModelAnswersWhoCanReadTheValue(t *testi
 		"local.secrets",
 		"deploy/terraform/gcp/modules/repo/build.tf:15",
 		"build account",
-		"internal/infra/spec.go:1356",
+		"internal/infra/spec.go:1374",
 		"not an independent Terraform check",
 	} {
 		if !strings.Contains(model, want) {

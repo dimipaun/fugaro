@@ -108,7 +108,7 @@ owner landed.
 | `internal/config/project_secrets.go` | **none** | **Untouched.** D1260's whole argument is that this block's key rule is not weakened; W0 adds a sibling file in the same package and reads these helpers (`invalidAllowDataToEntry`, `matchRepoPattern`) without editing them. A task that finds itself editing this file has chosen D1260's first alternative by accident and **stops and reports** |
 | `internal/localcfg/localcfg.go` | W1 | One field and one validation call, beside `ProjectSecrets` (`:186`, `:1605`) |
 | `internal/localcfg/shared.go` | W1 | The publish path drops the new block, the way it drops `ProjectSecrets` (`:79`) — an operator-local allow-list never reaches the shared config |
-| `internal/infra/spec.go` | W2 | `ProjectSecretCandidate` (`:1356`) gains the block as a source through `config.AllowedForProjectSecret`'s shape. It is the only eligibility edit |
+| `internal/infra/spec.go` | W2 | `ProjectSecretCandidate` (`:1374`) gains the block as a source through `config.AllowedForProjectSecret`'s shape. It is the only eligibility edit |
 | `internal/infra/tfvars.go` | W2 | `projectSecretContainers` (`:852`) derives the container from the new block's entries |
 | `internal/cli/secrets.go` | **G8**, then W3 | G8 adds the secret policy flags (`--allow-data-to`, `--proxy`); W3 adds the store path: `projectWideAccepted`, `projectWideRefusal`, `projectWideHint`, `projectScopeName`, `projectSecretAllowed`, and the `set` help (`:308`) and store-time note (`:859`). Two tasks, one file, and **W3 lands second** |
 | `internal/cli/secrets_rm.go` | **G8**, then W3 | G8's file, on an open branch (#1691): `fugaro secrets rm NAME` deletes the container and removes the `project_secrets.NAME` entry. W3 extends it to the new block once G8 has merged — `workflow_secrets.<name>` is the key `rm` drops for a project-scoped workflow secret, and `secretsRmWhat`'s sentence, the dry run's `key` and the `rm` help all name the block the entry lives in |
@@ -188,7 +188,7 @@ Without it every later task would invent its own key rule, which is the drift D1
 
 The one function every reader of the decision shares (F3), plus the container the plan derives.
 
-- **Interface.** `ProjectSecretCandidate` (`spec.go:1356`) gains one source:
+- **Interface.** `ProjectSecretCandidate` (`spec.go:1374`) gains one source:
   `config.AllowedForWorkflowSecret(lc.WorkflowSecrets, logical, repo)` — with **no sweep for a workflow secret**, so the entry
   is the whole gate (D1262: absent or empty means nobody). It is consulted **only for a name no other source claims**: `config.AllowedForProjectSecret` (the `project_secrets` entry), the D2 sweep,
   `config.ClaudeAccountBySecret` and `config.ProviderBySecret` answer first, and the new block is the
@@ -258,10 +258,11 @@ The one function every reader of the decision shares (F3), plus the container th
   the project's own name at a terminal, or `--yes` outside a coding agent's session — so a session is
   refused, which is the property the task has to pin. **The outright refusal is G8's, and W3 keeps
   it.** Beside the typed-widening path, G8 refuses a secret's policy write in a coding agent's session
-  outright — `internal/cli/secrets.go:747` on G8's branch is the line, and
-  `TestSecretsSetPolicyRefusesAnAgentSession` is the test — and `--yes` does not lift it. W3 writes
-  the new block's entry through that same call and adds no route of its own, because a second path
-  into one key is the door that refusal exists to close. What the task owes, therefore: the name check
+  outright — `internal/cli/secrets.go:747` on G8's branch is the line, and that branch's
+  `TestSecretsSetPolicyRefusesAnAgentSession` is the test, neither of them readable here until G8
+  merges — and `--yes` does not lift it. W3 writes the new block's entry through that same call and
+  adds no route of its own, because a second path into one key is the door that refusal exists to
+  close. What the task owes, therefore: the name check
   answers for either block (a `config.ReservedSecrets` name writes `project_secrets.<name>`; any
   other name writes `workflow_secrets.<name>` **when the new block holds it**; a name in neither is
   refused by G8's existing key-rule refusal, and this task points that refusal at the right block for
