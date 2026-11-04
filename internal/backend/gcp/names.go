@@ -629,17 +629,6 @@ func CatalogRecordsCondition(bucket, slug string) string {
 	return projectBucketPrefixClause(bucket, "builds/"+slug+"/catalog")
 }
 
-// CatalogRecordsConditionTitlePrefix is the fixed part of
-// CatalogRecordsConditionTitle, for the reason CatalogReadConditionTitlePrefix
-// gives.
-const CatalogRecordsConditionTitlePrefix = "fugaro-catalog-records-"
-
-// CatalogRecordsConditionTitle is the title of the catalog check job's
-// records grant on the repository slug.
-func CatalogRecordsConditionTitle(slug string) string {
-	return CatalogRecordsConditionTitlePrefix + slug
-}
-
 // TokenBucketPrefix is the runs bucket prefix the budget token objects live
 // under (internal/budget/token's ObjectPrefix, pinned equal by a test): out of
 // runs/, so that a job account, which may write runs/, may only read it
