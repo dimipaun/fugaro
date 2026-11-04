@@ -514,6 +514,39 @@ func TestPolicyPublishUnmanagedProjectKeepsTheAgentRefusal(t *testing.T) {
 	}
 }
 
+// Half a mark is not a managed project, and this is the half that is easy to
+// write and hard to notice: the creation fact is in the runs bucket, with the
+// label the read proves the bucket by, and the project itself carries no
+// fugaro_managed label. The gate requires BOTH, so the session reads today's
+// refusal and nothing is recorded — an implementation that accepted the object
+// alone would admit a publish in a project its owner never put into managed
+// mode.
+func TestPolicyPublishOneMarkIsNotManaged(t *testing.T) {
+	f := newUnmanagedPolicyFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+	f.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{gcp.LabelManaged: gcp.ManagedValue})
+	f.gcs.Put(initRunsBucket, managed.MarkerObject, policyMarker())
+	before := nodeOf(t, f.db)
+	t.Setenv("CLAUDECODE", "1")
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("half a mark admitted a coding agent's publish:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), initflow.AgentRefusal("CLAUDECODE")) {
+		t.Errorf("the refusal is not today's: %v", err)
+	}
+	if got := ExitCode(err); got != ExitUserError {
+		t.Errorf("exit %d, want %d", got, ExitUserError)
+	}
+	if after := nodeOf(t, f.db); after != before {
+		t.Errorf("the refused publish wrote something:\nbefore %s\nafter  %s", before, after)
+	}
+	if got := f.audits(t); len(got) != 0 {
+		t.Errorf("a project with half a mark left %d audit records, want none", len(got))
+	}
+}
+
 // A project whose cloud half this installation cannot even build the clients
 // of — the config names no endpoint for GCS or Resource Manager, which is what
 // an installation that predates them reads as — is a project the gate cannot

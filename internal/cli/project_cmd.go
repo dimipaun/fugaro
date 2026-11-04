@@ -319,14 +319,15 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		err = db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, json.RawMessage(body))
 		switch {
 		case err == nil:
-			// The record of the gate's admission, written now: after this
-			// command's own write and before anything else it does, because the
-			// record is what makes the difference between "this program ran" and
-			// "this program ran, and here is what it did", and because a record
-			// that cannot be written fails the command rather than being reported
-			// beside a success (spec §6, D1014). A write that failed records
-			// nothing: there is no application of an admitted step to file, and
-			// the node is as it was.
+			// The record of the gate's admission, filed as soon as the node it
+			// judged has landed and before the widening below: the node is the
+			// write the gate admitted, and a trail filed at the end of the
+			// command would be missing exactly where an owner needs it most —
+			// this publish does end in failure after this point (the widening
+			// can) and the node it wrote is real. A failed record is the
+			// command's own failure (spec §6, D1014), and a write that failed
+			// records nothing at all: there is no application of an admitted
+			// step to file, and the node is as it was.
 			if err := gate.recorded(ctx); err != nil {
 				return err
 			}
