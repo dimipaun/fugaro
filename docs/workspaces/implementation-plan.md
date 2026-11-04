@@ -13,21 +13,21 @@ address or a string shaped like a secret: the fixtures use marker values, and §
 
 | Decision | Blocks | Recommendation the plan is written to |
 | --- | --- | --- |
-| D980 | W3 | The workspace has its own Firebase project |
-| D981 | W0, W1 | At most one workspace per project |
-| D982 | W2 | The record is declared locally and published by `fugaro update` |
-| D983, D984 | W4 | One sign-in at the workspace, one exchange per member, at the member |
-| D985 | W5 | The member's own lists are the whole of the admission |
-| D986 | W4 | Hashes only |
-| D987 | W6 | One workspace bundle, one workspace service |
-| D988 | W6 | A per-project allow-list, intersected with the member's policy |
-| D989 | W7 | Enforced at the service, advisory at the member's gateway |
-| D990 | W7, W9 | The cap bounds the workspace's own credentials' spend |
-| D991 | W7 | A rollup from each member's ledger, `stale` rather than zero |
-| D992 | W8 | `fugaro budget kill` gains a workspace scope |
-| D993 | W1, W8 | Local writes and reads; `update` carries the cloud |
-| D994 | — | No console or mobile task in this plan |
-| D995 | W9 | Not a new licensed unit and not a new price |
+| D1290 | W3 | The workspace has its own Firebase project |
+| D1291 | W0, W1 | At most one workspace per project |
+| D1292 | W2 | The record is declared locally and published by `fugaro update` |
+| D1293, D1294 | W4 | One sign-in at the workspace, one exchange per member, at the member |
+| D1295 | W5 | The member's own lists are the whole of the admission |
+| D1296 | W4 | Hashes only |
+| D1297 | W6 | One workspace bundle, one workspace service |
+| D1298 | W6 | A per-project allow-list, intersected with the member's policy |
+| D1299 | W7 | Enforced at the service, advisory at the member's gateway |
+| D1300 | W7, W9 | The cap bounds the workspace's own credentials' spend |
+| D1301 | W7 | A rollup from each member's ledger, `stale` rather than zero |
+| D1302 | W8 | `fugaro budget kill` gains a workspace scope |
+| D1303 | W1, W8 | Local writes and reads; `update` carries the cloud |
+| D1304 | — | No console or mobile task in this plan |
+| D1305 | W9 | Not a new licensed unit and not a new price |
 
 **One thing must be read before any task starts:** [spec.md](spec.md) §8 is a threat model and its
 independent review is **mandatory** by the owner's brief. W4, W5, W6 and W7 each add a surface that
@@ -46,8 +46,8 @@ Three dependencies force the order, and none of them is a preference:
    W4 changes with it**, and if the owner declines the MCP design, W4 has no host and this plan's
    SSO half does not start. That dependency is the whole reason §5 recommends the slot it does.
 3. **The shared pool comes before the cap** (W6 before W7). The cap is enforced where the calls are
-   paid for (D989), and until there is one place that pays for them there is no such place. A cap
-   built first would be the member-gateway-only version D989 rejects.
+   paid for (D1299), and until there is one place that pays for them there is no such place. A cap
+   built first would be the member-gateway-only version D1299 rejects.
 
 Everything else is independent: W3 (the workspace's Firebase and its rules) can run beside W1, and
 W8 and W9 come last because they describe a thing that exists.
@@ -111,7 +111,7 @@ integer micro-dollars, and a `float64` field is the mistake this test exists to 
 ### W1 — the local layer, and the `fugaro workspace` reads and writes
 
 **Interface.** `localcfg.Config` gains `Workspace string \`yaml:"workspace,omitempty"\``; the new
-`fugaro workspace` family (D993) with `ls`, `show`, `add`, `rm`, `member add`, `member rm`, `cap set`
+`fugaro workspace` family (D1303) with `ls`, `show`, `add`, `rm`, `member add`, `member rm`, `cap set`
 — every write a local config edit through the same check, diff, backup and atomic write the `models`
 commands use, and every one ending with `next: fugaro update`.
 
@@ -131,7 +131,7 @@ make and the same one `yamledit` exists to keep.
 within it), `TestWorkspaceLsJSONCarriesNoCredentialShapedField` (the `config list` rule: a named set
 of fields, not a marshalled `localcfg.Config`),
 `TestWorkspaceWritesNothingUnderACodingAgentsMarker` (the `models` rule, `--yes` included),
-`TestLocalcfgRefusesASecondWorkspaceKey` (D981 is a scalar).
+`TestLocalcfgRefusesASecondWorkspaceKey` (D1291 is a scalar).
 
 **SEC:** no. Local file edits and offline reads.
 
@@ -177,7 +177,7 @@ is the test the task exists for: the record, the token hashes and the rollup liv
 a rules file that admitted a run token to them would be a leak with a public address.
 
 **Tests.** `TestWorkspaceRulesDenyEveryRunTokenTheRecord`,
-`TestWorkspaceRulesDenyEveryRunTokenTheTokenRecord` (D986: hashes only, and no client reads them),
+`TestWorkspaceRulesDenyEveryRunTokenTheTokenRecord` (D1296: hashes only, and no client reads them),
 `TestWorkspaceRulesAllowTheServicesOwnAccount`,
 `TestWorkspaceRulesVersionIsPinnedAndMigrated` (the rules marker's own pattern, so an older CLI
 converges rather than half-applies).
@@ -275,14 +275,14 @@ its whole cap in the member nobody could see.
 `TestWorkspaceCapRefusesTheCallThatWouldExceedIt`,
 `TestWorkspaceCapIsNotWidenedByAMembersOwnCap` (the merge is min, and the workspace can only
 tighten), `TestHeadroomIsAdvisoryAndTheGatewayNeverDecidesTheCap`,
-`TestWorkspaceCapBoundsOnlyTheCredentialsItPaysFor` (D990, stated as a test so the docs cannot drift
+`TestWorkspaceCapBoundsOnlyTheCredentialsItPaysFor` (D1300, stated as a test so the docs cannot drift
 from it).
 
 **SEC:** **yes.** It is a spend ceiling and a cross-project read (spec §8).
 
 ### W8 — the stop, and `fugaro workspace cap`
 
-**Interface.** `fugaro budget kill` gains a workspace scope (D992), which is the workspace service's
+**Interface.** `fugaro budget kill` gains a workspace scope (D1302), which is the workspace service's
 own stop flag; `fugaro workspace cap set --workspace <name> --monthly <amount>` records the cap
 locally and `fugaro update` publishes it.
 
@@ -396,9 +396,9 @@ spec names the sign-in as one of the four things a workspace is.
   and W5 are written to their interface and start after them.
 - **The credentials service's own slices.** W6 is a second deployment of that service, and the
   service's own plan owns the first.
-- **The console and the mobile app.** D994: a console workspace screen is a later design, and it
+- **The console and the mobile app.** D1304: a console workspace screen is a later design, and it
   reads a versioned CLI document this plan's W1 produces.
-- **The subscriptions key.** D995: a workspace is not a licensed unit, so no key, seat or price work
+- **The subscriptions key.** D1305: a workspace is not a licensed unit, so no key, seat or price work
   is in this plan.
 - **A workspace-wide repository allow-list.** Refused by [spec.md](spec.md) §9 and F18.
 - **Any live check, by number.** The owner-run checks are named in

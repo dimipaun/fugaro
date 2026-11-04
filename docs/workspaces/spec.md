@@ -2,7 +2,7 @@
 
 **Status: design only.** Nothing here is approved and no line of it is implemented. §0 is the
 owner's spec as this run recorded it; the design that follows (§1 onward) is written to the
-**recommended** answer of each decision in [reconciliation.md](reconciliation.md) §4 (D980–D995), and
+**recommended** answer of each decision in [reconciliation.md](reconciliation.md) §4 (D1290–D1305), and
 **where the two disagree the reconciliation wins** — §0 is the record of what was asked, not of what
 this design proposes. Implementation is **not** approved: the owner decides, task by task, after
 [implementation-plan.md](implementation-plan.md) has been reviewed.
@@ -61,11 +61,11 @@ no runs bucket, no job, no image and no policy.
 
 `fugaro update` is the whole upgrade (`CLAUDE.md`, HARD RULE). So:
 
-- The `workspace` commands **edit local files and read** (D993). None of them writes the workspace
+- The `workspace` commands **edit local files and read** (D1303). None of them writes the workspace
   node, a member's database, a secret or anything else in the cloud.
 - Every change they make reaches the cloud through the next `fugaro update`, which already
   re-converges the installation and, with the policy stage the update-converge work adds, publishes
-  the policy (D982). Each write command ends by printing that one command and nothing else.
+  the policy (D1292). Each write command ends by printing that one command and nothing else.
 - A change `fugaro update` cannot carry is a gap in `update`, not a step for the user (F13).
 
 ## 2. The workspace record
@@ -75,25 +75,25 @@ A workspace is declared in **two** places, and the second is derived from the fi
 1. **In each member's own project config** (`~/.config/fugaro/projects/<name>.yaml`,
    `internal/localcfg.Config`): one key, `workspace: <name>`. It is read by every command that reads
    a project config, and it is what makes a project a member. A project with no key is not a member
-   of anything, which is the state of every installation today (D981).
+   of anything, which is the state of every installation today (D1291).
 2. **In the workspace's own database**, at `workspaces/<name>`, published by `fugaro update`: the
    member list (each member's project name and its canonical `owner/repo` set), the workspace's
    identity provider, and the workspace's cap. This is the copy a *second* member reads when it
    needs to know who else is in the group, and it is the copy the workspace's own services read
-   (D982).
+   (D1292).
 
 The workspace name reuses the project-name grammar (`config.ProjectNameRE`, F21) rather than a second
 one. A workspace's record is validated strictly and strictly decoded, like every other config and
 wire format here: an unknown field is an error, and the shape has a JSON Schema in `schemas/`.
 
-**Membership is at most one workspace per project** (D981). The key is a scalar, not a list: the cap
+**Membership is at most one workspace per project** (D1291). The key is a scalar, not a list: the cap
 and the credential pool both need a unique owner for a project, and "which of N workspaces' headroom
 applies" has no answer a reader can act on.
 
 ## 3. Single sign-on: the workspace identity and the token exchange
 
 **The workspace has its own Firebase project**, created for the workspace and holding nothing else
-(D980). It is the workspace's identity provider, and it is not any member's: a member's own Firebase
+(D1290). It is the workspace's identity provider, and it is not any member's: a member's own Firebase
 continues to issue that member's own tokens, unchanged.
 
 **What a person does.** They sign in to the workspace's Firebase once — the same Firebase sign-in
@@ -102,7 +102,7 @@ publishes, with the issuer and the bare-project-id audience rule `internal/creds
 implements (F4). What they hold afterwards is a **short-lived workspace token**, and it is a bearer
 for exactly one thing: the exchange endpoint of a member they are already admitted to.
 
-**The exchange** (D983, D984). To reach a member, the person presents the workspace token to that
+**The exchange** (D1293, D1294). To reach a member, the person presents the workspace token to that
 member's own authorization server — the one the MCP design puts inside the coordinator
 (`docs/mcp-server/spec.md` §3) — which:
 
@@ -110,27 +110,27 @@ member's own authorization server — the one the MCP design puts inside the coo
 2. maps the identity to the member's own permission lists (`internal/cli/user.go`: the launchers and
    operators `fugaro user` writes), and **refuses when the member's lists do not name the person**;
 3. mints **the member's own token**, short-lived, with the member's own scopes and limits, exactly as
-   it mints one for a sign-in that started at the member (D985).
+   it mints one for a sign-in that started at the member (D1295).
 
 **Nothing is shared but the sign-in.** No session is shared, no member accepts another member's
 token as a bearer, and the workspace token is never a bearer for a member's API. A member that is
 down does not stop a person reaching another member; a member that is removed from the workspace
 stops being reachable through it, and its own sign-in keeps working.
 
-**What is stored** (D986). Only **hashes**: at the workspace, the record of who signed in and what
+**What is stored** (D1296). Only **hashes**: at the workspace, the record of who signed in and what
 was issued, in a subtree no client of the workspace's database may read (the MCP design's D922
 applied to the workspace); at each member, the member's own token record, unchanged. Revocation is
 one delete at the workspace, and the next exchange by that person is refused; a member's own
 revocation is unchanged and independent.
 
-**What a workspace identity may do in a member is what the member already grants** (D985). The
+**What a workspace identity may do in a member is what the member already grants** (D1295). The
 workspace cannot add a launcher, cannot make an operator, cannot admit an address a member's lists
 do not name, and cannot widen a member's policy, caps or allow-lists. That is rule 1 of this folder
 stated as a mechanism: the exchange reads the member's lists and never writes them.
 
 ## 4. Shared credentials
 
-**One workspace bundle, one workspace service** (D987). The credentials service
+**One workspace bundle, one workspace service** (D1297). The credentials service
 (`docs/credentials-service/`) is deployed **once, in the workspace's project**, and holds the
 workspace's model credentials in its one bundle secret — the same shape the owner ruled for an
 installation (one Secret Manager secret, one `secretAccessor` grant). Every member's runs reach it
@@ -139,7 +139,7 @@ the service verifies the signature and the `email` claim, and the run is proved 
 identity. The one thing that changes is that the admitted set is the **workspace's** member job
 service accounts, not one installation's.
 
-**Which credentials may be shared, and with whom** (D988). Every shared credential carries a
+**Which credentials may be shared, and with whom** (D1298). Every shared credential carries a
 **per-project allow-list** — the pattern `allow_data_to` already uses for a model route — and the
 effective set is the **intersection** of:
 
@@ -161,21 +161,21 @@ additive: the workspace's pool is a set a member *may* draw on, subject to the i
 
 ## 5. The workspace cap
 
-**What it bounds** (D990). The workspace cap bounds **the spend of the workspace's own credentials**.
+**What it bounds** (D1300). The workspace cap bounds **the spend of the workspace's own credentials**.
 It is *not* a bound on a member's total spend, and the design refuses to call it one: a member may
 hold credentials of its own whose calls never pass the workspace. For a member that routes *every*
 model call through the workspace, the cap does bound that member's whole spend — but that is a
 property of how the member is configured, not a property of the cap, and the console and the docs
 must say so.
 
-**Where it is enforced** (D989). At the **workspace's credentials service**, on the calls it pays
+**Where it is enforced** (D1299). At the **workspace's credentials service**, on the calls it pays
 for. That is the one hop every shared-credential call passes, so a member cannot bypass it by
 choosing a different gateway, and it is the only place that sees the total. Each member's own
 gateway additionally receives an **advisory headroom** — the workspace's remaining room, published
 to the member's database — so a run stops early rather than being cut off mid-stage; the advisory
 number is a courtesy to the run, never the enforcement.
 
-**The ledger** (D991). The authoritative per-run ledger is unchanged: `runs/<slug>/<run>` in the
+**The ledger** (D1301). The authoritative per-run ledger is unchanged: `runs/<slug>/<run>` in the
 member's own database, written by the member's own gateway under the rules that already constrain it
 (`NEW >= OLD`, `spent <= reserved`). The workspace's ledger is a **rollup**, recomputed by the
 workspace service from each member's ledger on the history job's schedule, and the enforcement reads
@@ -186,14 +186,14 @@ the last good rollup. A member whose ledger cannot be read is a member the rollu
 project* (F10). The workspace's cap is a **fourth scope**, spelled `fugaro workspace cap set
 --workspace <name>`, and the two are never spelled with the same word.
 
-**The stop** (D992). `fugaro budget kill` gains a **workspace scope**: one command stops every
+**The stop** (D1302). `fugaro budget kill` gains a **workspace scope**: one command stops every
 member's runs. It is the same switch the credentials service's own stop flag already is
 (`fugaro budget kill --all`, the operator's answer of 2026-10-19), so an operator under pressure has
 one command to remember and not two.
 
 ## 6. The command surface
 
-`fugaro workspace` (D993), five verbs:
+`fugaro workspace` (D1303), five verbs:
 
 | Verb | What it does |
 | --- | --- |
@@ -214,7 +214,7 @@ Neither reads a workspace today, because neither reads a workspace's *inputs* to
 console reads `fugaro config list --json` (`internal/cli/config_list.go`), which lists the
 installations this machine has, and the mobile app reads the runs and the budget of one project.
 
-**No console or mobile task is in this plan** (D994). A workspace is a group over the document the
+**No console or mobile task is in this plan** (D1304). A workspace is a group over the document the
 console already reads, so a console screen is a small read of a *versioned* `fugaro workspace ls
 --json` — and the design that adds it should be written after the CLI document exists, not before,
 because a wire contract fixed before the shape it carries is the mistake the MCP design's §10
@@ -227,10 +227,10 @@ mandatory before any decision in [reconciliation.md](reconciliation.md) §4 is a
 written as the questions a reader should be able to answer from it.
 
 **Who can reach what.** A workspace adds exactly one new reachable surface: the **exchange
-endpoint**, which lives on a member (D984) and is reached with a workspace token. It adds no
+endpoint**, which lives on a member (D1294) and is reached with a workspace token. It adds no
 endpoint to the workspace's own project, and it opens no member's API to anyone who is not already
 in that member's own lists. The workspace's database holds the member list and the token record
-hashes, and it is read by no client (D986).
+hashes, and it is read by no client (D1296).
 
 **What a stolen workspace token reaches.** One thing: `POST <member>/oauth/token`, and only for a
 member whose lists name the person, and only while it is unexpired. It is never a bearer for a
@@ -261,20 +261,20 @@ that back with token lifetime rather than with a callback into every member.
 the workspace's credentials service, and therefore spend the workspace's money and use the
 credentials its allow-list admits. It cannot read a credential's value (rule 2: the service proxies
 and never discloses), and it cannot reach a credential another member's allow-list admits and its
-own does not (D988). The residual risk this design accepts, stated plainly: **a member's operator
+own does not (D1298). The residual risk this design accepts, stated plainly: **a member's operator
 who controls that member's job image can make the member's jobs call the workspace's service with
 any request they like**, within the intersection above. That is the same trust the member's operator
 already has over the member's own credentials today; grouping it means one member's compromise
 reaches the *pool*, not just that member. It is why the allow-list is mandatory and why a shared
 credential's allow-list should name the fewest members that need it.
 
-**The workspace cap's integrity.** The cap is enforced at the service (D989), so a member cannot
+**The workspace cap's integrity.** The cap is enforced at the service (D1299), so a member cannot
 bypass the *refusal*. Its *accounting*, however, rests on each member's own ledger, and a run writes
 its own ledger under rules that forbid lowering it and do nothing to force it to rise (F12). A
 member whose image under-reports therefore consumes more of the workspace's room than the rollup
 believes. The design's answer is honest rather than complete: the rollup reads each member's ledger
 *and* its runs bucket, a disagreement is recorded as `stale` for that member rather than averaged
-away, and the hard stop is the workspace kill (D992) — one command, which does not depend on any
+away, and the hard stop is the workspace kill (D1302) — one command, which does not depend on any
 member's honesty.
 
 **Cross-project read.** The workspace's service reads N members' databases. That is new in this
@@ -324,7 +324,7 @@ This is rule 1 and rule 2 written as prohibitions. A workspace:
   service.
 - **never owns a repository, a runs bucket, a job or an image.** A workspace is a grouping over
   projects that already exist; it holds no runs and launches nothing.
-- **never writes a member's database** except the advisory headroom node (D989), which is a number a
+- **never writes a member's database** except the advisory headroom node (D1299), which is a number a
   member may ignore.
 - **never becomes a second permission model.** There is no workspace role that means something in a
   member; the member's own lists are the only thing that admits anyone.

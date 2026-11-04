@@ -3,7 +3,7 @@
 Each claim of [spec.md](spec.md) §0 — the owner's spec as this run recorded it — against the code at
 `origin/main` `3d6ed04d`, read on 2026-11-01, and against the 24 pull requests open at that moment.
 Every citation is a path and a line at that commit. Each finding is classified **Exists**,
-**Missing** or **Conflicts**, and states its consequence. §4 is the decisions **D980–D995**, each
+**Missing** or **Conflicts**, and states its consequence. §4 is the decisions **D1290–D1305**, each
 with the recommended option first and the cost of the alternative; §5 is the number block and how it
 was read; §6 is the owner checks no hermetic test can stand in for. **Where this file disagrees with
 [spec.md](spec.md), this file wins.**
@@ -87,7 +87,7 @@ which is that the caller's ID-token `email` claim is checked "against the instal
 accounts", with a shared project job refused whole until the phase-3 rules land. The bundle is ONE
 Secret Manager secret with ONE `secretAccessor` grant (the owner's Q6 ruling,
 `docs/credentials-service/README.md`). Consequence: a second project's jobs can neither read the
-bundle nor be admitted by the service as it stands — D987 is a second deployment, not a flag on the
+bundle nor be admitted by the service as it stands — D1297 is a second deployment, not a flag on the
 existing one.
 
 **F8 — The cascade's credential state is per installation, and it is the shape to copy. — Exists.**
@@ -113,14 +113,14 @@ live in two databases.
 Exists.** `internal/cli/budget.go:66` (`budget`), `:243` (`show`), `:881`
 (`set (--global | --defaults | --repo [owner/name]) …`). Consequence: the workspace's cap must be
 spelled with a word that is not `global`, or an operator will read "the workspace's cap" where the
-command means "this project's cap" — D989 and D993 name the word.
+command means "this project's cap" — D1299 and D1303 name the word.
 
 **F11 — The gateway is where a cap is enforced, and it runs inside the job. — Exists.**
 `internal/gateway` is the loopback proxy that holds the model credential and enforces the budget;
 `internal/budget/session.go` raises the halt reasons (`ReasonBudgetUnavailable`, the lease's
 refusals) and the runner maps a session halt to a run record by the reason string alone.
 Consequence: a workspace cap enforced only at a member's gateway is enforced by the member's own
-process, so it cannot be a fence against the member — D989 puts the enforcement at the service and
+process, so it cannot be a fence against the member — D1299 puts the enforcement at the service and
 keeps the gateway's copy advisory.
 
 **F12 — A run writes its own ledger, and the rules only forbid it going down. — Exists.**
@@ -137,7 +137,7 @@ raise it — so the workspace cap's accounting is only as good as each member's 
 publish stage coming. — Exists.** The update path (`internal/cli/update*.go`) is the HARD RULE's one
 command, and the policy stage the update-converge work adds is the models design's D787
 (`docs/models-commands/spec.md` §7, F8). Consequence: the workspace node and the workspace's rules
-hang on `update` (D982) and take no new command.
+hang on `update` (D1292) and take no new command.
 
 **F14 — Managed projects are marked on the project itself. — Exists, and a workspace is not one.**
 `internal/cli/managed_flag.go:128` names the label `fugaro_managed=true` on the GCP project, and
@@ -148,14 +148,14 @@ image, and a workspace owns none of them (spec §9).
 **F15 — The console's project view is `fugaro config list --json`. — Exists.**
 `internal/cli/config_list.go:42` (`configListDoc`) and `:216` (`newConfigListCmd`), read by the
 console's installation picker (`console/src/main/installlist.ts:71`). Consequence: a console
-workspace screen is a read of a new CLI document, which D994 leaves to a later design.
+workspace screen is a read of a new CLI document, which D1304 leaves to a later design.
 
 **F16 — The subscriptions design already measures the paid unit. — Exists.**
 `docs/subscriptions/spec.md:55` — "Paid tiers are priced per seat. A seat is a person who launches
 jobs or signs in to the console or mobile app as operator or admin; viewers are free" — and `:57` —
 "Seats are measurable without phoning home: Firebase Auth and the per-project allowlists already know
 who signs in". Consequence: a workspace is a shape the existing measurement takes, not a new unit
-(D995).
+(D1305).
 
 **F17 — The `ee/` boundary the workspace's own services fall under. — Exists.**
 `docs/ee-reorg/spec.md:7` records the standing rulings: A5 (the coordinator, command and library,
@@ -173,7 +173,7 @@ allow-list outright; the only allow-list a workspace adds is a shared credential
 **F19 — `fugaro user` is the member list, it is local, and `update` applies it. — Exists.**
 `internal/cli/user.go:73` (`newUserCmd`), whose own doc says it "changes the LOCAL config's
 `terraform.launchers` / `terraform.operators` and nothing else", that the change "takes effect then
-and not here", and that it "prints the invite for a person to paste". Consequence: D985 hangs a
+and not here", and that it "prints the invite for a person to paste". Consequence: D1295 hangs a
 member's admission on exactly this list, and the exchange reads it and never writes it.
 
 ### 2e. What the workspace adds that nothing today has
@@ -203,17 +203,17 @@ none** — the plan names what the owner must run and does not number it.
 - **That a workspace may be built by widening a member's rules.** The rules grant by project token
   (F6), and the exchange exists so that no member's rules change.
 - **That the cap can be enforced by the member being capped.** The run writes its own ledger (F12),
-  so an enforcement that lives only in the run's own gateway is advice; D989 puts it at the service.
+  so an enforcement that lives only in the run's own gateway is advice; D1299 puts it at the service.
 - **That the workspace's own services are core MIT.** They are the coordinator's and the credentials
   service's, and those move under `ee/` by rulings A5 and A6 (F17).
 
 ## 4. The decisions
 
-Sixteen decisions, **D980–D995**. Each names the question, the options with **the recommended one
+Sixteen decisions, **D1290–D1305**. Each names the question, the options with **the recommended one
 first**, and the cost of the alternative. Every one is **open**: the owner has answered none of them,
 and an answer is not an approval.
 
-**D980 — Where the workspace's identity lives.** A workspace needs one identity provider its members
+**D1290 — Where the workspace's identity lives.** A workspace needs one identity provider its members
 accept. Which Firebase is it?
 - **(A, recommended) The workspace's own Firebase project**, created for the workspace and holding
   nothing else.
@@ -224,14 +224,14 @@ launchers/operators lists, which today gate only itself, would silently become t
 admission lists: a permission widening nobody asked for. (A) costs a new Firebase project and one
 more thing `fugaro update` must converge.
 
-**D981 — May a project belong to more than one workspace?**
+**D1291 — May a project belong to more than one workspace?**
 - **(A, recommended) At most one.** The membership is a scalar key in the project's own config.
 - **(B) Any number.**
 Cost of (B): "which workspace's headroom applies" has no unique answer, a shared credential's "which
 workspace may this project use" has none either, and every refusal would have to name which of N
 workspaces refused. (A) costs a second key the day a project genuinely needs two groups.
 
-**D982 — Where the workspace record lives, and who writes it.**
+**D1292 — Where the workspace record lives, and who writes it.**
 - **(A, recommended) Declared in each member's local project config and published by
   `fugaro update`** to the workspace's own database, on the policy stage's pattern.
 - **(B) A new `fugaro workspace publish` command writing the node.**
@@ -239,14 +239,14 @@ Cost of (B): a second command that must run after a change, which the HARD RULE 
 forbids and which the models design already refused once (F13). (A) costs the published record being
 as fresh as the last `fugaro update`, which is what every other published node already is.
 
-**D983 — What "single sign-on" is.**
+**D1293 — What "single sign-on" is.**
 - **(A, recommended) One sign-in at the workspace, one exchange per member**: a person holds a
   short-lived workspace token and exchanges it for each member's own token. No session is shared.
 - **(B) Every member accepts the workspace token directly as a bearer.**
 Cost of (B): one stolen token is every member at once, and each member's rules would need a grant for
 a token whose issuer is not its own Firebase (F6) — a wider change to the rules than the exchange is.
 
-**D984 — Where the exchange happens.**
+**D1294 — Where the exchange happens.**
 - **(A, recommended) At the member**, in the member's own authorization server, which verifies the
   workspace token and mints the member's own. The member stays the authority over what the identity
   may do there.
@@ -255,7 +255,7 @@ Cost of (B): the workspace service holds the ability to mint tokens for every me
 credential authority over them rather than an identity provider; a compromise of it is a compromise
 of every member's API, and revocation needs the workspace to reach into each member.
 
-**D985 — What a workspace identity may do in a member.**
+**D1295 — What a workspace identity may do in a member.**
 - **(A, recommended) Nothing beyond what the member's own lists grant.** The exchange admits the
   person only when the member's launchers/operators list names their address.
 - **(B) A workspace role that maps to a member role.**
@@ -263,25 +263,25 @@ Cost of (B): a second permission model beside the member's, and the only-tighten
 — a workspace admin could widen a member's list without that member's owner acting. (A) costs one
 `fugaro user add` per member, which is the same act as today.
 
-**D986 — What is stored, and where.**
+**D1296 — What is stored, and where.**
 - **(A, recommended) Hashes only**, in the workspace's own subtree that no client of its database may
   read, plus each member's own unchanged record.
 - **(B) The workspace stores the member tokens it minted, so a person can list their sessions.**
 Cost of (B): the workspace holds a value it can present to a member — the one thing "store only
 hashes" exists to prevent — and revocation would have to reach every member's store.
 
-**D987 — What "shared credentials" means.**
+**D1297 — What "shared credentials" means.**
 - **(A, recommended) One workspace bundle and one workspace credentials service**: the credentials
   service deployed once in the workspace's project, holding the workspace's credentials in its one
   bundle secret, proxying every member's calls, admitting each member's jobs by their verified
   service-account email.
 - **(B) The bundle is copied into each member's project, each with its own service.**
 Cost of (B): N copies to rotate, N places a key can leak, no single revocation, and no one hop that
-sees the total, which is what the cap needs (D989). (A) costs the workspace holding model credentials
+sees the total, which is what the cap needs (D1299). (A) costs the workspace holding model credentials
 for every member — a trust the members must accept knowingly, and the reason spec §8 is a threat
 model.
 
-**D988 — Which credentials may be shared, and with whom.**
+**D1298 — Which credentials may be shared, and with whom.**
 - **(A, recommended) Every shared credential carries a per-project allow-list**, and the effective
   set is the intersection of that list and the member's own policy; the member's policy is the
   tighter side.
@@ -290,7 +290,7 @@ Cost of (B): one member's compromise reaches a credential every member's code is
 member whose policy excludes a provider would still be served it — a policy bypass, which the
 only-tighten rule forbids.
 
-**D989 — Where the workspace cap is enforced.**
+**D1299 — Where the workspace cap is enforced.**
 - **(A, recommended) At the workspace's credentials service**, on the calls it pays for, with an
   advisory headroom published to each member's gateway so a run stops early.
 - **(B) Only at each member's gateway, from the published headroom.**
@@ -298,7 +298,7 @@ Cost of (B): the cap becomes cooperative — a member that under-reports spends 
 (F12), and nothing sees the total. (A) costs the service being on the critical path of every
 shared-credential call, so its outage stops work; the advisory headroom and the stop flag bound that.
 
-**D990 — What the workspace cap bounds.**
+**D1300 — What the workspace cap bounds.**
 - **(A, recommended) The spend of the workspace's own credentials**, and, for a member that routes
   every call through the workspace, that member's whole spend. The design refuses to call it a bound
   on a member's total spend.
@@ -309,7 +309,7 @@ mandatory for all traffic, including a member's own keys — and it would have t
 requirement on every member rather than as a property of the cap. (A) costs the honest sentence "the
 cap covers what the workspace pays for", which the console must show and spec §8 must carry.
 
-**D991 — The workspace ledger.**
+**D1301 — The workspace ledger.**
 - **(A, recommended) A rollup recomputed by the workspace service from each member's own run
   ledger**, on the history job's schedule, with the enforcement reading the last good rollup.
 - **(B) Each run writes the workspace ledger directly.**
@@ -317,7 +317,7 @@ Cost of (B): a cross-database write from a job that holds no grant on the worksp
 new grant and a new failure mode in the run path — and a run that cannot write would halt work
 rather than merely go unrolled. (A) costs the headroom being as fresh as the rollup.
 
-**D992 — The stop.**
+**D1302 — The stop.**
 - **(A, recommended) `fugaro budget kill` gains a workspace scope**, one command that stops every
   member's runs, on the credentials service's own precedent (`fugaro budget kill --all` is already
   its stop flag).
@@ -326,13 +326,13 @@ Cost of (B): two stop flags an operator has to remember under pressure, and the 
 need its own runbook line beside the other. (A) costs the kill command's surface growing a scope,
 which its `--all` already models.
 
-**D993 — The command surface.**
+**D1303 — The command surface.**
 - **(A, recommended) `fugaro workspace ls | show | add | rm | cap`**, local writes and reads only;
   every cloud change reaches the workspace through `fugaro update`.
 - **(B) A `fugaro workspace` verb set with its own publish and apply.**
-Cost of (B): the HARD RULE again (D982). (A) costs nothing beyond the commands themselves.
+Cost of (B): the HARD RULE again (D1292). (A) costs nothing beyond the commands themselves.
 
-**D994 — The console and the mobile app.**
+**D1304 — The console and the mobile app.**
 - **(A, recommended) No console or mobile task in this plan.** The console reads `fugaro config list
   --json` today; a workspace screen is a later design reading a versioned `fugaro workspace ls
   --json`.
@@ -341,7 +341,7 @@ Cost of (B): a console contract (`console/src/main/installlist.ts`) fixed before
 carries exists — the mistake the MCP design's §10 refuses for the roadmap scope. (A) costs the
 workspace being CLI-only at first.
 
-**D995 — What a workspace is commercially.**
+**D1305 — What a workspace is commercially.**
 - **(A, recommended) Not a new licensed unit and not a new price.** The subscriptions design already
   measures the paid unit — a seat is a person who launches jobs or signs in as operator or admin,
   measured by Firebase Auth and the per-project allowlists — and a workspace is the shape that
@@ -361,7 +361,7 @@ Read at launch by hand, not from a neighbour's line, on 2026-11-01:
 | Highest number in `docs/` on `origin/main` (`3d6ed04d`) | **D900**, in `docs/rigor-command/README.md`:117, which is answered. (`D901` occurs on `main` only as the number that file says a later task takes) |
 | Highest number in the open pull requests' own diffs | **D979**, reserved by `docs/periodic-reviews` (**#1490**), which writes **D960–D971** |
 | Also taken, the same morning | **D920–D934**, `docs/mcp-server` (**#1487**), reserving **D935–D939**; **D940–D953**, `docs/plugin-user-scope` (**#1488**), reserving **D954–D959**; **D901–D919**, `docs/run-without-checkout` (**#1481**); and **D901–D920**, `docs/run-limit-carry-over` (**#1485**) — the last two **overlap**, and neither is this work's to fix (**noticed, not done**) |
-| **This work's block** | **D980–D995** — the sixteen decisions of §4 |
+| **This work's block** | **D1290–D1305** — the sixteen decisions of §4 |
 | Reserved, unused | **D996–D999** |
 | A later task takes | **D1000**, and re-checks the facts above rather than this conclusion |
 
