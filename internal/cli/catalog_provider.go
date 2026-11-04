@@ -81,9 +81,12 @@ var catalogAppKeySecretID = func(ctx context.Context, lc *localcfg.Config, rs in
 // environment, with the App ID and, when the environment holds no key of its
 // own, the App's private key added to it.
 //
-// Both stay overridable from the environment: an exported key wins and no
-// secret is read at all, and an exported App ID is the fallback when the
-// config holds none. The key read is the pre-check's own -- the repository's
+// The App ID is rs's own: catalogGitHubAppID resolved it for this repository
+// -- config first, environment only when the config holds none -- and infra.Repo
+// carried that same answer into the spec, so the credential this command reads
+// the Dockerfile with and the one the submitted build clones with cannot
+// differ. The key stays overridable: an exported one wins and no
+// secret is read at all. The key read is the pre-check's own -- the repository's
 // github-app-key secret, with the person's own credentials, in memory, behind
 // the coding agent's refusal -- and it is announced in the pre-check's own
 // line before it happens. The value joins the environment as a string, which
@@ -102,14 +105,13 @@ func catalogProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, r
 	}) {
 		return env, nil
 	}
-	appID, err := catalogGitHubAppID(lc, rs.Name, getenv)
-	if err != nil {
-		return nil, err
-	}
-	// The ID is appended after the process environment, so it is the one
-	// providers.envVars keeps of the two: catalogGitHubAppID already decided
-	// which of the sources wins, and the slice cannot disagree with it.
-	env = append(env, providers.EnvGitHubAppID+"="+appID)
+	// rs.GitHubAppID is the one answer catalogGitHubAppID gave for this
+	// repository, which the spec the build is submitted with carries too: the
+	// ID is appended after the process environment, so it is the one
+	// providers.envVars keeps of the two, and the credential this command
+	// reads the Dockerfile with cannot be named differently from the one the
+	// build clones with.
+	env = append(env, providers.EnvGitHubAppID+"="+rs.GitHubAppID)
 	if getenv(providers.EnvGitHubAppKey) != "" || getenv(providers.EnvGitHubAppKeyFile) != "" {
 		return env, nil
 	}

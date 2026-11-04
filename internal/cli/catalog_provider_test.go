@@ -31,9 +31,10 @@ const catalogEnvOnlyAppID = "67890"
 // reads or parses it.
 const catalogAppKeyPlaceholder = "not-a-real-key"
 
-// catalogProviderEnvRig is the state catalogProviderEnv is called with: a
-// GitHub repository of a project whose config records an App ID for it, and
-// one Dockerfile entry that opens the provider.
+// catalogProviderEnvRig is the state catalogProviderEnv is called with: the
+// spec of a GitHub repository, whose App ID the local config supplied and
+// infra.Repo carried (the field the environment is built from), and one
+// Dockerfile entry that opens the provider.
 func catalogProviderEnvRig(t *testing.T) (*localcfg.Config, infra.RepoSpec, []config.Entry) {
 	t.Helper()
 	lc := &localcfg.Config{
@@ -42,6 +43,7 @@ func catalogProviderEnvRig(t *testing.T) (*localcfg.Config, infra.RepoSpec, []co
 	}
 	rs := infra.RepoSpec{
 		Name: "acme/app", Slug: mustSlug(gitprov.KindGitHub, "acme/app"), Provider: gitprov.KindGitHub,
+		GitHubAppID:              catalogBuildAppID,
 		BuildServiceAccountEmail: "fugaro-build-" + mustSlug(gitprov.KindGitHub, "acme/app") + "@proj-1234.iam.gserviceaccount.com",
 	}
 	entries := []config.Entry{{Name: "base", Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/app", Path: ".fugaro/base.Dockerfile"}}}
