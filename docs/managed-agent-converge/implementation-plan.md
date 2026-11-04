@@ -91,7 +91,7 @@ The door the HARD RULE makes the whole upgrade is the door the agent must be abl
 
 ## M2. `fugaro config publish` under the gate (D1012). **SEC**
 
-- **Rules.** Every key in the registry; none of the reserved ones (`credentials.*`, `clone_urls`, `budget.*`, `agent.oauth_token`, `governance.*`); no executable-key change (`commands.*`, `image.apt`, `image.setup`) without the owner's own flag; the D854 generation check; a diff that widens no scope rule. A widening of `allow_repos` or of a profile's scope is refused (rule 4.1.5).
+- **Rules.** Every key in the registry; none of the reserved ones (`credentials.*`, `clone_urls`, `budget.*`, `agent.oauth_token`, `governance.*`); no executable-key change (`commands.*`, `image.apt`, `image.setup`) in an agent's session whatever the command line says, since `--executable-changes` is a flag the session can pass itself and a flag the session passes is not the owner's consent (D1015(e)); no lowering or removal of `defaults.rigor.*` (D1026); the D854 generation check, for this machine's own layer file and no other; a diff that widens no scope rule; and a refusal when the published object is not a layer this build can read, because no rule can be decided against the object it replaces. A widening of `allow_repos` or of a profile's scope is refused (rule 4.1.5).
 - **Red step.** `TestConfigPublishManagedRefusesACredentialsKey` and `TestConfigPublishManagedRefusesAStaleGeneration` (each fails today because the command's agent refusal fires first and neither rule is reached) — and, on the other side, `TestConfigPublishManagedAdmitsARegistryKey` with `AgentProceeded`.
 - **Files (≤6).** `internal/cli/config_publish.go`, a new `internal/cli/config_publish_managed.go`, and the tests.
 

@@ -332,6 +332,8 @@ It also reports the project's policy, for any installation with a budget backend
 
 `fugaro config publish` refuses in a coding-agent session, before anything else. That is what "only from your own terminal" means here. Since 0.7.0 it is also operator-only in effect: a launcher's own terminal gets the operator-role refusal ([design/bucket-iam.md](design/bucket-iam.md)), the same as any other write to `fugaro/`.
 
+One exception: a **managed** project, whose gate exists so that the same session that runs `fugaro update` can also publish the layer that update writes. There an agent's session reaches the deterministic gate instead of this refusal, and the gate admits a layer only on the terms [managed-agent-converge/spec.md](managed-agent-converge/spec.md) §4.2 lists — among them that **no executable key changes, whatever `--executable-changes` says**, because a flag the session itself can pass is not the owner's consent (D1015(e)). The flag below is unchanged for a person's own publish at their terminal, which is the only place an executable change is made.
+
 **`--executable-changes`.** A profile may set the keys of `config.ExecutableKeys`:
 
 <!-- executable-keys:start -->
