@@ -434,8 +434,14 @@ the list is what an operator writes, and the path that reads it is new:
   does not carry a route anybody can reach;
 - the coordinator's own account (`fugaro-coordinator`, `docs/coordinator/`) is added to the list by
   **that** work stream's deployment when it lands, which is why this plan adds no coordinator task;
-- the owner's own identity may be added for a manual verification; the design says so because the live
-  check uses it (§8), and records what it costs in §7;
+- a **service account the owner can impersonate** may be added for a manual verification, and it has to be
+  a service account rather than the owner's own user identity: this class keeps the service's URL as the
+  token's audience (the owner's ruling of 2026-11-04 lets the **person** class alone admit the plain token
+  a user account mints, and `credsvc.GcloudAudience` states that exception where its check lives), and
+  gcloud refuses `--audiences` outright for a user account — so the manual call's token is minted with
+  `gcloud auth print-identity-token --impersonate-service-account=<the account> --audiences=<the service's URL> --include-email`,
+  the flag an impersonated mint needs for its `email` and `email_verified` claims to be there at all; the
+  design says so because the live check uses it (§8), and records what it costs in §7;
 - **the list is the operator's, written where the policy node is built from**: the local configuration's
   top-level `verifier_accounts`, which `fugaro update`'s policy stage copies into `config/policy/shared` as
   the key of the same name (C3.9g3) — the pattern `bitbucket_api_roots` already travels by, and for the
@@ -670,7 +676,7 @@ registered with the service's redaction, §5.6 and D1074).
 | **another run on the same project job set** — the D892 gap: it holds `objectUser` on `runs/`, can list, and can write under a prefix it can see | a shared project job's account | **the verdict is signed, and it holds no key**: a forged or replayed `review.json` has no signature to carry, and the key is not in any container |
 | a caller that can **reach the service's URL** but holds no admitted identity | nothing | refused before a credential is read, as today |
 | the **launcher** | minting authority for run identities, and a share of the installation's own IAM | **unchanged, and stated**: a launcher that can mint an identity for any repository, and deploy a job with an admitted account name, can obtain a read-only token for that repository and sign as that account. This is the same launcher trust the credentials-service plan already records (F29, SECURITY.md) and this slice neither widens nor closes it |
-| the **owner's own identity**, if it is added to the verifier list (§5.4) | a Google identity admitted by configuration | it can ask "is this digest valid under this account" and learns one bit. It holds no key and can forge nothing. The list is configuration and empty by default; the live check is why it is stated |
+| the **service account the owner impersonates**, if it is added to the verifier list (§5.4) | a Google identity admitted by configuration | it can ask "is this digest valid under this account" and learns one bit. It holds no key and can forge nothing. The list is configuration and empty by default; the live check is why it is stated |
 
 **Residuals, at their true size.**
 
@@ -780,8 +786,11 @@ sandbox pull request.
    review run is refused **by the service itself** — the framed message (§5.2) is not the one that was
    signed, so the answer is `{"valid":false}` before any coordinator check runs — and an artifact with
    **no** sidecar is refused.
-8. **The verify route's caller class, and what its line carries**: with the owner's own identity in the
-   verifier list, a hand-made `POST /v1/review/verify` with the owner's ID token answers `{"valid":true}`
+8. **The verify route's caller class, and what its line carries**: with a service account you can
+   impersonate in the verifier list, a hand-made `POST /v1/review/verify` with that account's ID token —
+   `gcloud auth print-identity-token --impersonate-service-account=<the account> --audiences=<the service's URL> --include-email`,
+   the audience this class checks and the flag an impersonated mint needs to carry an `email` claim at all,
+   because a user account's own mint cannot carry `--audiences` — answers `{"valid":true}`
    for the real pair and `{"valid":false}` for the tampered one; the same call **without** a token is a
    typed refusal; and the service's log shows the line — the **verifier's email as its caller field** and
    the **review-signing key's entry name as its credential**, with no run and no job on it, because a

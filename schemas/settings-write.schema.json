@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/settings-write.schema.json",
   "title": "Fugaro settings write",
-  "description": "The document `fugaro settings set|unset … --dry-run --json` prints: what one edit would do and how the write path classifies it, with nothing written, no backup left and no confirmation asked (D1106). It is the document the console's confirmation window is drawn from, so every member is one the CLI produced and the consumer computes nothing. Members are only ever added within a version (D848), so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which D848 promises to keep readable under the same version.",
+  "description": "The document `fugaro settings set|unset … --dry-run --json` prints: what one edit would do and how the write path classifies it, with nothing written, no backup left and no confirmation asked (D1106). It is the document the console's confirmation window is drawn from, so every member is one the CLI produced and the consumer computes nothing. Members are only ever added within a version (D848), so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which D848 promises to keep readable under the same version. A member an edit does not produce is left out rather than written empty: the four entry members (D1164) are written by an entry write alone, so the document of a scalar write is exactly the shape version 1 has always had and both an older consumer and an older document stay readable.",
   "type": "object",
   "required": [
     "version",
@@ -55,15 +55,39 @@
     },
     "old": {
       "type": "string",
-      "description": "The value the target layer's document holds at the key now, empty when it holds none. It is the value at that key in that file and not the value a run gets: what another layer decides is the read's own answer, and a consumer that needs it reads `fugaro settings --json` (D1108)."
+      "description": "The value the target layer's document holds at the key now, empty when it holds none. It is the value at that key in that file and not the value a run gets: what another layer decides is the read's own answer, and a consumer that needs it reads `fugaro settings --json` (D1108). An entry write's old and new are the entry's own members — one `field=value` pair each, sorted by field and comma-separated — because the entry is what the edit is about and the sequence around it is not."
     },
     "new": {
       "type": "string",
-      "description": "The value the target layer's document would hold at the key after the edit, empty for a removal. A list key renders as its members comma-separated, the one spelling every comparison in this program reads a list by."
+      "description": "The value the target layer's document would hold at the key after the edit, empty for a removal. A list key renders as its members comma-separated, the one spelling every comparison in this program reads a list by, and an entry write renders the entry's own members the same way its old value does."
     },
     "refusal": {
       "type": "string",
       "description": "Always empty in every document this CLI prints, and written out because the shape is the contract: a refusal is the CLI's own sentence with a non-zero exit and no document at all, which is what a consumer branches on — a non-zero exit with no document is a refusal even when its sentence is empty (D1106, D1112). Nothing sets this member."
+    },
+    "operation": {
+      "type": "string",
+      "enum": [
+        "add-entry",
+        "remove-entry"
+      ],
+      "description": "The entry edit this document is about, written only by an entry write and left out of every other document (D1164): add-entry for --add-entry and remove-entry for --remove-entry. A consumer draws an entry edit from this member and not from the command line, and the four entry members travel together — a document carrying one carries all of the ones the edit has a value for."
+    },
+    "entry_key": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The field the entry is addressed by (D1163): a map's entry is the member the write names, so this is that member's name, and an object list's entry is named by its own key field, which is `name` for a workflow's secrets. Left out of a document that is not an entry write."
+    },
+    "entry_value": {
+      "type": "string",
+      "description": "The value entry_key holds: the member's value for a map, and for an object list the key field's value, which is what --remove-entry takes. Empty when a map member is removed — the member is gone and its value with it — and left out of a document that is not an entry write."
+    },
+    "entry_fields": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "The members the entry carries beside the field that addresses it, by name: an object list's entry is one mapping and this is the rest of it, while a map's entry is the one member entry_key names and this is empty. Left out of a document that is not an entry write, and of one that writes an entry with no member beside its key field."
     }
   }
 }

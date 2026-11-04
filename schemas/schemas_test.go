@@ -4537,6 +4537,12 @@ settings:
 // added on one side alone is red here rather than at a consumer that silently
 // reads nothing.
 //
+// The struct's members split in two, and the split is the version 1 contract
+// D1164 leaves alone: a member every document carries is required, and a member
+// a json tag marks omitempty is one an entry write produces and a scalar write
+// leaves out, so it is declared and not required. The two lists are read off
+// the struct and are the whole of the schema's properties.
+//
 // The document itself is validated against this schema by
 // TestSettingsSetDryRunJSONMatchesSchema in internal/cli, which is where the
 // command that writes it lives.
@@ -4552,12 +4558,12 @@ func TestSettingsWriteSchema(t *testing.T) {
 	// A schema that does not compile is a schema nobody can use.
 	sch := compile(t, "settings-write.schema.json")
 
-	want := settingsWriteDocMembers(t)
+	want, optional := settingsWriteDocMembers(t)
 	if got := stringsOf(t, doc, "required"); !slices.Equal(got, want) {
 		t.Errorf("settings-write.schema.json requires %v, and internal/cli's settingsWriteDoc writes %v: a consumer reads the document by these names", got, want)
 	}
 	props := nodeOf(t, doc, "properties")
-	for _, member := range want {
+	for _, member := range append(slices.Clone(want), optional...) {
 		node, ok := props[member].(map[string]any)
 		if !ok {
 			t.Errorf("%s: no properties entry, and the struct writes it", member)
@@ -4568,7 +4574,7 @@ func TestSettingsWriteSchema(t *testing.T) {
 		}
 	}
 	for member := range props {
-		if !slices.Contains(want, member) {
+		if !slices.Contains(want, member) && !slices.Contains(optional, member) {
 			t.Errorf("properties carries %s, and internal/cli's settingsWriteDoc writes no such member", member)
 		}
 	}
@@ -4618,19 +4624,22 @@ func TestSettingsWriteSchema(t *testing.T) {
 }
 
 // settingsWriteDocMembers returns the JSON member names of internal/cli's
-// settingsWriteDoc, in the order the struct writes them. The dry run's document
+// settingsWriteDoc, split into the members every document carries and the ones
+// only some do: the first list in the order the struct writes them, the second
+// in the order of the fields a json tag marks omitempty. The dry run's document
 // is the contract a consumer reads, so the schema's required list is that
 // contract only while it is the same members in the same order — and the struct
 // is where they are written, which is why this reads the Go source rather than
-// a second list.
-func settingsWriteDocMembers(t *testing.T) []string {
+// a second list. optional is read the same way, off the tags, so a member added
+// as an optional one is one the schema must declare and must not require
+// (D1164).
+func settingsWriteDocMembers(t *testing.T) (required, optional []string) {
 	t.Helper()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "../internal/cli/settings_set.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out []string
 	for _, decl := range f.Decls {
 		gd, ok := decl.(*ast.GenDecl)
 		if !ok || gd.Tok != token.TYPE {
@@ -4653,18 +4662,22 @@ func settingsWriteDocMembers(t *testing.T) []string {
 				if err != nil {
 					t.Fatal(err)
 				}
-				name := strings.Split(reflect.StructTag(raw).Get("json"), ",")[0]
+				name, opts, _ := strings.Cut(reflect.StructTag(raw).Get("json"), ",")
 				if name == "" || name == "-" {
 					t.Fatalf("settingsWriteDoc.%s carries no JSON member name: %s", field.Names[0].Name, raw)
 				}
-				out = append(out, name)
+				if slices.Contains(strings.Split(opts, ","), "omitempty") {
+					optional = append(optional, name)
+					continue
+				}
+				required = append(required, name)
 			}
 		}
 	}
-	if len(out) == 0 {
+	if len(required) == 0 {
 		t.Fatal("internal/cli/settings_set.go has no settingsWriteDoc struct, so this test would check nothing")
 	}
-	return out
+	return required, optional
 }
 
 // TestModelsLsSchema holds schemas/models-ls.schema.json to the document
