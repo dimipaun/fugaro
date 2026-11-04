@@ -121,7 +121,7 @@ Pin every download by version and checksum. Don't pipe a download into a shell, 
 
 ## 7. Build the image locally, and loop
 
-`fugaro image build --local --json` (add `--workflow <name>` with several workflows). A workflow that runs a catalog entry (`image_name:`) has no per-repository image to build: verify it with `fugaro image ls --json` — the entry listed, its tags covering the workflow's `needs:` — instead. `reference/validation.md` has the build notes and the failure table. On Apple silicon, iterate with `--platform linux/arm64`; the cloud build is the amd64 test. If the same failure survives three fixes, stop and ask the user. Done when `fugaro validate --json` prints `"valid": true` and the build's smoke result says `"passed": true` for every workflow.
+`fugaro image build --local --json` (add `--workflow <name>` with several workflows). A workflow that runs a catalog entry (`image_name:`) builds no per-repository image: verify it with `fugaro image ls --json` (the entry listed, its tags covering the workflow's `needs:`) instead. `reference/validation.md` has the build notes and the failure table. On Apple silicon, iterate with `--platform linux/arm64`; the cloud build is the amd64 test. If the same failure survives three fixes, stop and ask the user. Done when `fugaro validate --json` prints `"valid": true` and the build's smoke result says `"passed": true` for every workflow.
 
 ## 8. Secrets
 
@@ -145,7 +145,7 @@ fugaro secrets set claude-oauth-token
 fugaro secrets set claude-oauth-token-<name>
 ```
 
-Minting a *second* account's token is not yet verified: have the user run `claude setup-token` again and follow its prompts.
+Minting a *second* account's token, when this terminal holds one, is not yet verified: have the user run `claude setup-token` again and follow its prompts.
 
 ## 9. Hand off
 
