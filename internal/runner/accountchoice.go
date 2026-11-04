@@ -46,14 +46,17 @@ import (
 // What the walk cannot do is serve a stage the account it chose, and that is
 // why a choice which is not the account this run already holds is a refusal
 // and never a silent fallback: a Cloud Run job mounts one account's token
-// before the run starts (LC4), the run's own credential is that account, and a
-// stage that ran as another one would leave a record that says which account
-// served the stage while another account's token answered it. Delivering a
-// chosen account is the credentials layer's (the credentials service holds the
-// credentials a job does not, and a review job is deployed per account), and
-// no file this task owns reaches it: until that path exists, a failover past
-// the run's own account ends the run named rather than switching to an account
-// this container does not hold.
+// before the run starts (LC4) and a local run's process environment holds the
+// one CLAUDE_CODE_OAUTH_TOKEN its stage runs with (internal/agent/env.go), so
+// the run's own credential is that account either way, and a stage that ran as
+// another one would leave a record that says which account served the stage
+// while another account's token answered it. Delivering a chosen account is
+// the credentials layer's (the credentials service holds the credentials a job
+// does not, and a review job is deployed per account), and no file this task
+// owns reaches it: until that path exists, a failover past the run's own
+// account ends the run named rather than switching to an account this
+// container does not hold. The refusal is asked the same way wherever the run
+// stands, because the container holds one account's token wherever it runs.
 
 // accountChoice is one run's walk: the switch as this run read it, and what
 // each stage has already been through. It is written on the stage's own
@@ -184,18 +187,17 @@ func (r *run) checkStageAccount(ctx context.Context, stage string) string {
 		r.d.Log.With("stage", stage).Info("account failover: the stage's next attempt is the next account",
 			"from", candidates[at-1], "to", name)
 	}
-	if !r.d.Local {
-		// The account a Cloud Run job holds was mounted before this run
-		// started, and it is one account's token: the run's own credential
-		// (its task's selection, the default account and no selection being
-		// the same selection). A stage served by another account is a stage
-		// whose record would name an account that did not answer it, so the
-		// walk stops the run here rather than switching to a credential this
-		// container does not hold.
-		if own := claudeAccountOf(r.spec.OAuthToken); own != claudeAccountOf(name) {
-			return fmt.Sprintf("the stage's account under claude_account_auto is %q, and this run's own credential is %q: a run holds one account's token, mounted into its job before the run starts, so a stage of it is served by that account and no other. The run stops rather than running this stage as an account its own job does not hold — the record would name an account that did not answer it, and the account's own allow_repos is what bounds which repositories may use its token. Choosing an account per stage needs a job (or a credentials service) that holds the accounts the walk reaches, which this release does not deploy",
-				selectedName(name), selectedName(r.spec.OAuthToken))
-		}
+	// The account a run holds was mounted before it started — into its Cloud
+	// Run job, or, for a local run, as the one CLAUDE_CODE_OAUTH_TOKEN in its
+	// process environment (internal/agent/env.go) — and it is one account's
+	// token: the run's own credential (its task's selection, the default
+	// account and no selection being the same selection). A stage served by
+	// another account is a stage whose record would name an account that did
+	// not answer it, so the walk stops the run here rather than switching to a
+	// credential this container does not hold.
+	if own := claudeAccountOf(r.spec.OAuthToken); own != claudeAccountOf(name) {
+		return fmt.Sprintf("the stage's account under claude_account_auto is %q, and this run's own credential is %q: a run holds one account's token — mounted into its job before the run starts, or, in a local run, the one CLAUDE_CODE_OAUTH_TOKEN in its environment — so a stage of it is served by that account and no other. The run stops rather than running this stage as an account its own job does not hold — the record would name an account that did not answer it, and the account's own allow_repos is what bounds which repositories may use its token. Choosing an account per stage needs a job (or a credentials service) that holds the accounts the walk reaches, which this release does not deploy",
+			selectedName(name), selectedName(r.spec.OAuthToken))
 	}
 	r.recordStageAccount(stage, name)
 	return ""

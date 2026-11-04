@@ -170,56 +170,34 @@ func TestAutoOffMeansExplicitOnly(t *testing.T) {
 	})
 }
 
-// TestAutoNeverChoosesADisallowedAccount is the floor under the walk: team-b's
-// own allow_repos does not name this repository, so the walk passes over it
-// even with the switch on — the second attempt lands on the only admitted
-// account, and no account this repository may not use is ever named.
+// TestAutoNeverChoosesADisallowedAccount is the floor under the walk
+// (stageAccountCandidates): team-a's own allow_repos does not name this
+// repository, so the walk passes over it even with the switch on, and the
+// second attempt lands on the only admitted account. It sorts first, so a
+// candidate list that stopped asking the floor would hand the stage to it —
+// the account's own list is what bounds which repositories may use its token,
+// and a walk that could reach past it would be a way around claude_accounts.
 func TestAutoNeverChoosesADisallowedAccount(t *testing.T) {
 	node := autoNodeAdmitting(t, "true", map[string][]string{
-		accountA: {"github/acme/app"},
-		accountB: {"github/other/repo"},
+		accountA: {"github/other/repo"},
+		accountB: {"github/acme/app"},
 	})
 	h := autoRun(t, node)
 	handle := watchRun(t)
 	runner.SetCredsWait(t, func(context.Context, time.Duration) error { return nil })
-	rec, err := h.run(t, exhaustedOnce(t, handle), implement("feature"), review("ship", 0))
-	if err != nil || rec.Status != runstore.StatusSucceeded {
-		t.Fatalf("rec = %+v, err = %v", rec, err)
-	}
-	logs := h.logs.String()
-	if !strings.Contains(logs, "stage=implement from=default to="+accountA) {
-		t.Errorf("the second attempt did not land on the only account this repository is admitted to:\n%s", logs)
-	}
-	if strings.Contains(logs, accountB) {
-		t.Errorf("the walk named an account whose own list does not admit this repository:\n%s", logs)
-	}
-	if got := rec.StageAccounts["implement"]; got != accountA {
-		t.Errorf("stage_accounts[implement] = %q, want %q", got, accountA)
-	}
-}
-
-// TestAutoStopsWhenEveryAccountHasRefusedTheStage is the end of the walk: with
-// one account admitted for the repository the list holds two entries, both of
-// them already refused, and the stage stops named rather than spending a third
-// attempt on an account the service has just said no to.
-func TestAutoStopsWhenEveryAccountHasRefusedTheStage(t *testing.T) {
-	h := autoRun(t, autoNode(t, "true", accountA))
-	handle := watchRun(t)
-	runner.SetCredsWait(t, func(context.Context, time.Duration) error { return nil })
-	rec, err := h.run(t, exhaustedOnce(t, handle), exhaustedOnce(t, handle))
+	rec, err := h.run(t, exhaustedOnce(t, handle))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "every account this stage may be served by has already refused it") {
-		t.Fatalf("rec = %+v, calls = %d; want the run stopped when the walk ran out of accounts:\n%s", rec, len(h.agent.calls), h.logs.String())
+	logs := h.logs.String()
+	if !strings.Contains(logs, "stage=implement from=default to="+accountB) {
+		t.Errorf("the second attempt did not land on the only account this repository is admitted to:\n%s", logs)
 	}
-	if n := len(h.agent.calls); n != 2 {
-		t.Errorf("%d agent calls; want the two the exhaustion ended and no third", n)
+	if strings.Contains(logs, accountA) {
+		t.Errorf("the walk named an account whose own list does not admit this repository:\n%s", logs)
 	}
-	for _, want := range []string{accountA, config.DefaultClaudeAccount, "fugaro accounts ls"} {
-		if !strings.Contains(rec.Reason, want) {
-			t.Errorf("the refusal does not name %s: %s", want, rec.Reason)
-		}
+	if len(rec.StageAccounts) != 1 || rec.StageAccounts["implement"] != config.DefaultClaudeAccount {
+		t.Errorf("stage_accounts = %+v; want the account that answered the stage, never one this repository may not use", rec.StageAccounts)
 	}
 }
 
@@ -259,66 +237,80 @@ func TestAutoNeverSwitchesMidStage(t *testing.T) {
 }
 
 // TestAutoLogsEveryFailover: every failover is logged, and the line names the
-// stage and both accounts and carries no credential. Two stages that fail over
-// leave two lines: a run is read afterwards from its log, and a stage that was
-// moved without a line would leave the account only in a record no one reads
-// as it happens.
+// stage and both accounts and carries no credential. A run stops at the first
+// failover it cannot serve, so each stage the walk can move is driven in its
+// own run — the implement stage's, and the review stage's, which shares the
+// run's job and walks the whole list.
 func TestAutoLogsEveryFailover(t *testing.T) {
-	h := autoRun(t, autoNode(t, "true", accountA, accountB))
-	handle := watchRun(t)
-	runner.SetCredsWait(t, func(context.Context, time.Duration) error { return nil })
-	rec, err := h.run(t,
-		exhaustedOnce(t, handle), implement("feature"),
-		exhaustedOnce(t, handle), review("ship", 0),
-	)
-	if err != nil || rec.Status != runstore.StatusSucceeded {
-		t.Fatalf("rec = %+v, err = %v", rec, err)
+	cases := []struct {
+		stage string
+		steps func(t *testing.T, handle func() *runner.RunHandle) []step
+	}{
+		{"implement", func(t *testing.T, handle func() *runner.RunHandle) []step {
+			return []step{exhaustedOnce(t, handle)}
+		}},
+		{"review", func(t *testing.T, handle func() *runner.RunHandle) []step {
+			return []step{implement("feature"), exhaustedOnce(t, handle)}
+		}},
 	}
-	logs := h.logs.String()
-	lines := 0
-	for _, l := range strings.Split(logs, "\n") {
-		if !strings.Contains(l, "account failover") {
-			continue
-		}
-		lines++
-		if !strings.Contains(l, "from=default to="+accountA) {
-			t.Errorf("the failover line does not name the accounts it moved between: %s", l)
-		}
-	}
-	if lines != 2 {
-		t.Errorf("%d failover lines; want one for each stage that was moved:\n%s", lines, logs)
-	}
-	for _, want := range []string{"stage=implement", "stage=review"} {
-		if !strings.Contains(logs, want+" from=default to="+accountA) {
-			t.Errorf("no failover line names %s:\n%s", want, logs)
-		}
-	}
-	if strings.Contains(logs, "oauth-token-abcdef") {
-		t.Error("the run's log carries the credential")
+	for _, c := range cases {
+		t.Run("the "+c.stage+" stage's", func(t *testing.T) {
+			h := autoRun(t, autoNode(t, "true", accountA, accountB))
+			handle := watchRun(t)
+			runner.SetCredsWait(t, func(context.Context, time.Duration) error { return nil })
+			rec, err := h.run(t, c.steps(t, handle)...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			logs := h.logs.String()
+			lines := 0
+			for _, l := range strings.Split(logs, "\n") {
+				if !strings.Contains(l, "account failover") {
+					continue
+				}
+				lines++
+				if !strings.Contains(l, "stage="+c.stage+" from=default to="+accountA) {
+					t.Errorf("the failover line does not name what moved: %s", l)
+				}
+			}
+			if lines != 1 {
+				t.Errorf("%d failover lines; want the one the walk reached for this stage:\n%s", lines, logs)
+			}
+			if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, accountA) {
+				t.Errorf("rec = %+v; want the run stopped at the account the walk reached:\n%s", rec, logs)
+			}
+			if strings.Contains(logs, "oauth-token-abcdef") {
+				t.Error("the run's log carries the credential")
+			}
+		})
 	}
 }
 
-// TestAutoFailoverRecordsTheNewStagesAccount is D876 (§11.5): every stage's
-// account is written into the record's stage_accounts, keyed by the stage, so
-// what the log says as it happens is readable afterwards per stage — the
-// answer the record's own oauth_account cannot give, which keeps the meaning
-// it has (the account the run used last) and is not written here.
+// TestAutoFailoverRecordsTheNewStagesAccount is D876 (§11.5): the record's
+// stage_accounts carries the account that served each stage of the run, keyed
+// by the stage — the answer the record's own oauth_account cannot give, which
+// keeps the meaning it has (the account the run used last) and is not written
+// by the walk. The account every stage the walk serves stands on is the run's
+// own, and TestAutoNeverSwitchesMidStage pins that map; what the field must
+// never carry is an account that did not answer, and a failover is where that
+// would show: the stage's attempts were the default account's, the walk
+// reached the second account and the run stopped there, so the field keeps the
+// account that answered and never the one the walk reached. The line is the
+// log's half of the same fact.
 func TestAutoFailoverRecordsTheNewStagesAccount(t *testing.T) {
 	h := autoRun(t, autoNode(t, "true", accountA, accountB))
 	handle := watchRun(t)
 	runner.SetCredsWait(t, func(context.Context, time.Duration) error { return nil })
-	rec, err := h.run(t, exhaustedOnce(t, handle), implement("feature"), review("ship", 0))
-	if err != nil || rec.Status != runstore.StatusSucceeded {
-		t.Fatalf("rec = %+v, err = %v", rec, err)
+	rec, err := h.run(t, exhaustedOnce(t, handle))
+	if err != nil {
+		t.Fatal(err)
 	}
-	want := map[string]string{"implement": accountA, "review": config.DefaultClaudeAccount}
-	if len(rec.StageAccounts) != len(want) {
-		t.Fatalf("stage_accounts = %+v, want %+v", rec.StageAccounts, want)
+	logs := h.logs.String()
+	if !strings.Contains(logs, "account failover: the stage's next attempt is the next account") {
+		t.Fatalf("the walk did not reach the second account, so there is no failover to record:\n%s", logs)
 	}
-	for stage, account := range want {
-		if got := rec.StageAccounts[stage]; got != account {
-			t.Errorf("stage_accounts[%s] = %q, want %q", stage, got, account)
-		}
+	if len(rec.StageAccounts) != 1 || rec.StageAccounts["implement"] != config.DefaultClaudeAccount {
+		t.Errorf("stage_accounts = %+v; want only the account that answered the stage", rec.StageAccounts)
 	}
 	// The walk writes the per-stage map and never the run's own account: that
 	// field is the account the run used last, as the answers of its calls
@@ -333,20 +325,23 @@ func TestAutoFailoverRecordsTheNewStagesAccount(t *testing.T) {
 // §11.3, D874): with claude_account_auto on, a stage whose first account is
 // rate-limited makes its next attempt on the second account of the list
 // `fugaro accounts ls` prints, and the failover line names the stage and both
-// accounts. It is written before the walk exists, so it is red in the shape
-// D875 makes the default: the account is the launch's single account, the
-// second is never reached, and nothing writes the stage's account anywhere.
+// accounts. It was written before the walk existed and was red in the shape
+// D875 makes the default: the account was the launch's single account, the
+// second was never reached, and nothing wrote the stage's account anywhere.
+//
+// The second account of the list is also as far as a run can go, and that half
+// is the refusal: a run holds one account's token — a local OAuth run has the
+// one CLAUDE_CODE_OAUTH_TOKEN its stages run with in its environment
+// (internal/agent/env.go), a Cloud Run job its mounted account — so the stage
+// the walk reached is stopped named rather than run as an account that did not
+// answer it, and the record keeps nothing for it.
 func TestAutoWalksTheAccountsInTheListOrder(t *testing.T) {
 	h := autoRun(t, autoNode(t, "true", accountA, accountB))
 	handle := watchRun(t)
 	runner.SetCredsWait(t, func(context.Context, time.Duration) error { return nil })
-	rec, err := h.run(t,
-		withSession(exhaustedStage(t, handle, time.Now().Add(3*time.Minute)), "", "interrupted\n"),
-		implement("feature"),
-		review("ship", 0),
-	)
-	if err != nil || rec.Status != runstore.StatusSucceeded {
-		t.Fatalf("rec = %+v, err = %v", rec, err)
+	rec, err := h.run(t, exhaustedOnce(t, handle))
+	if err != nil {
+		t.Fatal(err)
 	}
 	logs := h.logs.String()
 	if !strings.Contains(logs, "account failover") {
@@ -357,10 +352,21 @@ func TestAutoWalksTheAccountsInTheListOrder(t *testing.T) {
 			t.Errorf("the failover line does not name %s:\n%s", want, logs)
 		}
 	}
-	if got := rec.StageAccounts["implement"]; got != accountA {
-		t.Errorf("stage_accounts[implement] = %q, want the account that took over, %q", got, accountA)
+	if n := len(h.agent.calls); n != 1 {
+		t.Errorf("%d agent calls; want only the attempt the exhaustion ended: the second account is one this run's token cannot serve", n)
 	}
-	if strings.Contains(logs, "oauth-token") {
+	if rec.Status != runstore.StatusFailed {
+		t.Fatalf("rec = %+v; want the run stopped at the account it cannot serve:\n%s", rec, logs)
+	}
+	for _, want := range []string{accountA, config.DefaultClaudeAccount} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("the refusal does not name %s: %s", want, rec.Reason)
+		}
+	}
+	if len(rec.StageAccounts) != 1 || rec.StageAccounts["implement"] != config.DefaultClaudeAccount {
+		t.Errorf("stage_accounts = %+v; want the account that answered the stage, never the one this run cannot serve", rec.StageAccounts)
+	}
+	if strings.Contains(logs, "oauth-token-abcdef") {
 		t.Error("the run's log carries the credential")
 	}
 }
