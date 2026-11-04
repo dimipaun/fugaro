@@ -245,11 +245,11 @@ the job it continues.
 
 The block **D901–D919** is held by this work; **D901–D915** are used below and D916–D919 are held for
 the decisions implementing this design will need (a task that needs one takes the next number in the
-block). The block's census is in the README. Every decision but **D915** was answered by the owner on
+block). The block's census is in the README. Every decision, **D915** included, was answered by the owner on
 **2026-11-04**, the answer column carrying the date, the owner's reason in one line, and the words
-**not the recommendation** where the answer is not the one this file proposed. **D915 is open**: it is
+**not the recommendation** where the answer is not the one this file proposed. **D915 was answered as recommended** (a set of its own): it is
 the question the mint's own permission set raised on 2026-11-04, when re-reading the code found that
-the person read mint reaches no file (F6), and the design states both options rather than picking one.
+the person read mint reaches no file (F6), and the owner chose the set of its own, accepting that every listed person can mint whole-repository read through the existing route.
 
 | # | Question | Recommendation | The alternative, and what it costs | Answered 2026-11-04 |
 | --- | --- | --- | --- | --- |

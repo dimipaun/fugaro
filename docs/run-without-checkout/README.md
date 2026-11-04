@@ -12,8 +12,8 @@ themselves, and **the CLI holds no App key and reads no environment variable**.
 `github.CoordinatorTokenPermissions`, which is `pull requests` and `metadata`, read — no `contents` —
 so `GET /repos/{owner}/{repo}/contents/fugaro.yaml` is refused with the token the service hands out, and
 an earlier round of this design said otherwise. That is why the plan's first task (**A0**) is a change
-to the service's own mint, why it is the one question left **open** (**D915**: a permission set of its
-own, or a route of its own), and why the design is no longer "no credentials-service change and no
+to the service's own mint, why it is the one question the code raised (**D915**: a permission set of its
+own, or a route of its own; answered 2026-11-04, a set of its own), and why the design is no longer "no credentials-service change and no
 operator step beyond `fugaro update`": the credentials service must be redeployed to serve the new set.
 Reconciliation F6 holds the reading; the plan's B2 holds the note the release owes the operator.
 
@@ -87,7 +87,7 @@ recommendation it answers and the cost of the alternative — is beside each dec
 | D912 | Two distinct refusals, one per cause | As recommended: the two causes have two different remedies |
 | D913 | `docs/checkout.md` and `docs/git-providers.md` state the new rule | As recommended: both pages describe the launcher's behaviour, and one describes what the CLI holds |
 | D914 | An independent, security-sensitive review | As recommended, and wider: with A0 the change is the service's own — its mint's permission set — so the review is the one `.claude/rules/credentials-service.md` requires |
-| D915 | **Open** — which permission the person read mint carries: a set of its own beside the coordinator's, or a route of its own | Raised by re-reading the code on 2026-11-04: the mint D902's answer uses reaches no file (F6). The design states both options and picks neither, so A0 waits for the owner. **Cost of option 1:** the token reads the whole repository, and every listed person can mint it for every onboarded repository through the existing person route; "one file" is the launcher's use of it, not a limit on it |
+| D915 | **A set of its own** (answered 2026-11-04 as recommended) — which permission the person read mint carries: a set of its own beside the coordinator's, or a route of its own | Raised by re-reading the code on 2026-11-04: the mint D902's answer uses reaches no file (F6). The owner chose option 1, a permission set of its own beside the coordinator's. **Cost of option 1:** the token reads the whole repository, and every listed person can mint it for every onboarded repository through the existing person route; "one file" is the launcher's use of it, not a limit on it |
 
 ## Numbers this work holds
 
@@ -100,7 +100,7 @@ pull request as D980–D1010: neither branch is in this checkout, so this is a r
 and a merger re-reads it). Designs written after this one take blocks between D920 and D999 — the
 periodic reviews' **D960–D979** and the binary-allow rule's **D981–D997** among them — and none of them
 reaches down to D901, so the numbers this design took on 2026-11-01, when `main`'s highest was D900,
-stand. **D901–D915 are used** — D915 the open one — and **D916–D919 are held** for the decisions
+stand. **D901–D915 are used**, all answered, and **D916–D919 are held** for the decisions
 implementing this design will need; `docs/run-limit-carry-over`, which first drafted D901–D920, has
 moved to D1041 and records D901–D914 as this design's. Nothing beyond D919 is reserved here: a later
 task that needs one takes D920 and re-checks this line's facts rather than its conclusion.

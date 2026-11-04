@@ -4,7 +4,7 @@
 
 The decisions each task answers are named in its heading; they are **D901–D915** in
 [reconciliation.md §3](reconciliation.md), answered by the owner on 2026-11-04, each with the reason for
-the answer beside it — **every one but D915**, the one question left open, which the code itself raised
+the answer beside it — **D915 too** (a permission set of its own, as recommended), the question the code itself raised
 (reconciliation F6). **D902's answer is not the recommendation** — the read is made through the
 installation's credentials service, as the operator themselves, so the launcher holds no App key and
 reads no environment variable — and A0, A1 and A3 below are written for that answer.
@@ -35,7 +35,7 @@ whole `internal/cli` or `internal/runner` run.
   `internal/credsvc/githubread.go`, `internal/credsvc/githubread_test.go`, and, if the route option is
   taken, the new route's own files beside them. `testdata/coordinator_token.json` is **not** touched:
   it holds the coordinator's mint body, and A0 must leave that body alone.
-- **Interfaces:** one of two, and the choice is the owner's (D915):
+- **Interfaces:** option 1 is the owner's answer (D915, 2026-11-04, as recommended); option 2 is recorded as declined:
   1. **A PERSON-class permission set of its own** — `personReadTokenPermissions`, unexported beside the
      five sets that exist and exported through an accessor as every one of them is, carrying
      `contents: read`, `pull_requests: read` and `metadata: read` — asked for by `githubRead` in place
