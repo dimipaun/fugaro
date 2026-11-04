@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -18,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -41,18 +44,42 @@ import (
 // because a record has to say what was judged. The reserved keys are the gate's
 // own rule, in config publish's own words.
 //
-// Three rules that could not fire here, and are therefore absent rather than
-// restated. (1) The executable keys (`commands.*`, `image.apt`,
-// `image.setup`): every one of them is a `repo` or `profile` layer key, and a
-// `--layer repo` write that is not the typed one is exactly the write today's
-// refusal admits (see settingsGateApplies), so no document this gate judges
-// can carry one. (2) The rigor floors and `review_floor`: those rows belong to
+// Two rules that could not fire here, and are therefore absent rather than
+// restated. (1) The rigor floors and `review_floor`: those rows belong to
 // another family (D853), so settingsWriteRow refuses them before any document
-// exists. (3) The widening of a cap: `budget.*` and `governance.*` are the
-// reserved runs, refused whole. A rule named among the ones that passed is a
-// claim that it ran and could have failed, and an owner auditing a record
-// reads it as one — so a rule that can never fire is worse than an absent one,
-// which is the reason M3 gives for the same omission on its own path.
+// exists. (2) The widening of a cap: `budget.*` and `governance.*` are the
+// reserved runs, refused whole.
+//
+// The executable keys are NOT one of those, and the earlier claim that they
+// were was wrong: the project layer's profiles carry them
+// (`layer.profiles.*.commands.*`, `layer.profiles.*.image.apt`,
+// `layer.profiles.*.image.setup`), and a `--layer project` write is exactly a
+// document this gate judges. So spec §4.2's executable-key guard has to fire
+// here, and settingsProfilesRule is it: every key of the project layer's
+// profiles block is refused, whatever the command line says, because a profile
+// is where a build script, an apt package or a command lives.
+//
+// A rule named among the ones that passed is a claim that it ran and could
+// have failed, and an owner auditing a record reads it as one — so a rule that
+// can never fire is worse than an absent one, which is the reason M3 gives for
+// the same omission on its own path.
+//
+// What this gate admits is an ALLOWLIST and not a list of things to refuse
+// (settingsManagedKeys, the owner decision D1027). The rules below judge what
+// the allowlist names; every other key is refused by settingsAdmittedRefusal,
+// whether it is in the registry today or is added to it by a later release.
+// The direction is the design's own (§4.1 rule 2, and D1021's "a caller that
+// reads nothing refuses"): a key nobody decided about is refused rather than
+// admitted by an omission, and the two keys on the list are the ones whose
+// write cannot weaken a run — the review rounds, and only upward
+// (settingsFloorRule).
+//
+// Which config the questions are asked about is part of the boundary too.
+// settingsManagedStep admits nothing unless the selected config is this
+// installation's own file (`localcfg.ProjectPath`): a session that aims
+// `--config` at a file it wrote would otherwise choose the installation whose
+// marks are read, and the gcpProject a mark read is asked about may never come
+// from content the session can write (spec §1, spec §7).
 //
 // Why the class the gate judges under is YesOrTyped and not the edit's own.
 // The edit's Typed form is what the confirmation asks a PERSON for, and it
@@ -86,6 +113,29 @@ func settingsGateMarker() string { return agentMarker(os.Getenv) }
 // never refused (D1025).
 func settingsGateApplies(marker string, kind settingsDocKind, typed bool) bool {
 	return marker != "" && (kind != settingsDocRepo || typed)
+}
+
+// settingsConfigIsTheProjects reports whether one settings write's selected
+// config is the project's own file — the path this installation derives from
+// its config home, and not a path the command line aimed somewhere else.
+//
+// Why a path and not the config's content. Everything this gate reads hangs
+// off the selected config: its gcp_project is the project the marks are read
+// about, and its name is the layer file the write lands in. Both `--config`
+// and $FUGARO_CONFIG let the caller name that file, and a coding agent's
+// session can write a file inside the repository it is working in — so a
+// session-chosen path is a session-chosen project, and the read would be asked
+// about an installation the content of the task picked (spec §1: the read's
+// verdict rests entirely on the gcpProject it is handed, which every caller
+// takes from the installation's own trusted configuration; spec §7: never from
+// a file in the repository).
+//
+// A path that cannot be derived at all — a name that is not a project name, a
+// config home that cannot be read — is not the project's own file either, and
+// the caller refuses on the same answer rather than on a second one.
+func settingsConfigIsTheProjects(selPath, project string) bool {
+	own, err := localcfg.ProjectPath(os.Getenv, project)
+	return err == nil && selPath != "" && selPath == own
 }
 
 // settingsWriteGate reads the two marks for one settings write and answers the
@@ -140,11 +190,20 @@ func settingsWriteGate(ctx context.Context, lc *localcfg.Config, marker, subcomm
 //
 // It is `accounts add`'s accountsAddGate in this command's own terms, and the
 // three answers are the same three for the same reasons. What differs is when
-// it is asked at all (settingsGateApplies, read once here) and which document
-// it judges.
-func settingsManagedStep(ctx context.Context, lc *localcfg.Config, target settingsTarget, key string, typed bool, why string, old, newData []byte, subcommand string) (initflow.Managed, managedGate, error) {
+// it is asked at all (settingsGateApplies, read once here), which document
+// it judges, and that it admits nothing unless `selPath` is the selected
+// project's own config file (settingsConfigIsTheProjects).
+func settingsManagedStep(ctx context.Context, lc *localcfg.Config, selPath string, target settingsTarget, key string, typed bool, why string, old, newData []byte, subcommand string) (initflow.Managed, managedGate, error) {
 	marker := settingsGateMarker()
 	if lc == nil || !settingsGateApplies(marker, target.kind, typed) {
+		return initflow.Managed{}, managedGate{}, nil
+	}
+	if !settingsConfigIsTheProjects(selPath, lc.Name) {
+		// The config the command selected is not this installation's own file,
+		// so the project the marks would be read about is one the session
+		// chose. Nothing is read and nothing is recorded: the answer is "not
+		// managed", and the session keeps this command's own refusal — the
+		// sentence it read before this row landed.
 		return initflow.Managed{}, managedGate{}, nil
 	}
 	gate := settingsWriteGate(ctx, lc, marker, subcommand)
@@ -195,6 +254,15 @@ func settingsManagedVerdict(ctx context.Context, g *managedGate, target settings
 	}
 	judge(settingsRegistryRule, "")
 	judge(settingsLayerRule, "")
+	judge(settingsAdmittedRule, settingsAdmittedRefusal(key))
+	if target.kind == settingsDocLayer {
+		// The two rules below are the project layer's own: `layer.profiles.*`
+		// and the two floor keys are rows whose only store is that file. Judged
+		// anywhere else they would name a check that never ran, for the reason
+		// the stale rule is written into the record only where it ran.
+		judge(settingsProfilesRule, settingsProfilesRefusal(key))
+		judge(settingsFloorRule, settingsFloorRefusal(key, old, newData, target.keyPath))
+	}
 	judge(settingsReservedRule, settingsReservedRefusal(key))
 	judge(settingsOwnerOnlyRule, settingsOwnerOnlyRefusal(typed, why))
 	if target.kind == settingsDocLayer {
@@ -228,6 +296,23 @@ const (
 	// for exactly that reason.
 	settingsRegistryRule = "the key is one the settings registry knows and this path writes (spec §4.4)"
 	settingsLayerRule    = "the key may be set at the layer this write lands in (the registry's Layers, spec §4.2 step 2)"
+	// settingsAdmittedRule is the allowlist itself (D1027): the write's key is
+	// one the gate decided about, in settingsManagedKeys. It is asked of every
+	// write this gate judges, at every layer, because "this key is not one a
+	// coding agent's session writes" is the answer for a key nobody decided
+	// about however the command line spelled it.
+	settingsAdmittedRule = "the key is one the gate's allowlist admits for a coding agent's session (D1027)"
+	// settingsProfilesRule is spec §4.2's executable-key guard over the project
+	// layer's profiles block. The keys it protects are the ones that run as
+	// shell — a build script, an apt package, a command — and they are
+	// reachable only through a profile, which is why the rule is written over
+	// the block rather than over a list of key names a later release could
+	// grow past.
+	settingsProfilesRule = "the write is no key of the project layer's profiles, which carry the keys that run as shell (spec §4.2)"
+	// settingsFloorRule is the direction rule over the two keys the allowlist
+	// admits: the review rounds a run spends, which a session may raise and
+	// never lower or remove.
+	settingsFloorRule = "the write does not lower the review rounds a run spends (the allowlist's floor keys, D1027)"
 	// settingsReservedRule is the plan's §2 settings row: the keys no coding
 	// agent's session writes, whatever the registry says about them — most of
 	// them ARE registry keys, and that is the point (spec §4.2).
@@ -247,6 +332,132 @@ const (
 	// the document no rule above judges is unchanged in the bytes written.
 	settingsUnjudgedRule = "every member of the document that no rule of this gate judges is unchanged (spec §4.1 rule 2)"
 )
+
+// settingsManagedKeys is the allowlist: every key a coding agent's session may
+// write, in a managed project, under this gate. It is a list of NAMES and not
+// a rule about a shape, which is the whole of the fail-closed direction — a
+// key a later release adds to the registry, a key a profile or a block grows,
+// and a key nobody has decided about are each refused, because they are not
+// here (settingsAdmittedRefusal).
+//
+// What is on it, and why these two. They are the review rounds a run spends:
+// `layer.defaults.agent.review_rounds` for the senior review and its fixes,
+// `layer.defaults.agent.adversarial_rounds` for the adversarial pass. Each is
+// a number whose larger value is more review, every other direction of which
+// is refused by settingsFloorRule; neither is a ceiling, a reserved key or a
+// key the typed confirmation reserves; and neither carries a key that runs as
+// shell. That is the whole of what makes a key admitted here: raising it
+// cannot weaken the project, and no other key of the registry can say that —
+// which is why this list is short and why it is the owner's to lengthen.
+//
+// It is an owner decision and not a derivation (D1027, recorded in
+// docs/managed-agent-converge/reconciliation.md pending the owner's
+// confirmation): the plan's §2 settings row admitted "a key the registry
+// knows" and refused the reserved ones, which is a denylist, and a denylist
+// admits every key nobody thought of. An allowlist that enumerated its
+// refusals instead would be the same list read backwards.
+var settingsManagedKeys = []string{
+	"layer.defaults.agent.review_rounds",
+	"layer.defaults.agent.adversarial_rounds",
+}
+
+// settingsAdmittedRefusal is the key this write names when it is not one the
+// allowlist admits, or "".
+func settingsAdmittedRefusal(key string) string {
+	if slices.Contains(settingsManagedKeys, key) {
+		return ""
+	}
+	return ruleSaid(settingsAdmittedRule, fmt.Sprintf("%s is not a key a coding agent's session writes: this gate admits %s and nothing else, so a key the registry gains later is refused until the project's owner confirms it; the project's owner writes it at their own terminal", safetext.Field(key), strings.Join(settingsManagedKeys, " and ")))
+}
+
+// settingsProfilesRefusal is the executable-key refusal over the project
+// layer's profiles block: every key under it, or "".
+//
+// The block is refused whole rather than key by key. A profile is one unit —
+// `default_profile` names one and a repository selects one — and the keys that
+// run as shell are inside it beside the profile's scope, its cache paths and
+// its timeouts, so a rule that admitted the profile's harmless members would
+// be a rule that admitted the block's own name and then had to be right about
+// every member a later release adds to it. `HasExecutable` (SD4) makes the
+// same call from the other side.
+func settingsProfilesRefusal(key string) string {
+	if !strings.HasPrefix(key, "layer.profiles.") {
+		return ""
+	}
+	return ruleSaid(settingsProfilesRule, fmt.Sprintf("the project layer's %s is a profile key, and a profile is where a build script, an apt package and a command live beside the scope of every repository that uses it: no coding agent's session writes one, whatever the command line says, and the project's owner writes it at their own terminal", safetext.Field(key)))
+}
+
+// settingsFloorRefusal is the direction rule over the allowlist's floor keys:
+// the write lowers the rounds a run spends, or takes them away, or "".
+//
+// The comparison is against what a run gets today, read out of `old` — the
+// same bytes the write is conditioned on (applySettingsEdit refuses to write
+// unless the file is still byte for byte what the caller read), so the value
+// judged and the value replaced are one artifact. The mode supplies the base
+// only where the layer sets no number of its own: the layer's
+// `defaults.rigor.default` when it names one, else rigor.Default, which is the
+// number a run of this project starts from (rigor.DefaultRounds).
+//
+// A write that leaves no number — `settings unset`, whose document carries the
+// key nowhere — is refused with the lowering. A removal hands the number back
+// to the mode's own row, and which way that moves is not something this gate
+// resolves: admitting the removal would need it to, because the number the
+// document then leaves is one nobody named. So the removal is refused and the
+// session that wants a different number names one, which this rule admits
+// whenever the number it names is at or above what a run spends today. Same
+// direction as every other read of this gate — a value nobody can hold at or
+// above the floor is not a value this rule may admit.
+func settingsFloorRefusal(key string, old, next []byte, keyPath []string) string {
+	if !slices.Contains(settingsManagedKeys, key) {
+		return ""
+	}
+	raw := settingsValueIn(next, keyPath)
+	value, ok := settingsRounds(raw)
+	if !ok {
+		return ruleSaid(settingsFloorRule, fmt.Sprintf("%s would be left as no number this gate can hold at or above the rounds a run spends today: the two keys it admits are floors, a coding agent's session raises them and never lowers or removes them, and the project's owner makes that change at their own terminal", safetext.Field(key)))
+	}
+	base, baseText := settingsFloorBase(old, keyPath)
+	if value < base {
+		return ruleSaid(settingsFloorRule, fmt.Sprintf("setting %s to %s would lower it from %s: the two keys this gate admits are floors, so a coding agent's session raises them and never lowers them, and the project's owner makes that change at their own terminal", safetext.Field(key), safetext.Field(raw), baseText))
+	}
+	return ""
+}
+
+// settingsRounds is a round count as a number, false for anything this rule
+// cannot read as one: a value the loader would refuse anyway, and the empty
+// string an unset or a removed key leaves.
+func settingsRounds(raw string) (float64, bool) {
+	if raw == "" {
+		return 0, false
+	}
+	n, err := strconv.ParseFloat(raw, 64)
+	return n, err == nil
+}
+
+// settingsFloorBase is the number of rounds a run spends today for the key at
+// keyPath: the layer's own value where it sets one, else the mode's own row.
+// The text beside it is what the refusal names, so an owner reading
+// "would lower it from 3" learns where the 3 came from.
+func settingsFloorBase(old []byte, keyPath []string) (float64, string) {
+	if raw := settingsValueIn(old, keyPath); raw != "" {
+		if n, ok := settingsRounds(raw); ok {
+			return n, raw
+		}
+	}
+	mode := rigor.Default
+	if raw := settingsValueIn(old, settingsRigorModePath); raw != "" {
+		if m, ok := rigor.Parse(raw); ok {
+			mode = m
+		}
+	}
+	n := rigor.DefaultRounds(mode).Senior
+	return float64(n), fmt.Sprintf("%d (the mode's own row)", n)
+}
+
+// settingsRigorModePath is where the project layer names the rigor mode whose
+// row supplies a round count no layer sets: the layer's own `defaults.rigor.default`
+// (SD14), read out of the same document the round keys are read from.
+var settingsRigorModePath = []string{"defaults", "rigor", "default"}
 
 // settingsReservedRefusal is the reserved run a written key hits, or "".
 //

@@ -1509,7 +1509,7 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		}
 		edit.DryRun = dry
 	}
-	managed, gate, err := settingsManagedStep(cmd.Context(), lc, target, key, typed, why, old, newData, "settings set")
+	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings set")
 	if err != nil {
 		return err
 	}
@@ -1591,7 +1591,7 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 	if o.dryRun {
 		edit.DryRun = &settingsDryRun{key: key, layer: target.layer, oldValue: oldValue, newValue: settingsValueIn(newData, target.keyPath), jsonOut: o.jsonOut}
 	}
-	managed, gate, err := settingsManagedStep(cmd.Context(), lc, target, key, typed, why, old, newData, "settings unset")
+	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings unset")
 	if err != nil {
 		return err
 	}
