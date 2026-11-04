@@ -1205,16 +1205,115 @@ func TestSettingsSetRefusesAMapKey(t *testing.T) {
 	}
 }
 
+// TestSettingsSetConcreteWildcardKeyWrites: a concrete spelling of a wildcard
+// registry row is a key a person writes, and the row it resolves to is the row
+// the run reads — the key stays as written in the document and the diff, and
+// the write lands in the layer the row's own Layers name (D1161). The dry run
+// is asked first, because it prints the document the console draws its
+// confirmation from and writes nothing, and the write then lands in the
+// checkout's fugaro.yaml.
+func TestSettingsSetConcreteWildcardKeyWrites(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML(""))
+	before := readFileString(t, path)
+	noTerminal(t)
+
+	doc := settingsDryRunDoc(t, "settings", "set", "workflows.web.commands.test", "go test -race ./...", "--layer", "repo")
+	if doc.Key != "workflows.web.commands.test" || doc.Layer != "repo" {
+		t.Errorf("the document names %s at layer %s, and the edit was workflows.web.commands.test at layer repo", doc.Key, doc.Layer)
+	}
+	if !doc.Changed {
+		t.Error("the document says the edit changes nothing, and the file holds a test command")
+	}
+	if doc.Old != "go test ./..." || doc.New != "go test -race ./..." {
+		t.Errorf("the document says %q -> %q, and the file holds the workflow's own test command", doc.Old, doc.New)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the dry run changed fugaro.yaml")
+	}
+	settingsNoBackup(t, path)
+
+	if _, _, err := execute(t, "settings", "set", "workflows.web.commands.test", "go test -race ./...", "--layer", "repo", "--yes"); err != nil {
+		t.Fatalf("writing a concrete spelling of a wildcard row was refused: %v", err)
+	}
+	cfg, ps := config.Parse([]byte(readFileString(t, path)))
+	if len(ps) > 0 {
+		t.Fatalf("the file the write produced does not read back: %s", ps[0].String())
+	}
+	if got := cfg.Workflows["web"].Commands.Test; got != "go test -race ./..." {
+		t.Errorf("the workflow's test command is %q, want the value the write named", got)
+	}
+	if got := cfg.Workflows["web"].Commands.Build; got != "go build ./..." {
+		t.Errorf("the write moved the key beside it: web's build command is %q", got)
+	}
+}
+
+// TestSettingsSetConcreteWildcardKeyCreatesTheBlock: D1161's stated cost, and
+// the property the plan decides here: nothing enumerates a wildcard block's
+// concrete spellings, so writing one key of a block the document does not hold
+// **creates the block** rather than refusing an unknown name. The layer file
+// carries no profile of its own, so the write to it is the case.
+func TestSettingsSetConcreteWildcardKeyCreatesTheBlock(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteLayerFile(t, "")
+	before := readFileString(t, path)
+	noTerminal(t)
+
+	out, _, err := execute(t, "settings", "set", "layer.profiles.svc.description", "the service profile", "--layer", "project", "--yes")
+	if err != nil {
+		t.Fatalf("writing one key of a block the layer file does not hold was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "next: fugaro update") {
+		t.Errorf("a layer write does not close with the command that publishes it:\n%s", out)
+	}
+	layer, ps := config.ParseProjectLayer([]byte(readFileString(t, path)), config.LayerAnchor{Project: "aurora", GCPProject: "aurora-gcp"})
+	if len(ps) > 0 {
+		t.Fatalf("the layer file the write produced does not read back: %s", ps[0].String())
+	}
+	if got := layer.Profiles["svc"].Description; got != "the service profile" {
+		t.Errorf("the created block's description is %q, want the value the write named", got)
+	}
+	if !strings.Contains(readFileString(t, path), "version: 1") || !strings.Contains(readFileString(t, path), "project: aurora") {
+		t.Errorf("creating the block rewrote the layer file's own anchors:\n%s", readFileString(t, path))
+	}
+	if before == readFileString(t, path) {
+		t.Error("the write the command reported left the layer file as it was")
+	}
+}
+
+// TestSettingsSetConcreteWildcardKeyRefusesALayerTheRowMayNotBeSetIn: the row a
+// concrete spelling resolves to is the registry's own, so a block a write would
+// create is still refused where the row's own Layers do not include the layer
+// (D1161): nothing is written, and the refusal names the layer the key may be
+// set in rather than the name of the block.
+func TestSettingsSetConcreteWildcardKeyRefusesALayerTheRowMayNotBeSetIn(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML(""))
+	before := readFileString(t, path)
+
+	// workflows.*.dockerfile is a repository-only row (config.Scopes), so the
+	// project layer is a layer it may not be set in.
+	_, _, err := execute(t, "settings", "set", "workflows.api.dockerfile", "Dockerfile", "--layer", "project", "--yes")
+	if err == nil {
+		t.Fatal("settings set wrote a repository-only row at --layer project")
+	}
+	if !strings.Contains(err.Error(), "repo") {
+		t.Errorf("the refusal does not name the layers the key may be set in: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused write changed fugaro.yaml")
+	}
+}
+
 // TestSettingsSetRefusesAWildcardRowOutsideTheGenericKeys: the pattern lookup
 // resolves a wildcard registry row only for a spelling settingsGenericKeys
-// carries by name, and `stages.*.claude_account` is the only one it does. A
-// concrete spelling of the project layer's `workflows.*.*` or the project
-// family's `repos.*.*` is refused like any other key the generic path does not
-// write, and nothing is written.
+// carries, so a concrete spelling of the project family's `repos.*.*` or the
+// models family's `providers.*.*` is refused like any other key the generic
+// path does not write, and nothing is written.
 func TestSettingsSetRefusesAWildcardRowOutsideTheGenericKeys(t *testing.T) {
 	_, localPath := settingsWriteHome(t)
 	before := readFileString(t, localPath)
-	for _, key := range []string{"workflows.build.commands.test", "repos.web.base_branch"} {
+	for _, key := range []string{"repos.web.base_branch", "providers.corp.base_url"} {
 		t.Run(key, func(t *testing.T) {
 			// The rule itself, so the test says which of the two reasons the
 			// refusal has: this key resolves no row here at all.
