@@ -41,6 +41,24 @@ the request against the tree and settles those.
 | [reconciliation.md](reconciliation.md) | Each spec claim against the code on `main`: what exists (F1–F13), what is missing or conflicts (F14–F24), the decisions **D960–D971** with the owner's answers (§3), and what the 2026-11-04 refresh found (§4). **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks R0–R6 (at most 12 files each, named tests, red steps, SEC flags) with the shared-files table, and the release slot. **Plan only: no task is approved and nothing is implemented** |
 
+## The owner's answers, 2026-11-04
+
+Three decisions were answered in words, **each as recommended, so nothing here is "not the
+recommendation"**; the other nine were not singled out and the recommendation stands for each
+([reconciliation.md](reconciliation.md) §3).
+
+- **D965 — the user installs the cadence; Fugaro writes no workflow and no crontab.** *Why:* a
+  schedule Fugaro wrote would commit into a repository it does not own, under the user's identity,
+  for a choice that is cheap for the user to make and expensive for Fugaro to get wrong.
+- **D968 — yes, one longer window: `cost_per_run_rising`, over five months.** *Why:* the four rules
+  read at most four weeks and one month against the month before, so a slow rise across a quarter and
+  a half is invisible to every one of them.
+- **D969 — the committed report keeps run IDs, stages, recipes and figures and carries no person,
+  address, task text or log line; the outgoing draft renumbers the runs and drops the repository
+  name.** *Why:* the report's reader is the repository's own agent and reviewer, who acts on a
+  flagged row by running `fugaro diagnose RUN`, while the draft's reader is a public issue that needs
+  the figures and none of the identifiers.
+
 ## Numbers this work holds
 
 | Block | Use |

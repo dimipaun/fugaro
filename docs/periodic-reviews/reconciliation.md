@@ -202,8 +202,21 @@ so this boundary now has live surfaces on the other side of it.
 **The owner answered the design on 2026-11-04.** Three decisions were named in words — **D965**,
 **D968** and **D969** — and **each is as recommended, so no answer here is "not the
 recommendation"**; the other nine were not singled out, and the recommendation in the table stands
-for each of them, which is what the plan is written to. The recommendation comes first, with the
-cost of the alternative.
+for each of them, which is what the plan is written to. **The three answers, each with its why:**
+
+- **D965 — the user installs the cadence; Fugaro writes no workflow and no crontab.** *Why:* a
+  schedule Fugaro wrote would commit into a repository it does not own, under the user's identity,
+  for a choice that is cheap for the user to make and expensive for Fugaro to get wrong.
+- **D968 — yes, one longer window: `cost_per_run_rising`, over five months.** *Why:* the four rules
+  read at most four weeks and one month against the month before, so a slow rise across a quarter and
+  a half is invisible to every one of them.
+- **D969 — the committed report keeps run IDs, stages, recipes and figures and carries no person,
+  address, task text or log line; the outgoing draft renumbers the runs and drops the repository
+  name.** *Why:* the report's reader is the repository's own agent and reviewer, who acts on a
+  flagged row by running `fugaro diagnose RUN`, while the draft's reader is a public issue that needs
+  the figures and none of the identifiers.
+
+The recommendation comes first in the table, with the cost of the alternative.
 
 | D | Question | Recommendation | The alternative, and its cost |
 | --- | --- | --- | --- |

@@ -5,9 +5,19 @@ approved.**
 
 Every task is written to the owner's answers of 2026-11-04 (D960–D971,
 [reconciliation.md](reconciliation.md) §3). **The plan does not change for them**: the three answers
-the owner gave — **D965**, **D968** and **D969** — are the recommendations the tasks were already
-written to, so no task's content moves; the other nine decisions were not singled out and the
-recommendation stands for each. What the 2026-11-04 refresh *does* change is in
+the owner gave are the recommendations the tasks were already written to, so no task's content moves.
+Each with its why:
+
+- **D965 — the user installs the cadence; Fugaro writes no workflow and no crontab** *(why: a
+  schedule Fugaro wrote would commit into a repository it does not own, under the user's identity)* —
+  R3.
+- **D968 — yes, one longer window, `cost_per_run_rising` over five months** *(why: the four rules see
+  at most four weeks and one month against the month before)* — R4.
+- **D969 — the committed report keeps its run IDs and the draft renumbers them** *(why: the report's
+  reader acts on a flagged row with `fugaro diagnose RUN`, and the draft's reader is a public
+  issue)* — no task: §4 of the spec states what already holds.
+
+The other nine decisions were not singled out and the recommendation stands for each. What the 2026-11-04 refresh *does* change is in
 [reconciliation.md](reconciliation.md) §4: a class for R2's check (M9), a sentence in the spec's §9
 (M1, M2), the sequencing behind `plugin/**` (M6) and the release slot (M8). Each task touches at most
 12 files, names its tests, starts with a red step and ends at the gates below.
