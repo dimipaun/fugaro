@@ -231,16 +231,24 @@ func (r *initRun) gateNamesAnIAMCall(bucket string) string {
 // guard and confirmation, where a session that may not confirm anything is
 // refused exactly as it was before this file existed.
 //
-// AllowDelete is empty and is not the session's. In a managed project the
-// addresses a run may delete or replace come from the owner's own list, and
-// that list approves deletes in the project's agent-authored root and never in
-// Fugaro's own roots, which is what these four stages plan (D72/D74, and
-// initManagedDeleteAdvice says the same to a person). So the gate feeds the
-// guard no list at all: every removal in these roots is refused, whatever the
-// session passed on its own command line, which is D1011's own rule that
-// `allow-delete` is never admitted. An installation whose upgrade deletes
-// something is the owner's to run — the gate can only narrow, and this is the
-// narrowing.
+// AllowDelete is empty, and that is the reading of "tf.Guard with the owner's
+// list" this command lands on. Three things say so. The list the owner writes
+// with fugaro allow-delete approves deletes in the project's agent-authored
+// root, which is what fugaro managed apply applies, and nothing the embedded
+// roots plan (managed.DeleteAdvice states it, and initManagedDeleteAdvice says
+// the same to a person): a gated step of this run that read it would approve
+// removals of Fugaro's own resources the owner never meant to approve there.
+// The list is never an argument of a command in the set (D1011, reconciliation
+// F6), so the session's own --allow-delete is refused rather than honoured —
+// and it is refused by the emptiness here rather than by a sentence, because
+// nothing this gate admits may read as "pass an address and it will pass". And
+// the gate can only narrow: an empty list refuses every delete and every
+// replace in these roots (managed.Spec's own rule), which is a subset of what
+// D74 requires, never a widening of it.
+//
+// So an installation whose upgrade deletes something is the owner's to run,
+// with the flag they have always passed and the confirmations they have always
+// been asked.
 func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey, cover managedmode.Cover) (bool, error) {
 	g := r.gate
 	if g == nil || !g.managed {
