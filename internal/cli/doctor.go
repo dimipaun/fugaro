@@ -311,7 +311,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// Before anything is read: neither the App's key nor the bundle's Bitbucket
 	// token is read in a coding agent's session.
 	if checkApp {
-		if err := refuseAppKeyReadInAgent(os.Getenv); err != nil {
+		if err := refuseAppKeyReadInAgent(os.Getenv, checkGitHubAppFlag); err != nil {
 			return err
 		}
 	}

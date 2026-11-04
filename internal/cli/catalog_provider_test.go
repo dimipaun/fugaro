@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -163,6 +165,34 @@ func TestCatalogProviderEnv(t *testing.T) {
 		}
 	})
 
+	t.Run("an exported key file wins too", func(t *testing.T) {
+		catalogClearProviderEnv(t)
+		lc, rs, entries := catalogProviderEnvRig(t)
+		resolves, reads := catalogStubKeyRead(t, nil, errors.New("Secret Manager must not be read"))
+		// A path that need not exist: this only builds the environment, and
+		// reading the file is the provider's own job (it refuses a missing
+		// one), so the shortcut is what is under test and not a file.
+		path := filepath.Join(t.TempDir(), "app-key.pem")
+		t.Setenv(providers.EnvGitHubAppKeyFile, path)
+		var notice bytes.Buffer
+		env, err := catalogProviderEnv(t.Context(), &notice, lc, rs, entries, os.Getenv)
+		if err != nil {
+			t.Fatalf("%v", err)
+		}
+		if got := envValue(env, providers.EnvGitHubAppKeyFile); got != path {
+			t.Errorf("%s = %q, want the file the environment names: the provider reads it from there", providers.EnvGitHubAppKeyFile, got)
+		}
+		if _, ok := envHas(env, providers.EnvGitHubAppKey); ok {
+			t.Errorf("%s was set although the environment names a key file", providers.EnvGitHubAppKey)
+		}
+		if *resolves != 0 || *reads != 0 {
+			t.Errorf("the key was read from Secret Manager (%d resolutions, %d reads) although the environment names a key file", *resolves, *reads)
+		}
+		if notice.Len() != 0 {
+			t.Errorf("a read that did not happen was announced: %q", notice.String())
+		}
+	})
+
 	t.Run("the repository's secret holds the key", func(t *testing.T) {
 		catalogClearProviderEnv(t)
 		lc, rs, entries := catalogProviderEnvRig(t)
@@ -204,6 +234,44 @@ func TestCatalogProviderEnv(t *testing.T) {
 			if leak != "" && strings.Contains(err.Error(), leak) {
 				t.Errorf("the failure carries key material: %v", err)
 			}
+		}
+	})
+
+	// The two refusals the read's own errors turn into. Each says what the
+	// person can do about it and neither repeats anything the read answered:
+	// the key is not stored yet (the fix is the command that stores it), or
+	// this account may not read secret values at all.
+	t.Run("a key that was never stored", func(t *testing.T) {
+		catalogClearProviderEnv(t)
+		lc, rs, entries := catalogProviderEnvRig(t)
+		catalogStubKeyRead(t, nil, fmt.Errorf("secret versions.list: %w", gcp.ErrNoVersion))
+		env, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv)
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("exit %d, err %v: a secret with no version is a user error", ExitCode(err), err)
+		}
+		if env != nil {
+			t.Error("a failed read answered an environment")
+		}
+		for _, want := range []string{"is not stored yet", "secrets set " + config.GitHubAppKeySecret + " --repo acme/app"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not say %q: %v", want, err)
+			}
+		}
+	})
+
+	t.Run("no permission to read secret values", func(t *testing.T) {
+		catalogClearProviderEnv(t)
+		lc, rs, entries := catalogProviderEnvRig(t)
+		catalogStubKeyRead(t, nil, fmt.Errorf("secrets.versions.access: %w", gcp.ErrNoAccess))
+		env, err := catalogProviderEnv(t.Context(), &bytes.Buffer{}, lc, rs, entries, os.Getenv)
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("exit %d, err %v: a missing secretAccessor is a user error", ExitCode(err), err)
+		}
+		if env != nil {
+			t.Error("a failed read answered an environment")
+		}
+		if want := "you may not read secret values (a project owner can)"; !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
 	})
 

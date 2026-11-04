@@ -120,7 +120,7 @@ func catalogProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, r
 	if getenv(providers.EnvGitHubAppKey) != "" || getenv(providers.EnvGitHubAppKeyFile) != "" {
 		return env, nil
 	}
-	if err := refuseKeyReadInAgent(getenv, catalogKeyRead, "the GitHub App's private key"); err != nil {
+	if err := refuseAppKeyReadInAgent(getenv, catalogKeyRead); err != nil {
 		return nil, err
 	}
 	secretID, err := catalogAppKeySecretID(ctx, lc, rs)
