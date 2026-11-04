@@ -1305,7 +1305,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
-| `--executable-changes` | bool | `false` | no | allow a change to a profile's commands, image.apt or image.setup (they run as shell in every repository that takes the profile) |
+| `--executable-changes` | bool | `false` | no | allow a change to a profile's commands, image.apt or image.setup (they run as shell in every repository that takes the profile); a managed project refuses such a change in a coding agent's session whatever this flag says |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for publish |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
