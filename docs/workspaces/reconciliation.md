@@ -223,6 +223,10 @@ none** — the plan names what the owner must run and does not number it.
 **This section is new on 2026-11-04, and it is the one to read first.** The findings above were
 written against `3d6ed04d` on 2026-11-01; main has since moved to `b41709ea`, and six things landed
 that touch this design. Each is classified the same way, and each states what it changes here.
+**F33 is a seventh entry and a different kind of one**: it records the independent SECURITY review
+that ran *after* the design merged as #1492, and the owner's answers to its seven findings — so it is
+the entry that amends decisions rather than only statements, and it is the reason §4, §5 and §8 below
+carry 2026-11-04 dates their first writing did not.
 
 **F23 — Managed mode landed, and the gate is real code. — Exists (new since the first reading).**
 The gate is a value in `internal/managed` (`internal/managed/plan.go:217` `Gate`,
@@ -351,15 +355,18 @@ as if a grant, a pin, a reader or a channel existed where the design beside it s
 - **The issuer pin.** W2 said a member's config records the workspace's Firebase project id and its
   issuer, and §2 gave the member's config one key and listed "the workspace's identity provider" as
   part of the **published record** — i.e. the pin was designed but never reached the spec or a task.
-  §2 now states the three pinned values (project id, issuer, workspace service account), the record
-  carries no identity provider and no service account, W1's interface carries the fields, and W4 owns
-  `TestExchangeVerifiesTheMembersPinnedIssuerNotTheRecords`.
+  §2 now states the pinned values (project id, issuer, workspace service account — and, since the
+  post-merge review's finding 1, **the workspace's assertion-signing key** as a fourth), the record
+  carries no identity provider, no key and no service account, W1's interface carries the fields, and
+  W4 owns `TestExchangeVerifiesTheMembersPinnedIssuerNotTheRecords`.
 - **Who applies the member-side grants.** §5 granted the workspace service a custom role on each
   member's Firebase project and `objectViewer` on each member's runs bucket — the *rollup's* two
   reads — but no task applied either and no identity was named for them, so the design's most
-  privileged binding had no owner. The **member's own `fugaro update`** applies both, to the service
-  account **its own config pins** and never to one the record supplies; W7 owns the file and the
-  test, because W7 is the task that first needs the write.
+  privileged binding had no owner. The **member's own `fugaro update`** applies the grant, to the
+  service account **its own config pins** and never to one the record supplies; W7 owns the file and
+  the test. **Amended on 2026-11-04** by the post-merge review's answers: the role is now the **read
+  half alone** (`instances.get`, no `update` — O1) and the **bucket grant is not bound at all**
+  (finding 5), so it is one binding and not two, and it is no longer a write.
 - **Who fills the person class, and the channel it would need.** F24 read D1295's answer as making
   the workspace service's person class a *derived* set — "the union of the members' lists, read from
   the members' own configs" — and the second re-read (F30) built a **per-route** admission on it: a
