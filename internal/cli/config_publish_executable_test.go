@@ -28,6 +28,12 @@ func parseLayerOrFatal(t *testing.T, text string) *config.ProjectLayer {
 // bug where commands.rerun_failed's Command and Each were joined with a
 // bare space, so two different (command, each) pairs could read as the
 // same text and publish without --executable-changes, no banner.
+//
+// The rows for the removed image keys went with them: a profile cannot carry
+// image.apt, image.setup or image.skip_build_scripts any more
+// (config.RemovedImageKeys), so there is no layer left whose value could
+// differ. What stays is every command key, which is the whole of
+// config.ExecutableKeys after the removal.
 func TestExecutableChangesTable(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -91,18 +97,6 @@ func TestExecutableChangesTable(t *testing.T) {
 			},
 		},
 		{
-			name: "apt reorder is a change",
-			prev: layerPreamble + "profiles:\n  svc:\n    image:\n      apt: [git, curl]\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    image:\n      apt: [curl, git]\ndefault_profile: svc\n",
-			want: []string{`profile svc: image.apt: ["git" "curl"] -> ["curl" "git"]`},
-		},
-		{
-			name: "a setup step split in two is a change",
-			prev: layerPreamble + "profiles:\n  svc:\n    image:\n      setup: [\"echo hi\"]\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    image:\n      setup: [echo, hi]\ndefault_profile: svc\n",
-			want: []string{`profile svc: image.setup: ["echo hi"] -> ["echo" "hi"]`},
-		},
-		{
 			name: "a profile renamed: the old name loses it, the new name gains it",
 			prev: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: sh test.sh\ndefault_profile: svc\n",
 			next: layerPreamble + "profiles:\n  svc2:\n    commands:\n      test: sh test.sh\ndefault_profile: svc2\n",
@@ -155,74 +149,16 @@ func TestExecutableChangesTable(t *testing.T) {
 			want: nil,
 		},
 		{
-			// Ruling: skip_build_scripts: true is the safe setting, so a
-			// profile whose only setting is that true must not make
-			// Profile.HasExecutable report true on its own. Both profiles
-			// are unchanged between prev and next (so no per-key diff from
-			// executableChanges' own loop either): the only thing that
-			// moves is default_profile itself, between two profiles
-			// neither of which HasExecutable considers executable, so this
-			// switch is not gated.
-			name: "default_profile a -> b, the new default's only setting is skip_build_scripts: true: not gated (true is the safe direction)",
-			prev: layerPreamble + "profiles:\n  svc: {}\n  other:\n    image:\n      skip_build_scripts: true\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc: {}\n  other:\n    image:\n      skip_build_scripts: true\ndefault_profile: other\n",
-			want: nil,
-		},
-		{
-			// The unsafe reverse of the case above: the old default's only
-			// setting is skip_build_scripts: true, the new default has it
-			// false/unset. Neither profile HasExecutable (SkipBuildScripts
-			// is deliberately excluded from it), and neither profile's own
-			// fields moved between prev and next, so this switch would
-			// otherwise go undetected; it must still be gated, since every
-			// repository without workflows goes from skipping dependency
-			// install/build scripts in its image build to running them.
-			name: "default_profile a -> b, the old default's only setting is skip_build_scripts: true, the new one has it off: gated (the unsafe direction)",
-			prev: layerPreamble + "profiles:\n  safe:\n    image:\n      skip_build_scripts: true\n  other: {}\ndefault_profile: safe\n",
-			next: layerPreamble + "profiles:\n  safe:\n    image:\n      skip_build_scripts: true\n  other: {}\ndefault_profile: other\n",
-			want: []string{`default_profile: "safe" -> "other" (repositories without workflows: now run profile other's commands)`},
-		},
-		{
 			name: "first publish (nil previous): every executable key of the one profile, plus default_profile",
 			prev: "",
-			next: layerPreamble + "profiles:\n  svc:\n    commands:\n      build: sh build.sh\n      test: sh test.sh\n    image:\n      apt: [git]\n      setup: [\"echo hi\"]\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    commands:\n      build: sh build.sh\n      test: sh test.sh\n      rerun_failed: { command: pytest, each: \"-k {id}\" }\ndefault_profile: svc\n",
 			want: []string{
 				`profile svc: commands.build: "" -> "sh build.sh"`,
+				`profile svc: commands.rerun_failed.command: "" -> "pytest"`,
+				`profile svc: commands.rerun_failed.each: "" -> "-k {id}"`,
 				`profile svc: commands.test: "" -> "sh test.sh"`,
-				`profile svc: image.apt: [] -> ["git"]`,
-				`profile svc: image.setup: [] -> ["echo hi"]`,
 				`default_profile: "" -> "svc" (repositories without workflows: now run profile svc's commands)`,
 			},
-		},
-		{
-			name: "skip_build_scripts true -> false turns build scripts back on: a change",
-			prev: layerPreamble + "profiles:\n  svc:\n    image:\n      skip_build_scripts: true\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    image:\n      skip_build_scripts: false\ndefault_profile: svc\n",
-			want: []string{`profile svc: image.skip_build_scripts: true -> false`},
-		},
-		{
-			name: "skip_build_scripts true removed (reads as false): a change",
-			prev: layerPreamble + "profiles:\n  svc:\n    image:\n      skip_build_scripts: true\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc: {}\ndefault_profile: svc\n",
-			want: []string{`profile svc: image.skip_build_scripts: true -> false`},
-		},
-		{
-			name: "skip_build_scripts false -> true is also reported, even though it is the safer direction",
-			prev: layerPreamble + "profiles:\n  svc:\n    image:\n      skip_build_scripts: false\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    image:\n      skip_build_scripts: true\ndefault_profile: svc\n",
-			want: []string{`profile svc: image.skip_build_scripts: false -> true`},
-		},
-		{
-			name: "null vs absent apt: equal, no change",
-			prev: layerPreamble + "profiles:\n  svc:\n    image:\n      apt: null\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc: {}\ndefault_profile: svc\n",
-			want: nil,
-		},
-		{
-			name: "empty list vs absent apt: equal, no change",
-			prev: layerPreamble + "profiles:\n  svc:\n    image:\n      apt: []\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc: {}\ndefault_profile: svc\n",
-			want: nil,
 		},
 	}
 	for _, c := range cases {
@@ -265,7 +201,7 @@ func equalStrings(a, b []string) bool {
 // (loudly, in CI) rather than only discovered on a live publish.
 func TestExecutableKeyValuesCoversEveryExecutableKey(t *testing.T) {
 	p := parseLayerOrFatal(t, layerPreamble+
-		"profiles:\n  svc:\n    commands:\n      build: sh build.sh\n      test: sh test.sh\n      rerun_failed: { command: pytest, each: \"-k {id}\" }\n    image:\n      apt: [git]\n      setup: [\"echo hi\"]\ndefault_profile: svc\n",
+		"profiles:\n  svc:\n    commands:\n      build: sh build.sh\n      test: sh test.sh\n      rerun_failed: { command: pytest, each: \"-k {id}\" }\ndefault_profile: svc\n",
 	).Profiles["svc"]
 	for _, key := range config.ExecutableKeys {
 		if err := executableKeyValues(map[string]string{}, p, key); err != nil {

@@ -484,19 +484,6 @@ func executableKeyValues(out map[string]string, p config.Profile, key string) er
 		}
 		out["commands.rerun_failed.command"] = strconv.Quote(cmd)
 		out["commands.rerun_failed.each"] = strconv.Quote(each)
-	case "workflows.*.image.apt":
-		// %q of the whole list, not of each entry, so a reorder or a step
-		// split into two (or joined into one) is a change.
-		out["image.apt"] = fmt.Sprintf("%q", p.Image.Apt)
-	case "workflows.*.image.setup":
-		out["image.setup"] = fmt.Sprintf("%q", p.Image.Setup)
-	case "workflows.*.image.tools":
-		// fmt's %q on a map sorts its keys before formatting, so a reorder
-		// of the YAML source is never a change: only a tool added, removed,
-		// renamed or repinned changes the quoted text.
-		out["image.tools"] = fmt.Sprintf("%q", p.Image.Tools)
-	case "workflows.*.image.skip_build_scripts":
-		out["image.skip_build_scripts"] = strconv.FormatBool(p.Image.SkipBuildScripts)
 	default:
 		return fmt.Errorf("%s", key)
 	}
@@ -505,20 +492,15 @@ func executableKeyValues(out map[string]string, p config.Profile, key string) er
 
 // defaultProfileChange is the change line for default_profile itself
 // (first set, or a -> b), when either the old or the new profile
-// HasExecutable, or the switch turns image.skip_build_scripts off:
-// repositories with no workflows: run that profile's commands and image
-// settings, so changing it changes what they run even though no profile's
-// own fields moved. HasExecutable deliberately ignores SkipBuildScripts
-// (true is the safe setting, so a profile whose only setting is
-// skip_build_scripts: true must not count as executable on its own,
-// decision L7's ruling), but that means a switch whose only difference is
-// SkipBuildScripts going from true (old default) to false or unset (new
-// default) - turning dependency install/build scripts back on for every
-// repository without workflows - would otherwise go undetected by
-// HasExecutable on both sides: reenabled below catches exactly that, so
-// this one unsafe direction is still gated. The opposite direction
-// (false/unset -> true, switching onto a safer default) is deliberately
-// not gated here, matching the same ruling.
+// HasExecutable: repositories with no workflows: run that profile's
+// commands, so changing it changes what they run even though no profile's
+// own fields moved.
+//
+// decision L7's ruling — that a profile whose only setting was
+// image.skip_build_scripts: true counted as not executable, and that only
+// the unsafe direction of that off switch was gated — needed a `reenabled`
+// clause here beside HasExecutable. skip_build_scripts is a removed key now,
+// so no profile can carry it and there is no such switch left to catch.
 func defaultProfileChange(prev, next *config.ProjectLayer) string {
 	var oldDefault string
 	var oldProfile config.Profile
@@ -528,8 +510,7 @@ func defaultProfileChange(prev, next *config.ProjectLayer) string {
 	}
 	newDefault := next.DefaultProfile
 	newProfile := next.Profiles[newDefault]
-	reenabled := oldProfile.Image.SkipBuildScripts && !newProfile.Image.SkipBuildScripts
-	if oldDefault == newDefault || (!oldProfile.HasExecutable() && !newProfile.HasExecutable() && !reenabled) {
+	if oldDefault == newDefault || (!oldProfile.HasExecutable() && !newProfile.HasExecutable()) {
 		return ""
 	}
 	return fmt.Sprintf("default_profile: %q -> %q (repositories without workflows: now run %s's commands)", oldDefault, newDefault, profileClause(newDefault))

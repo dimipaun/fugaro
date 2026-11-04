@@ -1293,9 +1293,12 @@ func TestSettingsSetConcreteWildcardKeyRefusesALayerTheRowMayNotBeSetIn(t *testi
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
 	before := readFileString(t, path)
 
-	// workflows.*.dockerfile is a repository-only row (config.Scopes), so the
-	// project layer is a layer it may not be set in.
-	_, _, err := execute(t, "settings", "set", "workflows.api.dockerfile", "Dockerfile", "--layer", "project", "--yes")
+	// workflows.*.profile is a repository-only row (config.Scopes), so the
+	// project layer is a layer it may not be set in. (The row this test used,
+	// workflows.*.dockerfile, is a removed key: it has no row to resolve to
+	// any more, so the refusal it earns is "no setting has that name", which
+	// is not the sentence under test.)
+	_, _, err := execute(t, "settings", "set", "workflows.api.profile", "svc", "--layer", "project", "--yes")
 	if err == nil {
 		t.Fatal("settings set wrote a repository-only row at --layer project")
 	}
