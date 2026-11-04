@@ -376,12 +376,14 @@ func TestCatalogCheckJobBuildsNothingFromAnUnreadableRecord(t *testing.T) {
 	_ = sum
 }
 
-// TestCatalogCheckJobBuildsNothingForAnEntryItHasNoRecordOf: an entry the
+// TestCatalogCheckJobLeavesAnEntryWithNoRecordToItsOwnBuild: an entry the
 // catalog has, with a definition copied and no build record, is due — and the
-// job still submits nothing, because the record is the only place a rebuild
-// could read the commit its image bakes. Building it once is the operator's
-// own build, from that repository's checkout.
-func TestCatalogCheckJobBuildsNothingForAnEntryItHasNoRecordOf(t *testing.T) {
+// job submits nothing, because the record is the only place a rebuild could
+// read the commit its image bakes. The design's rule is that the schedule stays
+// paused until every entry has a record, so a run that finds one missing is not
+// a failed check: it is a WARNING naming the one command that builds it once,
+// and the run exits 0.
+func TestCatalogCheckJobLeavesAnEntryWithNoRecordToItsOwnBuild(t *testing.T) {
 	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("runtime"), 5))
 	key, err := config.CatalogDockerfileKey("runtime")
 	if err != nil {
@@ -390,16 +392,23 @@ func TestCatalogCheckJobBuildsNothingForAnEntryItHasNoRecordOf(t *testing.T) {
 	f.put(t, key, []byte(catalogCheckOtherDef))
 
 	lines, err := runCatalogCheck(t)
+	if err != nil {
+		t.Fatalf("the catalog check failed for an entry with no build record: %v", err)
+	}
 	if got := buildPosts(f.fb); got != 0 {
 		t.Fatalf("builds submitted = %d, want 0", got)
 	}
-	if err == nil {
-		t.Fatal("the catalog check reported no failure for an entry with no build record")
-	}
 	l := lineFor(t, lines, "runtime")
-	if l.Decision != imagecheck.CheckFailed || l.Severity != "ERROR" || !slices.Contains(l.Reasons, imagecheck.ReasonNoRecord) ||
-		!strings.Contains(l.Error, "no build record") || !strings.Contains(l.Error, "fugaro image build runtime") || *l.BuildID != "" {
+	if l.Decision != imagecheck.NeedsBuild || l.Severity != "WARNING" || !slices.Equal(l.Reasons, []string{imagecheck.ReasonNoRecord}) ||
+		!strings.Contains(l.Error, "fugaro image build runtime") || *l.BuildID != "" {
 		t.Fatalf("runtime line = %+v", l)
+	}
+	// The state says the same, so the next run reads the entry the same way
+	// rather than as one whose check failed.
+	st := f.state(t, "runtime", "acme/other")
+	if st == nil || st.Decision != imagecheck.NeedsBuild || !slices.Equal(st.Reasons, []string{imagecheck.ReasonNoRecord}) ||
+		!strings.Contains(st.Error, "fugaro image build runtime") {
+		t.Fatalf("runtime check.json = %+v", st)
 	}
 }
 

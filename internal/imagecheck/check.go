@@ -25,6 +25,16 @@ const (
 	// NotInstalled: head's fugaro.yaml and the installed check job
 	// disagree about the workflow (fugaro update fixes it).
 	NotInstalled = "not-installed"
+	// NeedsBuild: the catalog entry has no build record, so nothing has
+	// ever built it and there is no commit a rebuild could be pinned to.
+	// It is the catalog's counterpart of the workflow check's
+	// paused-until-a-record rule: the schedule stays paused until every
+	// entry has one, and a run that finds one missing says so without
+	// alarming — fugaro image build <entry>, from the entry's
+	// repository's checkout, builds it once and the schedule takes it
+	// from there. Only the catalog check job decides it: a workflow's job
+	// clones, so it always has the commit a first build needs.
+	NeedsBuild = "needs-build"
 )
 
 // The reasons a decision records. The triggers come first, in the order

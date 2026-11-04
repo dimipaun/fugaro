@@ -140,8 +140,12 @@ func readCatalogJobEnv() (catalogJobEnv, error) {
 		return e, fmt.Errorf("%s is incomplete: %s", catalogCheckSpecEnv, catalogNotInstalledReason)
 	}
 	for _, r := range s.Repositories {
+		// GitSecretID is in this list because a build of the repository cannot
+		// clone without one: gcp.CatalogBuildSpec.check refuses a spec without
+		// it, and refusing it here says the same thing once at startup, with
+		// the reason that names the fix, instead of per entry at submit time.
 		if r.Repo == "" || r.Slug == "" || r.Provider == "" || r.RepoURL == "" || r.BaseBranch == "" ||
-			r.Workflow == "" || r.BuildServiceAccount == "" || len(r.Entries) == 0 {
+			r.GitSecretID == "" || r.Workflow == "" || r.BuildServiceAccount == "" || len(r.Entries) == 0 {
 			return e, fmt.Errorf("%s: the repository %s is incomplete: %s", catalogCheckSpecEnv, pluginwire.Printable(r.Repo), catalogNotInstalledReason)
 		}
 	}
@@ -207,6 +211,10 @@ type catalogEvaluation struct {
 	// read back from the one object the build itself reads.
 	definitionSHA256     string
 	definitionGeneration int64
+	// inputs are what imagecheck.CheckCatalog decides the entry from: this
+	// run's read of everything a decision needs, which the pass below hands
+	// the library rather than deciding the entry itself.
+	inputs imagecheck.CatalogInputs
 }
 
 // evaluate reads what entry e's decision needs and decides it. An error is a
@@ -216,11 +224,17 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 	var ev catalogEvaluation
 	// The guard comes first, before anything is read or submitted: an entry
 	// whose Dockerfile is another repository's is built by that repository's
-	// build account or not at all (catalogBuildEntryGuard, the manual path's
-	// rule, and the reason a spec rendered before the catalog moved an entry is
-	// refused rather than obeyed).
-	if err := catalogBuildEntryGuard(e, r.Repo); err != nil {
-		return ev, err
+	// build account or not at all (catalogEntryGuardOf, the manual path's rule,
+	// and the reason a spec rendered before the catalog moved an entry is
+	// refused rather than obeyed). Its route is the job's own: nobody reading
+	// this line is at a checkout, and the installed job — not the catalog — is
+	// what is behind, so the one command that fixes it is fugaro update.
+	switch catalogEntryGuardOf(e, r.Repo) {
+	case catalogEntryPrebuilt:
+		return ev, fmt.Errorf("the catalog entry %s is the prebuilt image %s: there is nothing to build", pluginwire.Printable(e.Name), pluginwire.Printable(e.Source.Image))
+	case catalogEntryOtherRepo:
+		return ev, fmt.Errorf("the catalog entry %s is built from %s's Dockerfile, but the installed catalog check job assigns it to %s: %s",
+			pluginwire.Printable(e.Name), pluginwire.Printable(e.Source.Repo), pluginwire.Printable(r.Repo), catalogNotInstalledReason)
 	}
 	recKey, err := gcp.CatalogRecordKey(slug, e.Name)
 	if err != nil {
@@ -292,7 +306,7 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 			}
 		}
 	}
-	ev.d = imagecheck.DecideCatalog(imagecheck.CatalogInputs{
+	ev.inputs = imagecheck.CatalogInputs{
 		Entry: e.Name, Record: ev.rec, LastCheck: ev.prev, LastBuildStatus: ev.lastStatus,
 		DefinitionSHA256: ev.definitionSHA256, BaseRef: t.base, BaseDigest: t.baseDigest,
 		// The lockfiles trigger is the one trigger this job cannot evaluate: it
@@ -303,7 +317,7 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 		// that up.
 		Lockfiles: false,
 		MaxAge:    config.DefaultMaxAge, Now: t.now, Force: t.force,
-	})
+	}
 	return ev, nil
 }
 
@@ -386,8 +400,10 @@ type catalogCheckLogger struct {
 
 // log writes one entry's line. rebuild-failed-last, check-failed, a last
 // rebuild that failed and a rebuild the run's cap stopped are ERROR, which the
-// alert matches; an entry the installed job does not know is WARNING, the
-// severity checkLogger gives a workflow head and the job disagree about.
+// alert matches; an entry the installed job does not know and one nothing has
+// built yet are WARNING, the severity checkLogger gives a workflow head and the
+// job disagree about: both are states fugaro update or one fugaro image build
+// fixes, not a check that failed.
 func (l *catalogCheckLogger) log(entry, repo, decision string, reasons []string, buildID, lastStatus, errMsg string) {
 	capped := slices.Contains(reasons, imagecheck.ReasonBuildCap)
 	sev := "INFO"
@@ -397,7 +413,7 @@ func (l *catalogCheckLogger) log(entry, repo, decision string, reasons []string,
 		decision == imagecheck.Rebuild && imagecheck.FailedBuild(lastStatus),
 		capped:
 		sev = "ERROR"
-	case decision == imagecheck.NotInstalled:
+	case decision == imagecheck.NotInstalled, decision == imagecheck.NeedsBuild:
 		sev = "WARNING"
 	}
 	msg := entry
@@ -528,8 +544,21 @@ func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 	}
 	t.readBaseDigest(ctx)
 
-	var failed []string
-	submitted := 0
+	// This run reads every entry the spec assigns, and imagecheck.CheckCatalog
+	// then decides them: the library's pass is the one that runs, so the
+	// prebuilt skip and the catalog's own order are one implementation and not
+	// two. An entry this run could not read is never handed to it — it is
+	// check-failed here, and nothing is submitted for it.
+	type catalogRun struct {
+		w  catalogAssignment
+		ev catalogEvaluation
+		// err is why this run could not read the entry, nil when it could.
+		err error
+		// d is the entry's decision, from CheckCatalog or from err.
+		d imagecheck.CatalogDecision
+	}
+	var runs []*catalogRun
+	inputs := map[string]imagecheck.CatalogInputs{}
 	for _, w := range work {
 		if !w.found {
 			// The installed job is behind the catalog: an entry it was
@@ -547,9 +576,51 @@ func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 				pluginwire.Printable(w.entry.Name), pluginwire.Printable(w.entry.Source.Image))
 			continue
 		}
-		ev, err := t.evaluate(ctx, w.entry, w.repo, w.slug)
-		if err != nil {
-			ev.d = imagecheck.CatalogDecision{Entry: w.name, Decision: imagecheck.CheckFailed, Error: oneLine(err.Error())}
+		r := &catalogRun{w: w}
+		if r.ev, r.err = t.evaluate(ctx, w.entry, w.repo, w.slug); r.err == nil {
+			inputs[w.name] = r.ev.inputs
+		}
+		runs = append(runs, r)
+	}
+	// The catalog CheckCatalog is handed: the assigned entries this run read,
+	// in the published catalog's own order. An entry it could not read is
+	// decided above instead, since the library decides no entry it was given
+	// no inputs for, and one a prebuilt image answers was never read at all.
+	var cat config.Catalog
+	for _, ce := range s.Catalog.Entries {
+		if _, ok := inputs[ce.Name]; ok {
+			cat.Entries = append(cat.Entries, ce)
+		}
+	}
+	decisions, err := imagecheck.CheckCatalog(&cat, inputs)
+	if err != nil {
+		return catalogFailAll(cmd, ctx, lg, e, bucket, err, now, o.dryRun)
+	}
+	byName := make(map[string]imagecheck.CatalogDecision, len(decisions))
+	for _, d := range decisions {
+		byName[d.Entry] = d
+	}
+
+	var failed []string
+	submitted := 0
+	for _, r := range runs {
+		w, ev := r.w, r.ev
+		switch {
+		case r.err != nil:
+			ev.d = imagecheck.CatalogDecision{Entry: w.name, Decision: imagecheck.CheckFailed, Error: oneLine(r.err.Error())}
+		default:
+			ev.d = byName[w.name]
+		}
+		if ev.d.Decision == imagecheck.Rebuild && ev.rec == nil {
+			// Nothing has ever built this entry, and a rebuild is pinned to the
+			// commit its last build recorded, so this run cannot submit one.
+			// The design's rule is that the schedule stays paused until every
+			// entry has a record (readiness keeps the workflow check's schedule
+			// paused the same way), so a run that finds one missing does not
+			// alarm: it says what to run, and the entry keeps its no-record
+			// decision for the next run to read the same way.
+			ev.d.Decision, ev.d.Error = imagecheck.NeedsBuild, fmt.Sprintf("fugaro image build %s from %s's checkout builds it once, and the schedule rebuilds it from then on",
+				pluginwire.Printable(w.name), pluginwire.Printable(w.repo.Repo))
 		}
 		// A rebuild the run's cap stops is left for the next run: it is
 		// recorded as a rebuild with the cap note, so the entry stays due and

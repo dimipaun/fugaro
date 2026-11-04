@@ -355,19 +355,39 @@ func catalogBuildEntries(cmd *cobra.Command, cat *config.Catalog, name, repo str
 	return buildable, nil
 }
 
-// catalogBuildEntryGuard is the one rule both paths that build a catalog entry
-// answer to: an entry a prebuilt image answers has nothing to build, and an
-// entry whose Dockerfile is another repository's is built by that repository's
-// build account or not at all. The manual path (catalogBuildEntries) refuses
-// it with the operator's own route — run from that repository's checkout — and
-// the scheduled catalog check refuses it for the entry's repository: it is the
-// same sentence either way, because it is the same rule, and the scheduled
-// path must not be the one place a build could run as the wrong account.
-func catalogBuildEntryGuard(e config.Entry, repo string) error {
+// catalogEntryGuardKind is the one rule both paths that build a catalog entry
+// answer to, as a value rather than a sentence: an entry a prebuilt image
+// answers has nothing to build, and an entry whose Dockerfile is another
+// repository's is built by that repository's build account or not at all. The
+// rule is one function so the scheduled path cannot drift from the manual one;
+// the two answer it with different routes, because the person reading is in a
+// different place — a checkout, where running from the other repository's
+// checkout is the fix, or the nightly job's log, where fugaro update is.
+type catalogEntryGuardKind int
+
+const (
+	catalogEntryBuildable catalogEntryGuardKind = iota
+	catalogEntryPrebuilt
+	catalogEntryOtherRepo
+)
+
+func catalogEntryGuardOf(e config.Entry, repo string) catalogEntryGuardKind {
 	switch {
 	case e.Source.Kind == config.SourceImage:
-		return userErr("the catalog entry %s is the prebuilt image %s: there is nothing to build", pluginwire.Printable(e.Name), pluginwire.Printable(e.Source.Image))
+		return catalogEntryPrebuilt
 	case e.Source.Kind == config.SourceDockerfile && !sameRepo(e.Source.Repo, repo):
+		return catalogEntryOtherRepo
+	}
+	return catalogEntryBuildable
+}
+
+// catalogBuildEntryGuard is the manual path's refusal: the operator is at a
+// checkout, so the route it names is the other repository's.
+func catalogBuildEntryGuard(e config.Entry, repo string) error {
+	switch catalogEntryGuardOf(e, repo) {
+	case catalogEntryPrebuilt:
+		return userErr("the catalog entry %s is the prebuilt image %s: there is nothing to build", pluginwire.Printable(e.Name), pluginwire.Printable(e.Source.Image))
+	case catalogEntryOtherRepo:
 		return catalogBuildWrongRepo(e, repo)
 	}
 	return nil
