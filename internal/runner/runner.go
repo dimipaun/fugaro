@@ -341,6 +341,15 @@ type run struct {
 	gwClosed       bool
 	gwUsed         pricing.Micros
 	gwNotional     pricing.Micros
+	// direct is the model spend of the stages a stage-scoped Claude OAuth
+	// account served -- a mixed run's review and adversarial stages
+	// (docs/design/mixed-credentials.md §11). The gateway saw none of their
+	// calls, so nothing settles them: their figure is Claude Code's own result
+	// event, recorded here by recordAccountStageCost, and it is in
+	// record.CostUSD and cost.model_usd beside the ledger's two (P11, P12).
+	// All of it is notional -- the subscription paid it -- so it is in no
+	// total and against no cap (P15).
+	direct pricing.Micros
 	// gwCacheRead and gwCacheWrite are the run's prompt-cache read and write
 	// token totals, taken from the gateway's ledger when it closes: what the
 	// run's record carries so a reader can see whether the cache behaved as
@@ -3448,9 +3457,19 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// The halt's way to stop this stage: cancelling with the halt as the
 	// cause, which StageError reads.
 	stageCtx, cancelCause := context.WithCancelCause(ownCtx)
+	// A stage the run's stage-scoped Claude OAuth account serves opens no stage
+	// in the gateway and takes no figure of its own from it: its calls go
+	// straight to Anthropic, so the gateway has nothing to admit, nothing to
+	// refuse and nothing to report for it (docs/design/mixed-credentials.md
+	// §11, P11). Its account stage is cleared of the previous stage's report
+	// for the same reason: nothing of this stage may be read from r.lastStage.
+	direct := r.stageDirect(name)
 	r.mu.Lock()
 	r.haltStage = cancelCause
 	extra := r.stageExtra
+	if direct {
+		extra, r.lastStage = nil, nil
+	}
 	early := r.halt
 	r.mu.Unlock()
 	if early != nil {
@@ -3466,7 +3485,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	}()
 	var watching sync.WaitGroup
 	stopWatch := func() {}
-	if r.gw != nil {
+	if r.gw != nil && !direct {
 		r.beginGatewayStage(name)
 		done := make(chan struct{})
 		watching.Add(1)
@@ -3512,9 +3531,12 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	ownTimedOut := own > 0 && err != nil && cutByOwn
 	stopCheckpoints()
 	stopWatch()
-	// An oauth run has no gateway: its stage's own cost figure is its
-	// notional spend, reported whatever became of the stage.
-	r.reportNotional(ctx, res)
+	// An account stage has no gateway: its stage's own cost figure is its
+	// notional spend, reported whatever became of the stage. A stage the run's
+	// stage-scoped Claude OAuth account serves reports the same way though the
+	// run's gateway is on, and it is the only stage of a gateway run that does
+	// (P13).
+	r.reportNotional(ctx, name, res)
 	r.mu.Lock()
 	sess := r.sess
 	r.mu.Unlock()
@@ -3545,8 +3567,10 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.gatewayTokens = gw
 		r.mu.Unlock()
 	}
-	if r.gw != nil {
+	if r.gw != nil && !direct {
 		r.recordGatewayStageCost(name, res.CostUSD, stageCtx.Err() != nil || r.haltValue() != nil)
+	} else if direct {
+		r.recordAccountStageCost(name, res.CostUSD)
 	} else {
 		r.rec.CostUSD += res.CostUSD
 	}

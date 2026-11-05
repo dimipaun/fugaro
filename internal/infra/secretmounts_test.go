@@ -637,3 +637,107 @@ workflows:
 		})
 	}
 }
+
+// mixedRungFourCfg is an api-key repository whose reviews run on the model the
+// case names: the shape the owner's ruling of 2026-11-05 is about, where the
+// project's default_claude_account and not a stage key is what asks for the
+// mix (docs/design/mixed-credentials.md §11).
+func mixedRungFourCfg(t *testing.T, reviewer string) *config.Config {
+	t.Helper()
+	return parseCfg(t, []byte(`version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+agent:
+  auth: api-key
+  models: { coder: deepseek/chat, reviewer: `+reviewer+` }
+workflows:
+  app:
+    commands: { build: npm run build, test: npm test }
+`))
+}
+
+// TestMixedStageAccountRungFourIsTheProjectDefault: the ruling's second way
+// into the mix. A repository whose project default_claude_account names an
+// account and whose review stage runs an Anthropic model is a mixed repository
+// — the account's own job is built for it, gcp.WorkflowVariant, and that job
+// mounts the token — and one whose reviews are on another vendor is not: the
+// key is then the account an oauth run would use and nothing about this run's
+// stages, so it gets no job and no mount, exactly as a stage key naming an
+// account the repository may not use does.
+func TestMixedStageAccountRungFourIsTheProjectDefault(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		reviewer string
+		def      string
+		variants []string
+		mounted  []string
+	}{
+		{"an Anthropic reviewer", "claude-sonnet-5", "default_claude_account: bmb\n",
+			[]string{config.DefaultClaudeAccount, "bmb"}, []string{"bmb"}},
+		{"a reviewer on another vendor", "deepseek/chat", "default_claude_account: bmb\n",
+			[]string{config.DefaultClaudeAccount}, nil},
+		// The sentinel names no account of its own: an api-key run's job
+		// carries no OAuth token for the default account, so the key declares
+		// no mix and gets no variant of its own.
+		{"the sentinel default", "claude-sonnet-5", "default_claude_account: " + config.DefaultClaudeAccount + "\n",
+			[]string{config.DefaultClaudeAccount}, nil},
+		// The allow-list is what keeps the mount to what the owner admitted:
+		// the project's default is a name like any other, and one whose
+		// allow_data_to does not list this repository is not this
+		// repository's to mount.
+		{"an account no allow_data_to admits here", "claude-sonnet-5", "default_claude_account: other\n",
+			[]string{config.DefaultClaudeAccount}, nil},
+		{"no default at all", "claude-sonnet-5", "",
+			[]string{config.DefaultClaudeAccount}, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			lc, cfg := parseLC(t, mixedLC+c.def), mixedRungFourCfg(t, c.reviewer)
+			if got := WorkflowAccounts(cfg, lc, "acme/app"); !slices.Equal(got, c.variants) {
+				t.Errorf("WorkflowAccounts = %v, want %v", got, c.variants)
+			}
+			for _, token := range []string{config.DefaultClaudeAccount, "bmb", "other"} {
+				ms, err := SecretMounts("github-app-key", cfg, "app", token, cfg.Workflows["app"], lc, "acme/app")
+				if err != nil {
+					t.Fatal(err)
+				}
+				logical := config.ClaudeAccountSecret(token)
+				got := slices.ContainsFunc(ms, func(m SecretMount) bool { return m.Logical == logical })
+				if want := slices.Contains(c.mounted, token); got != want {
+					t.Errorf("token %q mounted = %v, want %v (mounts %+v)", token, got, want, ms)
+				}
+			}
+		})
+	}
+}
+
+// TestMixedStageAccountRungFourIsOneAccount: the mix is one Claude account and
+// no second (config.CheckStageAccountMix; design §11, "never a second
+// provider's key"), and the project default is held to it here the way the
+// launch holds it (mixedStageAccount, internal/cli/run.go): where a stage's own
+// key names a different account, the default is not an account of this
+// repository's mix and gets no job — the launch refuses that configuration
+// outright, so a job built for the default would be a credential no run of this
+// repository may hold.
+func TestMixedStageAccountRungFourIsOneAccount(t *testing.T) {
+	// A second account this repository may use, so the case is about the two
+	// names and not about the allow-list.
+	lc := parseLC(t, strings.Replace(mixedLC,
+		"  bmb: { allow_data_to: [acme/app] }",
+		"  bmb: { allow_data_to: [acme/app] }\n  team-b: { allow_data_to: [acme/app] }", 1)+
+		"default_claude_account: bmb\nstages:\n  review: { claude_account: team-b }\n")
+	cfg := mixedRungFourCfg(t, "claude-sonnet-5")
+	// The default alone is the mix's account, and it is the same run as the
+	// stage keys naming it: the control, so the case below is about the two
+	// names and not about rung 4 being read at all.
+	got := WorkflowAccounts(cfg, parseLC(t, mixedLC+"default_claude_account: bmb\n"), "acme/app")
+	if want := []string{config.DefaultClaudeAccount, "bmb"}; !slices.Equal(got, want) {
+		t.Errorf("WorkflowAccounts = %v, want %v: the project default alone is the mix's account", got, want)
+	}
+	// Both keys written, naming two accounts: the stage key is rung 2 and the
+	// default is not an account of this repository's mix, so no job is built
+	// for it — a job for it would be a token no run of this repository may
+	// hold, and the launch refuses that configuration outright.
+	if got := WorkflowAccounts(cfg, lc, "acme/app"); !slices.Equal(got, []string{config.DefaultClaudeAccount, "team-b"}) {
+		t.Errorf("WorkflowAccounts = %v, want the stage key's account alone: a second account is what the rule refuses", got)
+	}
+}

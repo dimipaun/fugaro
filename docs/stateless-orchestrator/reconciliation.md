@@ -1,6 +1,6 @@
 # The stateless orchestrator: the spec against the code
 
-**Status: reconciliation answered by the owner 2026-11-04; plan in [implementation-plan.md](implementation-plan.md). Nothing implemented, no task approved.**
+**Status: reconciliation answered by the owner — D1220-D1243 in full, not only the first draft's D1220-D1240: the round-1 questions D1241, D1242 and D1243 were answered on 2026-11-04, and the last tension the answers left open, T7 (the daemon-unit carve-out of the HARD RULE), was ruled on 2026-11-05, so nothing in this section is still put to the owner. Plan in [implementation-plan.md](implementation-plan.md). Nothing implemented, no task approved.**
 Checked against `origin/main` at `5998d67c7` (`feat(config): the workflow_secrets block ... (W0) (#1710)`), merged into this branch,
 on **2026-11-04**. The open pull requests were read with `gh pr list` and `gh pr diff` the same day. Every path and symbol below was
 re-read at that commit; a citation by symbol is held where a line would move.
@@ -178,7 +178,8 @@ returns nothing), and **`docs/plugin-user-scope` designs no hook either** (`git 
 to share: a hook is a new surface, defined by Claude Code's plugin hook configuration (to be confirmed against the Claude Code plugin reference by
 O10's red step; **not** `plugin/skills/hooks/session-start`, which is not where plugin hooks live), and D1237's "one slot shared" is read as "one
 printer: the same skill sentence or hook, ordered after the update nudge". And `state --brief` **reads the RTDB**, a network read that D952
-forbids for the nudge: D1243 asks the owner which wins. Note
+forbids for the nudge: **D1243 answered it on 2026-11-04 — the session-start print reads a local cache the daemon writes (no network, D952
+holds), and `state --brief` stays the explicit command that reads the node**. Note
 the plugin's tests check every command and flag a skill names against the CLI: a new `fugaro orchestrator ...` command is a plugin-test
 change in the same PR.
 
@@ -244,19 +245,24 @@ not. People reach the database with an OAuth Bearer: launchers and operators hol
 `.validate`** (`internal/mailbox/lease.go`'s own comment: the writer "runs on the operator's ADC, which the store does not hold to the mailbox's
 `.write` claims or `.validate` lists"). The rules macro `USER` is the **paired phone's `mu` claim**, not a CLI person, and any launcher can mint a
 custom token through `signJwt` (`iam.tf`, the `minter` grant), so a claim-based "write own" rule can be forged by a launcher. Consequences:
-(a) **validation of the state's shape is client-side** (O0's validator, the same code in the daemon and the CLI); a rules `.validate` defends only
-against a job or token identity, never against a person's CLI; (b) **write-own is not enforceable by the rules** for a CLI person; (c) the real
+(a) **validation of the state's shape is client-side** (O0's validator, the same code in the daemon and the CLI); the rules do not validate shape at
+all — they refuse a job or a minted token identity outright, and bind a person's CLI not at all; (b) **write-own is not enforceable by the rules** for a CLI person; (c) the real
 bounds on money are outside the state node: the launch claim, `Precheck`, the kill switch and the spend caps; (d) a viewer-role person cannot
-write the node by Bearer at all, so the node needs a writer-identity decision before O2 (D1241, an owner question). What the rules *can* still do:
-refuse a run-scoped job identity and refuse an oversize or malformed value from a token-based writer.
+write the node by Bearer at all, so the node needed a writer identity before O2: **D1241 was answered on 2026-11-04 as (a), the recommendation — the
+person's own credential writes `orchestrator/`, validation is client-side only, and the rules refuse a job identity *and* a token identity — every
+identity the rules evaluate; O2 claims no write-own guarantee and its gate is lifted.** What the rules *can* still do:
+refuse a run-scoped job token, refuse a token the launcher's `signJwt` minter made, and refuse the phone's `mu` claim — the `.write` is `false` for
+all of them, not a denylist of run-scoped jobs behind a shape check. **Shape and size are not the rules' business**: a value that validates is still
+refused, so O0's validator (and its oversize and malformed tests) is the whole shape check, client-side.
 
 **Person-only is a mitigation, not a barrier.** `internal/initflow/stage.go` (`AgentAdvice`) and `internal/cli/init.go` both say the agent check is
 "a mitigation, not a barrier": `env -u CLAUDECODE fugaro orchestrator patch` or a direct node write (Bearer, no rules) passes it. So G2's CLI
 half (D1225) is **not enforced by an agent-session check**; **P1 is resolved as negative**. The honest bound: person-only ops (approve, `goal_set`,
 resolving a `waiting_on: person` decision) require at least a **Typed confirmation at a real terminal** (`initflow.CanConfirm(Typed)`, the control
 the repo's other person-only steps use), which stops the accident and most sessions; it is itself beatable by a pty wrapper (`script`, `expect`), so "a session that cannot type" is overstated; the **residual** is stated: an adversary running
-as the person at a terminal is the person. A stronger channel (a paired-device approval) is an owner question (D1242), and nothing consumes a
-resolved person decision until it is answered.
+as the person at a terminal is the person. **D1242 was answered on 2026-11-04: the terminal Typed confirmation stands for now, and a paired-device
+channel comes later** (the recommendation). The later channel may reshape O0's `Approval`, so nothing here fixes that shape: no task and no test is
+gated on it, and no task builds the paired-device channel.
 
 **Single-writer.** In RTDB, `PutIfMatch` on one state node plus a daemon lease (the mailbox heartbeat-lease pattern, F5/F16) gives one
 daemon per orchestrator id and a rejected write for any stale one. The spec's "Both modes coexist; transactions keep them from
@@ -266,13 +272,23 @@ are separate nodes: **the state compare-and-swap, not the lease, is what seriali
 `PutIfMatch` after a re-read, so `Save` re-checks the lease before each retry (plan O3, G9). Idempotency keys must therefore be derived, not generated
 (D1231).
 
-**One approval covers one attempt (round-2 M1, M2).** A session's `work_item_upsert` must not be able to turn one approval into many launches. `Phase`,
-`RunID`, `Attempts` and the `Intents` are written only by the **Daemon** actor; a session's upsert that carries them is refused. An approval covers
-the attempt it was given for (committing the intent clears `Approved` in the same `PutIfMatch`, and `Approved` is written only by `work_item_approve`, never by an upsert, because the digest is unkeyed); a further attempt (a retry after `failed`) needs a person's new approval. The digest is one `SpecDigest(WorkItem)` over every
-field except a named bookkeeping list (`Phase`, `RunID`, `Attempts`, `Note`, `Approved`), so a field added later is digested by default (a reflective
+**One approval covers the first attempt and at most one automatic retry (round-2 M1, M2; owner ruling 2026-11-04, the recommendation not taken).** A
+session's `work_item_upsert` must not be able to turn one approval into many launches. `Phase`, `RunID`, `Attempts` and the `Intents` are written only by
+the **Daemon** actor; a session's upsert that carries them is refused. `Approved` is written only by `work_item_approve`, never by an upsert, because the
+digest is unkeyed, and **it carries the attempts it covers**: the attempt the person approved, and after a first `failed` at most **one** automatic retry
+of that same approved spec, which reuses the approval only while `SpecDigest(item)` still equals the approval's digest. Committing the retry's intent
+spends the allowance, and only then is `Approved` cleared in the same `PutIfMatch` (the first intent clears nothing). A **second** failure needs a
+person's new approval, and an approval never outlives its item: the same write that moves a `Phase` to `done` or `cancelled` clears it, so a finished item
+cannot be relaunched by a standing approval. What this widens is one approval's reach: from one run to two, which is what the spec's own table wanted ("Task failed, first
+time: Code retries"). The caps, `Precheck` and the kill switch still bound it — the retry counts toward the per-cycle, per-minute, per-hour, per-day and
+running caps like any other launch — and a failure whose cause is a **refusal** (a failed `Precheck`, the kill switch, a spend cap, a validation refusal)
+is not retried at all — and **it burns no attempt only when the `Launcher` refuses before the start** (no `launch.json` under the intent's run id): a
+started run that reports a refusal is an attempt like any other, or the item would relaunch every tick until a cap stopped it. The digest is one
+`SpecDigest(WorkItem)` over every
+field except a named bookkeeping list (`Phase`, `RunID`, `SpentApprovalAt`, `Attempts`, `Note`, `Approved`), so a field added later is digested by default (a reflective
 test pins the list). The approve op carries the digest the person saw and is refused if it no longer equals the current one; the Typed confirmation
 shows the digested spec. State size: the ~4k-token target needs a retention rule, so finished items, resolved decisions and old `Intents`/briefs are
-archived out of the state node past a cap (O0), except that an `Intent` younger than the longest cap window is never archived (the caps are derived from intents), and a node still over the cap then stops the daemon spawning.
+archived out of the state node past a cap (O0), except that an `Intent` younger than the longest cap window is never archived (the caps are derived from intents), nor is one of an item whose approval still stands or was spent by that intent (or an item paused past the window would come back with its retry unspent), and a node still over the cap then stops the daemon spawning.
 
 ### Cost of the cycle loop
 
@@ -324,7 +340,7 @@ that is **money**. Two repairs:
    concurrency fence** (two daemons, a stale claim, a retry), and the corrected recipe is **re-issue, never mint again**: the intent records the minted run id before the
    start; recovery **re-issues the same launch under that recorded run id through `launchRun` (the `--retry` path when `task.json` exists)**, which reports
    "already-launched" if the start happened or launches exactly once if it did not. An "adopt only, never issue" recovery would leave an item stuck
-   in `running` forever (and holding a running-cap slot) if the crash fell between `task.json` and the start. It never mints a second run id. **Before `task.json` exists `--retry` cannot be used** (`retrySpec` in `internal/cli/run.go` refuses "has no task.json"), and rebuilding the task from the item's *current* spec is a check-then-write hole: a session edit after the intent was committed would launch an unapproved spec under the old intent. So recovery recreates the task under the recorded run id only when `SpecDigest(item)` equals the intent's digest and the approval still stands; otherwise the intent is marked abandoned (nothing started).
+   in `running` forever (and holding a running-cap slot) if the crash fell between `task.json` and the start. It never mints a second run id. **Before `task.json` exists `--retry` cannot be used** (`retrySpec` in `internal/cli/run.go` refuses "has no task.json"), and rebuilding the task from the item's *current* spec is a check-then-write hole: a session edit after the intent was committed would launch an unapproved spec under the old intent. So recovery recreates the task under the recorded run id only when `SpecDigest(item)` equals the intent's digest **and either the approval still stands or the intent is the retry that spent it** (`intent.ApprovalAt` equals the item's `SpentApprovalAt`; committing a retry's intent clears `Approved`, so the first test alone would abandon every crashed retry); otherwise the intent is marked abandoned (nothing started).
 2. **Level-triggered**: no cursor at all; the next cycle re-derives "task t-042 has no run" and acts again, with the per-run-id claim as the fence
    and the committed intent as the record that a run id was already minted for that attempt.
 
@@ -414,10 +430,13 @@ Numbers **D1220-D1249** (section 0). Recommendation first; the cost of the alter
 | D1238 | Managed projects | The daemon and its decision agents **never run a gated converge or publish command**; they may report "an update is due" and nothing else. | Let a managed project's daemon call the gate: ties the agent's judgment to the converge gate the owner deliberately made deterministic. | **Answered 2026-11-04.** The daemon and its decision agents never run a gated converge or publish command and report "update due" only: the recommendation. Why: the managed gate stays deterministic. |
 | D1239 | Spawn-guardrail defaults not in the repo (project running cap, per-minute spawn rate, batch size) | Put them in the **project policy as tightening-only** fields with conservative defaults (proposal: running cap = the person's `max_parallel`, batch 10 rather than the spec's 50); decided in the plan's slice that needs them. | The spec's 50: a looping cycle can launch 50 real runs before any person is asked. | **Answered 2026-11-04.** Project-policy fields, tightening-only, conservative defaults (running cap = `max_parallel`, batch 10, a per-minute spawn rate): the recommendation. Why: a looping cycle must not launch 50 runs before anyone is asked. |
 | D1240 | Release slot | **0.21.0 or later**, after the MCP chain (0.20.0 slot) for anything that needs the hosted tools; the local deterministic daemon (D1221) is independent of MCP and can ship earlier if the owner wants the saving first. | Same window as MCP: both are security-heavy and both touch the rules and `fugaro update`. | **Answered 2026-11-04.** The local daemon may ship earlier; the MCP-dependent parts are 0.21.0 or later: the recommendation. Why: the daemon is independent of the MCP chain. |
+| D1241 | Who writes the `orchestrator/` state node, before O2? | **The person's own credential** (option (a)): the CLI and the daemon write it with the person's ADC, O0's validator is the only shape check, and the rules refuse every identity they evaluate — a run-scoped job token and a `signJwt`-minted custom token alike. Reason: the rules do not bind a person's OAuth write at all (IAM bypasses `.write`), so the honest design claims no write-own guarantee rather than buying one that cannot be given (F4, trust boundary). | (b) A service-account writer behind the person's CLI — the coordinator's shape: a new identity to provision, grant and converge through `fugaro update`, and a new place the credential is read from, for a guarantee the rules still would not give a person's own CLI. (c) A custom-token claim the rules check: any launcher can mint it through `signJwt`, so it is a mitigation only. | **Answered 2026-11-04.** (a), the person's own credential, validation client-side, the rules refusing every identity they evaluate (a job token and a minted token alike), no write-own guarantee claimed: the recommendation. Why: write-own is not enforceable by the rules for a CLI person. O2's gate is lifted (section 6). |
+| D1242 | A paired-device channel for person decisions: are approval, `goal_set` and a person decision resolved only from the paired phone or console? | **Not in v1: the Typed confirmation at a real terminal stands**, and a paired-device channel comes later as work of its own. Reason: the Typed confirmation stops the accident and most sessions, and no task in this plan needs the device channel, so requiring it would gate all of slice 1 on a surface nothing builds. | Require the paired device from v1: every person-only op (approve, `goal_set`, resolving a `waiting_on: person` decision) waits on a new channel — pairing, MAC, a prompt on the phone — and its shape fixes O0's `Approval` before slice 1 ships. The cost of deferring is the residual already stated: an adversary running as the person at a terminal is the person. | **Answered 2026-11-04.** The terminal Typed confirmation for now, a paired-device channel later: the recommendation. Why: it stops the accident, and no task here needs the device channel. The later channel may reshape O0's `Approval`; **no task is gated on it** (section 6). |
+| D1243 | The session-start print versus D952's no-network rule: what does the print read? | **A local cache the daemon writes**: the print reads that file, shows its freshness stamp, and reaches no network, so D952 holds for the one check it governs. `state --brief` stays the explicit command that reads the node. Reason: the alternative changes a standing no-network rule for a print that runs at the start of every session, on the person's behalf, unasked (F17). | Amend D952 for this one read: the session-start check reaches the RTDB on the person's behalf at the start of every session, which is the thing D952 refuses, and a check that fails offline — the state a nudge must survive. The cost of the cache is staleness, which the freshness stamp makes visible, and a writer in the daemon (O8 gains it). | **Answered 2026-11-04.** The local cache the daemon writes: the recommendation. Why: D952's no-network rule holds at session start. **O8 gains the cache writer; O10 depends on O8 (level 4)** (section 6). |
 
-D1241-D1243 are **new owner questions raised by the round-1 security review, unanswered** (section 6): D1241 (the state node's writer identity, before O2), D1242 (a paired-device channel for person decisions), D1243 (the session-start check versus an RTDB read, D952). D1244-D1249 are reserved and unused. The owner confirmed the block D1220-D1249 on 2026-11-04.
+D1244-D1249 are reserved and unused. The owner confirmed the block D1220-D1249 on 2026-11-04.
 
-**The owner answered all of D1220-D1240 on 2026-11-04. Twenty of the twenty-one are the recommendation; D1235 is not** (cut over at once instead of a shadow week).
+**The owner answered all of D1220-D1243 on 2026-11-04.** Twenty-three of the twenty-four are the recommendation; **D1235 is not** (cut over at once instead of a shadow week), and the plan's own questions carry one more owner ruling that is not the recommendation: **the retry rule (one automatic retry under the same approval)**, in the plan's section 6. **Q2 was ruled twice:** the answer this pull request first recorded (`fugaro update` offers the install) is superseded by **the owner's answer, 2026-11-04** — `fugaro setup` installs the daemon and `fugaro orchestrator install` upgrades it — which closes **T6** and opened **T7** (the carve-out of the HARD RULE the answer left behind). **T7 was then ruled on 2026-11-05, and the ruling is not the recommendation: `fugaro update` re-renders an installed unit when the rendered template changed, so the HARD RULE is literally true**, which amends Q2's "`fugaro update` never touches the unit" to "never installs a unit; it re-renders an installed one". All of it is in section 6 below.
 
 ## 5. UNVERIFIED
 
@@ -440,15 +459,24 @@ D1241-D1243 are **new owner questions raised by the round-1 security review, una
   ("like the coordinator").
 - **U8.** Live behaviour: nothing in this reconciliation was run against a real installation (RTDB, Firestore or Cloud Run). No owner check
   number is claimed.
+- **U9.** Which surface would deliver a push (Q3). Verified against `main`: the repository carries **no** push implementation. The phone's push is
+  design-only (`docs/mobile/design/push-notifications.md`, Task P5.2, Phase 5 unscheduled; D121's "no push in v1", answered 2026-10-17), and the
+  app depends only on Firebase analytics and crash reporting. The console's notification is a design gap (`docs/design/desktop-console-v2.md` F27)
+  whose D33 answer — derived from the watch feed by the console's own reader, off by default — is unbuilt (V2.7.3), and nothing under `console/src`
+  uses Electron's `Notification` API. What does exist is the RTDB **mailbox** the phone polls (`mailbox/<mb>/{inbox,outbox,heartbeat}`, every write
+  MAC-checked by the rules; pairing D165/D166): a foreground channel, not a push. So "the mobile push the owner already has" is not verifiable from
+  this tree and is read as a setup outside it, the way F18 reads the owner's scripts.
 
 ## 6. OPEN TENSIONS (reported, not resolved)
 
-**T1. D1235 cut-over at once: what remains and what does not.** The owner chose no shadow week, so the daemon replaces the sweep,
-the Monitor watcher and the queue scripts the day it is switched on. A bad launch rule then launches real runs with no comparison
+**T1. D1235 cut-over at once, and the rollback the owner ruled (answered 2026-11-04).** The owner chose no shadow week, so the daemon replaces
+the sweep, the Monitor watcher and the queue scripts the day it is switched on. A bad launch rule then launches real runs with no comparison
 period against the sweep. The mitigations that remain are D1226's approved-items-only spawn, D1239's caps (running cap, batch, per-minute
-rate), the existing spend caps and the kill switch. **The owner is asked to rule** whether a one-command rollback to the scripts is wanted
-(keep the scripts until the daemon has run N days, and what N is). The plan carries the rollback as a note and builds no
-rollback command until the owner rules.
+rate), the existing spend caps and the kill switch. **The owner ruled the rollback on 2026-11-04, and it is not the plan's open item any more:
+the old scripts are kept 14 days and the rollback is documented and run by hand — stop the daemon, re-arm the sweep, the watcher and the queue
+scripts. No rollback command is built** (the recommendation). The plan carries the manual steps as an owner-run item (O11) and Check 302's "scripts
+still in place" never means both launching at once: the per-run-id claim is the daemon's own — a queue script launching the same work would double-launch
+it, because nothing outside the daemon takes the claim — so the scripts' launching stops before the daemon starts.
 
 **T2. D1224 against the hosted MCP design's deferral of `spawn_task`.** D1224 renames `retry_task` to `spawn_task`, but the hosted MCP design
 was amended the same day to defer `spawn_task` out of its first slice (H2: it needs `signJwt`, a runs-bucket write and
@@ -464,20 +492,51 @@ later task, not this one.
 **T5. The workspaces design reuses the MCP server** and was amended the same day; anything this design says about workspace caps
 (D1222's `ee/` part) waits on that design as well.
 
-**Round-3 open items (reported, not decided).** (1) D1242 names no gated task: approvals are consumed in O6 and O8 before it is answered, and this reconciliation accepts that. (2) One approval is one attempt, which overrides the spec's "Task failed, first time: Code retries" row; the owner is asked to confirm (`spec.md` is not edited). (3) An ambiguous launch error stays in flight up to `ClaimTTL` (10 minutes, `launchRun`'s contract; the runner's `ErrDuplicateExecution` is the second fence), and a daemon's repeated "still in flight" ticks must not count toward the circuit breaker.
+**T6. Q2, ruled a second time: the install moves to `fugaro setup` (CLOSED — the owner ruled it on 2026-11-04).** The answer this pull request first
+recorded put an **offer** in `fugaro update` behind a Typed confirmation, and that collided with the owner's standing **no prompts on a managed
+project** rule (terminal included): the two readings it left — install silently on a human's machine, or never offer it there — were both about a
+prompt. **The owner's answer, 2026-11-04 (a different answer from the one this PR first recorded, which is superseded):** the **first
+install belongs to `fugaro setup`** — one of its listed steps, shown in its plan, at a real terminal only, **refused under a coding agent's marker**
+(the unit is installed by the person's own run, never by an agent), and in a managed project the step follows the no-prompt rule: **no extra
+confirmation, and the plan line names the unit and its path**. **Upgrades move out of `fugaro update`** and into **`fugaro orchestrator install`**,
+which installs, re-renders and restarts the unit; **`fugaro update` never touches the unit** — amended on 2026-11-05 by **T7** to *never installs one,
+and re-renders an installed one when the template changed* (below). The collision is gone rather than decided: nothing
+asks a question the no-prompt rule forbids, and the install is a line of a plan the person already reads before it is applied. What the answer
+leaves behind is not a question about prompts but about the HARD RULE, which is **T7**.
 
-**Round-1 owner questions (new, unanswered; the plan decides none of them).**
+**T7. The daemon-unit carve-out of the HARD RULE (ANSWERED 2026-11-05 — and the answer is NOT the recommendation; it amends Q2's "never touches the
+unit").** `CLAUDE.md`'s HARD RULE is that **`fugaro update` is the whole upgrade**, with no other operator step: one missed or broken update loses the
+user's trust. Q2's answer takes the unit *out* of `update`, so after `brew upgrade` an installed daemon would keep running the old binary until
+somebody ran `fugaro orchestrator install` — exactly the hole the HARD RULE exists to close. The plan read that as a deliberate carve-out; **the owner
+refused the carve-out and ruled the HARD RULE literally true: `fugaro update` re-renders the daemon's unit when the rendered template changed**, so no
+release asks the person for a second command. The boundaries the answer keeps:
+**`fugaro setup` still installs the daemon first** (Q2, unchanged — the plan line names the unit and its path); **`update` only ever re-renders and
+reloads a unit that is ALREADY installed: it never installs one, and never creates one for a project that did not choose it** (a machine that skipped
+`setup` stays without a daemon until a person asks for one); and the re-render sits **behind the same plan-and-confirm rules as every other `update`
+step** — a managed project's gate stays as it is, a terminal asks as it already does for that step's class — because it is a write to the person's own
+home and their own service manager (launchd at login level, systemd `--user`), not a cloud write. **`fugaro orchestrator install` stays as the explicit
+command** (the first install on a machine that skipped `setup`, and repair), but **no release's `### For operators` ever needs it**. What the plan had
+already closed stays closed: **the daemon checks the binary the unit names (the stable path it rendered into the run, never `os.Executable()`, which
+after a Linuxbrew upgrade is the deleted versioned path) each tick and, when that binary's version differs from the running process's, exits cleanly, so
+launchd (`KeepAlive`) or systemd (`Restart=always`) starts the new binary from the stable path it already points at**, and **the state node's
+`schema_version` migration runs in the daemon's start-up** (O0's `Migrate`). Check 301 has the owner exercise both halves on a real machine: a
+brew-style upgrade with the daemon running, and a release that changes the unit's template converging under `fugaro update` alone. **The tension is
+closed: nothing here is left for the owner to rule.**
 
-- **D1241. Who writes the state node, before O2?** The rules do not bind a person's OAuth write (trust boundary above). Options: (a) the person's own
-  credential, validation client-side only, the rules refusing only job and token identities; (b) a service-account writer behind the person's CLI (a new
-  identity to provision and converge, the coordinator's shape); (c) a custom-token write with a claim the rules check, which any launcher can mint
-  through `signJwt`, so only a mitigation. **O2 is not started until this is answered** (the plan's gate); what O2 then builds is the job-refusing rules and the converge only, claiming no write-own guarantee.
-- **D1242. A paired-device channel for person decisions.** The terminal Typed confirmation stops an accident, not an adversary running as the person.
-  Are approval, `goal_set` and a person decision to be resolved only from the paired phone or console? Nothing consumes a resolved person decision
-  until this is answered (the launch of an approved item stays bounded by the caps, `Precheck` and the kill switch; the spec digest stops an edit made through the CLI after the approval, but it is an unkeyed hash, so a direct node writer can forge an item and its approval together, and `fugaro run` has no agent refusal, so the daemon adds no escalation over what that writer could do by running `fugaro run` itself). The answer may reshape O0's `Approval`.
-- **D1243. The session-start print versus D952.** `docs/plugin-user-scope` D952 says the session-start check never reaches the network; `fugaro
-  orchestrator state --brief` reads the RTDB. Options: the print reads a local cache the daemon wrote (no network at session start, possibly
-  stale), or D952 is amended for this one read (the person's own project, opt-in by installing the daemon). O10 is gated on this answer; if the cache is chosen, O8 gains the cache writer and O10 depends on O8 (level 4).
+**Open items T7's ruling leaves (reported, not decided).** (1) An `update` that cannot confirm the unit step writes no unit — an agent-marker run, a run
+with no terminal, a managed gate that declines — so the unit stays out of date until the person runs `fugaro update` where they can answer. The drift is
+visible (`doctor`, the session-start nudge) and the ruling keeps the managed gate as it is; **whether that consequence is right for a managed project,
+where Q2 gave the setup step its no-prompt reading, is reported rather than decided**. (2) A hand-edited unit is reverted: the comparison is the rendered
+template against the file on disk, so an edit a person made by hand is overwritten by the next `fugaro update` — which is what `fugaro orchestrator
+install` already does — and telling such an edit from an old template would need a second stamp. **Reported, not decided** (O9).
+
+**Round-3 open items (reported; two of the three are now ruled).** (1) **Answered 2026-11-04 (D1242): no task is gated on the paired-device channel.** It names no gated task because approvals are consumed in O6 and O8 and the terminal Typed confirmation stands for now; the later channel may reshape O0's `Approval`, and nothing here fixes that shape. (2) **Answered 2026-11-04, not the recommendation: the spec's retry row stands — an approval covers the first attempt and at most one automatic retry of the same approved spec.** The owner allowed the retry the spec's table wanted ("Task failed, first time: Code retries"); the plan had made one approval cover one attempt. `spec.md` is not edited; the correction is that one approval can now launch two runs, bounded by the caps, `Precheck` and the kill switch (section 3, "One approval covers the first attempt and at most one automatic retry"). (3) An ambiguous launch error stays in flight up to `ClaimTTL` (10 minutes, `launchRun`'s contract; the runner's `ErrDuplicateExecution` is the second fence), and a daemon's repeated "still in flight" ticks must not count toward the circuit breaker.
+
+**Round-1 owner questions (all three answered 2026-11-04; the plan's gates on them are lifted).**
+
+- **D1241. Who writes the state node, before O2?** **Answered as (a), the recommendation:** the person's own credential, validation client-side only, the rules refusing every identity they evaluate (a job token and a minted token alike), and O2 claiming no write-own guarantee. Why: the rules do not bind a person's OAuth write (IAM bypasses `.write`), so (b) a service-account writer buys a guarantee the rules still would not give, at the price of an identity to provision and converge, and (c) a claim-checked custom token is mintable by any launcher through `signJwt`, so a mitigation only. **O2's gate is lifted** (the plan's O2 no longer waits on this answer).
+- **D1242. A paired-device channel for person decisions.** **Answered, the recommendation:** the terminal Typed confirmation stands for now and a paired-device channel comes later. Why: it stops the accident and most sessions, and no task here needs the device channel; requiring it would gate all of slice 1 on a surface nothing builds. The residual stays stated: the Typed confirmation is beatable by a pty wrapper and `env -u CLAUDECODE` passes the agent check, so it stops an accident, not an adversary running as the person. The later channel may reshape O0's `Approval`; **no task and no test is gated on it**.
+- **D1243. The session-start print versus D952.** **Answered, the recommendation:** the print reads a **local cache the daemon wrote**, so D952's no-network rule holds at session start and the cache's freshness stamp is what tells the person how stale it is. Why: the alternative changes a standing no-network rule for a check that runs at every session start. **O8 gains the cache writer and O10 depends on O8 (level 4)**; `state --brief` stays the explicit read of the node.
 
 ## 7. What this reconciliation does not do
 

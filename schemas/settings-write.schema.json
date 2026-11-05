@@ -69,14 +69,15 @@
       "type": "string",
       "enum": [
         "add-entry",
-        "remove-entry"
+        "remove-entry",
+        "remove-secret"
       ],
-      "description": "The entry edit this document is about, written only by an entry write and left out of every other document (D1164): add-entry for --add-entry and remove-entry for --remove-entry. A consumer draws an entry edit from this member and not from the command line, and the four entry members travel together — a document carrying one carries all of the ones the edit has a value for."
+      "description": "The edit this document is about, written only by a write that has one of its own and left out of every other document (D1164): add-entry for --add-entry, remove-entry for --remove-entry, and remove-secret for `fugaro secrets rm NAME`, which takes away the whole `project_secrets.NAME` entry *and* the Secret Manager container behind it (D1171) — more than one member of a block, and so not remove-entry. A consumer draws the edit from this member and not from the command line, and the three entry members travel together with the two entry operations: a document carrying one of add-entry/remove-entry carries all of the ones the edit has a value for, while remove-secret carries none of them because what it removes is addressed by `key` alone."
     },
     "entry_key": {
       "type": "string",
       "minLength": 1,
-      "description": "The field the entry is addressed by (D1163): a map's entry is the member the write names, so this is that member's name, and an object list's entry is named by its own key field, which is `name` for a workflow's secrets. Left out of a document that is not an entry write."
+      "description": "The field the entry is addressed by (D1163): a map's entry is the member the write names, so this is that member's name, and an object list's entry is named by its own key field, which is `name` for a workflow's secrets. Left out of a document that is not an entry write — and of remove-secret's, whose subject `key` already names."
     },
     "entry_value": {
       "type": "string",
