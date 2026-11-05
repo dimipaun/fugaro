@@ -11,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -316,6 +317,43 @@ func projectJobAccountFor(p *projectpolicy.Policy, profile string, pr projectpol
 		}
 	}
 	return account, nil
+}
+
+// projectJobReviewFor is the launcher's review entry (design
+// docs/cloud-senior-review, CSR7): the review-only variant of the shared
+// project job a launch on (profile, provider, account) resolved — the job a
+// senior review of that profile's runs executes on, deployed beside the coding
+// job with the variant's own service account (internal/infra's
+// ProjectReviewJobs).
+//
+// The name is credsvc.ReviewJobName's, over the account segment the policy
+// speaks: config.ProjectJobAccounts' axis writes the default account as the
+// empty string and the variant's names carry config.DefaultClaudeAccount there
+// (infra.ReviewVariantAccount, the same mapping the deployer makes). That is
+// the one spelling the deployer deploys the job with and the credentials
+// service admits its account by (credsvc.ReviewJobAccountsFor), so a launcher
+// that spelled either its own way would resolve a job no installation has and
+// Cloud Run would answer 404 for a review that was never placed.
+//
+// What a launch on it hands the execution is nothing. The variant's own
+// environment carries the credentials service's address from its deployment
+// (internal/infra, D893 (c)), so this entry adds no variable and the job is
+// left with the environment it was deployed with — no App key, no Claude
+// token, no signing key and, unlike a repository's own job, no per-launch
+// entry at all (credentialsServiceLaunchEnv's rule for a job named at launch).
+// The review run fetches the read-only installation token by name from the
+// service when it needs one, and refreshes it through Token(ctx, minValid);
+// nothing of the installation's is handed in.
+//
+// account is the axis segment of the coding job the review is about — the
+// account whose admissions the service pairs the review caller by — and
+// timeout the profile's own, which the variant carries as its task timeout.
+func projectJobReviewFor(profile, provider, account string, timeout time.Duration) launchProjectJob {
+	return launchProjectJob{
+		Name:    credsvc.ReviewJobName(profile, provider, infra.ReviewVariantAccount(account)),
+		Profile: profile,
+		Timeout: timeout,
+	}
 }
 
 // checkProjectJobAccount refuses a launch whose run selects a Claude account

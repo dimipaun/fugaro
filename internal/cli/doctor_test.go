@@ -16,7 +16,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/basepin"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/pricing/catalog"
@@ -2516,6 +2518,66 @@ func TestDoctorProjectAccountStoredPresent(t *testing.T) {
 	}
 	if strings.Contains(out, "fake-token") {
 		t.Fatalf("a value leaked into doctor's output:\n%s", out)
+	}
+}
+
+// TestDoctorCensusNamesTheVariant: the account-job census names the review-only
+// variant of every job it reports — the second job the same axis deploys
+// (CSR7, internal/infra's ProjectReviewJobs, whose names are credsvc's) — and
+// it asks it for nothing. An installation that has converged to the review job
+// set has those jobs in the project, so a census that stopped at the coding
+// jobs would report a job set that is not the one deployed; and because the
+// variant mounts no secret at all (O1), it must never be counted among the
+// jobs whose token has to be stored, which is the container the failing line
+// sends the owner after.
+//
+// The variant's line says it mounts no secret, which is what makes the
+// difference from the shared job it is derived from readable: both names are
+// on the line, one with a token and one without.
+//
+// Mutation (run, restore): name the variant as another token job (an entry of
+// its own, with config.ClaudeAccountSecret's container) — this test finds it
+// in the failing line's missing jobs; drop the review clause from
+// projectAccountReach — the two Contains below fail.
+func TestDoctorCensusNamesTheVariant(t *testing.T) {
+	r := projectAccountRig(t)
+	variants := map[string]string{}
+	for _, account := range []string{"acme-personal", ""} {
+		variants[account] = credsvc.ReviewJobName("standard", "github", infra.ReviewVariantAccount(account))
+	}
+	// No container stored: the check fails, and no review variant is one of
+	// the jobs it says mount a token with no stored version.
+	out, _, err := execute(t, "doctor", "--json")
+	if err == nil {
+		t.Fatal("want doctor to fail: no account job's token is stored")
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "project-account-stored")
+	if !ok || c.OK {
+		t.Fatalf("project-account-stored = %+v", c)
+	}
+	for account, variant := range variants {
+		if strings.Contains(c.Problem, variant) {
+			t.Errorf("the failing line names the review variant %s of the account %q among the jobs whose token is missing: the variant mounts no secret, so there is no container for the owner to store", variant, account)
+		}
+	}
+	putProjectSecret(t, r.sm, "aurora", "claude-oauth-token-acme-personal", []byte("fake-token-0123456789"))
+	putProjectSecret(t, r.sm, "aurora", "claude-oauth-token", []byte("fake-token-9876543210"))
+	_, checks := doctorProjectAccounts(t, r)
+	c, ok = doctorCheckByID(checks, "project-account-stored")
+	if !ok || !c.OK || c.Severity != "info" {
+		t.Fatalf("project-account-stored = %+v", c)
+	}
+	for account, variant := range variants {
+		if !strings.Contains(c.Problem, variant) {
+			t.Errorf("the census %q does not name the review variant %s of the account %q: a converged installation deploys it, and the line reports the installation's job set", c.Problem, variant, account)
+		}
+		if want := credsvc.ReviewJobName("standard", "github", infra.ReviewVariantAccount(account)) + " mounts no secret"; !strings.Contains(c.Problem, want) {
+			t.Errorf("the census %q does not say that the review variant of the account %q mounts no secret: %s is the job that runs a test from the head under review, and its line has to say it holds nothing", c.Problem, account, variant)
+		}
 	}
 }
 
