@@ -11,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -859,5 +860,39 @@ func TestRunnerLeavesAPerRepositoryJobToTheOldRules(t *testing.T) {
 	}
 	if err := r.checkProjectJobAccount(context.Background(), "oauth"); err != nil {
 		t.Fatalf("checkProjectJobAccount = %v, want a per-repository job to be left alone", err)
+	}
+}
+
+// TestReviewJobVariantIsPlaced (CSR8): a review-marked run sitting in the
+// review-only variant of a project job — the name the launcher chose, which is
+// credsvc.ReviewJobName's, the deployer's own spelling of the variant — is
+// placed, and adopts the triple the variant's name was computed from, the
+// account segment included. The identity is the one internal/cli resolved when
+// it launched the review (projectJobReviewFor), so the launcher, the deployer
+// and the runner name one job rather than three.
+//
+// Red step: the variant's name is not a candidate the published policy
+// computes, so jobIdentity halts with cannotPlaceJob (projectjob.go) — a
+// container of the review variant cannot say which job it is in, and a review
+// launched once the constant is flipped halts at admission.
+//
+// Mutation (run, restored): drop the review candidate from
+// projectJobCandidates. This test fails with the same refusal.
+func TestReviewJobVariantIsPlaced(t *testing.T) {
+	p := policyOf(map[string]config.JobProfile{"standard": profileOf("github", "acme-personal")})
+	slug := identitySlug(t, "github", "acme/app")
+	job := credsvc.ReviewJobName("standard", "github", "acme-personal")
+	r := identityRun(t, job, slug, nil, p, true)
+	r.review = true
+	profile, provider, account, err := r.jobIdentity(context.Background())
+	if err != nil {
+		t.Fatalf("jobIdentity(%s) = %v: the review variant's name must be one the published policy computes", job, err)
+	}
+	if profile != "standard" || provider != "github" || account != "acme-personal"+config.ReviewVariantSuffix {
+		t.Fatalf("jobIdentity(%s) = %q/%q/%q, want standard/github/%q: the variant's own account segment is the account its name was computed from",
+			job, profile, provider, account, "acme-personal"+config.ReviewVariantSuffix)
+	}
+	if _, project := r.projectJob(); !project || r.job.Account != account {
+		t.Fatalf("the run adopted %+v: the matched candidate is the run's identity", r.job)
 	}
 }
