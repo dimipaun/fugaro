@@ -38,7 +38,7 @@ import (
 // jobTriple is one job's identity: the (profile, provider, account) its name
 // was computed from, all three of them (R2-11 — the account is the axis that
 // keeps each Claude account's token readable only by the runs using it, so a
-// pair would not be the identity).
+// pair would not be the identity), and the class of job it is (CSR8).
 //
 // A zero triple is not an identity: it is what a run in a per-repository job
 // has, and r.job.Profile == "" is how every reader tells the two apart.
@@ -46,6 +46,45 @@ type jobTriple struct {
 	Profile  string
 	Provider string
 	Account  string
+	Class    jobClass
+}
+
+// jobClass is which of the two jobs of one (profile, provider, account) axis a
+// name is: the shared coding job the run's work runs on, or the review-only
+// variant of it (CSR8). The class is not a property of the name — nothing
+// parses the variant's suffix back out (R2-5) — it is a property of the
+// candidate a name matched, and it is what tells checkProjectJobAccount
+// whether the job it is looking at mounts a Claude token at all.
+//
+// classCoding is the zero value deliberately: every triple a policy computed
+// before the variant existed is a coding job, and a literal without a Class is
+// one.
+type jobClass int
+
+const (
+	classCoding jobClass = iota
+	classReview
+)
+
+// runClass is the class of job this run is: a review run belongs on the
+// review-only variant and every other run on the shared coding job. It is the
+// launcher's own marker (spec.ReviewPRs, set before this is read — runner.go's
+// bootstrap) and never anything the job's environment says, so a container
+// cannot be told which class it is by the name it was started under.
+func (r *run) runClass() jobClass {
+	if r.review {
+		return classReview
+	}
+	return classCoding
+}
+
+// reviewVariantAccount is one entry of config.ProjectJobAccounts' axis as the
+// review-only variant's names spell it (config.ReviewVariantAccount plus
+// config.ReviewVariantSuffix): the account segment of the variant's job name
+// and service account, which is also the account ProjectJobOfPolicy reports
+// for it.
+func reviewVariantAccount(account string) string {
+	return config.ReviewVariantAccount(account) + config.ReviewVariantSuffix
 }
 
 // projectJob is the identity this run adopted, and whether the job it is in is
@@ -95,8 +134,43 @@ func (r *run) jobIdentity(ctx context.Context) (profile, provider, account strin
 		// admissionCheck derives the provider as it does today.
 		return "", "", "", nil
 	}
+	if err := r.checkJobClass(id); err != nil {
+		return "", "", "", err
+	}
 	r.job = id
 	return id.Profile, id.Provider, id.Account, nil
+}
+
+// checkJobClass holds a run to the job of the class it is: a review run
+// belongs on the review-only variant of its profile's job, and every other run
+// on the shared one. Both directions are refusals, because both are a job the
+// launcher does not put a run of that class in, and the two containers are not
+// interchangeable: the variant mounts no App key and no Claude token and takes
+// its model credential from the credentials service's review class (O1), while
+// the shared job mounts the App key the review container exists to be without.
+//
+// The class is the run's own marker (r.runClass, set from the task before
+// admission) and the candidate's, never a suffix read back out of the job's
+// name (R2-5): a name is matched against the names the published policy
+// computes, and what a matched name *means* is the candidate it matched. So a
+// container cannot choose its class by the name it was started under — the
+// name is the platform's, but a run that is not a review is a run that may not
+// adopt a review job's identity however it got there.
+//
+// It is a halt and not a silent correction in either direction: what a run may
+// do with the credential the job it is in already holds is decided before it
+// starts (the platform mounts it), so a run in the wrong job has already been
+// handed the wrong container, and the only safe answer is to stop.
+func (r *run) checkJobClass(id jobTriple) error {
+	switch {
+	case id.Class == classReview && !r.review:
+		return fmt.Errorf("this run is in the Cloud Run job %s, which is the review-only variant of the project job of the profile %q: the variant exists for a review that reads a pull request and pushes nothing, its container mounts no App key and no Claude token, and this run is not a review. Every other run of the profile belongs on the shared project job of that profile. What class a run is, is the launcher's marker (the task's review pull requests) and the job the run is in, never the job's name: this name is not read back out of the job. The run stops before any git credential is requested",
+			gcp.ProjectJobName(id.Profile, id.Provider, id.Account), id.Profile)
+	case id.Class == classCoding && r.review:
+		return fmt.Errorf("this run is a review, and it is in the Cloud Run job %s, which is the shared project job of the profile %q: a review runs on the review-only variant of that job — the same (profile, provider, account) axis with %q on the account segment — whose container mounts no App key and no Claude token, and never on the shared job, whose container holds both. What class a run is, is the launcher's marker (the task's review pull requests) and the job the run is in, never the job's name. The run stops before any git credential is requested",
+			gcp.ProjectJobName(id.Profile, id.Provider, id.Account), id.Profile, config.ReviewVariantSuffix)
+	}
+	return nil
 }
 
 // jobName is the name of the Cloud Run job this run is in, "" when the run has
@@ -163,9 +237,12 @@ func matchJobName(job string, p *projectpolicy.Policy, found bool, slug, workflo
 // profile pins, and one entry per account the profile serves — its
 // no-account job and one per account it lists (config.ProjectJobAccounts,
 // the one function the deployer built the deployed jobs with and the
-// launcher picks the job it launches with). The set is computed once per run,
-// from the one policy read, and its size is the cost note the plan makes: N
-// profiles × M accounts of string comparisons, no regex and no prefix test.
+// launcher picks the job it launches with) — **and, beside each of those, the
+// review-only variant of it** (CSR8), whose name is the same derivation over
+// the account segment config.ReviewVariantAccount and config.ReviewVariantSuffix
+// spell. The set is computed once per run, from the one policy read, and its
+// size is the cost note the plan makes: N profiles × M accounts of string
+// comparisons, no regex and no prefix test.
 //
 // The account comes from the profile's own claude_accounts field and from
 // nothing else, because that is what internal/infra deployed the names from
@@ -175,13 +252,22 @@ func matchJobName(job string, p *projectpolicy.Policy, found bool, slug, workflo
 // same answer while no profile could mount a Claude token; a token in
 // secrets: is still refused (projectpolicy's isClaudeOAuthSecret), so the
 // field is now the only place the axis can come from.
+//
+// Both classes are in the one set on purpose, and the plan's reason is the
+// security property: the runner places CLOUD_RUN_JOB here and the CLI's watch
+// reads its job's triple from ProjectJobOfPolicy, which iterates this same
+// set, so the two cannot disagree about which job is whose — and a review
+// container, which holds no App key and no Claude token, believes it is the
+// review job because the published policy computes that name and not because
+// its own name says so.
 func projectJobCandidates(p *projectpolicy.Policy) []jobTriple {
 	names := p.ProfileNames()
 	out := make([]jobTriple, 0, len(names))
 	for _, name := range names {
 		pr := p.Profiles[name]
 		for _, account := range config.ProjectJobAccounts(pr.JobProfile) {
-			out = append(out, jobTriple{Profile: name, Provider: pr.Provider, Account: account})
+			out = append(out, jobTriple{Profile: name, Provider: pr.Provider, Account: account, Class: classCoding})
+			out = append(out, jobTriple{Profile: name, Provider: pr.Provider, Account: reviewVariantAccount(account), Class: classReview})
 		}
 	}
 	return out
@@ -424,6 +510,9 @@ func (r *run) checkProjectJobAccount(ctx context.Context, auth string) error {
 	if err != nil {
 		return fmt.Errorf("this run is in the project job %s: %w", gcp.ProjectJobName(job.Profile, job.Provider, job.Account), err)
 	}
+	if job.Class == classReview {
+		return r.checkProjectReviewJobAccount(job)
+	}
 	account, oauth := "", auth == "oauth"
 	if oauth {
 		account = claudeAccountOf(r.spec.OAuthToken)
@@ -463,6 +552,49 @@ func (r *run) checkProjectJobAccount(ctx context.Context, auth string) error {
 	return fmt.Errorf("this run is in the project job %s, which holds the Claude account %q's token (%s, mounted as CLAUDE_CODE_OAUTH_TOKEN), and this repository is not on the list of repositories that token may be used by: accounts.%s.allow_repos is %s, and %s is not one of them. The account's list is derived at publish from the project's local config (%s), and it is the per-repository decision of which runs may use that token (D3). The run stops before the agent starts, independently of the launcher that started it",
 		gcp.ProjectJobName(job.Profile, job.Provider, job.Account), tokenAccount, config.ClaudeAccountSecret(tokenAccount),
 		tokenAccount, strings.Join(acc.AllowRepos, ", "), canonical, allowReposSource(tokenAccount))
+}
+
+// checkProjectReviewJobAccount is checkProjectJobAccount's review arm: a run
+// in the review-only variant of its profile's job, which the job identity has
+// already held to its class (checkJobClass).
+//
+// It admits, and the three rules the coding arm applies are each refused for a
+// reason that does not hold here:
+//
+//   - The variant holds no Claude token at all (internal/infra's
+//     ProjectReviewJobs mounts nothing under O1), so the token axis has no
+//     answer for it: config.ProjectJobTokenAccount knows the profile's coding
+//     jobs only — the variant's account segment is the profile's account with
+//     config.ReviewVariantSuffix on it, which no profile lists — and its
+//     "does this job hold a token" would read false on a job that holds none
+//     by design. Asking it anyway is what refuses an OAuth review run with
+//     "this job holds no Claude token", which is the refusal this arm is for.
+//   - The run's own credential is therefore not the account the axis names,
+//     and that is right: a review job's credential is its class's, not the
+//     run's selection. The credentials service mints the read-only
+//     installation token and serves the reviewer's model calls to the caller
+//     it verified (D893 (c), O1), keyed on the account the deployment gave the
+//     variant. The coding arm's refusal — a run holding a credential its own
+//     configuration did not choose — is about a token the job already holds,
+//     and this job holds none, so it does not apply.
+//   - The account's allow_repos list is not read either, for the same reason:
+//     it is the bound on a token's blast radius (D3) and there is no token
+//     here. Which repositories a review may be about is the profile's
+//     admission, which admissionCheck applied before this check runs.
+//
+// The arm is keyed on the run's own marker and on the candidate's class, never
+// on the job name's suffix parsed back out (R2-5).
+func (r *run) checkProjectReviewJobAccount(job jobTriple) error {
+	if !r.review {
+		// Unreachable: checkJobClass refuses a non-review run in a review job
+		// in jobIdentity, which runs first and is the one place the class is
+		// decided. Kept as the halt it would be, because this check is the
+		// run's second, independent door on the credential it holds and a door
+		// that admits what the first refused is not one.
+		return fmt.Errorf("this run is in the review-only project job %s, and it is not a review: that job's container holds no Claude token and no App key, and what a run of it may do is decided by its class, so no other run may be admitted to it. The run stops before the agent starts",
+			gcp.ProjectJobName(job.Profile, job.Provider, job.Account))
+	}
+	return nil
 }
 
 // allowReposSource is where an account's policy list is derived from at publish

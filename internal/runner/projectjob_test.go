@@ -534,3 +534,26 @@ func TestRunnerRefusesNonOAuthOnAccountJob(t *testing.T) {
 		gcp.ProjectJobName(job.profile, job.provider, account), `"`+account+`"`, config.ClaudeAccountSecret(account),
 		`"api-key"`, "CLAUDE_CODE_OAUTH_TOKEN", "The run stops")
 }
+
+// TestReviewVariantIsNotTheCodingJob (CSR8): the end-to-end half of the class
+// check. A run that is not a review — no launcher marker, no pull request in
+// its task — sitting in the review variant's job is refused at the runner's own
+// admission, before any git credential is requested, before anything is cloned
+// and before any lease: the class is decided by the launcher's marker and the
+// job the run is in, and never by the job's name, so a container cannot talk
+// itself into the identity of a job nobody launched it into.
+//
+// Mutation (run, restored): match the variant's name without asking the run's
+// class. This run is admitted, clones with the profile's credential and runs
+// its first stage in a container built for a review.
+func TestReviewVariantIsNotTheCodingJob(t *testing.T) {
+	const account = "acme-personal"
+	job := projectJob{profile: projectpolicy.DefaultProfileName, provider: "github",
+		account: account + config.ReviewVariantSuffix, slugRepo: "acme/app"}
+	b := projectRun(t, job, "off", "", projectPolicyServing(account))
+	projectHost(t, b)
+	rec, err := b.run(t)
+	refusedAdmission(t, b, rec, err,
+		gcp.ProjectJobName(job.profile, job.provider, job.account),
+		"review-only variant", "is not a review", "The run stops")
+}
