@@ -17,10 +17,10 @@ design ([task-governance/reconciliation.md](../task-governance/reconciliation.md
 
 **The record carries the cause as free text and nothing else.** `runstore.Record`
 (`internal/runstore/runstore.go:651`) has `Status` (`type Status string`, `runstore.go:26`), `Outcome`
-(`runstore.go:119`), `Reason` (`runstore.go:684`, `json:"reason,omitempty"`) and, for a halt,
+(`type Outcome string`, `runstore.go:116`), `Reason` (`runstore.go:684`, `json:"reason,omitempty"`) and, for a halt,
 `Halt` (`runstore.go:744`) whose own closed `HaltReason` (`runstore.go:44`) is written by the runner.
 `Reason` is a sentence the runner wrote, sometimes quoting what the agent or a provider said
-(`stageErrorText`, `internal/runner/runner.go:3775`), and it is the only place the *why* of a
+(`stageErrorText`, `internal/runner/runner.go:3780`), and it is the only place the *why* of a
 non-success run is kept. `runview.Row` copies it for the listing (`internal/runview/runview.go:106`),
 so `fugaro runs ls --json` carries one `reason` string per row and no grouping anywhere.
 
@@ -56,7 +56,7 @@ repeats:
   challenger arm;
 - `Run` — the deferred fallback (`internal/runner/runner.go:586`) and the two bootstrap terminals
   (`:650`, `:656`);
-- `finalize`'s switch (`internal/runner/runner.go:4151`–`4160`), which decides
+- `finalize`'s switch (`internal/runner/runner.go:4156`–`4165`), which decides
   succeeded/halted/cancelled/failed and whose four cases are four of the 36.
 
 Twelve of the functions are the `end*` helpers, three are the `fail*Infra` helpers and two are the
@@ -65,7 +65,7 @@ functions. Each writes `Status`, `Outcome` and usually `Reason` in a statement o
 
 **The run's first failure reason has one writer.** `r.fail` (`internal/runner/runner.go:1547`) records the first
 reason the run cannot produce a ready PR and `failLocked` (`internal/runner/runner.go:1554`) keeps it; every stage
-failure, panic and refusal reaches it (`internal/runner/runner.go:3334`–`3725`), and `recordHaltLocked`
+failure, panic and refusal reaches it (`internal/runner/runner.go:3339`–`3730`), and `recordHaltLocked`
 (`internal/runner/halt.go:57`) calls it too, with the halt's own text. `r.failure()` (`halt.go:128`)
 reads it back for the pull request's status section and for the reasons `finalize` decides with. That
 is the *report's* reason and the *record's* reason in most runs — but not in all of them:
@@ -73,10 +73,10 @@ is the *report's* reason and the *record's* reason in most runs — but not in a
 overwrite `rec.Reason` after the fact, so the record's reason and `r.failure()` can disagree today.
 
 **The agent's own words are already classified, once, narrowly.** `subscriptionUsageLimit`
-(`internal/runner/runner.go:3801`) reads a stage's error text (`res.Text`, set when the result event carries
-`is_error`, `internal/runner/runner.go:3724`) against a three-phrase table (`oauthLimitPhrases`, `internal/runner/runner.go:3793`) to
+(`internal/runner/runner.go:3806`) reads a stage's error text (`res.Text`, set when the result event carries
+`is_error`, `internal/runner/runner.go:3729`) against a three-phrase table (`oauthLimitPhrases`, `internal/runner/runner.go:3798`) to
 decide whether the run stopped on the OAuth account's spent allowance, and
-`stageErrorReason` (`internal/runner/runner.go:3750`) uses that to pick one named reason instead of quoting the text.
+`stageErrorReason` (`internal/runner/runner.go:3755`) uses that to pick one named reason instead of quoting the text.
 The subtype is no help — Claude Code reports a refused API call as subtype `success`, which is why
 that path reads the text at all.
 
@@ -145,8 +145,8 @@ knows what to do without reading a sentence:
 | `review_not_converged` | the deciding review round's verdict was `changes` and the mode did not tolerate its findings, or a level that had shipped was held back by one that did not (`review round N still has N findings`, `heldBackReason`, `internal/runner/outcome.go:73`, `:81`). The work is on the branch and the pull request is a draft. | quality | no — a follow-up on the pull request is the retry | yes |
 | `review_unread` | no round the rule can read: no deciding round at all, or a verdict of `none` after the retry (`no review verdict`, `review round N returned no parseable verdict after a retry`, `outcome.go:54`, `:65`) | quality | no | yes |
 | `tests_failed` | the final commit's test record failed (`tests failing on the final commit`, `outcome.go:52`) | quality | no | yes |
-| `unverified_final_commit` | the pushed head carries no passing test: no test record on that commit, or work committed at finalize after the last verified run (`ReasonNoVerifiedTest`, `outcome.go:26`; `internal/runner/runner.go:4023`) | quality | no | yes |
-| `no_commits` | the agent made no commits (`internal/runner/runner.go:3976`) | quality | no | yes |
+| `unverified_final_commit` | the pushed head carries no passing test: no test record on that commit, or work committed at finalize after the last verified run (`ReasonNoVerifiedTest`, `outcome.go:26`; `internal/runner/runner.go:4028`) | quality | no | yes |
+| `no_commits` | the agent made no commits (`internal/runner/runner.go:3981`) | quality | no | yes |
 | `halted_budget` | a dollar or token cap stopped the run: `run_cap`, `repo_daily_cap`, `global_daily_cap`, `token_cap`, `no_cap` (`runstore.go:48`–`52`) | budget | yes, once the cap is raised | yes |
 | `halted_governance` | a governance tripwire stopped the run: `stage_budget`, `review_ratio`, `fanout`, `review_scope`, `expected_exceeded` (`runstore.go:81`–`95`, `GovernanceHaltReasons`, `:103`). The checkpoint says what it would have done next. | budget | no, until the checkpoint is read | yes |
 | `halted_credential` | no credential became usable, or the budget database refused: `no_credential`, `creds_rules_denied`, `budget_unavailable`, `budget_token_expired` (`runstore.go:54`–`70`) | infra | yes, once the account is usable | yes |
@@ -201,7 +201,7 @@ Today no such function exists: 36 statements in 24 functions write the fields, e
 its own (§1). The change is mechanical and it *removes* writers rather than adding one: every one of
 those statements becomes one `recordEnd(…)` call, and the deferred function in `Run`
 (`internal/runner/runner.go:586`), the two bootstrap terminals beside it (`:650`, `:656`),
-`finalize`'s switch (`internal/runner/runner.go:4151`) and the twelve `end*` helpers with the three
+`finalize`'s switch (`internal/runner/runner.go:4156`) and the twelve `end*` helpers with the three
 `fail*Infra` and two `refuse*` writers all go through it. Its comment states the rule once: *the last
 call wins, and the four fields are written together, so a class can never describe a status the
 record does not carry.* The one statement it must account for rather than absorb is `storeUnposted`
@@ -217,12 +217,14 @@ record no longer holds. *Alternative:* the class beside `failReason` in `failLoc
 *Cost:* that disagreement — 36 statements that write a status, a reason and a halt already exist, and the
 class would have to be reconciled at read time, which is the reader deciding. *Alternative:* the
 class in `finalize`'s switch alone. *Cost:* a run that never reaches `finalize` — a bootstrap
-failure, a push refused, a cancelled review run, a challenger arm — carries none, and those are 6 of
-the 191 runs and every `infra_error`.
+failure, a push refused, a cancelled review run, a challenger arm — carries none, and those runs
+are the six the one-offs row of §2 counts, that row being the remainder that closes its table to
+191 (the named rows hold 185); every `infra_error` run is unnamed there too and so is one of them.
 
 **What is not in this change.** `fail` keeps its signature and its job (the pull request's report
 reads it); `r.rec.Reason` is not reworded anywhere; the pull request's section, `diagnose`'s output
-and the six digest flags do not move. The one new thing is that the 36 statements become one call
+and the six digest flags do not move. The one new thing is that the 36 statements become one call,
+at the site that already knows why the run is stopping.
 
 ### 4.2 How a class is chosen where several apply
 
@@ -235,7 +237,7 @@ that switch's decision names. This is stated once, in `recordEnd`'s comment, and
 re-derives it: the class it groups by is the field.
 
 **It does not always describe the record's `reason`, and one case says so plainly.** `finalize`
-writes `r.rec.Reason = reason` (`internal/runner/runner.go:4150`) *before* its switch, so a run
+writes `r.rec.Reason = reason` (`internal/runner/runner.go:4155`) *before* its switch, so a run
 cancelled at that point carries `status: cancelled`, the class `cancelled`, and the reason
 (`r.failure()`'s or `Decide`'s) it had already failed for — the class describes how the run ended,
 and the reason describes what it was about to report. A reader pairing the two is told the truth by
@@ -243,7 +245,7 @@ each field; a reader taking the reason as the class's cause would be wrong, whic
 print the class and never read a cause out of the sentence.
 
 **A run that reaches `finalize` with more than one refusal gets the class of the refusal the record
-carries.** `finalize` computes one `reason` (`internal/runner/runner.go:4024`: `r.failure()` outranks `Decide`, and a
+carries.** `finalize` computes one `reason` (`internal/runner/runner.go:4031`: `r.failure()` outranks `Decide`, and a
 halt outranks both) and the switch writes it — so the class is chosen by the same three-way choice,
 in the same place, by the same lines. The class the `Decide` refusal would have had is then lost,
 which is correct: the record cannot hold two reasons, and the pull request's section already prints
@@ -280,7 +282,7 @@ so the only thing that may cross from it into the record is a choice among fixed
 - **No text is copied.** The class is an enum whose values are the runner's own words; the matched
   phrase, the message and the provider's error string are never stored on the class or printed by
   the report. This is the point the owner's brief made and it is not negotiable: `stageErrorText`
-  already redacts what the *reason* quotes (`internal/runner/runner.go:3775`, two redactions and a one-line fold),
+  already redacts what the *reason* quotes (`internal/runner/runner.go:3780`, two redactions and a one-line fold),
   and the class adds no second copy for a secret to travel in.
 - **No injection path.** A message can at most move a run from one of these three values to another.
   Nothing branches on the class except the report's grouping: no launch, no retry, no admission, no
@@ -311,7 +313,7 @@ never replaces it — a report that wants `run_cap` reads `halt.reason`, which i
 record and in `runs ls --json`'s row.
 
 Everything else is a structured fact the site holds: `Decide`'s refusal (four classes, chosen where
-`Decide` is called, `internal/runner/runner.go:4021`), `verify.Record.Passed` for the final commit,
+`Decide` is called, `internal/runner/runner.go:4026`), `verify.Record.Passed` for the final commit,
 `r.runCommits` for an empty run, the push rejection's own `Kind`
 (`gitops.PushRejected`, `refused.go`), the provider call's error type for `git_provider_error`, and
 `config`'s own refusal for `config_invalid`.
@@ -339,7 +341,7 @@ answer back.**
   `no_commits`; a refusal whose text names `max_tokens` and the model's maximum → `config_invalid`.
 - **The table is ordered, and every pattern is anchored on a prefix the runner itself writes.** A
   reason is the runner's sentence with, at one point, the provider's or the agent's words inside it
-  (`stageErrorText`, `internal/runner/runner.go:3775`), so the agent-error prefix is matched **first**
+  (`stageErrorText`, `internal/runner/runner.go:3780`), so the agent-error prefix is matched **first**
   and the phrases of §4.3 are looked for only inside a reason that carries it. The worst case of that
   test is a mislabel into one of the three classes — a mislabel with no privilege, since nothing acts
   on a class (§4.3) — and anchoring on the runner's prefixes is what keeps model text from choosing a
@@ -544,6 +546,13 @@ that is already long; no reader of it is a contract.
   report's existing practice (it already prints run ids, `internal/digest/render.go:70`), and a run id
   is not task text.
 - **O5 — the thresholds (§8 D7)** if the owner has a view on what "high" means.
+- **O6 — no class names the spent subscription.** A run stopped by the OAuth account's usage limit
+  is written by `stageErrorReason` (`internal/runner/runner.go:3755`) today, and none of the nineteen
+  values names it: it is not the provider's `403`, not a stream that ended, so §4.3's classifier
+  leaves it in `stage_error_unexplained`. This design adds no class for it — the cause is a limit on
+  the *account*, shared with the owner's own use and resetting on its own schedule, rather than
+  anything about the task — so whether it earns a value of its own is a ruling on the vocabulary's
+  size (O2) and not an omission this design settles.
 
 ## 10. Tasks
 
@@ -576,15 +585,24 @@ classifier reads model output, so FC2 carries an SEC flag and needs an independe
 
 ### FC2 — one writer for the terminal status (D3)
 
-- **Files (9, under the plan's twelve-file cap):** `internal/runner/runner.go` (`recordEnd`,
+- **Files (11, under the plan's twelve-file cap):** `internal/runner/runner.go` (`recordEnd`,
   `finalize`'s switch, the deferred function and the two bootstrap terminals),
   `internal/runner/gate.go`, `internal/runner/refused.go`, `internal/runner/followup.go`,
   `internal/runner/reviewmode.go`, `internal/runner/artifact.go`, `internal/runner/reviewartifact.go`,
   `internal/runner/shadow.go` (the 36 statements of §1 — `reviewartifact.go` is the file the first
-  draft of this list missed), and `internal/runner/failure_class_internal_test.go` — **the internal
+  draft of this list missed), `internal/runner/failure_class_internal_test.go` — **the internal
   test package, because this is an unexported writer**, and the design recommends that new file over
   extending `record_save_internal_test.go` (an `internal` test file is not one of the
-  `docs_*_test.go` files the census counts).
+  `docs_*_test.go` files the census counts) — plus the two files this task's own change falsifies:
+  `docs/design/failure-classes.md` (§1's "36 statements, in 24 functions across 8 files" is
+  rewritten, because after `recordEnd` takes the status no statement assigns one itself) and
+  `internal/cli/docs_pr_state_test.go`, **whose census pin this task rewrites**: the pattern it
+  counts (`\brec\.Status[^=!]*= runstore\.Status`) matches nothing the tree writes once every writer
+  calls `recordEnd`, so `TestDocsFailureClassCensusMatchesTheRunner` reaches its `statements == 0`
+  fatal on this task's first run. The pin is rewritten to the shape that survives — no statement
+  assigns a `Status` outside `recordEnd` — and its file stays where it is, in an existing
+  `docs_pr_state_test.go` rather than a new one, so the docs-pin census it is chosen not to move
+  does not move (§11).
 - **Interfaces:** `func (r *run) recordEnd(status runstore.Status, outcome runstore.Outcome, class failure.Class, reason string)`.
 - **Tests:** `TestRecordEndIsTheOnlyWriterOfATerminalStatus` — the guard has to see **any** assignment
   of a `runstore.Status` to a record's `Status`, not only `r.rec.Status`: `storeUnposted`
@@ -592,7 +610,11 @@ classifier reads model output, so FC2 carries an SEC flag and needs an independe
   `r.rec.Status` alone would leave exactly that statement, and any like it, free to carry a status
   past `recordEnd`. So the guard matches `\.Status` assigned a `runstore.Status` anywhere in
   `internal/runner`, and the task accounts for the copy explicitly rather than excepting it
-  silently. Also `TestUnclassifiedIsWrittenWhereNoClassIsChosen` and
+  silently. It reads the **parsed** Go code, not the text: `runstore.Record{Status: …}` in a struct
+  literal, `r.rec.Status = st` through a variable, or a status written in a helper and assigned
+  later all sit past any pattern matched against lines, and only the parsed form can say whether a
+  statement *calls* `recordEnd` or writes the field itself — the AST is what the rewritten census
+  pin counts too. Also `TestUnclassifiedIsWrittenWhereNoClassIsChosen` and
   `TestHaltedRunCarriesItsHaltsClass` (a failure then a halt ends `halted`/`halted_budget`).
 - **Command:** `GOFLAGS=-p=2 go test ./internal/runner -run 'RecordEnd|Unclassified|HaltedRun' -count=1`.
 - **Depends on:** FC1.
@@ -728,15 +750,18 @@ FC2's own test is a guard over the tree and not a fixture per site.
 | `internal/runner/outcome.go`, `halt.go`, `prflow.go` | FC3 (L2) |
 | `internal/runner/stageerror_test.go`, `redaction_test.go` | FC4 (L3) |
 | `internal/runview/runview.go`, its own test file | FC5 (L3) |
-| `internal/cli/runs_test.go` | FC5 (L3), FC6 (L4) |
+| `internal/cli/runs_test.go` | FC1 (L0), FC5 (L3), FC6 (L4) |
+| `internal/cli/docs_pr_state_test.go` | FC1 (L0), FC2 (L1) |
+| `docs/design/failure-classes.md` | FC2 (L1) |
 | `internal/cli/runs.go`, `runid_test.go`, the `internal/cli/testdata` golden, `website/content/cli-reference.md` | FC6 (L4) |
 | `internal/digest/*.go`, `internal/digest/testdata` | FC7 (L4) |
 | `docs/design/v1.md`, `console/docs/json-contract.md`, `docs/task-governance/reconciliation.md`, `plugin/skills/working/reference/diagnose.md`, `internal/cli/docs_desktop_console_test.go`, `docs/releases/vX.Y.Z.md` | FC8 (L5) |
 
-Three files have two writers and one has three, and the table's rule is that a level holds at most
-one of them: `runner.go` (FC2, FC3, FC4) and `refused.go` (FC2, FC3) are spread across L1–L3, and
-`internal/cli/runs_test.go` (FC5, FC6) across L3–L4, so no two runs write one file at once. An
-implementing run that lands two of them at once rebases once, in the order L1, L2, L3.
+Two files have three writers and two have two, and the table's rule is that a level holds at most
+one of them: `runner.go` (FC2, FC3, FC4) is spread across L1–L3 and `internal/cli/runs_test.go`
+(FC1, FC5, FC6) across L0 and L3–L4, while `refused.go` (FC2, FC3) is spread across L1–L2 and
+`internal/cli/docs_pr_state_test.go` (FC1, FC2) across L0–L1, so no two runs write one file at
+once. An implementing run that lands two of them at once rebases once, in the order of their levels.
 
 ### 10.3 The HARD RULE, and the release
 
