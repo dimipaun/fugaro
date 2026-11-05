@@ -298,6 +298,10 @@ var setupDoor = convergeDoor{
 		name:  "forget",
 		owner: "fugaro update",
 		hint:  "it unwinds a converge that has already run, and a first run has nothing to unwind",
+	}, {
+		name:  "ask",
+		owner: "fugaro update",
+		hint:  "it asks for the confirmations a managed project's gate stands in for, and only fugaro update opens that gate: fugaro setup asks every one of its own confirmations already, whatever the project's marks say",
 	}},
 }
 
