@@ -846,6 +846,17 @@ func reseedPolicyKeys(old []byte, lc *localcfg.Config, p *projectpolicy.Policy, 
 		case "base_branch":
 			set(member, []string{"base_branch"}, p.BaseBranch, func() { lc.BaseBranch = p.BaseBranch })
 		default:
+			// The account-choice members — default_claude_account and each
+			// claude_account_stages.<stage> — land here, and the refusal above
+			// names them: this re-seed splices the members it has a shape for,
+			// and these are the operator's own settings, which is why the local
+			// config is their only store (the locLocal rows `fugaro settings set`
+			// writes). An operator whose node carries an account this file does
+			// not puts it back with that command — `fugaro settings set
+			// default_claude_account <name>`, `fugaro settings set
+			// stages.<stage>.claude_account <name>` — and runs `fugaro update`
+			// again, which is the path the refusal's message leaves open rather
+			// than a splice this re-seed could have made.
 			hand = append(hand, member)
 		}
 	}

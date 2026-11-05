@@ -147,6 +147,12 @@ func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 		"the project's **published policy node**",
 		"a mix no run of the project has",
 		"no second `fugaro project policy publish`",
+		// And the one step that command cannot take for these members: the D854
+		// re-seed refuses the account keys by name, and the doc says which
+		// command writes them, so the operator who meets that refusal has a path
+		// rather than a failure naming members no documented command sets.
+		"refuses the account keys **by name**",
+		"fugaro settings set default_claude_account <name>",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("%s §11 never says %q: the ruling is not recorded and the tasks B1-B5 have nothing to build against", path, want)
