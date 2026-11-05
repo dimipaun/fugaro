@@ -133,12 +133,27 @@ type initGate struct {
 // what the gate must never judge, so both pay for no read at all — the same
 // property their stages keep, and the reason the plan-only review's closing
 // line is written to be true either way (init_review.go).
-func (e *initEngine) gateRun(ctx context.Context) {
+//
+// --ask is decided here, once, right after the read and before the loop: the
+// line the flag prints, or the refusal that stops the run. It is the flag's
+// only entry point on this door, so there is one place to read what it does
+// (managed_ask.go holds the rule and the reasons). A run the gate never covers
+// gets its own line instead of a read: --ask has no confirmation to restore in
+// a run that applies nothing the gate stands in for, and saying so is truer
+// than reading marks to announce that nothing changed.
+func (e *initEngine) gateRun(ctx context.Context) error {
 	r := e.r
-	if r.gate != nil || !r.gateable() {
-		return
+	if r.o.ask && !r.gateable() {
+		fmt.Fprintln(r.w, initflow.AskNoGate())
+		return nil
 	}
-	r.gate = readUpdateGate(e, r)
+	if r.gate == nil && r.gateable() {
+		r.gate = readUpdateGate(e, r)
+	}
+	// The refusal is the user's to read and the run's to stop: it is returned
+	// whole (a user error, exit 1), and nothing after it runs — no stage, no
+	// write, no record.
+	return askDecide(r.w, askFlags{ask: r.o.ask, yes: r.o.yes}, r.gateUnderway(), r.conditions())
 }
 
 // gateable is whether this door has a gate for this run at all. A run whose own
@@ -271,6 +286,21 @@ func readUpdateGate(e *initEngine, r *initRun) *initGate {
 // of it is a step whose confirmation the gate does not judge, and never a step
 // the gate refused.
 func (r *initRun) gateUnderway() bool { return r.gate != nil && r.gate.managed }
+
+// gateStandsIn is whether the gate stands in for the confirmations it does NOT
+// judge document by document — the run's one confirmation (init_review.go's
+// runCovers and the ordinary steps it covers), the plugin wiring's y/N
+// (init_plugin_stage.go) and the lines the review prints about them. It is
+// gateUnderway with --ask struck out, and it is the whole of what the flag does
+// to this door beyond its own line: the steps whose documents the gate judges
+// ask the same question through initflow.GateConfirms (gateStep), which
+// Conditions.Ask answers false to, and the gate's own read, admit and record
+// are untouched either way.
+//
+// A run with no gate is not this case (r.gate == nil), and neither is one whose
+// marks said the project is not managed: both keep every confirmation they
+// have, exactly as they did before the managed case existed.
+func (r *initRun) gateStandsIn() bool { return r.gateUnderway() && !r.o.ask }
 
 // gateLeavesTheIAMCall is whether the one write of these stages that the gate
 // has no document for is left to the owner rather than made here: removing

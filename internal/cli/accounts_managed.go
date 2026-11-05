@@ -78,7 +78,12 @@ import (
 // document applied are one artifact and not two that happened to agree.
 func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, o accountsAddOptions, name, profile string, beyond []string, doc []byte) (initflow.Managed, managedGate, error) {
 	marker := agentMarker(os.Getenv)
-	if !settingsGateAsks(marker, settingsAsk(cmd, o.yes), settingsDocLocal, false) {
+	// The read is made where this command would ask, and --ask is one more
+	// such place: the flag has to speak about the marks in every session that
+	// passes it (a refusal in a managed project's agent session, a sentence
+	// everywhere else), so it forces the read even where the declaration
+	// itself would have asked nothing (--yes, or no terminal at all).
+	if !settingsGateAsks(marker, settingsAsk(cmd, o.yes) || o.ask, settingsDocLocal, false) {
 		return initflow.Managed{}, managedGate{}, nil
 	}
 	clients, err := newInitClients(ctx, lc)

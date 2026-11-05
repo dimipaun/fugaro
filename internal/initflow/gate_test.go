@@ -26,8 +26,12 @@ import (
 //     beside it; a step that reached past it would be a managed project's
 //     plan applied by a pipe or a --json run.
 
-// allConditions is the whole product of the five fields a run says about who
-// is there: 32 rows, each reachable from the CLI.
+// allConditions is the whole product of the six fields a run says about who
+// is there: 64 rows, each reachable from the CLI. --ask is one of them because
+// it is a fact about the run and not about a plan: the owner asking for the
+// confirmations back is a condition every predicate below is decided under,
+// and a table without it would test a rule the CLI can pass a different value
+// to.
 func allConditions() []Conditions {
 	markers := []string{"", "CLAUDECODE"}
 	var out []Conditions
@@ -36,14 +40,16 @@ func allConditions() []Conditions {
 			for _, js := range []bool{false, true} {
 				for _, term := range []bool{false, true} {
 					for _, agent := range markers {
-						out = append(out, Conditions{Yes: yes, NonInteractive: ni, JSON: js, Terminal: term, Agent: agent})
+						for _, ask := range []bool{false, true} {
+							out = append(out, Conditions{Yes: yes, NonInteractive: ni, JSON: js, Terminal: term, Agent: agent, Ask: ask})
+						}
 					}
 				}
 			}
 		}
 	}
-	if len(out) != 32 {
-		panic("the conditions product is not 32 rows")
+	if len(out) != 64 {
+		panic("the conditions product is not 64 rows")
 	}
 	return out
 }
@@ -88,7 +94,8 @@ func boolWord(b bool) string {
 
 func conditionsName(c Conditions) string {
 	return "Conditions{Yes:" + boolWord(c.Yes) + ", NonInteractive:" + boolWord(c.NonInteractive) +
-		", JSON:" + boolWord(c.JSON) + ", Terminal:" + boolWord(c.Terminal) + ", Agent:" + c.Agent + "}"
+		", JSON:" + boolWord(c.JSON) + ", Terminal:" + boolWord(c.Terminal) + ", Agent:" + c.Agent +
+		", Ask:" + boolWord(c.Ask) + "}"
 }
 
 // TestManagedADecisionNeverDependsOnTheFlag is the property the owner's ruling
@@ -216,14 +223,22 @@ func TestManagedRemovesHoldsEveryFactAtOnce(t *testing.T) {
 // terminal sentence printed to a coding agent's session — or the two
 // predicates being swapped at a call site, which this equality makes a
 // compile-time-looking mistake rather than a silent one.
+//
+// --ask is the one condition that answers false here whatever else is true of
+// the row, and it is written into the oracle rather than taken from the code:
+// the owner asking for the prompts back is exactly "the gate does not confirm
+// this step", in both sessions.
 func TestManagedGateConfirmsInBothSessions(t *testing.T) {
 	for _, class := range allClasses() {
 		for _, c := range allConditions() {
 			for _, m := range allManaged() {
 				var want bool
-				if c.Agent != "" {
+				switch {
+				case c.Ask:
+					want = false
+				case c.Agent != "":
 					want = m.Removes(class)
-				} else {
+				default:
 					want = ConfirmsByGate(class, c, m)
 				}
 				if got := GateConfirms(class, c, m); got != want {
@@ -244,14 +259,16 @@ func TestManagedGateConfirmsInBothSessions(t *testing.T) {
 // TestManagedConfirmsByGateIsTheOwnerAtARealTerminal: the terminal case is the
 // same four facts plus the one fact about who is there, and the case it must
 // never be true of is the run nobody is at — a pipe, --json,
-// --non-interactive, or a session with a coding agent's marker in it.
+// --non-interactive, a session with a coding agent's marker in it, or a run
+// whose owner asked for the prompts back (--ask: the gate is then nobody's
+// answer, which is the whole of what the flag is for).
 func TestManagedConfirmsByGateIsTheOwnerAtARealTerminal(t *testing.T) {
 	for _, class := range allClasses() {
 		for _, c := range allConditions() {
 			for _, m := range allManaged() {
 				got := ConfirmsByGate(class, c, m)
 				switch {
-				case c.Agent != "", !c.Terminal, c.NonInteractive, c.JSON:
+				case c.Ask, c.Agent != "", !c.Terminal, c.NonInteractive, c.JSON:
 					if got {
 						t.Errorf("ConfirmsByGate(%s, %s, %s) is true with nobody at the terminal", className(class), conditionsName(c), managedName(m))
 					}
@@ -295,5 +312,161 @@ func TestGateSentencesNameNoWayPast(t *testing.T) {
 	}
 	if !strings.Contains(GateProceeded(), "record") {
 		t.Errorf("GateProceeded does not say where the verdict can be read afterwards: %q", GateProceeded())
+	}
+}
+
+// TestManagedAskTakesTheGateOutOfTheDecision is --ask's own rule, and it is
+// the property the flag's safety rests on: asking for the confirmations back
+// puts the gate's verdict out of the decision, so the answer is the class
+// rule's — the answer the run would have had if the project were not managed —
+// under every Managed value. Two directions are checked, and they are the two
+// a mistake falls in: the project's marks stop deciding anything (a row where
+// some Managed changes the answer with the flag set is a managed project still
+// answering on its verdict), and no row is admitted that the same run without
+// the flag, and with nothing read, does not admit (the flag restores prompts,
+// it never removes one).
+//
+// A coding agent's session is the one place the flag's answer is not the plain
+// class rule's: it is refused there in both the rule (CanConfirmManaged's own
+// marker branch) and the caller (AskRefusal), because a prompt nobody can
+// answer is a refusal and never a silent proceed — including the silently
+// managed proceed the mark would otherwise give.
+//
+// The mutation caught: GateConfirms (or ConfirmsByGate) dropping its `c.Ask`,
+// which is a managed project answering a step with its verdict on a run whose
+// owner asked to be asked.
+func TestManagedAskTakesTheGateOutOfTheDecision(t *testing.T) {
+	for _, class := range allClasses() {
+		for _, c := range allConditions() {
+			if !c.Ask {
+				continue
+			}
+			plain := c
+			plain.Ask = false
+			for _, m := range allManaged() {
+				if GateConfirms(class, c, m) {
+					t.Errorf("GateConfirms(%s, %s, %s) is true with the confirmations asked for: the gate is nobody's answer in that run",
+						className(class), conditionsName(c), managedName(m))
+				}
+				got := CanConfirmManaged(class, c, m)
+				if got != CanConfirmManaged(class, c, Managed{}) {
+					t.Errorf("CanConfirmManaged(%s, %s, %s) = %v and %v with nothing read: asking for the confirmations back takes the project's marks out of the decision",
+						className(class), conditionsName(c), managedName(m), got, CanConfirmManaged(class, c, Managed{}))
+				}
+				if c.Agent != "" {
+					if got {
+						t.Errorf("CanConfirmManaged(%s, %s, %s) is true: a coding agent's session answers no confirmation (--ask included)",
+							className(class), conditionsName(c), managedName(m))
+					}
+					continue
+				}
+				if want := CanConfirm(class, plain); got != want {
+					t.Errorf("CanConfirmManaged(%s, %s, %s) = %v, want the class rule's own answer %v: the flag restores a confirmation, it never removes one",
+						className(class), conditionsName(c), managedName(m), got, want)
+				}
+			}
+		}
+	}
+}
+
+// TestAskDecisionIsTheFlagsWholeRule enumerates the decision, by hand: the
+// no-op line wherever the marks did not answer "managed" (and a refusal
+// nowhere), the refusal wherever a managed project's run cannot prompt, and
+// the restored line for the owner who can. The rows are written out rather
+// than derived, so a rule that answered a line and a refusal at once, or
+// answered a managed project's terminal with a refusal, is a failure here.
+func TestAskDecisionIsTheFlagsWholeRule(t *testing.T) {
+	for _, c := range allConditions() {
+		canPrompt := c.Agent == "" && c.Terminal && !c.NonInteractive && !c.JSON
+		for _, managed := range []bool{false, true} {
+			line, refusal := AskDecision(c, managed)
+			switch {
+			case !managed:
+				if refusal != "" || line != AskUnmanaged() {
+					t.Errorf("AskDecision(%s, managed=false) = %q, %q, want the no-op line and no refusal", conditionsName(c), line, refusal)
+				}
+			case canPrompt:
+				if refusal != "" || line != AskRestored() {
+					t.Errorf("AskDecision(%s, managed=true) = %q, %q, want the restored line and no refusal", conditionsName(c), line, refusal)
+				}
+			default:
+				if line != "" || refusal != AskRefusal(c) {
+					t.Errorf("AskDecision(%s, managed=true) = %q, %q, want the refusal and no line", conditionsName(c), line, refusal)
+				}
+				if !strings.Contains(refusal, askNobody(c)) {
+					t.Errorf("AskDecision(%s, managed=true) refuses with %q, which does not say why nobody can answer it (%q)", conditionsName(c), refusal, askNobody(c))
+				}
+			}
+		}
+	}
+	// A run with no terminal at all is the case the refusal exists for, and it
+	// must never read as a proceed: the sentence says nothing is applied, and
+	// it is the session's own advice (the person's terminal), the way every
+	// refusal for a session nobody can ask is.
+	for _, c := range []Conditions{{Agent: "CLAUDECODE"}, {NonInteractive: true}, {JSON: true}, {Terminal: false}, {Terminal: true, NonInteractive: true}} {
+		_, refusal := AskDecision(c, true)
+		if !strings.Contains(refusal, "nothing is applied") {
+			t.Errorf("the refusal for %s does not say that nothing is applied: %q", conditionsName(c), refusal)
+		}
+		if !strings.Contains(refusal, AgentAdvice) {
+			t.Errorf("the refusal for %s does not carry the way out that every refusal for a session nobody can ask carries: %q", conditionsName(c), refusal)
+		}
+	}
+}
+
+// TestAskRefusalNamesNoWayPast: the refusal of --ask is read by the session it
+// refuses, and the one name it must not carry is the flag itself. Dropping
+// --ask hands the step back to the gate's verdict, so a sentence that named it
+// would be an instruction on how to have the write made without the owner —
+// the rule AgentRefusal and AgentProceeded already follow, and the reason
+// AgentAdvice names a terminal rather than a variable to unset.
+func TestAskRefusalNamesNoWayPast(t *testing.T) {
+	for _, c := range []Conditions{{Agent: "CLAUDECODE"}, {Agent: IDEMarker}, {NonInteractive: true}, {JSON: true}, {}} {
+		refusal := AskRefusal(c)
+		for _, no := range []string{"--ask", "--yes", "unset ", "export ", "="} {
+			if strings.Contains(refusal, no) {
+				t.Errorf("AskRefusal(%s) contains %q: the session it refuses can read it, and dropping the flag it would name is the way round this refusal: %q", conditionsName(c), no, refusal)
+			}
+		}
+	}
+}
+
+// TestAskLinesAreOneLineEachAndNotEachOther: the three lines a command may
+// print for the flag say three different things — the prompts are back, there
+// was nothing to restore, the run never had a step for it — and a reader who
+// saw the wrong one would be told something false about their project.
+func TestAskLinesAreOneLineEachAndNotEachOther(t *testing.T) {
+	lines := map[string]string{"AskRestored": AskRestored(), "AskUnmanaged": AskUnmanaged(), "AskNoGate": AskNoGate()}
+	for name, line := range lines {
+		if strings.Contains(line, "\n") {
+			t.Errorf("%s is not one line: %q", name, line)
+		}
+		if !strings.HasPrefix(line, "--ask:") {
+			t.Errorf("%s does not start by naming the flag it is about: %q", name, line)
+		}
+		if strings.Contains(line, AgentAdvice) {
+			t.Errorf("%s carries the coding agent's own advice: the reader here is a person the flag belongs to: %q", name, line)
+		}
+	}
+	for a, la := range lines {
+		for b, lb := range lines {
+			if a != b && la == lb {
+				t.Errorf("%s and %s are one sentence: they answer about three different runs", a, b)
+			}
+		}
+	}
+	// The restored line is the one a reader could misread as "the gate is off".
+	// It says the opposite, in the words the design uses: judged, refused,
+	// unchanged.
+	for _, want := range []string{"still judged", "refused", "unchanged"} {
+		if !strings.Contains(AskRestored(), want) {
+			t.Errorf("AskRestored does not say %q: the flag restores prompts and weakens nothing: %q", want, AskRestored())
+		}
+	}
+	if !strings.Contains(AskUnmanaged(), "not an error") {
+		t.Errorf("AskUnmanaged does not say the flag is not an error: a reader would take a no-op line for a refusal: %q", AskUnmanaged())
+	}
+	if AskAndYes() == "" || !strings.Contains(AskAndYes(), "--ask") || !strings.Contains(AskAndYes(), "--yes") {
+		t.Errorf("AskAndYes does not name the two flags it refuses together: %q", AskAndYes())
 	}
 }

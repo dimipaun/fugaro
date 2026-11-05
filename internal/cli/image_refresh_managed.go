@@ -112,7 +112,12 @@ type refreshManaged struct {
 // out of a run that has no reason to make either call (M6's review of
 // 2026-11-03).
 func openRefreshManaged(ctx context.Context, cmd *cobra.Command, o refreshOptions, iopts *initOptions) *refreshManaged {
-	if agentMarker(os.Getenv) == "" && (o.yes || !stdinIsTerminal(cmd.InOrStdin())) {
+	// --ask forces the read: the flag has to answer for the marks in every
+	// session that passes it — the refusal a managed project's agent session
+	// gets, the sentence every other session gets — so a run that passed it
+	// reads where it would otherwise have asked nothing (--yes, or no terminal
+	// at all).
+	if agentMarker(os.Getenv) == "" && !o.ask && (o.yes || !stdinIsTerminal(cmd.InOrStdin())) {
 		return nil
 	}
 	lc, path, old, err := loadRepoConfig(ctx, iopts, o.checkoutDir())
@@ -157,7 +162,7 @@ func openRefreshManaged(ctx context.Context, cmd *cobra.Command, o refreshOption
 // untouched (these are the ordinary YesOrTyped steps of their own command),
 // and no admission is invented for a step the gate never judged.
 func (m *refreshManaged) asksNothing(c initflow.Conditions) bool {
-	return m != nil && c.Agent == "" && c.Terminal && !c.Yes && !c.NonInteractive && !c.JSON
+	return m != nil && c.Agent == "" && c.Terminal && !c.Yes && !c.NonInteractive && !c.JSON && !c.Ask
 }
 
 // refreshGateFacts is this command's own facts about itself, as M6's helper

@@ -51,6 +51,14 @@ type settingsEdit struct {
 	// answer it: it names --yes where the caller says a flag stands in
 	// (D1107), and the refusal of a session with no terminal repeats it.
 	TypedWhy string
+	// Ask is the owner's --ask: the confirmations this write would have been
+	// given in a project that is not managed, asked here instead of being
+	// replaced by the gate's verdict (initflow.Conditions.Ask, and the rule of
+	// 2026-11-04 that makes it --yes's symmetric half). It never touches the
+	// gate above: the read, the judgement and the admission are made exactly
+	// where they were, and the flag answers only the question of what this
+	// write is confirmed BY.
+	Ask bool
 	// Kind is the document Path is: the local project config, the local project
 	// layer file, or a repository's fugaro.yaml. It is one fact and not two,
 	// because both things it decides must agree: the reader of the
@@ -236,7 +244,7 @@ func readSettingsCurrent(e settingsEdit) ([]byte, error) {
 // it runs in. It is read once per edit, so the fence above and the gate below
 // are decided under one struct rather than two readings that could disagree.
 func settingsEditConditions(cmd *cobra.Command, e settingsEdit) initflow.Conditions {
-	return initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), Yes: e.Yes, Agent: agentMarker(os.Getenv)}
+	return initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), Yes: e.Yes, Agent: agentMarker(os.Getenv), Ask: e.Ask}
 }
 
 // confirmSettingsWrite is the ordinary y/N confirmation: --yes answers it, a

@@ -59,27 +59,34 @@ type initOptions struct {
 	// that already exists, even one an earlier run of fugaro setup created
 	// and a plain first run would resume; created, when set, is
 	// filled with what this run did, for the caller to check.
-	strictCreate                        bool
-	created                             *initCreation
-	cloud                               cloudOptions
-	schedulerRegion                     string
-	runsBucket, stateBucket             string
-	baseImages                          []string
-	baseKinds                           []string // --base: base kinds to mirror now
-	imageSource                         string   // --image-source: a fork's own release registry/owner
-	expectDigests                       []string // --expect-digest KIND=sha256:...: the digest a release tag must resolve to
-	replaceImages                       []string // --replace-image KIND: kinds (history) whose tag in your registry may be replaced, each an ordinary covered step (askCovered: D12's answer of 2026-10-20 covers it in both doors, and a terminal without --yes types the project's name); a base kind is refused there, since nothing is copied for it any more
-	launchers, operators                []string
-	budget                              int64
-	budgetCurrency, billingAccount      string
-	alertEmail                          string
-	noLogIsolation                      bool
-	registryCleanup                     string
-	planOnly, printVars, configOnly     bool
-	publishConfig                       bool // --publish-config: publish the shared config to the runs bucket and stop
-	anchor                              bool // --anchor: write the checkout's gcp_project line, after its checks, and stop
-	forget, yes, asJSON                 bool
-	nonInteractive                      bool
+	strictCreate                    bool
+	created                         *initCreation
+	cloud                           cloudOptions
+	schedulerRegion                 string
+	runsBucket, stateBucket         string
+	baseImages                      []string
+	baseKinds                       []string // --base: base kinds to mirror now
+	imageSource                     string   // --image-source: a fork's own release registry/owner
+	expectDigests                   []string // --expect-digest KIND=sha256:...: the digest a release tag must resolve to
+	replaceImages                   []string // --replace-image KIND: kinds (history) whose tag in your registry may be replaced, each an ordinary covered step (askCovered: D12's answer of 2026-10-20 covers it in both doors, and a terminal without --yes types the project's name); a base kind is refused there, since nothing is copied for it any more
+	launchers, operators            []string
+	budget                          int64
+	budgetCurrency, billingAccount  string
+	alertEmail                      string
+	noLogIsolation                  bool
+	registryCleanup                 string
+	planOnly, printVars, configOnly bool
+	publishConfig                   bool // --publish-config: publish the shared config to the runs bucket and stop
+	anchor                          bool // --anchor: write the checkout's gcp_project line, after its checks, and stop
+	forget, yes, asJSON             bool
+	nonInteractive                  bool
+	// ask is --ask (the owner's rule of 2026-11-04): the symmetric half of
+	// --yes, and fugaro update's flag alone (setup refuses it by name). In a
+	// managed project it puts back the confirmations the gate would have
+	// stood in for; where the marks did not answer "managed" it is a no-op
+	// that says so; and where nobody can answer a prompt it refuses the run
+	// (managed_ask.go, initflow.AskDecision).
+	ask                                 bool
 	provisionBatch                      bool   // --provision-batch: provision the Batch backend's installation-level root (owner-run, typed confirmation)
 	provisionCredentials                bool   // --provision-credentials: turn the credentials service on in the installation root (owner-run, typed confirmation)
 	coordinator                         bool   // --coordinator: opt the installation in to the coordinator's aggregation job (owner-run, at a terminal, never --yes)
@@ -310,6 +317,12 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 			switch {
 			case foreign:
 				err = userErr("fugaro %s does not take --%s: that is %s's (%s)", d.name, ff.name, ff.owner, ff.hint)
+			case o.ask && o.yes:
+				// The two flags say opposite things about the same
+				// confirmations (managed_ask.go): refused here, beside the
+				// foreign flag, so no question is asked and no mark is read
+				// for a run whose flags contradict each other.
+				err = askConflict(askFlags{ask: o.ask, yes: o.yes})
 			case o.repo:
 				err = runInitRepo(r, args)
 			case len(args) > 0:
@@ -434,6 +447,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	if d.takes("forget") {
 		stops = "--forget and --config-only"
 	}
+	f.BoolVar(&o.ask, "ask", false, "ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the project's name typed at the review, each step's own, the y/Ns. It is the symmetric half of --yes, which is the same flag for a project that is NOT managed, and the two contradict each other: pass one, or neither. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never reaches a Typed step (money, permanence, a secret: the owner's own word, which no door relaxes). In a project whose marks do not answer \"managed\" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, --non-interactive, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed")
 	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its typed confirmation even then, so that plan exits 1); --yes never covers the typed-only steps (see --yes). With "+stops+" it only stops them prompting: their confirmations then need --yes")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
 	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
@@ -1598,7 +1612,7 @@ var canConfirmTyped = initflow.CanConfirm
 func (r *initRun) conditions() initflow.Conditions {
 	o := r.o
 	return initflow.Conditions{Yes: o.yes && !o.planOnly, NonInteractive: o.nonInteractive, JSON: o.asJSON,
-		Terminal: r.cmd != nil && stdinIsTerminal(r.cmd.InOrStdin()), Agent: agentMarker(os.Getenv)}
+		Terminal: r.cmd != nil && stdinIsTerminal(r.cmd.InOrStdin()), Agent: agentMarker(os.Getenv), Ask: o.ask}
 }
 
 // confirm shows the ⚠ CONFIRM banner for what, and returns nil once it is

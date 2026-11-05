@@ -131,48 +131,90 @@ type confirmRow struct {
 	yes, planOnly, nonInteractive, json, terminal bool
 	condYes                                       bool
 	ordRight, ordWrong, typRight, typWrong        bool
+	// ask is --ask. It is written LAST rather than beside the flags it is a
+	// sibling of, so that every column the rows had before it keeps its place
+	// in the literal.
+	ask bool
 }
 
 // confirmTable is every combination of --yes, --plan-only, --non-interactive,
-// --json and a terminal (2^5 = 32 rows), each written out.
+// --json, a terminal and --ask (2^6 = 64 rows), each written out. --ask is a
+// dimension of this table and it moves no expected value in it: every row here
+// is a project that is NOT managed and has no marker, and the flag is a no-op
+// where the marks did not answer managed (managed_ask.go, and the owner's rule
+// of 2026-11-04 that makes it --yes's symmetric half). The rows where it does
+// move something are the managed ones, which are not this table's subject:
+// managed_ask_test.go is theirs.
 var confirmTable = []confirmRow{
-	//  yes    plan   nonInt json   term     condYes   ordR   ordW   typR   typW
-	{false, false, false, false, false /**/, false /**/, false, false, false, false},
-	{false, false, false, false, true /* */, false /**/, true, false, true, false},
-	{false, false, false, true, false /* */, false /**/, false, false, false, false},
-	{false, false, false, true, true /*  */, false /**/, true, false, false, false},
-	{false, false, true, false, false /* */, false /**/, false, false, false, false},
-	{false, false, true, false, true /*  */, false /**/, false, false, false, false},
-	{false, false, true, true, false /*  */, false /**/, false, false, false, false},
-	{false, false, true, true, true /*   */, false /**/, false, false, false, false},
-	{false, true, false, false, false /* */, false /**/, false, false, false, false},
-	{false, true, false, false, true /*  */, false /**/, true, false, true, false},
-	{false, true, false, true, false /*  */, false /**/, false, false, false, false},
-	{false, true, false, true, true /*   */, false /**/, true, false, false, false},
-	{false, true, true, false, false /*  */, false /**/, false, false, false, false},
-	{false, true, true, false, true /*   */, false /**/, false, false, false, false},
-	{false, true, true, true, false /*   */, false /**/, false, false, false, false},
-	{false, true, true, true, true /*    */, false /**/, false, false, false, false},
-	{true, false, false, false, false /* */, true /* */, true, true, false, false},
-	{true, false, false, false, true /*  */, true /* */, true, true, false, false},
-	{true, false, false, true, false /*  */, true /* */, true, true, false, false},
-	{true, false, false, true, true /*   */, true /* */, true, true, false, false},
-	{true, false, true, false, false /*  */, true /* */, true, true, false, false},
-	{true, false, true, false, true /*   */, true /* */, true, true, false, false},
-	{true, false, true, true, false /*   */, true /* */, true, true, false, false},
-	{true, false, true, true, true /*    */, true /* */, true, true, false, false},
-	{true, true, false, false, false /*  */, false /**/, false, false, false, false},
-	{true, true, false, false, true /*   */, false /**/, true, false, true, false},
-	{true, true, false, true, false /*   */, false /**/, false, false, false, false},
-	{true, true, false, true, true /*    */, false /**/, true, false, false, false},
-	{true, true, true, false, false /*   */, false /**/, false, false, false, false},
-	{true, true, true, false, true /*    */, false /**/, false, false, false, false},
-	{true, true, true, true, false /*    */, false /**/, false, false, false, false},
-	{true, true, true, true, true /*     */, false /**/, false, false, false, false},
+	//  yes    plan   nonInt json   term     condYes    ordR   ordW   typR   typW   ask
+	{false, false, false, false, false /**/, false /**/, false, false, false, false, false /*ask*/},
+	{false, false, false, false, true /* */, false /**/, true, false, true, false, false /*ask*/},
+	{false, false, false, true, false /* */, false /**/, false, false, false, false, false /*ask*/},
+	{false, false, false, true, true /*  */, false /**/, true, false, false, false, false /*ask*/},
+	{false, false, true, false, false /* */, false /**/, false, false, false, false, false /*ask*/},
+	{false, false, true, false, true /*  */, false /**/, false, false, false, false, false /*ask*/},
+	{false, false, true, true, false /*  */, false /**/, false, false, false, false, false /*ask*/},
+	{false, false, true, true, true /*   */, false /**/, false, false, false, false, false /*ask*/},
+	{false, true, false, false, false /* */, false /**/, false, false, false, false, false /*ask*/},
+	{false, true, false, false, true /*  */, false /**/, true, false, true, false, false /*ask*/},
+	{false, true, false, true, false /*  */, false /**/, false, false, false, false, false /*ask*/},
+	{false, true, false, true, true /*   */, false /**/, true, false, false, false, false /*ask*/},
+	{false, true, true, false, false /*  */, false /**/, false, false, false, false, false /*ask*/},
+	{false, true, true, false, true /*   */, false /**/, false, false, false, false, false /*ask*/},
+	{false, true, true, true, false /*   */, false /**/, false, false, false, false, false /*ask*/},
+	{false, true, true, true, true /*    */, false /**/, false, false, false, false, false /*ask*/},
+	{true, false, false, false, false /* */, true /* */, true, true, false, false, false /*ask*/},
+	{true, false, false, false, true /*  */, true /* */, true, true, false, false, false /*ask*/},
+	{true, false, false, true, false /*  */, true /* */, true, true, false, false, false /*ask*/},
+	{true, false, false, true, true /*   */, true /* */, true, true, false, false, false /*ask*/},
+	{true, false, true, false, false /*  */, true /* */, true, true, false, false, false /*ask*/},
+	{true, false, true, false, true /*   */, true /* */, true, true, false, false, false /*ask*/},
+	{true, false, true, true, false /*   */, true /* */, true, true, false, false, false /*ask*/},
+	{true, false, true, true, true /*    */, true /* */, true, true, false, false, false /*ask*/},
+	{true, true, false, false, false /*  */, false /**/, false, false, false, false, false /*ask*/},
+	{true, true, false, false, true /*   */, false /**/, true, false, true, false, false /*ask*/},
+	{true, true, false, true, false /*   */, false /**/, false, false, false, false, false /*ask*/},
+	{true, true, false, true, true /*    */, false /**/, true, false, false, false, false /*ask*/},
+	{true, true, true, false, false /*   */, false /**/, false, false, false, false, false /*ask*/},
+	{true, true, true, false, true /*    */, false /**/, false, false, false, false, false /*ask*/},
+	{true, true, true, true, false /*    */, false /**/, false, false, false, false, false /*ask*/},
+	{true, true, true, true, true /*     */, false /**/, false, false, false, false, false /*ask*/},
+	{false, false, false, false, false /**/, false /**/, false, false, false, false, true /*ask*/},
+	{false, false, false, false, true /* */, false /**/, true, false, true, false, true /*ask*/},
+	{false, false, false, true, false /* */, false /**/, false, false, false, false, true /*ask*/},
+	{false, false, false, true, true /*  */, false /**/, true, false, false, false, true /*ask*/},
+	{false, false, true, false, false /* */, false /**/, false, false, false, false, true /*ask*/},
+	{false, false, true, false, true /*  */, false /**/, false, false, false, false, true /*ask*/},
+	{false, false, true, true, false /*  */, false /**/, false, false, false, false, true /*ask*/},
+	{false, false, true, true, true /*   */, false /**/, false, false, false, false, true /*ask*/},
+	{false, true, false, false, false /* */, false /**/, false, false, false, false, true /*ask*/},
+	{false, true, false, false, true /*  */, false /**/, true, false, true, false, true /*ask*/},
+	{false, true, false, true, false /*  */, false /**/, false, false, false, false, true /*ask*/},
+	{false, true, false, true, true /*   */, false /**/, true, false, false, false, true /*ask*/},
+	{false, true, true, false, false /*  */, false /**/, false, false, false, false, true /*ask*/},
+	{false, true, true, false, true /*   */, false /**/, false, false, false, false, true /*ask*/},
+	{false, true, true, true, false /*   */, false /**/, false, false, false, false, true /*ask*/},
+	{false, true, true, true, true /*    */, false /**/, false, false, false, false, true /*ask*/},
+	{true, false, false, false, false /* */, true /* */, true, true, false, false, true /*ask*/},
+	{true, false, false, false, true /*  */, true /* */, true, true, false, false, true /*ask*/},
+	{true, false, false, true, false /*  */, true /* */, true, true, false, false, true /*ask*/},
+	{true, false, false, true, true /*   */, true /* */, true, true, false, false, true /*ask*/},
+	{true, false, true, false, false /*  */, true /* */, true, true, false, false, true /*ask*/},
+	{true, false, true, false, true /*   */, true /* */, true, true, false, false, true /*ask*/},
+	{true, false, true, true, false /*   */, true /* */, true, true, false, false, true /*ask*/},
+	{true, false, true, true, true /*    */, true /* */, true, true, false, false, true /*ask*/},
+	{true, true, false, false, false /*  */, false /**/, false, false, false, false, true /*ask*/},
+	{true, true, false, false, true /*   */, false /**/, true, false, true, false, true /*ask*/},
+	{true, true, false, true, false /*   */, false /**/, false, false, false, false, true /*ask*/},
+	{true, true, false, true, true /*    */, false /**/, true, false, false, false, true /*ask*/},
+	{true, true, true, false, false /*   */, false /**/, false, false, false, false, true /*ask*/},
+	{true, true, true, false, true /*    */, false /**/, false, false, false, false, true /*ask*/},
+	{true, true, true, true, false /*    */, false /**/, false, false, false, false, true /*ask*/},
+	{true, true, true, true, true /*     */, false /**/, false, false, false, false, true /*ask*/},
 }
 
 func (c confirmRow) String() string {
-	return fmt.Sprintf("--yes=%v --plan-only=%v --non-interactive=%v --json=%v terminal=%v", c.yes, c.planOnly, c.nonInteractive, c.json, c.terminal)
+	return fmt.Sprintf("--yes=%v --plan-only=%v --non-interactive=%v --json=%v terminal=%v --ask=%v", c.yes, c.planOnly, c.nonInteractive, c.json, c.terminal, c.ask)
 }
 
 // confirmClasses is every confirmation class the product runs over, by the
@@ -482,7 +524,7 @@ func confirmRig(t *testing.T, row confirmRow, typed string) (*initRun, *readSpy)
 	spy := &readSpy{Reader: strings.NewReader(typed + "\n")}
 	cmd := &cobra.Command{}
 	cmd.SetIn(spy)
-	o := &initOptions{yes: row.yes, planOnly: row.planOnly, nonInteractive: row.nonInteractive, asJSON: row.json}
+	o := &initOptions{yes: row.yes, planOnly: row.planOnly, nonInteractive: row.nonInteractive, asJSON: row.json, ask: row.ask}
 	return &initRun{cmd: cmd, o: o, w: io.Discard, in: bufio.NewReader(spy), projectName: initProjectName, gcpProject: initProject}, spy
 }
 
@@ -574,11 +616,11 @@ func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads 
 // The property itself, over the whole product and the program's real paths.
 func TestManagedNonManagedProjectNeverSkipsAConfirmation(t *testing.T) {
 	reads := managedReads(t)
-	if len(confirmTable) != 1<<5 {
-		t.Fatalf("the table has %d rows, want 32", len(confirmTable))
+	if len(confirmTable) != 1<<6 {
+		t.Fatalf("the table has %d rows, want 64", len(confirmTable))
 	}
 	bad, n := managedViolations(t, managedMode, reads)
-	// 13 environment states x 32 rows x 14 non-managed reads x 2 classes x 2 answers.
+	// 13 environment states x 64 rows x 14 non-managed reads x 2 classes x 2 answers.
 	if want := len(agentEnvStates()) * len(confirmTable) * (len(reads) - 1) * len(confirmClasses) * 2; n != want || n == 0 {
 		t.Fatalf("the property ran %d combinations, want %d", n, want)
 	}
@@ -618,7 +660,7 @@ func TestManagedConfirmRuleMatchesTheTable(t *testing.T) {
 		for _, row := range confirmTable {
 			withTerminal(t, row.terminal)
 			r, _ := confirmRig(t, row, "")
-			want := initflow.Conditions{Yes: row.condYes, NonInteractive: row.nonInteractive, JSON: row.json, Terminal: row.terminal, Agent: env.agent}
+			want := initflow.Conditions{Yes: row.condYes, NonInteractive: row.nonInteractive, JSON: row.json, Terminal: row.terminal, Agent: env.agent, Ask: row.ask}
 			if got := r.conditions(); got != want {
 				t.Errorf("%s, %s: initRun.conditions() = %+v, want %+v", row, env.name, got, want)
 			}
@@ -826,6 +868,7 @@ var initFlagCases = map[string]string{
 	"non-interactive": "dimension: never prompts, so nothing typed confirms",
 	"json":            "dimension: never takes a Typed confirmation",
 	"plan-only":       "dimension: folded into Yes=false by initRun.conditions; never takes --yes",
+	"ask":             "dimension: takes the gate out of the question (initflow.Conditions.Ask makes GateConfirms false), so every step falls back to the confirmation it would have had in a project that is not managed — the same decision the --ask half of every row already records. It never weakens the gate: the read and the admit are made before it is consulted. In a session that cannot answer it refuses (managed_ask.go), and `fugaro setup` refuses the flag by name: the gate is `fugaro update`'s",
 	// Flags whose steps confirm through the paths the property drives.
 	"create-project":        "its creation confirms through the Typed class (askTyped/canType, both covered)",
 	"managed":               "OUTSIDE the property: with --create-project it requires the budget amount (D64) and records it in the creation fact (Task 4.2); it adds a guard, so the creation still confirms through the Typed class (covered)",
@@ -874,7 +917,7 @@ func TestManagedEveryInitFlagHasACase(t *testing.T) {
 			t.Errorf("initFlagCases names --%s, which fugaro setup does not declare", name)
 		}
 	}
-	for _, d := range []string{"yes", "non-interactive", "json", "plan-only"} {
+	for _, d := range []string{"yes", "non-interactive", "json", "plan-only", "ask"} {
 		if !strings.HasPrefix(initFlagCases[d], "dimension:") {
 			t.Errorf("--%s is one of the table's dimensions", d)
 		}
@@ -921,7 +964,7 @@ func TestManagedConditionEnumerationIsComplete(t *testing.T) {
 	for i := 0; i < typ.NumField(); i++ {
 		declared = append(declared, typ.Field(i).Name)
 	}
-	if want := []string{"Yes", "NonInteractive", "JSON", "Terminal", "Agent"}; !slices.Equal(declared, want) {
+	if want := []string{"Yes", "NonInteractive", "JSON", "Terminal", "Agent", "Ask"}; !slices.Equal(declared, want) {
 		t.Fatalf("initflow.Conditions is %v and the table covers %v (%s)", declared, want, conditionsString(initflow.Conditions{}))
 	}
 }

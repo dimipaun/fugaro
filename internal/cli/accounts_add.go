@@ -37,6 +37,13 @@ type accountsAddOptions struct {
 	profile string
 	claude  bool
 	yes     bool
+	// ask is --ask (the owner's rule of 2026-11-04, and --yes's symmetric
+	// half): in a project whose marks say it is managed the declaration and
+	// the converge below are written on the gate's verdict with no prompt, and
+	// the flag asks the y/N this file has always asked instead. Unmanaged, it
+	// says so and changes nothing; a session that could not answer refuses
+	// (managed_ask.go). It is refused beside --yes.
+	ask bool
 }
 
 func newAccountsAddCmd() *cobra.Command {
@@ -84,6 +91,7 @@ so a coding agent's session is refused, --yes included.`,
 	f.StringVar(&o.profile, "profile", "", "the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one)")
 	f.BoolVar(&o.claude, "claude", false, "run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt")
 	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
+	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this declaration would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --yes")
 	return cmd
 }
 
@@ -91,6 +99,9 @@ so a coding agent's session is refused, --yes included.`,
 // does, and the subset rule is applied to the bytes this would write, before
 // the file is read for the write at all.
 func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error {
+	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
+		return err
+	}
 	// The name is a DEFINITION and not a reference: the definition's rule is
 	// ValidateClaudeAccounts', whose sentences are the ones the loader prints
 	// for the same name in the file, so the two cannot part company. It is the
@@ -162,6 +173,13 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	if err != nil {
 		return err
 	}
+	// --ask, after the gate's own decision and before anything is screened,
+	// run or written: the line it prints, or the refusal that stops this
+	// command where nobody could answer the question it restores
+	// (managed_ask.go). A gate refusal above is still the gate's own sentence.
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask, yes: o.yes}, m.Managed, askConditions(cmd, false, false)); err != nil {
+		return err
+	}
 
 	// §3's act one is screened here and run below, and the split is the owner's
 	// ruling of 2026-11-02: everything that can refuse the login — a coding
@@ -192,6 +210,7 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 		Managed: m,
 		Command: command,
 		Yes:     o.yes,
+		Ask:     o.ask,
 	}); err != nil {
 		return err
 	}

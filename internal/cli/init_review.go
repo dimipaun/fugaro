@@ -95,7 +95,7 @@ func (r *initRun) runCovers() (bool, error) {
 		return false, r.declinedRun()
 	}
 	ctx := r.ctx()
-	if r.gateUnderway() {
+	if r.gateStandsIn() {
 		rv.state = reviewTaken
 		rv.screen(ctx, "")
 		return true, nil
@@ -162,7 +162,7 @@ func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
 		}
 		if covered {
 			fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
-			if r.gateUnderway() {
+			if r.gateStandsIn() {
 				fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
 			} else {
 				fmt.Fprintln(r.w, "  covered by the run confirmation (the project's name typed at the review)")
@@ -350,7 +350,7 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	r, o := e.r, e.r.o
 	w := r.w
 	todo := e.todo()
-	managed := r.gateUnderway()
+	managed := r.gateStandsIn()
 	if managed {
 		fmt.Fprintf(w, "\nReview: project %s (GCP %s) is a managed project, so its steps take no confirmation: the deterministic gate judges each document before it writes.\n",
 			pluginwire.Printable(r.projectName), pluginwire.Printable(r.gcpProject))

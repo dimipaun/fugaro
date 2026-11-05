@@ -244,8 +244,12 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// one confirmation and the steps the gate does not judge ask about
 	// (update_managed.go's gateRun), and it is made before the first stage so
 	// that a run whose gated stages all have nothing to do still has the
-	// answer.
-	e.gateRun(ctx)
+	// answer. Its error is the --ask refusal (a managed project's prompts asked
+	// for where nobody can answer them): it stops the run here, before the
+	// first stage, and it is never a fallback to the verdict.
+	if err := e.gateRun(ctx); err != nil {
+		return err
+	}
 	res, err := initflow.Run(ctx, stages, e.options())
 	if err == nil && res != nil && e.r.o.planOnly && res.Failed == nil {
 		e.planOnlyReview(ctx, res.Stages)
