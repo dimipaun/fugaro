@@ -11,12 +11,19 @@ import (
 // The B0 ruling of 2026-11-04 (release 0.19.0) reverses the "a run does not
 // mix credentials" rule for exactly one case, and the owner's ruling of
 // 2026-11-05 widens the rung that may name the account; these tests are what
-// hold the three documents that state both to the rule: the design note that
+// hold the documents that state both to the rule: the design note that
 // records it (docs/design/mixed-credentials.md, whose §11 is new), the
 // credential section and the refusal list of the user doc
-// (docs/multi-model.md), and SECURITY.md's residual risk. B1 (the config rule
-// and the launch) is built; the rest of the tasks B1-B5 are not, and until
-// they are these documents say so.
+// (docs/multi-model.md), SECURITY.md's residual risk, and — since the tasks
+// B1-B6 shipped in 0.19.0 — the repository's own fugaro.yaml comment and the
+// owner-run smoke test (Check 290 of docs/gcp-live-checklist.md) that
+// verifies the mix live. The rule is built end to end: the config rule and
+// the launch (B1, B1b), the account's own job and the token it mounts (B2),
+// the per-stage environment (B3), the account stage's notional accounting and
+// its bound (B4) and the failure text a stage reports (B5); B6 is these
+// documents, that comment and the check. What is still not built is the
+// mitigation §6.4/§11 record as optional — a separate job execution for the
+// review stage — and every document here says so.
 //
 // The rule itself, in one sentence: a run whose own credential is a provider
 // key (`agent.auth: api-key`) may declare ONE stage-scoped Claude OAuth
@@ -49,7 +56,7 @@ import (
 // TestDocsMixedCredentialsRecordsTheRuling: the design note carries the rule
 // as its own section, with the two stages it may serve, the two it may never
 // serve, the second-provider refusal, the threat model and the failure
-// behaviour the tasks B1-B5 follow.
+// behaviour the tasks B1-B6 follow.
 func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 	const path = "docs/design/mixed-credentials.md"
 	section := flattenDoc(docSection(t, path, readDoc(t, path), "## 11. "))
@@ -135,10 +142,10 @@ func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 		"### A review stage that fails",
 		"no silent fallback",
 		// And what the note deliberately does not build.
-		"### The decisions the tasks B1-B5 follow",
+		"### The decisions the tasks B1-B6 follow",
 	} {
 		if !strings.Contains(section, want) {
-			t.Errorf("%s §11 never says %q: the ruling is not recorded and the tasks B1-B5 have nothing to build against", path, want)
+			t.Errorf("%s §11 never says %q: the ruling is not recorded and the tasks B1-B6 have nothing to build against", path, want)
 		}
 	}
 
@@ -217,6 +224,11 @@ func TestDocsMultiModelRecordsTheReviewAccountException(t *testing.T) {
 		// the limit §6 and §7 of the design note state, said where a reader
 		// meets the credential.
 		"not priced or capped by the gateway",
+		// And that the credential is not a plan any more: the reader who
+		// meets the rule here has to learn that the keys it names work, and
+		// which owner-run check the claim rests on.
+		"the whole rule is built",
+		"Check 290",
 	} {
 		if !strings.Contains(key, want) {
 			t.Errorf("%s §3 never says %q: the credential section is where a reader learns what a run may hold", path, want)
@@ -261,5 +273,181 @@ func TestSecurityMdStatesTheMixedRunResidual(t *testing.T) {
 	// hardening, and §11 keeps it unbuilt.
 	if !strings.Contains(limits, "it is not built") {
 		t.Errorf("%s's residual says the review stage's own job execution without saying it is not built: the fix a reader could assume exists is the one this document has to deny", path)
+	}
+}
+
+// TestDocsMixedCredentialsRecordsWhatShipped: the note was written as a ruling
+// the tasks build against, and the tasks are built (0.19.0). Every place the
+// document says so has to say it: the status line a reader meets first, §11's
+// own status and its decision list, §5's proposal for the shape the build
+// answered to, §9's "if built" bullet and §10's phase 3. A document left
+// reading "nothing here is built" while the tree holds the rule, the mount,
+// the per-stage environment and the notional record is the one failure this
+// test exists for: it makes an owner who does have the setting believe they do
+// not, and an agent believe a shipped refusal is still to come.
+func TestDocsMixedCredentialsRecordsWhatShipped(t *testing.T) {
+	const path = "docs/design/mixed-credentials.md"
+	doc := readDoc(t, path)
+
+	stale := "Nothing here is built"
+	if whole := flattenDoc(doc); strings.Contains(whole, stale) {
+		t.Errorf("%s still says %q: B1-B6 shipped in 0.19.0 and the status line is where a reader learns it", path, stale)
+	}
+	head := flattenDoc(doc[:strings.Index(doc, "## 1. ")])
+	for _, want := range []string{
+		"the tasks B1–B6",
+		"0.19.0",
+		"[gcp-live-checklist.md](../gcp-live-checklist.md)",
+	} {
+		if !strings.Contains(head, want) {
+			t.Errorf("%s's status line never says %q: the ruling is a description of behaviour the tree has now, and the document's first lines have to say which behaviour it is", path, want)
+		}
+	}
+
+	eleven := flattenDoc(docSection(t, path, doc, "## 11. "))
+	if !strings.Contains(eleven, "built: the tasks B1–B6 shipped in 0.19.0") {
+		t.Errorf("%s §11's status still reads as a ruling nothing implements: the section is the rule the tree runs on", path)
+	}
+	// One shipped line per area, so a reader can tell which of the five
+	// decisions the tree answers and where. The area names are pinned, not the
+	// sentences: what the task did is the tree's to describe.
+	for _, want := range []string{"Shipped (B1", "Shipped (B2", "Shipped (B3", "Shipped (B4"} {
+		if !strings.Contains(eleven, want) {
+			t.Errorf("%s §11's decision list carries no %q line: the decisions read as work outstanding", path, want)
+		}
+	}
+
+	// §5 proposed a shape under `stage_auth`; the build answered it under the
+	// accounts design's per-stage keys. The section has to say which parts of
+	// its own list shipped and which did not, or a reader takes the future
+	// tense for the state of the tree.
+	five := flattenDoc(docSection(t, path, doc, "## 5. Path B"))
+	for _, want := range []string{"Built (B1–B6)", "Check 290", "the gateway still cannot cap it"} {
+		if !strings.Contains(five, want) {
+			t.Errorf("%s §5 never says %q: the section is the one that proposed this shape, and it has to read as built rather than as outstanding", path, want)
+		}
+	}
+
+	// §9 ends its B bullet with the sandbox run the section asks for, and that
+	// run is a check with a number: an owner who wants the evidence has to be
+	// able to find it.
+	nine := flattenDoc(docSection(t, path, doc, "## 9. Testing and live checks"))
+	for _, want := range []string{"B, shipped", "Check 290", "never `belong`"} {
+		if !strings.Contains(nine, want) {
+			t.Errorf("%s §9 never says %q: the section's own B bullet is where the live run it asks for is named", path, want)
+		}
+	}
+
+	// Phase 3 is the B work, and it is done: a phases list that still lists it
+	// as a phase to come reads as a plan, not as a record.
+	ten := flattenDoc(docSection(t, path, doc, "## 10. Phases"))
+	if !strings.Contains(ten, "shipped in 0.19.0") {
+		t.Errorf("%s §10's phase 3 still reads as work to come: the phase shipped as the tasks B1–B6", path)
+	}
+}
+
+// TestFugaroYAMLStatesTheShippedReviewSettings: the repository's own
+// fugaro.yaml comment is the file's account of why these models are what they
+// are, and it drifts when the tree moves under it. It said the L1/L2 model
+// guardrail would refuse this file's pair "once it ships" and that the
+// independent review stays outside the cloud loop "until the per-stage OAuth
+// reviewer setting exists" — and both now exist: the guard is shipped
+// (`internal/config/levels.go`, D721) and the per-stage account setting is, so
+// a comment that still promises them reads as a tree two releases behind.
+// What the file may not do is make the owner's decision for them: naming a
+// Claude account here is the owner's step, after Check 290 has passed.
+func TestFugaroYAMLStatesTheShippedReviewSettings(t *testing.T) {
+	const path = "fugaro.yaml"
+	doc := readDoc(t, path)
+	for _, gone := range []string{
+		"once it ships",
+		"until the per-stage OAuth reviewer setting exists",
+	} {
+		if strings.Contains(doc, gone) {
+			t.Errorf("%s still says %q: the guard is shipped and the per-stage account setting exists, so the comment claims the tree is missing what it has", path, gone)
+		}
+	}
+	// The models are the owner's and this comment may not change them: the
+	// claim the comment makes about the pair is only true while it names them.
+	for _, want := range []string{
+		"coder: deepseek/deepseek-v4.1-flash",
+		"reviewer: deepseek/deepseek-v4-pro",
+		"D721",
+		"stages.<stage>.claude_account",
+		"docs/design/mixed-credentials.md",
+		"Check 290",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s never says %q: the file's own comment is where the pair, the guard that judges it and the setting that would change it are stated", path, want)
+		}
+	}
+}
+
+// TestDocsCheck290IsTheMixedRunsSmokeTest: the owner-run check that verifies
+// the mix live. It is the only place the whole shape meets a real run, so the
+// facts it is written to read back are pinned here one by one: the coder's
+// stage priced through the gateway, the review stage on the account with its
+// model an Opus one and its name in `stage_accounts`, the verdict that says
+// the review ran, the absence of the credential failure that would mean the
+// stage fell back, the split that puts the account's dollars inside
+// `cost.model_usd` and outside `cost.total_usd`, and the coder's environment
+// holding no token at all. A check that stopped naming one of them would pass
+// with that half unverified.
+func TestDocsCheck290IsTheMixedRunsSmokeTest(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+
+	// The row, and the section it points at.
+	if !strings.Contains(doc, "\n| 290 |") {
+		t.Errorf("%s's table carries no row for 290: a check an owner is meant to run is listed where every other one is", path)
+	}
+	section := flattenDoc(docSection(t, path, doc, "## Check 290:"))
+	for _, want := range []string{
+		// Who runs it, and where.
+		"OWNER-RUN",
+		"NOT RUN",
+		"never `belong`",
+		"no agent runs any step of it",
+		// The coder stays where it was: a provider route, priced by the
+		// gateway, and the stage's own `model call` lines are what say so.
+		"provider route",
+		"`model call`",
+		"budget.mode: enforce",
+		// The review stage is the account's, direct to Anthropic, on an Opus
+		// model, and its name is in the record.
+		"`review`",
+		"Opus",
+		"stage_accounts",
+		"credential",
+		"oauth",
+		// The verdict: the review ran and shipped, and it did not fall back.
+		"ship",
+		"Invalid API key",
+		// The accounting: notional inside the model figure and outside the
+		// billed total, and the stage's own two figures equal.
+		"model_notional_usd",
+		"total_usd",
+		"model_usd",
+		// The coder's own environment holds no model credential.
+		"CLAUDE_CODE_OAUTH_TOKEN",
+		"ANTHROPIC_API_KEY",
+		// What the owner pastes back.
+		"Paste back",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("%s's `## Check 290` never says %q: the smoke test's whole point is the fact it reads back", path, want)
+		}
+	}
+
+	// The register paragraph is the record of the number, and 290 is a
+	// reservation taken above the register's own top rather than a number this
+	// work held: it is free because the console auto-update plan declared it
+	// so, and a section written without that stated is a number nobody can
+	// audit.
+	register := flattenDoc(doc[:strings.Index(doc, "**That is the end of the register.**")])
+	for _, want := range []string{"Check 290", "290–299", "declared unused", "274–289", "Check 273"} {
+		if !strings.Contains(register, want) {
+			t.Errorf("%s's register never says %q: the number's provenance is what makes it a claim rather than a collision", path, want)
+		}
 	}
 }
