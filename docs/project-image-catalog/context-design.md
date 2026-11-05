@@ -262,7 +262,7 @@ credential where today it holds none, which is a grant and a Terraform change, a
 | --- | --- | --- |
 | `internal/config.Source` | the field, its yaml and json spellings, `catalogContextMessage`, and `addCatalogWrongKind` | the local configuration's strict loader, `ValidateCatalog` |
 | the published node | the same value, through `projectpolicy.ImageCatalog = config.Catalog` | every launcher and every run |
-| `internal/projectpolicy`'s **closed member list** (`catalogSourceMembers`) | one more name — **this is the skew** | the node's decoder, in the CLI and in the runner |
+| `internal/projectpolicy`'s member-name list (`catalogSourceMembers`, held to the documented spelling by `checkMemberNames`) | one more name, so a node spelling it any other way is refused as a misspelling — while the block's own closure comes from the typed decode, `dec.DisallowUnknownFields()`. **This is the skew** | the node's decoder, in the CLI and in the runner |
 | `internal/settings/registry.go` and `schemas/settings.schema.json` | one row each. The source's leaves are **six** today — `kind`, `repo`, `path`, `branch`, `inline`, `image`, the list `catalogSourceMembers` holds — and `context` makes them **seven**; the whole entry's leaf set is **ten**, and the registry's rows go **325 → 326** | `fugaro settings`, and the two documents that state the figure ([docs/config-management/](../config-management/README.md) F1, and the pinned `cfmRegistryRows`) re-pointed in the same commit |
 
 **The skew is the shape D1156 already states, one level down and harder.** D1156's honest note is that
@@ -270,10 +270,14 @@ credential where today it holds none, which is a grant and a Terraform change, a
 `UnknownKeys` — tolerated by a runner (`internal/runner/projectpolicy.go` logs it) and refused by the
 CLI (`refuseUnknownPolicyKeys`) — so a project that names a catalog has every launcher upgraded before
 it can launch again, and a project that names none has a node byte for byte what it was. A `context`
-member is different in one way that must be said plainly: `decodeImageCatalog` holds every member name
-to the documented spelling through **`checkMemberNames` before the decoder runs**, so a reader that
-knows `image_catalog` but predates `context` does not tolerate the member — it **fails the whole block
-decode**, in the CLI *and* in the runner. The population is narrower (only readers that already know
+member is different in one way that must be said plainly: `decodeImageCatalog` reads the block with
+**`dec.DisallowUnknownFields()`**, so a member the reader does not know is an error and not an ignored
+field — a reader that knows `image_catalog` but predates `context` does not tolerate the member, it
+**fails the whole block decode**, in the CLI *and* in the runner. (Two checks run on the member names
+*before* that decoder, and neither is what catches `context`: `checkMemberNames` refuses a name written
+twice or spelled differently from a known member — a case or Unicode-fold variant — and
+`objectMemberNames` reads the names out of the raw JSON. An entirely unknown name is the decoder's to
+refuse.) The population is narrower (only readers that already know
 `image_catalog`) and the failure is louder (a decode error, not a listed unknown key), and the remedy
 is the same one: the node is written by `fugaro update` and read by a CLI at least as new. The
 publisher's keep rule is untouched: an installation that names no catalog writes no key, and an

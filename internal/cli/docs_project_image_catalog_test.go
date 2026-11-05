@@ -297,7 +297,8 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		"**The context has no bound in the code today and this amendment does not add one**",
 		// A7: the node, the schema and the skew.
 		"### A7. The node, the schema and the skew",
-		"**`checkMemberNames` before the decoder runs**",
+		"**`dec.DisallowUnknownFields()`**",
+		"An entirely unknown name is the decoder's to",
 		"**Whether the policy `Version` moves is the owner's, and it is O1**",
 		"the whole entry's leaf set is **ten**, and the registry's rows go **325 → 326**",
 		// A8: what does not change.
