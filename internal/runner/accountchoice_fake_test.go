@@ -9,6 +9,7 @@ import (
 
 	"gocloud.dev/blob/memblob"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -192,5 +193,56 @@ func TestAutoStopsWhenEveryAccountHasRefusedTheStage(t *testing.T) {
 	}
 	if len(h.r.rec.StageAccounts) != 0 {
 		t.Errorf("a stage the walk ran out of accounts for wrote stage_accounts: %+v", h.r.rec.StageAccounts)
+	}
+}
+
+// TestAccountFailoverIsClosedToTheAccountsOwnAllowance is the walk's
+// classifier, and A7b's whole gate on it (spec §11.3): only a stage whose own
+// result event reported an error *and* whose text is one of B5's allowance
+// phrases *and* that ran on the account's own OAuth token advances the walk.
+// Everything else is an ordinary stage failure, which is the direction to fail
+// in — a walk that moved on a text that only mentions a limit would move the
+// owner's run off an account that answered it, and the run's record would name
+// an account that produced none of it.
+//
+// The phrase set itself is B5's and is pinned by his own table
+// (TestSubscriptionUsageLimitIsTheAccountsOwnSignal); what this test pins is
+// the conjunction the walk reads it through, so the rows below are one shape
+// per half of it rather than a second copy of that table.
+//
+// Mutation (drop res.IsError): the "reported no error" rows classify, so a
+// stage that succeeded — a task or a repository that is about usage limits puts
+// the words in its own result text — moves the walk.
+// Mutation (ask subscriptionUsageLimit without the auth, or answer "" for it):
+// the api-key and cascade rows classify, so a run that holds no subscription
+// allowance of its own is moved off its credential.
+// Mutation (widen a phrase, in subscriptionUsageLimit): the lookalike row
+// classifies; B5's table holds that half.
+func TestAccountFailoverIsClosedToTheAccountsOwnAllowance(t *testing.T) {
+	const wall = "Claude AI usage limit reached|1760000000"
+	cases := []struct {
+		name string
+		auth string
+		res  agent.Result
+		want bool
+	}{
+		{"the CLI's own allowance sentence", "oauth", agent.Result{IsError: true, Text: wall}, true},
+		{"the CLI's newer wording", "oauth", agent.Result{IsError: true, Text: "You've hit your limit - resets at 4pm (UTC)"}, true},
+		{"the API refusal of a spent token", "oauth", agent.Result{IsError: true, Text: `API Error: 429 {"type":"error","error":{"type":"rate_limit_error"}}`}, true},
+		{"a stage that reported no error", "oauth", agent.Result{Text: wall}, false},
+		{"the same words on an api-key run", "api-key", agent.Result{IsError: true, Text: wall}, false},
+		{"the same words on a cascade run", config.AuthCascade, agent.Result{IsError: true, Text: wall}, false},
+		{"a resource limit, not the allowance", "oauth", agent.Result{IsError: true, Text: "the build failed: disk usage limit reached"}, false},
+		{"an ordinary API refusal", "oauth", agent.Result{IsError: true, Text: `API Error: 500 {"type":"error","error":{"type":"api_error"}}`}, false},
+		{"an error with no text at all", "oauth", agent.Result{IsError: true}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newAutoFakeRun(t, true, true, autoPolicyNode(), "", nil)
+			h.r.cfg.Agent.Auth = c.auth
+			if got := h.r.accountEndedTheAttempt(c.res); got != c.want {
+				t.Fatalf("accountEndedTheAttempt(%+v) on a %s run = %v, want %v", c.res, c.auth, got, c.want)
+			}
+		})
 	}
 }
