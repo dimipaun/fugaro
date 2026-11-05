@@ -6,14 +6,16 @@ package cli
 // never edited), README.md, reconciliation.md (F1-F23, the decisions
 // D1220-D1243) and implementation-plan.md (O0-O19). Nothing in it pins a
 // command or a flag. What rots silently is pinned here: the block the decisions
-// live in, the rulings that are not the recommendation (D1235 and the retry
-// rule), Q2 answered a second time, the three round-1 questions the owner has
-// now answered, the one tension the answers left open (T7, the daemon-unit
-// carve-out of the HARD RULE), the facts a rewrite would quietly drop (D1243's
-// cache writer and O10's level, the 14-day manual rollback, the unit moved out
-// of `fugaro update` and into `fugaro setup`, the approval an intent spends and
-// the refusal that burns no attempt, the binary the unit names) and the
-// absence of any secret-shaped literal.
+// live in, the rulings that are not the recommendation (D1235, the retry rule
+// and T7), Q2 answered a second time, the three round-1 questions the owner has
+// now answered, the last tension the answers left open — T7, the daemon-unit
+// carve-out of the HARD RULE, ruled on 2026-11-05 and refused in favour of
+// `fugaro update` re-rendering an installed unit — the facts a rewrite would
+// quietly drop (D1243's cache writer and O10's level, the 14-day manual
+// rollback, the unit's first install in `fugaro setup` and its re-render in
+// `fugaro update`, the approval an intent spends and the refusal that burns no
+// attempt, the binary the unit names) and the absence of any secret-shaped
+// literal.
 
 import (
 	"os"
@@ -80,8 +82,8 @@ func TestDocsStatelessOrchestratorD1235IsNotTheRecommendation(t *testing.T) {
 
 // The three questions the round-1 security review left open were answered on
 // 2026-11-04, so the folder must not still be asking them: each has a dated
-// answer cell, the reconciliation's own words for "unanswered" are gone, and
-// the tension the answers left behind is the one item still put to the owner.
+// answer cell, and the reconciliation's own words for "unanswered" are gone —
+// from T7 too, which the owner ruled on 2026-11-05.
 func TestDocsStatelessOrchestratorOwnerQuestionsAreAnswered(t *testing.T) {
 	rec := soRead(t, soReconciled)
 	for _, id := range []string{"D1241", "D1242", "D1243"} {
@@ -105,8 +107,8 @@ func TestDocsStatelessOrchestratorOwnerQuestionsAreAnswered(t *testing.T) {
 	if !strings.Contains(rec, "**T6.") || !strings.Contains(rec, "CLOSED") {
 		t.Errorf("%s: T6 is not stated as closed", soReconciled)
 	}
-	if !strings.Contains(rec, "**T7.") || !strings.Contains(rec, "Unanswered: the owner rules") {
-		t.Errorf("%s: the one tension the answers left open (T7) is not stated as open", soReconciled)
+	if strings.Contains(rec, "Unanswered: the owner rules") {
+		t.Errorf("%s: T7 is still called unanswered after the owner's ruling of 2026-11-05", soReconciled)
 	}
 	for _, want := range []string{"mitigation, not a barrier", "ClaimKey()", "bypasses the rules"} {
 		if !strings.Contains(rec, want) {
@@ -124,20 +126,20 @@ func TestDocsStatelessOrchestratorDeviationsAreMarked(t *testing.T) {
 	if !strings.Contains(plan, "Retry rule (2026-11-04, not the recommendation)") {
 		t.Errorf("%s: the retry rule is not marked as not the recommendation", soPlan)
 	}
-	if !strings.Contains(readme, "two rulings are not") {
+	if !strings.Contains(readme, "three rulings are not") {
 		t.Errorf("%s: the README no longer names the rulings that are not the recommendation", soReadme)
 	}
 	if !strings.Contains(readme, "T7") || !strings.Contains(plan, "T7") {
-		t.Errorf("the one open tension (T7) is not named in the README and the plan")
+		t.Errorf("the tension T7 is not named in the README and the plan")
 	}
 }
 
 // Q2 was ruled a second time: the first answer (an offer inside `fugaro
 // update`) is superseded, `fugaro setup` installs the unit, `fugaro
-// orchestrator install` upgrades it, and `update` never touches it — which
-// closed T6 and opened T7 for the HARD RULE carve-out it leaves behind. A
-// later edit that puts the unit back into `update`, or that drops the
-// self-upgrade that stands in for it, is the change this design cannot afford.
+// orchestrator install` is the explicit command, and `update` never installs
+// one — which closed T6 and left T7, since ruled (T7IsRuled below). A later
+// edit that puts the unit's *install* back into `update`, or that drops the
+// self-upgrade, is the change this design cannot afford.
 func TestDocsStatelessOrchestratorQ2IsRuledTwice(t *testing.T) {
 	plan := soRead(t, soPlan)
 	rec := soRead(t, soReconciled)
@@ -154,7 +156,6 @@ func TestDocsStatelessOrchestratorQ2IsRuledTwice(t *testing.T) {
 		"TestMigrateRunsAtDaemonStart",
 		"TestUnitPointsAtTheStableBinaryPath",
 		"TestSetupInstallsTheUnitAsAPlanStep",
-		"TestUpdateNeverTouchesTheUnit",
 		"`internal/cli/update.go`",
 		"init_orchestrator_stage.go",
 	} {
@@ -172,6 +173,56 @@ func TestDocsStatelessOrchestratorQ2IsRuledTwice(t *testing.T) {
 	} {
 		if strings.Contains(plan, gone) {
 			t.Errorf("%s: the superseded first Q2 answer is still built (%q)", soPlan, gone)
+		}
+	}
+}
+
+// T7 is the newest owner ruling and it is not the recommendation: it amends
+// Q2 — `fugaro update` re-renders an installed unit's template rather than
+// leaving the person a second command — so the HARD RULE is literally true.
+// What a later edit must not drop: the ruling, its date, the boundary that
+// `update` never installs a unit, the step that carries it, and the tests that
+// hold it. A folder that still says T7 is open, or that leaves the unit's
+// template out of `update` again, is the change this design cannot afford.
+func TestDocsStatelessOrchestratorT7IsRuled(t *testing.T) {
+	plan := soRead(t, soPlan)
+	rec := soRead(t, soReconciled)
+	readme := soRead(t, soReadme)
+	for _, f := range []struct{ name, text string }{{soPlan, plan}, {soReconciled, rec}, {soReadme, readme}} {
+		if !strings.Contains(f.text, "2026-11-05") {
+			t.Errorf("%s: T7's ruling carries no date", f.name)
+		}
+		if !strings.Contains(f.text, "not the recommendation") {
+			t.Errorf("%s: T7's ruling is not marked as not the recommendation", f.name)
+		}
+	}
+	for _, want := range []string{
+		"re-renders the daemon's unit",
+		"never installs one",
+		"update_unit_stage.go",
+		"TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged",
+		"TestUpdateNeverInstallsAUnit",
+		"`fugaro orchestrator install` stays",
+	} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("%s: T7's ruled follow-through %q is gone", soPlan, want)
+		}
+	}
+	if !strings.Contains(rec, "ANSWERED 2026-11-05") {
+		t.Errorf("%s: T7 is not marked answered with its date", soReconciled)
+	}
+	for _, gone := range []string{
+		"Unanswered: the owner rules",
+		"the owner is asked to rule",
+		"until T7 is",
+		"the carve-out that\n  leaves is T7",
+		"TestUpdateNeverTouchesTheUnit",
+		"no release changes the daemon unit's template",
+	} {
+		for _, f := range []struct{ name, text string }{{soPlan, plan}, {soReconciled, rec}, {soReadme, readme}} {
+			if strings.Contains(f.text, gone) {
+				t.Errorf("%s: the superseded T7 wording is still there (%q)", f.name, gone)
+			}
 		}
 	}
 }
@@ -220,7 +271,7 @@ func TestDocsStatelessOrchestratorApprovalIsBoundToItsIntents(t *testing.T) {
 		"TestSetupInstallsInAManagedProjectWithoutAPrompt",
 		"TestDoctorReportsAnOutOfDateUnitTemplate",
 		"run --binary",
-		"no release changes the daemon unit's template",
+		"that changes the daemon unit's template is carried by `fugaro update` like any other upgrade",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s: the approval-and-refusal follow-through %q is gone", soPlan, want)

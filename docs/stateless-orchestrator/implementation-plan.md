@@ -4,12 +4,14 @@
 security review (verdict "fix first") are applied in this revision** (round 2: the launch claim is per run id and is the fence, an approval covered one attempt only (**superseded below by the owner's 2026-11-04 retry ruling**: one approval covers the first attempt and at most one automatic retry), the Routine allowlist, the lease versus the state compare-and-swap; the round-1 corrections follow): the corrections are in reconciliation section 3 (the rules do not bind a person's
 write; person-only is a mitigation; the launch claim is per run id, so it is the fence), in G2, G4, G5, G11, O0-O12 below, and in D1241-D1243.
 
-**The owner answered D1241-D1243 and Q1-Q4 on 2026-11-04, and this revision follows every answer through.** Three of them change what the plan
+**The owner answered D1241-D1243 and Q1-Q4 on 2026-11-04, and ruled the last open tension T7 on 2026-11-05; this revision follows every answer
+through.** Four of them change what the plan
 builds, and each is stated where it lands rather than only here: **the retry rule** (not the recommendation: one approval covers the first attempt
 and at most one automatic retry of the same approved spec — G4, O0, O6), **Q2** (**the owner's answer, 2026-11-04 — a different answer from the one
 this PR first recorded, which is superseded**: `fugaro setup` installs the unit as one of its listed steps and `fugaro orchestrator install` moves it
-to the new template, so **`fugaro update` never touches the unit**; O8, O9, G11, and the carve-out of the HARD RULE it leaves behind is **T7** in
-reconciliation section 6), and
+to the new template, so **`fugaro update` never touches the unit**; O8, O9, G11), **T7** (**the owner's ruling of 2026-11-05, not the recommendation,
+which amends Q2: `fugaro update` re-renders an installed unit when the rendered template changed, so the HARD RULE is literally true; `update` never
+installs one** — O9, G11, and reconciliation section 6), and
 **D1243** (the session-start print reads a local cache the daemon writes: O8 gains the cache writer and O10 moves to level 4). D1241 lifts O2's gate,
 D1242 gates nothing, **Q1** rules that the rollback is manual with the old scripts kept 14 days and no command built for it (O11, Check 302), Q3 names
 the notification channel, and Q4 gates slice 2 on a measured 14-day run of slice 1.
@@ -48,17 +50,19 @@ Findings are cited as F#, decisions as D#, open tensions as T# (reconciliation s
 | D1242 | The terminal Typed confirmation stands, and a paired-device channel comes later; the later channel may reshape O0's `Approval`, so no task or test is gated on it | O0, O5 |
 | D1243 | The session-start print reads a local cache the daemon writes (atomic, with a freshness stamp the print shows); `state --brief --offline` never reaches the network | O5, O8, O10 |
 | **Retry rule (2026-11-04, not the recommendation)** | **One approval covers the first attempt and at most one automatic retry of the same approved spec; a refusal (a failed `Precheck`, the kill switch, a spend cap, a validation refusal) is never retried; a second failure needs a person's new approval; the retry counts toward every cap** | O0, O6, G4 |
-| Q2 (**the owner's answer, 2026-11-04 — a different answer from the one this PR first recorded, which is superseded**) | **`fugaro setup` installs the unit** as one of its listed steps (real terminal only, refused under a coding agent's marker, and in a managed project no extra confirmation: the plan line names the unit and its path), **upgrades move to `fugaro orchestrator install`**, and **`fugaro update` never touches the unit**; the HARD RULE carve-out this leaves is **T7** | O8, O9, G11 |
+| Q2 (**the owner's answer, 2026-11-04 — a different answer from the one this PR first recorded, which is superseded**) | **`fugaro setup` installs the unit** as one of its listed steps (real terminal only, refused under a coding agent's marker, and in a managed project no extra confirmation: the plan line names the unit and its path), **upgrades move to `fugaro orchestrator install`**, and **`fugaro update` never touches the unit** — **amended 2026-11-05 by T7: `update` never *installs* a unit, and it does re-render and reload one already installed**; the HARD RULE carve-out it left is **T7**, now ruled | O8, O9, G11 |
+| **T7 (2026-11-05, not the recommendation; amends Q2)** | **`fugaro update` re-renders the daemon's unit when the rendered template changed, so the HARD RULE is literally true**: it only ever re-renders and reloads a unit that is **already installed** (never installs one, never creates one for a project that did not choose it), behind the same plan-and-confirm rules as every other `update` step (a managed project's gate stays, a terminal asks for the step's class); `fugaro setup` still installs the first one (Q2); `fugaro orchestrator install` stays the explicit command but no release's `### For operators` ever needs it; the daemon's self-restart and its start-up `Migrate` stay | O8, O9, G11 |
 | Q3 | The macOS notification plus the owner's existing mobile push; Linux falls back to the desktop notifier. What the tree actually carries is U9: no push implementation, and the mailbox is a foreground channel | O7, O9 |
 | Q4 | Slice 2 (O12, O13) is approved only after slice 1 has run 14 days and Check 303 measured the cycle cost | O12, O13, D1228 |
 
-**Open tensions the plan must not resolve** (reconciliation section 6): T1 (no shadow week; the scripts are kept 14 days and the rollback is the
-manual one the owner ruled), T2 (the launch in v1 is the local `fugaro run` path, never an MCP `spawn_task`; the state group must not depend on it),
-T3 (the new scopes are an edit to the MCP design), T4 (MCP-dependent work waits for the MCP threat-model amendment), T5 (the workspace design reuses
-MCP), **T6 (Q2's offer against the managed no-prompt rule) — closed by the owner's second answer of 2026-11-04: the install moved to `fugaro setup`
-and the question of what an offer does in a managed project no longer arises** — and **T7 (the carve-out of the HARD RULE that answer leaves behind:
-the daemon upgrades itself, the unit's own template still needs `fugaro orchestrator install`, and the owner is asked to rule on the reading; the
-plan builds the self-upgrade and resolves nothing about the reading)**.
+**Tensions** (reconciliation section 6): the ones the plan must not resolve are T2 (the launch in v1 is the local `fugaro run` path, never an MCP
+`spawn_task`; the state group must not depend on it), T3 (the new scopes are an edit to the MCP design), T4 (MCP-dependent work waits for the MCP
+threat-model amendment) and T5 (the workspace design reuses MCP). T1 was ruled on 2026-11-04 (no shadow week; the scripts are kept 14 days and the
+rollback is the manual one the owner ruled). **T6 — Q2's offer against the managed no-prompt rule — was closed by the owner's second answer of
+2026-11-04** (the install moved to `fugaro setup`, so the question of what an offer does in a managed project no longer arises). **T7 — the carve-out
+of the HARD RULE that answer left behind — was ruled on 2026-11-05, and not the recommendation: `fugaro update` re-renders an installed unit when the
+rendered template changed, so the HARD RULE is literally true and no second operator command is ever needed** (O9, G11). **No question here is left
+open.**
 
 ## 2. Conventions
 
@@ -70,25 +74,27 @@ adjacent code), `.claude/rules/terraform.md` (O2 edits `internal/infra/firebased
   from an agent run.
 - **Hermetic tests**: `internal/gcpfake` (its RTDB fake honours ETag and if-match), `internal/testutil`, `t.TempDir()`; the rules emulator
   tests are the repo's existing pattern (`internal/budget/rules/emulator_*_test.go`).
-- **`fugaro update` is the whole upgrade (the HARD RULE), and the owner's Q2 answer of 2026-11-04 cut the daemon unit out of it — the carve-out that
-  leaves is T7 (reconciliation section 6), which the owner has not ruled on, so the plan follows the answer and reports the reading.** Everything that was in `update` stays in it: O2 ships the rules convergence inside
-  `update`, with a test that an installation at the previous rules generation converges in one run, and the release's `### For operators` is still
-  "run `fugaro update`" plus what it asks. **What left `update` by the owner's Q2 answer is the unit**: `fugaro setup` installs the first one as a
-  listed step of its own plan (real terminal only, refused under a coding agent's marker, and in a managed project no extra confirmation — the plan
-  line names the unit and its path), `fugaro orchestrator install` installs or re-renders and restarts it, and **`update` never touches it**. The
-  hole that leaves — an upgraded binary and a daemon still running the old one — is closed **without an operator step** by the daemon itself: it
+- **`fugaro update` is the whole upgrade (the HARD RULE), literally.** The owner's Q2 answer of 2026-11-04 cut the daemon unit out of `update`, which
+  left the carve-out **T7** open; **the owner ruled T7 on 2026-11-05, and not the recommendation: `update` re-renders the unit itself**, so no release
+  ever asks for a second command and the HARD RULE is true as written. Everything that was in `update` stays in it: O2 ships the rules convergence
+  inside `update`, with a test that an installation at the previous rules generation converges in one run, and the release's `### For operators` is
+  still "run `fugaro update`" plus what it asks. **What the two answers put on the unit:** `fugaro setup` installs the first one as a listed step of
+  its own plan (real terminal only, refused under a coding agent's marker, and in a managed project no extra confirmation — the plan line names the
+  unit and its path); **`update` re-renders and reloads a unit that is already installed when the rendered template changed, and never installs one**
+  (O9) — a write to the person's own home and service manager, behind the same plan-and-confirm rules as every other `update` step; and `fugaro
+  orchestrator install` stays as the explicit command (a machine that skipped `setup`, and repair) which no release depends on. An upgraded binary
+  reaches a running daemon **without an operator step** by the daemon itself: it
   checks the binary the unit names each tick, exits cleanly when its version **differs** from the one running (not only when it is newer: whoever can write that path already owns the login unit, so a downgrade escalates nothing), and launchd (`KeepAlive`) or systemd (`Restart=always`)
-  starts the new one (O8); the state node's `schema_version` migration runs in the daemon's start-up for the same reason. Only a change to the
-  unit's own template needs `fugaro orchestrator install`, which is why the carve-out is reported to the owner as T7 rather than decided here.
+  starts the new one (O8); the state node's `schema_version` migration runs in the daemon's start-up for the same reason.
 - **`ee/` boundary**: nothing outside `ee/` imports `ee/`; `go test ./internal/eeboundary/ -count=1` after any `ee/` or registration change; the
   core builds and tests with `ee/` deleted; `TestCoreNeverImportsEE` is the standing guard, and no core task here imports `ee/`.
 - **A field never changes meaning**: every new wire shape (state, patch, `--json` output, policy keys) is additive with a `schema_version` and a
   schema in `schemas/` (F21); the work item's fields (`phase`, `rigor_tier`) are named in O0 so that none equals a run-record or
   MCP field with a different meaning.
 - **Release notes**: a task that changes what `fugaro update` does adds its line to the release notes' `### For operators` in the same PR
-  (`docs/releases/README.md`); the file is `docs/releases/vX.Y.Z.md` of the release the owner assigns under D1240 (O2 creates the entry). **Until T7 is
-  ruled, no release changes the daemon unit's template**: a unit change is the one upgrade `fugaro update` cannot carry, and adding `fugaro orchestrator
-  install` to `### For operators` would ship a second operator step while the HARD RULE's carve-out is still the open question.
+  (`docs/releases/README.md`); the file is `docs/releases/vX.Y.Z.md` of the release the owner assigns under D1240 (O2 creates the entry). **A release
+  that changes the daemon unit's template is carried by `fugaro update` like any other upgrade** (T7 ruled, O9): it adds no operator line, and no
+  release's `### For operators` names `fugaro orchestrator install` — the HARD RULE's promise is that the one command is the whole upgrade.
 - **Comments explain why**; no TODO, no section headers. A fix round adds no functionality.
 - **Plugin tests** check every command and flag a skill names against the CLI: O5 and O10 move together (O10 depends on O5).
 - **Docs tests**: a task that edits a doc runs `GOFLAGS=-p=2 go test ./internal/cli/ -run 'Docs' -count=1`.
@@ -107,7 +113,7 @@ adjacent code), `.claude/rules/terraform.md` (O2 edits `internal/infra/firebased
 | G8 | The daemon and decision agents never run a gated converge or publish command, never pass `Yes` to a confirmation, and never answer a refusal with an action (D1238, F20) | O8 `TestDaemonDoesNotDependOnGatedCommands` (an import and dependency test), `TestDaemonNeverPassesYes`, O12 `TestDecisionAgentRunsWithTheAgentDenyRules` |
 | G9 | One daemon per orchestrator id by the lease; **the state compare-and-swap, not the lease, serialises intents** (a daemon that lost its lease could win a `PutIfMatch` after a re-read, so `Save` re-checks the lease before every retry); a stale writer's write is refused, never forced (D1232, F5); `state`, `lease` and `audit` are **siblings** under `orchestrator/<id>` (a PUT of the parent wipes children and every heartbeat would move a shared ETag) | O3 `TestTwoDaemonsOneLease`, `TestSaveRechecksTheLeaseBeforeARetry`, `TestHeartbeatDoesNotMoveTheStateETag` |
 | G10 | A failed or empty cycle is a visible state (a `pending_decisions` item), never a silent no-op (owner lesson 22) | O6 `TestBreakerRaisesADecision`, O12 `TestEmptyCycleCountsAsFailed` |
-| G11 | A rules or policy change is converged by `fugaro update` from the previous generation, and a **state-schema** change converges without the person doing anything either: `Migrate` runs in the daemon's start-up (O8). The **daemon unit** is the owner's Q2 carve-out (T7): `fugaro update` never touches it, `fugaro setup` installs the first one as a step of its plan, `fugaro orchestrator install` moves it to a new template, and an upgraded binary reaches the running daemon by the daemon's own version check and clean exit, not by a command (the HARD RULE's carve-out; owner ruling 2026-11-04, T7) | O2 `TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration`, O0 `TestMigrateFromThePreviousSchemaVersion`, O8 `TestMigrateRunsAtDaemonStart`, `TestDaemonRestartsWhenTheUnitBinaryDiffers`, O9 `TestInstallRerendersAndRestartsAPreviousVersionUnit`, `TestSetupInstallsTheUnitAsAPlanStep` |
+| G11 | A rules, policy, **state-schema** or **daemon-unit** change converges under `fugaro update` from the previous generation, with no other operator step (the HARD RULE, ruled literally true on 2026-11-05): `update` re-renders an **already installed** unit when the rendered template changed and never installs one (O9, T7), `Migrate` runs in the daemon's start-up (O8), and an upgraded binary reaches the running daemon by the daemon's own version check and clean exit, not by a command. `fugaro setup` installs the first unit (Q2) and `fugaro orchestrator install` stays the explicit command (a machine that skipped `setup`, repair), which no release depends on | O2 `TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration`, O0 `TestMigrateFromThePreviousSchemaVersion`, O8 `TestMigrateRunsAtDaemonStart`, `TestDaemonRestartsWhenTheUnitBinaryDiffers`, O9 `TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged`, `TestUpdateNeverInstallsAUnit`, `TestInstallRerendersAndRestartsAPreviousVersionUnit`, `TestSetupInstallsTheUnitAsAPlanStep` |
 
 **Reviewer tier.** *Security*: `security-reviewer` (Opus), a mandatory independent review, at least one mutation check, routed by changed
 paths (rules, guards, the launch path, prompts and plugin skills are security paths per the owner's routing rule). *Light*: `light-reviewer`.
@@ -341,8 +347,8 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   silent.** It
   refuses any gated converge or publish command (G8): the daemon reports "update due" and nothing else; **it never passes `Yes`** to any confirmation
   and the daemon package does not depend on the gated-command packages.
-  **Start-up, before the first tick (the owner's Q2 answer of 2026-11-04 took the unit out of `fugaro update`, so the daemon has to converge itself;
-  T7 records the reading):** the state is loaded through O3's store, whose `Load` applies O0's `Migrate`, so a state node left at an older
+  **Start-up, before the first tick (the daemon converges its own state node — Q2's answer ran `update` past it, and T7's ruling of 2026-11-05 keeps
+  this: `Migrate` at start-up is the daemon's, while the unit's own template is `update`'s re-render, O9):** the state is loaded through O3's store, whose `Load` applies O0's `Migrate`, so a state node left at an older
   `schema_version` is migrated **by the daemon's own start-up** and the next `Save` writes the raised version — not by `update`, which no longer
   touches anything under `orchestrator/`. **Each tick then checks the binary the unit names against the running process:** the daemon reads the version
   of **the path the unit rendered into it** (`fugaro orchestrator run --binary <stable path>`, which `install` writes; never `os.Executable()`, which on
@@ -351,7 +357,7 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   that version differs from the running one it exits cleanly (status 0, lease released), so launchd's `KeepAlive` or systemd's `Restart=always` starts
   the new binary from the same stable path.** The rule is **differs**, not "newer": a downgrade restarts the daemon too, and escalates nothing, because
   whoever can write that path already owns the login unit. That is what makes a `brew upgrade` reach a running daemon with no operator step and no unit
-  re-render; a read that fails, or an unparseable version, is logged and **never** a reason to exit (a broken package-manager link must not stop the
+  re-render at all — the re-render is for a *template* change, and it is `fugaro update`'s own step (O9, T7); a read that fails, or an unparseable version, is logged and **never** a reason to exit (a broken package-manager link must not stop the
   daemon), and the check is **skipped only while a `Launch` is in progress**, never for a run merely in flight, so a busy queue still upgrades and a
   tick never abandons a start. A foreground `run` with no `--binary` runs the check off: nothing restarts it.
 - **Schema/rules/config change:** none.
@@ -370,16 +376,16 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   fails when the daemon keeps running after the binary at the unit's path has moved on, which is the upgrade hole T7 is about.
 - **Reviewer:** security (the launch path).
 
-### O9. The unit: `fugaro setup`'s step and `fugaro orchestrator install`
+### O9. The unit: `fugaro setup`'s step, `update`'s re-render and `fugaro orchestrator install`
 
-- **Files (14):** `website/content/cli-reference.md` (regenerated), `internal/orchestrator/service/launchd.go` (new), `internal/orchestrator/service/systemd.go` (new),
+- **Files (16):** `website/content/cli-reference.md` (regenerated), `internal/orchestrator/service/launchd.go` (new), `internal/orchestrator/service/systemd.go` (new),
   `internal/orchestrator/service/service.go` (new), `internal/orchestrator/service/service_test.go` (new), `internal/orchestrator/service/testdata/unit-a.golden`
   (new), `internal/cli/orchestrator_install.go` (new), `internal/cli/orchestrator_install_test.go` (new), `internal/cli/orchestrator_cmd.go` (edit: install,
   uninstall, status), **the setup step: `internal/cli/init_orchestrator_stage.go` (new), `internal/cli/init_orchestrator_stage_test.go` (new), and
-  `internal/cli/init_stages.go` (edit: registers the step for the `setup` door)**, **and the drift report: `internal/cli/doctor.go` (edit: `doctor`
+  `internal/cli/init_stages.go` (edit: registers the two stages, one per door)**, **the update-side step (T7's ruling): `internal/cli/update_unit_stage.go`
+  (new) with `internal/cli/update_unit_stage_test.go` (new)**, **and the drift report: `internal/cli/doctor.go` (edit: `doctor`
   reports a unit written from an older template) with `internal/cli/doctor_orchestrator_test.go` (new)** — so the person is told "update due" for the
-  unit the one way the CLI already reports drift, and O10's session-start nudge can carry the same line. **`internal/cli/update.go` is not touched by this task** and no
-  update hook is written: `update` never converges the unit (the owner's Q2 answer, below).
+  unit the one way the CLI already reports drift, and O10's session-start nudge can carry the same line. **`internal/cli/update.go` is not touched by this task**: `update` already runs `initStages` (`init_stages.go`'s list, which `converge` builds for both doors), so the update-side step is registered there like the checkout stage, and `update.go`'s own flags and stages are none of this task's business.
 - **Interfaces:** `fugaro orchestrator install|uninstall|status`: writes a per-user unit that runs `fugaro orchestrator run`, restarts after a crash or
   reboot (`KeepAlive` on launchd, `Restart=always` on systemd), never touches a system path or needs root; macOS and Linux only (D1232), Windows
   answers "not supported" (`docs/windows-cli`). Content is rendered from a fixed template with the binary path quoted; nothing from state or policy
@@ -392,14 +398,34 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   covers it (a unit runs code at login); **the residual is the same one G2 names — `env -u CLAUDECODE fugaro orchestrator install` — and it escalates
   nothing, because whoever can call that can write a plist into the login directory directly** (the marker is a mitigation, not a barrier).
   **The owner's Q2 answer (2026-11-04 — a different answer from the one this PR first recorded, which is superseded):** the **first install belongs
-  to `fugaro setup`**, as one of its listed steps, and **`fugaro update` never touches the unit**. The setup step renders the plan line every stage
+  to `fugaro setup`**, as one of its listed steps. The setup step renders the plan line every stage
   renders — naming the unit it writes and where it is written — and calls the very same installer `fugaro orchestrator install` calls, so there is one
   implementation and no second renderer; it is registered for the `setup` door in `initStages` (`update` runs the same list and its door removes this
   step, the way it removes the project stage's creation path), it is **a real terminal only and refused under a coding agent's marker** (the unit is
   written by the person's own run, never by an agent), and in a **managed project it follows the no-prompt rule**: no extra confirmation, because the
-  step is a line of a plan the person already reads before it is applied. **That closes T6** — nothing asks a question the no-prompt rule forbids —
-  and the carve-out of the HARD RULE the answer leaves behind is **T7** (reconciliation section 6, unanswered), which is why O8 carries the
-  self-upgrade and this task carries no update hook.
+  step is a line of a plan the person already reads before it is applied. **That closes T6** — nothing asks a question the no-prompt rule forbids.
+
+  **T7's ruling (2026-11-05, not the recommendation; it amends Q2's "`update` never touches the unit"):** **`fugaro update` re-renders the daemon's
+  unit, so the HARD RULE is literally true and no release ever asks for a second command.** The **update-side step** (`update_unit_stage.go`,
+  registered for the `update` door in `initStages`, and by nothing else) does four things, and nothing more:
+  **detect** an installed unit (the platform's own login-unit file under the person's home — `~/Library/LaunchAgents/<label>.plist` on macOS, and
+  `localcfg.UserDir(..., DirConfig)` joined with `systemd/user/<name>.service` on Linux — the same path `install` writes; none installed means the
+  step ends there, with a plan line saying so);
+  **compare** the template it would render now with the file on disk, using `service.Render`, the same renderer `install` uses, so there is no second
+  renderer and no stamp to drift;
+  **re-render** the file when the two differ — the unit's text, the stable binary path and the `run --binary` argument alike — and leave a current unit
+  byte-for-byte alone (a re-render that churns an identical file, or a reload with nothing to reload, would make the one command noisy on every run);
+  and **reload** the login service (`launchctl` at the user's own login level on macOS, `systemctl --user` on Linux, the same interface
+  `install` uses, faked in tests) so the running daemon picks the re-rendered unit up.
+  **It is a write to the person's own home and their own service manager, never to a system path and never to the cloud**, and it is stated as such in
+  the plan line: no root, no `sudo`, no network. **It never installs a unit**: a machine without one — a project that did not choose the daemon, or a
+  person who skipped `setup` — gets no daemon from `update`, and that is a boundary of the ruling rather than an oversight. **It follows the same
+  plan-and-confirm rules as every other `update` step**: a managed project's gate stays exactly as it is (no new prompt and no new exemption for this
+  step), and at a terminal it asks for the step's own class — **`Typed`**, the strictest, because a unit is code that runs at login and `--yes` never
+  covers one (the same class `install` takes) — with the agent-marker refusal G2 names applying here too, so an agent-driven `update` writes no unit
+  and the drift stays visible through `doctor` and O10's nudge until the person runs the command themselves. **`fugaro orchestrator install` stays the
+  explicit command** — the first install on a machine that skipped `setup`, and repair — and the re-render reuses its installer rather than a second
+  copy of it, but **no release's `### For operators` ever needs it**. `Migrate` stays the daemon's own start-up (O8), so this step carries no state work.
 - **Schema/rules/config change:** none.
 - **Tests:** `TestLaunchdPlistMatchesTheGolden`, `TestSystemdUnitMatchesTheGolden`, `TestInstallWritesOnlyUnderTheUserHome`, `TestWindowsIsRefusedNamed`,
   `TestUninstallRemovesWhatInstallWrote`, `TestInstallRefusedUnderAnAgentMarker`, `TestUnitPointsAtTheStableBinaryPath` (never a versioned
@@ -410,19 +436,32 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   what it wrote and restarts once), `TestSetupInstallsTheUnitAsAPlanStep` (a `setup` run's plan names the unit and its path, and the step calls the
   same installer), `TestSetupInstallsInAManagedProjectWithoutAPrompt` (a managed project's `setup` reaches the step with no confirmation of its own:
   the plan line is the only thing the person is shown), `TestSetupNeverInstallsUnderAnAgentMarker` (an agent session's `setup` runs to completion and
-  writes no unit, the step skipped with the marker's own sentence), `TestUpdateNeverTouchesTheUnit` (in the spirit of O8's dependency test: `fugaro
-  update` leaves an installed unit's file byte-for-byte as it found it), `TestDoctorReportsAnOutOfDateUnitTemplate` (the unit's stamp says an older
-  template, so `doctor` reports the drift — never a command to run silently, and never a write). Tests render into `t.TempDir()` and never call
+  writes no unit, the step skipped with the marker's own sentence), and `TestDoctorReportsAnOutOfDateUnitTemplate` (the file on disk differs from what
+  the current template renders, so `doctor` reports the drift — never a command to run silently, and never a write). **T7's ruling adds the update-side
+  half**, all in `update_unit_stage_test.go`: `TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged` (a machine whose unit was rendered from the
+  previous template converges under **one `fugaro update`** — the file is re-rendered from the current template and the service reloaded — with no
+  second command, which is the HARD RULE), `TestUpdateNeverInstallsAUnit` (no unit installed: `update` writes none and the plan line says why, so a
+  project that did not choose the daemon never gets one), `TestUpdateLeavesACurrentUnitAlone` (the rendered text equals the file: no write and no
+  reload, so a repeated `update` is quiet), `TestUpdateRerendersWhenTheBinaryPathChanged` (the render carries the stable path, so a moved Homebrew
+  prefix re-renders), `TestUpdateUnitStepNeedsATypedConfirmation` (the class is `Typed`: `--yes` does not cover it and an agent-marker run writes no
+  unit), `TestUpdateUnitStepTouchesNoSystemPath` (the write stays under the person's home and no `sudo` is asked for), and
+  `TestUpdateUnitStepUsesTheInstallersRenderer` (the step calls `service.Render` and the installer's reload, so there is no second renderer). Tests
+  render into `t.TempDir()` and never call
   `launchctl` or `systemctl` (an interface is faked).
-- **Command:** `go test ./internal/orchestrator/service/ -count=1 && go test ./internal/cli/ -run 'TestLaunchd|TestSystemd|TestInstall|TestUninstall|TestWindows|TestSetup|TestUpdateNeverTouches|TestDoctorReportsAnOutOfDateUnitTemplate' -count=1`
+- **Command:** `go test ./internal/orchestrator/service/ -count=1 && go test ./internal/cli/ -run 'TestLaunchd|TestSystemd|TestInstall|TestUninstall|TestWindows|TestSetup|TestUpdateRerenders|TestUpdateNeverInstalls|TestUpdateLeaves|TestUpdateUnitStep|TestDoctorReportsAnOutOfDateUnitTemplate' -count=1`
 - **Depends on:** O8. **Level 4.**
-- **Commit:** `feat(cli): install the orchestrator unit from fugaro setup and fugaro orchestrator install (O9)`
-- **Red step:** `TestInstallWritesOnlyUnderTheUserHome` fails to build, then fails when a path outside the home is accepted.
+- **Commit:** `feat(cli): install the orchestrator unit from fugaro setup and re-render it from fugaro update (O9)`
+- **Red step:** `TestInstallWritesOnlyUnderTheUserHome` fails to build, then fails when a path outside the home is accepted; **and, for T7's ruling,
+  `TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged` fails while `update` leaves the previous template's unit in place — an installation at the
+  previous template version must converge under `fugaro update` alone, which is the HARD RULE.**
 - **OWNER-RUN, Check 301 (text written by O2):** on the owner's Mac: `fugaro orchestrator install`, close the terminal, reboot, confirm the daemon is running and exactly one
-  instance holds the lease (start a second by hand and see it refuse); **then the upgrade half, which is what T7 is about: a brew-style upgrade on a
+  instance holds the lease (start a second by hand and see it refuse); **then the upgrade half: a brew-style upgrade on a
   throwaway machine, with the daemon running, and the daemon must notice the new binary and exit so launchd starts it, with no command typed**; on a
-  Linux machine the same with systemd. No agent runs it.
-- **Reviewer:** security (code that runs at login).
+  Linux machine the same with systemd. **Then T7's own half, which a fake cannot settle:** take that machine to a release that changes the unit's
+  template, run **`fugaro update`** and nothing else, and confirm the unit file is re-rendered, the service reloaded, the daemon running under it, and
+  that a second `fugaro update` writes nothing. No agent runs it.
+- **Reviewer:** security — **`security-reviewer` (Opus), a mandatory independent review with at least one mutation check** (the owner's routing rule
+  puts a guard and a write path here, and T7's ruling doubles it: code that runs at login, plus code `fugaro update` runs on the person's own machine).
 
 ### O10. The plugin skill and the shared session-start hook slot
 
@@ -435,7 +474,8 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   **D1243 was answered on 2026-11-04: the print reads O8's local cache and reaches no network, so D952's no-network rule holds at session start.** The
   print shows the short summary, any pending decision and **the cache's freshness stamp**, so a stale cache is visible rather than silent, **fenced and
   cleaned** (G3), ordered after the update nudge — **which carries O9's doctor line when the installed unit was rendered from an older template**, so
-  the carve-out T7 leaves is visible to the person rather than silent.
+  an `update` that could not confirm the re-render (an agent-marker run, a run with no terminal) leaves a drift the person is told about rather than a
+  silent one.
 - **Schema/rules/config change:** the plugin skill list.
 - **Tests:** `TestOrchestratorSkillNamesOnlyRealCommandsAndFlags`, `TestSessionStartPrintsOneScreen`, `TestSessionStartPrintFencesStoredText`, `TestHookNeverRunsAGatedCommand`,
   `TestSessionStartPrintMakesNoNetworkCall` (the print's command is the `--offline` one and a client that fails every call still prints the cache),
@@ -590,10 +630,10 @@ one level beyond slice 1 once approved **and once Q4's gate is met**; slice 3's 
 | `schemas/*` | each schema has one writer (O0, O5, O12) | one writer each |
 | `internal/orchestrator/state.go` and `schemas/orchestrator-state.schema.json` | O0 (0) only; O6 and O12 use `Intents` and `Counters` and edit neither | one writer |
 | `website/content/cli-reference.md` (generated by `go run ./ee/clidoc`) | O5 (2), O8 (3), O9 (4), O11 (5), O13 (6) | no, one per level |
-| `internal/cli/init_stages.go`, `internal/cli/init_orchestrator_stage.go` and its test (the setup step Q2 moved the first install into) | O9 (4) | one writer |
+| `internal/cli/init_stages.go`, `internal/cli/init_orchestrator_stage.go` and `internal/cli/update_unit_stage.go` with their tests (the setup step Q2 moved the first install into, and the update-side re-render T7's ruling adds) | O9 (4) | one writer |
 | `internal/cli/orchestrator_version.go` and its test (the binary-version check, T7) | O8 (3) | one writer |
 | `internal/cli/doctor.go` and its orchestrator test (the out-of-date unit template) | O9 (4) | one writer |
-| `internal/cli/update.go` | **no writer: Q2's answer took the unit out of `update`**, so no task here edits it | — |
+| `internal/cli/update.go` | **no writer: the unit's re-render is a stage of `initStages`, which O9 registers (`update` already runs that list)**, so no task here edits `update.go` itself | — |
 | `internal/orchestrator/cache.go` and its test (D1243's writer) | O8 (3); O5 (2) reads the cache file the daemon produces at runtime, never this source file | one writer |
 
 **Re-checked for D1243 and the new level table:** every file above has one writer per level (level 3 is O8 and O18, level 4 is O9 and O10, and neither pair
@@ -608,24 +648,32 @@ are unchanged (O9 is level 4 either way, and O8's new dependence on O0 is on a l
 touches either; O8 gained no file (the cache and crash tests its Command names were already its own), and the retry and refusal rules changed no
 interface, so **the edges, the level table, the critical path and the shared-files table are as they were**.
 
+**Re-checked for T7's ruling:** the update-side step is **two files in O9** (`internal/cli/update_unit_stage.go` and its test) plus a registration in
+`init_stages.go`, which was already O9's, so **no level gained a writer and `internal/cli/update.go` still has none** (level 4 is O9 and O10, and O10
+writes only `plugin/` files); it needs no state, so **O9 <- O8 is unchanged**, and O9 stays at level 4 — the critical path (O0 -> O3 -> O5 -> O8 -> O9
+-> O11) does not move. The one thing the ruling *removes* is the second-command escape hatch the table's rows used to lean on: what converged the unit
+is now `update` itself.
+
 ## 5. Owner-run items, exactly
 
 Checks 300 (O2: rules and `fugaro update` on a real installation, not `belong`), 301 (O9: the daemon under launchd and systemd across a reboot and
-a second instance, **and the upgrade half of T7 — a brew-style upgrade on a throwaway machine with the daemon running, which must notice the new
-binary and hand over to it with no command typed**), 302 (O11: the cutover on the owner's own installation **and, inside the 14 days, the manual rollback** — stop the daemon with
+a second instance, **the upgrade half — a brew-style upgrade on a throwaway machine with the daemon running, which must notice the new
+binary and hand over to it with no command typed — and T7's own half, a release that changes the unit's template converging under `fugaro update`
+alone, with a second `update` writing nothing**), 302 (O11: the cutover on the owner's own installation **and, inside the 14 days, the manual rollback** — stop the daemon with
 `fugaro orchestrator uninstall`, re-arm the sweep, the watcher and the queue scripts, and see one launch through them), 303 (O12: one real decision
 call and the measured cost, **which is Q4's gate for slice 2 together with slice 1's 14 days**), 304 (O17:
 a two-person handoff), 305 (O16: the MCP state group, when it exists). 306-309 are reserved. No agent performs any of them. **The manual rollback is
-the one owner action here that has no command behind it** (T1, answered 2026-11-04): it is the three steps Check 302 names, run by hand. **The one
-command an upgrade can still ask for is `fugaro orchestrator install`, and only when a release changes the unit's own template** (T7, reported and
-not decided): a binary upgrade alone asks for nothing, because the daemon hands over to the new binary itself, and **until T7 is ruled no release changes
-the unit's template**, so the second command is not asked for either.
+the one owner action here that has no command behind it** (T1, answered 2026-11-04): it is the three steps Check 302 names, run by hand. **After T7's
+ruling (2026-11-05) no upgrade asks for a command at all**: a binary upgrade is the daemon's own hand-over, a template change is `fugaro update`'s
+re-render, and `fugaro orchestrator install` is the explicit command for a machine that skipped `setup` or needs a repair — **`update` never installs a
+unit, so Check 301's template half starts from a machine that has one**.
 
-## 6. Owner questions: the answers, and the one thing still open
+## 6. Owner questions: the answers, and nothing left open
 
-**Q1-Q4 were all answered on 2026-11-04, and D1241-D1243 with them. Q2 was answered a second time on the same day, which closed T6. The one item this
-section still puts to the owner is T7** (the daemon-unit carve-out of the HARD RULE, reconciliation section 6): the plan builds the self-upgrade the
-carve-out needs and resolves nothing about the reading.
+**Q1-Q4 were all answered on 2026-11-04, and D1241-D1243 with them. Q2 was answered a second time on the same day, which closed T6, and the last
+tension the answers left open, T7, was ruled on 2026-11-05** (reconciliation section 6): **the ruling is not the recommendation — `fugaro update`
+re-renders an installed unit rather than leaving the person a second command**, so **this section puts nothing to the owner any more** and the plan
+follows the ruling through O9, G11 and the conventions above.
 
 - **Q1 (T1): answered.** No one-command rollback. The old scripts are **kept for 14 days** and the rollback is **manual and documented** — stop the
   daemon, re-arm the sweep, the watcher and the queue scripts (O11's how-to, Check 302's second half, section 5).
@@ -633,10 +681,16 @@ carve-out needs and resolves nothing about the reading.
   **`fugaro setup` installs the daemon** — one of its listed steps, shown in its plan, at a real terminal only, refused under a coding agent's marker,
   the unit written by the person's own run and never by an agent — and in a **managed project the step follows the no-prompt rule**: no extra
   confirmation, because the plan line already names the unit and its path. **Upgrades move out of `fugaro update`** and into
-  **`fugaro orchestrator install`**, which installs or re-renders and restarts the unit; **`fugaro update` never touches it.** The first answer
-  (an offer inside `update`) is gone, and with it the collision that was **T6**: nothing now asks a question the no-prompt rule forbids. **What the
-  answer leaves behind is T7** (the carve-out of the HARD RULE, reconciliation section 6, unanswered): the plan closes the binary and schema parts of
-  it with O8's self-upgrade, and the owner rules on the reading.
+  **`fugaro orchestrator install`**, which installs or re-renders and restarts the unit; **`fugaro update` never touches it** — **amended on
+  2026-11-05 by the T7 ruling below.** The first answer
+  (an offer inside `update`) is gone, and with it the collision that was **T6**: nothing now asks a question the no-prompt rule forbids.
+- **T7: ruled 2026-11-05, and not the recommendation.** **`fugaro update` re-renders the daemon's unit when the rendered template changed**, so the HARD
+  RULE is literally true and no release asks the person for a second command. The boundaries: `update` **only ever re-renders and reloads a unit that is
+  already installed** and never installs one (a machine that skipped `setup` stays without a daemon until a person asks for one); the step sits behind
+  the same plan-and-confirm rules as every other `update` step, takes the strict `Typed` class because a unit is code that runs at login, and writes
+  only under the person's own home and service manager — never a cloud write, never root; `fugaro setup` still installs the first one (Q2) and `fugaro
+  orchestrator install` stays as the explicit command (a machine that skipped `setup`, repair) that no release's `### For operators` needs; and the
+  daemon's self-restart on a changed binary and its start-up `Migrate` stay as O8 has them (O9, G11).
 - **Q3 (P2): answered.** The macOS OS notification, plus the owner's existing mobile push as the second channel; Linux falls back to the desktop
   notifier. **What the tree actually carries is U9** (reconciliation section 5): no push implementation exists in it, so the mobile half is UNVERIFIED
   against `main` and slice 1 ships the OS notification.
@@ -650,6 +704,14 @@ carve-out needs and resolves nothing about the reading.
   cap; `spec.md` is not edited (G4, O0, O6; reconciliation section 3). (3) **Still reported, not decided:** an ambiguous launch error stays in flight up
   to `ClaimTTL` (10 minutes: `launchRun`'s contract, the runner's `ErrDuplicateExecution` is the second fence); a daemon's repeated "still in flight"
   ticks must not count toward the circuit breaker (O6, O7 tests).
+- **Open items T7's ruling raises (reported, not decided here).** (1) **An `update` that cannot confirm the unit step writes no unit**: an agent-marker
+  run, a run with no terminal, or a managed-project gate that declines the step leaves an out-of-date unit behind, and the person has to run `fugaro
+  update` again where they can answer. The ruling keeps the managed gate exactly as it is (no exemption for this step), so the plan builds that; what is
+  **reported rather than decided** is whether that consequence is the right one for a managed project, where Q2 did give the setup step its no-prompt
+  reading. (2) **A hand-edited unit is reverted**: the
+  comparison is the rendered template against the file on disk, so a person who edited their plist or unit by hand sees `update` overwrite it (which is
+  what `fugaro orchestrator install` already does). Reported rather than decided: nothing in either ruling says whether such an edit should be preserved,
+  and a second stamp would be needed to tell it from an old template (O9, section 3).
 - **D1241, D1242, D1243** (the round-1 security review's questions, now answered in the reconciliation's decision table and its section 6): D1241 the
   person's own credential writes the node, so **O2's gate is lifted**; D1242 the terminal Typed confirmation now and a paired-device channel later, so
   **nothing is gated**; D1243 the session-start print reads a local cache, so **O8 gains the cache writer and O10 depends on O8 (level 4)**.
