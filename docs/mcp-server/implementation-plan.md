@@ -108,7 +108,9 @@ D921 back to its alternatives before any code exists rather than after.
   (`internal/budget/rules/rules.json.tmpl:10-13`, the claim at `internal/budget/rules/rules.go:517`):
   the node is refused to every client, and the one account that writes it — the coordinator's own —
   reaches it through `roles/firebasedatabase.admin`
-  (`deploy/terraform/gcp/modules/firebase/iam.tf:138`) and not through a rule.
+  (`deploy/terraform/gcp/modules/firebase/iam.tf:138`) and not through a rule. **That last sentence
+  states the rules' half only, and both it and [spec.md](spec.md) §8 overstate the other one: see the
+  open item below.**
 - **Red step:** `TestMCPAuthIsNamedAndDeniedToEveryClient` — it asserts the subtree is **named** in
   the template, and that the emulator refuses a **read** as `USER` and as a run's `TOKEN` and refuses
   a **write** as `USER` and as `TOKEN`. It fails before the template change because the key is
@@ -123,6 +125,31 @@ D921 back to its alternatives before any code exists rather than after.
   one**, so the review's question here is the reverse of the one an open read rule would raise: not
   what the exposure accepts, but whether anything but the coordinator's account can reach a node the
   rules refuse and the database admin grant reaches past them.
+- **Open item for the owner — the IAM exposure this task's rules cannot close (raised 2026-11-05,
+  deciding nothing).** [spec.md](spec.md) §8 says the subtree is "read by the coordinator's account
+  over IAM and by nobody else" (`docs/mcp-server/spec.md:513`) and calls the coordinator's account
+  its only writer, and the Interface bullet above repeats that; **neither holds.** A rule binds a
+  client token and binds no IAM identity, and the installation's RTDB roles are granted
+  project-wide, with no path scope and no condition: `roles/firebasedatabase.viewer` to every
+  launcher and every operator (`deploy/terraform/gcp/modules/firebase/iam.tf:44`), who read the
+  whole database past the rules, and `roles/firebasedatabase.admin` to the admins and budget admins
+  (`deploy/terraform/gcp/modules/firebase/iam.tf:53`), to the history service account
+  (`deploy/terraform/gcp/modules/firebase/iam.tf:81`) and to the coordinator's own writer
+  (`deploy/terraform/gcp/modules/firebase/iam.tf:141`), who read and write it. So `mcpauth` is
+  refused to every client the rules bind — the whole of what a rule can do, and what M3's red step
+  proves — and **not** refused to the installation's own IAM identities: the token records, the
+  client list, the redirect URIs, the revocation state and the whole tool-call audit are inside that
+  exposure. The rules package already records this fact for `config/admin`
+  (`internal/budget/rules/rules.go:59`), [roles.md](../design/roles.md) states it for the database as
+  a whole (`docs/design/roles.md:104` — "Any confidential thing placed in RTDB is readable by
+  everyone on either list"), and M3's own SEC bullet above is the question it answers: something
+  other than the coordinator's account **can** reach this node. **The options, none of them decided
+  here:** a store the installation's RTDB roles do not reach (a separate database instance, or a
+  different store altogether); narrower IAM, which RTDB's project-wide `firebasedatabase.admin` and
+  `firebasedatabase.viewer` do not offer at path level; or the exposure accepted and §8 and this
+  section corrected to say what is true. **M5 does not write a record into `mcpauth` until the owner
+  answers**: the answer decides whether the records live there at all, and a coordinator that began
+  writing would settle the store by default.
 - **Depends on:** nothing. **Can land first.**
 - **Do not touch:** `internal/budget/rules/rules.go` is shared with every other rules work; the
   change is one constant and one template key, and a conflict there is a rebase, not a redesign.
