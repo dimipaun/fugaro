@@ -370,3 +370,184 @@ func TestAutoWalksTheAccountsInTheListOrder(t *testing.T) {
 		t.Error("the run's log carries the credential")
 	}
 }
+
+// oauthWall is the CLI's own sentence about a spent allowance, the shape B5's
+// classifier reads (runner.go, oauthLimitPhrases). It carries a reset instant
+// and no token, and it is the output a stage says, never a credential.
+const oauthWall = "Claude AI usage limit reached|1760000000"
+
+// cannedStage is one stage's own output as the agent reads it: a stream-json
+// line, parsed by agent.ParseStream — the one reader of the stream there is
+// (internal/agent/stream.go) — so what advances the walk in these tests is the
+// event Claude Code's stream carries, and not a Result built by hand that could
+// pass with the event's own shape misspelled.
+func cannedStage(t *testing.T, text string, isError bool) agent.Result {
+	t.Helper()
+	line, err := json.Marshal(map[string]any{
+		// The shape a refused call arrives in: the error flag set on a result
+		// event whose subtype says "success".
+		"type": "result", "subtype": "success", "is_error": isError,
+		"result": text, "session_id": agent.NewSessionID(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, found, err := agent.ParseStream(strings.NewReader(string(line)+"\n"), nil)
+	if err != nil || !found {
+		t.Fatalf("the canned stage output did not parse: %v (found=%v)", err, found)
+	}
+	return res
+}
+
+// sayingStage is base's work reported by a stage that said text in its result
+// event: the harness's stand-in for what a stage's own output carries when a
+// call was refused. The stage's cost and structured output stay base's.
+func sayingStage(base step, text string, isError bool) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		res, err := base(t, ctx, req)
+		if err != nil {
+			return res, err
+		}
+		out := cannedStage(t, text, isError)
+		out.CostUSD, out.Structured = res.CostUSD, res.Structured
+		return out, nil
+	}
+}
+
+// TestAutoWalksOnTheAccountsOwnAllowance is A7b's red step (spec §11.3, D874):
+// an OAuth stage whose own output says the account spent its subscription
+// allowance advances the walk exactly as the credentials service's typed answer
+// advances it, so the stage's next attempt is the next account of the list
+// `fugaro accounts ls` prints — and, because a run holds one account's token,
+// the run then stops there, named.
+//
+// It was red before this task, in the shape the task was filed for: the walk's
+// only ending was the credentials service's answer, which an OAuth run never
+// receives (GatewayOn answers false for it), so the stage whose account had
+// spent its allowance was recorded as an ordinary failure and no failover line
+// was ever written.
+func TestAutoWalksOnTheAccountsOwnAllowance(t *testing.T) {
+	h := autoRun(t, autoNode(t, "true", accountA, accountB))
+	rec, err := h.run(t, sayingStage(implement("feature"), oauthWall, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs := h.logs.String()
+	if !strings.Contains(logs, "subscription usage limit ended this attempt") {
+		t.Fatalf("nothing named the allowance that ended the attempt:\n%s", logs)
+	}
+	for _, want := range []string{"stage=implement", "from=default", "to=" + accountA} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("the failover line does not name %s:\n%s", want, logs)
+		}
+	}
+	if n := len(h.agent.calls); n != 1 {
+		t.Errorf("%d agent calls; want only the attempt the allowance ended: the second account is one this run's token cannot serve", n)
+	}
+	if rec.Status != runstore.StatusFailed {
+		t.Fatalf("rec = %+v; want the run stopped at the account it cannot serve:\n%s", rec, logs)
+	}
+	for _, want := range []string{accountA, config.DefaultClaudeAccount} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("the refusal does not name %s: %s", want, rec.Reason)
+		}
+	}
+	if len(rec.StageAccounts) != 1 || rec.StageAccounts["implement"] != config.DefaultClaudeAccount {
+		t.Errorf("stage_accounts = %+v; want the account that answered the stage, never the one this run cannot serve", rec.StageAccounts)
+	}
+	if strings.Contains(logs, "oauth-token-abcdef") {
+		t.Error("the run's log carries the credential")
+	}
+}
+
+// TestAutoNeverWalksOnATextThatIsNotTheAllowance is the closed half of A7b's
+// gate, end to end: the walk stays where it is for every stage output that is
+// not the account's own allowance. A stage that failed carries on failing the
+// way it does today, with B5's reason, and a stage that said the allowance's
+// own words but reported no error — a repository or a task that is about usage
+// limits — carries the run on to its review, because a stage that succeeded is
+// nothing for the walk to move.
+func TestAutoNeverWalksOnATextThatIsNotTheAllowance(t *testing.T) {
+	cases := []struct {
+		name    string
+		text    string
+		isError bool
+		onward  bool // the stage did not fail, so the run reaches its review
+	}{
+		{"the allowance's words in a stage that succeeded", oauthWall, false, true},
+		{"a repository's own rate limit", "the test command hit a rate limit and backed off", true, false},
+		{"a resource limit", "the build failed: disk usage limit reached", true, false},
+		{"an ordinary API refusal", `API Error: 500 {"type":"error","error":{"type":"api_error"}}`, true, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := autoRun(t, autoNode(t, "true", accountA, accountB))
+			steps := []step{sayingStage(implement("feature"), c.text, c.isError)}
+			if c.onward {
+				steps = append(steps, review("ship", 0))
+			}
+			rec, err := h.run(t, steps...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			logs := h.logs.String()
+			for _, moved := range []string{"account failover", "subscription usage limit ended this attempt"} {
+				if strings.Contains(logs, moved) {
+					t.Errorf("the walk moved on a stage output that is not the account's own allowance (%q):\n%s", moved, logs)
+				}
+			}
+			if c.onward {
+				if rec.Status != runstore.StatusSucceeded {
+					t.Errorf("rec = %+v; want the run carried on: the stage that said the words succeeded", rec)
+				}
+				return
+			}
+			if rec.Status != runstore.StatusFailed || rec.Reason == "" {
+				t.Errorf("rec = %+v; want the ordinary failed stage it has always been, with its reason recorded", rec)
+			}
+		})
+	}
+}
+
+// TestAutoLeavesADormantOrExplicitRunOnTheAccountThatAnswered is D875 (§11.4)
+// and §11.2's chain, asked of A7b's signal: the account's own allowance moves
+// no run whose owner has not switched the walk on, and none that named its own
+// account. Each stops on the account whose allowance was spent, with B5's
+// reason naming it, and writes neither a failover line nor a stage_accounts
+// entry — the attempt is the only one the stage ever makes.
+func TestAutoLeavesADormantOrExplicitRunOnTheAccountThatAnswered(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func(*testing.T) *bk
+	}{
+		{"the policy carries no switch", func(t *testing.T) *bk { return autoRun(t, autoNode(t, "", accountA, accountB)) }},
+		{"the policy switches it off", func(t *testing.T) *bk { return autoRun(t, autoNode(t, "false", accountA, accountB)) }},
+		{"the run named its own account", func(t *testing.T) *bk {
+			return autoRunExplicit(t, autoNode(t, "true", accountA, accountB), accountA)
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := c.run(t)
+			rec, err := h.run(t, sayingStage(implement("feature"), oauthWall, true))
+			if err != nil {
+				t.Fatal(err)
+			}
+			logs := h.logs.String()
+			for _, moved := range []string{"account failover", "subscription usage limit ended this attempt"} {
+				if strings.Contains(logs, moved) {
+					t.Errorf("a run the walk does not apply to moved anyway (%q):\n%s", moved, logs)
+				}
+			}
+			if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "subscription usage limit was reached") {
+				t.Errorf("rec = %+v; want B5's named reason: no walk applies, so the stage is the failed one it has always been", rec)
+			}
+			if len(rec.StageAccounts) != 0 {
+				t.Errorf("stage_accounts = %+v; want nothing recorded: no account was chosen for this run", rec.StageAccounts)
+			}
+			if n := len(h.agent.calls); n != 1 {
+				t.Errorf("%d agent calls; want the one attempt, with no retry on a walk that does not apply", n)
+			}
+		})
+	}
+}

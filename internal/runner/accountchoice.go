@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
@@ -38,10 +39,14 @@ import (
 //     chosen for it.
 //   - **The walk never moves a stage that is already running.** A stage's
 //     transcript, its cost and its verdict belong to one account, so the
-//     only thing that advances the walk is the credential service's typed
-//     answer ending an attempt (C1.17, noteStageExhausted): the attempt that
-//     follows is the next account's, and nothing inside an attempt can move
-//     it.
+//     only things that advance the walk are the two answers that end an
+//     attempt: the credential service's typed one (C1.17), which only a
+//     cascade run can receive, and — for the OAuth run the walk applies to,
+//     which has no gateway to carry that answer — the account's own subscription
+//     allowance read from the attempt's own result event (A7b,
+//     accountEndedTheAttempt). Each advances the walk as the attempt ends and
+//     not before, so the attempt that follows is the next account's, and
+//     nothing inside a running attempt can move it.
 //
 // What the walk cannot do is serve a stage the account it chose, and that is
 // why a choice which is not the account this run already holds is a refusal
@@ -163,6 +168,40 @@ func (r *run) noteStageExhausted(stage string) {
 		c.failovers = map[string]int{}
 	}
 	c.failovers[stage]++
+}
+
+// accountLimitedError is the ending of an attempt the OAuth account's own
+// subscription allowance refused (A7b, spec §11.3). It is not a failure: it
+// ends the attempt the way the credentials service's typed answer ends a
+// cascade run's, so the stage's next attempt is the walk's next account. Its
+// text is never recorded or shown -- an ending that a run may serve leaves
+// nothing behind but the account that served the attempt and the account that
+// takes the next one, each written where it is chosen.
+type accountLimitedError struct{}
+
+func (e *accountLimitedError) Error() string {
+	return "the account's subscription usage limit ended the attempt"
+}
+
+// accountEndedTheAttempt reports whether the attempt that just ended did so
+// because the account serving it had spent its own subscription allowance
+// rather than because of anything about the work. This is the walk's whole
+// classifier, and it is deliberately closed: a stage's result event with the
+// error flag, and a text one of B5's phrase shapes (subscriptionUsageLimit,
+// runner.go) on a run authenticated by the account's own token. Everything
+// else -- an unrelated API error, a repository's own rate limit, a resource
+// limit, a wall's words in a text that is not the CLI's own sentence -- is an
+// ordinary stage failure, which is the direction to fail in: advancing the
+// owner's walk on a text that only mentions a limit would move a run off an
+// account that answered it, and the phrases' own doc records why the exact
+// wording is deliberately not widened.
+//
+// The error flag is asked here and not only at the stage's end because a
+// stage that succeeded can carry the words too: a task or a repository that
+// is about usage limits puts them in its own result text, and a successful
+// stage is nothing for the walk to move.
+func (r *run) accountEndedTheAttempt(res agent.Result) bool {
+	return res.IsError && subscriptionUsageLimit(r.cfg.Agent.Auth, res.Text)
 }
 
 // checkStageAccount is the walk's stage-start decision, and it returns the

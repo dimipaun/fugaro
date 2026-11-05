@@ -3116,7 +3116,12 @@ type stageOpts struct {
 // the run's: a review runs in a session of its own, and a wait during one
 // resumes that one.
 //
-// The loop is bounded (maxCredentialResumes): each wait is bounded by
+// The loop's second reason is the account's own subscription allowance (A7b,
+// D874): a stage that ended on it did not fail either, and the attempt that
+// follows is the same stage again — on the walk's next account, in a session
+// of its own, and with nothing to wait for, because no service answered.
+//
+// The cascade's wait is bounded (maxCredentialResumes): each wait is bounded by
 // waitForCredential's own check against the job's remaining time, but a
 // reset that has already passed resumes the stage at once, and a service
 // that kept answering that way would run the stage again and again with no
@@ -3127,6 +3132,28 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	resumes := 0
 	for {
 		res, ok, err := r.stageOnce(ctx, name, req, opts)
+		// The account's own subscription allowance ended this attempt (A7b,
+		// spec §11.3). Nothing is waited for -- no service answered, and the
+		// allowance's own reset is hours away -- so the stage's next attempt
+		// follows at once, on the account the walk has moved to, which is what
+		// stageOnce's own stage-start check chooses.
+		//
+		// It is a fresh attempt and not a resumed one: the attempt that ended
+		// was another account's, and a session resumed across accounts would
+		// carry one account's conversation into another account's attempt --
+		// the shape §11.3's "never mid-stage" rule keeps out of the record.
+		// No bound of its own is needed either, unlike the resume loop below:
+		// each pass advances the walk by one account, and the stage's
+		// stage-start check stops it once the stage's own list is exhausted.
+		var limited *accountLimitedError
+		if errors.As(err, &limited) {
+			// The attempt that ended spent what it spent, for the reason the
+			// wait below counts its own: the caller's countTokens only ever
+			// sees the last attempt of this stage.
+			r.countTokens(res)
+			req.SessionID, req.Resume = agent.NewSessionID(), false
+			continue
+		}
 		var ex *exhaustedError
 		if !errors.As(err, &ex) {
 			return res, ok, err
@@ -3601,6 +3628,34 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	case res.IsError && opts.Skippable && r.skippable(ctx, stageCtx):
 		r.save(ctx)
 		return res, false, skippedError{fmt.Errorf("the agent reported an error (%s)", res.Subtype)}
+	// The account's own subscription allowance ended this attempt (A7b, spec
+	// §11.3): the attempt was refused by the credential that served it and not
+	// by anything about the work, so with the walk on it is not a failed stage
+	// — it is the attempt the next account makes, and stage's own loop runs it
+	// on the account the walk has moved to.
+	//
+	// It comes after the Skippable case above, so a stage the run may skip is
+	// skipped exactly as it is today: §11.3 says a rate limit ends that attempt
+	// "as it does today", and a skipped stage has no next attempt for the walk
+	// to serve. It comes before the ordinary error below, which is what the same
+	// text is whenever the walk does not apply: D875's explicit-only run keeps
+	// B5's named reason, and so does any text the closed classifier does not
+	// read as the account's own allowance.
+	//
+	// Nothing about the ended attempt is recorded. It did not fail, and a run
+	// the walk can serve goes on, so a failure reason here would outlive the
+	// failure. Why the stage moved is the line below and the failover line the
+	// next attempt's stage-start check writes; the agent's own words stay in
+	// the stage's transcript, where they already are.
+	case r.accountEndedTheAttempt(res) && r.accountAuto(ctx):
+		r.noteStageExhausted(name)
+		// The account that served the attempt is the run's own credential's:
+		// the walk serves a stage only as the account the run holds, so the
+		// line and the record's own account cannot disagree.
+		log.Info("the account's subscription usage limit ended this attempt, so the stage's next attempt is the walk's next account",
+			"account", selectedName(r.spec.OAuthToken))
+		r.save(ctx)
+		return res, false, &accountLimitedError{}
 	// A stage that reported an error carries its own words for it in the
 	// result event's text, and its subtype says nothing: Claude Code reports
 	// a refused API call as subtype "success". The reason therefore quotes
@@ -3626,9 +3681,12 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 // The one error that gets a name of its own is the OAuth account's
 // subscription usage limit (subscriptionUsageLimit): the allowance is the
 // account's, shared with the owner's own use, and it resets on its own
-// schedule, so the stage is not going to succeed by being run again. A stage
-// on an API key, a provider route or Vertex has no such allowance and keeps
-// the reason above.
+// schedule, so the stage is not going to succeed by being run again on that
+// account. It is the reason a run that cannot move records: the walk off,
+// which is what D875 ships, or a stage the walk may not serve. With the walk
+// on, the same classification ends the attempt instead and nothing about it is
+// recorded (A7b, stageOnce's own case). A stage on an API key, a provider
+// route or Vertex has no such allowance and keeps the reason above.
 func (r *run) stageErrorReason(stage string, res agent.Result) string {
 	what := "the agent reported an error"
 	if res.Subtype != "" && res.Subtype != "success" {
