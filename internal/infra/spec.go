@@ -944,7 +944,7 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 		}
 		// The one mix the owner's B0 ruling admits: the stage account's own
 		// job mounts its token (mixedStageAccounts).
-		if slices.Contains(mixedStageAccounts(lc, repo), token) {
+		if slices.Contains(mixedStageAccounts(cfg, lc, repo), token) {
 			out = append(out, SecretMount{config.ClaudeAccountSecret(token), config.ReservedSecrets["claude-oauth-token"]})
 		}
 	}
@@ -985,7 +985,7 @@ func WorkflowAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []st
 		return config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)
 	case "api-key":
 		out := []string{config.DefaultClaudeAccount}
-		for _, name := range mixedStageAccounts(lc, repo) {
+		for _, name := range mixedStageAccounts(cfg, lc, repo) {
 			if !slices.Contains(out, name) {
 				out = append(out, name)
 			}
@@ -1313,8 +1313,10 @@ func Repo(in Inputs) (RepoSpec, error) {
 		// config.AllowedClaudeAccounts is the one place that decides the
 		// set, so a name not on it never gets a key here at all (the hard
 		// backstop of the allow-list, design §6b.3). Every other auth kind
-		// has exactly the default account, unchanged from before this field
-		// existed.
+		// has exactly the default account, except an api-key repository whose
+		// stage keys, or whose project default, declare the one mix the
+		// ruling admits: that repository gets the account's own variant
+		// beside the default, and nothing else changes (WorkflowAccounts).
 		// catalogImage is what catalogJobImage answered for the workflow's
 		// job, read back from the spec it built rather than asked again:
 		// the check below and the job's own image must never disagree about
@@ -1774,18 +1776,23 @@ func Schedule(slug string) string {
 }
 
 // mixedStageAccounts are the Claude accounts an api-key repository's runs mix
-// with their provider key: the account each of config.MixedAccountStages'
-// stage keys names, held to config.AllowedClaudeAccounts the way every other
-// account name is, deduplicated and in the stages' own order. The review and
-// the adversarial review may name one account and no other stage may name any
+// with their provider key, held to config.AllowedClaudeAccounts the way every
+// other account name is, deduplicated and in the stages' own order: the
+// account each of config.MixedAccountStages' stage keys names, and the
+// project's default_claude_account where that key is what asks for the mix
+// (mixedDefaultAccount). The review and the adversarial review may name one
+// account and no other stage may name any
 // (docs/design/mixed-credentials.md §11): that is the one mix the owner's B0
 // ruling admits, the coder's own stages keeping the provider key the gateway
 // holds.
 //
-// The account is a job of its own rather than a second token on the default
-// job, so an api-key repository that names no stage account keeps the single
-// job it had: the run that holds a Claude account is the run whose stage keys
-// asked for one, and its review is the stage that goes direct to Anthropic.
+// An account is a job of its own (gcp.WorkflowVariant), so an api-key
+// repository that mixes nothing keeps the single job it had: the run that
+// holds a Claude account is the run whose stage keys, or whose project
+// default, asked for one, and its review is the stage that goes direct to
+// Anthropic. The default account's own spelling is the one name that is not a
+// job of its own: its variant is the base job, which is why a stage key naming
+// it adds nothing here.
 //
 // The allow-list is what keeps the mount to what the owner admitted: a token's
 // mount is this repository's runs reading that account's credential, and only
@@ -1793,7 +1800,7 @@ func Schedule(slug string) string {
 // code where that token is. An account the list does not carry is not an entry
 // here — `fugaro validate` and the launch refuse the key — so the operator
 // hears about it rather than a job quietly appearing without the token.
-func mixedStageAccounts(lc *localcfg.Config, repo string) []string {
+func mixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []string {
 	if lc == nil {
 		return nil
 	}
@@ -1806,5 +1813,67 @@ func mixedStageAccounts(lc *localcfg.Config, repo string) []string {
 		}
 		out = append(out, name)
 	}
+	if def := mixedDefaultAccount(cfg, lc, allowed); def != "" && !slices.Contains(out, def) {
+		out = append(out, def)
+	}
 	return out
+}
+
+// mixedDefaultAccount is rung 4's account for an api-key repository: the
+// project's default_claude_account where the owner's ruling of 2026-11-05
+// admits it as one of this repository's mixed accounts, "" otherwise
+// (docs/design/mixed-credentials.md §11). It is the job set's half of the rung
+// the launch (mixedStageAccount, internal/cli/run.go) and the run
+// (r.mixedDefaultAccount, internal/runner) resolve, so a run that may hold the
+// account's token is a run a job exists for — and a repository the ruling
+// refuses gets neither, rather than a job whose token no run may read.
+//
+// The ruling's conditions, as the job set can read them:
+//
+//   - the key names an account of its own: "" and the unsuffixed-default
+//     sentinel (config.DefaultClaudeAccount) are the same answer, because an
+//     api-key job's base variant carries no OAuth token of its own;
+//   - the name is one this repository may use (config.AllowedClaudeAccounts):
+//     the mount is this repository's runs reading that account's credential,
+//     and the published policy carries no allow-list for a run to check, so
+//     the filter here is the only place it is applied;
+//   - no stage key of the mix names a *different* account: the run holds one
+//     Claude account and no second (config.CheckStageAccountMix, which the
+//     launch and `fugaro validate` apply), so where a stage key names another
+//     account the default is not an account of this repository's mix and no
+//     job is built for it;
+//   - one of the two stages runs an Anthropic model (config.MixedStageModel,
+//     config.IsClaudeModel): a project that sets the key and reviews on
+//     another vendor has asked for no mix, and its key keeps the other meaning
+//     it has — the account an oauth run gives to every stage.
+//
+// The coder's provider route and the budget mode are deliberately not read
+// here. They are conditions of the run, not of the job set: they decide
+// whether a run of this repository may hold the token at all, and they change
+// with a branch's fugaro.yaml or a task's override that no deploy can see.
+// Reading them here would refuse a job for a configuration the next commit
+// makes admissible, and build one the current branch cannot use; the run
+// refuses it where it resolves (r.mixedDefaultAccount) with the reason.
+func mixedDefaultAccount(cfg *config.Config, lc *localcfg.Config, allowed []string) string {
+	if cfg == nil {
+		return ""
+	}
+	def := lc.DefaultClaudeAccount
+	if def == "" || def == config.DefaultClaudeAccount || !slices.Contains(allowed, def) {
+		return ""
+	}
+	for _, stage := range config.MixedAccountStages {
+		if name := lc.ClaudeAccountStages[stage].ClaudeAccount; name != "" && name != def {
+			return ""
+		}
+	}
+	for _, stage := range config.MixedAccountStages {
+		if lc.ClaudeAccountStages[stage].ClaudeAccount != "" {
+			continue
+		}
+		if config.IsClaudeModel(config.MixedStageModel(cfg.Agent, stage)) {
+			return def
+		}
+	}
+	return ""
 }

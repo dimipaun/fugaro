@@ -11,6 +11,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // modelCredentialVars are kept out of the environment of every git call the
@@ -107,12 +109,106 @@ func (r *run) resolveMixedStages(ctx context.Context) (map[string]string, error)
 	}
 	out := map[string]string{}
 	for _, stage := range config.MixedAccountStages {
-		if name := p.ClaudeAccountStages[stage]; name != "" {
-			out[stage] = name
+		name := p.ClaudeAccountStages[stage]
+		if name == "" {
+			def := r.mixedDefaultAccount(p, stage)
+			if def == "" {
+				continue
+			}
+			// The run holds one Claude account (design §11, "never a second
+			// provider's key"): the other mixed stage's own key names the mix's
+			// account when it names one, and a project default that names a
+			// different one would be a second credential this run may not
+			// hold. Refused rather than honoured, the way the launch refuses it
+			// (mixedStageAccount, internal/cli/run.go), so nothing the operator
+			// wrote reads as if it were in use. Asked here, where rung 4 can
+			// actually apply: a default no stage of this run reaches is not
+			// this run's to refuse.
+			for _, other := range config.MixedAccountStages {
+				if other == stage {
+					continue
+				}
+				if named := p.ClaudeAccountStages[other]; named != "" && named != def {
+					return nil, fmt.Errorf("the project's default_claude_account is %q and the %s stage's own claude_account is %q: an api-key run holds one Claude account beside the provider key the gateway holds, and %q is already this run's — name %q in both keys, or remove the project default", def, other, named, named, named)
+				}
+			}
+			name = def
 		}
+		// A stage the account serves goes straight to Anthropic on the account's
+		// token, so it can only run a Claude model. A stage model a provider
+		// route claims would be handed to Anthropic under a model Anthropic does
+		// not serve -- an unknown model at best, another provider's own ID at
+		// worst -- so it is refused here, before any model call, the way a stage
+		// account the launch refuses is (design §11, "A review stage that
+		// fails"). It is never quietly run on the gateway's credential instead.
+		if model := r.stageModel(stage); model != "" {
+			if route, _, ok := config.ProviderFor(r.modelProviders(), model); ok {
+				return nil, fmt.Errorf("the %s stage is served by the Claude account %q and its model %q is served by the provider route %q: a stage the account serves goes straight to Anthropic, which neither model nor route reaches — name a Claude model for the stage, or remove the account named for it", stage, name, model, route)
+			}
+		}
+		out[stage] = name
 	}
 	return out, nil
 }
+
+// mixedDefaultAccount is rung 4's account for a stage: the project's
+// default_claude_account where the owner's ruling of 2026-11-05 admits it for
+// that stage, "" otherwise (docs/design/mixed-credentials.md §11). The launch
+// resolves the same rung for the same stage (mixedStageAccount,
+// internal/cli/run.go) and this is the run making the judgement again on the
+// node it reads — with the recipe's roles applied, which a launch that reads no
+// recipe cannot see — so a rung the launch admitted does not silently go out on
+// the gateway's credential here.
+//
+// Every one of the ruling's conditions is read off the run:
+//
+//   - the key names an account of its own: "" and the unsuffixed-default
+//     sentinel (config.DefaultClaudeAccount) are the same answer, because an
+//     api-key run's job carries no OAuth token for the default account;
+//   - the stage's own model is an Anthropic one (config.IsClaudeModel): the
+//     condition is the *default*'s and never rung 2's, because a default is
+//     what a project has for every stage it has by writing one key, and a
+//     project that sets it and reviews on another vendor has asked for no mix;
+//   - the coder is served by a provider route this repository may use: the mix
+//     is the coder on a provider route and the reviews on the subscription, and
+//     a coder Anthropic's own endpoint serves has no provider key in the
+//     gateway for the account to sit beside;
+//   - the mode the run resolved is enforce: only enforce routes a call to a
+//     provider at all (config.CheckProviderGateway), which is what
+//     "provider-served" means at run time.
+func (r *run) mixedDefaultAccount(p *projectpolicy.Policy, stage string) string {
+	def := p.DefaultClaudeAccount
+	if def == "" || def == config.DefaultClaudeAccount {
+		return ""
+	}
+	if !config.IsClaudeModel(r.stageModel(stage)) {
+		return ""
+	}
+	if _, _, served := config.ProviderFor(r.modelProviders(), r.cfg.Agent.ModelFor(config.RoleCoder)); !served {
+		return ""
+	}
+	if r.spend.Mode != policy.ModeEnforce {
+		return ""
+	}
+	return def
+}
+
+// stageDirect reports whether the stage runs on the run's stage-scoped Claude
+// OAuth account rather than on the run's own credential, which for a stage
+// means its calls do not go through the gateway at all
+// (docs/design/mixed-credentials.md §11).
+//
+// It is the stage-scoped question every reader that used to ask it about the
+// run has to ask instead: for a mixed run both r.gw != nil and r.gatewayOn()
+// are true, and neither can tell the account stage's accounting from the
+// gateway's. What the answer decides, one site at a time (P11): the stage's
+// pins and managed settings (stagePins, writeManagedSettings), whether it
+// opens a stage in the gateway (stageOnce), whether the gateway's last stage
+// report is its figure (stageTiming), whether the cross-check compares its
+// figure with the gateway's (recordGatewayStageCost), where its dollars are
+// kept (recordAccountStageCost) and who reports them to the backend
+// (reportNotional).
+func (r *run) stageDirect(stage string) bool { return r.stageAccount(stage) != "" }
 
 // stageAccount is the Claude OAuth account the stage runs on, "" for every
 // stage that runs on the run's own credential. The map it reads holds the two
