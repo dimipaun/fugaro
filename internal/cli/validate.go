@@ -684,6 +684,29 @@ func reviewFloorUnpublishable(lc *localcfg.Config) []config.Problem {
 		strings.Join(missing, " and "), lc.Name)}}
 }
 
+// stageAccountProblems is the B0 ruling judged over the file in hand
+// (docs/design/mixed-credentials.md §11, decision 1: "the rule is the rule at
+// every layer that judges it, and fugaro validate says the same as the run").
+// The rule needs both halves — the auth, which is the file's, and the stage
+// accounts, which are the machine's local config — so this is the one place
+// offline that holds them together; the launch makes the same call
+// (claudeAccountFor) and the runner will make it again with the auth its task
+// resolves.
+//
+// The file's auth is the *effective* one (ecfg, the file over the project
+// layer, as the run resolves it), for claudeAccountFor's reason: a layer whose
+// defaults say agent.auth: api-key over a file that names none is a mixed run,
+// and reading the raw file would report a valid file as invalid or the
+// reverse. What the check does not do is hold the stage accounts to the
+// repository's allow-list: that needs the repository, which a file in hand
+// does not name, and the launch is where it is enforced.
+func stageAccountProblems(lc *localcfg.Config, ecfg *config.Config) []config.Problem {
+	if lc == nil || ecfg == nil {
+		return nil
+	}
+	return config.CheckStageAccountMix(ecfg.Agent.Auth, stageAccountsOf(lc), "stages")
+}
+
 // catalogSourceProblems are the project's own catalog entries whose
 // Dockerfile this installation cannot fetch: a dockerfile source on a
 // provider with no reader (catalog.Readable) is refused by `fugaro image
@@ -1916,6 +1939,7 @@ func newValidateCmd() *cobra.Command {
 				rlp, rlw := reviewLevelProblems(filepath.Dir(path), cfg, lc, lcErr, claimed)
 				problems, warnings = append(problems, rlp...), append(warnings, rlw...)
 				warnings = append(warnings, reviewFloorUnpublishable(lc)...)
+				problems = append(problems, stageAccountProblems(lc, ecfg)...)
 				problems = append(problems, catalogSourceProblems(lc)...)
 				annotateProjectRecipe(filepath.Dir(path), cfg, problems)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {

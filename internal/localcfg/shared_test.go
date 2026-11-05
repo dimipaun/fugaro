@@ -710,3 +710,36 @@ func TestMergeSharedNeverPublishesTheProjectBaseBranch(t *testing.T) {
 		t.Error("MergeShared modified an input's base_branch")
 	}
 }
+
+// TestMergeSharedNeverCarriesTheAccountChoiceKeys: the three account-choice
+// keys (docs/accounts-add/spec.md §11.1) are local-only for claude_accounts'
+// own reason — a key that could name the account a run's stages use, or turn on
+// Fugaro's own choice of one, would be a way around that account's
+// allow_data_to — so neither the local config's values nor a published file's
+// reach the output. They travel to a run through the policy node instead.
+func TestMergeSharedNeverCarriesTheAccountChoiceKeys(t *testing.T) {
+	defined := "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/web]\n  acme-overflow:\n    allow_data_to: [acme/web]\n"
+	block := "default_claude_account: acme-personal\nclaude_account_auto: true\nstages:\n  review:\n    claude_account: acme-personal\n"
+	existing := sharedBase(t, defined+block)
+	local := sharedBase(t, defined+strings.ReplaceAll(block, "acme-personal", "acme-overflow"))
+	if existing.DefaultClaudeAccount == "" || !existing.ClaudeAccountAuto || len(existing.ClaudeAccountStages) != 1 {
+		t.Fatalf("fixtures: %q %v %v", existing.DefaultClaudeAccount, existing.ClaudeAccountAuto, existing.ClaudeAccountStages)
+	}
+	for name, got := range map[string]*Config{"shared": local.Shared(), "merged": MergeShared(existing, local), "nil published": MergeShared(nil, local), "published only": MergeShared(existing, sharedBase(t, defined))} {
+		if got.DefaultClaudeAccount != "" || got.ClaudeAccountAuto || got.ClaudeAccountStages != nil {
+			t.Errorf("%s: %q, %v, %v", name, got.DefaultClaudeAccount, got.ClaudeAccountAuto, got.ClaudeAccountStages)
+		}
+		out, err := got.Marshal()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, key := range []string{"default_claude_account", "claude_account_auto", "stages"} {
+			if strings.Contains(string(out), key) {
+				t.Errorf("%s: output carries %s:\n%s", name, key, out)
+			}
+		}
+	}
+	if local.DefaultClaudeAccount == "" || !local.ClaudeAccountAuto || len(local.ClaudeAccountStages) != 1 {
+		t.Error("Shared/MergeShared cleared the local account-choice keys")
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math/rand/v2"
 	"os"
 	"os/exec"
@@ -431,7 +432,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			// from the previous run): the account is resolved from the flag
 			// and the checkout's own value, and reviewSpec resolves it again
 			// from the ref it names once one is.
-			if _, err := claudeAccountFor(ctx, env, repo, o.token, o.ref, checkoutOf(ctx, repo)()); err != nil {
+			if _, err := claudeAccountFor(ctx, env, repo, o.token, "", o.ref, checkoutOf(ctx, repo)()); err != nil {
 				return err
 			}
 			rr, rerr := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), o.recipe, time.Now(), false)
@@ -1371,7 +1372,7 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	// network call a disallowed --token should never trigger — the account
 	// is checked against config.AllowedClaudeAccounts first, using only the
 	// local config and the checkout already in hand, no network of its own.
-	account, err := claudeAccountFor(ctx, env, repo, o.token, ref, checkout())
+	account, err := claudeAccountFor(ctx, env, repo, o.token, "", ref, checkout())
 	if err != nil {
 		return nil, err
 	}
@@ -1651,7 +1652,7 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 			return "", nil, err
 		}
 	}
-	account, err := claudeAccountFor(ctx, env, repo, o.token, ref, checkout())
+	account, err := claudeAccountFor(ctx, env, repo, o.token, "", ref, checkout())
 	if err != nil {
 		return "", nil, err
 	}
@@ -1672,14 +1673,33 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 }
 
 // claudeAccountFor is the named Claude account a first run uses: flag
-// (fugaro run --token), else agent.oauth_token of the fugaro.yaml at the ref
-// the run checks out, else the repository's default
-// (config.DefaultClaudeAccount). A non-default name is refused
-// (claudeAccountAllowed) unless config.AllowedClaudeAccounts (the local
-// config's claude_accounts) lists it for repo, before any launch (design
+// (fugaro run --token), else stages.<stage>.claude_account for the stage asked
+// for, else agent.oauth_token of the fugaro.yaml at the ref the run checks
+// out, else the project's default_claude_account, else the unsuffixed default
+// (config.DefaultClaudeAccount). That is rungs 1 to 5 of the accounts design's
+// chain (docs/accounts-add/spec.md §11.2, D873), and stage is "" for the run's
+// own account — the three launch call sites ask for that, and rung 2 is walked
+// only when a stage is named, because a run's own credential is one account
+// and not a stage's. A non-default name is refused (claudeAccountAllowed)
+// unless config.AllowedClaudeAccounts (the local config's claude_accounts)
+// lists it for repo, before any launch (design
 // docs/design/named-oauth-tokens.md §3 T7) — checked whether or not a checkout
 // is available here, so --repo X --token N outside any checkout is held to the
 // same rule a checkout's own resolution would be.
+//
+// The mix rule is judged first, for every call and whatever stage was asked
+// for (config.CheckStageAccountMix): an api-key run may name one Claude
+// account, for the senior review and the adversarial review and no other stage
+// (docs/design/mixed-credentials.md §11, the owner's B0 ruling), and a run
+// under vertex or cascade may name none at all. That refusal belongs to the
+// launch rather than to the stage it was asked about: a config that declares a
+// mix the ruling does not admit is refused before anything is read or started,
+// and the sentence names the key that has to change.
+//
+// Rung 4 is walked only for an oauth run. Under api-key it is not a rung at
+// all: default_claude_account "never opts an api-key run into this mix"
+// (§11), so such a run's own account stays the unsuffixed default, and its
+// coder stays on the provider key the gateway holds.
 //
 // Both halves are the run's, and neither is the working tree's. The account is
 // read at the ref the run checks out, out of this checkout's git objects
@@ -1706,20 +1726,8 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // itself resolves the ref's fugaro.yaml after cloning it, and a launch onto a
 // shared project job whose own credential cannot be resolved is refused
 // outright (projectJobAgentAuth) rather than judged on a guess.
-func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, ref string, co *config.Config) (string, error) {
+func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref string, co *config.Config) (string, error) {
 	a, refAuth, refAgent := agentAtRef(ctx, env, repo, ref)
-	name := flag
-	if name == "" {
-		switch {
-		case refAgent:
-			name = a.OAuthToken
-		case co != nil:
-			name = co.Agent.OAuthToken
-		}
-	}
-	if name == "" {
-		name = config.DefaultClaudeAccount
-	}
 	// The auth a name is judged against, as the run resolves it: the document
 	// at the ref over the project layer when that could be read, and the
 	// checkout's own, layer-applied resolution otherwise.
@@ -1730,7 +1738,74 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, ref string
 	if refAgent {
 		auth = refAuth
 	}
+	declared := stageAccountsOf(env.lc)
+	if ps := config.CheckStageAccountMix(auth, declared, "stages"); len(ps) > 0 {
+		return "", userErr("%s: %s", ps[0].Path, ps[0].Message)
+	}
+	// Every name is checked before any launch, whatever rung it came from, and
+	// the stage accounts are names too: this call does not use one as the run's
+	// own credential, but the run's review stages will, and the account's
+	// allow_data_to is what decides whether this repository may put its code
+	// where that token is. The check is the allow-list's, not
+	// claudeAccountAllowed's whole rule — its auth clause keeps a named *run*
+	// account out of every auth but oauth, and an api-key run is exactly the run
+	// the B0 ruling gives a stage account to.
+	for _, at := range slices.Sorted(maps.Keys(declared)) {
+		if account := stageAccountOf(env.lc, auth, at); account != "" {
+			if err := claudeAccountMembership(env, repo, account); err != nil {
+				return "", err
+			}
+		}
+	}
+	name := flag
+	if name == "" && stage != "" {
+		if account := stageAccountOf(env.lc, auth, stage); account != "" {
+			return account, nil
+		}
+	}
+	if name == "" {
+		switch {
+		case refAgent:
+			name = a.OAuthToken
+		case co != nil:
+			name = co.Agent.OAuthToken
+		}
+	}
+	if name == "" && auth == "oauth" {
+		name = env.lc.DefaultClaudeAccount
+	}
+	if name == "" {
+		name = config.DefaultClaudeAccount
+	}
 	return name, claudeAccountAllowed(env, repo, name, auth)
+}
+
+// stageAccountsOf is the local config's stage accounts as the rules read them:
+// the stage name to the account it names, empty values dropped.
+func stageAccountsOf(lc *localcfg.Config) map[string]string {
+	if lc == nil || len(lc.ClaudeAccountStages) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(lc.ClaudeAccountStages))
+	for stage, choice := range lc.ClaudeAccountStages {
+		if choice.ClaudeAccount != "" {
+			out[stage] = choice.ClaudeAccount
+		}
+	}
+	return out
+}
+
+// stageAccountOf is the account the stage's own key names, for the auths that
+// may have one: oauth, where the accounts design's rung 2 gives a stage an
+// account of its own, and api-key, where the B0 ruling's one account serves the
+// senior review and the adversarial review. Every other auth is "" — vertex and
+// cascade are refused outright by CheckStageAccountMix, and an auth the launch
+// cannot resolve yet is not judged on a guess.
+func stageAccountOf(lc *localcfg.Config, auth, stage string) string {
+	if lc == nil || (auth != "oauth" && auth != "api-key") {
+		return ""
+	}
+	return lc.ClaudeAccountStages[stage].ClaudeAccount
 }
 
 // agentAtRef is the two agent facts a launch judges a named account with, read
@@ -1918,6 +1993,23 @@ func claudeAccountAllowed(env *cloudEnv, repo, name, auth string) error {
 		return userErr("named Claude account %s only applies to a workflow whose agent.auth is oauth; %s's agent.auth is %s",
 			pluginwire.Printable(name), repo, auth)
 	}
+	return claudeAccountMembership(env, repo, name)
+}
+
+// claudeAccountMembership is the allow-list half of claudeAccountAllowed, and
+// the whole check for a *stage* account: every name is held to the account's own
+// allow_data_to for the repository, whatever permitted rung it came from
+// (docs/design/mixed-credentials.md §11, "every name is still held to
+// claude_accounts's allow-list"). It is one function rather than two copies so
+// that the run's own rungs and the stage's cannot drift: a name one admits for
+// this repository is a name the other admits, and a name one refuses the other
+// refuses, in the same sentence.
+//
+// The auth clause is deliberately not here. It keeps a named *run* account out
+// of every auth but oauth — no secret is mounted for such a name, so it would
+// be silently unused — while a stage account under api-key is exactly the mix
+// the B0 ruling admits, so the stage path must not pass through it.
+func claudeAccountMembership(env *cloudEnv, repo, name string) error {
 	allowed := config.AllowedClaudeAccounts(env.lc.ClaudeAccounts, repo)
 	if !slices.Contains(allowed, name) {
 		return userErr("named Claude account %s is not one %s may use (allowed: %s); ask the operator to add it to claude_accounts in their local config",
