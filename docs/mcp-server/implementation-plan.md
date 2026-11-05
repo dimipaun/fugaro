@@ -75,7 +75,9 @@ either file cannot meet it on their own.
 
 ## 2. The edges, the levels and the critical path
 
-Eleven edges, and nothing else forces the shape. "A ← B" reads "A waits for B".
+**Twelve task-to-task edges**, and nothing else forces the shape: "A ← B" reads "A waits for B", and
+the gates that are not tasks — the SECURITY review, §8's store answer, D928, D921's licence and
+check 0's unbuilt fence — are named beside the task each one holds.
 
 **M1** ← nothing. **M2** ← M1, and the store answer of §8. **M3** ← nothing: it is a rules file and
 its tests, and it can land first. **M4** ← the SECURITY review of [spec.md](spec.md) §8, and the store
@@ -175,7 +177,9 @@ than any interface any other task builds against.
   is the interface, the key layout and the record shapes; `store_bucket.go` is the one concrete
   backend**, so an owner who answers §8 with a different store changes that file and its own test and
   nothing any other task builds against. The backend this plan names is §8's recommendation — **the
-  `mcpauth/` prefix of a bucket of its own, whose only member is the coordinator's service account** —
+  `mcpauth/` prefix of a bucket of its own, `fugaro-mcpauth-<gcp-project>`, whose only member is the
+  coordinator's service account and whose name is outside every prefix a conditioned role in this
+  installation is fenced to (M4, and the correction of 2026-11-05)** —
   written with `internal/blobx` (`internal/blobx/blobx.go:1`): create-if-absent with the new
   generation, generation-matched replace and delete, atomic on GCS. That is what makes rotation and
   revocation compare-and-swaps rather than read-modify-writes, and it is why a bucket can carry a
@@ -189,7 +193,8 @@ than any interface any other task builds against.
   store needs — a database transaction used to give it away, and a bucket does not),
   `TestTheStoreRefusesTheDatabaseAndTheRunsBucket` (the store opens one URL from the coordinator's own
   configuration and refuses anything else at construction, so a later edit that pointed it back at
-  `mcpauth` in the database, or at the runs bucket, fails rather than works).
+  `mcpauth` in the database, at the runs bucket, **or at a bucket under the managed prefix `fmgd-` —
+  the reach the correction of 2026-11-05 removed** — fails rather than works).
 - **SEC:** yes — it is the task that decides what is at rest **and where**, and D935's answer is only
   worth anything if the store is the store and not the database under another name.
 - **Depends on:** M1, **and on the owner's answer to §8's open item.** The recommendation is the
@@ -203,7 +208,12 @@ than any interface any other task builds against.
   child of it** (D922's answer) — with **`.read: false` and `.write: false`**, named in the file so
   that the next person who adds a grant can see it is there, plus the constant the parity test reads
   it through. It deliberately does **not** copy `coordinator/`'s `.read: "USER"`
-  (`internal/budget/rules/rules.json.tmpl:10`, the claim at `internal/budget/rules/rules.go:517`).
+  (`internal/budget/rules/rules.json.tmpl:10-13`, the claim at `internal/budget/rules/rules.go:517`):
+  the node is refused to every client, and the one account that could write it — the coordinator's
+  own — reaches it through `roles/firebasedatabase.admin`
+  (`deploy/terraform/gcp/modules/firebase/iam.tf:138`) and not through a rule. **That last sentence
+  states the rules' half only, and the IAM half is what the Open item below raised; D935 is the
+  owner's answer to it, recorded in the bullet after this one.**
 - **What the node is now, and what its comment must say (D935, 2026-11-05).** **The records do not
   live here any more**: they live in the store M2 defines, because this installation's database grants
   are project-level and no rule can keep a launcher, an operator, a budget admin or the history
@@ -238,6 +248,34 @@ than any interface any other task builds against.
   the project's database is where the token material lives, and whether anything but the coordinator's
   own account can reach a node the rules refuse and the database admin grant reaches past. M4 is the task
   that decides who reaches the store they moved to.
+- **The open item this task raised, and the answer it got (raised 2026-11-05, answered the same day).**
+  [spec.md](spec.md) §8 says the subtree is "read by the coordinator's account
+  over IAM and by nobody else" (`docs/mcp-server/spec.md:513`) and calls the coordinator's account
+  its only writer, and the Interface bullet above repeated that; **neither held.** A rule binds a
+  client token and binds no IAM identity, and the installation's RTDB roles are granted
+  project-wide, with no path scope and no condition: `roles/firebasedatabase.viewer` to every
+  launcher and every operator (`deploy/terraform/gcp/modules/firebase/iam.tf:44`), who read the
+  whole database past the rules, and `roles/firebasedatabase.admin` to the admins and budget admins
+  (`deploy/terraform/gcp/modules/firebase/iam.tf:53`), to the history service account
+  (`deploy/terraform/gcp/modules/firebase/iam.tf:81`) and to the coordinator's own writer
+  (`deploy/terraform/gcp/modules/firebase/iam.tf:141`), who read and write it. So `mcpauth` is
+  refused to every client the rules bind — the whole of what a rule can do, and what M3's red step
+  proves — and **not** refused to the installation's own IAM identities: the token records, the
+  client list, the redirect URIs, the revocation state and the whole tool-call audit were inside that
+  exposure. The rules package already records this fact for `config/admin`
+  (`internal/budget/rules/rules.go:59`), [roles.md](../design/roles.md) states it for the database as
+  a whole (`docs/design/roles.md:104` — "Any confidential thing placed in RTDB is readable by
+  everyone on either list"), and M3's own SEC bullet above is the question it answers: something
+  other than the coordinator's account **can** reach this node. **The options it put to the owner,
+  none of them decided in it:** a store the installation's RTDB roles do not reach (a separate
+  database instance, or a different store altogether); narrower IAM, which RTDB's project-wide
+  `firebasedatabase.admin` and `firebasedatabase.viewer` do not offer at path level; or the exposure
+  accepted and §8 and this section corrected to say what is true. **The owner took the first on
+  2026-11-05 — D935, the store of the first kind — and this open item is answered rather than
+  standing**: the records leave this database for a store whose IAM names the coordinator's own
+  service account, §8's sentence is corrected by the plan's own §8, and the node stays closed as a
+  defence in depth. What M5 writes is therefore M2's store and not `mcpauth`, and the answer to this
+  item is what decides that.
 - **Depends on:** nothing. **Can land first**, and it is the one task that shares no file with any
   other.
 - **Do not touch:** `internal/budget/rules/rules.go` is shared with every other rules work; the
@@ -257,14 +295,18 @@ than any interface any other task builds against.
 - **Interface:** a `google_cloud_run_v2_service` for the coordinator with `allUsers` invoker (D920),
   its own service account, no model credential mounted, and the launch role of M9 declared but not
   yet used. **And the store of D935, which is this task's because this is the task that writes IAM.**
-  The recommended store is **a bucket of its own — `fmgd-<gcp-project>-mcpauth`, a function of the
-  project alone, the convention the managed state bucket already follows
+  The recommended store is **a bucket of its own — `fugaro-mcpauth-<gcp-project>`, a function of the
+  project alone, the convention the runs bucket and both state buckets already follow
   (`internal/managed/statebucket.go:75`)** — with uniform bucket-level access and public access
   prevention enforced, because the installer's plan review refuses a bucket without both
-  (`internal/infra/tf/cover.go:2199`). **Three things about its IAM are deliberate:**
-  - **One binding, one member.** No project-level storage binding exists anywhere in this
-    installation: every grant is bucket-scoped (`deploy/terraform/gcp/modules/installation/iam.tf:207`,
-    `:222`, `:238`; `coordinator.tf:76`), so a bucket with one member has exactly one reader. That is
+  (`internal/infra/tf/cover.go:2199`). **Its name is deliberately outside every conditioned prefix,
+  and that is the correction of 2026-11-05: `fmgd-` is the managed deployer's fence, not this
+  store's.** **Five things about its IAM and its name are deliberate:**
+  - **One binding, one member.** Every storage grant in this installation that is not the deployer's
+    conditioned one is bucket-scoped (`deploy/terraform/gcp/modules/installation/iam.tf:207`, `:222`,
+    `:238`; `coordinator.tf:76`), and the deployer's conditioned role is fenced to names this store
+    does not carry, so a bucket with one member has exactly one reader — the owner's own account
+    excepted, which the fifth bullet states. That is
     the whole of D935: the IAM names the coordinator's account and nobody else, where the database's
     own grants name four sets of people.
   - **`roles/storage.objectAdmin`, and not `objectUser`.** A bucket-scoped `objectAdmin` carries no
@@ -278,22 +320,49 @@ than any interface any other task builds against.
     record is served by a tool (M10) rather than by a credential — so the second the store gains a
     second member is the second this design has widened, and the test below is what makes that fail
     rather than happen.
-  - The name carries the `fmgd-` prefix because the managed deployer's storage role is fenced to it
-    (`deploy/terraform/gcp/modules/installation/deployer.tf:142`), which is what lets `fugaro update`
-    create the bucket and set its IAM with no permission it does not already hold (`:219`, `:242`).
+  - **The name is outside the managed prefix, and that is what the first version of this plan got
+    wrong (corrected 2026-11-05).** The earlier bullet here said the opposite — that the name should
+    carry `fmgd-` so the managed deployer's storage role would reach it, and that "no project-level
+    storage binding exists anywhere". **The second half is false and the first half was the bug.**
+    The deployer holds a **project-level** binding of `fugaroDeployerStorage`
+    (`deploy/terraform/gcp/modules/installation/deployer.tf:379`, the role at `:237`), and the role is
+    conditioned on `projects/_/buckets/fmgd-` (`deployer.tf:142`) while carrying
+    `storage.objects.get/list/create/update/delete` and `storage.buckets.setIamPolicy/update/delete`:
+    a store named `fmgd-...` would be readable **and rewritable** — the token hashes, the redirect
+    URIs, the revocation state and the whole audit — by every identity that can act as the deployer,
+    and re-grantable to anyone the deployer may bind. Every operator is such an identity, because the
+    installation gives each of them `roles/iam.serviceAccountTokenCreator` on the deployer's own
+    account (`deployer.tf:501`, `:513`), and every managed apply is another. **That is F32 again, one
+    resource over.** Naming the bucket outside `fmgd-` puts it out of that role's reach entirely, and
+    the deployer's reach is not needed: **`fugaro update` runs with the owner's own rights**, which
+    create every bucket in the project. Nothing in a managed plan can take the name either — the
+    deployer's only unconditioned storage permission is `storage.buckets.create`
+    (`deployer.tf:219`), and creating a bucket that already exists fails.
+  - **The one identity that reaches the store besides its member is the project Owner.** A bucket
+    policy does not narrow a project Owner, so the owner's own account — the account that runs
+    `fugaro update` — reaches the store as it reaches every object in the project. That is the person
+    who already holds the project rather than a class the installation lists, and it is the floor
+    under every option of §8: a second database instance and Firestore are reached by it too. What
+    D935 buys is that the store names nobody **else** — no launcher, no operator, no budget admin and
+    not the history account — which is exactly what the database it leaves cannot do.
 - **Red step:** `TestCoordinatorServiceIsPublicAndCarriesNoCredential` — it fails against the current
   Terraform because there is no service, and it asserts the two things that matter (the invoker
   binding is `allUsers`, and the container carries no secret whose value is a model credential).
 - **Tests:** `TestCoordinatorServiceIsPublicAndCarriesNoCredential`,
   `TestCoordinatorServiceHasItsOwnAccount`,
   `TestTheStoreHasExactlyOneMemberAndItIsTheCoordinator` (the plan's bindings on the store's bucket
-  name one member, that member is the service's own service account, and no other row of the plan
-  names that bucket), and the existing `cover.go` tests must stay green.
+  name one member, that member is the service's own service account, no other row of the plan names
+  that bucket, and **the bucket's name outside every prefix a conditioned role in this installation
+  is fenced to** — the `fmgd-` assertion that is the correction of 2026-11-05 kept as a test rather
+  than only written as prose), and the
+  existing `cover.go` tests must stay green.
 - **SEC:** **yes, mandatory.** It creates a public endpoint, a new service account **and the store
   the token records live in** — the one new store this design adds and the one new grant that keeps it
   private. The review's question is the one D935 asks: whether a plan-level test can be trusted to
-  keep that grant's member list at one, and whether the store's name and its IAM are the only route to
-  it.
+  keep that grant's member list at one, **and whether the store is out of reach of every identity the
+  installation already lets act — the point the first version of this task got wrong, where the
+  managed deployer's conditioned role was the way in rather than the reason the name was chosen**.
+  Its second question is whether the store's name and its IAM are the only route to it.
 - **Depends on:** D920 answered on 2026-11-04 (**it was, the recommendation**), the SECURITY
   review of [spec.md](spec.md) §8 read, **and the owner's answer to §8's open item** — the
   recommendation is the bucket, and this task does not start before the answer.
@@ -572,7 +641,9 @@ here is small enough to pull forward.
   **Two things this plan cannot prove hermetically, and both are owner checks in
   [reconciliation.md](reconciliation.md) §6:** the public reachability of M4's service (check 2), and
   **who the store's IAM actually admits (check 8)** — a plan-level test reads the plan, and the plan
-  is not the project's policy.
+  is not the project's policy. **The second is the one the correction of 2026-11-05 turned on**: a
+  name and a binding can be read off the plan, and whether *another* identity — an operator acting as
+  the deployer — reaches the store is a fact about the project's IAM and can only be read there.
 - **Named tests, never whole packages.** `internal/cli` and `internal/runner` are never run whole;
   every command is `GOFLAGS=-p=2 go test ./<package>/ -run 'Name|Name' -count=1`.
 - **A test that reads a changed file runs.** For every file a task touches, the implementing run
@@ -625,18 +696,24 @@ risk, and never money.
 
 | | A second Realtime Database instance | Firestore | **A bucket of its own, prefix `mcpauth/`** — recommended |
 | --- | --- | --- | --- |
-| **What it is** | a new `google_firebasedatabase_instance`, its own rules publish in the same `update`, its URL in the coordinator's configuration | a `mcpauth` collection in the project's existing database, or a named database of its own | a new bucket (`fmgd-<gcp-project>-mcpauth`) with every record under `mcpauth/` |
+| **What it is** | a new `google_firebasedatabase_instance`, its own rules publish in the same `update`, its URL in the coordinator's configuration | a `mcpauth` collection in the project's existing database, or a named database of its own | a new bucket (`fugaro-mcpauth-<gcp-project>`, **outside every conditioned prefix**) with every record under `mcpauth/` |
 | **What it costs** | **the most, and it does not work on its own.** The project-level bindings are inherited by every instance, so the new one is readable by every launcher and operator and writable by every admin, budget admin and the history account **until those three bindings are re-scoped** from the project to the default instance alone (`deploy/terraform/gcp/modules/firebase/iam.tf:44`, `:53`, `:81`) — a migration of the access every launcher already uses for `fugaro watch` and `budget show` (`:43`), in the release that also ships a public endpoint. The store code is the closest to what M2 first planned (the database client, key paths), which is the one thing in its favour | **the smallest to add and the one that cannot be made private at all.** `roles/datastore.viewer` is granted project-wide to `local.people ∪ local.admins` (`deploy/terraform/gcp/modules/firebase/iam.tf:65`) and the history account holds `roles/datastore.user` (`:96`); Firestore's data roles have **no per-database and no per-collection narrowing** to re-scope to, so a named database is reached by the same project-level binding as the default one. Getting out would mean withdrawing `datastore.viewer` from the people lists — which takes the spend history's own read with it — and the spend history is not this work's to break | **no transactions and no query language.** The store is objects, written with `internal/blobx`'s generation-matched primitives (`internal/blobx/blobx.go:1`), so the audit record is a prefix listing rather than a query, and each of rotate, replay-detect and revoke is a compare-and-swap that a test has to prove rather than a transaction that gives it. Everything else is a seam the repository already has, and the GCS fake implements the one precondition the store needs (`internal/gcpfake/gcs.go:34`) |
-| **The new Terraform** | one `google_firebasedatabase_instance`, plus the rules publish to it, plus **the re-scoping of the three project-level bindings above**, which is the part that touches what exists | one `google_firestore_database` for a named database, and **none at all** for a collection in the existing one | one `google_storage_bucket` — uniform bucket-level access and public access prevention enforced, because the installer's plan review refuses a bucket without both (`internal/infra/tf/cover.go:2199`) — and one `google_storage_bucket_iam_member`. Both types are already covered (`internal/infra/tf/cover.go:64`), and the managed deployer's conditioned storage role already reaches a bucket carrying the `fmgd-` prefix (`deploy/terraform/gcp/modules/installation/deployer.tf:142`, `:219`, `:242`), so `fugaro update` applies it with **no new operator permission and no second command** |
-| **The IAM binding it needs** | **none that is narrow.** There is no per-instance binding in the shape the rest of this installation uses: the only way to keep the four sets of people out is to stop granting them project-wide, which is the re-scoping above — and that changes what a launcher has today | **not available.** The binding cannot be narrowed to the records, so the store is readable by everyone `datastore.viewer` names and writable by the history account. This is the row that rules Firestore out rather than pricing it | **one binding, one member:** `roles/storage.objectAdmin` for the coordinator's own service account on that bucket, and nothing else. Every storage grant in this installation is bucket-scoped (`deploy/terraform/gcp/modules/installation/iam.tf:207`, `:222`, `:238`; `coordinator.tf:76`) and no project-level storage binding exists anywhere, so a bucket with one member has exactly one reader. **A prefix of the runs bucket is not this option:** every launcher reads that whole bucket (`deploy/terraform/gcp/modules/installation/iam.tf:222`) and every operator holds `objectAdmin` on it (`:207`), so the records would be readable by both lists — the finding F32 is, one resource over |
-| **The owner-run live check** | after the re-scoping: read the new instance's `mcpauth` node as a launcher and as a budget admin and expect a refusal — **and then confirm `fugaro watch` and `fugaro report` still work**, which is the half of this option that can break an installation | the same read, which **fails**: the launcher's own credentials reach the documents. The check is what turns this row from a preference into a fact | with a launcher's own credentials and with a budget admin's, read and list the store's prefix and expect a refusal; with the coordinator's service account, read one record and expect it to work; and confirm the store's bucket is not the runs bucket (check 8, [reconciliation.md](reconciliation.md) §6) |
+| **The new Terraform** | one `google_firebasedatabase_instance`, plus the rules publish to it, plus **the re-scoping of the three project-level bindings above**, which is the part that touches what exists | one `google_firestore_database` for a named database, and **none at all** for a collection in the existing one | one `google_storage_bucket` — uniform bucket-level access and public access prevention enforced, because the installer's plan review refuses a bucket without both (`internal/infra/tf/cover.go:2199`) — and one `google_storage_bucket_iam_member`. Both types are already covered (`internal/infra/tf/cover.go:64`), and `fugaro update` applies them with the owner's own rights, so **no new operator permission and no second command**. **The name must not carry `fmgd-`**: the managed deployer's storage role is a project-level binding conditioned on that prefix (`deploy/terraform/gcp/modules/installation/deployer.tf:379`, `:142`) and every operator can act as the deployer (`:501`), so a prefixed name would put the store inside exactly the reach this option exists to leave — the correction of 2026-11-05, and the reason M4's test asserts the name |
+| **The IAM binding it needs** | **none that is narrow.** There is no per-instance binding in the shape the rest of this installation uses: the only way to keep the four sets of people out is to stop granting them project-wide, which is the re-scoping above — and that changes what a launcher has today | **not available.** The binding cannot be narrowed to the records, so the store is readable by everyone `datastore.viewer` names and writable by the history account. This is the row that rules Firestore out rather than pricing it | **one binding, one member:** `roles/storage.objectAdmin` for the coordinator's own service account on that bucket, and nothing else. Every storage grant in this installation **but one** is bucket-scoped (`deploy/terraform/gcp/modules/installation/iam.tf:207`, `:222`, `:238`; `coordinator.tf:76`) — the exception is the managed deployer's conditioned `fugaroDeployerStorage` (`deploy/terraform/gcp/modules/installation/deployer.tf:379`), which is why the store's name stays outside `fmgd-` and out of its reach — so a bucket so named has exactly one member, and the project Owner is the only other identity that reaches it. **A prefix of the runs bucket is not this option:** every launcher reads that whole bucket (`deploy/terraform/gcp/modules/installation/iam.tf:222`) and every operator holds `objectAdmin` on it (`:207`), so the records would be readable by both lists — the finding F32 is, one resource over |
+| **The owner-run live check** | after the re-scoping: read the new instance's `mcpauth` node as a launcher and as a budget admin and expect a refusal — **and then confirm `fugaro watch` and `fugaro report` still work**, which is the half of this option that can break an installation | the same read, which **fails**: the launcher's own credentials reach the documents. The check is what turns this row from a preference into a fact | with a launcher's own credentials and with a budget admin's, read and list the store's prefix and expect a refusal; **impersonate the deployer as an operator and expect a refusal too** — the reading the correction of 2026-11-05 adds; with the coordinator's service account, read one record and expect it to work; and confirm the store's bucket is not the runs bucket (check 8, [reconciliation.md](reconciliation.md) §6) |
 
 **Why the recommendation is the bucket.** The first candidate's IAM cannot be narrowed without
 re-scoping grants four sets of people already hold, which is a bigger change to a working
 installation than the store itself; the second's cannot be narrowed at all, so it is not a candidate
 — it is the finding again, one resource over. The third is the only one whose IAM **can be exactly one
 account**, which is the sentence D935 answered with, and the one thing the ruling actually requires.
-What it gives up is transactions, and the repository already has the primitives for the two places a
+**Getting there cost the first version of this section a mistake worth recording**: it named the
+bucket under the managed prefix `fmgd-` so the deployer's conditioned role would reach it, which put
+the store inside the reach of every operator (through the deployer's own account) and of every
+managed apply — F32 again, one resource over, and found by this work's own review. A name outside
+that prefix, with the owner's `update` doing the creating, is what makes the sentence true rather
+than nearly true. What it gives up is transactions, and the repository already has the primitives for
+the two places a
 transaction would otherwise be doing the work (`internal/blobx`, and the GCS fake's generation
 precondition), which is a smaller risk than either of the other two rows' IAM.
 
@@ -645,8 +722,10 @@ start until then, and §2 puts both in the front levels for that reason; nothing
 waits on it, because every other task builds against M2's `Store` interface and not against a store.
 
 **What the store adds to the live check** ([reconciliation.md](reconciliation.md) §6, check 8, which
-is owner-run like the rest): three readings no hermetic test can stand in for — a launcher refused, a
-budget admin refused, the coordinator's service account admitted — plus the confirmation that the
+is owner-run like the rest): four readings no hermetic test can stand in for — a launcher refused, a
+budget admin refused, **an operator acting as the deployer refused** (the reading the correction of
+2026-11-05 adds, and the one that proves the name is out of the conditioned role's reach rather than
+only written to be), and the coordinator's service account admitted — plus the confirmation that the
 store's bucket is not the runs bucket. It is check 2's shape for a second resource: the claim is about
 who reaches something, and only the project can answer it.
 

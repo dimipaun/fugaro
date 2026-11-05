@@ -115,7 +115,7 @@ func (o *credsOptions) addFlags(cmd *cobra.Command) {
 // no run's process — whose environment the platform sets, not the agent — can
 // reach the document at all.
 func credsOwnerOnly(getenv func(string) string, did string) error {
-	if m := agentMarker(getenv); m != "" {
+	if m := agentMarker(getenv, processTerminal()); m != "" {
 		return userErr("nothing was %s: fugaro creds works on the credentials service's one bundle secret, which holds every model credential the service issues, with the operator's own identity, so it is run by a person at their own terminal: %s", did, initflow.AgentRefusal(m))
 	}
 	if m := managedFlagRunMarker(getenv); m != "" {

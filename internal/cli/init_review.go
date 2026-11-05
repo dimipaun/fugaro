@@ -83,7 +83,7 @@ func (r *initRun) ctx() context.Context {
 // the typed name was asked once.
 func (r *initRun) runCovers() (bool, error) {
 	rv := r.review
-	if rv == nil || r.o.planOnly || agentMarker(os.Getenv) != "" || !initflow.CanConfirmRun(r.conditions()) {
+	if rv == nil || r.o.planOnly || agentMarker(os.Getenv, r.stdinTerminal()) != "" || !initflow.CanConfirmRun(r.conditions()) {
 		return false, nil
 	}
 	switch rv.state {
@@ -152,7 +152,7 @@ func (r *initRun) notCovered(p *tf.Plan, imports []tf.ImportKey) string {
 // why this step is not covered (shown), so it asks its own typed
 // confirmation.
 func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
-	if m := agentMarker(os.Getenv); m != "" {
+	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return false, &initflow.AgentError{Marker: m}
 	}
 	if notCovered == "" {

@@ -50,6 +50,7 @@ Subcommands:
 - `fugaro recipes` -- List, show, validate and publish recipes, the task loop a run follows after implement
 - `fugaro report` -- Report what the project spent, by day, week, month, year, repository, model, person or mode
 - `fugaro restore` -- Rebuild a managed project from zero, into a new GCP project ID, and print what is not restored
+- `fugaro review` -- Review a pull request in a job of its own, on a named account
 - `fugaro run` -- Launch a task in the cloud; it always ends with a PR
 - `fugaro runs` -- List and inspect runs
 - `fugaro secrets` -- Store, list and withdraw a repository's secrets in Secret Manager
@@ -1939,9 +1940,11 @@ Add an image catalog entry to this machine's project config
 Add a named image to the project's image catalog, in this machine's project
 config: the copy fugaro update publishes to the project's policy node
 (image_catalog). The entry's source is a Dockerfile in one of the project's
-repositories (--dockerfile owner/name:path, with --branch) or a Dockerfile
-written out here (--inline <file>), and its tags are what a repository's
-needs: is matched against.
+repositories (--dockerfile owner/name:path, with --branch), a Dockerfile
+written out here (--inline <file>), or an image that already exists
+(--image <ref>), and its tags are what a repository's needs: is matched
+against. The three are one entry's alternatives and are refused together
+rather than resolved.
 
 Nothing is built and nothing is published here: fugaro image build <name>
 builds the entry's image, and fugaro update publishes the catalog. --default
@@ -1961,6 +1964,7 @@ Flags:
 | `--dockerfile` | string | "" | no | a Dockerfile in one of the project's repositories, as owner/name:path |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for add |
+| `--image` | string | "" | no | a prebuilt image reference, such as ghcr.io/owner/image:1.2: nothing is built and the image is used as it is |
 | `--inline` | string | "" | no | a file whose contents are the entry's Dockerfile |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -3561,6 +3565,89 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro review`
+
+Review a pull request in a job of its own, on a named account
+
+Launch an independent review of pull request N, in a container the coding
+run never ran in and with the account you name.
+
+The review runs on the review-only variant of the repository's job: no App
+key, no Claude token and no signing key are mounted in it, and its git
+credential is a read-only one it fetches from the installation's credentials
+service. It reads a fresh clone of the pull request's head, writes its verdict
+as an artifact (fugaro review show RUN prints it) and posts no comment and no
+review on the pull request: what reaches the pull request is the owner's and
+the coordinator's to decide.
+
+The account is picked as everywhere else: --token, else agent.oauth_token in
+fugaro.yaml at the run's ref, else the project's default_claude_account.
+
+--mutate FILE:TEST asks for one mutation check: the reviewer flips a boolean
+literal in FILE, which must be Go source in the head under review, and TEST —
+a Go test name — must then fail. The artifact carries what was observed; it is
+evidence and never a verdict.
+
+--json prints the launch's own result, the run id, its job and the account, as
+every other command's --json does. The verdict does not exist yet: it is
+written by the job, and `fugaro review show RUN` reads it back.
+
+A pull request whose own coding run is still going is refused: the review
+records the head it read, and a head that moves under it would leave the
+verdict about a commit that is no longer there.
+
+Usage: `fugaro review --pr N`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for review |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--mutate` | stringArray | `[]` | no | ask for one mutation check, as <file:test>: the Go source in the reviewed head to flip and the Go test name that must then fail; at most one |
+| `--pr` | int | `0` | no | the pull request to review (required) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--token` | string | "" | no | named Claude account (claude_accounts in the local config) this review runs as; default: agent.oauth_token in fugaro.yaml at the run's ref, else the project's default_claude_account |
+
+Subcommands:
+
+- `fugaro review show` -- Print a review run's verdict artifact and its markdown
+
+## `fugaro review show`
+
+Print a review run's verdict artifact and its markdown
+
+Print what a review run wrote: its verdict artifact (review.json), and the
+same review rendered as markdown (review.md). RUN is <repo-slug>/<run-id>.
+
+--json prints the artifact's own JSON alone, byte for byte as the review job
+wrote it, so the bytes are the ones the service signed and a reader that
+checks the signature (the sidecar object review.json.sig) is checking those
+bytes.
+
+A run that is still going has no artifact yet; the command says so rather than
+printing an empty review.
+
+Usage: `fugaro review show RUN`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for show |
+| `--json` | bool | `false` | no | print the artifact's own JSON alone, exactly as the review job wrote it |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro run`
 
 Launch a task in the cloud; it always ends with a PR
@@ -4609,11 +4696,18 @@ a provider's own, takes the typed owner/name whatever the run was given. What
 the Firestore database's permanent location, this door's first-time question.
 With --yes, --non-interactive, --json or a pipe each of those is left for you,
 with the one line to run. In a coding agent's environment (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
-CLAUDE_CODE_SSE_PORT, CLAUDE_CODE_REMOTE, CURSOR_AGENT or AI_AGENT is set) setup
+CLAUDE_CODE_REMOTE, CURSOR_AGENT or AI_AGENT is set) setup
 applies nothing, --yes included, and says to run it in your own terminal
 window; --plan-only and the read-only checks still work, and so does setup
 --anchor (with --yes), which edits only the checkout's fugaro.yaml. That is a mitigation,
-not a barrier: an agent can unset its own environment. A run that writes this
+not a barrier: an agent can unset its own environment. CLAUDE_CODE_SSE_PORT is
+read the same way and is the one case that is not an agent's: the Claude Code
+IDE extension sets it in a person's own terminal too, so on its own it counts
+as a coding agent's session only where standard input is not a real terminal,
+and with a real terminal it types the same confirmations as any other — one
+line says the confirmation was accepted from an IDE terminal. Set beside any
+of the markers above it is an agent's session like theirs, and a pipe, --json,
+--non-interactive and --yes behave exactly as they did. A run that writes this
 machine's local config from an installation that already exists (fugaro
 update on a new machine) changes nothing in the cloud in the same run (the
 local config and, in a checkout, the plugin wiring in .claude/settings.json
@@ -4627,9 +4721,11 @@ prompts only in your own terminal: never with --yes, --non-interactive or
 --json (--json never prompts; the stage then exits 1 with the one-line
 fugaro secrets set commands), never when stdin, stdout or stderr is not a
 terminal (a pipe is never read), and never when a coding agent's variable is set (CLAUDECODE
-and the like; CLAUDE_CODE_SSE_PORT is also set by the Claude Code IDE
-extension in VS Code and JetBrains terminals, so a person's own IDE terminal
-can be refused: its refusal tells you what to do about it). A pasted private key may have at most 120 lines. It creates each
+and the like). CLAUDE_CODE_SSE_PORT is set by the Claude Code IDE extension in
+VS Code and JetBrains terminals as well, so it alone is not a coding agent when
+standard input is a real terminal: a person's own IDE terminal prompts exactly
+as any other terminal does, and no stored secret is read back to it; with
+another marker beside it, or no terminal, it is refused like any other. A pasted private key may have at most 120 lines. It creates each
 secret's container, before the repository stage, with the labels
 setup --repo's Terraform imports (fugaro, fugaro_repo, fugaro_secret).
 
@@ -4738,7 +4834,7 @@ Flags:
 | `--runs-bucket` | string | "" | no | the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>) |
 | `--scheduler-region` | string | "" | no | Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers) |
 | `--state-bucket` | string | "" | no | the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>) |
-| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, the Firestore database's location, a secret value, or a policy publish that would loosen the published node: each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) setup changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are setup --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where every stage before the checkout is done, because the first stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
+| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, the Firestore database's location, a secret value, or a policy publish that would loosen the published node: each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) setup changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are setup --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where every stage before the checkout is done, because the first stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
 
 Subcommands:
 
@@ -4924,7 +5020,7 @@ Flags:
 | `--runs-bucket` | string | "" | no | the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>) |
 | `--scheduler-region` | string | "" | no | Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers) |
 | `--state-bucket` | string | "" | no | the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>) |
-| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — the Firestore database's location, a rebuild of the checkout's workflow images, a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, a secret value, or a policy publish that would loosen the published node: each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like) update changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are update --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where every stage before the checkout is done, because the first stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
+| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — the Firestore database's location, a rebuild of the checkout's workflow images, a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, a secret value, or a policy publish that would loosen the published node: each of those is typed at a real terminal, and no door relaxes them. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) update changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are update --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where every stage before the checkout is done, because the first stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint |
 
 Subcommands:
 

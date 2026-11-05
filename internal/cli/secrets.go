@@ -776,7 +776,7 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 		key = block + "." + name + ".allow_data_to"
 	}
 	command := secretsSetPolicyCommand(o, name, proxy)
-	if marker := agentMarker(os.Getenv); marker != "" {
+	if marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); marker != "" {
 		return userErr("refusing to write %s in a coding agent's session (%s is set): it decides which repositories may mount the value and whether the credentials service forwards it, which no plan shows and no dry run brings back; run this yourself at your own terminal: %s; nothing was written",
 			pluginwire.Printable(key), marker, command)
 	}

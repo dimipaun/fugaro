@@ -1692,17 +1692,19 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 }
 
 // isNamedAddition reports whether p is one of the paths a rules change of this
-// branch is allowed to add: the credentials family (C1.3), or the coordinator's
-// subtree (coordinator plan task P3, D195). Anything else that appears in the
-// document is a rules change nobody asked for.
+// branch is allowed to add: the credentials family (C1.3), the coordinator's
+// subtree (coordinator plan task P3, D195), or the hosted MCP server's own
+// (docs/mcp-server/implementation-plan.md's M3, D922). Anything else that
+// appears in the document is a rules change nobody asked for.
 //
-// The coordinator half is an equality and not a prefix, for the reason
-// isNewCredsPath gives below: P3 adds the family's own node and nothing under
-// it, so a path *under* /coordinator is a change to what the family contains —
-// the shape a grant hidden under it takes — and belongs here as a diff a
-// reviewer reads rather than as a match this test waves through.
+// The coordinator's half and the MCP server's are equalities and not prefixes,
+// for the reason isNewCredsPath gives below: P3 adds the family's own node and
+// nothing under it, so a path *under* /coordinator is a change to what the
+// family contains — the shape a grant hidden under it takes — and belongs here
+// as a diff a reviewer reads rather than as a match this test waves through.
+// M3's node is refused whole, so a path under it is the same shape.
 func isNamedAddition(p string) bool {
-	return isNewCredsPath(p) || p == coordpath.PathRoot
+	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth
 }
 
 // isNewCredsPath reports whether p is one of the three things C1.3 adds: the

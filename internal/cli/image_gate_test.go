@@ -33,7 +33,11 @@ func TestImageBuildCloudMatrix(t *testing.T) {
 		{"a pipe", nil, false, "", "aurora\n", false},
 		{"--json at a terminal", []string{"--json"}, true, "", "aurora\n", false},
 		{"a coding agent at a terminal", nil, true, "CLAUDECODE", "aurora\n", false},
-		{"an IDE terminal", nil, true, "CLAUDE_CODE_SSE_PORT", "aurora\n", false},
+		// The Claude Code IDE extension sets its marker in a person's own
+		// terminal too, so that marker alone, at a terminal, is a person's
+		// (the ruling of 2026-11-05); with no terminal it is an agent's.
+		{"an IDE terminal", nil, true, "CLAUDE_CODE_SSE_PORT", "aurora\n", true},
+		{"an IDE terminal, a pipe", nil, false, "CLAUDE_CODE_SSE_PORT", "aurora\n", false},
 		{"a coding agent, a pipe", nil, false, "CURSOR_AGENT", "aurora\n", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

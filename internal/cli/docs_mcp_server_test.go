@@ -179,6 +179,35 @@ func TestDocsMCPServerAnswersAreTheOnesInForce(t *testing.T) {
 			t.Errorf("%s still says the closed subtree is the one place nothing but the coordinator's database grant reaches: it sits in the project's shared database, whose viewer and admin grants are project-level and cover every node in it (F32, D935), so the sentence states the opposite of the answer in force", path)
 		}
 	}
+
+	// The store's name, and the reach the second review of this work removed.
+	// Section 8 and M4 first named the recommended bucket under the managed
+	// prefix `fmgd-`, on the claim that no project-level storage binding exists
+	// -- and both halves are gone: the managed deployer's conditioned role is
+	// bound at project level on that prefix (deployer.tf:379, :142) and every
+	// operator can act as the deployer (deployer.tf:501), so a prefixed name put
+	// the store inside the reach it exists to leave. What is pinned is the name
+	// that replaces it, the sentence that says why, and the reading check 8
+	// gains -- so a later edit that quietly restored the prefix fails here.
+	plan := flattenDoc(readDoc(t, mcpPlan))
+	if !strings.Contains(plan, "fugaro-mcpauth-<gcp-project>") {
+		t.Errorf("%s does not name the store's bucket %q: §8 and M4 recommend a bucket of its own and the name is the whole of what keeps the managed deployer's conditioned role off it", mcpPlan, "fugaro-mcpauth-<gcp-project>")
+	}
+	if !strings.Contains(plan, "`fmgd-` is the managed deployer's fence") {
+		t.Errorf("%s does not say why the store's name is outside the managed prefix: the deployer's conditioned storage role is a project-level binding on `fmgd-` (deployer.tf:379) and every operator can act as the deployer (deployer.tf:501), so the reason is the correction rather than a detail", mcpPlan)
+	}
+	for _, path := range mcpDocs() {
+		flat := flattenDoc(readDoc(t, path))
+		if strings.Contains(flat, "fmgd-<gcp-project>-mcpauth") {
+			t.Errorf("%s still names the store's bucket under the managed prefix `fmgd-<gcp-project>-mcpauth`: the managed deployer's conditioned storage role reaches every bucket carrying that prefix and every operator can act as the deployer, so a store so named is readable and rewritable by both (the second review of this work, 2026-11-05)", path)
+		}
+		if strings.Contains(flat, "No project-level storage binding exists anywhere") {
+			t.Errorf("%s still says no project-level storage binding exists anywhere: the managed deployer's `fugaroDeployerStorage` is one, conditioned on `fmgd-` (deployer.tf:379), and the claim is what made the store's name wrong", path)
+		}
+	}
+	if !strings.Contains(flattenDoc(readDoc(t, mcpReconciled)), "impersonate the deployer as an operator") {
+		t.Errorf("%s: check 8 does not carry the operator-impersonating-the-deployer reading: the store's name keeps that identity off it, and only a live project can show the name did what it was chosen to do", mcpReconciled)
+	}
 }
 
 // TestDocsMCPServerNamesWhatItDesigns: the names the design fixes are the names

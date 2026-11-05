@@ -193,6 +193,19 @@ exactly one thing: **the store**. D922's other half, `.read: false` and `.write:
 kept by D935 as the second barrier rather than as the barrier, and the record of the 2026-11-04 answer
 above is left standing rather than rewritten, so a reader can see what moved and why.
 
+**And the same finding caught the recommendation once (corrected 2026-11-05).** The plan's §8 first
+named the recommended bucket under the managed prefix `fmgd-`, so that the managed deployer's
+conditioned storage role would reach it — and that role is a **project-level** binding
+(`deploy/terraform/gcp/modules/installation/deployer.tf:379`, conditioned on the prefix at `:142`),
+while every operator holds `roles/iam.serviceAccountTokenCreator` on the deployer's own account
+(`deployer.tf:501`). A bucket so named would have been readable, rewritable and re-grantable by every
+operator and by every managed apply: **F32 again, one resource over**, found by this work's own
+review rather than by the installation. The store's name is therefore outside every conditioned
+prefix, and the owner's `fugaro update` — which runs with the owner's own rights — is what creates it.
+The one identity besides the store's own member that reaches it is the project Owner, which reaches
+every bucket in the project; that is the floor under every candidate of §8, and what D935 buys is that
+the store names **nobody else**.
+
 ## 5. The number block, and why it stays D920
 
 Read at launch (2026-11-01) and **re-read on 2026-11-04 against `b41709ea`**, because the tree had
@@ -263,9 +276,14 @@ code task starts:
    stands in for this one: the plan's own test reads the plan, and the plan is not the project's
    policy. With the owner's own credentials, once M4 has been applied by `fugaro update`: **read and
    list the store's prefix as a launcher and as a budget admin, and see a refusal** — the two classes
-   F32 found the rules cannot exclude from the database; **read one record as the coordinator's own
-   service account, and see it work**; and **confirm the store's bucket is not the runs bucket**, which
-   is the one placement a prefix of an existing bucket would have made readable by both lists. It is
+   F32 found the rules cannot exclude from the database; **impersonate the deployer as an operator
+   (`gcloud storage ls` under the deployer's account, or with the token-creator grant the installation
+   gives every operator, `deploy/terraform/gcp/modules/installation/deployer.tf:501`), and see a
+   refusal too** — the reading the correction of 2026-11-05 adds, and the one that proves the store's
+   name is outside the deployer's conditioned prefix rather than merely written to be; **read one
+   record as the coordinator's own service account, and see it work**; and **confirm the store's
+   bucket is not the runs bucket**, which is the one placement a prefix of an existing bucket would
+   have made readable by both lists. It is
    check 2's shape for a second resource: the claim is about who reaches something, and only the
    project can answer it. **Which store** it is checked against is the plan's Open item — the plan
    recommends a bucket of its own, and the check's wording moves with the answer rather than this
