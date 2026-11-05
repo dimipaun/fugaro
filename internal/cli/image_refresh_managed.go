@@ -320,7 +320,7 @@ func refreshBuildRules(t *refreshTarget, p *refreshPlan, build, kind, host strin
 	if started < bound.Count() {
 		rules = append(rules, fmt.Sprintf("the build is within the bound the project's marker records (%d per invocation, %d already submitted)", bound.Count(), started))
 	} else {
-		refused = append(refused, fmt.Sprintf("the build is past the bound the project's marker records (%d per invocation, and %d builds have already been submitted by this one), so nothing further is built here: the owner runs %s in their own terminal window, where a person's own run has the per-build question and no bound, or records a larger max_image_builds for the project (D1013)",
+		refused = append(refused, fmt.Sprintf("the build is past the bound the project's marker records (%d per invocation, and %d builds have already been submitted by this one), so nothing further is built here: while this project is managed, the owner's own terminal is asked no per-build question either — the gate answers it — so the same bound holds there, and the two ways past it are %s --yes, which confirms every build itself, and a larger max_image_builds recorded for the project (D1013)",
 			bound.Count(), started, safetext.Field(selfCommand()+" image refresh")))
 	}
 	return rules, refused
