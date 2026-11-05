@@ -135,7 +135,7 @@ func runReviewLaunch(cmd *cobra.Command, o *reviewOptions) error {
 	if err := spec.Validate(); err != nil {
 		return userErr("%v", err)
 	}
-	if err := checkReviewLaunch(ctx, env, repo, slug, spec, cmd.ErrOrStderr()); err != nil {
+	if err := checkReviewLaunch(ctx, env, repo, slug, o.pr, spec, cmd.ErrOrStderr()); err != nil {
 		return err
 	}
 	res, err := finishLaunch(ctx, env, o2, slug, spec, false, cmd.ErrOrStderr(), false)
@@ -187,7 +187,12 @@ func reviewAccount(spec *task.Spec) string {
 // the job fetches its credentials from (E7's two halves, the first of which is
 // the release's own precondition, D893 (c)), the named account's own state
 // (D882), and the pull request's coding run (spec §5).
-func checkReviewLaunch(ctx context.Context, env *cloudEnv, repo, slug string, spec *task.Spec, warn io.Writer) error {
+//
+// The pull request is the command's own --pr, which is checked positive before
+// anything else happens, and not spec.ReviewPRs[0]: the task's own list is the
+// same number (reviewSpec writes it from that flag) and is not read for its
+// length here, so no caller can index an empty slice.
+func checkReviewLaunch(ctx context.Context, env *cloudEnv, repo, slug string, pr int, spec *task.Spec, warn io.Writer) error {
 	if err := checkReviewService(env); err != nil {
 		return err
 	}
@@ -197,7 +202,7 @@ func checkReviewLaunch(ctx context.Context, env *cloudEnv, repo, slug string, sp
 	if err := checkReviewAccountState(ctx, env, spec); err != nil {
 		return err
 	}
-	return checkReviewHeadIsStill(ctx, env, repo, slug, spec.ReviewPRs[0], warn)
+	return checkReviewHeadIsStill(ctx, env, repo, slug, pr, warn)
 }
 
 // checkReviewJobAdmitted is E7's second half, and the half nobody can supply
