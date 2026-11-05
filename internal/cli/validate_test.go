@@ -3225,6 +3225,62 @@ func TestValidateNotesTheArtifactOutputCap(t *testing.T) {
 	}
 }
 
+// TestValidateNotesTheSubscriptionStageBound (CSR6, F10): a review job runs on
+// a Claude account, so its model calls never reach the gateway and
+// budget.per_run_usd — the cap the gateway enforces — bounds none of them. The
+// one ceiling over such a stage is agent.max_budget_usd, which is Claude Code's
+// own estimate of the stage's cost: accurate for a Claude model, and about
+// twenty-five times too high for a provider model, where it is therefore the
+// figure an owner would be trusting by mistake.
+//
+// The note says so where the file sets a per-run cap, because that is the key
+// whose promise a reader would take as covering the whole installation, and it
+// is a note: the cap is a real bound on every other run and nothing here
+// refuses it.
+func TestValidateNotesTheSubscriptionStageBound(t *testing.T) {
+	boundNote := func(errOut string) []string {
+		t.Helper()
+		var got []string
+		for _, line := range strings.Split(errOut, "\n") {
+			if rest, ok := strings.CutPrefix(line, "note: budget.per_run_usd: "); ok {
+				got = append(got, rest)
+			}
+		}
+		return got
+	}
+	for _, tc := range []struct {
+		name     string
+		accounts bool
+		budget   string
+		want     bool
+	}{
+		{name: "a cap beside a named account", accounts: true, budget: "budget: { per_run_usd: 5 }\n", want: true},
+		{name: "no cap", accounts: true},
+		{name: "no named account", budget: "budget: { per_run_usd: 5 }\n"},
+	} {
+		path := reviewInstallation(t, tc.accounts, "", "", tc.budget)
+		out, errOut, err := execute(t, "validate", path)
+		if err != nil || !strings.Contains(out, "is valid") {
+			t.Fatalf("%s: validate must not refuse a cap it cannot enforce: %v\nout: %s\nerr: %s", tc.name, err, out, errOut)
+		}
+		got := boundNote(errOut)
+		if !tc.want {
+			if len(got) != 0 {
+				t.Fatalf("%s: noted though no subscription stage is at stake: %q", tc.name, got)
+			}
+			continue
+		}
+		if len(got) != 1 {
+			t.Fatalf("%s: bound notes = %q (stderr %q)", tc.name, got, errOut)
+		}
+		for _, want := range []string{"agent.max_budget_usd", "twenty-five times too high", "(F10)"} {
+			if !strings.Contains(got[0], want) {
+				t.Errorf("%s: the note does not say %q: %q", tc.name, want, got[0])
+			}
+		}
+	}
+}
+
 // TestValidateNotesTheCredentialsServicePrecondition (CSR6, E7): a review job
 // mounts no credential of its own, so its read-only installation token and its
 // account's model calls both come from the installation's credentials service
