@@ -702,14 +702,26 @@ func wordMacro(m string, depth int) (string, error) {
 // rather than left to the root's own denial, and deliberately not
 // `coordinator/`'s `.read: "USER"`: D195 has a signed-in person read the
 // coordinator's state, and D922's answer refuses that same person every read
-// of this one. Nothing a client holds admits it; the coordinator's own account
-// is its only writer, and it reaches the node through
-// roles/firebasedatabase.admin (deploy/terraform/gcp/modules/firebase/iam.tf),
-// which bypasses the rules — which is why the node is written as a refusal
-// beside the IAM grant rather than as a grant of its own. Without the read
-// being false, the client list, the redirect URIs, the revocation state and
-// the audit would be readable by everyone the installation admits, and "store
-// only hashes" would protect the token values and nothing else.
+// of this one. Nothing a client token holds admits it: a rule binds a client
+// token and refuses this node to every one of them. It binds no IAM identity,
+// and the coordinator's account is not the node's only writer — the
+// installation grants roles/firebasedatabase.viewer to every launcher and
+// operator (deploy/terraform/gcp/modules/firebase/iam.tf:44) and
+// roles/firebasedatabase.admin to the admins and budget admins
+// (deploy/terraform/gcp/modules/firebase/iam.tf:53), to the history service
+// account (deploy/terraform/gcp/modules/firebase/iam.tf:81) and to the
+// coordinator's own writer (deploy/terraform/gcp/modules/firebase/iam.tf:141),
+// and every one of those reads and writes every node past these rules — the
+// fact the package comment above states for config/admin and
+// docs/design/roles.md:104 for the database as a whole. So the node is written
+// as a refusal beside the IAM grants rather than as a grant of its own, and the
+// exposure those grants leave is not one a rule here can close: it is an open
+// item on the plan's M3 (docs/mcp-server/implementation-plan.md) for the owner
+// to decide — another store, narrower IAM, or the exposure accepted and the
+// spec corrected. Without the read being false, the client list, the redirect
+// URIs, the revocation state and the audit would be readable by every client
+// the installation admits, and "store only hashes" would protect the token
+// values and nothing else.
 //
 // It sits below the macro table rather than beside PathDevices because a
 // constant added above it would move the lines internal/cli's voice-switch
