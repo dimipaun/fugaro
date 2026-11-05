@@ -64,6 +64,7 @@ so (D922 was first answered the other way and restated the same day).
 | F29 | **The coordinator's spec §4 says "whoever can reach the project's coordinator is in the project; no extra permission model in v1"** (`docs/coordinator/spec.md:25`), and that sentence is true while reaching the coordinator means holding `roles/run.invoker`. D920 removes exactly that, so the sentence stops describing anything and an authorization rule has to replace it. **→ D933.** |
 | F30 | **The console's graph write is blocked on "the front door (coordinator P8, not started)"** — `docs/console-dependency-graph/reconciliation.md:330`, with GV3.1 and GV3.2 blocked in `docs/console-dependency-graph/implementation-plan.md:457-489,511,528`. A front door that authenticates a person *could* carry the write, which is why the design has to say whether it does. **→ D927.** |
 | F31 | **The coordinator's spec §7 wants MCP tools that overlap the owner's, with different names** (`docs/coordinator/spec.md:46-53`: `report_intent`, `check_conflicts`, `get_project_state`, `record_override`). Two tool sets on one endpoint is a naming decision the implementation cannot leave open: a client sees one `tools/list`. **→ D931's note.** |
+| F32 | **A closed subtree in the project's database is still reachable by everyone the installation lists.** The database grants are **project-level**, so every instance and every node in the project inherits them and the rules do not bind their holders: `deploy/terraform/gcp/modules/firebase/iam.tf:44` gives `roles/firebasedatabase.viewer` to every launcher and operator, `deploy/terraform/gcp/modules/firebase/iam.tf:53` gives `roles/firebasedatabase.admin` to every admin and budget admin, and `deploy/terraform/gcp/modules/firebase/iam.tf:81` gives it to the history account (`docs/design/roles.md:104`: "Any confidential thing placed in RTDB is readable by everyone on either list"). F26's conflict was answered by closing the subtree (D922), and **closing it is not enough**: the conflict stands against any node in this database, whoever writes the rule. **→ D935**, found by the independent review of PR #1715's M3. |
 
 ## 4. The decisions
 
@@ -164,6 +165,47 @@ load-bearing:
 carries — **design answered by the owner 2026-11-04; plan only; nothing implemented; no task
 approved.**
 
+### The answer of 2026-11-05
+
+**One question was put to the owner after that day, and it moves where the records live rather than
+what they are.** The **independent SECURITY review of PR #1715's M3** — the rules change that closed
+the `mcpauth` node — found that the closed node cannot do what D922 asked of it, and the reason is a
+fact about the installation rather than about the rule: **F32**. The findings above were read again
+for it, and the owner answered on **2026-11-05**, again as recommended.
+
+| D | The answer, 2026-11-05 | Why, in one line |
+| --- | --- | --- |
+| **D935** | **The recommendation: the `mcpauth` records — the client list, the redirect URIs, the token hashes, the tool-call audit and the revocation state — leave the project's shared Realtime Database** for **a store of their own, whose IAM names the coordinator's own service account and no other member**, and **the `mcpauth` node stays in the rules as a defence in depth**, with `.read: false` and `.write: false`. **Which store is left open**: the plan's §8 compares a second Realtime Database instance, Firestore and a bucket of its own, recommends the bucket, and carries the choice as an Open item. | Every launcher and operator holds `roles/firebasedatabase.viewer` on the whole project and every budget admin and the history account holds `roles/firebasedatabase.admin` (F32), so **no rule can keep them out of the project's database** — the records have to leave it, and the store that holds them has to be one whose IAM can name exactly one account. |
+
+**What it moves, and what it does not.** [implementation-plan.md](implementation-plan.md) is written
+to it: M2's store, M3's node and the comment it carries, M4's store and its single grant, M5's writes
+and M10's audit record and revocation. **Nothing else moves.** D922's rule stands — only hashes, shown
+once at mint, never again — D930's rotation and its one-delete revocation stand, and D933's operator
+read of the audit record stands, because a tool serves it and no node does. **spec.md is not edited**:
+§6 and §8 there still describe the records as living in the `mcpauth` subtree, because that file
+carries the owner's spec and the answers of 2026-11-04, and the plan wins where the two disagree.
+
+**Why it is not a contradiction of D922, which answers the same question.** D922 answered *where the
+records live* and its answer was the closed subtree; D935 answers it again, one day and one review
+later, because the premise D922's answer rested on — that a closed subtree is reachable by the
+coordinator's account and by nobody else — is false in the project's database. The two rows differ in
+exactly one thing: **the store**. D922's other half, `.read: false` and `.write: false` on the node, is
+kept by D935 as the second barrier rather than as the barrier, and the record of the 2026-11-04 answer
+above is left standing rather than rewritten, so a reader can see what moved and why.
+
+**And the same finding caught the recommendation once (corrected 2026-11-05).** The plan's §8 first
+named the recommended bucket under the managed prefix `fmgd-`, so that the managed deployer's
+conditioned storage role would reach it — and that role is a **project-level** binding
+(`deploy/terraform/gcp/modules/installation/deployer.tf:379`, conditioned on the prefix at `:142`),
+while every operator holds `roles/iam.serviceAccountTokenCreator` on the deployer's own account
+(`deployer.tf:501`). A bucket so named would have been readable, rewritable and re-grantable by every
+operator and by every managed apply: **F32 again, one resource over**, found by this work's own
+review rather than by the installation. The store's name is therefore outside every conditioned
+prefix, and the owner's `fugaro update` — which runs with the owner's own rights — is what creates it.
+The one identity besides the store's own member that reaches it is the project Owner, which reaches
+every bucket in the project; that is the floor under every candidate of §8, and what D935 buys is that
+the store names **nobody else**.
+
 ## 5. The number block, and why it stays D920
 
 Read at launch (2026-11-01) and **re-read on 2026-11-04 against `b41709ea`**, because the tree had
@@ -179,10 +221,13 @@ moved a long way in three days and a block that was free at launch is not free b
   removal design), **D1220–D1259** to the stateless-orchestrator work, **D1260–D1289** to the #1678
   design, and **D1290–D1309** are #1492's new block.
 
-**This work keeps D920–D934**, the fifteen decisions above, and **reserves D935–D939**, which nothing
-here uses. They do not collide: on `main` the strings "D920" and "D934" appear only as *other works'
-inventories of this pull request's block* (`docs/managed-agent-converge/reconciliation.md:248`,
-`docs/run-limit-carry-over/README.md:54`), never as a decision of their own. A later task that needs
+**This work keeps D920–D934**, the fifteen decisions above, **and D935** — the answer of 2026-11-05,
+which this work's own reservation had left free and which its review asked for — and **reserves
+D936–D939**, which nothing here uses. They do not collide: on `main` the strings "D920", "D934" and
+"D935" appear only as *other works' inventories of this pull request's block*
+(`docs/managed-agent-converge/reconciliation.md:248`, `docs/run-limit-carry-over/README.md:54`), never
+as a decision of their own — D935 was checked against `main` again before it was written rather than
+assumed free, and the only files that name it are this folder's own. A later task that needs
 a number takes **D1310** — the first number above every allocation listed here — and re-checks this
 section's facts rather than its conclusion.
 
@@ -224,7 +269,25 @@ code task starts:
    **run by the coordinator**, not by this folder's authors: the threat model is the section the
    review reads, and **no task in [implementation-plan.md](implementation-plan.md) starts before it
    has been read and its findings answered.** [README.md](README.md) records who runs it and what it
-   covers.
+   covers. **Its first finding has already landed** (F32, the review of PR #1715's M3), and the owner
+   answered it on 2026-11-05 (**D935**); the rest of §8 is still to be read, and M2 and M4 carry a gate
+   of their own until §8 of the plan answers the store question.
+8. **The store's IAM is what D935 says it is, and only a live project can show it.** No hermetic test
+   stands in for this one: the plan's own test reads the plan, and the plan is not the project's
+   policy. With the owner's own credentials, once M4 has been applied by `fugaro update`: **read and
+   list the store's prefix as a launcher and as a budget admin, and see a refusal** — the two classes
+   F32 found the rules cannot exclude from the database; **impersonate the deployer as an operator
+   (`gcloud storage ls` under the deployer's account, or with the token-creator grant the installation
+   gives every operator, `deploy/terraform/gcp/modules/installation/deployer.tf:501`), and see a
+   refusal too** — the reading the correction of 2026-11-05 adds, and the one that proves the store's
+   name is outside the deployer's conditioned prefix rather than merely written to be; **read one
+   record as the coordinator's own service account, and see it work**; and **confirm the store's
+   bucket is not the runs bucket**, which is the one placement a prefix of an existing bucket would
+   have made readable by both lists. It is
+   check 2's shape for a second resource: the claim is about who reaches something, and only the
+   project can answer it. **Which store** it is checked against is the plan's Open item — the plan
+   recommends a bucket of its own, and the check's wording moves with the answer rather than this
+   check's purpose.
 
 ## 7. What `main` had overtaken, and what was fixed in place
 
