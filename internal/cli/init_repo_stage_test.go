@@ -789,3 +789,175 @@ func TestRepoStageNewMachineRefusalComesBeforeTheTypedPrompt(t *testing.T) {
 		t.Errorf("asked before refusing:\n%s", out.String())
 	}
 }
+
+// repoBuildRig is the head every update --repo test that reaches the build
+// step writes: the rig, its installation's state, a reachable project layer
+// and record bucket (a build resolves the layer and writes the repository's
+// copy of it), the fake terraform's plan and outputs, and an isolated cache.
+// The checkout's own head is each test's (project aurora, gcp_project
+// proj-1234, matching r.script["output"]'s project_name).
+func repoBuildRig(t *testing.T, extra string) *initRig {
+	t.Helper()
+	r := newInitRig(t)
+	r.stateBucket()
+	w, err := r.gcs.Bucket(t, initStateBucket).NewWriter(context.Background(), infra.StatePrefixInstallation+"/default.tfstate", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r.appendConfig(t, "base_images: {base: "+sandboxBaseRelease+"}\n"+extra)
+	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
+	r.script["output"] = map[string]any{"stdout": outputsJSON(t)}
+	r.save(t)
+	isolateCache(t)
+	layerDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(layerDir, "fugaro"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(layerDir, "fugaro", "project-layer.yaml"), []byte(testProjectLayer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	openLayer := layerBucketOpener
+	t.Cleanup(func() { layerBucketOpener = openLayer })
+	layerBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) { return blobx.Open(ctx, "file://"+layerDir) }
+	openRecords := openRecordBucket
+	t.Cleanup(func() { openRecordBucket = openRecords })
+	openRecordBucket = func(ctx context.Context, _ string) (*blobx.Bucket, error) {
+		return blobx.Open(ctx, "file://"+t.TempDir())
+	}
+	return r
+}
+
+// seedRepoSecrets gives acme/sandbox's own copies of names a version, so
+// infra.NeedsBuild has nothing but the image record to judge a first build by.
+func seedRepoSecrets(t *testing.T, r *initRig, names ...string) {
+	t.Helper()
+	slug := mustSlug("bitbucket", "acme/sandbox")
+	label, err := gcp.RepoLabel(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		r.sm.Seed(gcp.SecretID(slug, name),
+			map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: name}, []byte("tok"))
+	}
+}
+
+// catalogTeam is the operator's catalog: one entry whose source is a
+// prebuilt reference, which no Fugaro build writes and no default marker, so
+// only a workflow that pins it by name runs it.
+func catalogTeam() string {
+	ref := gcp.DefaultRegistryHost("us-east5", initProject) + "/" + gcp.SharedRegistryRepoID() + "/team-image:1"
+	return "image_catalog:\n  entries:\n    - name: team\n      source: { kind: image, image: \"" + ref + "\" }\n"
+}
+
+// #1749's repository: its only workflow runs a catalog entry, so its job
+// carries the entry's own reference and no per-repository image exists — no
+// first build to offer, none to confirm (the confirmation is billable) and
+// none to submit. The run reaches its end instead, writing the local config,
+// which is what the converge's stages after the repository stage (the plugin
+// pin among them) wait for: before, the build was submitted, failed at its
+// render step because the base branch had no fugaro.yaml yet, and ended the
+// run.
+//
+// Mutation (run, restore): drop `|| ws.CatalogEntry != ""` from NeedsBuild's
+// skip guard and this test fails twice over — a build is submitted, and the
+// output carries its CONFIRM banner.
+func TestRepoEngineAsksNoBuildForACatalogWorkflow(t *testing.T) {
+	r := repoBuildRig(t, catalogTeam())
+	yaml := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket, base_branch: main }\n" +
+		"agent: { auth: oauth }\n" +
+		"workflows:\n  app: { image_name: team, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	t.Chdir(repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", yaml))
+	seedRepoSecrets(t, r, "bitbucket-token", "claude-oauth-token")
+	e := rigEngine(t, r, &initOptions{})
+	fb := useFakeBuilder(t)
+	out := atTerminal(t, e, strings.Repeat(initProjectName+"\n", 4))
+	if err := e.r.repoEngine(t.Context(), ".", "", true); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(fb.specs) != 0 {
+		t.Fatalf("specs = %+v, want no per-repository build for a workflow a catalog entry gives its image to", fb.specs)
+	}
+	if strings.Contains(out.String(), "submits a Cloud Build") {
+		t.Errorf("the run asked to confirm a build the entry's job never runs:\n%s", out.String())
+	}
+	// The engine reached its last step (the local config), which is what the
+	// converge's stages after the repository stage need.
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lc.Repos["acme/sandbox"].Workflows; len(got) != 1 || got[0] != "app" {
+		t.Errorf("the local config records %q, want the repository the run onboarded: the run did not reach its end", got)
+	}
+}
+
+// A repository with one workflow on a catalog entry and one that builds its
+// own image: only the second is offered a first build — the entry's job runs
+// a reference this repository's build never writes.
+//
+// Mutation (run, restore): drop `|| ws.CatalogEntry != ""` from NeedsBuild's
+// skip guard and both workflows are built.
+func TestRepoEngineBuildsOnlyThePerRepositoryWorkflow(t *testing.T) {
+	r := repoBuildRig(t, catalogTeam())
+	yaml := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket, base_branch: main }\n" +
+		"agent: { auth: oauth }\n" +
+		"workflows:\n" +
+		"  app: { image_name: team, commands: { build: sh build.sh, test: sh test.sh } }\n" +
+		"  api: { dockerfile: api.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	t.Chdir(repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", yaml))
+	seedRepoSecrets(t, r, "bitbucket-token", "claude-oauth-token")
+	e := rigEngine(t, r, &initOptions{})
+	fb := useFakeBuilder(t)
+	out := atTerminal(t, e, strings.Repeat(initProjectName+"\n", 4))
+	if err := e.r.repoEngine(t.Context(), ".", "", true); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(fb.specs) != 1 || fb.specs[0].Workflow != "api" {
+		t.Fatalf("specs = %+v, want only api's first build: app's job runs the catalog entry team", fb.specs)
+	}
+	if strings.Contains(out.String(), "submits a Cloud Build for acme/sandbox/app") {
+		t.Errorf("the run asked to confirm a build for the catalog workflow:\n%s", out.String())
+	}
+}
+
+// A first onboarding before /fugaro:setup's pull request is merged: the
+// checkout holds fugaro.yaml and the base branch does not. The build clones
+// the base branch and renders the file from it, so the run would spend a
+// billable build to fail at that step, with the render step's own words —
+// said here instead, before the confirmation, naming the merge.
+//
+// Mutation (run, restore): drop repoEngine's baseBranchFugaroYAML call and
+// the build is submitted and confirmed.
+func TestRepoEngineRefusesTheFirstBuildWithoutFugaroYAMLOnTheBaseBranch(t *testing.T) {
+	r := repoBuildRig(t, "")
+	// The checkout: fugaro.yaml committed here, origin/main still at the
+	// commit before it (repoCheckout fetches first, this commit comes after).
+	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", "")
+	yaml := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket, base_branch: main }\n" +
+		"agent: { auth: oauth }\n" +
+		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commit(t, dir, "fugaro.yaml")
+	t.Chdir(dir)
+	seedRepoSecrets(t, r, "bitbucket-token", "claude-oauth-token")
+	e := rigEngine(t, r, &initOptions{})
+	fb := useFakeBuilder(t)
+	out := atTerminal(t, e, strings.Repeat(initProjectName+"\n", 4))
+	err := e.r.repoEngine(t.Context(), ".", "", true)
+	if err == nil || ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), "fugaro.yaml is not on main yet: merge it before the first build") {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out.String())
+	}
+	if len(fb.specs) != 0 {
+		t.Fatalf("specs = %+v, want no build for a fugaro.yaml the base branch does not hold", fb.specs)
+	}
+}

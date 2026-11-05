@@ -3400,6 +3400,18 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		// for an empty names).
 		var buildCfg *config.Config
 		if len(names) > 0 {
+			// A build clones the base branch and renders fugaro.yaml from it,
+			// never from this working tree: a file that is only in the
+			// checkout — the usual first onboarding, before /fugaro:setup's
+			// pull request is merged — fails the build's own render step,
+			// after the build was billed. Said here instead, before the
+			// confirmation and before the re-resolution below, and only when
+			// this checkout holds the branch's remote-tracking ref
+			// (baseBranchFugaroYAML; a checkout that cannot answer says
+			// nothing).
+			if has, known := baseBranchFugaroYAML(ctx, root, spec.BaseBranch); known && !has {
+				return r.retireLeftover(spec, userErr("fugaro.yaml is not on %s yet: merge it before the first build", spec.BaseBranch))
+			}
 			if buildCfg, err = resolveForBuild(ctx, root, lc); err != nil {
 				return r.retireLeftover(spec, err)
 			}
