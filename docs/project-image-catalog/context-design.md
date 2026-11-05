@@ -143,8 +143,10 @@ commit.
 A new step runs before the copy is written, between `credential` and `dockerfile`:
 
 - it clones the entry's repository **at the recorded commit** into `/workspace/context` with the
-  credential on the same private volume the derived path already uses — `/creds/git-credentials`, mode
-  0700, written by `fugaro image git-credential` — and passes the helper with
+  credential on the same private volume the derived path already uses — the file `/creds/git-credentials`
+  (mode 0600, `internal/cli/gitcred.go`'s `writeCredential`) inside the `/creds` directory the derived
+  path's `prep` step creates 0700 and owns as the image's user, written by `fugaro image git-credential`
+  — and passes the helper with
   `git -c credential.helper='store --file=/creds/git-credentials'` (the exact shape
   `images/derived/cloudbuild.yaml`'s `source` step uses);
 - the Dockerfile step then writes the pinned copy into the tree **at its own repository-relative
@@ -225,11 +227,13 @@ identity is:
   anywhere on the branch fires it — and honest about it: it is one bounded ref read per entry per
   night, it needs no tree walk, and `max-age` already rebuilds an idle entry on its own schedule.
 
-**The check never clones.** Today it reads one bucket object and compares its sha256 with the record
-(`internal/cli/image_check_catalog.go`: `ReadMax` of the copy, `sha256.Sum256`, then
-`DecideCatalog`'s `in.DefinitionSHA256 != rec.DefinitionSHA256`). Under this amendment it reads the
-same object **plus one bounded provider read per entry with a context** — a ref resolve, or the named
-paths' identities — and never a checkout, never a blob tree, never a clone. **What that read costs is
+**The check never clones.** Today it reads bucket objects and no repository at all: the copied
+definition, the entry's record and the check's own state object, all through `t.bucket`
+(`internal/cli/image_check_catalog.go`), and it compares the copy's `sha256.Sum256` with the record's
+through `DecideCatalog`'s `in.DefinitionSHA256 != rec.DefinitionSHA256`. Under this amendment it reads
+the same objects **plus one bounded provider read per entry with a context** — a ref resolve, or the
+named paths' identities — and never a checkout, never a blob tree, never a clone. **What that read
+costs is
 the owner's, and it is O2**: the project-level catalog check job would hold a repository credential
 where today it holds none, which is a grant and a Terraform change, and the alternative (the context
 rides `max-age` alone, with no repository read at all) is priced there.
@@ -260,7 +264,7 @@ rides `max-age` alone, with no repository read at all) is priced there.
 | `internal/config.Source` | the field, its yaml and json spellings, `catalogContextMessage`, and `addCatalogWrongKind` | the local configuration's strict loader, `ValidateCatalog` |
 | the published node | the same value, through `projectpolicy.ImageCatalog = config.Catalog` | every launcher and every run |
 | `internal/projectpolicy`'s **closed member list** (`catalogSourceMembers`) | one more name — **this is the skew** | the node's decoder, in the CLI and in the runner |
-| `internal/settings/registry.go` and `schemas/settings.schema.json` | one row each (10 → **11** for the source leaves), and therefore the registry's **325 → 326** rows | `fugaro settings`, and the two documents that state the figure ([docs/config-management/](../config-management/README.md) F1, and the pinned `cfmRegistryRows`) re-pointed in the same commit |
+| `internal/settings/registry.go` and `schemas/settings.schema.json` | one row each. The source's leaves are **six** today — `kind`, `repo`, `path`, `branch`, `inline`, `image`, the list `catalogSourceMembers` holds — and `context` makes them **seven**; the whole entry's leaf set is **ten**, and the registry's rows go **325 → 326** | `fugaro settings`, and the two documents that state the figure ([docs/config-management/](../config-management/README.md) F1, and the pinned `cfmRegistryRows`) re-pointed in the same commit |
 
 **The skew is the shape D1156 already states, one level down and harder.** D1156's honest note is that
 `image_catalog` itself is a new *top-level* key: a reader that does not know it lists it in
@@ -299,7 +303,7 @@ without moving it.
 - **The selection.** The tag-cover rule, `image_name` as a pin and `needs` as a requirement are
   untouched: a context is a property of how an entry is *built*, never of how one is *chosen*.
 - **The removal.** [docs/repo-image-removal/](../repo-image-removal/implementation-plan.md) R0–R10 and
-  the order in its §3 are not amended. This design widens what a migrated entry **may** be; it does not
+  the order its §2 (**Order, and what forces it**) states are not amended. This design widens what a migrated entry **may** be; it does not
   move a task, and the removal's order (**entry built and pinned before anything is removed**) is what
   makes either shape safe.
 
@@ -431,8 +435,9 @@ same credential:
 
 ### 4.4 The credential stays out of the image
 
-- The credential's value lives in `/creds/git-credentials` on the `fugaro-creds` **volume**, mode 0700
-  and owned by the image's user, written by the `credential` step and removed by the build's own
+- The credential's value lives in the file `/creds/git-credentials` on the `fugaro-creds` **volume** —
+  mode **0600**, inside the `/creds` directory the `prep` step makes 0700 and owns as the image's user
+  — written by the `credential` step and removed by the build's own
   `trap` (`rm -f /creds/git-credentials`) — the same file, the same volume and the same teardown the
   derived path uses. The `images/cloudbuild_test.go` rules that keep it there (no `/workspace/…creds`
   path anywhere, every `git-credentials` mention either `/creds/git-credentials` or
@@ -704,7 +709,9 @@ per-repository).
   by one release, and this file does not settle it: a reader should trust the folder that owns the
   removal, and re-read it at merge.
 - **Recommendation: C1–C4 land in the removal's own release, ordered ahead of its first removal task.**
-  The removal's §3 order already requires the entry to exist and be built before any key is removed;
+  The removal's order ([implementation-plan.md](../repo-image-removal/implementation-plan.md) §2) and
+  its spec's own §How a repository migrates already require the entry to exist and be built before any
+  key is removed;
   C3 is what lets an entry be a repository's ordinary CI Dockerfile, so it belongs in the same window
   as R0 and ahead of R2–R8. Under either slot the ordering is identical — **catalog ships → C1–C4 →
   R0 → … → R10** — and only the release number in the notes changes.

@@ -257,7 +257,7 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		"**Status: design only. This is an amendment to [spec.md](spec.md), it is not approved, and no task in",
 		"**Nothing here is approved to build.**",
 		// The amended spec sentence, kept verbatim, and the amendment beside it.
-		"the amended sentence is quoted here verbatim and marked",
+		"That is the issue's own requirement and it is what makes this amendment additive:",
 		"Build context: a catalog entry can set it explicitly. By default, a repo-referenced Dockerfile uses",
 		"**AMENDED AFTER REVIEW (this design):**",
 		"**amended**: there is **no such default**.",
@@ -268,8 +268,8 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		"**G1. The owner's spec asks for a context and the code has none.**",
 		"**G2. The catalog build's context is the Dockerfile and nothing else.**",
 		"**G3. \"One commit\" is not guaranteed today, and the commit is already load-bearing.**",
-		"the build step —",
-		"**The Dockerfile in that same build reads",
+		"`--build-arg \"FUGARO_COMMIT=$$commit\"` and as",
+		"`--label \"org.opencontainers.image.revision=$$commit\"`",
 		"**G4. The removal works around G2 by hand.**",
 		"*\"a catalog build never clones a repository into the build context\"*",
 		// A1: the key, its own path rule, and no change for an entry without one.
@@ -298,7 +298,7 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		"### A7. The node, the schema and the skew",
 		"**`checkMemberNames` before the decoder runs**",
 		"**Whether the policy `Version` moves is the owner's, and it is O1**",
-		"and therefore the registry's **325 → 326** rows",
+		"the whole entry's leaf set is **ten**, and the registry's rows go **325 → 326**",
 		// A8: what does not change.
 		"### A8. What this amendment does not change",
 		"**An entry without `context`.** Byte for byte today's build",
@@ -312,7 +312,7 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		"### 4.3 A compromised repository already controls its Dockerfile",
 		"**A context adds no new principal and no new",
 		"### 4.4 The credential stays out of the image",
-		"- The credential's value lives in `/creds/git-credentials` on the `fugaro-creds` **volume**",
+		"mode **0600**, inside the `/creds` directory the `prep` step makes 0700 and owns as the image's user",
 		"### 4.5 What the amendment does not widen",
 		// The tasks, their red steps and their order.
 		"**Red step.** `TestCatalogContextAcceptsTheRepositoryRoot` fails",
