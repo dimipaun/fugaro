@@ -444,6 +444,112 @@ func TestUpdateRevokedMidRunKeepsTheConfirmations(t *testing.T) {
 	}
 }
 
+// The gate's refusals are refusals in the owner's own terminal too, and the two
+// a person's run can reach are the two halves of what it judges: a plan the
+// cover refuses (a grant to somebody the review did not list) and a plan the
+// cost list blocks. Neither falls back to the confirmation the step would have
+// had: the run stops in the gate's own sentence and nothing is applied.
+//
+// Why the cost arm is the one that has to be here. It is the arm whose plan is
+// INSIDE the run's cover — the control below runs the same plan in a project
+// that is not managed, where one typed name at the review confirms it and the
+// step is "covered by the run confirmation", with no question of its own — so a
+// gateStep that swallowed a refusal (returning false, nil where the gate said
+// no) would hand this step to a confirmation that says yes, and the plan would
+// be applied with nothing typed. The outsider's grant is not that witness: it
+// is outside the cover, so the ordinary path would ask its own typed name on
+// the way down and stop there anyway.
+func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
+	const job = "module.installation.google_cloud_run_v2_job.runner"
+	// A job the cover admits — one container, an image of this run's own
+	// registry, no command, which is the workflow jobs' own shape — and a GPU,
+	// which is the cost list's (managedCostGPU) and nothing the cover reads.
+	costPlan := planChange{
+		"address": job,
+		"type":    "google_cloud_run_v2_job",
+		// mode is not decoration: managedCostBills is asked only of a managed
+		// change (tf.ManagedCosts skips every other mode), so a change without
+		// it is a plan the cost list reads as nothing to check and admits.
+		"mode": "managed",
+		"change": map[string]any{"actions": []string{"create"}, "before": map[string]any{}, "after": map[string]any{
+			"template": []any{map[string]any{"template": []any{map[string]any{
+				"containers":    []any{map[string]any{"image": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-runner:0.2.0"}},
+				"node_selector": []any{map[string]any{"accelerator": "nvidia-l4"}},
+			}}}},
+		}},
+	}
+	outsiderGrant := grantChange("runs_outsider", "user:a@example.com", "roles/storage.objectViewer", "create")
+
+	for _, tc := range []struct {
+		name string
+		plan planChange
+		// names is the fact the refusal has to be about, in the refusal's own
+		// words: the member neither list holds, and the accelerator the cost
+		// list's GPU entry read. A run that stopped for any other reason — a
+		// missing grant, an unreadable plan — would stop without it.
+		names string
+	}{
+		{"an outsider's grant", outsiderGrant, "user:a@example.com"},
+		{"a plan the cost list blocks", costPlan, "nvidia-l4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := updateManagedRig(t) // a coding agent's session is unset below: this is a terminal's
+			noAgentSession(t)
+			fakeTerminal(t)
+			updating(t, r)
+			r.setPlan(t, tc.plan)
+
+			got, err := updateRun(t, r, "update")
+			if err == nil {
+				t.Fatalf("a terminal in a managed project applied a plan the gate refused:\n%s", got)
+			}
+			if n := len(r.ran(t, "apply")); n != 0 {
+				t.Errorf("%d terraform apply(s) ran after the gate's refusal:\n%s", n, got)
+			}
+			if !strings.Contains(got, managedmode.NotConverged) {
+				t.Errorf("the step did not stop in the gate's own sentence, so what refused it is not what the owner reads:\n%s", got)
+			}
+			if !strings.Contains(got, tc.names) {
+				t.Errorf("the refusal does not name %s, so it is not this arm's refusal:\n%s", tc.names, got)
+			}
+			// GateProceeded and not GateOrdinary: the run's other steps, the
+			// IAM removal before the first plan among them, print the latter
+			// legitimately — it says the run announced them, which it did — and
+			// only the former claims a verdict for a document.
+			if strings.Contains(got, initflow.GateProceeded()) {
+				t.Errorf("the step took the gate's verdict after the gate had refused it:\n%s", got)
+			}
+		})
+	}
+
+	// The control for the cost arm: the same plan, the same terminal, a project
+	// that is not managed — one typed name at the review, no question about the
+	// step, and it is applied. That is what the gate's refusal holds back.
+	r := updateRig(t)
+	// A project of Fugaro's own that is not managed: the marker names it, so
+	// the review is a run confirmation a person can type (markedRuns writes no
+	// management label and no mark of the gate's), and no grant for the runs
+	// bucket's project Viewers to lose, so that removal's own question —
+	// which in this project has no gate standing in for it — does not read the
+	// typed name before the review does.
+	r.markedRuns(t, initProjectName, initProject)
+	r.gcs.SetBucketPolicy(initRunsBucket, nil)
+	fakeTerminal(t)
+	noAgentSession(t)
+	updating(t, r)
+	r.setPlan(t, costPlan)
+	got, _, err := executeStdin(t, initProjectName+"\n", "update")
+	if err != nil {
+		t.Fatalf("the cost-blocked plan was not applied in a project that is not managed: %v\n%s", err, got)
+	}
+	if !strings.Contains(got, "covered by the run confirmation") {
+		t.Errorf("the control's step was not covered by the run's one confirmation, so it does not witness what the gate's refusal holds back:\n%s", got)
+	}
+	if n := len(r.ran(t, "apply")); n != 1 {
+		t.Errorf("%d terraform apply(s) in the control run, want the one:\n%s", n, got)
+	}
+}
+
 // A person's own run on a project that is NOT managed keeps every behaviour it
 // had: --yes covers what it always covered, nothing asks a new question, and no
 // record is written about a decision this design never made.
