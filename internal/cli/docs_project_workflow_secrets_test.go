@@ -914,7 +914,7 @@ func TestDocsProjectWorkflowSecretsSetHelpSaysTheWorkflowBlock(t *testing.T) {
 // TestDocsProjectWorkflowSecretsSaysTheBuildLanded (W7): the folder is a design
 // whose build shipped, and the status line is what a reader arriving from the
 // issue reads first. The three reading documents said "nothing is built" while
-// the build was a plan; D1277's slot is 0.19.0, the tasks W0-W6 are on `main`
+// the build was a plan; D1277's slot is 0.19.0, the tasks W0–W6 are on `main`
 // and W7 is the line itself, so all three now say the build has landed and the
 // outcome is pinned rather than left to the next reader to rediscover. spec.md
 // carries the outcome too: it is the file the issue was copied into, and a
@@ -933,8 +933,7 @@ func TestDocsProjectWorkflowSecretsSaysTheBuildLanded(t *testing.T) {
 			t.Errorf("%s still says nothing is built: W0–W6 are on `main` and the build is the 0.19.0 theme", name)
 		}
 		// What shipped, not only that something did: the release the build
-		// belongs to and the tasks that carry it, with W7 named as the line
-		// itself rather than counted among the code.
+		// belongs to, and the tasks that carry it.
 		for _, want := range []string{"the build is the 0.19.0 theme", "W0–W6 are on `main`"} {
 			if !strings.Contains(doc, want) {
 				t.Errorf("%s does not carry %q: a status line that says a build landed without naming it is one nobody can find", name, want)
