@@ -405,6 +405,7 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		// D-block and its findings stay exactly what they are.
 		"**The amendment in [context-design.md](context-design.md) is reconciled against",
 		"It takes **no `D` number** and adds **no finding**",
+		"**G1–G4** (the gaps read against the code), **A1–A8** (its decisions),\n**C1–C5** (the tasks)",
 		"**The amendment does not edit the three files above.**",
 		"**The amendment takes no `D` number and adds no finding**",
 		"**Nothing in it is approved to build**",

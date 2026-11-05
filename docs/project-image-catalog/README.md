@@ -111,7 +111,7 @@ second one beside it.
 verbatim and marks it **amended after review**, the way a merge request amends a review rather than
 rewriting it; the owner's spec stays verbatim on disk. Its own statements, its decisions and the tasks
 it plans sit in its own series — **G1–G4** (the gaps read against the code), **A1–A8** (its decisions),
-**C1–C4** (the tasks) — because a second `D` block inside one folder's own design would make every "the
+**C1–C5** (the tasks) — because a second `D` block inside one folder's own design would make every "the
 highest written" reading in [docs/config-management/](../config-management/README.md) and
 [docs/repo-image-removal/](../repo-image-removal/reconciliation.md) §3 re-read for one amendment.
 **Nothing in it is approved to build**, and its six **open items (O1–O6)** are the owner's — the
