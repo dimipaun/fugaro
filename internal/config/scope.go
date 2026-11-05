@@ -159,14 +159,14 @@ var ExecutableKeys = []string{
 var NonExecutableImageKeys = map[string]string{
 	"workflows.*.image.node": "removed in 0.7.0, refused unconditionally by validateImage (" + MigrationDoc + "); never a command",
 	"workflows.*.image.jdk":  "removed in 0.7.0, refused unconditionally by validateImage (" + MigrationDoc + "); never reaches a Dockerfile",
-	// The five 0.18.0 tombstones are here rather than in ExecutableKeys: a
+	// The five 0.20.0 tombstones are here rather than in ExecutableKeys: a
 	// removed key that stayed executable would keep gating a publish on a
 	// value no profile can carry any more.
-	"workflows.*.image.apt":                "removed in 0.18.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
-	"workflows.*.image.setup":              "removed in 0.18.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
-	"workflows.*.image.tools":              "removed in 0.18.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
-	"workflows.*.image.skip_build_scripts": "removed in 0.18.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
-	"workflows.*.image.key_files":          "removed in 0.18.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
+	"workflows.*.image.apt":                "removed in 0.20.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
+	"workflows.*.image.setup":              "removed in 0.20.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
+	"workflows.*.image.tools":              "removed in 0.20.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
+	"workflows.*.image.skip_build_scripts": "removed in 0.20.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
+	"workflows.*.image.key_files":          "removed in 0.20.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
 }
 
 // ScopeOf is the row of path, a fugaro.yaml path with a real workflow name
@@ -203,7 +203,7 @@ func scopeRow(key string) (ScopeRow, bool) {
 
 // isBlock reports whether path ("agent", "workflows.*.image") is a block
 // that holds listed keys rather than a key itself, or held the removal's keys
-// until 0.18.0.
+// until 0.20.0.
 func isBlock(path string) bool {
 	for _, r := range Scopes {
 		if strings.HasPrefix(r.Key, path+".") {

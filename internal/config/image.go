@@ -113,8 +113,8 @@ const RemovedImageKeyDoc = "docs/project-image-catalog/README.md"
 // key: a person who meets the refusal has to be told what to do next, and a
 // decoder's "field not found" tells them nothing (D1195).
 const (
-	removedBuildKeyMessage   = "was removed in 0.18.0: a job's image is a catalog entry now, and a repository adds one with `fugaro image add` and selects it with image_name (%s)"
-	removedRebuildKeyMessage = "was removed in 0.18.0: nothing rebuilds a repository's own image any more; `fugaro image add` records a catalog entry and `fugaro image build` builds it (%s)"
+	removedBuildKeyMessage   = "was removed in 0.20.0: a job's image is a catalog entry now, and a repository adds one with `fugaro image add` and selects it with image_name (%s)"
+	removedRebuildKeyMessage = "was removed in 0.20.0: nothing rebuilds a repository's own image any more; `fugaro image add` records a catalog entry and `fugaro image build` builds it (%s)"
 )
 
 // removedImageKey is one key the repository-image removal took out of a

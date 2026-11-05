@@ -23,16 +23,16 @@ workflows:
 
 // imageFieldReasons is config.Image's fields that never run as shell and so
 // stay off ExecutableKeys, with why: Node and JDK were removed in 0.7.0 and
-// the other five in 0.18.0, and every one of them is refused unconditionally,
+// the other five in 0.20.0, and every one of them is refused unconditionally,
 // so none reaches a Dockerfile.
 var imageFieldReasons = map[string]string{
 	"Node":             "removed in 0.7.0; refused unconditionally by validateImage, never run as shell",
 	"JDK":              "removed in 0.7.0; refused unconditionally by validateImage, never reaches a Dockerfile",
-	"Apt":              "removed in 0.18.0; refused unconditionally by removedImageKeyProblems, never a command",
-	"Setup":            "removed in 0.18.0; refused unconditionally by removedImageKeyProblems, never a command",
-	"Tools":            "removed in 0.18.0; refused unconditionally by removedImageKeyProblems, never a command",
-	"SkipBuildScripts": "removed in 0.18.0; refused unconditionally by removedImageKeyProblems, never a command",
-	"KeyFiles":         "removed in 0.18.0; refused unconditionally by removedImageKeyProblems, never a command",
+	"Apt":              "removed in 0.20.0; refused unconditionally by removedImageKeyProblems, never a command",
+	"Setup":            "removed in 0.20.0; refused unconditionally by removedImageKeyProblems, never a command",
+	"Tools":            "removed in 0.20.0; refused unconditionally by removedImageKeyProblems, never a command",
+	"SkipBuildScripts": "removed in 0.20.0; refused unconditionally by removedImageKeyProblems, never a command",
+	"KeyFiles":         "removed in 0.20.0; refused unconditionally by removedImageKeyProblems, never a command",
 }
 
 // TestImageFieldsAreClassified is decision L7's reflection-style guard: a
@@ -314,7 +314,7 @@ func TestCheckoutCloneToolsCorpus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const msg = "was removed in 0.18.0"
+	const msg = "was removed in 0.20.0"
 	if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != "workflows.web.image.tools" || !strings.Contains(ps[0].Message, msg) {
 		t.Fatalf("problems = %v, want exactly one at workflows.web.image.tools: %s", ps, msg)
 	}
@@ -329,7 +329,7 @@ func TestCheckoutCloneSkipBuildCorpus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const msg = "was removed in 0.18.0"
+	const msg = "was removed in 0.20.0"
 	if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != "workflows.web.image.skip_build_scripts" || !strings.Contains(ps[0].Message, msg) {
 		t.Fatalf("problems = %v, want exactly one at workflows.web.image.skip_build_scripts: %s", ps, msg)
 	}
