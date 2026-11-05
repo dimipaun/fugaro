@@ -45,10 +45,17 @@ func failingReview(subtype, text string) step {
 // is not named that way: an API key has no subscription allowance to be out
 // of.
 //
+// The negative side is here as well as in the classifier's own test: a text
+// that only resembles the allowance keeps the generic reason, which is the
+// shape a reader of the record, the report and the draft pull request sees.
+//
 // Mutation (drop the auth check in subscriptionUsageLimit): the api-key case
 // below is named after an OAuth allowance the run does not have.
 // Mutation (drop a phrase from oauthLimitPhrases): the oauth case here falls
 // back to the generic reason and fails.
+// Mutation (widen a phrase -- "claude ai usage limit" to "usage limit", or
+// "rate_limit_error" to a bare one): the lookalike cases below are named
+// after an allowance the run never spent.
 func TestStageErrorReasonNamesTheOAuthUsageLimit(t *testing.T) {
 	const named = "stage review: the OAuth account's subscription usage limit was reached, so the run stops here: " +
 		"the account's allowance is shared with the owner's own Claude Code use and resets on its own schedule: " + usageLimitText
@@ -70,6 +77,24 @@ func TestStageErrorReasonNamesTheOAuthUsageLimit(t *testing.T) {
 			t.Fatalf("reason = %q, want %q", rec.Reason, want)
 		}
 	})
+	// The text is the agent's own, so it is quoted back whatever it says: a
+	// lookalike keeps the generic reason and loses nothing of what the call
+	// was told.
+	for _, tc := range []struct{ name, text string }{
+		{"a repository's own rate limit", "the test command hit a rate limit and backed off"},
+		{"a resource limit", "the build failed: disk usage limit reached"},
+		{"the error type in prose", "the gateway answers 429 rate_limit_error when too many calls are in flight"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec, err := oauthHarness(t).run(t, implement("feature"), failingReview("success", tc.text))
+			if err != nil || rec.Status != runstore.StatusFailed {
+				t.Fatalf("rec = %+v, err = %v", rec, err)
+			}
+			if want := "stage review: the agent reported an error: " + tc.text; rec.Reason != want {
+				t.Fatalf("reason = %q, want %q", rec.Reason, want)
+			}
+		})
+	}
 }
 
 // TestStageErrorReasonQuotesTheAgentsText: a stage that reported an error

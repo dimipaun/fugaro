@@ -5,17 +5,19 @@ import "testing"
 // TestSubscriptionUsageLimitIsTheAccountsOwnSignal: the classifier behind the
 // named reason fires on each shape a spent OAuth allowance arrives as, and on
 // nothing else: a stage on an API key or on a provider route cannot be
-// reported as the account's allowance, and a repository's own rate-limit
-// wording in a result text is not read as one.
+// reported as the account's allowance, and neither can a limit that is a
+// repository's own wording, a resource's, a header's, or an error type merely
+// named in the text.
 //
 // Mutation (drop the auth check): the api-key and vertex rows classify, so a
 // run that has no subscription allowance is told it spent one.
 // Mutation (drop a phrase from oauthLimitPhrases): its row stops classifying,
 // and that shape keeps the generic reason.
-// Mutation (widen a phrase -- rate_limit_error to rate_limit, to ratelimit, or
-// to the English "rate limit"): the lookalike rows below classify, so a
-// repository's own wording, a header and another API error type are all read
-// as the account's allowance.
+// Mutation (widen a phrase -- rate_limit_error to a bare rate_limit_error or
+// to rate_limit, "claude ai usage limit" to "usage limit", or any phrase to
+// the English "rate limit"): the lookalike rows below classify, so a
+// repository's own wording, a header, a resource limit, an echoed snippet or
+// another API error type is read as the account's allowance.
 func TestSubscriptionUsageLimitIsTheAccountsOwnSignal(t *testing.T) {
 	cases := []struct {
 		name string
@@ -33,6 +35,9 @@ func TestSubscriptionUsageLimitIsTheAccountsOwnSignal(t *testing.T) {
 		{"another error type that starts the same", "oauth", `API Error: 429 {"type":"error","error":{"type":"rate_limit_exceeded"}}`, false},
 		{"a rate-limit header, not the allowance", "oauth", "x-ratelimit-remaining: 0", false},
 		{"the words in a message, not the type", "oauth", "the upstream said: rate limit reached, try later", false},
+		{"a resource limit, not the allowance", "oauth", "the build failed: disk usage limit reached", false},
+		{"the type in a field of another name", "oauth", `the log said "previous_error_type": "rate_limit_error" was retried`, false},
+		{"the type named in prose", "oauth", "the gateway answers 429 rate_limit_error when too many calls are in flight", false},
 		{"no text at all", "oauth", "", false},
 	}
 	for _, tc := range cases {

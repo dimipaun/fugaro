@@ -3642,12 +3642,21 @@ func (r *run) stageErrorText(text string) string {
 	return logtail.Clip(r.redact(safetext.OneLine(r.redact(text))), logtail.DefaultLineBytes)
 }
 
-// oauthLimitPhrases are what Claude Code and Anthropic print when an OAuth
-// account has spent its subscription allowance: the CLI's own wall, and the
-// API error type a token past its allowance gets, matched as that type rather
-// than as English wording -- a repository's own "hit a rate limit" in a
-// result text is not the account's allowance.
-var oauthLimitPhrases = []string{"usage limit", "hit your limit", "rate_limit_error"}
+// oauthLimitPhrases are what an OAuth account's spent subscription allowance
+// is reported as, each matched as the shape it is rather than as English: the
+// CLI's own sentence about the allowance, its newer wording, and the API error
+// type a token past its allowance gets -- read inside the envelope that
+// carries it, so that a type merely named in a result text (an echoed snippet,
+// a "previous_error_type" field) is not taken for the refusal itself.
+//
+// The exact wording is Anthropic's and is unverified (named-oauth-tokens U4),
+// so the match is deliberately narrow and leans the safe way. A "usage limit"
+// with no more than that around it is a disk's or a container's as often as
+// the account's, and a wall this cannot read only leaves the reason quoting the
+// agent's own text -- which the skill's own loose "usage limit" match reads
+// there anyway -- while naming an allowance a run never spent is a claim the
+// reason has no business making.
+var oauthLimitPhrases = []string{"claude ai usage limit", "hit your limit", `"type":"rate_limit_error"`}
 
 // subscriptionUsageLimit reports whether a stage's own text says it stopped on
 // the OAuth account's subscription usage limit rather than on anything about
