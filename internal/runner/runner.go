@@ -219,11 +219,20 @@ type run struct {
 	// to the cheap loop (review: {bounce: first_line}); 0 until the first
 	// one. Stamped onto each first-line ReviewSummary (firstLine) so the
 	// record shows which cheap loop a review followed.
-	bounce  int
-	repo    *gitops.Repo
-	env     []string
-	secrets []string
-	budget  Budget
+	bounce int
+	repo   *gitops.Repo
+	env    []string
+	// mixedStages are the stages of this run that run on a stage-scoped
+	// Claude OAuth account of its own instead of the run's own credential,
+	// keyed by stage (docs/design/mixed-credentials.md §11, the owner's B0
+	// ruling). It holds at most the senior review and the adversarial review,
+	// and it is empty for every run that does not mix credentials. It is read
+	// once at bootstrap (resolveMixedStages, agentenv.go) and never changes: a
+	// stage's environment, its pins and its managed settings all read it, and
+	// they have to read one answer.
+	mixedStages map[string]string
+	secrets     []string
+	budget      Budget
 	// stampHooks and runnerHooks are the two hook directories bootstrap wrote
 	// for this run's commits (writeStampHooks): the agent's stages commit
 	// under stampHooks, chained to the repository's own hooks, and the
@@ -617,6 +626,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 
 	r.addSealKey()
 	r.addMountedSecrets()
+	r.registerModelCredentials()
 	if onNewRun != nil {
 		onNewRun(r)
 	}
@@ -1276,14 +1286,23 @@ func (r *run) stampTrailers(model string) []gitops.Trailer {
 // stage's pins, and the stamp every commit it makes carries (A3). The model
 // trailer is this stage's pin, read the same way the record's StageTiming
 // reads it (cost.go).
-func (r *run) stageEnv(stage string, pins map[string]string) []string {
-	env := gitops.WithVars(r.env, pins)
+//
+// The stage's credential is the part of it that is not the run's own: a stage
+// the run's stage-scoped Claude OAuth account serves gets that account's
+// environment instead (stageAgentEnv, docs/design/mixed-credentials.md §11),
+// and the error here is the refusal of a stage whose account token the runner
+// does not hold.
+func (r *run) stageEnv(stage string, pins map[string]string) ([]string, error) {
+	env, err := r.stageAgentEnv(stage, pins)
+	if err != nil {
+		return nil, err
+	}
 	if r.stampHooks == "" {
-		return env
+		return env, nil
 	}
 	stamp := gitops.Stamp{Author: r.stampAuthor,
 		Trailers: r.stampTrailers(r.stageModel(stage))}
-	return gitops.StampEnv(stamp, r.stampHooks, env)
+	return gitops.StampEnv(stamp, r.stampHooks, env), nil
 }
 
 // logUnstampedCommits writes the one line finalize owes about the commits it
@@ -2226,6 +2245,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 			return fmt.Errorf("building git credentials: %w", err)
 		}
 		maps.Copy(set, agentAuthVars)
+	}
+	// The stages this run may serve from a stage-scoped Claude OAuth account
+	// (resolveMixedStages, agentenv.go), read from the published policy before
+	// anything runs and before the gateway starts: they decide both halves of
+	// a stage's credential, and a node the run cannot read stops it here
+	// rather than at the first review.
+	if r.mixedStages, err = r.resolveMixedStages(ctx); err != nil {
+		return err
 	}
 	if r.gatewayOn() {
 		// After the lock and the provider, so a run that never gets as far
@@ -3338,6 +3365,14 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.fail("stage " + name + ": " + err.Error())
 		return agent.Result{}, false, err
 	}
+	// Before the stage's transcript is read at all: a stage the run's account
+	// serves is refused here when the run holds no token for it, and the
+	// refusal is one of the run's own errors, redacted like any other.
+	stageEnv, envErr := r.stageEnv(name, pins)
+	if envErr != nil {
+		r.fail("stage " + name + ": " + envErr.Error())
+		return agent.Result{}, false, envErr
+	}
 	r.stageN[name]++
 	n := r.stageN[name]
 	started := r.d.Now()
@@ -3375,7 +3410,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	}
 	tw := agent.NewRedactor(io.MultiWriter(&transcript, transcriptTail, relay), r.secretList())
 	sw := agent.NewRedactor(io.MultiWriter(NewLineWriter(log, "agent"), stderrTail), r.secretList())
-	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, r.stageEnv(name, pins), tw, sw
+	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, stageEnv, tw, sw
 	req.Model, req.MaxBudgetUSD = r.stageModel(name), r.cfg.Agent.MaxBudgetUSD
 
 	deadlineCtx, cancelDeadline := r.budget.StageContext(ctx)
