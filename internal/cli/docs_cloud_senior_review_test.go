@@ -215,7 +215,19 @@ func TestDocsCloudSeniorReviewIsWritten(t *testing.T) {
 		"**The switch lets a launch start; it makes the service admit nothing.**",
 		"**removed by CSR11 in the same commit as the flip**",
 		"**a launch the service then refuses**",
+		// The conclusion has to hold for both states of the installation, not
+		// only for today's: an edit that kept the unmet-E7 case alone would let
+		// the switch read as harmless in the very state the owner's own check
+		// runs in, where a switched launch is a working review.
+		"**E7 is enabled and the constant is still `false`**",
 		"which still answers 401 to a review caller it does not admit",
+		// The verify call's account has ONE source, and it is named where the
+		// plan says it is: the account of the review job the launcher resolved,
+		// read from the review run's own task -- not the result record's
+		// oauth_account, which is informational and written by the job itself
+		// from whatever credential name the service answered with.
+		"has **one source: the account of the review job the launcher itself resolved**",
+		"**`oauth_account` in the run's record is deliberately not that source**",
 		// The three answers of 2026-11-05, each pinned in its own item's marker:
 		// a later edit that turned one back into a recommendation ("0.20.0 is the
 		// recommendation", "if the owner wants it anyway") would be the folder

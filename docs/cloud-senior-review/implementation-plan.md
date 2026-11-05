@@ -988,13 +988,32 @@ is untouched by anything here.
   twin of the job's metadata identity and **not** the launcher person's own address — see the class
   refusal in **Depends on** above. Two things the verify call needs and this section had not said:
   - **the account the call names** (`VerifyRequest.Account`, which selects **which key** the service
-    recomputes under, `internal/credsvc/verdict.go:406`) comes from **the review run's own record** — the
-    account its launch resolved, `oauth_account` in the run's record (`internal/runstore/runstore.go:661`)
-    and `agent.oauth_token` in the task beside it — **and never from the artifact**, which has no account
-    field at all by design: an artifact that could name the account whose key verifies it would choose its
-    own verifier. A review run whose record cannot be read refuses the brief (fail closed), and the account
-    the launcher's **own** run uses is irrelevant to the call: the fix round's account and the review's are
-    different axes and the verify is about the review's.
+    recomputes under, `internal/credsvc/verdict.go:406`) has **one source: the account of the review job
+    the launcher itself resolved**. That is the axis account `reviewJobFor` (`internal/cli/review.go:240`)
+    reads back out of `runner.ProjectJobOfPolicy` (`internal/runner/projectjob.go:201`) and hands to
+    `projectJobReviewFor` (`internal/cli/project_job.go:351`) — the name the deployer built the variant's
+    job from and the one the service keys its own `ReviewJobAccount.Account` and the sign route on
+    (`internal/credsvc/review.go:113`: **never empty**, the axis's empty account spelled
+    `config.DefaultClaudeAccount`). The launcher **saves it where it saves the rest of the launch: the
+    review run's own task**, whose `agent.oauth_token` (`internal/task/task.go:169`) *is* that account and
+    whose **absence is the default** — the field may never spell `default` itself
+    (`internal/task/task.go:1094`) — so the fix-round launcher reads the review run's task with
+    `ReadTask` (`internal/runstore/runstore.go:1283`, which validates what it reads), maps "" through the
+    rule the launch already prints with (`reviewAccount`, `internal/cli/review.go:179`), and puts
+    `config.DefaultClaudeAccount` on the wire: `readVerifyRequest` refuses an empty account as a bad
+    **call**, not as a `valid:false` about an artifact.
+    **`oauth_account` in the run's record is deliberately not that source**
+    (`internal/runstore/runstore.go:656`): it is documented as informational, never read by anything that
+    makes a security decision, and the **job** writes it itself from the credential name the service
+    answered with (`recordCredential`, `internal/runner/runner.go:808`) — so it may be "" or a credential
+    name, and a value that is neither the account nor always there cannot key a verify call.
+    **And never the artifact**, which has no account field at all by design: an artifact that could name
+    the account whose key verifies it would choose its own verifier. A review run whose task cannot be read
+    refuses the brief (fail closed), and the account the launcher's **own** run uses is irrelevant to the
+    call: the fix round's account and the review's are different axes and the verify is about the review's.
+    Naming the wrong account cannot pass and does not fail open: the field selects a key and never a
+    validity (`VerifyRequest`'s own comment, `internal/credsvc/verdict.go:406`), so anything other than
+    the review's own account answers `valid:false` and the brief is refused.
   - **the head the call demands** (`ReviewExpectation.HeadSHA`, compared against the artifact's own
     `head_sha` by `VerifyReviewArtifact`, `internal/runner/reviewartifact.go:531`): the launcher **reads
     the pull request's current head from the forge** with the provider's own
@@ -1025,8 +1044,12 @@ is untouched by anything here.
   `TestFixBriefRefusesWhenTheServiceIsUnreachable` (fail closed rather than fail open: a fix round is not
   launched on an unverified artifact), `TestFixBriefVerifiesTheBytesItReads` (the digest the fake service
   was asked about is the SHA-256 of the stored bytes, byte for byte, and a re-encoded artifact does not
-  verify), `TestFixBriefNamesNoProseFromTheArtifact` (a refusal quotes the review run and the artifact's
-  identity fields only — never a summary, a fix or an overview), and
+  verify), `TestFixBriefVerifiesADefaultAccountReview` (**the account's second direction**: a review run
+  whose task carries **no** `agent.oauth_token` — the unsuffixed default, which is how that field spells it
+  — is verified with the call naming `config.DefaultClaudeAccount` and never the empty string, which
+  `readVerifyRequest` refuses as a bad call; a review task the launcher cannot read refuses the brief
+  rather than guessing an account), `TestFixBriefNamesNoProseFromTheArtifact` (a refusal quotes the review
+  run and the artifact's identity fields only — never a summary, a fix or an overview), and
   `TestServiceVerifierReadsOnlyTheRefusalBits` (an answer that is not the route's own is refused rather
   than read generously), `TestFixBriefRefusesAVerdictThatAsksForNoFix` (a **verified** artifact whose
   verdict is `ship` or `reject` refuses the brief, and the sentence names the verdict word and the review
@@ -1045,7 +1068,10 @@ is untouched by anything here.
   fails; treat a missing service as "nothing to check" → `TestFixBriefRefusesWhenTheServiceIsUnreachable`
   fails; print the artifact's summary in the refusal → `TestFixBriefNamesNoProseFromTheArtifact` fails;
   pass a verified `reject` through to `FixFindings` → `TestFixBriefRefusesAVerdictThatAsksForNoFix` fails;
-  refuse every verdict → `TestFixBriefBuildsTheBriefForFixFirst` fails.
+  refuse every verdict → `TestFixBriefBuildsTheBriefForFixFirst` fails; key the call on the run record's
+  `oauth_account` rather than the review's own task → `TestFixBriefVerifiesADefaultAccountReview` fails,
+  because a record from a run that took no credential carries nothing there and the call then names no
+  account at all.
 - **Reviewer tier:** **SEC — opus, with the independent review mandatory.**
 - **OWNER-RUN:** **no step of this task is a person's**; the one observation it rests on is the owner's —
   a real verify answer from a real installation is the C3.9 live check's `docs/c39-review-identity/live-check.md`
@@ -1201,13 +1227,34 @@ the service admit nothing.**
   launch is refused by the constant, which is gap 1 and the whole reason C3.9's step 3 cannot be reached.
 - **SEC flag: yes — with an explicit conclusion, because a deliberate hole needs one.** The task's own
   security review states **what an attacker who can set an environment variable on a launcher's machine
-  gains: a launch the service then refuses.** The launcher's early refusal is not the control; the
-  credential, the read-only token and the model call are the service's answers, and the service admits
-  the caller or it does not (Global Constraint 6, C3.9). What the attacker gets is the **spend of a job
-  that dies at its first call** — bounded by `budget.per_run_usd` and the job's own timeout — and **no
-  credential, no read and no write they did not already have**, since setting the launcher's environment
-  already means controlling the launcher (and every other variable it reads). **The one real cost is a
-  spend nobody asked for, and that is why the flip removes the switch rather than keeping it.**
+  gains**, and it answers **both states of the installation**, because a conclusion that only holds while
+  E7 is unmet would be a conclusion about today rather than about the switch. The launcher's early refusal
+  is not the control in either: the credential, the read-only token and the model call are the service's
+  answers, and the service admits the caller or it does not (Global Constraint 6, C3.9).
+  - **E7 is not enabled** — the service admits no review caller, which is the state gap 1 describes and
+    the state this task's own live check cannot pass in: what the attacker gains is **a launch the service
+    then refuses** — the **spend of a job that dies at its first call**, bounded by
+    `budget.per_run_usd` and the job's own timeout — and **no credential, no read and no write they did
+    not already have**, since setting the launcher's environment already means controlling the launcher
+    (and every other variable it reads).
+  - **E7 is enabled and the constant is still `false`** — the state the owner's own live check runs in,
+    because the service admits the review caller and the launcher's constant is the one gate left: the
+    switch then yields **a working review launch**, end to end — the account's model calls, the read-only
+    installation token and a signed verdict all answer, because the service's answer is yes. What the
+    attacker gains there is **a review run of a pull request of the repository and the verdict artifact it
+    writes: the whole of what the flip (CSR11) makes unconditional, one gate early — and nothing the
+    launcher could not already do.** It is not more than that: controlling the launcher's environment
+    already means controlling the launcher, which can start any run the repository's configuration admits,
+    and the review's own reach (the read-only token, the model calls, one write under its own prefix) is
+    the service's answer **to the caller**, not to the switch — the switch changes no credential, no
+    admission and no scope, and it is refused in an agent's session like every other launcher-only door.
+    A review of a pull request is in any case one `fugaro run --pr N --recipe <the review recipe>` away
+    today (`checkReviewJobAdmitted`'s own sentence names that as how a review is run until the flip), and
+    the signed verdict the switched launch produces is exactly the artifact CSR10's reader must accept
+    **after** the flip — so the second state is the flip's own capability, not a new one.
+  So the switch is a convenience in both cases and the boundary in neither. **The one real cost is a
+  spend nobody asked for — plus, in the second state, a review the flip was going to allow anyway — and
+  that is why the flip removes the switch rather than keeping it.**
 - **Mutation to hold it:** read the value from the config instead of the environment →
   `TestReviewSwitchIsNotReadFromConfig` fails; honour it with a marker present →
   `TestReviewSwitchIsRefusedInAnAgentSession` fails; print nothing when it is honoured →
@@ -1347,7 +1394,12 @@ it does not admit (Global Constraint 6, C3.9). **The switch lets a launch start;
 admit nothing.** What an attacker who can set an environment variable on a launcher's machine gains is
 **a launch the service then refuses** — a spend bounded by `budget.per_run_usd` and the job's timeout, and
 no credential, no read and no write they did not already have, since setting that machine's environment
-already means controlling the launcher.
+already means controlling the launcher. **With E7 enabled and the constant still `false` — the state this
+item's own check runs in — the same switch yields a working review launch instead, and what it gains is
+the flip's own capability one gate early: a review run and its signed verdict, and nothing the launcher
+could not already do.** Both states are spelled out in CSR12's own SEC paragraph, because a conclusion
+that held only while the service refuses its caller would be a conclusion about today rather than about
+the switch.
 
 **2. Whether a verdict policy applies in the launcher. — ANSWERED 2026-11-05: the launcher's own rule
 (this item's recommendation).** `reviewFindings` renders `art.Issues` into the brief **whatever the
