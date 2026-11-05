@@ -162,15 +162,16 @@ func (r *run) jobIdentity(ctx context.Context) (profile, provider, account strin
 // starts (the platform mounts it), so a run in the wrong job has already been
 // handed the wrong container, and the only safe answer is to stop.
 func (r *run) checkJobClass(id jobTriple) error {
-	switch {
-	case id.Class == classReview && !r.review:
-		return fmt.Errorf("this run is in the Cloud Run job %s, which is the review-only variant of the project job of the profile %q: the variant exists for a review that reads a pull request and pushes nothing, its container mounts no App key and no Claude token, and this run is not a review. Every other run of the profile belongs on the shared project job of that profile. What class a run is, is the launcher's marker (the task's review pull requests) and the job the run is in, never the job's name: this name is not read back out of the job. The run stops before any git credential is requested",
-			gcp.ProjectJobName(id.Profile, id.Provider, id.Account), id.Profile)
-	case id.Class == classCoding && r.review:
+	class := r.runClass()
+	if id.Class == class {
+		return nil
+	}
+	if class == classReview {
 		return fmt.Errorf("this run is a review, and it is in the Cloud Run job %s, which is the shared project job of the profile %q: a review runs on the review-only variant of that job — the same (profile, provider, account) axis with %q on the account segment — whose container mounts no App key and no Claude token, and never on the shared job, whose container holds both. What class a run is, is the launcher's marker (the task's review pull requests) and the job the run is in, never the job's name. The run stops before any git credential is requested",
 			gcp.ProjectJobName(id.Profile, id.Provider, id.Account), id.Profile, config.ReviewVariantSuffix)
 	}
-	return nil
+	return fmt.Errorf("this run is in the Cloud Run job %s, which is the review-only variant of the project job of the profile %q: the variant exists for a review that reads a pull request and pushes nothing, its container mounts no App key and no Claude token, and this run is not a review. Every other run of the profile belongs on the shared project job of that profile. What class a run is, is the launcher's marker (the task's review pull requests) and the job the run is in, never the job's name: this name is not read back out of the job. The run stops before any git credential is requested",
+		gcp.ProjectJobName(id.Profile, id.Provider, id.Account), id.Profile)
 }
 
 // jobName is the name of the Cloud Run job this run is in, "" when the run has
