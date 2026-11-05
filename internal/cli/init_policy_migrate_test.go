@@ -1154,7 +1154,7 @@ func TestUpgradePolicyStepSkipsWhereItCannotWrite(t *testing.T) {
 			cmd := NewRootCmd()
 			cmd.SetOut(out)
 			u := &upgradeCtx{cmd: cmd, w: out, loc: pluginwire.Location{Root: f.dir},
-				agent: agentMarker(func(string) string { return tc.marker })}
+				agent: agentMarker(func(string) string { return tc.marker }, false)}
 			u.o.local = tc.local
 			r := policyStep(context.Background(), u)
 			if r.state != stepSkipped {

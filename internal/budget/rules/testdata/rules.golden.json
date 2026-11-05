@@ -553,6 +553,10 @@
           }
         }
       }
+    },
+    "mcpauth": {
+      ".read": false,
+      ".write": false
     }
   }
 }

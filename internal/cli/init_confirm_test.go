@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -185,13 +186,19 @@ func TestTypedOnlyImageBuildMatrix(t *testing.T) {
 }
 
 // An agent's environment confirms nothing the engines ask, --yes or not, and
-// the refusal never offers --yes.
+// the refusal never offers --yes. The run's cmd carries a stdin that is not a
+// terminal, so every one of the six markers is an agent's session here
+// whatever the test binary's own stdin is; the IDE extension's marker alone,
+// at a real terminal, is a person's and is its own test
+// (TestIDETerminalTypedConfirmation).
 func TestAgentEnvironmentConfirmsNothing(t *testing.T) {
-	for _, marker := range agentMarkers {
+	for _, marker := range agentenv.Markers {
 		t.Run(marker, func(t *testing.T) {
 			t.Setenv(marker, "1")
 			var out strings.Builder
-			r := &initRun{cmd: &cobra.Command{}, o: &initOptions{yes: true}, w: &out, in: bufio.NewReader(strings.NewReader("")), projectName: initProjectName, gcpProject: initProject}
+			cmd := &cobra.Command{}
+			cmd.SetIn(strings.NewReader(""))
+			r := &initRun{cmd: cmd, o: &initOptions{yes: true}, w: &out, in: bufio.NewReader(strings.NewReader("")), projectName: initProjectName, gcpProject: initProject}
 			ok, err := r.ask("applies a plan")
 			var ag *initflow.AgentError
 			if ok || err == nil || !asAgent(err, &ag) {

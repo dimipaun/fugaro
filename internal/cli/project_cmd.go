@@ -203,7 +203,7 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 	// rule of them reads (policyUnjudgedRule). So what the exception admits is a
 	// publish whose every changed member is one a rule read and judged not to be
 	// a widening: a node that narrows, or one that does not move.
-	agent := agentMarker(os.Getenv)
+	agent := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
 	lc, db, configPath, err := openProjectBudget(ctx, o.cloud, "nothing was published")
 	if err != nil {
 		return err

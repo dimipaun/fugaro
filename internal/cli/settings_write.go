@@ -244,7 +244,7 @@ func readSettingsCurrent(e settingsEdit) ([]byte, error) {
 // it runs in. It is read once per edit, so the fence above and the gate below
 // are decided under one struct rather than two readings that could disagree.
 func settingsEditConditions(cmd *cobra.Command, e settingsEdit) initflow.Conditions {
-	return initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), Yes: e.Yes, Agent: agentMarker(os.Getenv), Ask: e.Ask}
+	return initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), Yes: e.Yes, Agent: agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())), Ask: e.Ask}
 }
 
 // confirmSettingsWrite is the ordinary y/N confirmation: --yes answers it, a
@@ -269,5 +269,6 @@ func confirmSettingsWrite(cmd *cobra.Command, lc *localcfg.Config, path string, 
 	if ans := strings.ToLower(strings.TrimSpace(line)); ans != "y" && ans != "yes" {
 		return userErr("not confirmed; nothing was written")
 	}
+	noteIDETerminalCmd(cmd, out)
 	return nil
 }

@@ -1842,6 +1842,7 @@ func TestSettingsSetAddEntrySecretsMemberIsATypedWidening(t *testing.T) {
 
 	for _, marker := range agentMarkers {
 		t.Run(marker, func(t *testing.T) {
+			noTerminal(t) // every one of the six is an agent's session with no terminal
 			t.Setenv(marker, "1")
 			out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo", "--yes")
 			if err == nil {
@@ -2340,6 +2341,7 @@ func TestSettingsSetTheNewTypedRowsAreRefusedInAnAgentSession(t *testing.T) {
 	tokens := "agent:\n  max_run_tokens: 300000\n"
 	for _, marker := range agentenv.Markers {
 		t.Run(marker, func(t *testing.T) {
+			noTerminal(t) // every one of the six is an agent's session with no terminal
 			for _, c := range []struct {
 				name string
 				args []string
