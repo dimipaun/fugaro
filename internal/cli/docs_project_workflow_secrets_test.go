@@ -12,6 +12,12 @@ package cli
 //   - **The four documents exist and each says what it is.** The folder's
 //     shape is the spec-to-pr one (a spec, a reconciliation, a plan, a
 //     README), and a reader arriving from the issue must find all four.
+//   - **Every status line says the build landed (W7).** The folder was a
+//     design while it was a plan, and its documents said so; the build is now
+//     the 0.19.0 theme, so the status lines say that instead, and the sentence
+//     they replaced is banned rather than merely absent. A reader who takes a
+//     built design for an open one does not use it, and one who takes an open
+//     design for a built one re-argues what the owner has already ruled.
 //   - **spec.md is the issue, byte for byte.** It is the folder's only
 //     document that is not a reading: the issue's words are what the design
 //     is answerable to, so the headings, the three quoted sentences and the
@@ -90,8 +96,8 @@ func readProjectWorkflowSecrets(t *testing.T, name string) string {
 // TestDocsProjectWorkflowSecretsFolderIsComplete: the four documents, none empty,
 // and each carrying a status line — the fact docs/managed-agent-converge/
 // carries in its README and this folder carries in each file, because a
-// reader who lands on reconciliation.md directly must be able to see that
-// nothing is built and nothing is approved.
+// reader who lands on reconciliation.md directly must be able to see the
+// folder's state: the build has landed, and no decision of it is open.
 func TestDocsProjectWorkflowSecretsFolderIsComplete(t *testing.T) {
 	for _, name := range []string{pwsReadme, pwsSpec, pwsReconcile, pwsPlan} {
 		doc := readProjectWorkflowSecrets(t, name)
@@ -108,17 +114,17 @@ func TestDocsProjectWorkflowSecretsFolderIsComplete(t *testing.T) {
 	// issue, and the issue does not know what a design folder is.
 	for _, name := range []string{pwsReadme, pwsReconcile, pwsPlan} {
 		doc := readProjectWorkflowSecrets(t, name)
-		if !strings.Contains(doc, "nothing is built") {
-			t.Errorf("%s does not say that nothing is built", name)
+		if !strings.Contains(doc, "the build has landed") {
+			t.Errorf("%s does not say that the build has landed", name)
 		}
 	}
 	// The owner answered all eighteen on 2026-11-04, so the status line says so
-	// and names what that unlocks: a reader who takes an answered design for an
-	// open one does not start the build, and one who takes it for approved
-	// without the slot does not know what it lands in.
+	// and names what it produced: a reader who takes an answered design for an
+	// open one does not use it, and one who takes it for answered but unslotted
+	// does not know which release carries it.
 	if doc := readProjectWorkflowSecrets(t, pwsReconcile); !strings.Contains(doc, "**The owner answered all eighteen on 2026-11-04, all as recommended**") ||
-		!strings.Contains(doc, "the build may start") {
-		t.Error("reconciliation.md does not state the owner's answers and what they start")
+		!strings.Contains(doc, "the build is the 0.19.0 theme") {
+		t.Error("reconciliation.md does not state the owner's answers and what they produced")
 	}
 }
 
@@ -278,11 +284,11 @@ func TestDocsProjectWorkflowSecretsRecordsTheOwnersAnswers(t *testing.T) {
 	// The README and the plan carry the same status, and every half of it
 	// matters: how many were answered, that the answers were the
 	// recommendations, and where the build lands. A task a reader believes is
-	// still open does not get built, and one believed approved without a slot
-	// gets built in the wrong release.
+	// still open does not get used, and one believed answered without a slot
+	// cannot be found in a release.
 	for _, name := range []string{pwsReadme, pwsPlan} {
 		other := readProjectWorkflowSecrets(t, name)
-		for _, want := range []string{"all eighteen", "as recommended", "the build may start", "0.19.0"} {
+		for _, want := range []string{"all eighteen", "as recommended", "the build is the 0.19.0 theme"} {
 			if !strings.Contains(other, want) {
 				t.Errorf("%s does not carry %q: the status line has to say the block is answered, how, and where it lands", name, want)
 			}
@@ -901,6 +907,47 @@ func TestDocsProjectWorkflowSecretsSetHelpSaysTheWorkflowBlock(t *testing.T) {
 	} {
 		if !strings.Contains(help, strings.Join(strings.Fields(want), " ")) {
 			t.Errorf("`fugaro secrets set`'s help does not say %q: the store path is decided there, before the value is typed", want)
+		}
+	}
+}
+
+// TestDocsProjectWorkflowSecretsSaysTheBuildLanded (W7): the folder is a design
+// whose build shipped, and the status line is what a reader arriving from the
+// issue reads first. The three reading documents said "nothing is built" while
+// the build was a plan; D1277's slot is 0.19.0, the tasks W0-W6 are on `main`
+// and W7 is the line itself, so all three now say the build has landed and the
+// outcome is pinned rather than left to the next reader to rediscover. spec.md
+// carries the outcome too: it is the file the issue was copied into, and a
+// reader who lands on the ask has to learn that it was met.
+//
+// The wording that was replaced is banned rather than merely absent. A design
+// folder whose status line reads as an open question is one a reader does not
+// act on, so a revert of the flip has to fail here rather than read plausibly.
+func TestDocsProjectWorkflowSecretsSaysTheBuildLanded(t *testing.T) {
+	for _, name := range []string{pwsReadme, pwsReconcile, pwsPlan} {
+		doc := readProjectWorkflowSecrets(t, name)
+		if !strings.Contains(doc, "**Status: a design, and the build has landed.**") {
+			t.Errorf("%s does not open on `**Status: a design, and the build has landed.**`: the status line is where a reader checks the folder against the build", name)
+		}
+		if strings.Contains(doc, "nothing is built") {
+			t.Errorf("%s still says nothing is built: W0–W6 are on `main` and the build is the 0.19.0 theme", name)
+		}
+		// What shipped, not only that something did: the release the build
+		// belongs to and the tasks that carry it, with W7 named as the line
+		// itself rather than counted among the code.
+		for _, want := range []string{"the build is the 0.19.0 theme", "W0–W6 are on `main`"} {
+			if !strings.Contains(doc, want) {
+				t.Errorf("%s does not carry %q: a status line that says a build landed without naming it is one nobody can find", name, want)
+			}
+		}
+	}
+	// spec.md is the issue byte for byte, so nothing in its body may date; its
+	// status line is the one place the folder can say the ask was answered and
+	// built, and it points a reader at the folder that says the rest.
+	spec := readProjectWorkflowSecrets(t, pwsSpec)
+	for _, want := range []string{"it states no decision of its own", "was built at 0.19.0", "[README.md](README.md)"} {
+		if !strings.Contains(spec, want) {
+			t.Errorf("%s does not carry %q: the issue's copy has to say the ask was met, and where", pwsSpec, want)
 		}
 	}
 }

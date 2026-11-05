@@ -1,11 +1,12 @@
 # The project workflow secret: implementation plan
 
-**Status: a design, and nothing is built.** Every task below is written to an **answered decision** in
-[reconciliation.md](reconciliation.md) §4: the owner answered **all eighteen on 2026-11-04, all as
+**Status: a design, and the build has landed.** Every task below is written to an **answered decision**
+in [reconciliation.md](reconciliation.md) §4: the owner answered **all eighteen on 2026-11-04, all as
 recommended** — **D1260** (`workflow_secrets`), **D1266** (refuse) and **D1267** (untouched) by name,
-and the other fifteen as recommended — so **the build may start, at 0.19.0 (D1277)**. **Where this
-plan and [reconciliation.md](reconciliation.md) disagree, the reconciliation wins**; where a task and
-the reconciliation disagree, the reconciliation wins.
+and the other fifteen as recommended — so **the build is the 0.19.0 theme (D1277)**: the tasks
+**W0–W6 are on `main`**, and W7 is the folder's own status lines. **Where this plan and
+[reconciliation.md](reconciliation.md) disagree, the reconciliation wins**; where a task and the
+reconciliation disagree, the reconciliation wins.
 
 Each task touches at most twelve files, names its tests, starts with a **red step**, and carries a
 **SEC** flag where it moves a security boundary — and six of the eight carry one, because the whole

@@ -1,12 +1,13 @@
 # Reconciliation: every claim of the design against the code, and the decisions this design needs
 
-**Status: a design, and nothing is built.** The decisions are **D1260–D1277** (§4), each with a
+**Status: a design, and the build has landed.** The decisions are **D1260–D1277** (§4), each with a
 recommendation and the cost of every alternative; **D1278–D1289 are reserved and unused**.
 **The owner answered all eighteen on 2026-11-04, all as recommended** — D1260 (`workflow_secrets`),
 D1266 (refuse) and D1267 (untouched) were named explicitly, and D1261–D1265 and D1268–D1277 were
-answered **as this file recommended** — so **the build may start, at 0.19.0 (D1277)**, and every
-decision section below carries its answer. **Where this file and [README.md](README.md) or
-[spec.md](spec.md) disagree, this file wins.**
+answered **as this file recommended** — so **the build is the 0.19.0 theme (D1277)**: the tasks
+W0–W6 are on `main`, W7 is the folder's own status lines, and every decision section below carries
+its answer. **Where this file and [README.md](README.md) or [spec.md](spec.md) disagree, this file
+wins.**
 
 Reconciled against `origin/main` at **`b41709ea`**, on 2026-11-04, by reading the files rather than
 the designs that describe them. Line numbers are that head.
