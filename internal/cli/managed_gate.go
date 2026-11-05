@@ -158,6 +158,18 @@ type managedGate struct {
 	marks managed.MarkFacts
 	// managed is whether both marks were there at readManagedGate.
 	managed bool
+	// revoked is set by the second read when it finds the project is no longer
+	// managed: the one way a gate that was open closes before its command is
+	// over. It is a field of its own and not managed's negation, because the
+	// two say different things to a caller that holds this gate across a run
+	// (initGate.underway): a gate that never opened keeps every confirmation
+	// the run always had, and a gate the second read revoked has to stop
+	// standing in for them — the run's one confirmation, the plugin wiring's
+	// y/N and the IAM removals included — from that moment on. Without it a
+	// caller that copied managed at the first read would go on admitting steps
+	// for a project that is not managed any more, in the gate's sentence and
+	// with nothing typed.
+	revoked bool
 	// judged is the document this gate ADMITTED, nil until it admits one. It is
 	// held here so the record written after the command's write is about the
 	// document that was judged — the same value, carrying the digest of the
@@ -244,7 +256,13 @@ func (g *managedGate) admit(ctx context.Context, class initflow.ConfirmClass, co
 		// word on whether this project is managed, so a later call on this gate
 		// finds the same un-managed project the second read did and not the
 		// managed one the first read saw.
+		//
+		// revoked records that this is what happened, for the caller that holds
+		// the gate across a run and decides prompts of its own from it: the
+		// answer that was true at the first read is not the answer any more.
 		g.managed = false
+		g.revoked = true
+		g.revoked = true
 		return initflow.Managed{}, nil
 	}
 	g.marks = fresh

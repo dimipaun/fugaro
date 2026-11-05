@@ -367,6 +367,83 @@ func TestUpdateReadsTheGateBeforeAnyWrite(t *testing.T) {
 	})
 }
 
+// A project the owner unflags while the run is in flight is a project that is
+// not managed from that moment on, and the confirmations come back with it —
+// which is a thing a terminal can witness and a coding agent's session cannot.
+// The run's own read (gateRun, before the first stage) finds both marks; the
+// helper's second read, immediately before the first step's write (D1024),
+// finds the label gone.
+//
+// The state is arranged rather than raced, because the two reads are one
+// function apart: the gate is built by the read the run itself makes, the label
+// is then removed underneath it, and the gate that read left is handed to the
+// run. That is exactly the pair of facts the bug's window holds — a run whose
+// read said "managed" in a project that is not managed any more — and what the
+// run does next is the whole assertion: the step's own confirmation is asked
+// (the project's name at the review) with nothing on stdin, so nothing is
+// applied. A run that kept the first read's answer never asks, prints the
+// gate's own sentence, and applies the plan with nothing typed.
+//
+// The mutation this is for: dropping the second half of initGate.underway, so a
+// revoked run goes on standing in for the confirmations of a project that is
+// not managed.
+func TestUpdateRevokedMidRunKeepsTheConfirmations(t *testing.T) {
+	const additive = "module.installation.google_service_account.scheduler"
+	releaseBuild(t, "0.2.0")
+	r := updateRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	// The runs bucket's project Viewers have no grant to lose here, so the one
+	// step of this run that is not a Terraform plan — the removal of that
+	// access, which is asked with the run's own confirmation before the first
+	// plan (init.go's runsBucketViewers) — is not a step at all. What is left
+	// is the shape this test is about: the run's read, then the first gated
+	// step, and nothing between them that could have taken the confirmation
+	// already.
+	r.gcs.SetBucketPolicy(initRunsBucket, nil)
+	isolateGateCredentials(t)
+	noAgentSession(t)
+	fakeTerminal(t)
+	updating(t, r)
+	r.setPlan(t, change(additive, "create"))
+
+	// The read the run makes before its first stage, in a project that is
+	// managed at that moment: the gate a run in this window holds.
+	gate, err := readManagedGate(context.Background(), managedGateEnv{
+		lc:  &localcfg.Config{Name: initProjectName, GCPProject: initProject, RunsBucket: initRunsBucket},
+		s:   managedStorage(t, r.gcs),
+		crm: managedCRM(t, r.crm),
+	}, managedGateFacts{Subcommand: "update", Declined: "nothing was applied"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gate.managed {
+		t.Fatal("the rig's project did not read as managed, so there is no revocation for this test to make")
+	}
+	// The owner unflags it between that read and the write the first step is
+	// admitted for.
+	r.crm.SetLabels(initProject, map[string]string{managed.ProjectLabelKey: "no"})
+
+	e := rigEngine(t, r, &initOptions{door: updateDoor.name})
+	out := &syncBuf{}
+	e.r.w = out
+	e.r.gate = &initGate{g: gate, managed: true}
+	_ = e.converge(t.Context())
+
+	got := out.String()
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("%d terraform apply(s) ran in a project the second read found unmanaged:\n%s", n, got)
+	}
+	if strings.Contains(got, initflow.GateOrdinary()) || strings.Contains(got, initflow.GateProceeded()) {
+		t.Errorf("the revoked run applied a step under the gate's own sentence:\n%s", got)
+	}
+	if !strings.Contains(got, "Type "+initProjectName) {
+		t.Errorf("the revoked run asked nothing at the owner's own terminal:\n%s", got)
+	}
+	if e.r.gateUnderway() {
+		t.Error("the gate is still underway after the read that found the project unmanaged")
+	}
+}
+
 // A person's own run on a project that is NOT managed keeps every behaviour it
 // had: --yes covers what it always covered, nothing asks a new question, and no
 // record is written about a decision this design never made.

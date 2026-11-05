@@ -118,6 +118,20 @@ type initGate struct {
 	managed bool
 }
 
+// underway is whether this run's gate is open now: the marks were read, they
+// said the project is managed, and no admit since has found that it is not.
+//
+// The second half is asked of the helper (managedGate.revoked) rather than
+// copied into managed at each call of admit, because a revocation is detected
+// in one place — the helper's own second read, immediately before a write
+// (D1024) — and every reader of this answer has to close at the same instant:
+// the run's one confirmation, the plugin wiring's y/N, the two IAM removals,
+// and the admission of whatever stage comes next. A copy taken at the three
+// call sites of this package's gateSteps is a copy the fourth one would not
+// take, and the run would be back to applying a step under the gate's sentence
+// for a project the last read said is not managed.
+func (g *initGate) underway() bool { return g != nil && g.managed && !g.g.revoked }
+
 // gateRun reads the managed project's marks for this run, once, before the
 // loop's first stage (update_managed.go's one read per command, D1015).
 //
@@ -171,8 +185,11 @@ func (r *initRun) gateable() bool {
 // under the gate in this session (D1016). The loop asks it in a coding agent's
 // session and for the owner at their own terminal, and everything that is not
 // a yes is today's refusal — an unreadable mark, a project that is not
-// managed, a stage this door does not gate, and a run whose own arguments
-// shape the installation rather than converge it as it is.
+// managed, a project whose marks a step's admit has since found gone
+// (initGate.underway: the stages after that one are a project that is not
+// managed's, and they keep the coding agent's refusal the whole time), a stage
+// this door does not gate, and a run whose own arguments shape the installation
+// rather than converge it as it is.
 func (e *initEngine) managedStage(name string) bool {
 	r := e.r
 	// --plan-only applies nothing by its own definition, and the loop asks this
@@ -189,7 +206,7 @@ func (e *initEngine) managedStage(name string) bool {
 		// helpers of a test, or an engine that drives the loop itself.
 		r.gate = readUpdateGate(e, r)
 	}
-	return r.gate.managed
+	return r.gate.underway()
 }
 
 // shapesTheInstallation reports whether this run's own arguments shape the
@@ -274,7 +291,9 @@ func readUpdateGate(e *initEngine, r *initRun) *initGate {
 }
 
 // gateUnderway is whether this run has the managed gate open: the marks were
-// read and they say the project is managed. It is what a step asks when what it
+// read and they say the project is managed, and no step's admit has since found
+// the marks gone (initGate.underway — a project revoked mid-run is a project
+// whose confirmations come back at once). It is what a step asks when what it
 // needs is not a verdict about its own document but the fact that this run is a
 // managed project's — the run's one confirmation (init_review.go), the plugin
 // wiring's y/N (init_plugin_stage.go), and the two IAM removals below.
@@ -285,7 +304,7 @@ func readUpdateGate(e *initEngine, r *initRun) *initGate {
 // see (the ruling of 2026-11-01) is replaced here — which is why every caller
 // of it is a step whose confirmation the gate does not judge, and never a step
 // the gate refused.
-func (r *initRun) gateUnderway() bool { return r.gate != nil && r.gate.managed }
+func (r *initRun) gateUnderway() bool { return r.gate.underway() }
 
 // gateStandsIn is whether the gate stands in for the confirmations it does NOT
 // judge document by document — the run's one confirmation (init_review.go's
