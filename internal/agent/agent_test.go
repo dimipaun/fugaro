@@ -181,6 +181,34 @@ func TestClaudeRunNonZeroExitWithResult(t *testing.T) {
 	}
 }
 
+// TestClaudeRunAccountRefusalIsReadFromTheResultEvent is the shape the runner's
+// account failover reads its one signal off (A7b of accounts-add, spec §11.3):
+// an OAuth run has no gateway, so no credentials service answers, and the
+// account's own refusal exists only in the stage's output. What the runner
+// depends on is pinned here: the refusal arrives as a result event with the
+// error flag set and its own words in the text, the process still exits
+// non-zero, and Run reports no error at all -- procgroup reports a status
+// through the exit code, and a result event was emitted. A refusal that reached
+// the runner as an err instead would be an ordinary failed stage to every
+// reader of its endings, and the account's allowance would never be seen.
+func TestClaudeRunAccountRefusalIsReadFromTheResultEvent(t *testing.T) {
+	const refusal = `API Error: 429 {"type":"error","error":{"type":"rate_limit_error"}}`
+	script, err := json.Marshal(map[string]any{"calls": []any{
+		map[string]any{"text": refusal, "is_error": true, "exit": 1},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := testutil.FakeClaude(t, string(script))
+	res, err := Claude{Bin: bin}.Run(context.Background(), Request{SessionID: "s", Env: []string{"PATH=" + os.Getenv("PATH")}})
+	if err != nil {
+		t.Fatalf("err = %v, want nil: the refusal is the stage's own output, not a failed process", err)
+	}
+	if !res.IsError || res.Text != refusal || res.ExitCode != 1 {
+		t.Fatalf("result = %+v, want the error flag, the event's own text and the exit status", res)
+	}
+}
+
 func TestClaudeRunStructuredPassesThrough(t *testing.T) {
 	bin := testutil.FakeClaude(t, `{"calls":[{"text":"ok","structured":{"verdict":"ship","score":3}}]}`)
 	res, err := Claude{Bin: bin}.Run(context.Background(), Request{SessionID: "s", Env: []string{"PATH=" + os.Getenv("PATH")}})
@@ -356,6 +384,67 @@ func TestBuildEnvOAuthNeverFallsBackToTheAPIKey(t *testing.T) {
 	if _, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=" + key}, EnvSpec{Auth: "oauth"}); err == nil ||
 		!strings.Contains(err.Error(), "CLAUDE_CODE_OAUTH_TOKEN") {
 		t.Fatalf("a run with auth: oauth and no token was admitted with an API key in the environment: err = %v", err)
+	}
+}
+
+// A stage that runs on a Claude OAuth credential of its own runs on that
+// account and not on the run's gateway: the environment it gets is the run's
+// own with the gateway's routing dropped — the address its calls would go to
+// and the per-run token they would present there, both of which the managed
+// settings file writes too — and the account's token set in their place
+// (docs/design/mixed-credentials.md §11, the owner's B0 ruling). Everything
+// else about the run's environment is the stage's: the base variables, the
+// declared secrets and the directory variables, which are what the stage's
+// own tools need and none of which is a credential.
+//
+// Mutation (run, restored): return runEnv with the token appended and the
+// gateway's variables left in place. The first loop fails: the stage's calls
+// would go to Fugaro's gateway on a token the gateway issued, and the
+// account's own credential would never be presented.
+func TestOAuthStageEnvDropsTheGatewayAndSetsTheToken(t *testing.T) {
+	runEnv, _, err := BuildEnv([]string{"PATH=/bin", "HOME=/h", "NPM_TOKEN=npm-456", "ANTHROPIC_API_KEY=key-123"},
+		EnvSpec{Auth: "api-key", Secrets: []string{"NPM_TOKEN"},
+			Gateway: &Gateway{BaseURL: "http://127.0.0.1:1", Token: "gw-token-abcdef"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A run environment that already carries an entry under the token's name
+	// — whatever put it there — ends with the account's token and that one
+	// entry: two would leave which credential the stage presents to the order
+	// a reader happens to take them in.
+	runEnv = append(runEnv, "CLAUDE_CODE_OAUTH_TOKEN=stale-token-abcdef")
+	env, err := OAuthStageEnv(runEnv, "oauth-token-abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := 0
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "ANTHROPIC_BASE_URL=") || strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") {
+			t.Errorf("a stage on its own account still carries the gateway's routing: %q", kv)
+		}
+		if strings.HasPrefix(kv, "CLAUDE_CODE_OAUTH_TOKEN=") {
+			tokens++
+			if kv != "CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abcdef" {
+				t.Errorf("the stage presents %q, not the account's token", kv)
+			}
+		}
+	}
+	if tokens != 1 {
+		t.Errorf("the stage's environment carries %d entries for the token, want 1: %v", tokens, env)
+	}
+	for _, want := range []string{"CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abcdef", "PATH=/bin", "HOME=/h", "NPM_TOKEN=npm-456"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("env lacks %s: %v", want, env)
+		}
+	}
+
+	// A token this build could not redact is refused rather than used: the
+	// stage would otherwise run on whatever the environment falls back to.
+	if _, err := OAuthStageEnv(runEnv, ""); err == nil || !strings.Contains(err.Error(), "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Errorf("no token: err = %v, want a refusal naming CLAUDE_CODE_OAUTH_TOKEN", err)
+	}
+	if _, err := OAuthStageEnv(runEnv, "abc"); err == nil || !strings.Contains(err.Error(), "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Errorf("short token: err = %v, want a refusal naming CLAUDE_CODE_OAUTH_TOKEN", err)
 	}
 }
 

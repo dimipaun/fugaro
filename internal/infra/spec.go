@@ -902,12 +902,12 @@ type SecretMount struct{ Logical, Env string }
 
 // SecretMounts is what the job of workflow name, for Claude account token
 // (w) mounts, in order: the git provider's credential (gitSecret), the one
-// Claude credential agent.auth names (none for vertex; token's own derived
-// secret, config.ClaudeAccountSecret, for oauth), the keys of the model
+// Claude credential agent.auth names — none for vertex, token's own derived
+// secret (config.ClaudeAccountSecret) for oauth, and for an api-key job the
+// stage account's token when a stage key named one — the keys of the model
 // providers the owner's local config allows repo to send code to (only with
-// api-key: a run does not mix credentials), and the workflow's own secrets.
-// It is the one place that decides it, for the job's spec and for the
-// secrets init asks for.
+// api-key), and the workflow's own secrets. It is the one place that decides
+// it, for the job's spec and for the secrets init asks for.
 //
 // A provider's key is the runner's, for its gateway, and only a repository
 // the owner allowed to send code there gets it, as a variable the agent's
@@ -942,6 +942,11 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 				out = append(out, SecretMount{p.Secret, p.SecretEnv()})
 			}
 		}
+		// The one mix the owner's B0 ruling admits: the stage account's own
+		// job mounts its token (mixedStageAccounts).
+		if slices.Contains(mixedStageAccounts(lc, repo), token) {
+			out = append(out, SecretMount{config.ClaudeAccountSecret(token), config.ReservedSecrets["claude-oauth-token"]})
+		}
 	}
 	for _, s := range w.Secrets {
 		if p, ok := config.ProviderBySecret(lc.Providers, s.Name); ok {
@@ -970,12 +975,22 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 
 // WorkflowAccounts are the Claude accounts each of repo's workflows gets a
 // job for: under oauth every account config.AllowedClaudeAccounts allows repo
-// (the default first), and the default alone under every other auth. RepoSpec
+// (the default first), and mixedStageAccounts' accounts beside the default
+// under api-key, and the default alone under every other auth. RepoSpec
 // deploys one job per (workflow, account) from it, and RequiredSecrets reads
 // the same list, so the two cannot disagree about which tokens are mounted.
 func WorkflowAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []string {
-	if cfg.Agent.Auth == "oauth" {
+	switch cfg.Agent.Auth {
+	case "oauth":
 		return config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)
+	case "api-key":
+		out := []string{config.DefaultClaudeAccount}
+		for _, name := range mixedStageAccounts(lc, repo) {
+			if !slices.Contains(out, name) {
+				out = append(out, name)
+			}
+		}
+		return out
 	}
 	return []string{config.DefaultClaudeAccount}
 }
@@ -1378,15 +1393,19 @@ func (c *repoCtx) projectSecretCandidates(rs RepoSpec) map[string]string {
 // account's own derived secret whose account lists repo, or a model
 // provider's own key whose provider lists repo -- AllowsData uniformly
 // across the last three, so §3a's no-list/["*"]-means-any-repository rule
-// applies to a provider's key exactly as it does everywhere else. ok is
-// false, id "" otherwise. It is exported because fugaro update's
-// secrets stage (before any RepoSpec exists) needs the identical answer.
+// applies to a provider's key exactly as it does everywhere else -- or,
+// last, an entry of workflow_secrets that lists repo, the one source with no
+// default at all (D1262). ok is false, id "" otherwise. It is exported
+// because fugaro update's secrets stage (before any RepoSpec exists) needs
+// the identical answer.
 func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id string, ok bool) {
 	if lc == nil || logical == "" {
 		return "", false
 	}
 	eligible := config.AllowedForProjectSecret(lc.ProjectSecrets, logical, repo)
-	if !eligible && config.ProjectScopeByDefault(logical) {
+	_, listed := lc.ProjectSecrets[logical]
+	swept := config.ProjectScopeByDefault(logical)
+	if !eligible && swept {
 		// D2 (plan Task 2.1 step 2, finding 13): a reserved name the platform
 		// itself mounts is eligible project-wide with no per-name list, which
 		// is the case this function refused before -- only an entry of
@@ -1396,24 +1415,32 @@ func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id strin
 		// Without one, the sweep applies, and every repository may read it --
 		// the same reach the CLI's default store announces, which is what
 		// makes "stored project-wide" mean what a person reads it to mean.
-		if _, listed := lc.ProjectSecrets[logical]; !listed {
+		if !listed {
 			eligible = true
 		}
 	}
-	if !eligible {
-		// ClaudeAccountBySecret always resolves the bare claude-oauth-token
-		// to DefaultClaudeAccount, which is never a key of the map
-		// (ValidateClaudeAccounts refuses it), so the default account's own
-		// secret is eligible only through project_secrets above -- the
-		// documented shape (design §3).
-		if name, found := config.ClaudeAccountBySecret(lc.ClaudeAccounts, logical); found {
-			eligible = lc.ClaudeAccounts[name].AllowsData(repo)
-		}
+	// ClaudeAccountBySecret always resolves the bare claude-oauth-token
+	// to DefaultClaudeAccount, which is never a key of the map
+	// (ValidateClaudeAccounts refuses it), so the default account's own
+	// secret is eligible only through project_secrets above -- the
+	// documented shape (design §3).
+	account, namedAccount := config.ClaudeAccountBySecret(lc.ClaudeAccounts, logical)
+	if !eligible && namedAccount {
+		eligible = lc.ClaudeAccounts[account].AllowsData(repo)
 	}
-	if !eligible {
-		if name, found := config.ProviderBySecret(lc.Providers, logical); found {
-			eligible = lc.Providers[name].AllowsData(repo)
-		}
+	provider, namedProvider := config.ProviderBySecret(lc.Providers, logical)
+	if !eligible && namedProvider {
+		eligible = lc.Providers[provider].AllowsData(repo)
+	}
+	claimed := listed || swept || namedAccount || namedProvider
+	if !eligible && !claimed {
+		// workflow_secrets is the fourth and last source, asked only for a
+		// name none of the others claims -- the order is the gate, so a
+		// hand-written entry cannot widen a name the sweep, an account or a
+		// provider already answers for (D1262). Unlike the sweep this block
+		// has no default: an entry is the whole gate, so a name with none
+		// mounts nowhere.
+		eligible = config.AllowedForWorkflowSecret(lc.WorkflowSecrets, logical, repo)
 	}
 	if !eligible {
 		return "", false
@@ -1744,4 +1771,40 @@ func Schedule(slug string) string {
 	sum := sha256.Sum256([]byte(slug))
 	n := binary.BigEndian.Uint16(sum[:2]) % 120
 	return fmt.Sprintf("%d %d * * *", n%60, 5+n/60)
+}
+
+// mixedStageAccounts are the Claude accounts an api-key repository's runs mix
+// with their provider key: the account each of config.MixedAccountStages'
+// stage keys names, held to config.AllowedClaudeAccounts the way every other
+// account name is, deduplicated and in the stages' own order. The review and
+// the adversarial review may name one account and no other stage may name any
+// (docs/design/mixed-credentials.md §11): that is the one mix the owner's B0
+// ruling admits, the coder's own stages keeping the provider key the gateway
+// holds.
+//
+// The account is a job of its own rather than a second token on the default
+// job, so an api-key repository that names no stage account keeps the single
+// job it had: the run that holds a Claude account is the run whose stage keys
+// asked for one, and its review is the stage that goes direct to Anthropic.
+//
+// The allow-list is what keeps the mount to what the owner admitted: a token's
+// mount is this repository's runs reading that account's credential, and only
+// the account's own allow_data_to says whether this repository may put its
+// code where that token is. An account the list does not carry is not an entry
+// here — `fugaro validate` and the launch refuse the key — so the operator
+// hears about it rather than a job quietly appearing without the token.
+func mixedStageAccounts(lc *localcfg.Config, repo string) []string {
+	if lc == nil {
+		return nil
+	}
+	allowed := config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)
+	var out []string
+	for _, stage := range config.MixedAccountStages {
+		name := lc.ClaudeAccountStages[stage].ClaudeAccount
+		if name == "" || !slices.Contains(allowed, name) || slices.Contains(out, name) {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
 }
