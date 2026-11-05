@@ -128,22 +128,47 @@ func (e *initEngine) hold(value []byte) (release func(), err error) {
 // With any of them present the stage never prompts: the person typing must be
 // at their own terminal, not behind an agent. CLAUDE_CODE_SSE_PORT is also set
 // by the Claude Code IDE extension in the integrated terminals of VS Code and
-// JetBrains, so a person's own IDE terminal can be refused: only for that
-// marker the refusal tells the person (not the agent) what to do about it.
+// JetBrains, so a person's own IDE terminal is one of them only without a real
+// terminal: agentMarker classifies it (agentenv.Session), and only that case
+// is a person's own IDE terminal rather than an agent's session.
 //
 // The list lives in internal/agentenv because the owner-run live
 // credentials-rules check in internal/e2e refuses on it too
 // (credentials-service plan F33), and one list cannot drift from the other.
 var agentMarkers = agentenv.Markers
 
-// agentMarker is the first marker getenv shows set, or "" with none: a coding
-// agent's session.
-func agentMarker(getenv func(string) string) string { return agentenv.Marker(getenv) }
+// agentMarker is the marker that makes getenv a coding agent's session for a
+// run with (or without) a real terminal on its input, or "" when it is a
+// person's: an agent-set marker is one whatever the terminal, and the IDE
+// extension's marker alone is one only without a terminal
+// (agentenv.Session). It is the one classification every marker reader in this
+// package asks, so a person's own IDE terminal is treated as a person's
+// everywhere and an agent's tool call — which has no terminal — is refused
+// everywhere.
+func agentMarker(getenv func(string) string, stdinTerminal bool) string {
+	return agentenv.Session(getenv, stdinTerminal)
+}
 
 // agentEnv reports whether getenv shows a coding agent's session. It is
 // agentMarker, so that a caller that only wants the yes/no cannot drift from
 // the caller that names the variable to unset.
-func agentEnv(getenv func(string) string) bool { return agentMarker(getenv) != "" }
+func agentEnv(getenv func(string) string, stdinTerminal bool) bool {
+	return agentMarker(getenv, stdinTerminal) != ""
+}
+
+// ideTerminal reports whether getenv is a person's own IDE terminal: the IDE
+// extension's marker alone, at a real terminal (agentenv.IDETerminal). It is
+// the one case a typed confirmation is accepted from without a marker refusal,
+// and the one case a run prints the IDE notice for.
+func ideTerminal(getenv func(string) string, stdinTerminal bool) bool {
+	return agentenv.IDETerminal(getenv, stdinTerminal)
+}
+
+// ideNotice is the one line a run prints when it accepts a confirmation from a
+// person's own IDE terminal (CLAUDE_CODE_SSE_PORT alone, at a real terminal)
+// instead of refusing it. It says only what changed: which marker was read, and
+// that the session is a person's IDE terminal rather than a coding agent's.
+const ideNotice = "note: this is the Claude Code IDE extension's own terminal (" + agentenv.IDEMarker + " is set), not a coding agent's session, so the confirmation is accepted"
 
 // writerIsTerminal reports whether w is a terminal. Tests replace it.
 var writerIsTerminal = func(w io.Writer) bool {
@@ -197,7 +222,7 @@ func (s *secretsStage) Name() string { return initflow.Secrets }
 // it: a hard rule, --json never prompts) is set.
 func (s *secretsStage) canPrompt() bool {
 	o, cmd := s.e.r.o, s.e.r.cmd
-	return !o.nonInteractive && !o.yes && !o.asJSON && !agentEnv(os.Getenv) &&
+	return !o.nonInteractive && !o.yes && !o.asJSON && !agentEnv(os.Getenv, stdinIsTerminal(cmd.InOrStdin())) &&
 		stdinIsTerminal(cmd.InOrStdin()) && writerIsTerminal(cmd.ErrOrStderr()) && writerIsTerminal(cmd.OutOrStdout())
 }
 
@@ -523,7 +548,7 @@ func (s *secretsStage) Check(ctx context.Context) (initflow.Status, error) {
 	}
 	detail := describeNeeds(s.missing) + note
 	if !s.canPrompt() {
-		if m := agentMarker(os.Getenv); m != "" {
+		if m := agentMarker(os.Getenv, s.e.r.stdinTerminal()); m != "" {
 			detail += "; a coding agent's session is present (" + m + " is set), so " + initflow.NeedsTerminal("typing the values") + "; run " + selfCommand() + " secrets set in your own terminal window"
 			if h := initflow.IDEHint(m); h != "" {
 				detail += " (" + h + ")"
@@ -578,7 +603,7 @@ func (s *secretsStage) Left() initflow.Left {
 		}
 	}
 	text := "run these in your own terminal window, one line at a time, in this order"
-	if agentEnv(os.Getenv) {
+	if agentEnv(os.Getenv, s.e.r.stdinTerminal()) {
 		text = "run these in your own terminal window, not through a coding agent, one line at a time, in this order"
 	}
 	return initflow.Left{Stage: initflow.Secrets, Kind: initflow.LeftCommand, Text: text, Commands: cmds}

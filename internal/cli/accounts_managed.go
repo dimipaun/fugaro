@@ -93,7 +93,7 @@ const accountsAddTypedEdit = false
 // the record carries is taken from here (D1022), so the document judged and the
 // document applied are one artifact and not two that happened to agree.
 func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, o accountsAddOptions, name, profile string, beyond []string, doc []byte) (initflow.Managed, managedGate, error) {
-	marker := agentMarker(os.Getenv)
+	marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
 	// The read is made where this command would ask, and --ask is one more
 	// such place: the flag has to speak about the marks in every session that
 	// passes it (a refusal in a managed project's agent session, a sentence

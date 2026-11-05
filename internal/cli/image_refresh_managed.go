@@ -125,7 +125,7 @@ func openRefreshManaged(ctx context.Context, cmd *cobra.Command, o refreshOption
 	// the same two flags as the refresh's own copy of them, so the two agree
 	// today; reading the copy here would be a second answer to one question, and
 	// the one that could drift from the confirmations the gate stands in for.
-	if agentMarker(os.Getenv) == "" && !iopts.ask && (iopts.yes || !stdinIsTerminal(cmd.InOrStdin())) {
+	if agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())) == "" && !iopts.ask && (iopts.yes || !stdinIsTerminal(cmd.InOrStdin())) {
 		return nil
 	}
 	lc, path, old, err := loadRepoConfig(ctx, iopts, o.checkoutDir())
@@ -182,7 +182,7 @@ func refreshGateFacts() managedGateFacts {
 		Subcommand:  "image refresh",
 		Argv:        os.Args[1:],
 		Declined:    "nothing was built",
-		AgentMarker: agentMarker(os.Getenv),
+		AgentMarker: agentMarker(os.Getenv, processTerminal()),
 	}
 }
 

@@ -52,6 +52,13 @@ var stdinIsTerminal = func(in io.Reader) bool {
 	return ok && term.IsTerminal(int(f.Fd()))
 }
 
+// processTerminal reports whether the process's own stdin is a real terminal,
+// for the marker classification sites that hold no command: init's own flag
+// validation (checkOnboardRepo, checkRepo) reads the environment before a run
+// exists, and its terminal fact is the process's. Tests replace
+// stdinIsTerminal, so this follows them.
+func processTerminal() bool { return stdinIsTerminal(os.Stdin) }
+
 type initOptions struct {
 	// strictCreate and created are fugaro restore's, and nothing else sets
 	// them: no flag reaches either (restore.go builds the child with
@@ -489,6 +496,7 @@ type initRun struct {
 	coordinatorNoted bool
 	printed          bool // the --json result has been printed
 	anchorNoted      bool // update --repo's pointer at --anchor has been said
+	ideNoted         bool // the IDE-terminal notice has been said, once per run
 	// notedOpenProviders is the once-per-run guard on the note about the
 	// providers every repository may use: the converge's repository stage
 	// runs the repo engine too, and the note belongs once.
@@ -672,7 +680,7 @@ func runInit(r *initRun) error {
 		if old == nil {
 			return userErr("--publish-config publishes an existing project config, and there is none: run fugaro setup first")
 		}
-		if m := agentMarker(os.Getenv); m != "" {
+		if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 			return userErr("--publish-config writes to the cloud: %s", initflow.AgentRefusal(m))
 		}
 		var why []string
@@ -1174,7 +1182,7 @@ func (o *initOptions) checkOnboardRepo() error {
 	if o.onboardRepo == "" {
 		return nil
 	}
-	if m := agentMarker(os.Getenv); m != "" {
+	if m := agentMarker(os.Getenv, processTerminal()); m != "" {
 		return userErr("--onboard-repo opts a repository in to cloud changes and is not accepted in a coding agent's session (%s is set): %s, and type the repository's owner/name at the prompt", m, initflow.AgentAdvice)
 	}
 	if _, err := task.CanonicalRepo(o.onboardRepo); err != nil {
@@ -1612,7 +1620,29 @@ var canConfirmTyped = initflow.CanConfirm
 func (r *initRun) conditions() initflow.Conditions {
 	o := r.o
 	return initflow.Conditions{Yes: o.yes && !o.planOnly, NonInteractive: o.nonInteractive, JSON: o.asJSON,
-		Terminal: r.cmd != nil && stdinIsTerminal(r.cmd.InOrStdin()), Agent: agentMarker(os.Getenv), Ask: o.ask}
+		Terminal: r.stdinTerminal(), Agent: agentMarker(os.Getenv, r.stdinTerminal()), Ask: o.ask}
+}
+
+// stdinTerminal reports whether this run's own input is a real terminal, the
+// one fact both the marker classification and every confirmation read: it is
+// read from the command the run is already holding, so the two cannot disagree
+// about whether a person is there.
+func (r *initRun) stdinTerminal() bool {
+	return r.cmd != nil && stdinIsTerminal(r.cmd.InOrStdin())
+}
+
+// noteIDETerminal prints, once per run, the one line that says a confirmation
+// was accepted from the Claude Code IDE extension's own terminal
+// (CLAUDE_CODE_SSE_PORT alone, at a real terminal) rather than refused. It is
+// said only where a run is about to accept a typed confirmation, and only
+// once: the classification is asked many times per run and the fact about who
+// is there is one.
+func (r *initRun) noteIDETerminal() {
+	if r.ideNoted || !ideTerminal(os.Getenv, r.stdinTerminal()) {
+		return
+	}
+	r.ideNoted = true
+	fmt.Fprintln(r.w, ideNotice)
 }
 
 // confirm shows the ⚠ CONFIRM banner for what, and returns nil once it is
@@ -1662,7 +1692,7 @@ func (r *initRun) yesRoute() string {
 // that did not answer and a session with no terminal or with --yes reach the
 // lines below exactly as they always did.
 func (r *initRun) ask(what string) (bool, error) {
-	if m := agentMarker(os.Getenv); m != "" {
+	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return false, &initflow.AgentError{Marker: m}
 	}
 	if r.refresh.asksNothing(r.conditions()) {
@@ -1696,7 +1726,11 @@ func (r *initRun) typed(prompt string) (bool, error) {
 			return false, userErr("reading the confirmation: %v", err)
 		}
 		if answer := strings.TrimSpace(line); answer != "" || err != nil || blanks >= 3 {
-			return answer == r.projectName, nil
+			if answer == r.projectName {
+				r.noteIDETerminal()
+				return true, nil
+			}
+			return false, nil
 		}
 	}
 }
@@ -2582,7 +2616,7 @@ func credentialsServiceBlock(s *infra.CredentialsService) *localcfg.CredentialsS
 // publishSharedConfig publishes the shared config after the local config is
 // written. A failure only warns: the installation works without it.
 func (r *initRun) publishSharedConfig(ctx context.Context, lc *localcfg.Config) {
-	if m := agentMarker(os.Getenv); m != "" {
+	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		fmt.Fprintf(r.w, "note: the shared config was not published: %s; run "+r.o.doorProgram()+" --publish-config in your own terminal\n", initflow.AgentRefusal(m))
 		return
 	}
@@ -3025,7 +3059,7 @@ func (o *initOptions) checkCoordinator() error {
 // that reads the environment: a coding agent's session is refused, and so is
 // a run with no terminal to confirm at.
 func (r *initRun) refuseCoordinatorUnattended() error {
-	if m := agentMarker(os.Getenv); m != "" {
+	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return userErr("--coordinator opts the installation in to the coordinator's aggregation job: %s", initflow.AgentRefusal(m))
 	}
 	if r.cmd == nil || !stdinIsTerminal(r.cmd.InOrStdin()) {

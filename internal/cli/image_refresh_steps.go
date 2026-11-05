@@ -230,7 +230,7 @@ func builtSoFar(err error, built []string) error {
 // stops on it before this call (refreshBuilds, builtSoFar), so the zero value
 // above is never a refused document being asked again.
 func (r *initRun) askBuild(what string, g initflow.Managed) (confirmed, reachable bool, err error) {
-	if marker := agentMarker(os.Getenv); marker != "" {
+	if marker := agentMarker(os.Getenv, r.stdinTerminal()); marker != "" {
 		if !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, g) {
 			return false, false, &initflow.AgentError{Marker: marker}
 		}

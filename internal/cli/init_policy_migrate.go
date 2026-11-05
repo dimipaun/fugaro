@@ -451,7 +451,7 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		// in, and a session with no terminal or a coding agent's is refused), and
 		// a document this node's confirmation already covers needs no second
 		// question.
-		if err := confirmEmptyAllowList(cmd, m.lc, agentMarker(os.Getenv)); err != nil {
+		if err := confirmEmptyAllowList(cmd, m.lc, agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))); err != nil {
 			return err
 		}
 	} else if !admitted {
@@ -981,7 +981,7 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 	// sentence it reads is the one it always read.
 	gate := s.e.r.gateUnderway()
 	if !gate {
-		if marker := agentMarker(os.Getenv); marker != "" {
+		if marker := agentMarker(os.Getenv, s.e.r.stdinTerminal()); marker != "" {
 			return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
 		}
 	}
@@ -1004,7 +1004,7 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 		return initflow.Outcome{}, err
 	}
 	if !admitted {
-		if marker := agentMarker(os.Getenv); marker != "" {
+		if marker := agentMarker(os.Getenv, s.e.r.stdinTerminal()); marker != "" {
 			return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
 		}
 	}

@@ -317,7 +317,7 @@ func userEdit(cmd *cobra.Command, o cloudOptions, role, member string, add bool)
 	// refusal is about who is running, which allow_delete.go decides the same
 	// way for the same reason — a coding agent's session holds the operator's
 	// credentials and can write the config file directly.
-	if m := agentMarker(os.Getenv); m != "" {
+	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
 		return userErr("nothing was written: fugaro user add and rm change the installation's launcher and operator lists, which grant the roles a run is launched and a repository onboarded with, so they are run by a person at their own terminal: %s", initflow.AgentRefusal(m))
 	}
 	// GODEBUG=http2debug makes Go print HTTP requests with their credentials

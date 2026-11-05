@@ -847,13 +847,26 @@ func TestManagedAgentMarkersAreTheExpectedSix(t *testing.T) {
 		t.Fatalf("agentMarkers is %v and the oracle is %v", agentMarkers, expectedAgentMarkers)
 	}
 	for _, k := range expectedAgentMarkers {
-		if got := agentMarker(func(s string) string {
+		one := func(s string) string {
 			if s == k {
 				return "1"
 			}
 			return ""
-		}); got != k {
-			t.Errorf("agentMarker with only %s set = %q", k, got)
+		}
+		// Every one of the six is a coding agent's session without a terminal.
+		if got := agentMarker(one, false); got != k {
+			t.Errorf("agentMarker with only %s set and no terminal = %q", k, got)
+		}
+		// With a terminal only the IDE extension's own marker is a person's own
+		// terminal rather than an agent's session (the ruling of 2026-11-05):
+		// the other five are set in the agent's own processes and are an agent's
+		// session whatever the terminal.
+		want := k
+		if k == "CLAUDE_CODE_SSE_PORT" {
+			want = ""
+		}
+		if got := agentMarker(one, true); got != want {
+			t.Errorf("agentMarker with only %s set and a terminal = %q, want %q", k, got, want)
 		}
 	}
 }

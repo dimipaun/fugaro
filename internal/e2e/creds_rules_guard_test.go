@@ -22,11 +22,14 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"reflect"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
+
+	"golang.org/x/term"
 
 	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/budget"
@@ -151,10 +154,19 @@ type crTarget struct {
 	requestedBy  string
 }
 
+// crStdinIsTerminal is the process's own stdin as agentenv.Session reads it for
+// the live driver: a person typing at a terminal is not a coding agent, and the
+// IDE extension's marker alone is one only where there is no terminal.
+func crStdinIsTerminal() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
+
 // crTargetFrom reads and checks the owner's environment. getenv is a
 // parameter, not os.Getenv, so the guard is a pure function of the
 // environment: it makes no request, and an ordinary test can drive every
-// refusal below without a credential or a network.
+// refusal below without a credential or a network. terminal says whether the
+// run's stdin is a real terminal, which is the one fact agentenv.Session needs
+// beside the markers: the check's own driver reads the process's, and every
+// pure case below passes false, where the IDE extension's marker alone is a
+// coding agent's session like the other five (an owner at a terminal is not).
 //
 // An environment that aims it nowhere skips, before any of the refusals: the
 // agent marker is checked after the aim and not before, so an unaimed run from
@@ -167,7 +179,7 @@ type crTarget struct {
 // database URL that is not a plain Firebase address — rtdb.ValidateURL is the
 // repository's own check for that, and it is what keeps the owner's credential
 // from being sent to a host that merely looks like a database.
-func crTargetFrom(getenv func(string) string) (crTarget, error) {
+func crTargetFrom(getenv func(string) string, terminal bool) (crTarget, error) {
 	if getenv == nil {
 		// An environment that is not there at all is the empty environment:
 		// the guard stays a total function of what it is given.
@@ -190,7 +202,7 @@ func crTargetFrom(getenv func(string) string) (crTarget, error) {
 	if t.rtdbURL == "" && t.apiKey == "" && t.signer == "" && t.installation == "" && optIn == "" {
 		return crTarget{}, crSkip
 	}
-	if m := agentenv.Marker(getenv); m != "" {
+	if m := agentenv.Session(getenv, terminal); m != "" {
 		return crTarget{}, fmt.Errorf("%s is set: this is a coding agent's session, and a check that writes to a real installation's database is the owner's to run at their own terminal (F33); run it outside the agent's session", m)
 	}
 	if optIn != "1" {
