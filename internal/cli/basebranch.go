@@ -96,7 +96,11 @@ func (e *cloudEnv) layersBaseBranch(ctx context.Context, repo string) string {
 // checkout fails the build after it was billed. ok is false when the checkout
 // holds no remote-tracking ref of the branch (nothing fetched, or a branch it
 // never saw): then there is no answer here to refuse on, and the build goes
-// ahead and finds the file, or fails with the build's own words.
+// ahead and finds the file, or fails with the build's own words. A
+// remote-tracking ref that is merely stale reads as "no file", which is the
+// same assumption the repository stage's own read of the branch makes
+// (resolveRepoTarget), and the refusal names the base branch so the user can
+// check it. No fetch is attempted here: this check is local by design.
 func baseBranchFugaroYAML(ctx context.Context, root, base string) (has, ok bool) {
 	if root == "" || base == "" {
 		return false, false
