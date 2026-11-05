@@ -625,6 +625,14 @@ walks only the accounts **allowed for the stage it is choosing for**, so the clo
 sees a review-scoped account. That second restriction is a **rule of its own** and not the repository's
 allow-list said twice — where it comes from is the next paragraph.
 
+**It replaces rung 5 and nothing above it.** A run whose own credential an explicit rung already filled —
+the flag, the committed `agent.oauth_token`, or the project's `default_claude_account` — leaves the walk
+nothing to choose: `accountWalkApplies` (`internal/runner/accountchoice.go`) is false whenever the task's
+`spec.OAuthToken` names an account, which is how rungs 1, 3 and 4 reach the job, and the walk is an
+`oauth` run's in any case (a mixed `api-key` run names the walk no account at all:
+[mixed-credentials](../design/mixed-credentials.md) §11). So setting `default_claude_account` is also how
+a project turns the walk off for its runs: with that key set, no run of the project reaches rung 5.
+
 **Where "allowed for the stage" comes from (D874).** The repository's own admission is one rule:
 `claudeAccountAllowed` / `config.AllowedClaudeAccounts` — the list `fugaro accounts ls` prints — and it
 is the floor every rung of §11.2 already stands on. **Stage scope is a narrower, second rule, and it

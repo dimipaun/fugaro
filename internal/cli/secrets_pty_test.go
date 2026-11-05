@@ -235,3 +235,54 @@ func TestInitSecretsNeverReadsStdinForProjectCoveredName(t *testing.T) {
 		t.Fatalf("a prompt was printed: %q", s)
 	}
 }
+
+// TestInitPromptStatesTheReachOfAProjectWorkflowSecret: the stage's prompt is
+// where a person decides whether storing the shared copy is safe, so its reach
+// sentence must be the entry's own — an entry that lists one repository says
+// one, exactly as `secrets set`'s store-time note says it. workflow_secrets is
+// the newest source of a project-scope name, and reading "no repository can
+// mount it" over an entry that lists this repository would tell the person the
+// opposite of what the store is about to do.
+func TestInitPromptStatesTheReachOfAProjectWorkflowSecret(t *testing.T) {
+	tty := newTTY(t)
+	r := newSecretsRig(t, bitbucketOrigin, tty.tty)
+	r.workflowSecretConfig(t, "app-signing-key")
+	r.e.lc.WorkflowSecrets = map[string]config.ProjectSecret{
+		"app-signing-key": {AllowDataTo: []string{"acme/app"}},
+	}
+	r.stage.resolve(context.Background())
+	if !r.stage.projectScope("app-signing-key") {
+		t.Fatal("the stage does not read the entry as a project-wide one: the prompt under test would not fire")
+	}
+	// The other two names are stored, so the workflow secret is the one
+	// prompted for and this test's line is the one the prompt reads.
+	slug := mustSlug("bitbucket", "acme/app")
+	r.store.seed(slug, "bitbucket-token", tokenValue)
+	r.store.seed(slug, "claude-oauth-token", tokenValue)
+	if _, err := tty.master.WriteString(tokenValue + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := r.run(t)
+	if err != nil {
+		t.Fatalf("%v (prompts %q)", err, r.errOut.String())
+	}
+	// The run stores this test's value, so the stage ends applied rather than
+	// done: what the test is about is the sentence it printed, and the store is
+	// asserted so that a run which printed the prompt and read nothing cannot
+	// pass it.
+	if got := stateOf(res, initflow.Secrets); got != initflow.Changed {
+		t.Fatalf("state = %q, want changed (prompts %q)", got, r.errOut.String())
+	}
+	if n := r.store.setCalls(); n != 1 {
+		t.Fatalf("%d value(s) stored, want the one this test piped in", n)
+	}
+	shown := r.errOut.String()
+	const reach = "only the repositories its allow_data_to lists can mount it (acme/app), whatever a published policy admits"
+	if !strings.Contains(shown, reach) {
+		t.Errorf("the prompt does not state the entry's reach: want %q in\n%s", reach, shown)
+	}
+	if strings.Contains(shown, "no repository can mount it") {
+		t.Errorf("the prompt says nobody can mount a value the entry allows this repository:\n%s", shown)
+	}
+	noLeak(t, tokenValue, shown, r.out.String())
+}

@@ -1,6 +1,6 @@
 # `fugaro accounts add`: the implementation plan
 
-**The decisions are answered (2026-10-31, and D873–D876 on 2026-11-01); nothing here is built yet.** Every
+**The decisions are answered (2026-10-31, and D873–D876 on 2026-11-01), and part of this plan has shipped:** the account-choice keys and their publish into the policy node, `accounts add --claude`, the run's stage-scoped account with its stage-start walk, and the mixed-credentials tasks B1–B6, in 0.19.0. `accounts rm` (A4) is not among them. Every
 task is written to the owner's answers in [reconciliation.md](reconciliation.md) §4 — D860–D875, with
 **D862 answered as the alternative (a)** and **D868 answered `--yes` covers everything** — and a decision
 answered the other way changes the task, not just a sentence. **D876** (the run record's one account

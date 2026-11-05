@@ -574,3 +574,46 @@ func TestCheckWrittenAccountFieldsReturnsTheReadError(t *testing.T) {
 		t.Errorf("the documented spelling was refused: %v", err)
 	}
 }
+
+// TestAccountsBlockRefusesTheReviewVariantSuffix: an account of the published
+// policy whose own name ends in the review-only job variant's suffix is
+// refused where the block is read (CSR7, the owner's ruling of 2026-11-04,
+// config.ReviewVariantSuffix). The variant's job name and service account are
+// the coding job's with the suffix on the account segment, so such an account
+// derives exactly the name and the service account of another account's review
+// variant: the coding job of that name mounts the App key, which the review
+// container must never be able to read (O1). The rule is config's, asked here
+// through config.ValidClaudeAccountRef as every other account name of this
+// node is, so the policy and the local config refuse one name with one
+// sentence.
+//
+// The mutation is dropping the suffix case from config.ValidClaudeAccountRef:
+// the node decodes and an installation publishes a policy the deployer has to
+// refuse later, or — worse, on a node published by hand — one whose variant
+// runs as an account that mounts the key.
+func TestAccountsBlockRefusesTheReviewVariantSuffix(t *testing.T) {
+	const name = "ops-review"
+	const accounts = `{"` + name + `":{"allow_repos":["github/acme/app"]}}`
+	_, _, err := Decode([]byte(accountsNode(accounts, "")))
+	if err == nil {
+		t.Fatalf("a node defining the account %s was accepted", name)
+	}
+	if !strings.Contains(err.Error(), "accounts."+name) {
+		t.Errorf("the refusal does not name the field the account is written at: %v", err)
+	}
+	// The sentence is config's own (config.ValidClaudeAccountRef), which is
+	// what keeps the policy and the local config from parting company; the
+	// path echoes the key because the key IS the path here, and the sentence
+	// after it names the suffix rather than the account.
+	if !strings.Contains(err.Error(), `may not end in "`+config.ReviewVariantSuffix+`"`) {
+		t.Errorf("the refusal does not carry the suffix rule's sentence: %v", err)
+	}
+
+	// A profile naming it is refused too, at the entry that names it: the
+	// accounts block and the reference to it are the same rule.
+	profile := `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
+		`"claude_accounts":["` + name + `"],"allow_repos":["github/acme/app"]}}`
+	if _, _, err := Decode([]byte(accountsNode(accounts, profile))); err == nil {
+		t.Errorf("a profile serving the account %s was accepted", name)
+	}
+}
