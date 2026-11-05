@@ -12,6 +12,12 @@ package cli
 //   - **The four documents exist and each says what it is.** The folder's
 //     shape is the spec-to-pr one (a spec, a reconciliation, a plan, a
 //     README), and a reader arriving from the issue must find all four.
+//   - **Every status line says the build landed (W7).** The folder was a
+//     design while it was a plan, and its documents said so; the build is now
+//     the 0.19.0 theme, so the status lines say that instead, and the sentence
+//     they replaced is banned rather than merely absent. A reader who takes a
+//     built design for an open one does not use it, and one who takes an open
+//     design for a built one re-argues what the owner has already ruled.
 //   - **spec.md is the issue, byte for byte.** It is the folder's only
 //     document that is not a reading: the issue's words are what the design
 //     is answerable to, so the headings, the three quoted sentences and the
@@ -41,6 +47,12 @@ package cli
 //     folder's subject is a credential stored once for 65 repositories, so
 //     it is exactly the place a real value would be pasted "for
 //     illustration".
+//   - **The sentences outside the folder that the feature cannot ship
+//     without.** D1272 makes five documents load-bearing — a reach a reader
+//     believes and acts on — and all but one of them sit outside this folder,
+//     where an operator meets the scope of a secret name, the setup flow's
+//     prompts and the `set` help at the command itself: three of those W6
+//     writes, and the help is W3's, pinned here because nothing else reads it.
 //
 // Nothing here asserts the design is *right*: the decisions are the owner's,
 // and this file pins that the folder records them rather than re-argues them.
@@ -84,8 +96,8 @@ func readProjectWorkflowSecrets(t *testing.T, name string) string {
 // TestDocsProjectWorkflowSecretsFolderIsComplete: the four documents, none empty,
 // and each carrying a status line — the fact docs/managed-agent-converge/
 // carries in its README and this folder carries in each file, because a
-// reader who lands on reconciliation.md directly must be able to see that
-// nothing is built and nothing is approved.
+// reader who lands on reconciliation.md directly must be able to see the
+// folder's state: the build has landed, and no decision of it is open.
 func TestDocsProjectWorkflowSecretsFolderIsComplete(t *testing.T) {
 	for _, name := range []string{pwsReadme, pwsSpec, pwsReconcile, pwsPlan} {
 		doc := readProjectWorkflowSecrets(t, name)
@@ -102,17 +114,17 @@ func TestDocsProjectWorkflowSecretsFolderIsComplete(t *testing.T) {
 	// issue, and the issue does not know what a design folder is.
 	for _, name := range []string{pwsReadme, pwsReconcile, pwsPlan} {
 		doc := readProjectWorkflowSecrets(t, name)
-		if !strings.Contains(doc, "nothing is built") {
-			t.Errorf("%s does not say that nothing is built", name)
+		if !strings.Contains(doc, "the build has landed") {
+			t.Errorf("%s does not say that the build has landed", name)
 		}
 	}
 	// The owner answered all eighteen on 2026-11-04, so the status line says so
-	// and names what that unlocks: a reader who takes an answered design for an
-	// open one does not start the build, and one who takes it for approved
-	// without the slot does not know what it lands in.
+	// and names what it produced: a reader who takes an answered design for an
+	// open one does not use it, and one who takes it for answered but unslotted
+	// does not know which release carries it.
 	if doc := readProjectWorkflowSecrets(t, pwsReconcile); !strings.Contains(doc, "**The owner answered all eighteen on 2026-11-04, all as recommended**") ||
-		!strings.Contains(doc, "the build may start") {
-		t.Error("reconciliation.md does not state the owner's answers and what they start")
+		!strings.Contains(doc, "the build is the 0.19.0 theme") {
+		t.Error("reconciliation.md does not state the owner's answers and what they produced")
 	}
 }
 
@@ -272,11 +284,11 @@ func TestDocsProjectWorkflowSecretsRecordsTheOwnersAnswers(t *testing.T) {
 	// The README and the plan carry the same status, and every half of it
 	// matters: how many were answered, that the answers were the
 	// recommendations, and where the build lands. A task a reader believes is
-	// still open does not get built, and one believed approved without a slot
-	// gets built in the wrong release.
+	// still open does not get used, and one believed answered without a slot
+	// cannot be found in a release.
 	for _, name := range []string{pwsReadme, pwsPlan} {
 		other := readProjectWorkflowSecrets(t, name)
-		for _, want := range []string{"all eighteen", "as recommended", "the build may start", "0.19.0"} {
+		for _, want := range []string{"all eighteen", "as recommended", "the build is the 0.19.0 theme"} {
 			if !strings.Contains(other, want) {
 				t.Errorf("%s does not carry %q: the status line has to say the block is answered, how, and where it lands", name, want)
 			}
@@ -758,6 +770,183 @@ func TestDocsProjectWorkflowSecretsResidualNamesTheManagedExposure(t *testing.T)
 	for _, want := range []string{"settings_set.go:412", "settings.go:170"} {
 		if !strings.Contains(d1270, want) {
 			t.Errorf("reconciliation.md D1270 does not cite %q: the registry answer has to name the line it comes from", want)
+		}
+	}
+}
+
+// TestDocsProjectWorkflowSecretsReachIsSaidWhereAPersonMeetsIt (W6, D1272,
+// D1273): the feature's reach is invisible in a repository's own fugaro.yaml —
+// nothing in that file says its `db-password` is stored once for sixty-five
+// repositories — so the pages a person reads round the command are the only
+// place the decision is made. Four of them said a workflow's own secret could
+// not be shared at all, which was true before this design and is not true of a
+// name an operator's `workflow_secrets` entry covers:
+//
+//   - docs/project-layer.md's "outside this table" paragraph, where the scope
+//     of a secret name is decided and the layer's own non-secrets are
+//     enumerated;
+//   - docs/design/project-secrets.md §4's list of what `fugaro secrets set`
+//     accepts, where a reader of the parent design lands on the refusal this
+//     design adds a second form beside — a pointer, not a rewrite;
+//   - the setup skill, whose step 9 is the other place a value is stored, and
+//     whose sentence about a covered name has to hold for a workflow secret
+//     too;
+//   - SECURITY.md's project-scope section, which is the only page a reader who
+//     never opens a terminal meets the fence on, and which owes the new
+//     block's two readings besides: the shared copy's reach is its entry, and
+//     a wildcard in that entry means every repository it matches now and later
+//     (D1273).
+//
+// The reach itself is elsewhere and is not re-argued here: the store-time note
+// and the `set` help say it at the command (W3, secrets_test.go's own pins,
+// which hold the wildcard clause too), SECURITY.md's project-scope section
+// says it for the reader who never opens a terminal, and the folder states it
+// in full — so what this test pins of SECURITY.md is the sentences that page
+// owes this design, not the reach it already stated. The sentences wrap in the
+// files, so the assertions are made against the whitespace-normalized text,
+// and the page the website serves is generated from SECURITY.md by
+// internal/clidoc, so a pin here is a pin on both.
+//
+// The pins are word for word, and the banned strings are the wording these
+// pages carried before W6: a sentence that leaves the block out is the claim
+// this task exists to replace, so a revert has to fail here rather than read
+// plausibly.
+func TestDocsProjectWorkflowSecretsReachIsSaidWhereAPersonMeetsIt(t *testing.T) {
+	cases := []struct {
+		path   string
+		want   []string
+		banned []string
+	}{
+		{"docs/project-layer.md", []string{
+			// The block, its operator-locality, and the pointer: a reader who
+			// stops at this paragraph must be able to reach the design that
+			// decides what the entry may name and who may mount it.
+			"a workflow's own secret is shared once for the project through the operator-local `workflow_secrets` block instead",
+			"[project-workflow-secrets/](project-workflow-secrets/)",
+		}, []string{
+			// The unqualified sentence: the parenthesis that names the block
+			// is what makes it true, so the clause may not stand alone again.
+			"cannot be shared through a workflow's block;",
+		}},
+		{"docs/design/project-secrets.md", []string{
+			"which has no project-wide meaning (§3; a workflow's own secret has a project-wide form of its own since 0.19.0",
+			"[project-workflow-secrets/](../project-workflow-secrets/)",
+		}, []string{
+			"which has no project-wide meaning (§3).",
+		}},
+		{"SECURITY.md", []string{
+			// The paragraph D1273 asks for, in the shape the Bitbucket token's
+			// warning already has in this file: the entry decides the reach,
+			// a wildcard reaches what it matches now and later, the value is
+			// what the repository's build and tests read, and a repository's
+			// own copy wins.
+			"A workflow secret's entry is where its reach is decided.",
+			"so the reach of a name like `db-password` is that entry and not the whole installation",
+			"With no entry, or with an entry that lists nothing, the name mounts nowhere and stays a repository copy.",
+			"A wildcard inside a segment (`myworkspace/*`) means every repository it matches **now and later**",
+			"**The value is whatever the repository's build and tests read**",
+			"A repository that stores its own copy keeps it, as every other name does.",
+			// And the two clauses that stopped being true, corrected in place.
+			"`workflows.<n>.secrets` **can** be shared this way, through the operator's own `workflow_secrets.<name>` entry",
+			"A **shared project job** never mounts one at all",
+			"A name that has no project-wide meaning (a workflow's own `secrets:` entry that no `workflow_secrets` entry in the operator's local config covers",
+		}, []string{
+			// The two sentences the feature made false. A security page is
+			// where this costs most: the reader acts on it without running
+			// anything, so the old wording may not return as a plausible
+			// paraphrase.
+			"`workflows.<n>.secrets` cannot be shared this way at all",
+			"A name that has no project-wide meaning (a workflow's own `secrets:` entry, or the default Claude account's `claude-oauth-token`) keeps the repository scope it had.",
+		}},
+		{"plugin/skills/setup/SKILL.md", []string{
+			// The skill says it in its own vocabulary — "covered" is what it
+			// already calls a name the project's copy answers for — because
+			// the skill carries a hard byte budget (plugin/skills_lint_test.go's
+			// 24576) and the sentence has to pay for itself; the block is named
+			// where the block is decided, in the documents above.
+			"a covered name is not asked for, nor is a covered workflow secret",
+		}, nil},
+	}
+	for _, tc := range cases {
+		doc := strings.Join(strings.Fields(readDoc(t, tc.path)), " ")
+		for _, want := range tc.want {
+			if !strings.Contains(doc, strings.Join(strings.Fields(want), " ")) {
+				t.Errorf("%s does not say %q: it is where a person decides whether storing one value for many repositories is safe", tc.path, want)
+			}
+		}
+		for _, banned := range tc.banned {
+			if strings.Contains(doc, strings.Join(strings.Fields(banned), " ")) {
+				t.Errorf("%s still says %q: a workflow's own secret can be stored once for the project through the operator-local workflow_secrets block, and a page that says it cannot is a reach a reader believes and acts on wrongly", tc.path, banned)
+			}
+		}
+	}
+	// The sentences say the block is built, so they may only say it while the
+	// store path reads it: the doc pins and this one fail together rather than
+	// outliving the code they describe.
+	for _, want := range []string{"workflow_secrets", "lc.WorkflowSecrets", "projectSecretAllowed"} {
+		if !strings.Contains(readDoc(t, "internal/cli/secrets.go"), want) {
+			t.Errorf("the pages say a workflow secret is stored once for the project through the new block, and internal/cli/secrets.go no longer carries %q", want)
+		}
+	}
+}
+
+// TestDocsProjectWorkflowSecretsSetHelpSaysTheWorkflowBlock (W6, D1272): the
+// other sentence D1272 makes load-bearing is the `set` help's, which W3 wrote
+// and nothing read: the generated page (website/content/cli-reference.md)
+// proves the help reached the document, never that the document says what the
+// store path does. It is the text a person reads at the command, before
+// typing a value, so it is pinned here — the two readings it has to give are
+// which block stores a workflow secret once for the project, and that an
+// entry with an empty list mounts nowhere (D1274). The help wraps, so the
+// assertions are made against its whitespace-normalized text.
+func TestDocsProjectWorkflowSecretsSetHelpSaysTheWorkflowBlock(t *testing.T) {
+	help := flattenDoc(newSecretsSetCmd().Long)
+	for _, want := range []string{
+		"or a secret a workflow declares that your local config's workflow_secrets block lists at least one repository for",
+		"A workflow's own secret is stored once for the project only through such an entry: with no workflow_secrets entry it stays in the repository's own container as before, and an entry present with an empty allow_data_to is refused, since it would mount nowhere.",
+	} {
+		if !strings.Contains(help, strings.Join(strings.Fields(want), " ")) {
+			t.Errorf("`fugaro secrets set`'s help does not say %q: the store path is decided there, before the value is typed", want)
+		}
+	}
+}
+
+// TestDocsProjectWorkflowSecretsSaysTheBuildLanded (W7): the folder is a design
+// whose build shipped, and the status line is what a reader arriving from the
+// issue reads first. The three reading documents said "nothing is built" while
+// the build was a plan; D1277's slot is 0.19.0, the tasks W0–W6 are on `main`
+// and W7 is the line itself, so all three now say the build has landed and the
+// outcome is pinned rather than left to the next reader to rediscover. spec.md
+// carries the outcome too: it is the file the issue was copied into, and a
+// reader who lands on the ask has to learn that it was met.
+//
+// The wording that was replaced is banned rather than merely absent. A design
+// folder whose status line reads as an open question is one a reader does not
+// act on, so a revert of the flip has to fail here rather than read plausibly.
+func TestDocsProjectWorkflowSecretsSaysTheBuildLanded(t *testing.T) {
+	for _, name := range []string{pwsReadme, pwsReconcile, pwsPlan} {
+		doc := readProjectWorkflowSecrets(t, name)
+		if !strings.Contains(doc, "**Status: a design, and the build has landed.**") {
+			t.Errorf("%s does not open on `**Status: a design, and the build has landed.**`: the status line is where a reader checks the folder against the build", name)
+		}
+		if strings.Contains(doc, "nothing is built") {
+			t.Errorf("%s still says nothing is built: W0–W6 are on `main` and the build is the 0.19.0 theme", name)
+		}
+		// What shipped, not only that something did: the release the build
+		// belongs to, and the tasks that carry it.
+		for _, want := range []string{"the build is the 0.19.0 theme", "W0–W6 are on `main`"} {
+			if !strings.Contains(doc, want) {
+				t.Errorf("%s does not carry %q: a status line that says a build landed without naming it is one nobody can find", name, want)
+			}
+		}
+	}
+	// spec.md is the issue byte for byte, so nothing in its body may date; its
+	// status line is the one place the folder can say the ask was answered and
+	// built, and it points a reader at the folder that says the rest.
+	spec := readProjectWorkflowSecrets(t, pwsSpec)
+	for _, want := range []string{"it states no decision of its own", "was built at 0.19.0", "[README.md](README.md)"} {
+		if !strings.Contains(spec, want) {
+			t.Errorf("%s does not carry %q: the issue's copy has to say the ask was met, and where", pwsSpec, want)
 		}
 	}
 }

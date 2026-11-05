@@ -910,7 +910,14 @@ func checkProviderURL(s string) error {
 // coder, the reviewer and the background model that a provider claims need
 // agent.auth api-key. oauth is a subscription credential that cannot leave
 // Anthropic, and vertex is Claude on Vertex; neither can carry a provider
-// key, and a run does not mix credentials.
+// key, so a provider-claimed model is refused under either of them. The
+// owner's ruling of 2026-11-04 (task B0) permits exactly one mix of
+// credentials and leaves this function's answer unchanged: an api-key run
+// may declare one stage-scoped Claude OAuth account for its review and
+// adversarial stages, beside the provider key its coder runs on
+// (docs/design/mixed-credentials.md §11). That account is not a provider's
+// key and it sits under the value this function admits before it reads
+// anything, so every refusal below still stands for the auth values it names.
 //
 // cascade is refused a provider pin for oauth's reason, from the other side: a
 // cascade run's calls are carried by whatever credential the cascade chose, and

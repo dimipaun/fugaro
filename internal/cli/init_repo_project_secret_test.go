@@ -169,11 +169,26 @@ const probeKeyYAML = "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: 
 	"agent: { auth: api-key, models: { coder: probe2/probe-1, reviewer: probe2/probe-1, background: probe2/probe-1 } }\n" +
 	"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 
+// workflowSecretCheckoutYAML is probeKeyYAML with the app workflow mounting an
+// application secret of its own: the name the owner's workflow_secrets block
+// may cover project-wide.
+var workflowSecretCheckoutYAML = strings.Replace(probeKeyYAML,
+	"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n",
+	"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh }, secrets: [{ name: app-signing-key, env: APP_SIGNING_KEY }] }\n", 1)
+
 // newProjectKeyRig is the rig of Check 40 step 40i's shape: an installation
 // of aurora, a checkout of acme/sandbox pinning only provider probe2, and
 // probe2's allow_data_to given by the caller. The project layer is served
 // from a local bucket, so no test reaches a real gs:// URL.
 func newProjectKeyRig(t *testing.T, allow string) *initRig {
+	t.Helper()
+	return newProjectKeyRigWith(t, allow, probeKeyYAML)
+}
+
+// newProjectKeyRigWith is newProjectKeyRig with the checkout's own fugaro.yaml
+// given by the caller: the shape for a repository that mounts one more secret
+// than probeKeyYAML's single provider pin.
+func newProjectKeyRigWith(t *testing.T, allow, checkout string) *initRig {
 	t.Helper()
 	r := newInitRig(t)
 	r.installationState(t)
@@ -200,9 +215,75 @@ func newProjectKeyRig(t *testing.T, allow string) *initRig {
 	openRecordBucket = func(ctx context.Context, _ string) (*blobx.Bucket, error) {
 		return blobx.Open(ctx, "file://"+t.TempDir())
 	}
-	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", probeKeyYAML)
+	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkout)
 	t.Chdir(dir)
 	return r
+}
+
+// The project workflow secret (design docs/project-workflow-secrets/, D1262,
+// D1269), end to end through the engine: a name the repository's own workflow
+// declares and the owner's workflow_secrets block lists for this repository,
+// its value stored once in the project container and nothing in the
+// repository's own. This task is tests alone -- find() and projectScope
+// already answer through infra.ProjectSecretCandidate -- so what it holds is
+// the claim itself: the run is covered, no value is asked for, and no build is
+// stranded. The first subtest is what makes the second an assertion: with
+// nothing stored anywhere the name IS one this repository's jobs mount, so a
+// covered answer cannot be a name no job asks about.
+func TestInitDoesNotPromptForAProjectWorkflowSecret(t *testing.T) {
+	rig := func(t *testing.T) *initRig {
+		t.Helper()
+		r := newProjectKeyRigWith(t, `["*"]`, workflowSecretCheckoutYAML)
+		// A segment wildcard and not a bare "*": the block's own entry rule,
+		// which config.ValidateWorkflowSecrets holds (W0).
+		r.appendConfig(t, "workflow_secrets:\n  app-signing-key: { allow_data_to: [acme/*] }\n")
+		r.seedRepoSecret(t, "bitbucket-token", []byte("tok"))
+		r.seedRepoSecret(t, "probe2-api-key", nil)
+		r.seedProjectKey(t, "probe2-api-key")
+		r.seedRepoSecret(t, "app-signing-key", nil)
+		return r
+	}
+
+	t.Run("with nothing stored anywhere the name is missing", func(t *testing.T) {
+		r := rig(t)
+		e := rigEngine(t, r, &initOptions{})
+		out := atTerminal(t, e, initProjectName+"\n")
+		if err := e.r.repoEngine(t.Context(), ".", "", false); err != nil {
+			t.Fatalf("%v\n%s", err, out.String())
+		}
+		got := missingLine(e.r.res.Missing, "app-signing-key")
+		// The entry lists this repository, so the value goes to the project's
+		// own container: the command must not send the user to a repository
+		// copy that would then win over the project one forever.
+		if !strings.Contains(got, "secrets set app-signing-key") || strings.Contains(got, "--repo") {
+			t.Errorf("missing = %q, want the workflow secret missing, with the project-wide command", got)
+		}
+	})
+
+	t.Run("the project copy covers it", func(t *testing.T) {
+		r := rig(t)
+		r.seedProjectKey(t, "app-signing-key")
+		fb := useFakeBuilder(t)
+		e := rigEngine(t, r, &initOptions{})
+		out := atTerminal(t, e, strings.Repeat(initProjectName+"\n", 3))
+		if err := e.r.repoEngine(t.Context(), ".", "", false); err != nil {
+			t.Fatalf("the project-covered workflow secret left the run unfinished: %v\n%s", err, out.String())
+		}
+		if len(fb.specs) != 1 || fb.specs[0].Workflow != "app" {
+			t.Fatalf("specs = %+v, want the app workflow's first build: a covered secret must not strand it", fb.specs)
+		}
+		if got := missingLine(e.r.res.Missing, "app-signing-key"); got != "" {
+			t.Errorf("the project-covered workflow secret is still missing: %q", got)
+		}
+		// The three shapes the stage asks in: the command it leaves, the
+		// prompt's own first line, and the hidden prompt's. The config diff
+		// legitimately names the secret, so this cannot be a bare substring.
+		for _, ask := range []string{"secrets set app-signing-key", "app-signing-key for acme/sandbox", "Paste the value for app-signing-key"} {
+			if strings.Contains(out.String(), ask) {
+				t.Errorf("the run asked for a value the project copy covers: %q\n%s", ask, out.String())
+			}
+		}
+	})
 }
 
 // seedRepoSecret stores the repository's own container of logical, correctly

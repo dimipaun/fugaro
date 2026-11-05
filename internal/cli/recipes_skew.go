@@ -362,6 +362,22 @@ const reviewLevelsSince = "0.16.0"
 // on levels reads.
 const reviewLevelsKnows = "the review levels (review_levels, agent.levels)"
 
+// reviewJobSince is the first fugaro release that deploys and launches the
+// review-only job variant (design docs/cloud-senior-review, CSR7): the second
+// job per (profile, provider, account), with its own service account and no
+// secret at all, which is what a senior review runs on. An image older than it
+// has no variant beside its coding job, so a launch naming one resolves a job
+// the installation does not hold.
+//
+// It is declared here, by the task that ships the variant, and read by the
+// tasks that gate on it — the launch refusal (CSR2: an image older than this
+// one would otherwise be accepted in silence) and the release's own checklist
+// entry (CSR6) — which is what the plan means by declaring the constant to
+// that task. It names the release this work is slotted for; docs/release.md's
+// ("Before you tag") list verifies the number against the tag actually cut,
+// the way digestSince's and reviewLevelsSince's bullets record.
+const reviewJobSince = "0.19.0"
+
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
 // check job's own rebuild names the secret ID Readiness resolved, so a
@@ -1375,6 +1391,34 @@ func checkCloneReviewLevelsImage(lc *localcfg.Config, spec *task.Spec, subject s
 		return nil
 	}
 	return checkCloneImageSince(lc, spec, reviewLevelsSince, subject, reviewLevelsKnows, reviewLevelsAlt, warn)
+}
+
+// reviewJobKnows names, for the gate's messages, what the job image's runner
+// has to know: the review-only variant of the job it is in, and the marker a
+// launch on it sets, which is the whole of what a review run branches on
+// (internal/runner's reviewJob).
+const reviewJobKnows = "the review-only job variant and the review job's own marker (FUGARO_REVIEW_JOB, mode: review)"
+
+// reviewJobAlt is the refusal's other way out, as reviewLevelsAlt's is: the
+// update deploys the variants beside the coding jobs and rebuilds this
+// repository's job images behind its own confirmation.
+const reviewJobAlt = "; or run fugaro update, which is the whole upgrade: it brings the installation to this release, deploys the review-only job beside each coding job and rebuilds this repository's job images behind its own confirmation"
+
+// checkReviewJobImage refuses a launch that carries mode: review (fugaro
+// review): the launch starts CSR7's review-only variant and marks the
+// execution, and an installation older than reviewJobSince has neither the
+// variant deployed beside its coding job nor a runner that reads the marker —
+// so a review it accepted would run the coder's own job, with the App key the
+// review container exists to be without. Judged from the deployed job's build
+// record, as every checkImageSince gate's is.
+func checkReviewJobImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
+	return checkImageSince(ctx, env, slug, spec, kind, reviewJobSince, "a review launch", reviewJobKnows, reviewJobAlt, warn)
+}
+
+// checkCloneReviewJobImage is checkReviewJobImage for a checkout: clone
+// workflow: see checkCloneImageSince.
+func checkCloneReviewJobImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer) error {
+	return checkCloneImageSince(lc, spec, reviewJobSince, "a review launch", reviewJobKnows, reviewJobAlt, warn)
 }
 
 // refuseClonesNotShipped refuses, before any cloud effect, deploying or

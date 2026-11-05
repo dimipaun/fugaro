@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // TestAccountsAddRefusesAName is the name rule as a table (spec §2.4): the two
@@ -16,6 +18,11 @@ func TestAccountsAddRefusesAName(t *testing.T) {
 	}{
 		{"default", `"default" is reserved for the unnamed claude-oauth-token secret`},
 		{"bitbucket-token", "this name is reserved"},
+		// A name ending in the review-only variant's suffix derives the job
+		// name and service account of another account's variant (CSR7,
+		// config.ReviewVariantSuffix), so it is refused as a definition here
+		// exactly as the loader refuses it in the file.
+		{"acme-review", `may not end in "` + config.ReviewVariantSuffix + `"`},
 		{"Team-A", "account name must match"},
 		{"-lead", "account name must match"},
 		{"trail-", "account name must match"},
