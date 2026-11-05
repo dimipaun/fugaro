@@ -1694,12 +1694,22 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // under vertex or cascade may name none at all. That refusal belongs to the
 // launch rather than to the stage it was asked about: a config that declares a
 // mix the ruling does not admit is refused before anything is read or started,
-// and the sentence names the key that has to change.
+// and the sentence names the key that has to change. Its budget-mode clause
+// follows it in the same place (config.CheckMixBudget): a declared mix is
+// admitted only under budget.mode: enforce, because that is the only mode that
+// routes a call to a provider at all, and only there does a provider key sit in
+// the gateway beside the account.
 //
-// Rung 4 is walked only for an oauth run. Under api-key it is not a rung at
-// all: default_claude_account "never opts an api-key run into this mix"
-// (§11), so such a run's own account stays the unsuffixed default, and its
-// coder stays on the provider key the gateway holds.
+// Rung 4 (default_claude_account) fills a *stage* account for an api-key run
+// too, under the condition the owner ruled on 2026-11-05 (§11, amending the
+// 2026-11-04 conservative reading): the stage asked for is one of the mix's
+// two, its own model is an Anthropic one, the coder is served by a route this
+// repository may use, and the mode the run resolves is enforce (mixedStageAccount
+// is the whole rule). Elsewhere it is not a rung at all: such a run's own
+// account stays the unsuffixed default, and its coder stays on the provider key
+// the gateway holds. Rung 4 is never a way to a coder's stage, and never a
+// second account: the run holds one Claude account, which rung 2 names when it
+// names one (mixedStageAccount refuses a project default that disagrees).
 //
 // Both halves are the run's, and neither is the working tree's. The account is
 // read at the ref the run checks out, out of this checkout's git objects
@@ -1742,25 +1752,89 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	if ps := config.CheckStageAccountMix(auth, declared, "stages"); len(ps) > 0 {
 		return "", userErr("%s: %s", ps[0].Path, ps[0].Message)
 	}
-	// Every name is checked before any launch, whatever rung it came from, and
-	// the stage accounts are names too: this call does not use one as the run's
-	// own credential, but the run's review stages will, and the account's
-	// allow_data_to is what decides whether this repository may put its code
-	// where that token is. The check is the allow-list's, not
-	// claudeAccountAllowed's whole rule — its auth clause keeps a named *run*
-	// account out of every auth but oauth, and an api-key run is exactly the run
-	// the B0 ruling gives a stage account to.
+	// Every *declared* stage account is checked before any launch, whatever rung
+	// ends up using it: this call may not use one as the run's own credential,
+	// but the run's review stages will, and the account's allow_data_to is what
+	// decides whether this repository may put its code where that token is. The
+	// check is the allow-list's, not claudeAccountAllowed's whole rule — its
+	// auth clause keeps a named *run* account out of every auth but oauth, and
+	// an api-key run is exactly the run the ruling gives a stage account to. It
+	// is asked of what the config *declares* rather than of what this call can
+	// resolve, because an auth the launch cannot place yet ("" — see
+	// stageAccountOf) must not be the thing that skips the allow-list.
 	for _, at := range slices.Sorted(maps.Keys(declared)) {
-		if account := stageAccountOf(env.lc, auth, at); account != "" {
-			if err := claudeAccountMembership(env, repo, account); err != nil {
+		if err := claudeAccountMembership(env, repo, declared[at]); err != nil {
+			return "", err
+		}
+	}
+	// The project default is a name too, and it is held to this repository's
+	// allow-list exactly where rung 4 would hand it to something. Untying it
+	// from the rung was a bug of the first cut: the key is written once for
+	// every run the project has, so a default no stage of *this* run can use
+	// must not refuse the launch — an api-key run with a provider reviewer is
+	// the ruling's own "no mix and no error", and under vertex and cascade no
+	// Claude OAuth credential reaches the run at all. Each auth's own reader
+	// therefore does the checking:
+	//
+	//   - api-key: the mix is the only way the default reaches a stage, so
+	//     mixedStageAccount holds it there (the two stages it may serve, and no
+	//     other), and a run whose reviews are not Claude's checks nothing;
+	//   - oauth: the walk below ends in claudeAccountAllowed, which checks the
+	//     default whenever it is what the run picked as its own credential,
+	//     while a --token or an agent.oauth_token that names an allowed account
+	//     leaves the default unused and unjudged;
+	//   - vertex, cascade: the key can never apply, and a refusal would be about
+	//     a name no rung of such a run reads.
+	//
+	// What no rung reads is an auth the launch cannot place yet (""): a
+	// repository whose own committed fugaro.yaml carries the value is exactly
+	// the launch that has to fail closed, so the default is checked here, where
+	// nothing else will.
+	if def := env.lc.DefaultClaudeAccount; def != "" && def != config.DefaultClaudeAccount {
+		switch auth {
+		case "api-key":
+			// The account it returns is the stage's resolution and not this
+			// launch's; what the launch wants here is the rule's own refusals,
+			// raised for a stage the run has whether or not this call asked for
+			// it.
+			for _, at := range config.MixedAccountStages {
+				if _, err := mixedStageAccount(ctx, env, repo, at, auth, co); err != nil {
+					return "", err
+				}
+			}
+		case "oauth", "vertex", config.AuthCascade:
+			// Nothing to check here: the oauth walk checks the default itself
+			// when it picks it, and neither of the other two reaches a Claude
+			// OAuth credential at all.
+		default:
+			if err := claudeAccountMembership(env, repo, def); err != nil {
 				return "", err
 			}
+		}
+	}
+	// The mix's budget-mode clause (config.CheckMixBudget, §11), asked of what
+	// the config *declares* and whatever stage was asked for: the one Claude
+	// account an api-key run may hold exists because the gateway holds the
+	// provider key and routes the coder's calls to it, and only budget.mode:
+	// enforce routes a call to a provider at all, so a configuration that
+	// declares a mix under any other mode declares a key that could never apply
+	// — refused at the launch that picks the account, not left to a stage that
+	// would never be handed one. The auth is asked before the clause's own
+	// arguments are built, which is CheckMixBudget's first test said here: an
+	// oauth launch must not spend a local default-branch git read (mixMode) and
+	// a route resolution (mixRoutes) on a clause that cannot apply to it.
+	if auth == "api-key" {
+		if ps := config.CheckMixBudget(auth, mixMode(ctx, env, repo, co), mixCoder(co), env.lc.DefaultClaudeAccount, declared, mixRoutes(env, repo, co), "budget.mode"); len(ps) > 0 {
+			return "", userErr("%s: %s", ps[0].Path, ps[0].Message)
 		}
 	}
 	name := flag
 	if name == "" && stage != "" {
 		if account := stageAccountOf(env.lc, auth, stage); account != "" {
 			return account, nil
+		}
+		if account, err := mixedStageAccount(ctx, env, repo, stage, auth, co); err != nil || account != "" {
+			return account, err
 		}
 	}
 	if name == "" {
@@ -1806,6 +1880,160 @@ func stageAccountOf(lc *localcfg.Config, auth, stage string) string {
 		return ""
 	}
 	return lc.ClaudeAccountStages[stage].ClaudeAccount
+}
+
+// mixRoutes is the provider routes this repository may use, as the run resolves
+// them: the local config's table with the document's own claims merged over it
+// (layerRoutes), narrowed to the entries that may see this repository
+// (runner.ProvidersFor — an entry whose allow_data_to does not name it is not a
+// route this run has). It is what "the coder is served by a provider" is asked
+// of, here and in the runner.
+func mixRoutes(env *cloudEnv, repo string, co *config.Config) map[string]config.ModelProvider {
+	if co == nil {
+		return nil
+	}
+	routes, _, _ := layerRoutes(env.lc, co.Layer, repo)
+	return runner.ProvidersFor(routes, repo)
+}
+
+// mixCoder is the coder's model as the mix's conditions read it: the document's
+// own pin with the recipe's role aliasing applied, and "" when no document was
+// read — a stage account is admitted for no coder the launch cannot see.
+func mixCoder(co *config.Config) string {
+	if co == nil {
+		return ""
+	}
+	return co.Agent.ModelFor(config.RoleCoder)
+}
+
+// mixMode is the budget mode the run resolves, over the three layers the runner
+// merges (runner's own policy resolution): the installation's ceiling, the
+// default branch's policy keys and the document at hand. It reads no network —
+// the published policy is the job environment's ceiling, which ceilingLayer
+// already carries — so a launch and the run itself agree on every layer they
+// both can see, and a launch with no checkout judges the layers it has (an
+// absent document contributes no mode of its own, runner.FileLayer(nil)).
+func mixMode(ctx context.Context, env *cloudEnv, repo string, co *config.Config) string {
+	var layer policy.Layer
+	if co != nil {
+		layer = runner.FileLayer(co)
+	}
+	return policy.Merge(ceilingLayer(env.lc), defaultBranchPolicyLayer(ctx, repo), layer).Mode
+}
+
+// mixedStageAccount is the account rung 4 puts on one of the mix's two stages
+// of an api-key run, its whole rule, and "" when the mix is not admitted for
+// that stage (docs/design/mixed-credentials.md §11, the owner's ruling of
+// 2026-11-05: "IF default_claude_account is set AND we have an Anthropic model
+// for senior review and/or security review, then we get mixed runs"). rung 2 is
+// read before this call and wins, so the stage's own key is not consulted here.
+//
+// The mix is admitted for the stage when every one of these holds, and they are
+// read off what a launch has: the checkout's own, layer-applied document and
+// the project's local config. `fugaro validate` judges the other half of the
+// rule and not this one — stageAccountProblems asks
+// config.CheckStageAccountMix of the file's auth and the local stage keys, and
+// the offline report never calls config.CheckMixBudget, so the mode and the
+// provider routes below are the launch's own judgement (the runner makes it
+// again, with the recipe's roles applied, in the job):
+//
+//   - the run's credential is a provider key (api-key): the mix exists to give
+//     such a run a Claude review credential it otherwise has none of;
+//   - the stage is review or adversarial, the ruling's allow-list: rung 4 never
+//     reaches implement, review_first, fix, plan or any later stage;
+//   - the stage's model is an Anthropic one (mixedStageModel): with a provider
+//     reviewer or a non-Claude one, default_claude_account changes nothing —
+//     no mix and no error, because nothing about that stage would use the
+//     account;
+//   - the coder is served by a route this repository may use: the mix is the
+//     coder on a provider route *and* the reviews on the subscription, and a
+//     run whose coder is not provider-served has no provider key to mix;
+//   - the mode the run resolves is enforce: the provider key lives in the
+//     gateway, and only enforce routes a call to a provider at all
+//     (config.CheckProviderGateway), which is what "provider-served" means at
+//     run time.
+//
+// The default is held to this repository's allow-list here, at the end of the
+// rule, and not at the top of a launch: it is a name rung 4 can use only where
+// the mix is admitted, so a launch whose reviews are not Claude's, or whose
+// coder has no provider key in the gateway, must not be refused for a key that
+// can never apply. The one-account refusal is raised here with it, and both are
+// the caller's to see — the launch asks this function per mixed stage for
+// exactly that reason.
+//
+// A launch that cannot read a document (no checkout) admits nothing: the mix is
+// a fact about the run's configuration, and a guess is not one.
+func mixedStageAccount(ctx context.Context, env *cloudEnv, repo, stage, auth string, co *config.Config) (string, error) {
+	if auth != "api-key" || !slices.Contains(config.MixedAccountStages, stage) {
+		return "", nil
+	}
+	if co == nil {
+		return "", nil
+	}
+	def := env.lc.DefaultClaudeAccount
+	// "" and the unsuffixed-default sentinel (config.DefaultClaudeAccount,
+	// "default") are the same answer here: a local config may spell the key
+	// either way (localcfg's choiceRefProblem admits the sentinel), and neither
+	// names an account of its own — an api-key run's job carries no OAuth token
+	// for the default account, which is exactly what spec.OAuthToken's own rule
+	// says (a run whose account is the sentinel sets no token at all). So the
+	// key declares no mix, and reading it as one would invent the second
+	// credential this rule refuses below.
+	if def == "" || def == config.DefaultClaudeAccount {
+		return "", nil
+	}
+	if !isClaudeModel(mixedStageModel(co.Agent, stage)) {
+		return "", nil
+	}
+	if _, _, served := config.ProviderFor(mixRoutes(env, repo, co), mixCoder(co)); !served {
+		return "", nil
+	}
+	if mixMode(ctx, env, repo, co) != policy.ModeEnforce {
+		return "", nil
+	}
+	// The run holds one Claude account (docs/design/mixed-credentials.md §11,
+	// "never a second provider's key"): the other mixed stage's own key names
+	// the mix's account when it names one, and a project default that names a
+	// *different* one would be a second credential this run may not hold. It is
+	// refused rather than ignored, the way a stage account that could never
+	// apply is, so nothing the operator wrote reads as if it were in use.
+	for _, other := range config.MixedAccountStages {
+		if other == stage {
+			continue
+		}
+		if account := stageAccountOf(env.lc, auth, other); account != "" && account != def {
+			return "", userErr("default_claude_account is %s and stages.%s.claude_account is %s: an api-key run holds one Claude account beside the provider key the gateway holds, and %s is already this run's — the project default would be a second credential. Name %s in both keys, or remove the project default",
+				pluginwire.Printable(def), other, pluginwire.Printable(account), pluginwire.Printable(account), pluginwire.Printable(account))
+		}
+	}
+	if err := claudeAccountMembership(env, repo, def); err != nil {
+		return "", err
+	}
+	return def, nil
+}
+
+// mixedStageModel is the model a review stage runs, for the mix's
+// Anthropic-model condition: level 2's own model for review and level 3's for
+// adversarial — the levels the two stages are (config.ResolveLevels' own
+// defaults) — and the reviewer role's model when the level names none. Level
+// models are read here because a level's model is a pin of its own: it runs in
+// place of the role slot the level sits in, so a Claude reviewer with a
+// DeepSeek level 2 is a stage the account has nothing to do on.
+//
+// What it does not apply is the run's recipe: a recipe's roles mapping
+// (roles: {reviewer: coder}) and a task's own level override are read by the
+// run at bootstrap, and the runner makes this same judgement there with them
+// applied. A launch that cannot see them answers the configuration's own
+// model, which is what a launch that reads no recipe can honestly answer.
+func mixedStageModel(a config.Agent, stage string) string {
+	level := a.Levels.L2
+	if stage == "adversarial" {
+		level = a.Levels.L3
+	}
+	if level != nil && level.Model != "" {
+		return level.Model
+	}
+	return a.ModelFor(config.RoleReviewer)
 }
 
 // agentAtRef is the two agent facts a launch judges a named account with, read
