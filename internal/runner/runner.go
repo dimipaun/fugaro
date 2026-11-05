@@ -3116,7 +3116,12 @@ type stageOpts struct {
 // the run's: a review runs in a session of its own, and a wait during one
 // resumes that one.
 //
-// The loop is bounded (maxCredentialResumes): each wait is bounded by
+// The loop's second reason is the account's own subscription allowance (A7b,
+// D874): a stage that ended on it did not fail either, and the attempt that
+// follows is the same stage again — on the walk's next account, in a session
+// of its own, and with nothing to wait for, because no service answered.
+//
+// The cascade's wait is bounded (maxCredentialResumes): each wait is bounded by
 // waitForCredential's own check against the job's remaining time, but a
 // reset that has already passed resumes the stage at once, and a service
 // that kept answering that way would run the stage again and again with no
