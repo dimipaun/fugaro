@@ -1,6 +1,6 @@
 # Project Claude accounts: one OAuth token per (profile, account)
 
-Status: **0.9.0, released.** The released Fugaro is 0.18.0, and 0.9.0 is the first release any of this page works on:
+Status: **0.9.0, released.** The released Fugaro is 0.19.0, and 0.9.0 is the first release any of this page works on:
 the `claude_accounts` field inside a profile, the `accounts` block in the published policy and the
 jobs they name all ship in 0.9.0 (policy version 3,
 [`internal/projectpolicy/version.go`](../internal/projectpolicy/version.go)), and a 0.8.x binary
@@ -214,7 +214,10 @@ they are about to deploy against the same block. The rules, and what a refusal s
 - **An account may not be named so that its name ends in `-review`.** The suffix is the review-only
   job variant's (`internal/config`'s `ReviewVariantSuffix`): `fugaro update` deploys, beside every
   `(profile, provider, account)` job, a variant of that job whose account segment carries the suffix
-  — the container a project's own senior review runs on, which mounts no credential at all. A
+  — the container a project's own senior review runs on, which mounts no credential at all. Since
+  0.19.0 that container has a reader: the independent cloud senior review of a pull request runs on
+  an account's variant, and it refuses until the installation's credentials service is enabled and
+  admits the review job's caller (E7), which no `fugaro update` supplies. A
   coding account named `acme-personal-review` therefore derives the job name and the service account
   of `acme-personal`'s variant, and the variant would run as an account whose coding job mounts the
   GitHub App key — the one thing it exists not to be. The name is refused where it is written:
