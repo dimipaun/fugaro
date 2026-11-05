@@ -503,8 +503,9 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	// before any build-record read or the launch itself. It goes through the
 	// same resolver a fresh launch's account does (claudeAccountFor) rather
 	// than through the allow-list check alone, so this path is held to the
-	// whole rule every other launch is: the allow-list, the auth clause, and
-	// the mix a config may not declare (config.CheckStageAccountMix).
+	// whole rule every other launch is: the allow-list, the auth clause, the
+	// mix a config may not declare (config.CheckStageAccountMix) and the
+	// budget mode that mix needs (config.CheckMixBudget).
 	if _, err := claudeAccountFor(ctx, env, have.Repo, cmp.Or(have.OAuthToken, config.DefaultClaudeAccount), "", have.Ref, checkoutOf(ctx, have.Repo)()); err != nil {
 		return nil, err
 	}
