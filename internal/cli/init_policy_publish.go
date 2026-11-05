@@ -141,7 +141,51 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 		}
 		add("profiles."+name+".claude_accounts", profiles[name].ClaudeAccounts, served, false)
 	}
+	// The account-choice keys are compared too — the project's
+	// default_claude_account and each stage's own claude_account — because
+	// this file is their only store and the publish is what carries them
+	// (docs/design/mixed-credentials.md §11): the runner reads them off the
+	// published node alone (resolveMixedStages, mixedDefaultAccount), so a
+	// config that names an account while the node does not carry it is a
+	// launch that admits the mix and a job that mounts the token beside a
+	// runner that never sees the keys (B7).
+	//
+	// They are compared whether or not this file states them, which is the
+	// derived members' rule above and not the keep rule review_floor, the
+	// verifier list and the catalog get: the publisher COPIES these members
+	// from the file and keeps none of them, so a file silent about the key
+	// states no account — the node it builds carries no member — and a node
+	// that names one is a difference only a publish closes. The stage names
+	// are the union of the two documents' for the same reason: an entry the
+	// node carries and the file does not is a stage the publish takes off the
+	// account, and comparing the file's own stages alone would leave the
+	// runner serving it there.
+	add("default_claude_account", lc.DefaultClaudeAccount, p.DefaultClaudeAccount, false)
+	for _, stage := range accountStageNames(lc, p) {
+		var mine string
+		if c, ok := lc.ClaudeAccountStages[stage]; ok {
+			mine = c.ClaudeAccount
+		}
+		add("claude_account_stages."+stage, mine, p.ClaudeAccountStages[stage], false)
+	}
 	return out
+}
+
+// accountStageNames is the stages either document names an account for, in the
+// order a diff reads: this file's own entries, and the entries the node
+// carries. A stage only the node names is a member this publish would drop,
+// which is a difference like any other (policyConfigDrift).
+func accountStageNames(lc *localcfg.Config, p *projectpolicy.Policy) []string {
+	names := make(map[string]bool, len(lc.ClaudeAccountStages)+len(p.ClaudeAccountStages))
+	for stage, choice := range lc.ClaudeAccountStages {
+		if choice.ClaudeAccount != "" {
+			names[stage] = true
+		}
+	}
+	for stage := range p.ClaudeAccountStages {
+		names[stage] = true
+	}
+	return slices.Sorted(maps.Keys(names))
 }
 
 // jsonText is a value as the two documents spell it, with the empty forms
@@ -278,10 +322,71 @@ func policyLoosening(old, new *projectpolicy.Policy) []policyCeiling {
 	return out
 }
 
+// policyAccountWidening is the account-choice members this publish would SET
+// where the node it replaces names none of them or names another account: the
+// project's default_claude_account, and each stage's own claude_account.
+//
+// It is a widening in the sense the typed name is asked for, and it is measured
+// against the node that replaces only the account-choice members for that
+// reason. The account is the credential a mixed run's review goes out on
+// (docs/design/mixed-credentials.md §11), so a node that starts naming one
+// hands a stage a credential it did not hold — and to an api-key run the mix
+// the ruling admits, which the launch resolver reads off this node and nothing
+// else, while the credential itself is mounted into the job's environment from
+// this machine's config. So the publish is the moment the operator's choice
+// becomes the project's, which is exactly what the ceiling widenings above are
+// asked for and why the settings commands write these keys under the same
+// typed confirmation (internal/settings, the claude_account entries).
+//
+// A member this publish REMOVES — the node names one and this file names none —
+// is not a widening: it takes a credential away from a stage, and the
+// comparison settingsLoosens makes for a ceiling has the same shape (a member
+// the new node states nothing for is carried by the removal branch above). A
+// member the publish CHANGES to another account is one: the project's runs stop
+// going out on the account the node named, which is a widening of who holds the
+// review credential wherever the new name is pointed at.
+func policyAccountWidening(old, new *projectpolicy.Policy) []policyCeiling {
+	was, now := policyAccountValues(old), policyAccountValues(new)
+	var out []policyCeiling
+	for _, member := range slices.Sorted(maps.Keys(now)) {
+		before := was[member]
+		if before == now[member] {
+			continue
+		}
+		if before == "" {
+			before = "(not set)"
+		}
+		out = append(out, policyCeiling{Member: member, Was: before, Now: now[member]})
+	}
+	return out
+}
+
+// policyAccountValues is a node's account-choice members, keyed the way the
+// node's own document spells them, with the members it states nothing for left
+// out: the two are the keys the drift above compares, and the key names are
+// what the widening sentence shows the operator.
+func policyAccountValues(p *projectpolicy.Policy) map[string]string {
+	out := map[string]string{}
+	if p == nil {
+		return out
+	}
+	if p.DefaultClaudeAccount != "" {
+		out["default_claude_account"] = p.DefaultClaudeAccount
+	}
+	for stage, account := range p.ClaudeAccountStages {
+		if account != "" {
+			out["claude_account_stages."+stage] = account
+		}
+	}
+	return out
+}
+
 // loosening is this run's publish measured against the node it replaces, and it
 // is empty for every run that publishes nothing: Migrate moves a version and
 // derives the members the config states, and a member it derives is not a
-// ceiling the operator's config states.
+// ceiling the operator's config states. The account-choice members are asked
+// beside the ceilings (policyAccountWidening) rather than through them, since a
+// node's account is not a member settingsLoosens reads.
 //
 // A FIRST publish is the one publish with no node to measure against, and it is
 // a widening by its own name rather than an empty comparison: the document it
@@ -306,7 +411,11 @@ func (m *policyMigration) loosening() []policyCeiling {
 	if m.firstPublish {
 		return []policyCeiling{{Member: projectpolicy.PathShared()}}
 	}
-	return policyLoosening(m.node, m.pub.pol)
+	// The account keys are not ceilings, so settingsLoosens has nothing to say
+	// about them and their own comparison is asked beside it: setting one is the
+	// same class of decision — who is admitted, and on whose credential — that
+	// the typed name guards here.
+	return append(policyLoosening(m.node, m.pub.pol), policyAccountWidening(m.node, m.pub.pol)...)
 }
 
 // looseningWhy is the sentence the typed confirmation shows and the refusal
