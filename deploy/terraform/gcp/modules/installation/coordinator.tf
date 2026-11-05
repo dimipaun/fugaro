@@ -2,8 +2,10 @@
 # Cloud Run job that re-reads GitHub through the project-wide read (P2),
 # recomputes the repository views (P1) and writes them into the coordinator's
 # subtree (P3), recording what it could not reconcile instead of half a view.
-# It is the deterministic half of the coordinator, and the account below is
-# the only identity that writes the coordinator's state.
+# It is the deterministic half of the coordinator, and the coordinator account
+# below is the only identity that writes the coordinator's state — the front
+# door at the bottom of this file has an account of its own, and that one
+# writes nothing anywhere.
 #
 # None of this exists unless the owner opts in (fugaro update
 # --firebase-project <id> --coordinator); var.coordinator is null otherwise.
@@ -20,6 +22,10 @@
 # rules' floor. Everything else here is the narrowest grant the job needs:
 # objectViewer on the runs bucket, secretAccessor on the App key's one
 # container, and the job_runner role on this job alone.
+#
+# The front door's own account is at the bottom of this file, and the two are
+# deliberately not the same one: its comment says what the sweep holds that a
+# public endpoint must not reach.
 
 locals {
   # coordinator is the owner's opt-in, and it is the whole switch: fugaro
@@ -50,6 +56,16 @@ locals {
   coordinator_github = local.deploy_coordinator && anytrue([
     for r in var.coordinator.repos : r.provider == "github"
   ])
+
+  # The front door's own switch (D934), and the only thing that creates the
+  # account and the service below: var.mcp_server is null on every installation
+  # that has not asked for one, and the coordinator's opt-in is required beside
+  # it because a front door serves the coordinator's state and there is nothing
+  # for one to answer about on an installation that has no coordinator. The
+  # variable's own validation refuses the one combination this local would
+  # hide: an opt-in with no coordinator, which would otherwise plan nothing and
+  # say nothing.
+  mcp_server_on = var.mcp_server != null && local.coordinator_on
 }
 
 resource "google_service_account" "coordinator" {
@@ -280,4 +296,240 @@ resource "google_cloud_scheduler_job" "coordinator_sweep" {
   }
 
   depends_on = [google_cloud_run_v2_job_iam_member.coordinator_runner]
+}
+
+# The front door's own account, and the whole of why it is not the sweep's
+# (M4's "its own service account"): the sweep's account holds the GitHub App's
+# private key, a Bitbucket read at the credentials service and
+# firebasedatabase.admin over the FP, and an identity holding any of those
+# behind a public endpoint would make spec.md §8's "there is no credential to
+# reach" false the day the front door is turned on. This one holds one grant —
+# the runs bucket's read, below — and nothing else in this tree or the Firebase
+# root grants it anything: no secret, no database, no actAs, which is the
+# narrowest account the design names for M4.
+#
+# It is created with the front door's own opt-in and not with the coordinator's:
+# an installation that opted into the coordinator for its read-only view
+# acquires no account at all, which is the same rule the service and the
+# binding follow.
+#
+# The database half of what a front door needs is NOT here and deliberately so:
+# the store binding is D935, which the owner has not answered, and its account
+# is the only member that binding will name (#1760). Until then this account
+# reads run artefacts (D932) and can reach nothing else.
+resource "google_service_account" "mcp_server" {
+  count = local.mcp_server_on ? 1 : 0
+
+  project      = var.project
+  account_id   = var.mcp_server.account_id
+  display_name = "Fugaro MCP server"
+
+  depends_on = [google_project_service.this]
+}
+
+# The runs bucket, read-only, and the account's one grant: a run's recorded
+# artefacts — its logs and its diff — are what the tools behind this port
+# answer with (D932), and the answer the owner did not choose (streaming Cloud
+# Logging live) is the reason it is the whole of the read: objectViewer on this
+# bucket reaches no log line outside a run, and no other object in the project.
+#
+# objectViewer and never objectAdmin, with no condition (unverified assumption
+# A3, the sweep account's grant): the front door writes no object, and the
+# bucket's root is something no read can change.
+resource "google_storage_bucket_iam_member" "mcp_server_runs_reader" {
+  count = local.mcp_server_on ? 1 : 0
+
+  bucket = google_storage_bucket.runs.name
+  role   = "roles/storage.objectViewer"
+  member = google_service_account.mcp_server[0].member
+}
+
+# Nobody is granted actAs on this account either, operators included, for the
+# reason the sweep account's own comment gives: whoever could deploy a revision
+# as it would serve the front door's answers — and every run artefact behind
+# them — as the installation's own identity.
+
+# The coordinator's front door (D920, D934): the one endpoint a standard MCP
+# client reaches without a Google identity. It is a Cloud Run SERVICE and not
+# the job above — the job is a scheduled, finite sweep, and this one is
+# resident, answerable at any moment, and reachable by everyone on the network
+# (spec.md §8, "Who can call the front door": there is no network gate, no VPN,
+# no source allowlist and no mutual TLS, and the handler is the only gate).
+#
+# OFF by default. The whole switch is var.mcp_server, and no CLI writer sets it
+# yet: `fugaro update` has no --mcp-server flag on this branch, so the variable
+# arrives only from a tfvars a later stage writes, and the release that turns
+# the front door on adds the flag (M5's) and its line to the release notes'
+# ### For operators section (D934). The account above and this service exist
+# only for an installation whose owner asked: one that opted into the
+# coordinator for its read-only view acquires neither, and one that never asked
+# plans exactly what it planned before this file existed.
+#
+# What the front door is NOT is what makes it safe to be public. It carries no
+# model credential and no forge credential — no secret_key_ref, no value_source,
+# no credential-shaped environment name, which
+# coordinator_service_test.go's TestCoordinatorServiceIsPublicAndCarriesNoCredential
+# holds against this very block — and the identity behind the port is an
+# account whose whole reach is the runs bucket's read, so a stolen access token
+# reaches the tools its scopes name and nothing else (spec.md §8, "What a
+# stolen access token reaches": there is no credential to reach).
+#
+# M9's launch grant is deliberately absent, and the absence is the design:
+# spawn_task is the one privilege this work adds, it belongs to M9's own
+# change, and until it lands nothing here can start a run. When it lands it is
+# a grant on the project's own job, added here (the shared-files table), and
+# this comment is what says the service it is granted for already exists.
+resource "google_cloud_run_v2_service" "coordinator_front_door" {
+  count = local.mcp_server_on ? 1 : 0
+
+  project  = var.project
+  location = var.region
+  name     = var.mcp_server.service
+  labels = {
+    fugaro      = "managed"
+    fugaro_role = "coordinator-mcp"
+  }
+
+  # The public internet, because that is who calls it: an MCP client reaches
+  # the endpoint over its run.app URL, and INGRESS_TRAFFIC_INTERNAL_ONLY would
+  # refuse every caller there is. The fence is not the network — it is the
+  # bearer token the handler checks, and the audit record every refusal and
+  # every call writes (M10) — which is why the ingress is stated here rather
+  # than left to the provider's default.
+  ingress = "INGRESS_TRAFFIC_ALL"
+
+  # IAM is required, and the public binding below is the grant D920 decided:
+  # stated explicitly rather than left to the provider's default, so the front
+  # end checks IAM before the container runs and a later change of that default
+  # cannot open the service silently (credentials.tf's rule for the same flag).
+  # The binding is visible in the plan, which is the point — a public endpoint
+  # is a deliberate act and internal/infra/tf's cover refuses an allUsers
+  # member by name, so the update that creates this asks its own confirmation.
+  invoker_iam_disabled = false
+
+  # The service holds no data of its own: every token record, client
+  # registration and audit line lives in the mcpauth subtree (D922), which is a
+  # subtree of the database rather than a resource of this plan, so no apply can
+  # remove it with this flag. Turning the front door off is therefore one
+  # ordinary apply with var.mcp_server unset, and deletion_protection stays
+  # false so that apply can do its work.
+  deletion_protection = false
+
+  template {
+    labels = {
+      fugaro      = "managed"
+      fugaro_role = "coordinator-mcp"
+    }
+
+    # The front door's OWN account, never the default compute account and never
+    # the sweep's (the account's comment above): a revision reaching a
+    # credential through its identity is the one thing a public endpoint must
+    # not do, and the sweep's identity reaches the App key and the whole
+    # database. Nobody is granted actAs on this one either, so no person and no
+    # deployer can run a revision as it.
+    service_account = google_service_account.mcp_server[0].email
+
+    # Scale to zero (D196's own shape): a public endpoint nobody calls costs
+    # nothing, and a cold start is what a caller waits for rather than what the
+    # installation pays for around the clock. The concurrency and rate limits
+    # that bound a caller's cost are the front door's own and are enforced at
+    # M9's single launch point, not here.
+    scaling {
+      min_instance_count = 0
+    }
+
+    containers {
+      image = var.mcp_server.image
+
+      # One CLI binary serves the aggregation job and the front door
+      # (internal/infra's Coordinator reads the same history image), so the
+      # front door names the command it runs rather than an image built for
+      # it: the resident server, which answers on Cloud Run's PORT. Without
+      # the pair below the image's own default entry point would run
+      # `fugaro version` and exit — a revision that never becomes ready, and
+      # an apply that fails after the owner asked for a front door.
+      command = ["/usr/local/bin/fugaro"]
+      args    = ["coordinator", "serve"]
+
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "512Mi"
+        }
+      }
+
+      # The state the front door serves, in the names the sweep already reads:
+      # the project, the Firebase project and database the coordinator's
+      # subtrees live in, and the runs bucket a run's artefacts (its logs and
+      # its diff) are read from (D932). None of them is a credential, no entry
+      # here has a value_source, and naming the database is not a grant on it:
+      # what this account may read there is D935's store binding, which does not
+      # exist yet, so a front door built from this file reaches the runs bucket
+      # and nothing else.
+      env {
+        name  = "FUGARO_PROJECT"
+        value = var.fugaro_project
+      }
+      env {
+        name  = "FUGARO_FIREBASE_PROJECT"
+        value = var.coordinator.firebase_project
+      }
+      env {
+        name  = "FUGARO_RTDB_URL"
+        value = var.coordinator.rtdb_url
+      }
+      env {
+        name  = "FUGARO_RUNS_BUCKET"
+        value = var.runs_bucket
+      }
+      # The repositories the front door may answer about, in the same JSON
+      # shape the sweep's own FUGARO_COORDINATOR_REPOS carries: a token's
+      # repository filter is applied on top of this list, never instead of it,
+      # so naming a repository the installation does not hold is refused
+      # rather than resolved.
+      env {
+        name  = "FUGARO_COORDINATOR_REPOS"
+        value = jsonencode(var.coordinator.repos)
+      }
+
+      # The port is left unnamed, and that is the HTTP/1.1 default: Cloud Run's
+      # own is 8080, which is also the number the process falls back to when
+      # PORT is unset. credentials.tf's comment (and the local above it) says
+      # why the h2c name exists there and why it must follow the image; the
+      # front door's transport is decided by M5's server, and a name this
+      # release cannot read out of an image would be a claim about a process
+      # nobody has written yet.
+    }
+  }
+
+  traffic {
+    type    = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
+    percent = 100
+  }
+
+  lifecycle {
+    ignore_changes = [client, client_version]
+  }
+}
+
+# D920's public invoker binding, and the whole of the endpoint's reachability:
+# roles/run.invoker to allUsers, on this service and no other. It is written
+# beside the service rather than inside it because that is where a plan's
+# review screen can see it, and internal/infra/tf's cover refuses an allUsers
+# member by name — the member kind the table's row for this type deliberately
+# does not carry — so the update that carries this plan stops and asks the
+# owner to confirm it in so many words.
+#
+# Every unauthenticated path this opens is a metadata document or an
+# authorization endpoint with no work behind it, and the MCP endpoint itself
+# answers 401 to a request with no token (M5, spec.md §8): the invoker grant
+# admits a caller to the CONTAINER, and the handler is still the gate.
+resource "google_cloud_run_v2_service_iam_member" "coordinator_front_door_public" {
+  count = local.mcp_server_on ? 1 : 0
+
+  project  = var.project
+  location = google_cloud_run_v2_service.coordinator_front_door[0].location
+  name     = google_cloud_run_v2_service.coordinator_front_door[0].name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
 }

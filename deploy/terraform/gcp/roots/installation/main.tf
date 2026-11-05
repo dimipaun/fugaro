@@ -47,6 +47,7 @@ module "installation" {
   enable_budget             = var.enable_budget
   history                   = var.history
   coordinator               = var.coordinator
+  mcp_server                = var.mcp_server
   catalog_check             = var.catalog_check
   credentials_service       = var.credentials_service
   project_secrets           = var.project_secrets
