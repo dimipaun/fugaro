@@ -1,6 +1,15 @@
 # The independent senior review as a cloud job: spec
 
-**Status: design only; nothing approved.** This document describes a shape; it changes nothing and
+**Status (2026-11-05): the first slice is in the tree and nothing launches it yet.** CSR1–CSR7 of
+[implementation-plan.md](implementation-plan.md) are implemented — the version gates an older job
+image is refused against, `fugaro review --pr N` and its launch refusals, the review-only job variant
+and its own service account, the mutation check, the signature the credentials service makes and the
+notes `fugaro validate` prints — and **E7, the one thing no task of that plan can deliver, is still
+open**: the credentials service ships dormant, so a review refuses until the installation enables it
+and the service admits the review job's own caller. What is written below is the design those
+sentences were built from, and where the built thing and this document disagree, the code and the
+reconciliation win. *The status as first written, kept:* **Status: design only; nothing approved.**
+This document describes a shape; it changes nothing and
 commits nobody. Its decisions are numbered in
 [reconciliation.md](reconciliation.md) §4 and its tasks in
 [implementation-plan.md](implementation-plan.md). Where this document and the reconciliation

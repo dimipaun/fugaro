@@ -2,7 +2,7 @@
 
 **Status: written by M9, after the build landed. Two designs' rows have landed, one is owed, and the skill's paragraph is a handoff — this folder does not edit the file it belongs in.**
 
-[implementation-plan.md](implementation-plan.md) §2 writes one row for each of the **settings**, **rigor** and **accounts** designs, so that design's owner copies its row rather than reconstructing it, and §4 keeps `plugin/**` and every other design's files out of this build's reach. This note is where those rows are recorded, where each command's state is read against the tree, and where the paragraph `plugin/skills/setup/reference/managed.md` owes is written down for its owner to place. **Nothing here is a decision**: the decisions are D1011–D1027 in [reconciliation.md](reconciliation.md) §3, [spec.md](spec.md) §3.1 is the set they name, and this note changes neither.
+[implementation-plan.md](implementation-plan.md) §2 writes one row for each of the **settings**, **rigor** and **accounts** designs, so that design's owner copies its row rather than reconstructing it, and §4 keeps `plugin/**` and every other design's files out of this build's reach. This note is where those rows are recorded, where each command's state is read against the tree, and where the paragraph `plugin/skills/setup/reference/managed.md` owes is written down for its owner to place. **Nothing here is a decision**: the decisions are D1011–D1028 in [reconciliation.md](reconciliation.md) §3, [spec.md](spec.md) §3.1 is the set they name, and this note changes neither.
 
 ## The three rows
 

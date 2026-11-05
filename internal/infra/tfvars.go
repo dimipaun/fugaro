@@ -175,6 +175,13 @@ type InstallationSpec struct {
 	// an installation whose local config names no profile, so the plan of
 	// one that had none is unchanged (infra.ProjectJobs).
 	ProjectJobs map[string]ProjectJob `json:"project_jobs,omitempty"`
+	// ProjectReviewJobs are the review-only variants of those jobs, by job
+	// name: one per (profile, provider, account) the coding set deploys, with
+	// an empty secret_env, deployed by the root as a module instance of its own
+	// with no secrets handed in (design docs/cloud-senior-review, CSR7). Left
+	// out — like ProjectJobs, and for the same reason — of an installation
+	// whose local config names no profile.
+	ProjectReviewJobs map[string]ProjectJob `json:"project_review_jobs,omitempty"`
 	// ManagedDeployerScoped is the module's managed_deployer_scoped: left out
 	// unless set, so an installation that does not opt in writes the same
 	// tfvars as before the variable existed and plans without the seven
@@ -828,6 +835,11 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		return InstallationSpec{}, err
 	}
 	s.ProjectJobs = jobs
+	review, err := ProjectReviewJobs(lc, bucket, s.EnableVertex)
+	if err != nil {
+		return InstallationSpec{}, err
+	}
+	s.ProjectReviewJobs = review
 	s.ManagedDeployerScoped = o.ManagedDeployerScoped
 	cc, err := CatalogCheck(lc, bucket, o.ImageBuilds)
 	if err != nil {
@@ -897,7 +909,8 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 // key unconditionally (§3a: a provider's key is eligible for project storage
 // whether or not its allow_data_to list exists, and an absent list is a
 // valid "every repository" state, not a reason to leave the container out),
-// and every named Claude account with a non-empty allow_data_to. A reserved
+// every named Claude account with a non-empty allow_data_to, and every
+// workflow_secrets entry with a non-empty allow_data_to (D1263). A reserved
 // name with no project_secrets entry has no container at all.
 //
 // This is only the config half: DiscoverInstallation unions the live
@@ -918,6 +931,11 @@ func projectSecretContainers(lc *localcfg.Config) map[string]string {
 		if len(lc.ClaudeAccounts[name].AllowDataTo) > 0 {
 			s := config.ClaudeAccountSecret(name)
 			out[s] = gcp.ProjectSecretID(lc.Name, s)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(lc.WorkflowSecrets)) {
+		if len(lc.WorkflowSecrets[name].AllowDataTo) > 0 {
+			out[name] = gcp.ProjectSecretID(lc.Name, name)
 		}
 	}
 	return out

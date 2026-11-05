@@ -1,6 +1,7 @@
 # The spec: a workflow secret stored once for the project, behind an operator-local allow-list
 
-**Status: the issue text, verbatim, with this line added; it states no decision of its own.**
+**Status: the issue text, verbatim, with this line added; it states no decision of its own, and the
+design it asks for was built at 0.19.0 (the outcome is in [README.md](README.md)).**
 Issue **#1678**, "secrets: let a workflow secret be stored once for the project, behind an
 allow-list", opened by the repository owner. It is reproduced below **byte for byte** — headings,
 the checklist box and the em dashes included — and nothing in this file is the design. The design is

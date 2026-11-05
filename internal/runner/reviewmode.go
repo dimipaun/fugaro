@@ -179,6 +179,14 @@ func (r *run) checkReviewAuthor(ctx context.Context, n int, h gitprov.PRHead) er
 func (r *run) refuseReview(ctx context.Context, n int, reason string) error {
 	reason = r.redact(reason)
 	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, reason
+	if !r.reviewMayComment() {
+		// The independent review job holds a read-only installation token
+		// (CSR1's scope, minted for it by the credentials service), so this
+		// is not a write it may make and not one worth logging a 403 for:
+		// its whole record of the refusal is the run's own reason, which its
+		// reader (fugaro review show, fugaro diagnose) shows.
+		return errors.New(reason)
+	}
 	note := "**Fugaro:** " + reason + ". Nothing was checked out or reviewed.\n" + gitprov.ReportMarker(r.rec.RunID) + "\n"
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), giveUpCommentTimeout)
 	defer cancel()
@@ -187,6 +195,16 @@ func (r *run) refuseReview(ctx context.Context, n int, reason string) error {
 	}
 	return errors.New(reason)
 }
+
+// reviewMayComment reports whether this run may write to the pull request it
+// reviews, which is the permission the CALLER states: the launcher that started
+// the independent review job marks its execution (EnvReviewJob, set only on
+// CSR7's review-only variant) and hands that job a read-only token, so the run
+// is told what it may do rather than guessing it from a token's scopes — a
+// scope it cannot read. Every other review run — `fugaro run --recipe
+// review-only`, and a coding run's own rounds — keeps its token and its
+// comments.
+func (r *run) reviewMayComment() bool { return !r.reviewJob() }
 
 // reviewDir is where a pick run checks out pull request n (design
 // generic-tool §3.6, G12): a sibling of the main checkout (r.d.WorkDir),

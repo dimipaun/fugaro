@@ -23,6 +23,7 @@
 version: 1
 
 summaries:
+  v0.19.0: A managed project no longer asks you to confirm anything, a run can code on a cheap provider model and review on your Claude subscription, a project's workflow secrets reach exactly the repositories you list, and a project secret can be removed in one step.
   v0.18.0: A coding agent can now manage a Fugaro-created project for you behind a fixed safety gate, a project's catalog images are checked and rebuilt on a schedule, and building a catalog image works end to end from your own login.
   v0.17.0: A project can keep its own named images, built in the cloud and picked by the tags a run needs, so a repository no longer needs a hand-made image of its own. Settings edits classify what they change before writing, and Bitbucket repositories can be read through a read-scoped consumer.
   v0.16.0: A repository can give each of its three review levels its own model, effort and focus and let a run follow them through to a harder adversarial review, the default recipe writes its adversarial step itself, fugaro accounts add sets a Claude account up end to end, fugaro models and fugaro settings can now change what a run gets, and fugaro runs ls and the coordinator command read a fleet's runs, pull requests and declared intents.

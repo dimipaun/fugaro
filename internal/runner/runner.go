@@ -219,11 +219,20 @@ type run struct {
 	// to the cheap loop (review: {bounce: first_line}); 0 until the first
 	// one. Stamped onto each first-line ReviewSummary (firstLine) so the
 	// record shows which cheap loop a review followed.
-	bounce  int
-	repo    *gitops.Repo
-	env     []string
-	secrets []string
-	budget  Budget
+	bounce int
+	repo   *gitops.Repo
+	env    []string
+	// mixedStages are the stages of this run that run on a stage-scoped
+	// Claude OAuth account of its own instead of the run's own credential,
+	// keyed by stage (docs/design/mixed-credentials.md §11, the owner's B0
+	// ruling). It holds at most the senior review and the adversarial review,
+	// and it is empty for every run that does not mix credentials. It is read
+	// once at bootstrap (resolveMixedStages, agentenv.go) and never changes: a
+	// stage's environment, its pins and its managed settings all read it, and
+	// they have to read one answer.
+	mixedStages map[string]string
+	secrets     []string
+	budget      Budget
 	// stampHooks and runnerHooks are the two hook directories bootstrap wrote
 	// for this run's commits (writeStampHooks): the agent's stages commit
 	// under stampHooks, chained to the repository's own hooks, and the
@@ -271,6 +280,10 @@ type run struct {
 	instructions string
 	reviewFile   string
 	stageN       map[string]int
+	// accounts is the ordered failover the stage-start account choice keeps
+	// for this run (accountchoice.go, D874): off unless the owner's published
+	// policy turns it on, and the account each stage has reached.
+	accounts accountChoice
 	// mu guards halt, cancelled, failReason, tokens, gatewayTokens and
 	// haltStage: the cancel watcher and, with the gateway, its halt
 	// callback record into them from other goroutines. Whichever of a halt
@@ -328,6 +341,15 @@ type run struct {
 	gwClosed       bool
 	gwUsed         pricing.Micros
 	gwNotional     pricing.Micros
+	// direct is the model spend of the stages a stage-scoped Claude OAuth
+	// account served -- a mixed run's review and adversarial stages
+	// (docs/design/mixed-credentials.md §11). The gateway saw none of their
+	// calls, so nothing settles them: their figure is Claude Code's own result
+	// event, recorded here by recordAccountStageCost, and it is in
+	// record.CostUSD and cost.model_usd beside the ledger's two (P11, P12).
+	// All of it is notional -- the subscription paid it -- so it is in no
+	// total and against no cap (P15).
+	direct pricing.Micros
 	// gwCacheRead and gwCacheWrite are the run's prompt-cache read and write
 	// token totals, taken from the gateway's ledger when it closes: what the
 	// run's record carries so a reader can see whether the cache behaved as
@@ -613,6 +635,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 
 	r.addSealKey()
 	r.addMountedSecrets()
+	r.registerModelCredentials()
 	if onNewRun != nil {
 		onNewRun(r)
 	}
@@ -1272,14 +1295,23 @@ func (r *run) stampTrailers(model string) []gitops.Trailer {
 // stage's pins, and the stamp every commit it makes carries (A3). The model
 // trailer is this stage's pin, read the same way the record's StageTiming
 // reads it (cost.go).
-func (r *run) stageEnv(stage string, pins map[string]string) []string {
-	env := gitops.WithVars(r.env, pins)
+//
+// The stage's credential is the part of it that is not the run's own: a stage
+// the run's stage-scoped Claude OAuth account serves gets that account's
+// environment instead (stageAgentEnv, docs/design/mixed-credentials.md §11),
+// and the error here is the refusal of a stage whose account token the runner
+// does not hold.
+func (r *run) stageEnv(stage string, pins map[string]string) ([]string, error) {
+	env, err := r.stageAgentEnv(stage, pins)
+	if err != nil {
+		return nil, err
+	}
 	if r.stampHooks == "" {
-		return env
+		return env, nil
 	}
 	stamp := gitops.Stamp{Author: r.stampAuthor,
 		Trailers: r.stampTrailers(r.stageModel(stage))}
-	return gitops.StampEnv(stamp, r.stampHooks, env)
+	return gitops.StampEnv(stamp, r.stampHooks, env), nil
 }
 
 // logUnstampedCommits writes the one line finalize owes about the commits it
@@ -1607,7 +1639,12 @@ const bashTimeoutSlack = 2 * time.Minute
 // (FUGARO_CHECKOUT=clone, design generic-tool.md §2, G4) has no baked
 // checkout, so its clone is the blobless one gitops.CloneBlobless makes:
 // full history, no file contents until the checkout of the task's ref needs
-// them. cloneVars are the git credentials authVars built.
+// them. A prebuilt catalog entry's job has no baked checkout either — the
+// entry's image is shared by every repository that names it — but it is no
+// clone kind (FUGARO_CHECKOUT is unset, since the entry's own build installed
+// its tools), so its clone is the whole one gitops.OpenOrClone makes, which
+// is also the history a follow-up and merge-base need. cloneVars are the git
+// credentials authVars built.
 //
 // The branch cloned is the remote's own default branch, not
 // git.base_branch: that is in the repository's fugaro.yaml, which cannot be
@@ -2222,6 +2259,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 			return fmt.Errorf("building git credentials: %w", err)
 		}
 		maps.Copy(set, agentAuthVars)
+	}
+	// The stages this run may serve from a stage-scoped Claude OAuth account
+	// (resolveMixedStages, agentenv.go), read from the published policy before
+	// anything runs and before the gateway starts: they decide both halves of
+	// a stage's credential, and a node the run cannot read stops it here
+	// rather than at the first review.
+	if r.mixedStages, err = r.resolveMixedStages(ctx); err != nil {
+		return err
 	}
 	if r.gatewayOn() {
 		// After the lock and the provider, so a run that never gets as far
@@ -3112,7 +3157,12 @@ type stageOpts struct {
 // the run's: a review runs in a session of its own, and a wait during one
 // resumes that one.
 //
-// The loop is bounded (maxCredentialResumes): each wait is bounded by
+// The loop's second reason is the account's own subscription allowance (A7b,
+// D874): a stage that ended on it did not fail either, and the attempt that
+// follows is the same stage again — on the walk's next account, in a session
+// of its own, and with nothing to wait for, because no service answered.
+//
+// The cascade's wait is bounded (maxCredentialResumes): each wait is bounded by
 // waitForCredential's own check against the job's remaining time, but a
 // reset that has already passed resumes the stage at once, and a service
 // that kept answering that way would run the stage again and again with no
@@ -3123,6 +3173,28 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	resumes := 0
 	for {
 		res, ok, err := r.stageOnce(ctx, name, req, opts)
+		// The account's own subscription allowance ended this attempt (A7b,
+		// spec §11.3). Nothing is waited for -- no service answered, and the
+		// allowance's own reset is hours away -- so the stage's next attempt
+		// follows at once, on the account the walk has moved to, which is what
+		// stageOnce's own stage-start check chooses.
+		//
+		// It is a fresh attempt and not a resumed one: the attempt that ended
+		// was another account's, and a session resumed across accounts would
+		// carry one account's conversation into another account's attempt --
+		// the shape §11.3's "never mid-stage" rule keeps out of the record.
+		// No bound of its own is needed either, unlike the resume loop below:
+		// each pass advances the walk by one account, and the stage's
+		// stage-start check stops it once the stage's own list is exhausted.
+		var limited *accountLimitedError
+		if errors.As(err, &limited) {
+			// The attempt that ended spent what it spent, for the reason the
+			// wait below counts its own: the caller's countTokens only ever
+			// sees the last attempt of this stage.
+			r.countTokens(res)
+			req.SessionID, req.Resume = agent.NewSessionID(), false
+			continue
+		}
 		var ex *exhaustedError
 		if !errors.As(err, &ex) {
 			return res, ok, err
@@ -3279,6 +3351,14 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.fail("time budget exhausted before stage " + name)
 		return agent.Result{}, false, nil
 	}
+	// The stage's own account (accountchoice.go, D874): with the switch on
+	// this is the walk's next account for the stage, and a stage this run's
+	// own credential cannot serve is refused here rather than run as another
+	// account.
+	if reason := r.checkStageAccount(ctx, name); reason != "" {
+		r.fail("stage " + name + ": " + reason)
+		return agent.Result{}, false, errors.New(reason)
+	}
 	// With the gateway on, nothing the agent or the repository wrote since
 	// the last stage may send Claude Code around it.
 	if r.gatewayOn() {
@@ -3305,14 +3385,23 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	r.rec.Stage = name
 	r.save(ctx)
 	log := r.d.Log.With("stage", name)
-	// Refresh before the redactors below are built, so they know the new
-	// token. Bounded on its own: a slow or hanging provider call must not
-	// eat into the stage's own budget.
+	// Refresh before the stage's environment is built, so the agent is handed
+	// the new token (the environment is a copy of the run's own), and before
+	// the redactors below are built, so they know it. Bounded on its own: a
+	// slow or hanging provider call must not eat into the stage's own budget.
 	authCtx, cancelAuth := context.WithTimeout(ctx, authRefreshTimeout)
 	err := r.refreshGitAuth(authCtx, authValidity(r.budget.Stage+gitAuthSlack))
 	cancelAuth()
 	if err != nil {
 		r.warnAuthRefresh(err)
+	}
+	// Before the stage's transcript is read at all: a stage the run's account
+	// serves is refused here when the run holds no token for it, and the
+	// refusal is one of the run's own errors, redacted like any other.
+	stageEnv, envErr := r.stageEnv(name, pins)
+	if envErr != nil {
+		r.fail("stage " + name + ": " + envErr.Error())
+		return agent.Result{}, false, envErr
 	}
 	log.Info("stage started", "n", n)
 
@@ -3336,7 +3425,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	}
 	tw := agent.NewRedactor(io.MultiWriter(&transcript, transcriptTail, relay), r.secretList())
 	sw := agent.NewRedactor(io.MultiWriter(NewLineWriter(log, "agent"), stderrTail), r.secretList())
-	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, r.stageEnv(name, pins), tw, sw
+	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, stageEnv, tw, sw
 	req.Model, req.MaxBudgetUSD = r.stageModel(name), r.cfg.Agent.MaxBudgetUSD
 
 	deadlineCtx, cancelDeadline := r.budget.StageContext(ctx)
@@ -3374,9 +3463,19 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// The halt's way to stop this stage: cancelling with the halt as the
 	// cause, which StageError reads.
 	stageCtx, cancelCause := context.WithCancelCause(ownCtx)
+	// A stage the run's stage-scoped Claude OAuth account serves opens no stage
+	// in the gateway and takes no figure of its own from it: its calls go
+	// straight to Anthropic, so the gateway has nothing to admit, nothing to
+	// refuse and nothing to report for it (docs/design/mixed-credentials.md
+	// §11, P11). Its account stage is cleared of the previous stage's report
+	// for the same reason: nothing of this stage may be read from r.lastStage.
+	direct := r.stageDirect(name)
 	r.mu.Lock()
 	r.haltStage = cancelCause
 	extra := r.stageExtra
+	if direct {
+		extra, r.lastStage = nil, nil
+	}
 	early := r.halt
 	r.mu.Unlock()
 	if early != nil {
@@ -3392,7 +3491,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	}()
 	var watching sync.WaitGroup
 	stopWatch := func() {}
-	if r.gw != nil {
+	if r.gw != nil && !direct {
 		r.beginGatewayStage(name)
 		done := make(chan struct{})
 		watching.Add(1)
@@ -3438,9 +3537,12 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	ownTimedOut := own > 0 && err != nil && cutByOwn
 	stopCheckpoints()
 	stopWatch()
-	// An oauth run has no gateway: its stage's own cost figure is its
-	// notional spend, reported whatever became of the stage.
-	r.reportNotional(ctx, res)
+	// An account stage has no gateway: its stage's own cost figure is its
+	// notional spend, reported whatever became of the stage. A stage the run's
+	// stage-scoped Claude OAuth account serves reports the same way though the
+	// run's gateway is on, and it is the only stage of a gateway run that does
+	// (P13).
+	r.reportNotional(ctx, name, res)
 	r.mu.Lock()
 	sess := r.sess
 	r.mu.Unlock()
@@ -3471,8 +3573,10 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.gatewayTokens = gw
 		r.mu.Unlock()
 	}
-	if r.gw != nil {
+	if r.gw != nil && !direct {
 		r.recordGatewayStageCost(name, res.CostUSD, stageCtx.Err() != nil || r.haltValue() != nil)
+	} else if direct {
+		r.recordAccountStageCost(name, res.CostUSD)
 	} else {
 		r.rec.CostUSD += res.CostUSD
 	}
@@ -3560,6 +3664,10 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// own.
 	var exhausted *exhaustedError
 	if errors.As(context.Cause(stageCtx), &exhausted) && (err != nil || res.IsError) {
+		// The answer ended this attempt, so the stage's next attempt is the
+		// walk's next account (accountchoice.go, D874): nothing inside the
+		// attempt that just ended moves it.
+		r.noteStageExhausted(name)
 		r.save(ctx)
 		return res, false, exhausted
 	}
@@ -3585,13 +3693,127 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	case res.IsError && opts.Skippable && r.skippable(ctx, stageCtx):
 		r.save(ctx)
 		return res, false, skippedError{fmt.Errorf("the agent reported an error (%s)", res.Subtype)}
+	// The account's own subscription allowance ended this attempt (A7b, spec
+	// §11.3): the attempt was refused by the credential that served it and not
+	// by anything about the work, so with the walk on it is not a failed stage
+	// — it is the attempt the next account makes, and stage's own loop runs it
+	// on the account the walk has moved to.
+	//
+	// It comes after the Skippable case above, so a stage the run may skip is
+	// skipped exactly as it is today: §11.3 says a rate limit ends that attempt
+	// "as it does today", and a skipped stage has no next attempt for the walk
+	// to serve. It comes before the ordinary error below, which is what the same
+	// text is whenever the walk does not apply: D875's explicit-only run keeps
+	// B5's named reason, and so does any text the closed classifier does not
+	// read as the account's own allowance.
+	//
+	// Nothing about the ended attempt is recorded. It did not fail, and a run
+	// the walk can serve goes on, so a failure reason here would outlive the
+	// failure. Why the stage moved is the line below and the failover line the
+	// next attempt's stage-start check writes; the agent's own words stay in
+	// the stage's transcript, where they already are.
+	case r.accountEndedTheAttempt(res) && r.accountAuto(ctx):
+		r.noteStageExhausted(name)
+		// The account that served the attempt is the run's own credential's:
+		// the walk serves a stage only as the account the run holds, so the
+		// line and the record's own account cannot disagree.
+		log.Info("the account's subscription usage limit ended this attempt, so the stage's next attempt is the walk's next account",
+			"account", selectedName(r.spec.OAuthToken))
+		r.save(ctx)
+		return res, false, &accountLimitedError{}
+	// A stage that reported an error carries its own words for it in the
+	// result event's text, and its subtype says nothing: Claude Code reports
+	// a refused API call as subtype "success". The reason therefore quotes
+	// that text, and one stop gets a name of its own (stageErrorReason): the
+	// OAuth account's subscription usage limit.
 	case res.IsError:
-		r.fail(fmt.Sprintf("stage %s: the agent reported an error (%s)", name, res.Subtype))
+		r.fail(r.stageErrorReason(name, res))
 		r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
 		return res, false, nil
 	}
 	r.save(ctx)
 	return res, true, nil
+}
+
+// stageErrorReason is the failure reason for a stage that reported an error
+// result (is_error). The subtype does not describe such an error -- Claude
+// Code reports a refused API call as subtype "success" with is_error set --
+// so the reason quotes the event's own text, redacted, on one line and
+// clipped: what the agent was told is the only thing that says why the call
+// failed, and without it the record, the report and the draft pull request
+// say nothing.
+//
+// The one error that gets a name of its own is the OAuth account's
+// subscription usage limit (subscriptionUsageLimit): the allowance is the
+// account's, shared with the owner's own use, and it resets on its own
+// schedule, so the stage is not going to succeed by being run again on that
+// account. It is the reason a run that cannot move records: the walk off,
+// which is what D875 ships, or a stage the walk may not serve. With the walk
+// on, the same classification ends the attempt instead and nothing about it is
+// recorded (A7b, stageOnce's own case). A stage on an API key, a provider
+// route or Vertex has no such allowance and keeps the reason above.
+func (r *run) stageErrorReason(stage string, res agent.Result) string {
+	what := "the agent reported an error"
+	if res.Subtype != "" && res.Subtype != "success" {
+		what += " (" + res.Subtype + ")"
+	}
+	if subscriptionUsageLimit(r.cfg.Agent.Auth, res.Text) {
+		what = "the OAuth account's subscription usage limit was reached, so the run stops here: " +
+			"the account's allowance is shared with the owner's own Claude Code use and resets on its own schedule"
+	}
+	reason := "stage " + stage + ": " + what
+	if text := r.stageErrorText(res.Text); text != "" {
+		reason += ": " + text
+	}
+	return reason
+}
+
+// stageErrorText is a result event's text as a reason may carry it: the
+// agent's own words, so redacted first, then put on one line (a reason is a
+// sentence), then redacted again and clipped to one log line's length. Neither
+// redaction is redundant: the first sees a multi-line secret's own lines where
+// they are, before OneLine folds the text into one line, and the second
+// catches a secret an upstream split with an escape sequence -- OneLine
+// deletes the sequence, so the halves the first pass saw separately come back
+// together inside the line the reason would carry. The stage's transcript
+// holds the whole text either way.
+func (r *run) stageErrorText(text string) string {
+	return logtail.Clip(r.redact(safetext.OneLine(r.redact(text))), logtail.DefaultLineBytes)
+}
+
+// oauthLimitPhrases are what an OAuth account's spent subscription allowance
+// is reported as, each matched as the shape it is rather than as English: the
+// CLI's own sentence about the allowance, its newer wording, and the API error
+// type a token past its allowance gets -- read inside the envelope that
+// carries it, so that a type merely named in a result text (an echoed snippet,
+// a "previous_error_type" field) is not taken for the refusal itself.
+//
+// The exact wording is Anthropic's and is unverified (named-oauth-tokens U4),
+// so the match is deliberately narrow and leans the safe way. A "usage limit"
+// with no more than that around it is a disk's or a container's as often as
+// the account's, and a wall this cannot read only leaves the reason quoting the
+// agent's own text -- which the skill's own loose "usage limit" match reads
+// there anyway -- while naming an allowance a run never spent is a claim the
+// reason has no business making.
+var oauthLimitPhrases = []string{"claude ai usage limit", "hit your limit", `"type":"rate_limit_error"`}
+
+// subscriptionUsageLimit reports whether a stage's own text says it stopped on
+// the OAuth account's subscription usage limit rather than on anything about
+// the work. Only an OAuth run is asked: the phrases are the subscription's, and
+// a run authenticated any other way holds no allowance of its own -- a cascade
+// run's credential is the credentials service's, and a spent one there is the
+// service's own answer to give (C1.17), not this text's.
+func subscriptionUsageLimit(auth, text string) bool {
+	if auth != "oauth" {
+		return false
+	}
+	lower := strings.ToLower(text)
+	for _, p := range oauthLimitPhrases {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // skippable reports whether a failed Skippable stage may be skipped: the run
