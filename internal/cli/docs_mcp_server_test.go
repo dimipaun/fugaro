@@ -5,8 +5,9 @@ package cli
 // docs/mcp-server/ is a design-only folder: README.md (the index, the reading
 // of the number block and what a reader should not take from it), spec.md (the
 // owner's spec copied verbatim as §0, then the design written to his answers),
-// reconciliation.md (the findings F1-F31, the fifteen decisions D920-D934 and
-// the answers of 2026-11-04) and implementation-plan.md (the tasks M1-M10). It
+// reconciliation.md (the findings F1-F32, the fifteen decisions D920-D934 and
+// the answers of 2026-11-04, and the answer of 2026-11-05, D935) and
+// implementation-plan.md (the tasks M1-M10). It
 // adds no code and no task in it is approved, so nothing here pins a command, a
 // flag or an option.
 //
@@ -15,8 +16,9 @@ package cli
 //  * TestDocsMCPServerIsWritten -- the four files exist, each carries the
 //    folder's status line word for word, and the plan states the two gates
 //    every task waits behind.
-//  * TestDocsMCPServerAnswersAreTheOnesInForce -- the answers of 2026-11-04 are
-//    dated in reconciliation.md §4, every one of them is the recommendation (no
+//  * TestDocsMCPServerAnswersAreTheOnesInForce -- the answers of 2026-11-04 and
+//    the answer of 2026-11-05 are dated in reconciliation.md §4, every one of
+//    them is the recommendation (no
 //    row says otherwise), D922's restatement is recorded rather than the answer
 //    it replaced, and the "D922/D933 tension" the first answer created is gone
 //    from every file.
@@ -146,6 +148,35 @@ func TestDocsMCPServerAnswersAreTheOnesInForce(t *testing.T) {
 	for _, path := range []string{mcpReconciled, mcpSpec, mcpPlan} {
 		if flat := flattenDoc(readDoc(t, path)); !strings.Contains(flat, "restated") {
 			t.Errorf("%s does not record that D922's answer was restated the same day: the folder's earlier record was the other answer, and a reader who finds only the current one cannot tell that it moved", path)
+		}
+	}
+
+	// The answer of 2026-11-05 (D935), from the independent review of the plan's
+	// M3, is recorded the way the fifteen before it are: a section of its own in
+	// the reconciliation, the decision written twice -- the question of §4's
+	// first table and the answer under it -- and the two files that carry the
+	// design naming it, because a reader of the plan or the index alone has to
+	// find the same answer the reconciliation records.
+	if !strings.Contains(rec, "### The answer of 2026-11-05") {
+		t.Fatalf("%s does not carry the answer of 2026-11-05: the review of the plan's M3 found that the closed subtree is still reachable by everyone the installation lists (F32), the owner answered it the same day, and that answer is what the plan's M2, M3, M4, M5 and M10 are written to", mcpReconciled)
+	}
+	if n := strings.Count(rec, "**D935**"); n < 2 {
+		t.Errorf("%s names **D935** %d times and the folder writes each decision twice (the question of §4's first table and its answer in §4's second): the answer's row is missing or the question's",
+			mcpReconciled, n)
+	}
+	for _, path := range []string{mcpReadme, mcpPlan} {
+		if flat := flattenDoc(readDoc(t, path)); !strings.Contains(flat, "D935") {
+			t.Errorf("%s never names D935: the token records leave the project's database, and the index and the plan are what a reader meets first, so an amendment that reached the reconciliation alone would leave both describing a store the records have left", path)
+		}
+	}
+
+	// And the claim the review overturned is gone rather than left standing
+	// beside its replacement: the closed subtree was written as the one place
+	// nothing but the coordinator's database grant reaches, which is exactly
+	// what F32 disproved.
+	for _, path := range mcpDocs() {
+		if flat := flattenDoc(readDoc(t, path)); strings.Contains(flat, "the one place in this design where nothing but the coordinator's database admin grant reaches the data") {
+			t.Errorf("%s still says the closed subtree is the one place nothing but the coordinator's database grant reaches: it sits in the project's shared database, whose viewer and admin grants are project-level and cover every node in it (F32, D935), so the sentence states the opposite of the answer in force", path)
 		}
 	}
 }

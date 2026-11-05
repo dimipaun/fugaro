@@ -6,7 +6,11 @@ reconciled against the code here; [reconciliation.md](reconciliation.md) §4 put
 (D920–D934) in front of the owner, each with the recommendation first and the cost of the
 alternative — and **all fifteen were answered on 2026-11-04**, **every one of them the
 recommendation**, with the owner's own detail written into the design (D922's was restated the same
-day: the first answer opened the subtree and the restatement closes it). **If the implementation
+day: the first answer opened the subtree and the restatement closes it). **A sixteenth answer arrived
+on 2026-11-05 (D935), from the independent review of PR #1715's M3**: the `mcpauth` records leave the
+project's shared Realtime Database for a store whose IAM names only the coordinator's own service
+account, because the database's own grants are project-level and no rule can keep a launcher out
+([reconciliation.md](reconciliation.md) §3 F32, §4 D935). **If the implementation
 happens,
 [implementation-plan.md](implementation-plan.md) §5 recommends 0.20.0 "Quokka" or later** — 0.15.0,
 0.16.0 and 0.17.0 have all shipped since this design was written, and §5 says why the work is big and
@@ -18,7 +22,9 @@ manage tasks without the CLI. The owner approved a design PR on 2026-10-31 and *
 decisions on 2026-11-04** — D920's public endpoint, D923's paired-device sign-in and its `user:`-only
 lists, D930's rotating tokens, D931's single launch path, D934's off-by-default front door, D921's
 library **with its licence still UNCONFIRMED**, and D922's separate **`mcpauth`** subtree, closed to
-every client.
+every client. **And answered one more on 2026-11-05 (D935)**, on the independent review of PR
+#1715's M3: those records do not live in the project's shared Realtime Database at all, but in a
+store whose IAM names only the coordinator's own service account.
 
 **Reconciled against.** `origin/main` at `3d6ed04d`, read on 2026-11-01, and **re-read on 2026-11-04
 at `b41709ea`**, with the seventeen pull requests open at the first reading — most closely #1472
@@ -40,7 +46,10 @@ device allowlist, which is what D923's answer signs a person in with).
   request merging**, and no task in [implementation-plan.md](implementation-plan.md) starts before it
   has been read and its findings answered. Its scope is §8, every **SEC**-marked task of §3 — the
   five whose marker says **mandatory** are M3, M4, M5, M7 and M9, and M2, M6, M8 and M10 carry the
-  marker without that word — and the one new privilege this design asks for (M9's launch grant).
+  marker without that word — and the two new privileges this design asks for (M9's launch grant, and
+  M4's single binding on the store D935 moves the records into). **That review has already found
+  something**: F32 in [reconciliation.md](reconciliation.md) §3, the answer to it recorded as D935 on
+  2026-11-05, and it is the reason the records leave the project's database.
 - **The folder keeps one rule unconditionally**: **no agent handles a credential.** The coordinator
   never hands a model credential or a forge credential to an MCP caller — not as a tool result, not
   in an error, not in a log line. A run's credential reaches the run the way it reaches every run
@@ -53,8 +62,8 @@ One document set, four files:
 | File | What it holds |
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec, copied **verbatim**, as §0 — and then the design written to the owner's answers of 2026-11-04: the front door and its transport (§2), the authorization server and its flow (§3), Firebase as the identity provider (§4), the six tools (§5), tokens, rigor windows and spend limits (§6), unattended agents (§7), **the threat model (§8)**, the coordinator's prohibitions (§9), and the console's graph write (§10) |
-| [reconciliation.md](reconciliation.md) | Each claim of §0 against the code at the base: **what exists** (F1–F15, F19), **what is missing** (F16–F18, F20–F22) and **what conflicts** (F23–F31), each with a path and a line; then the **fifteen decisions, D920–D934** (§4) with the owner's answers of 2026-11-04 under them, the number block and how it was read (§5), the owner checks that no hermetic test can stand in for (§6), and what `main` had overtaken (§7) |
-| [implementation-plan.md](implementation-plan.md) | What the owner was asked and answered (§1), the order and what forces it (§2), ten tasks **M1–M10** each with its files, its interface, its **red step**, its named tests and its SEC flag (§3) — M4 carrying its **For operators** block — the **shared-files table** (§4), **the release slot** (§5), the test rules (§6) and what the plan does not own (§7) |
+| [reconciliation.md](reconciliation.md) | Each claim of §0 against the code at the base: **what exists** (F1–F15, F19), **what is missing** (F16–F18, F20–F22) and **what conflicts** (F23–F32), each with a path and a line; then the **fifteen decisions, D920–D934** (§4) with the owner's answers of 2026-11-04 under them **and the answer of 2026-11-05, D935** (the records leave the project's database), the number block and how it was read (§5), the owner checks that no hermetic test can stand in for (§6), and what `main` had overtaken (§7) |
+| [implementation-plan.md](implementation-plan.md) | What the owner was asked and answered (§1), the order and what forces it (§2), ten tasks **M1–M10** each with its files, its interface, its **red step**, its named tests and its SEC flag (§3) — M4 carrying its **For operators** block — the **shared-files table** (§4), **the release slot** (§5), the test rules (§6), what the plan does not own (§7) and **the store the records move to (§8, D935)**, with the three candidates compared and the Open item that picks between them |
 | `README.md` | This file: the status, the reading of the number block, and what a reader should not take from here |
 
 **Two works this folder is wired to.** The **stateless-orchestrator spec** (open as **#1682**, not on
@@ -95,7 +104,8 @@ free by default:
 | In the open pull requests at launch | **D899** (`docs/cloud-senior-review`, #1472); **D901–D919** by `docs/run-without-checkout` (#1481) |
 | Taken above D1189 now | **D1190–D1219** #1676 (repository-image removal), **D1220–D1259** the stateless-orchestrator work, **D1260–D1289** the #1678 design, **D1290–D1309** #1492's new block |
 | **This work's block** | **D920–D934** — the fifteen decisions of [reconciliation.md](reconciliation.md) §4, **kept because they do not collide**: "D920" and "D934" appear on `main` only as other works' inventories of this pull request's block (`docs/managed-agent-converge/reconciliation.md`:248, `docs/run-limit-carry-over/README.md`:54) |
-| Reserved, unused | **D935–D939** |
+| Taken from this work's own reservation | **D935** — the answer of 2026-11-05, written here and not on `main` before it, so the same non-collision holds |
+| Reserved, unused | **D936–D939** |
 | A later task takes | **D1310**, the first number above every allocation above, and re-checks the facts rather than this conclusion |
 
 `grep -rhoE 'D[0-9]{3,4}' docs` is not quite enough on its own, for two reasons this folder records
@@ -123,10 +133,14 @@ README, in its own diff, is where the block above D1189 is written.
 - **Not a design with a second reader to argue about.** D922's answer closes the token records'
   subtree to every client (`.read: false`, `.write: false`, the coordinator's own account the only
   writer), so [spec.md](spec.md) §8's token-storage paragraph states a **refusal** rather than an
-  accepted exposure — and the `mcpauth` node is the one place in this design where nothing but the
-  coordinator's database admin grant reaches the data at all. The review reads that paragraph
-  beside the rest of §8 anyway: the paragraph a review should check hardest is the one that says
-  nothing can get in.
+  accepted exposure. **But the rules are not the whole of who reaches a node**, and D935 is where
+  that was found: the subtree sits in the project's shared database, whose `viewer` and `admin`
+  grants are project-level and therefore cover every node in it, so the rules keep out every client
+  and nobody else — a launcher, a budget admin and the history account all reach it, and the review
+  of PR #1715's M3 found it (F32). The records now live in a store whose IAM names one account.
+  **Nothing in §8 changes**: the node still says `.read: false` and `.write: false` and still holds
+  nothing, and the review reads that paragraph beside the rest of §8 anyway — the paragraph a review
+  should check hardest is the one that says nothing can get in.
 - **Not settled on what a later version might admit.** D923 refuses `domain:`, `group:` and
   `serviceAccount:` entries in v1, the same refusal `fugaro user` makes at its own door; whether a
   later version admits a whole domain, and what would have to be true of the signer's role first, is
