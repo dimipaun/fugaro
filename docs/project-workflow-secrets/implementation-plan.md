@@ -357,9 +357,10 @@ person decides whether storing one value for sixty-five repositories is safe.
   entry), a new paragraph in the same section carrying D1273's sentence (the wildcard's reach, the
   repo-wins rule, and the fact that the value is what the repository's build and tests read),
   `docs/project-layer.md:244` (the parenthesis that says a name with a project-wide meaning cannot be
-  shared through a workflow's block), `docs/design/project-secrets.md` §3 step 4 (a pointer to this
-  folder, not a rewrite), and `plugin/skills/setup/SKILL.md:130` (a covered workflow secret is not
-  prompted for either).
+  shared through a workflow's block), `docs/design/project-secrets.md` §4 item 4 (a pointer to this
+  folder, not a rewrite — that document's §4 *Decision: storage*, the fourth point of "Who writes a
+  version"), and `plugin/skills/setup/SKILL.md:130` (a covered workflow secret is not prompted for
+  either).
 - **Red step.** Extend `internal/cli/docs_project_wide_git_test.go`'s discipline in a new
   `internal/cli/docs_project_workflow_secrets_test.go` — which W7 finishes — with the two sentences
   this task writes, so the docs cannot land without them. The test is **written here and completed in

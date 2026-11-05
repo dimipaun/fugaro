@@ -1343,7 +1343,10 @@ func secretsSetProjectWide(cmd *cobra.Command, env *cloudEnv, o secretsOptions, 
 // "absent or empty means nobody", and a provider's key is any repository only
 // when its allow_data_to is absent (design §3a) -- the same readings
 // projectSecretAllowed gives the --project-wide listing, so the two surfaces
-// cannot disagree.
+// cannot disagree. A list that names repositories with a `*` in a segment is
+// the one case the list alone understates: it reaches the repositories it
+// matches, present and future, so the sentence says that too rather than
+// leaving the reader to read a pattern as a list.
 func projectReach(lc *localcfg.Config, logical string) string {
 	repos := projectSecretAllowed(lc, logical)
 	switch {
@@ -1352,8 +1355,19 @@ func projectReach(lc *localcfg.Config, logical string) string {
 	case len(repos) == 0:
 		return "no repository can mount it: its allow_data_to lists none, and absent or empty means nobody"
 	default:
-		return fmt.Sprintf("only the repositories its allow_data_to lists can mount it (%s), whatever a published policy admits",
+		reach := fmt.Sprintf("only the repositories its allow_data_to lists can mount it (%s), whatever a published policy admits",
 			pluginwire.Printable(strings.Join(repos, ", ")))
+		if slices.ContainsFunc(repos, func(r string) bool { return strings.Contains(r, "*") }) {
+			// A wildcard is a pattern, not a list read once: the repositories
+			// it will match are not the ones it spells out, and nothing else
+			// in the sentence says that onboarding one mounts the copy with no
+			// further edit to the entry. A person deciding whether to store the
+			// shared copy is who has to know it (D1273), so the clause is in
+			// the same sentence as the list, in the shape SECURITY.md's
+			// Bitbucket token warning already uses for the same field.
+			reach += ", and a `*` in an entry reaches every repository it matches now and later, so one onboarded afterwards mounts the copy with nothing else to do"
+		}
+		return reach
 	}
 }
 
