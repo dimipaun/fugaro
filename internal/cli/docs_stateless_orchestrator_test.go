@@ -11,8 +11,9 @@ package cli
 // now answered, the one tension the answers left open (T7, the daemon-unit
 // carve-out of the HARD RULE), the facts a rewrite would quietly drop (D1243's
 // cache writer and O10's level, the 14-day manual rollback, the unit moved out
-// of `fugaro update` and into `fugaro setup`), and the absence of any
-// secret-shaped literal.
+// of `fugaro update` and into `fugaro setup`, the approval an intent spends and
+// the refusal that burns no attempt, the binary the unit names) and the
+// absence of any secret-shaped literal.
 
 import (
 	"os"
@@ -149,7 +150,7 @@ func TestDocsStatelessOrchestratorQ2IsRuledTwice(t *testing.T) {
 	for _, want := range []string{
 		"`fugaro setup` installs the daemon",
 		"`fugaro update` never touches the unit",
-		"TestDaemonRestartsWhenItsBinaryIsNewer",
+		"TestDaemonRestartsWhenTheUnitBinaryDiffers",
 		"TestMigrateRunsAtDaemonStart",
 		"TestUnitPointsAtTheStableBinaryPath",
 		"TestSetupInstallsTheUnitAsAPlanStep",
@@ -194,6 +195,47 @@ func TestDocsStatelessOrchestratorRetryRuleIsFollowedThrough(t *testing.T) {
 	}
 	if strings.Contains(plan, "One approval covers one attempt") || strings.Contains(plan, "one approval is one attempt") {
 		t.Errorf("%s: the superseded 'one approval is one attempt' rule is stated as current", soPlan)
+	}
+}
+
+// The retry allowance is tied to the approval that spends it, a refusal only
+// burns no attempt when the launcher refuses before the start, the daemon
+// checks the binary the unit names, and the rules refuse every token writer:
+// each is a hole a rewrite would silently reopen (a successful run leaves a
+// standing approval, a crashed retry is abandoned, a Linuxbrew upgrade never
+// restarts the daemon, a shape-validating token writer gets in).
+func TestDocsStatelessOrchestratorApprovalIsBoundToItsIntents(t *testing.T) {
+	plan := soRead(t, soPlan)
+	rec := soRead(t, soReconciled)
+	for _, want := range []string{
+		"ApprovalAt", "SpentApprovalAt",
+		"TestRetryCountsOnlyIntentsOfTheStandingApproval",
+		"TestIntentCarriesTheApprovalItSpends",
+		"TestRetentionKeepsTheIntentsOfAStandingApproval",
+		"TestRecoveryBeforeTaskJSONOfASpentRetryStartsOnce",
+		"TestAPreStartRefusalReissuesTheSameIntent",
+		"TestAStartedRunsRefusalCounts",
+		"TestOrchestratorRefusesEveryTokenWriter",
+		"TestUnitPinsKeepAliveForACleanExit",
+		"TestSetupInstallsInAManagedProjectWithoutAPrompt",
+		"TestDoctorReportsAnOutOfDateUnitTemplate",
+		"run --binary",
+		"no release changes the daemon unit's template",
+	} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("%s: the approval-and-refusal follow-through %q is gone", soPlan, want)
+		}
+	}
+	if !strings.Contains(plan, "`os.Executable()`") {
+		t.Errorf("%s: the reason the check reads the unit's path and not os.Executable() is gone", soPlan)
+	}
+	for _, want := range []string{"refuse a job identity *and* a token identity", "`os.Executable()`"} {
+		if !strings.Contains(rec, want) {
+			t.Errorf("%s: the corrected token-writer and binary-path statement %q is gone", soReconciled, want)
+		}
+	}
+	if strings.Contains(plan, "TestDaemonRestartsWhenItsBinaryIsNewer") || strings.Contains(rec, "binary on disk is newer") {
+		t.Errorf("the superseded 'newer' rule is stated as current")
 	}
 }
 

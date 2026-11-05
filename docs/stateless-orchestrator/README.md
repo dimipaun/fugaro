@@ -23,8 +23,8 @@ All of D1220-D1243 were answered on 2026-11-04. Most are the recommendation; two
   the daemon** (a listed step of its plan, at a real terminal, refused under a coding agent's marker, and in a managed project no extra confirmation),
   **`fugaro orchestrator install` upgrades it**, and **`fugaro update` never touches the unit.** The question the first answer collided with — what
   an offer does on a managed project — is gone, so **T6 is closed**; what the answer leaves behind is **T7** in reconciliation section 6: taking the
-  unit out of `update` is a carve-out of the HARD RULE, the daemon upgrades itself instead (it exits when the binary on disk is newer, so launchd or
-  systemd starts the new one, and it migrates the state schema at start-up), and the owner is asked to rule on the reading.
+  unit out of `update` is a carve-out of the HARD RULE, the daemon upgrades itself instead (it exits when the binary the unit names differs from the one
+  it is running, so launchd or systemd starts the new one, and it migrates the state schema at start-up), and the owner is asked to rule on the reading.
 
 D1241 (the person's own credential writes the `orchestrator/` node), D1242 (the terminal Typed confirmation now, a paired-device channel later) and
 D1243 (the session-start print reads a local cache the daemon writes) are all the recommendation, and the gates the plan had put on them are lifted.
