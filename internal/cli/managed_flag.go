@@ -400,6 +400,7 @@ func confirmTypedGCPProject(cmd *cobra.Command, gcpProject string) error {
 	if strings.TrimSpace(line) != gcpProject {
 		return userErr("not confirmed (the GCP project ID was not typed exactly); nothing was written")
 	}
+	noteIDETerminalCmd(cmd, cmd.OutOrStdout())
 	return nil
 }
 

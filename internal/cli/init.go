@@ -855,6 +855,7 @@ func (r *initRun) confirmResumedMark() bool {
 		r.warn(later)
 		return false
 	}
+	r.noteIDETerminal()
 	return true
 }
 

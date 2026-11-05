@@ -404,7 +404,11 @@ func (s *projectStage) typed(banner, want, prompt string) (bool, error) {
 		return false, userErr("reading the confirmation: %v", err)
 	}
 	fmt.Fprintln(r.w)
-	return strings.TrimSpace(line) == want, nil
+	if strings.TrimSpace(line) != want {
+		return false, nil
+	}
+	r.noteIDETerminal()
+	return true, nil
 }
 
 // resumeNote is what every confirmation and the plan say about a project

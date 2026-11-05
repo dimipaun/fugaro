@@ -420,6 +420,7 @@ func confirmBuild(cmd *cobra.Command, project, gcpProject, what string) error {
 	if strings.TrimSpace(line) != project {
 		return userErr("not confirmed (the project's name was not typed); no build was submitted")
 	}
+	noteIDETerminalCmd(cmd, w)
 	return nil
 }
 

@@ -629,6 +629,7 @@ func (r *initRun) confirmLocation() error {
 	if strings.TrimSpace(line) != infra.FirestoreLocation {
 		return userErr("the location %s was not typed; the Firestore database was not created (nothing was written)", infra.FirestoreLocation)
 	}
+	r.noteIDETerminal()
 	return nil
 }
 
