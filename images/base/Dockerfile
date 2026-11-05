@@ -78,11 +78,14 @@ ARG GRAPHIFY_PYTHON_VERSION=3.12.15
 ARG GRAPHIFY_VERSION=0.9.89
 # The date the build is taken to have happened on, which is what makes two
 # builds of the same tree agree on the byproducts that a package install writes
-# from the clock (images/base/byproducts.sh). It is not a pin: nothing passes
-# it by hand, and images/build-base.sh defaults it to the checkout's last
-# commit, so the CLI's `fugaro image build` path and CI agree without either
-# naming a date.
-ARG SOURCE_DATE_EPOCH=0
+# from the clock (images/base/byproducts.sh). It has no default on purpose:
+# nothing passes it by hand -- images/build-base.sh takes it from the
+# checkout's last commit, so the CLI's `fugaro image build` path and CI agree
+# without either naming a date -- and a default of 0 would date the build 1970,
+# whose last-change day PAM reads as "password change required" for the fugaro
+# account. A build that carries no date refuses (byproducts.sh checks it), and
+# so does build-base.sh, which cannot find one for a checkout with no commit.
+ARG SOURCE_DATE_EPOCH
 ENV HOME=/home/fugaro \
     PATH=/home/fugaro/.local/share/mise/shims:/home/fugaro/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LANG=C.UTF-8 \

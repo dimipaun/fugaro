@@ -37,6 +37,18 @@
 #    cache format. Nothing in the image reads them.
 set -eu
 
+# The date is required, and 0 is not a date: `chage -d 1970-01-01` writes a
+# last-change day of 0, which PAM reads as "the password must be changed", so
+# `su` and every PAM account check against this image's fugaro user would fail
+# (a NOPASSWD sudo is exempt, which is why nothing else noticed). A build with
+# no date from its caller is a build that cannot be normalized, not one to
+# date 1970.
+epoch=${SOURCE_DATE_EPOCH:-}
+[ -n "$epoch" ] && [ "$epoch" != 0 ] || {
+  echo "byproducts: SOURCE_DATE_EPOCH is ${epoch:-empty}, and 0 dates the image 1970, whose last-change day PAM reads as a required password change; pass the last commit's date (images/build-base.sh does)" >&2
+  exit 1
+}
+
 {
   printf '[filter "lfs"]\n'
   for key in clean smudge process required; do
@@ -46,7 +58,7 @@ set -eu
   done
 } > /etc/gitconfig
 
-chage -d "$(date -u -d "@${SOURCE_DATE_EPOCH:-0}" +%Y-%m-%d)" fugaro
+chage -d "$(date -u -d "@$epoch" +%Y-%m-%d)" fugaro
 cp -f /etc/shadow /etc/shadow-
 
 rm -f /var/cache/ldconfig/aux-cache

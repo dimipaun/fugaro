@@ -79,8 +79,15 @@ func TestBaseByproductsAreNormalizedInTheirOwnLayer(t *testing.T) {
 			t.Errorf("%s keeps writing after byproducts.sh, so that write is a byproduct of its own:\n%s", m.what, tail)
 		}
 	}
-	if !strings.Contains(df, "ARG SOURCE_DATE_EPOCH=0") {
+	// No default on the ARG: a default of 0 would date the build 1970, and
+	// `chage -d 1970-01-01` writes the last-change day PAM reads as a required
+	// password change. The date is the caller's to pass or the build's to
+	// refuse, never this line's to invent.
+	if !strings.Contains(df, "\nARG SOURCE_DATE_EPOCH\n") {
 		t.Error("the Dockerfile does not declare SOURCE_DATE_EPOCH, so the date byproducts.sh reads is not a build argument BuildKit's frontend also uses")
+	}
+	if strings.Contains(df, "ARG SOURCE_DATE_EPOCH=") {
+		t.Error("the Dockerfile defaults SOURCE_DATE_EPOCH, and a default of 0 dates the image 1970, whose last-change day PAM reads as a required password change")
 	}
 }
 
@@ -102,7 +109,10 @@ func TestByproductsScriptNormalizesTheBuildClock(t *testing.T) {
 	}
 	s := string(b)
 	for _, want := range []string{
-		`chage -d "$(date -u -d "@${SOURCE_DATE_EPOCH:-0}" +%Y-%m-%d)" fugaro`,
+		`epoch=${SOURCE_DATE_EPOCH:-}`,
+		`[ -n "$epoch" ] && [ "$epoch" != 0 ] || {`,
+		`echo "byproducts: SOURCE_DATE_EPOCH is ${epoch:-empty}, and 0 dates the image 1970,`,
+		`chage -d "$(date -u -d "@$epoch" +%Y-%m-%d)" fugaro`,
 		"cp -f /etc/shadow /etc/shadow-",
 		"rm -f /var/cache/ldconfig/aux-cache",
 		"find /var/log -mindepth 1 ! -type d -delete",
@@ -169,6 +179,8 @@ func TestBuildBasePinsTheDateAndTheExporter(t *testing.T) {
 	for _, want := range []string{
 		`epoch=${SOURCE_DATE_EPOCH:-$(git -C "$root" log -1 --format=%ct 2>/dev/null || echo 0)}`,
 		`--build-arg "SOURCE_DATE_EPOCH=$epoch"`,
+		`if [ -z "$epoch" ] || [ "$epoch" = 0 ]; then`,
+		`echo "build-base.sh: SOURCE_DATE_EPOCH is ${epoch:-empty} and this checkout has no commit date to take:`,
 		`--output "type=docker,rewrite-timestamp=true"`,
 	} {
 		if !strings.Contains(s, want) {

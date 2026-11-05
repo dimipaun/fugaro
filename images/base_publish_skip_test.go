@@ -144,6 +144,27 @@ func publishSkipProblems(wf imagesWorkflow) []string {
 	if !strings.Contains(script(dec.Run), "docker create") {
 		bad("the unchanged step does not read the published image with docker create and docker cp: running it would need the other architecture to be emulated on this runner")
 	}
+	// A read that fails has no answer, and the step may only compare answers.
+	// Bash turns errexit off inside a command substitution, so an unchecked
+	// docker read falls through to the sha256sum below -- which hashes the
+	// empty files and prints a digest -- and two such answers compare equal:
+	// "I could not read the image" would become unchanged=true and the nightly
+	// would skip the publish it exists to make. Every read therefore returns
+	// non-zero, and only fingerprints that succeeded are compared.
+	for _, read := range []string{
+		`cid=$(docker create "$1")`,
+		`docker cp "$cid:/etc/fugaro/base.json" "$dir/base.json"`,
+		`docker cp "$cid:/usr/local/bin/fugaro" "$dir/fugaro"`,
+		`docker cp "$cid:/var/lib/dpkg/status" "$dir/dpkg-status"`,
+	} {
+		if !strings.Contains(script(dec.Run), read+" || return 1") {
+			bad("the unchanged step's fingerprint does not check %s (`|| return 1`): a read that failed gives no answer, and an unchecked one gives the hash of the empty files, which equals the other side's empty answer -- so an image nothing could be read from would be called unchanged and the publish skipped", read)
+		}
+	}
+	if !strings.Contains(script(dec.Run), `a=$(fingerprint "$repo:$VERSION-$arch") && b=$(fingerprint fugaro-base:ci)`) ||
+		!strings.Contains(script(dec.Run), `[ -n "$a" ] && [ "$a" = "$b" ]`) {
+		bad(`the unchanged step does not compare only fingerprints that answered (want the two substitutions in one "&&" chain and "[ -n \"$a\" ] && [ \"$a\" = \"$b\" ]"): an empty answer equals another empty answer, and the step would skip a publish it could not decide`)
+	}
 	return out
 }
 
@@ -188,6 +209,16 @@ func TestPublishSkipProblemsFindEveryMutation(t *testing.T) {
 				s.Run = strings.Replace(s.Run, `docker cp "$cid:/usr/local/bin/fugaro" "$dir/fugaro"`, "", 1)
 			})
 		}, "does not read /usr/local/bin/fugaro"},
+		{"the fingerprint's read of the image is unchecked", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("unchanged", func(s *workflowStep) {
+				s.Run = strings.Replace(s.Run, `cid=$(docker create "$1") || return 1`, `cid=$(docker create "$1")`, 1)
+			})
+		}, "does not check cid=$(docker create"},
+		{"the comparison accepts a fingerprint that failed", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("unchanged", func(s *workflowStep) {
+				s.Run = strings.Replace(s.Run, `[ -n "$a" ] && [ "$a" = "$b" ]`, `[ "$a" = "$b" ]`, 1)
+			})
+		}, "does not compare only fingerprints that answered"},
 		{"the decision step pushes what it is deciding about", func(wf imagesWorkflow) imagesWorkflow {
 			return wf.withStep("unchanged", func(s *workflowStep) {
 				s.Run += "\ndocker push \"$repo:$VERSION-amd64\"\n"
@@ -219,8 +250,13 @@ func TestPublishSkipProblemsFindEveryMutation(t *testing.T) {
 // quietly answer nothing. The state files it reads are written by the test:
 // local_id_<arch> (the freshly built image's config digest), published_id_<arch>
 // (the published manifest's, absent for a tag that is not there),
-// pullable_<arch>, and refs/<key>/{base.json,fugaro,dpkg-status}, keyed by the
-// image reference with its separators replaced.
+// pullable_<arch>, refs/<key>/{base.json,fugaro,dpkg-status}, keyed by the
+// image reference with its separators replaced, and the two files that make a
+// read of an image fail: create_fails (docker create refuses the image, which
+// is what an arm64 image the runner cannot create looks like) and cp_fails
+// (docker cp finds no such file in it). Both fail for every reference on
+// purpose: the danger is a step that reads nothing from either side and calls
+// the two empty answers equal.
 const fakeDocker = `#!/bin/sh
 # A docker CLI stub (images/base_publish_skip_test.go).
 set -eu
@@ -255,11 +291,19 @@ case "${1:-}" in
     exit 1
     ;;
   create)
+    if [ -f "$state/create_fails" ]; then
+      echo "Error response from daemon: No such image: ${2:-}" >&2
+      exit 1
+    fi
     printf '%s\n' "${2:-}" > "$state/cid"
     printf 'fakecid\n'
     ;;
   cp)
     key=$(printf '%s' "$(cat "$state/cid")" | tr '/:@' '___')
+    if [ -f "$state/cp_fails" ]; then
+      echo "Error response from daemon: Could not find the file $(basename "${3:-}") in the container" >&2
+      exit 1
+    fi
     cp "$state/refs/$key/$(basename "${3:-}")" "${3:-}"
     ;;
   rm)
@@ -291,6 +335,11 @@ type publishSkipCase struct {
 	// image: it must not when the digests already agree (the cheap answer),
 	// and must when they do not.
 	wantPull bool
+	// readFails is how reading the images fails, if it does: "create"
+	// (docker create refuses them) or "cp" (docker cp finds no such file in
+	// them), on both sides. Either way the step has no answer, and "no answer"
+	// has to end in a publish rather than in a skip.
+	readFails string
 }
 
 // TestTheUnchangedStepDecidesOnStubs runs the decision step's own shell, with
@@ -365,6 +414,35 @@ func TestTheUnchangedStepDecidesOnStubs(t *testing.T) {
 			wantPull: true,
 		},
 		{
+			// Nothing can be read from either image -- `docker create` refuses
+			// both, which an arm64 image the amd64 runner cannot create, a
+			// daemon in a bad state or a runner out of space all look like. The
+			// step has no answer, and "I could not read it" is not "it is the
+			// same": it has to publish.
+			name: "neither image can be read: docker create refuses it",
+			config: map[string]map[string]string{
+				"amd64": {"local": "sha256:aa", "published": "sha256:dd"},
+				"arm64": {"local": "sha256:bb", "published": "sha256:ee"},
+			},
+			content:   sameContent,
+			pullable:  map[string]bool{"amd64": true, "arm64": true},
+			readFails: "create",
+			want:      "false",
+			wantPull:  true,
+		},
+		{
+			name: "neither image can be read: docker cp finds no file",
+			config: map[string]map[string]string{
+				"amd64": {"local": "sha256:aa", "published": "sha256:dd"},
+				"arm64": {"local": "sha256:bb", "published": "sha256:ee"},
+			},
+			content:   sameContent,
+			pullable:  map[string]bool{"amd64": true, "arm64": true},
+			readFails: "cp",
+			want:      "false",
+			wantPull:  true,
+		},
+		{
 			name: "the published base is another tree's",
 			config: map[string]map[string]string{
 				"amd64": {"local": "sha256:aa", "published": "sha256:dd"},
@@ -432,6 +510,9 @@ func TestTheUnchangedStepDecidesOnStubs(t *testing.T) {
 					if c.pullable[arch] {
 						writeFile(t, state, "pullable_"+arch, "yes\n")
 						writeFingerprintFixture(t, state, published(arch), c.content[arch]["published"])
+						if c.readFails != "" {
+							writeFile(t, state, c.readFails+"_fails", "yes\n")
+						}
 					}
 				}
 			}
@@ -477,7 +558,8 @@ func stepByID(wf imagesWorkflow, job, id string) (workflowStep, bool) {
 
 // writeFingerprintFixture writes the three files the fingerprint reads, all
 // three carrying what the side is: two sides given the same string hash the
-// same, and two given different ones cannot.
+// same, and two given different ones cannot. The directory is named the way
+// the stub's `tr '/:@' '___'` names it, so the two have to agree.
 func writeFingerprintFixture(t *testing.T, state, ref, what string) {
 	t.Helper()
 	rel := filepath.Join("refs", strings.NewReplacer("/", "_", ":", "_", "@", "_").Replace(ref))

@@ -374,12 +374,20 @@ jobs:
           set -eu
           repo=ghcr.io/dimipaun/fugaro-base
           # What a base image is, as bytes a shell can hash.
+          # Every read is checked, and a read that fails returns 1 rather than
+          # a hash: bash turns errexit off inside a command substitution, so
+          # without the guards a docker create or docker cp that failed would
+          # fall through to the sha256sum below, which happily hashes the empty
+          # input and prints a digest -- and two empty answers compare equal,
+          # which turns "I could not read the image" into `unchanged=true` and
+          # skips the publish. An unread image is an unknown answer, and unknown
+          # means publish (below).
           fingerprint() {
-            cid=$(docker create "$1")
+            cid=$(docker create "$1") || return 1
             dir=$(mktemp -d)
-            docker cp "$cid:/etc/fugaro/base.json" "$dir/base.json"
-            docker cp "$cid:/usr/local/bin/fugaro" "$dir/fugaro"
-            docker cp "$cid:/var/lib/dpkg/status" "$dir/dpkg-status"
+            docker cp "$cid:/etc/fugaro/base.json" "$dir/base.json" || return 1
+            docker cp "$cid:/usr/local/bin/fugaro" "$dir/fugaro" || return 1
+            docker cp "$cid:/var/lib/dpkg/status" "$dir/dpkg-status" || return 1
             docker rm -f "$cid" >/dev/null
             {
               sha256sum "$dir/base.json" "$dir/fugaro" | cut -d' ' -f1
@@ -406,9 +414,15 @@ jobs:
               why="the published image is this build, byte for byte"
             elif docker pull --quiet "$repo:$VERSION-$arch" >/dev/null 2>&1; then
               why="the published image differs from this build"
-              if [ "$(fingerprint "$repo:$VERSION-$arch")" = "$(fingerprint fugaro-base:ci)" ]; then
+              # Only a read that answered on both sides may be compared: a
+              # fingerprint that failed gives no answer, and an unknown answer
+              # has to publish rather than skip.
+              if a=$(fingerprint "$repo:$VERSION-$arch") && b=$(fingerprint fugaro-base:ci) \
+                 && [ -n "$a" ] && [ "$a" = "$b" ]; then
                 same=true
                 why="same pins, same binary and same packages as the published image"
+              elif [ -z "${a:-}" ] || [ -z "${b:-}" ]; then
+                why="an image could not be read, so this build is published"
               fi
             fi
             [ "$same" = true ] || unchanged=false

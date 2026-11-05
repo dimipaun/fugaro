@@ -2,8 +2,9 @@
 # build-base.sh BASE [TAG...] builds the Fugaro base image images/BASE from
 # this checkout with plain docker, tagged TAG (default fugaro-BASE:dev).
 # PLATFORM (default linux/amd64, what Cloud Run runs), FUGARO_VERSION
-# (default dev) and SOURCE_DATE_EPOCH (default: the last commit's date) come
-# from the environment. CI and the Docker tests both build through this
+# (default dev) and SOURCE_DATE_EPOCH (default: the last commit's date, and
+# required: a checkout whose log carries none is refused rather than dated 0)
+# come from the environment. CI and the Docker tests both build through this
 # script.
 #
 # Two builds of the same tree must produce the same image (issue #1745: the
@@ -37,6 +38,15 @@ if [ ! -f "$root/images/$base/Dockerfile" ]; then
 fi
 [ $# -gt 0 ] || set -- "fugaro-$base:dev"
 epoch=${SOURCE_DATE_EPOCH:-$(git -C "$root" log -1 --format=%ct 2>/dev/null || echo 0)}
+# A build with no date is not a build dated 1970: `chage -d 1970-01-01` writes
+# the fugaro account a last-change day PAM reads as "the password must be
+# changed", so `su` and every PAM account check against the image fail, and
+# nothing else in the build notices. A checkout with no commit has no date to
+# take, and that is a refusal rather than a silent 0.
+if [ -z "$epoch" ] || [ "$epoch" = 0 ]; then
+  echo "build-base.sh: SOURCE_DATE_EPOCH is ${epoch:-empty} and this checkout has no commit date to take: pass SOURCE_DATE_EPOCH=<unix seconds>, because 0 dates the image 1970 and PAM reads the fugaro account's day-0 last-change as a required password change" >&2
+  exit 1
+fi
 # The tags, in the order given: the docker exporter below names the image
 # after the first one, and the rest are applied to it afterwards, so a caller
 # asking for several still gets them all. A tag cannot contain a space (a
