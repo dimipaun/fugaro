@@ -43,9 +43,10 @@ package cli
 //     illustration".
 //   - **The sentences outside the folder that the feature cannot ship
 //     without.** D1272 makes five documents load-bearing — a reach a reader
-//     believes and acts on — and three of them sit outside this folder, where
-//     an operator meets the scope of a secret name and the setup flow's
-//     prompts. W6 writes them; the tests at the end of this file pin them.
+//     believes and acts on — and all but one of them sit outside this folder,
+//     where an operator meets the scope of a secret name, the setup flow's
+//     prompts and the `set` help at the command itself: three of those W6
+//     writes, and the help is W3's, pinned here because nothing else reads it.
 //
 // Nothing here asserts the design is *right*: the decisions are the owner's,
 // and this file pins that the folder records them rather than re-argues them.
@@ -846,6 +847,27 @@ func TestDocsProjectWorkflowSecretsReachIsSaidWhereAPersonMeetsIt(t *testing.T) 
 	for _, want := range []string{"workflow_secrets", "lc.WorkflowSecrets", "projectSecretAllowed"} {
 		if !strings.Contains(readDoc(t, "internal/cli/secrets.go"), want) {
 			t.Errorf("the pages say a workflow secret is stored once for the project through the new block, and internal/cli/secrets.go no longer carries %q", want)
+		}
+	}
+}
+
+// TestDocsProjectWorkflowSecretsSetHelpSaysTheWorkflowBlock (W6, D1272): the
+// other sentence D1272 makes load-bearing is the `set` help's, which W3 wrote
+// and nothing read: the generated page (website/content/cli-reference.md)
+// proves the help reached the document, never that the document says what the
+// store path does. It is the text a person reads at the command, before
+// typing a value, so it is pinned here — the two readings it has to give are
+// which block stores a workflow secret once for the project, and that an
+// entry with an empty list mounts nowhere (D1274). The help wraps, so the
+// assertions are made against its whitespace-normalized text.
+func TestDocsProjectWorkflowSecretsSetHelpSaysTheWorkflowBlock(t *testing.T) {
+	help := flattenDoc(newSecretsSetCmd().Long)
+	for _, want := range []string{
+		"or a secret a workflow declares that your local config's workflow_secrets block lists at least one repository for",
+		"A workflow's own secret is stored once for the project only through such an entry: with no workflow_secrets entry it stays in the repository's own container as before, and an entry present with an empty allow_data_to is refused, since it would mount nowhere.",
+	} {
+		if !strings.Contains(help, strings.Join(strings.Fields(want), " ")) {
+			t.Errorf("`fugaro secrets set`'s help does not say %q: the store path is decided there, before the value is typed", want)
 		}
 	}
 }
