@@ -404,3 +404,83 @@ func TestRepoCopyStillWins(t *testing.T) {
 		t.Errorf("missing = %v, want none: the repository's own copy resolves", missing)
 	}
 }
+
+// --- W2: a workflow_secrets entry is the whole eligibility gate -----------
+
+// workflowSecretLC makes sandbox-probe -- a secret the sandbox repository's
+// own workflow declares (deploy/sandbox/fugaro.yaml) -- project-wide for
+// acme/sandbox alone.
+const workflowSecretLC = `workflow_secrets:
+  sandbox-probe: { allow_data_to: [acme/sandbox] }
+`
+
+// TestProjectSecretCandidateTakesAWorkflowSecret: the new block is a fourth
+// source of project-wide eligibility, so a repository its entry lists is a
+// candidate for the project's own container (D1262, D1263).
+func TestProjectSecretCandidateTakesAWorkflowSecret(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions+workflowSecretLC)
+	id, ok := ProjectSecretCandidate(lc, "sandbox-probe", "acme/sandbox")
+	if !ok {
+		t.Fatalf("ProjectSecretCandidate = %q, false; want the project's ID: the entry lists acme/sandbox", id)
+	}
+	if want := gcp.ProjectSecretID(lc.Name, "sandbox-probe"); id != want {
+		t.Errorf("id = %q, want the project's own ID %q", id, want)
+	}
+}
+
+// TestProjectSecretCandidateRefusesAnUnlistedRepository: the entry is the
+// whole gate, so a repository it does not name mounts nothing -- the issue's
+// own guarantee, that a project copy never widens to a repository the
+// operator did not list.
+func TestProjectSecretCandidateRefusesAnUnlistedRepository(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions+`workflow_secrets:
+  sandbox-probe: { allow_data_to: [acme/other] }
+`)
+	if id, ok := ProjectSecretCandidate(lc, "sandbox-probe", "acme/sandbox"); ok {
+		t.Fatalf("ProjectSecretCandidate = %q, true; want not a candidate: the entry names acme/other", id)
+	}
+	if _, ok := ProjectSecretCandidate(lc, "sandbox-probe", "acme/other"); !ok {
+		t.Error("ProjectSecretCandidate(acme/other) is not a candidate, want the entry's own answer")
+	}
+}
+
+// TestWorkflowSecretHasNoProjectScopeDefault is D1262's line in the sand: no
+// sweep, for any workflow secret, ever. A name with no entry is not eligible
+// however the rest of the block is written, and this assertion is what keeps
+// the decision from being quietly reversed into mounting a stored value on
+// sixty-five repositories.
+func TestWorkflowSecretHasNoProjectScopeDefault(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions+`workflow_secrets:
+  other-probe: { allow_data_to: ["acme/*"] }
+`)
+	if id, ok := ProjectSecretCandidate(lc, "sandbox-probe", "acme/sandbox"); ok {
+		t.Errorf("ProjectSecretCandidate = %q, true; want not a candidate: absent means nobody", id)
+	}
+}
+
+// TestWorkflowSecretEntryCannotWidenAReservedName holds the predicate's
+// order: the new block is asked last, only for a name no other source claims,
+// so a hand-written entry can neither widen nor narrow what the sweep, an
+// account or a provider already answers (D1262).
+//
+// The map is built here rather than parsed: internal/config refuses these
+// keys as workflow secrets, which is the first fence, and this is the second
+// one behind it -- the predicate's own order.
+func TestWorkflowSecretEntryCannotWidenAReservedName(t *testing.T) {
+	lc := &localcfg.Config{
+		Name: "aurora",
+		Providers: map[string]config.ModelProvider{
+			"openrouter": {Secret: "openrouter-api-key", AllowDataTo: []string{"acme/other"}},
+		},
+		WorkflowSecrets: map[string]config.ProjectSecret{
+			"openrouter-api-key": {AllowDataTo: []string{"acme/sandbox"}},
+			"github-app-key":     {AllowDataTo: []string{"acme/other"}},
+		},
+	}
+	if id, ok := ProjectSecretCandidate(lc, "openrouter-api-key", "acme/sandbox"); ok {
+		t.Errorf("ProjectSecretCandidate = %q, true; want the provider's own answer (false): an entry cannot widen a name a provider already answers for", id)
+	}
+	if _, ok := ProjectSecretCandidate(lc, "github-app-key", "acme/sandbox"); !ok {
+		t.Error("ProjectSecretCandidate(github-app-key) is not a candidate, want D2's sweep: the entry lists the other repository only and is asked last")
+	}
+}

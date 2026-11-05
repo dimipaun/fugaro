@@ -2094,6 +2094,37 @@ func TestProjectSecretContainers(t *testing.T) {
 	}
 }
 
+// TestProjectSecretContainerIsDerivedFromTheEntry: the plan creates the
+// project container for a workflow_secrets entry exactly as it does for a
+// project_secrets one -- a non-empty allow_data_to and nothing else, D1263 --
+// so a container Terraform creates and one the store path created first (F16)
+// are the same container.
+func TestProjectSecretContainerIsDerivedFromTheEntry(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		lc   string
+		want []string
+	}{
+		{"entry with a list", "workflow_secrets:\n  sandbox-probe: { allow_data_to: [acme/sandbox] }\n", []string{"sandbox-probe"}},
+		{"entry with an empty list", "workflow_secrets:\n  sandbox-probe: { allow_data_to: [] }\n", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			lc := parseLC(t, m4LocalConfig+m5Additions+tt.lc)
+			spec, err := Installation(lc, InstallOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := map[string]string{}
+			for _, logical := range tt.want {
+				want[logical] = gcp.ProjectSecretID(lc.Name, logical)
+			}
+			if !maps.Equal(spec.ProjectSecrets, want) {
+				t.Errorf("ProjectSecrets = %+v, want %+v", spec.ProjectSecrets, want)
+			}
+		})
+	}
+}
+
 // --- RepoSpec.Addresses (plan docs/plans/2026-10-14-config-transitions.md Task 1)
 
 // The golden fixtures' agent blocks. oauth with one named account and
