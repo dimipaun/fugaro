@@ -902,12 +902,12 @@ type SecretMount struct{ Logical, Env string }
 
 // SecretMounts is what the job of workflow name, for Claude account token
 // (w) mounts, in order: the git provider's credential (gitSecret), the one
-// Claude credential agent.auth names (none for vertex; token's own derived
-// secret, config.ClaudeAccountSecret, for oauth), the keys of the model
+// Claude credential agent.auth names — none for vertex, token's own derived
+// secret (config.ClaudeAccountSecret) for oauth, and for an api-key job the
+// stage account's token when a stage key named one — the keys of the model
 // providers the owner's local config allows repo to send code to (only with
-// api-key: a run does not mix credentials), and the workflow's own secrets.
-// It is the one place that decides it, for the job's spec and for the
-// secrets init asks for.
+// api-key), and the workflow's own secrets. It is the one place that decides
+// it, for the job's spec and for the secrets init asks for.
 //
 // A provider's key is the runner's, for its gateway, and only a repository
 // the owner allowed to send code there gets it, as a variable the agent's
@@ -942,6 +942,17 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 				out = append(out, SecretMount{p.Secret, p.SecretEnv()})
 			}
 		}
+		// The one mix the owner's B0 ruling admits
+		// (docs/design/mixed-credentials.md §11): the job built for the stage
+		// account — of which WorkflowAccounts makes one per account the
+		// repository's stage keys name — carries that account's token beside
+		// the provider key the coder's gateway holds. The run's own job is
+		// that variant, so its review and adversarial stages, and no other
+		// stage, are the ones with a Claude credential to go direct to
+		// Anthropic on.
+		if slices.Contains(mixedStageAccounts(lc, repo), token) {
+			out = append(out, SecretMount{config.ClaudeAccountSecret(token), config.ReservedSecrets["claude-oauth-token"]})
+		}
 	}
 	for _, s := range w.Secrets {
 		if p, ok := config.ProviderBySecret(lc.Providers, s.Name); ok {
@@ -970,14 +981,61 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 
 // WorkflowAccounts are the Claude accounts each of repo's workflows gets a
 // job for: under oauth every account config.AllowedClaudeAccounts allows repo
-// (the default first), and the default alone under every other auth. RepoSpec
-// deploys one job per (workflow, account) from it, and RequiredSecrets reads
-// the same list, so the two cannot disagree about which tokens are mounted.
+// (the default first), under api-key the default plus the stage accounts of
+// the one mix the owner's B0 ruling admits (mixedStageAccounts), and the
+// default alone under every other auth. RepoSpec deploys one job per
+// (workflow, account) from it, and RequiredSecrets reads the same list, so the
+// two cannot disagree about which tokens are mounted.
+//
+// The mix's account is a job of its own rather than a second token on the
+// default one, so an api-key repository that names no stage account keeps the
+// single job it had: the run that holds a Claude account is the run whose
+// stage keys asked for one.
 func WorkflowAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []string {
-	if cfg.Agent.Auth == "oauth" {
+	switch cfg.Agent.Auth {
+	case "oauth":
 		return config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)
+	case "api-key":
+		out := []string{config.DefaultClaudeAccount}
+		for _, name := range mixedStageAccounts(lc, repo) {
+			if !slices.Contains(out, name) {
+				out = append(out, name)
+			}
+		}
+		return out
 	}
 	return []string{config.DefaultClaudeAccount}
+}
+
+// mixedStageAccounts are the Claude accounts an api-key repository's runs mix
+// with their provider key: the account each of config.MixedAccountStages'
+// stage keys names, held to config.AllowedClaudeAccounts the way every other
+// account name is, deduplicated and in the stages' own order. It is the
+// accounts design's §11.1 keys read as the B0 ruling reads them
+// (docs/design/mixed-credentials.md §11): the review and the adversarial
+// review may name one account, and no other stage may name any.
+//
+// The allow-list is what keeps the mount to what the owner admitted: the
+// token's mount is the repository's runs reading that account's credential,
+// and only the account's own allow_data_to says whether this repository may
+// put its code where that token is. An account the list does not carry is not
+// an entry here — `fugaro validate` and the launch refuse the key, so the
+// operator hears about it rather than a job quietly appearing without the
+// token.
+func mixedStageAccounts(lc *localcfg.Config, repo string) []string {
+	if lc == nil {
+		return nil
+	}
+	allowed := config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)
+	var out []string
+	for _, stage := range config.MixedAccountStages {
+		name := lc.ClaudeAccountStages[stage].ClaudeAccount
+		if name == "" || !slices.Contains(allowed, name) || slices.Contains(out, name) {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
 }
 
 // RequiredSecrets is every logical secret name the jobs of repo's workflows

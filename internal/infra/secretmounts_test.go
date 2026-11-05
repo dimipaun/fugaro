@@ -78,6 +78,159 @@ func TestSecretMounts(t *testing.T) {
 	}
 }
 
+// mixedLC is the local config every mixed-credentials case builds on: two
+// Claude accounts (one this repository may use, one it may not) and the
+// provider whose key the coder's gateway holds. The stage keys are the case's
+// own, appended to it.
+const mixedLC = `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry_host: us-east5-docker.pkg.dev/proj-1234
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
+repos:
+  acme/app: { provider: github, base_branch: main, workflows: [app], github_app_id: "123456" }
+claude_accounts:
+  bmb: { allow_data_to: [acme/app] }
+  other: { allow_data_to: [acme/other] }
+providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["deepseek/*"]
+    allow_data_to: ["acme/app"]
+`
+
+// TestMixedStageAccountMountsTheTokenOnTheApiKeyJob: B2's whole point
+// (docs/design/mixed-credentials.md §11, the ruled table). An api-key run
+// keeps its coder on the provider key the gateway holds AND runs its review
+// and adversarial stages on one Claude OAuth account, so the run's own job —
+// the one built for that account, gcp.WorkflowVariant — mounts the account's
+// token beside the OpenRouter key, and the repository's other jobs mount
+// nothing new.
+func TestMixedStageAccountMountsTheTokenOnTheApiKeyJob(t *testing.T) {
+	lc := parseLC(t, mixedLC+"stages:\n  review: { claude_account: bmb }\n")
+	cfg := parseCfg(t, []byte(`version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+agent: { auth: api-key }
+workflows:
+  app:
+    commands: { build: npm run build, test: npm test }
+`))
+	if got, want := WorkflowAccounts(cfg, lc, "acme/app"), []string{config.DefaultClaudeAccount, "bmb"}; !slices.Equal(got, want) {
+		t.Fatalf("WorkflowAccounts = %v, want %v: the account's own job variant is what holds the token", got, want)
+	}
+	mountsFor := func(token string) []string {
+		t.Helper()
+		ms, err := SecretMounts("github-app-key", cfg, "app", token, cfg.Workflows["app"], lc, "acme/app")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, m := range ms {
+			out = append(out, m.Logical)
+		}
+		return out
+	}
+	// The account's job mounts both credentials: the provider key the coder's
+	// gateway reads, and the account's token.
+	if got, want := mountsFor("bmb"), []string{"github-app-key", "anthropic-api-key", "openrouter-api-key", "claude-oauth-token-bmb"}; !slices.Equal(got, want) {
+		t.Errorf("the stage account's job mounts %v, want %v", got, want)
+	}
+	// The provider's key and the token are the ONE pair the ruling admits: no
+	// second account, and no account at all on the run that names none.
+	if got := mountsFor(config.DefaultClaudeAccount); slices.Contains(got, "claude-oauth-token-bmb") {
+		t.Errorf("the base job mounts %v, want no stage account's token", got)
+	}
+	required, err := RequiredSecrets(cfg, lc, "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"claude-oauth-token-bmb", "github-app-key", "openrouter-api-key"}; !slices.Equal(required, want) {
+		t.Errorf("RequiredSecrets = %v, want %v: a deployed job mounts the token, so secrets ls must flag it MISSING", required, want)
+	}
+}
+
+// The ruling's refusals, at the variant and at the mount
+// (docs/design/mixed-credentials.md §11, "An allow-list, not a denylist"): an
+// api-key run's account serves review and adversarial and no other stage, its
+// name is held to claude_accounts' own allow-list for the repository, and no
+// other auth has a provider key to mix it with.
+func TestMixedStageAccountIsTheRulingsAllowList(t *testing.T) {
+	cfgFor := func(auth string) *config.Config {
+		return parseCfg(t, []byte(`version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+agent: { auth: `+auth+` }
+workflows:
+  app:
+    commands: { build: npm run build, test: npm test }
+`))
+	}
+	for _, c := range []struct {
+		name, stages, auth string
+		variants           []string
+		// mounted are the variant tokens whose own job mounts a token: the
+		// accounts the stage keys name, and no other variant.
+		mounted []string
+	}{
+		{"the senior review's key", "  review: { claude_account: bmb }\n", "api-key",
+			[]string{config.DefaultClaudeAccount, "bmb"}, []string{"bmb"}},
+		{"the adversarial review's own key", "  adversarial: { claude_account: bmb }\n", "api-key",
+			[]string{config.DefaultClaudeAccount, "bmb"}, []string{"bmb"}},
+		{"both keys naming the one account", "  review: { claude_account: bmb }\n  adversarial: { claude_account: bmb }\n", "api-key",
+			[]string{config.DefaultClaudeAccount, "bmb"}, []string{"bmb"}},
+		// The default account named by a stage key is the unsuffixed token,
+		// which the base job then carries: the one case where the run that
+		// names no account and the run that names this one share a job.
+		{"the keys naming the default account", "  review: { claude_account: default }\n", "api-key",
+			[]string{config.DefaultClaudeAccount}, []string{config.DefaultClaudeAccount}},
+		{"a stage that is not one of the two", "  fix: { claude_account: bmb }\n", "api-key",
+			[]string{config.DefaultClaudeAccount}, nil},
+		{"the coder's own stage", "  implement: { claude_account: bmb }\n", "api-key",
+			[]string{config.DefaultClaudeAccount}, nil},
+		{"an account no allow_data_to admits here", "  review: { claude_account: other }\n", "api-key",
+			[]string{config.DefaultClaudeAccount}, nil},
+		// oauth keeps every name claude_accounts admits for the repository,
+		// which is the accounts design's own rung and not this mix (an oauth
+		// run has no provider key to mix with).
+		{"an oauth run", "", "oauth", []string{config.DefaultClaudeAccount, "bmb"}, nil},
+		{"a vertex run", "", "vertex", []string{config.DefaultClaudeAccount}, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			yaml := mixedLC
+			if c.stages != "" {
+				yaml += "stages:\n" + c.stages
+			}
+			lc, cfg := parseLC(t, yaml), cfgFor(c.auth)
+			if got := WorkflowAccounts(cfg, lc, "acme/app"); !slices.Equal(got, c.variants) {
+				t.Errorf("WorkflowAccounts = %v, want %v", got, c.variants)
+			}
+			if c.auth != "api-key" {
+				return
+			}
+			// Every variant, the mix's own included: a job mounts the token
+			// only when its variant is the account's, and a name no job
+			// exists for is a mount that could never be read.
+			for _, token := range append(append([]string{}, c.variants...), "other") {
+				ms, err := SecretMounts("github-app-key", cfg, "app", token, cfg.Workflows["app"], lc, "acme/app")
+				if err != nil {
+					t.Fatal(err)
+				}
+				logical := config.ClaudeAccountSecret(token)
+				got := slices.ContainsFunc(ms, func(m SecretMount) bool { return m.Logical == logical })
+				if want := slices.Contains(c.mounted, token); got != want {
+					t.Errorf("token %q mounted = %v, want %v (mounts %+v)", token, got, want, ms)
+				}
+			}
+		})
+	}
+}
+
 // TestSecretMountsRefusesAnotherProvidersConventionalName: a workflow may not
 // declare the name reserved for a configured provider's key either, even when
 // that provider stores its key under another name — the name belongs to that
