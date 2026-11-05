@@ -1639,7 +1639,12 @@ const bashTimeoutSlack = 2 * time.Minute
 // (FUGARO_CHECKOUT=clone, design generic-tool.md §2, G4) has no baked
 // checkout, so its clone is the blobless one gitops.CloneBlobless makes:
 // full history, no file contents until the checkout of the task's ref needs
-// them. cloneVars are the git credentials authVars built.
+// them. A prebuilt catalog entry's job has no baked checkout either — the
+// entry's image is shared by every repository that names it — but it is no
+// clone kind (FUGARO_CHECKOUT is unset, since the entry's own build installed
+// its tools), so its clone is the whole one gitops.OpenOrClone makes, which
+// is also the history a follow-up and merge-base need. cloneVars are the git
+// credentials authVars built.
 //
 // The branch cloned is the remote's own default branch, not
 // git.base_branch: that is in the repository's fugaro.yaml, which cannot be
