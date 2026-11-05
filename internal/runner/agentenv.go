@@ -34,9 +34,9 @@ func strip(repo *gitops.Repo) *gitops.Repo {
 // not carry.
 //
 // A value too short to redact safely is skipped with a warning that names only
-// the variable (addMountedSecrets, the variables' other registration): the
-// stage that would have run on it is refused where it is built instead
-// (agent.OAuthStageEnv), and the warning says so without printing it.
+// the variable, the way addMountedSecrets skips one. A stage whose token is
+// too short to redact is refused where its environment is built
+// (agent.OAuthStageEnv) rather than run on it.
 func (r *run) registerModelCredentials() {
 	for _, k := range modelCredentialVars {
 		switch v := envLookup(r.d.Env, k); {
@@ -71,8 +71,8 @@ func (r *run) parentEnv() map[string]string {
 	return m
 }
 
-// mixedStages is the run's stage accounts: the stages of the one mix the
-// owner's B0 ruling admits, and the account each of them runs on
+// resolveMixedStages answers the run's stage accounts: the stages of the one
+// mix the owner's B0 ruling admits, and the account each of them runs on
 // (docs/design/mixed-credentials.md §11). A run whose own credential is a
 // provider key — agent.auth is api-key — may hold exactly one stage-scoped
 // Claude OAuth account, declared by that stage's own key in the project's
@@ -116,7 +116,7 @@ func (r *run) resolveMixedStages(ctx context.Context) (map[string]string, error)
 
 // stageAccount is the Claude OAuth account the stage runs on, "" for every
 // stage that runs on the run's own credential. The map it reads holds the two
-// stages the ruling admits and nothing else (mixedStages).
+// stages the ruling admits and nothing else (resolveMixedStages).
 func (r *run) stageAccount(stage string) string { return r.mixedStages[stage] }
 
 // stageAgentEnv is the environment a stage's own process runs in: the run's

@@ -227,7 +227,7 @@ type run struct {
 	// keyed by stage (docs/design/mixed-credentials.md §11, the owner's B0
 	// ruling). It holds at most the senior review and the adversarial review,
 	// and it is empty for every run that does not mix credentials. It is read
-	// once at bootstrap (mixedStages, agentenv.go) and never changes: a
+	// once at bootstrap (resolveMixedStages, agentenv.go) and never changes: a
 	// stage's environment, its pins and its managed settings all read it, and
 	// they have to read one answer.
 	mixedStages map[string]string
@@ -2247,7 +2247,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		maps.Copy(set, agentAuthVars)
 	}
 	// The stages this run may serve from a stage-scoped Claude OAuth account
-	// (mixedStages, agentenv.go), read from the published policy before
+	// (resolveMixedStages, agentenv.go), read from the published policy before
 	// anything runs and before the gateway starts: they decide both halves of
 	// a stage's credential, and a node the run cannot read stops it here
 	// rather than at the first review.
