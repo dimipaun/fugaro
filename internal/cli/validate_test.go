@@ -3307,6 +3307,7 @@ func TestValidateNotesTheCredentialsServicePrecondition(t *testing.T) {
 		}
 		return got
 	}
+	t.Cleanup(func() { reviewJobAdmitted = false })
 	for _, tc := range []struct {
 		name     string
 		local    string
@@ -3337,9 +3338,10 @@ func TestValidateNotesTheCredentialsServicePrecondition(t *testing.T) {
 			name: "no named account", local: service,
 		},
 	} {
-		if tc.admitted {
-			admitReviewJob(t)
-		}
+		// Decided by the row on every row: E7's second half is a package
+		// variable, and one carried over from an earlier case would be a
+		// state this row never asked for.
+		reviewJobAdmitted = tc.admitted
 		path := reviewInstallation(t, tc.accounts, tc.local, "", "")
 		out, errOut, err := execute(t, "validate", path)
 		if err != nil || !strings.Contains(out, "is valid") {
