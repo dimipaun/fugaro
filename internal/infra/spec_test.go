@@ -1934,11 +1934,14 @@ func TestRepoSpecHasNoVariantForDisallowedName(t *testing.T) {
 	}
 }
 
-// A named account's variants exist ONLY for oauth repositories: an api-key or
-// vertex repository that an account happens to list in allow_data_to still
-// gets exactly the one default job per workflow (the oauth gate at the loop in
-// Repo(): removing it stayed green until this test).
-func TestRepoSpecHasNoVariantForNonOAuthRepositories(t *testing.T) {
+// An account gets a job variant only where a key that selects it exists: under
+// oauth every account config.AllowedClaudeAccounts admits, and under api-key
+// only the review or adversarial account the B0 mix rule admits (B1, B2). An
+// api-key or vertex repository that an account merely lists in allow_data_to
+// — no stage key names it — still gets exactly the one default job per
+// workflow, which is the allow-list's own backstop: being allowed data is not
+// being chosen.
+func TestRepoSpecHasNoVariantForAnUnchosenAccount(t *testing.T) {
 	for _, auth := range []string{"api-key", "vertex"} {
 		in := sandboxInputs(t, m5Additions+claudeAccountsLC)
 		in.Cfg.Agent.Auth = auth
@@ -2189,6 +2192,14 @@ const repoRootAPIKeyLC = repoRootLC + `providers:
     allow_data_to: ["acme/webapp"]
 `
 
+// repoRootMixedLC is repoRootAPIKeyLC with the one stage key the owner's B0
+// ruling admits (docs/design/mixed-credentials.md §11): the review stage's
+// Claude account, whose allow_data_to admits this repository. The coder's own
+// stages are untouched, so they keep the provider key the gateway holds.
+const repoRootMixedLC = repoRootAPIKeyLC + `stages:
+  review: { claude_account: bmb }
+`
+
 // repoRootCredentialsAPIKeyInputs is the api-key shape of the opt-in fixture:
 // the installation has a credentials service, and the one workflow mounts the
 // Anthropic API key (agent.auth api-key) and a provider's key — the other two
@@ -2231,10 +2242,11 @@ func variantKeys(addrs []string) []string {
 	return out
 }
 
-// A named Claude account is a workflow variant only under oauth: Repo
-// builds them only there, and the address set must follow the map rather
-// than drift from it (Review Focus 3).
-func TestRepoAddressesNamedVariantsOnlyUnderOAuth(t *testing.T) {
+// The address set must follow the map of jobs Repo built rather than drift
+// from it (Review Focus 3). The oauth fixture's local config defines one
+// account, which under oauth is a variant; the same config under api-key
+// names no stage for it, so the one job it has is the whole address set.
+func TestRepoAddressesFollowTheVariantMap(t *testing.T) {
 	oauth := repoRootSpec(t, repoRootOAuthAgent)
 	if got, want := slices.Sorted(maps.Keys(oauth.Workflows)), []string{"web", "web_bmb"}; !slices.Equal(got, want) {
 		t.Fatalf("oauth spec Workflows = %v, want %v", got, want)
@@ -2342,6 +2354,10 @@ type repoRootFixture struct {
 	// a repository root reads: the project's catalog check job's account
 	// (D1148), which the root grants actAs on its own build account.
 	catalogCheckServiceAccount string
+	// lc replaces the fixture's local config when the fixture's own shape
+	// lives there rather than in the agent block — the stage account B2's mix
+	// names is a local-config key, never a published one.
+	lc string
 }
 
 // repoRootFixtures are the fixture specs, keyed by the golden's name.
@@ -2373,6 +2389,12 @@ var repoRootFixtures = map[string]repoRootFixture{
 	// mirror adds (the actAs on the build account, modules/repo/catalogcheck.tf)
 	// is compared with a real plan rather than trusted.
 	"repo_root_catalog_check": {agent: repoRootOAuthAgent, catalogCheckServiceAccount: "fugaro-catalog-check@proj-1234.iam.gserviceaccount.com"},
+	// repo_root_mixed is B2's fixture: an api-key spec whose local config
+	// names the one stage account the owner's B0 ruling admits, so a real plan
+	// holds the job variant that account gets, the token it mounts and the
+	// accessor beside them (docs/design/mixed-credentials.md §11). No other
+	// fixture has an api-key job at all.
+	"repo_root_mixed": {agent: `agent: { auth: api-key }`, lc: repoRootMixedLC},
 }
 
 // repoRootFixtureSpec builds one fixture's spec by name, the opt-in
@@ -2389,6 +2411,9 @@ func repoRootFixtureSpec(t *testing.T, name string) RepoSpec {
 	}
 	if f.catalogCheckServiceAccount != "" {
 		in.Installation.CatalogCheckServiceAccount = f.catalogCheckServiceAccount
+	}
+	if f.lc != "" {
+		in.LC = parseLC(t, f.lc)
 	}
 	rs, err := Repo(in)
 	if err != nil {
@@ -2492,6 +2517,46 @@ func TestRepoAddressesMatchTheCredentialsGolden(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("Addresses() differs from repo_root_credentials_addresses.golden:\nmissing: %v\nunexpected: %v",
 			missingFrom(want, got), missingFrom(got, want))
+	}
+}
+
+// The mixed fixture pins B2's address set against a real plan: the api-key
+// repository that names a stage account has two jobs, and the account's —
+// the variant whose name carries the account's own token — is the only one
+// that reaches a Claude credential. That is the whole shape of the ruling:
+// the run's review and adversarial stages are on the account, and no stage
+// of the coder's own job is (docs/design/mixed-credentials.md §11).
+func TestRepoAddressesMatchTheMixedGolden(t *testing.T) {
+	const (
+		account = "bmb"
+		token   = "claude-oauth-token-" + account
+		mixed   = `module.repo.module.workflow["web_` + account + `"].`
+		coder   = `module.repo.module.workflow["web"].`
+	)
+	spec := repoRootFixtureSpec(t, "repo_root_mixed")
+	want := addressesGolden(t, "repo_root_mixed")
+	if len(want) == 0 {
+		t.Fatal("the golden is empty")
+	}
+	got := spec.Addresses()
+	if !slices.Equal(got, want) {
+		t.Errorf("Addresses() differs from repo_root_mixed_addresses.golden:\nmissing: %v\nunexpected: %v",
+			missingFrom(want, got), missingFrom(got, want))
+	}
+	for _, a := range []string{
+		mixed + "google_cloud_run_v2_job.this[0]",
+		mixed + `google_secret_manager_secret_iam_member.job["` + token + `"]`,
+		coder + `google_secret_manager_secret_iam_member.job["anthropic-api-key"]`,
+		coder + `google_secret_manager_secret_iam_member.job["openrouter-api-key"]`,
+	} {
+		if !slices.Contains(want, a) {
+			t.Errorf("the plan of the mixed fixture does not hold %s", a)
+		}
+	}
+	for _, a := range want {
+		if strings.HasPrefix(a, coder) && strings.Contains(a, "claude-oauth-token") {
+			t.Errorf("the coder's own job reaches a Claude token: %s", a)
+		}
 	}
 }
 
