@@ -267,7 +267,9 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		// The four gaps, each read against the code.
 		"**G1. The owner's spec asks for a context and the code has none.**",
 		"**G2. The catalog build's context is the Dockerfile and nothing else.**",
-		"**G3. \"One commit\" is not guaranteed today.**",
+		"**G3. \"One commit\" is not guaranteed today, and the commit is already load-bearing.**",
+		"the build step —",
+		"**The Dockerfile in that same build reads",
 		"**G4. The removal works around G2 by hand.**",
 		"*\"a catalog build never clones a repository into the build context\"*",
 		// A1: the key, its own path rule, and no change for an entry without one.

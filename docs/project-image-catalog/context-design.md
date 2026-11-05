@@ -61,14 +61,20 @@ items in **O1–O7**:
   (`internal/backend/gcp/catalog_test.go`) pins that, over `b.Steps`: some step mentioning `clone` is a
   failure of the test as it stands.
 
-- **G3. "One commit" is not guaranteed today.** The copy reads the Dockerfile **at the entry's branch**
-  — `r.Contents(ctx, s.Path, s.Branch)` (`internal/catalog/fetch.go`, the `ContentsReader` interface
-  in `internal/gitprov/gitprov.go`), which resolves a ref and never answers a commit — while the build
-  is submitted with `SourceCommit: commit` from `gitRead(ctx, root, "rev-parse", "HEAD")`
-  (`internal/cli/image_build_catalog.go`), the **operator's checkout HEAD**. The record's
-  `source_commit` and the image's `org.opencontainers.image.revision` label are that value. For an
-  entry that never clones anything this is a label nobody reads; the moment a build checks a context
-  out **at that commit**, it is load-bearing, and the two values must be one.
+- **G3. "One commit" is not guaranteed today, and the commit is already load-bearing.** The copy reads
+  the Dockerfile **at the entry's branch** — `r.Contents(ctx, s.Path, s.Branch)`
+  (`internal/catalog/fetch.go`, the `ContentsReader` interface in `internal/gitprov/gitprov.go`),
+  which resolves a ref and never answers a commit — while the build is submitted with
+  `SourceCommit: commit` from `gitRead(ctx, root, "rev-parse", "HEAD")`
+  (`internal/cli/image_build_catalog.go`), the **operator's checkout HEAD**. That value is not merely a
+  record and a label: `catalogPinStep` writes it to `/workspace/out/source-commit`, and the build step —
+  the one `images/derived/cloudbuild.yaml` states, reused whole by `CatalogBuildRequest` — passes it as
+  `--build-arg "FUGARO_COMMIT=$$commit"` and as
+  `--label "org.opencontainers.image.revision=$$commit"`. **The Dockerfile in that same build reads
+  `FUGARO_COMMIT` and clones at it** (that is exactly D1208's shape, G4), so today a migrated entry's
+  Dockerfile can come from one commit and its clone be pinned to another, with the record and the
+  revision label naming the second. For an entry that never reads `FUGARO_COMMIT` this costs nothing;
+  the moment a build checks a context out **at that commit**, the two values must be one.
 
 - **G4. The removal works around G2 by hand.**
   [docs/repo-image-removal/](../repo-image-removal/spec.md) §3.2, D1208: the migrated entry's Dockerfile
@@ -117,9 +123,11 @@ The copy resolves the source's ref to a commit **before** it reads the Dockerfil
 that commit (both `gitprov` adapters already accept a commit where they accept a branch:
 `Contents(ctx, path, ref)` is the `ref` query parameter on GitHub and a commit-or-branch ref on
 Bitbucket, whose `validContentsRef` says so), and answers with it. That commit is what the submission
-records as `SourceCommit`, what the image's `org.opencontainers.image.revision` label carries, what
-the build receives as `_FUGARO_COMMIT`, and what the context is checked out at. **One commit, named in
-four places that agree by construction.**
+records as `SourceCommit`, what `catalogPinStep` writes to `/workspace/out/source-commit` and the build
+step therefore passes as `--build-arg FUGARO_COMMIT` **and** as
+`--label org.opencontainers.image.revision` (the two the Dockerfile's own clone and the record both
+read, G3), and what the context is checked out at. **One commit, named in four places that agree by
+construction.**
 
 What it costs: one extra provider read per dockerfile source per `fugaro image build` — a ref → commit
 resolve, which GitHub does not have today (`internal/gitprov/github` has no commits read) and Bitbucket
