@@ -485,9 +485,10 @@ them**, and R11 is the code that gives the job its work.
   R12 writes in the module; `runs/` keeps its 90 (`F24`, untouched).
 - **Files (11):** `internal/infra/reportsjob.go` (new: the spec type, the env document and its
   version), `internal/infra/reportsjob_test.go` (new: the untagged tests below),
-  `internal/infra/reportsjob_terraform_test.go` (new: **the tagged convergence test alone**, because a
-  build tag covers a whole file and mixing it into `reportsjob_test.go` would hide every untagged
-  test in it behind the tag), `internal/infra/tfvars.go` (the `reports` node and
+  `internal/infra/reportsjob_terraform_test.go` (new: **the tagged convergence test alone** — a build
+  tag applies to a whole file, so tagging `reportsjob_test.go` would put every untagged test in it
+  behind the tag and the tagged test takes a file of its own), `internal/infra/tfvars.go` (the
+  `reports` node and
   `bucket_lifecycle.reports_days`), `deploy/terraform/gcp/roots/installation/variables.tf` (the
   `reports` variable) and `main.tf` (its pass-through), and **the five goldens the always-present
   node regenerates** — `internal/infra/testdata/installation-accounts.tfvars.json`, `-budget-job`,
@@ -536,7 +537,7 @@ Hermetic throughout — it touches no cloud API the fake does not model.
 - **Its command.** `fugaro runs reports --job`, registered beside its sibling in
   `internal/cli/runs.go:232` (not `root.go`, which another work stream holds). It reads its whole
   assignment from **`FUGARO_REPORTS_JOB_SPEC`** — a versioned JSON document on the
-  `FUGARO_CATALOG_CHECK_SPEC` shape (`internal/infra/catalogcheck.go:23`), which R7 declares: the
+  `FUGARO_CATALOG_CHECK_SPEC` shape (`internal/infra/catalogcheck.go:29`), which R7 declares: the
   project, the bucket, the repository slugs and the periods to close — and **refuses to start without
   it**. The release's own `*Since` constant (`internal/cli/recipes_skew.go:303` is `digestSince`'s)
   gains the release that ships it, so a skill or a recipe that names `runs reports` cannot reach a
