@@ -1916,7 +1916,15 @@ func mixedStageAccount(ctx context.Context, env *cloudEnv, repo, stage, auth str
 		return "", nil
 	}
 	def := env.lc.DefaultClaudeAccount
-	if def == "" {
+	// "" and the unsuffixed-default sentinel (config.DefaultClaudeAccount,
+	// "default") are the same answer here: a local config may spell the key
+	// either way (localcfg's choiceRefProblem admits the sentinel), and neither
+	// names an account of its own — an api-key run's job carries no OAuth token
+	// for the default account, which is exactly what spec.OAuthToken's own rule
+	// says (a run whose account is the sentinel sets no token at all). So the
+	// key declares no mix, and reading it as one would invent the second
+	// credential this rule refuses below.
+	if def == "" || def == config.DefaultClaudeAccount {
 		return "", nil
 	}
 	if !isClaudeModel(mixedStageModel(co.Agent, stage)) {

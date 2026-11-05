@@ -238,19 +238,24 @@ func mixCase(t *testing.T, keys, reviewer, budget string) (*cloudEnv, *config.Co
 // nothing changes and nothing is refused. Rung 2 is a declaration about that
 // very stage, which B1 serves as written.
 //
-// Two mutations fail this test: dropping the allow-list from mixedStageAccount
-// serves the account to implement, review_first and fix, and dropping the
-// model condition from it serves the project default to a review stage that
-// runs on the provider.
+// Three mutations fail this test: dropping the allow-list from mixedStageAccount
+// serves the account to implement, review_first and fix; dropping the model
+// condition from it serves the project default to a review stage that runs on
+// the provider; and reading the sentinel default as an account serves the
+// unsuffixed default to the two review stages of a project that named none.
 func TestClaudeAccountForTheMixMatrix(t *testing.T) {
 	// rung 2 is the stage's own key — both mixed stages name one account,
 	// which is the shape the one-account rule admits; rung 4 is the project
 	// default alone; "both" names the same account in each; "neither" declares
-	// no mix at all and is the control.
+	// no mix at all and is the control; and the sentinel row is the value a
+	// local config may spell the default key with — "default" is the unsuffixed
+	// default account, which an api-key run's job carries no token for, so it
+	// names no account and declares no mix whatever the stage's model is.
 	rungs := []struct{ name, keys string }{
 		{"rung 2", stagesBlock("review", "acme-overflow", "adversarial", "acme-overflow")},
 		{"rung 4", "default_claude_account: acme-overflow\n"},
 		{"both", "default_claude_account: acme-overflow\n" + stagesBlock("review", "acme-overflow", "adversarial", "acme-overflow")},
+		{"the sentinel default", "default_claude_account: " + config.DefaultClaudeAccount + "\n"},
 		{"neither", ""},
 	}
 	models := []struct {
@@ -302,6 +307,42 @@ func TestClaudeAccountForLeavesTheRunsOwnCredentialAlone(t *testing.T) {
 	if got != config.DefaultClaudeAccount {
 		t.Fatalf("account = %q, want %q: an api-key run's own credential is not a stage's", got, config.DefaultClaudeAccount)
 	}
+}
+
+// TestClaudeAccountForReadsTheSentinelDefaultAsNoAccount: "default" is the
+// unsuffixed default account — the sentinel task.Spec.OAuthToken's own rule
+// reads as "no token of the run's own", which is where a local config may
+// spell either account-choice key (localcfg's choiceRefProblem admits it) — and
+// an api-key run's job carries no OAuth token for the default account at all.
+// So a project that writes default_claude_account: default declares no mix: the
+// key is not a way into the review stages, the launch is not refused under a
+// mode that could not carry one, and the key is not a second credential beside
+// the other mixed stage's own.
+func TestClaudeAccountForReadsTheSentinelDefaultAsNoAccount(t *testing.T) {
+	sentinel := "default_claude_account: " + config.DefaultClaudeAccount + "\n"
+	t.Run("the key declares no mix", func(t *testing.T) {
+		env, co := mixCase(t, sentinel, claudeReviewer, "budget: { mode: observe, per_run_usd: 5 }\n")
+		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "review", "", co)
+		if err != nil {
+			t.Fatalf("err = %v, want no refusal: the sentinel names no account", err)
+		}
+		if got != config.DefaultClaudeAccount {
+			t.Fatalf("account = %q, want %q", got, config.DefaultClaudeAccount)
+		}
+	})
+	t.Run("the key is no second credential", func(t *testing.T) {
+		env, co := mixCase(t, sentinel+stagesBlock("adversarial", "acme-overflow"), claudeReviewer, mixEnforce)
+		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "review", "", co)
+		if err != nil {
+			t.Fatalf("err = %v, want no refusal: the sentinel is not an account the stage key could disagree with", err)
+		}
+		if got != config.DefaultClaudeAccount {
+			t.Fatalf("review account = %q, want %q", got, config.DefaultClaudeAccount)
+		}
+		if got, err = claudeAccountFor(context.Background(), env, "acme/other", "", "adversarial", "", co); err != nil || got != "acme-overflow" {
+			t.Fatalf("adversarial account = %q, err = %v: the stage's own key is served as written", got, err)
+		}
+	})
 }
 
 // TestClaudeAccountForRefusesAMixThatWouldBeASecondAccount: the run holds one

@@ -135,14 +135,15 @@ func TestCheckMixBudgetIsTheModeClause(t *testing.T) {
 	const coder = "deepseek/deepseek-v4-flash"
 	mixed := map[string]string{"review": "acme-overflow", "adversarial": "acme-overflow"}
 	cases := []struct {
-		name   string
-		auth   string
-		mode   string
-		coder  string
-		def    string
-		stages map[string]string
-		routes map[string]ModelProvider // nil: the owner's whole table
-		want   []string                 // substrings the one problem must name; nil for none
+		name    string
+		auth    string
+		mode    string
+		coder   string
+		def     string
+		stages  map[string]string
+		routes  map[string]ModelProvider // nil: the owner's whole table
+		want    []string                 // substrings the one problem must name; nil for none
+		notWant []string                 // substrings the problem must not name
 	}{
 		{name: "api-key under enforce", auth: "api-key", mode: BudgetEnforce, coder: coder, def: "acme-overflow", stages: mixed},
 		{name: "api-key under observe", auth: "api-key", mode: BudgetObserve, coder: coder, def: "acme-overflow", stages: mixed,
@@ -151,6 +152,18 @@ func TestCheckMixBudgetIsTheModeClause(t *testing.T) {
 			want: []string{"budget.mode", "default_claude_account"}},
 		{name: "api-key under off, a stage key alone", auth: "api-key", mode: BudgetOff, coder: coder, stages: mixed,
 			want: []string{"budget.mode", "stages.adversarial.claude_account"}},
+		// The sentinel is not an account: a local config may spell the project
+		// default "default" (localcfg's choiceRefProblem admits it), which names
+		// the unsuffixed default account and no account of its own, and an
+		// api-key run's job carries no OAuth token for the default at all. So
+		// the key declares no mix, and the clause stays silent — a refusal here
+		// would tell an operator to raise budget.mode for a key that names
+		// nothing, and on the launch's side it would invent the second
+		// credential mixedStageAccount refuses.
+		{name: "api-key under observe, the project default is the sentinel", auth: "api-key", mode: BudgetObserve, coder: coder, def: DefaultClaudeAccount},
+		{name: "api-key under off, the sentinel beside a real stage key", auth: "api-key", mode: BudgetOff, coder: coder, def: DefaultClaudeAccount,
+			stages: map[string]string{"review": "acme-overflow"},
+			want:   []string{"budget.mode", "stages.review.claude_account"}, notWant: []string{"default_claude_account"}},
 		// The clause is judged only where the run has the shape that could mix:
 		// with no provider route serving this repository's coder there is no
 		// provider key in the gateway, whatever the mode says. The table is the
@@ -188,6 +201,11 @@ func TestCheckMixBudgetIsTheModeClause(t *testing.T) {
 			for _, want := range tc.want {
 				if !strings.Contains(ps[0].Path, want) && !strings.Contains(ps[0].Message, want) {
 					t.Errorf("problem = %+v, want it to name %q", ps[0], want)
+				}
+			}
+			for _, not := range tc.notWant {
+				if strings.Contains(ps[0].Path, not) || strings.Contains(ps[0].Message, not) {
+					t.Errorf("problem = %+v, want it not to name %q", ps[0], not)
 				}
 			}
 		})

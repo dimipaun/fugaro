@@ -144,10 +144,15 @@ func mixedAccountProblems(stages map[string]string, path string) []Problem {
 //
 // auth, mode, coder and routes are the run's as the caller resolves them (the
 // launch and `fugaro validate` each build them the way the run does); def is
-// the project default_claude_account, "" when none is set; stages is the
-// declared stage accounts, as CheckStageAccountMix reads them. path is where
-// the caller spells the budget mode ("budget.mode" today), and it is the key
-// the problem points at: the fix is to raise the mode, or to drop the keys
+// the project default_claude_account, "" when none is set and never the
+// unsuffixed-default sentinel (DefaultClaudeAccount, "default") — that value
+// names no account of its own, and an api-key run's job carries no OAuth token
+// for it, so a project that spells the default key "default" declares no mix
+// and is not this clause's business (a local config that admitted the sentinel
+// for the key wrote it in so many words: localcfg's choiceRefProblem); stages
+// is the declared stage accounts, as CheckStageAccountMix reads them. path is
+// where the caller spells the budget mode ("budget.mode" today), and it is the
+// key the problem points at: the fix is to raise the mode, or to drop the keys
 // that declare a mix this run cannot carry.
 func CheckMixBudget(auth, mode, coder, def string, stages map[string]string, routes map[string]ModelProvider, repo, path string) []Problem {
 	if auth != "api-key" || mode == BudgetEnforce {
@@ -159,7 +164,7 @@ func CheckMixBudget(auth, mode, coder, def string, stages map[string]string, rou
 			keys = append(keys, "stages."+stage+".claude_account")
 		}
 	}
-	if def != "" {
+	if def != "" && def != DefaultClaudeAccount {
 		keys = append(keys, "default_claude_account")
 	}
 	if len(keys) == 0 {

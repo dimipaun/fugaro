@@ -90,6 +90,13 @@ func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 		"amending the conservative reading this section recorded on 2026-11-04",
 		"then we get mixed runs",
 		"only where that stage's own model is an Anthropic one",
+		// The sentinel: a project may spell the key `default_claude_account:
+		// default`, which names the unsuffixed default account and no account
+		// of its own. The rule has to say that this declares no mix — a
+		// document that left it to the reader would leave a project
+		// wondering whether it had asked for one.
+		"**no mix at all**",
+		"`default` is the unsuffixed default account",
 		"`agent.auth` is `api-key`",
 		// The rule is an allow-list, so a stage the tree does not have yet is
 		// refused by the rule rather than by omission.
