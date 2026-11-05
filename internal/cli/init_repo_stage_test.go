@@ -933,10 +933,17 @@ func TestRepoEngineBuildsOnlyThePerRepositoryWorkflow(t *testing.T) {
 // checkout holds fugaro.yaml and the base branch does not. The build clones
 // the base branch and renders the file from it, so the run would spend a
 // billable build to fail at that step, with the render step's own words —
-// said here instead, before the confirmation, naming the merge.
+// held on that reason instead, before the confirmation, naming the merge.
+//
+// Held, never refused: the apply has already landed when this is known, so
+// the run goes on, writes the local config and reaches the stages after the
+// repository stage (the plugin pin among them), exactly as it does when the
+// GitHub App's pre-check holds a build. Only the billable build is left.
 //
 // Mutation (run, restore): drop repoEngine's baseBranchFugaroYAML call and
-// the build is submitted and confirmed.
+// the build is submitted and confirmed; make the hold return through
+// retireLeftover instead (as the refusal first did) and the local config is
+// left without the repository.
 func TestRepoEngineRefusesTheFirstBuildWithoutFugaroYAMLOnTheBaseBranch(t *testing.T) {
 	r := repoBuildRig(t, "")
 	// The checkout: fugaro.yaml committed here, origin/main still at the
@@ -961,5 +968,18 @@ func TestRepoEngineRefusesTheFirstBuildWithoutFugaroYAMLOnTheBaseBranch(t *testi
 	}
 	if len(fb.specs) != 0 {
 		t.Fatalf("specs = %+v, want no build for a fugaro.yaml the base branch does not hold", fb.specs)
+	}
+	if len(e.r.buildsLeft) != 1 || e.r.buildsLeft[0] != "app" {
+		t.Errorf("buildsLeft = %q, want the workflow whose build is held", e.r.buildsLeft)
+	}
+	// The run reached its last step: the first apply already made the
+	// repository's resources, so they join the local config even though the
+	// build is held, which is what the converge's stages after this one need.
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lc.Repos["acme/sandbox"]; len(got.Workflows) != 1 || got.Workflows[0] != "app" || got.BaseBranch != "main" {
+		t.Errorf("the local config records %+v, want the repository the run onboarded: the run did not reach its end", got)
 	}
 }
