@@ -3374,6 +3374,22 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.fail("stage " + name + ": " + err.Error())
 		return agent.Result{}, false, err
 	}
+	r.stageN[name]++
+	n := r.stageN[name]
+	started := r.d.Now()
+	r.rec.Stage = name
+	r.save(ctx)
+	log := r.d.Log.With("stage", name)
+	// Refresh before the stage's environment is built, so the agent is handed
+	// the new token (the environment is a copy of the run's own), and before
+	// the redactors below are built, so they know it. Bounded on its own: a
+	// slow or hanging provider call must not eat into the stage's own budget.
+	authCtx, cancelAuth := context.WithTimeout(ctx, authRefreshTimeout)
+	err := r.refreshGitAuth(authCtx, authValidity(r.budget.Stage+gitAuthSlack))
+	cancelAuth()
+	if err != nil {
+		r.warnAuthRefresh(err)
+	}
 	// Before the stage's transcript is read at all: a stage the run's account
 	// serves is refused here when the run holds no token for it, and the
 	// refusal is one of the run's own errors, redacted like any other.
@@ -3381,21 +3397,6 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	if envErr != nil {
 		r.fail("stage " + name + ": " + envErr.Error())
 		return agent.Result{}, false, envErr
-	}
-	r.stageN[name]++
-	n := r.stageN[name]
-	started := r.d.Now()
-	r.rec.Stage = name
-	r.save(ctx)
-	log := r.d.Log.With("stage", name)
-	// Refresh before the redactors below are built, so they know the new
-	// token. Bounded on its own: a slow or hanging provider call must not
-	// eat into the stage's own budget.
-	authCtx, cancelAuth := context.WithTimeout(ctx, authRefreshTimeout)
-	err := r.refreshGitAuth(authCtx, authValidity(r.budget.Stage+gitAuthSlack))
-	cancelAuth()
-	if err != nil {
-		r.warnAuthRefresh(err)
 	}
 	log.Info("stage started", "n", n)
 

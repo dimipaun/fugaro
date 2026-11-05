@@ -468,13 +468,15 @@ func TestDocsCheck290IsTheMixedRunsSmokeTest(t *testing.T) {
 	// A step is runnable only if it names the right command, and that is what
 	// these pins hold: making the config reach a run (the stage keys are the
 	// machine's, and the runner reads the published policy node, which
-	// `fugaro update` does not republish for these keys), committing and pushing
+	// `fugaro update` republishes for these keys since B7), committing and pushing
 	// the repository's own change (the run fetches the ref), and telling the
 	// refusals apart — three of them are not `fugaro validate`'s, and a check
 	// that attributes a refusal to a command which never raises it sends the
 	// owner looking in the wrong place.
 	for _, want := range []string{
-		"fugaro project policy publish",
+		"there is no second publish command to run",
+		"`fugaro update --repo`, which publishes the two keys to the policy node",
+		"it republishes the removal to the policy node",
 		"policyConfigDrift",
 		"Commit the `fugaro.yaml` change and push",
 		"config.CheckStageAccountMix",

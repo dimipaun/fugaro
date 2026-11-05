@@ -2560,3 +2560,53 @@ func TestSecretsSetStatesTheWorkflowCaveatForAWorkflowSecretAlone(t *testing.T) 
 	}
 	noLeak(t, tokenValue, errOut)
 }
+
+// TestSecretsSetStatesAWildcardsReach: the store-time note is where a person
+// decides whether storing one value for many repositories is safe, and an entry
+// that spells a wildcard is the one shape the list alone cannot state the reach
+// of. "only the repositories its allow_data_to lists can mount it (acme/*)"
+// reads as the workspace's repositories today, while the entry reaches every
+// one onboarded afterwards with no further edit to it — the fact that makes
+// such an entry right for one name and wrong for the next. D1273 asks for the
+// clause in the note, in the shape SECURITY.md's Bitbucket token warning
+// already has for the same field. An entry that names repositories keeps the
+// sentence it had, exactly: the clause is not true of it, so the assertion is
+// that it is absent.
+func TestSecretsSetStatesAWildcardsReach(t *testing.T) {
+	cases := []struct {
+		name  string
+		entry string
+		want  string
+	}{
+		{
+			name:  "an entry that names a repository",
+			entry: "acme/app",
+			want:  "where only the repositories its allow_data_to lists can mount it (acme/app), whatever a published policy admits. Inside a shared job",
+		},
+		{
+			name:  "a wildcard entry",
+			entry: "acme/*",
+			want:  "where only the repositories its allow_data_to lists can mount it (acme/*), whatever a published policy admits, and a `*` in an entry reaches every repository it matches now and later, so one onboarded afterwards mounts the copy with nothing else to do. Inside a shared job",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sm := secretsFixture(t)
+			appCheckout(t)
+			projectSecretFixture(t, "workflow_secrets:\n  npm-token: { allow_data_to: [\""+tc.entry+"\"] }\n")
+			_, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "npm-token")
+			if err != nil {
+				t.Fatalf("%v (%s)", err, errOut)
+			}
+			// The note is the project-wide path's, so the store says which
+			// path the sentence under test was printed on.
+			if sm.Latest(gcp.ProjectSecretID("aurora", "npm-token")) == nil {
+				t.Fatal("the entry did not take the project-wide path under test")
+			}
+			if !strings.Contains(errOut, tc.want) {
+				t.Errorf("the note does not state the entry's reach: want %q in\n%s", tc.want, errOut)
+			}
+			noLeak(t, tokenValue, errOut)
+		})
+	}
+}
