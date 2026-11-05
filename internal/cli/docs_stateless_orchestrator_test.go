@@ -6,11 +6,13 @@ package cli
 // never edited), README.md, reconciliation.md (F1-F23, the decisions
 // D1220-D1243) and implementation-plan.md (O0-O19). Nothing in it pins a
 // command or a flag. What rots silently is pinned here: the block the decisions
-// live in, the rulings that are not the recommendation (D1235, the retry rule
-// and Q2), the three round-1 questions the owner has now answered, the one
-// tension the answers left open (T6), the facts a rewrite would quietly drop
-// (D1243's cache writer and O10's level, the 14-day manual rollback), and the
-// absence of any secret-shaped literal.
+// live in, the rulings that are not the recommendation (D1235 and the retry
+// rule), Q2 answered a second time, the three round-1 questions the owner has
+// now answered, the one tension the answers left open (T7, the daemon-unit
+// carve-out of the HARD RULE), the facts a rewrite would quietly drop (D1243's
+// cache writer and O10's level, the 14-day manual rollback, the unit moved out
+// of `fugaro update` and into `fugaro setup`), and the absence of any
+// secret-shaped literal.
 
 import (
 	"os"
@@ -99,8 +101,11 @@ func TestDocsStatelessOrchestratorOwnerQuestionsAreAnswered(t *testing.T) {
 			t.Errorf("%s: an answered question is still called open (%q)", soReconciled, gone)
 		}
 	}
-	if !strings.Contains(rec, "**T6.") || !strings.Contains(rec, "Unanswered: the owner rules") {
-		t.Errorf("%s: the one tension the answers left open (T6) is not stated as open", soReconciled)
+	if !strings.Contains(rec, "**T6.") || !strings.Contains(rec, "CLOSED") {
+		t.Errorf("%s: T6 is not stated as closed", soReconciled)
+	}
+	if !strings.Contains(rec, "**T7.") || !strings.Contains(rec, "Unanswered: the owner rules") {
+		t.Errorf("%s: the one tension the answers left open (T7) is not stated as open", soReconciled)
 	}
 	for _, want := range []string{"mitigation, not a barrier", "ClaimKey()", "bypasses the rules"} {
 		if !strings.Contains(rec, want) {
@@ -110,22 +115,63 @@ func TestDocsStatelessOrchestratorOwnerQuestionsAreAnswered(t *testing.T) {
 }
 
 // The owner's rulings that are not the recommendation have to be readable as
-// deviations: D1235 (pinned above), the retry rule and Q2. A deviation
-// recorded as a recommendation is a record the owner cannot read.
+// deviations: D1235 (pinned above) and the retry rule. A deviation recorded as
+// a recommendation is a record the owner cannot read.
 func TestDocsStatelessOrchestratorDeviationsAreMarked(t *testing.T) {
 	plan := soRead(t, soPlan)
 	readme := soRead(t, soReadme)
 	if !strings.Contains(plan, "Retry rule (2026-11-04, not the recommendation)") {
 		t.Errorf("%s: the retry rule is not marked as not the recommendation", soPlan)
 	}
-	if !strings.Contains(plan, "Q2 (2026-11-04, not the recommendation)") {
-		t.Errorf("%s: Q2 is not marked as not the recommendation", soPlan)
-	}
-	if !strings.Contains(readme, "three rulings are not") {
+	if !strings.Contains(readme, "two rulings are not") {
 		t.Errorf("%s: the README no longer names the rulings that are not the recommendation", soReadme)
 	}
-	if !strings.Contains(readme, "T6") || !strings.Contains(plan, "T6") {
-		t.Errorf("the one open tension (T6) is not named in the README and the plan")
+	if !strings.Contains(readme, "T7") || !strings.Contains(plan, "T7") {
+		t.Errorf("the one open tension (T7) is not named in the README and the plan")
+	}
+}
+
+// Q2 was ruled a second time: the first answer (an offer inside `fugaro
+// update`) is superseded, `fugaro setup` installs the unit, `fugaro
+// orchestrator install` upgrades it, and `update` never touches it — which
+// closed T6 and opened T7 for the HARD RULE carve-out it leaves behind. A
+// later edit that puts the unit back into `update`, or that drops the
+// self-upgrade that stands in for it, is the change this design cannot afford.
+func TestDocsStatelessOrchestratorQ2IsRuledTwice(t *testing.T) {
+	plan := soRead(t, soPlan)
+	rec := soRead(t, soReconciled)
+	readme := soRead(t, soReadme)
+	for _, f := range []struct{ name, text string }{{soPlan, plan}, {soReconciled, rec}, {soReadme, readme}} {
+		if !strings.Contains(f.text, "superseded") {
+			t.Errorf("%s: the superseded first Q2 answer is not named as superseded", f.name)
+		}
+	}
+	for _, want := range []string{
+		"`fugaro setup` installs the daemon",
+		"`fugaro update` never touches the unit",
+		"TestDaemonRestartsWhenItsBinaryIsNewer",
+		"TestMigrateRunsAtDaemonStart",
+		"TestUnitPointsAtTheStableBinaryPath",
+		"TestSetupInstallsTheUnitAsAPlanStep",
+		"TestUpdateNeverTouchesTheUnit",
+		"`internal/cli/update.go`",
+		"init_orchestrator_stage.go",
+	} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("%s: Q2's ruled follow-through %q is gone", soPlan, want)
+		}
+	}
+	for _, gone := range []string{
+		"TestUpdateRerendersAndRestartsAPreviousVersionUnit",
+		"TestUpdateOffersTheInstallOnlyAtATerminal",
+		"TestUpdateInstallsNothingUnderAnAgentMarker",
+		"TestUpdateMigratesTheStateSchemaVersion",
+		"`internal/cli/update_orchestrator.go`",
+		"offers** to install the daemon",
+	} {
+		if strings.Contains(plan, gone) {
+			t.Errorf("%s: the superseded first Q2 answer is still built (%q)", soPlan, gone)
+		}
 	}
 }
 

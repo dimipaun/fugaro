@@ -1,6 +1,6 @@
 # The stateless orchestrator: the spec against the code
 
-**Status: reconciliation answered by the owner 2026-11-04 — D1220-D1243 in full, not only the first draft's D1220-D1240: the round-1 questions D1241, D1242 and D1243 are answered below, so the only thing this section still asks the owner to rule is T6 (Q2's offer against the managed no-prompt rule). Plan in [implementation-plan.md](implementation-plan.md). Nothing implemented, no task approved.**
+**Status: reconciliation answered by the owner 2026-11-04 — D1220-D1243 in full, not only the first draft's D1220-D1240: the round-1 questions D1241, D1242 and D1243 are answered below, so the only thing this section still asks the owner to rule is T7 (the daemon-unit carve-out of the HARD RULE that Q2's answer leaves behind, T6 having been closed by it). Plan in [implementation-plan.md](implementation-plan.md). Nothing implemented, no task approved.**
 Checked against `origin/main` at `5998d67c7` (`feat(config): the workflow_secrets block ... (W0) (#1710)`), merged into this branch,
 on **2026-11-04**. The open pull requests were read with `gh pr list` and `gh pr diff` the same day. Every path and symbol below was
 re-read at that commit; a citation by symbol is held where a line would move.
@@ -431,7 +431,7 @@ Numbers **D1220-D1249** (section 0). Recommendation first; the cost of the alter
 
 D1244-D1249 are reserved and unused. The owner confirmed the block D1220-D1249 on 2026-11-04.
 
-**The owner answered all of D1220-D1243 on 2026-11-04.** Twenty-three of the twenty-four are the recommendation; **D1235 is not** (cut over at once instead of a shadow week), and the plan's own questions carry two more owner rulings that are not the recommendation: **the retry rule (one automatic retry under the same approval)** and **Q2 (`fugaro update` offers to install the daemon)** — both in the plan's section 6, with Q2's tension in section 6 below.
+**The owner answered all of D1220-D1243 on 2026-11-04.** Twenty-three of the twenty-four are the recommendation; **D1235 is not** (cut over at once instead of a shadow week), and the plan's own questions carry one more owner ruling that is not the recommendation: **the retry rule (one automatic retry under the same approval)**, in the plan's section 6. **Q2 was ruled twice:** the answer this pull request first recorded (`fugaro update` offers the install) is superseded by **the owner's answer, 2026-11-04** — `fugaro setup` installs the daemon and `fugaro orchestrator install` upgrades it — which closes **T6** and opens **T7** (the carve-out of the HARD RULE the answer leaves behind), both in section 6 below.
 
 ## 5. UNVERIFIED
 
@@ -486,16 +486,28 @@ later task, not this one.
 **T5. The workspaces design reuses the MCP server** and was amended the same day; anything this design says about workspace caps
 (D1222's `ee/` part) waits on that design as well.
 
-**T6. Q2 against the managed no-prompt rule (OPEN; the owner is asked to rule, and the plan does not resolve it).** The owner answered Q2 on
-2026-11-04 **not** as recommended: `fugaro update` **offers** to install the daemon, rather than leaving `fugaro orchestrator install` as a separate
-opt-in. That collides with two standing rules, and the plan follows the answer while stating the collision rather than deciding it:
-(1) installing persistence (a launchd or systemd unit) must still be **refused under an agent marker**, so the offer happens only at a real terminal
-and never in a coding agent's session — that part is not in doubt; (2) the owner's standing ruling is **no prompts on a managed project** (terminal
-included), so the question is what the offer does in a managed project. **Reading one:** `update` installs the unit silently on a human's machine,
-because asking is the prompt the rule forbids. **Reading two:** `update` never offers it there, because installing a unit is a change the person did
-not ask for and the no-prompt rule was about not blocking, not about acting unasked. **Recommendation (not applied):** the offer appears only in a
-non-managed project, or when the person has already run `fugaro orchestrator install` once; a managed project's `update` re-renders and restarts an
-**already installed** unit and never installs a new one. **Unanswered: the owner rules; O9 lists the work and builds nothing until then.**
+**T6. Q2, ruled a second time: the install moves to `fugaro setup` (CLOSED — the owner ruled it on 2026-11-04).** The answer this pull request first
+recorded put an **offer** in `fugaro update` behind a Typed confirmation, and that collided with the owner's standing **no prompts on a managed
+project** rule (terminal included): installing silently on a human's machine and never offering it there were both readings of a question that should
+not have been asked. **The owner's answer, 2026-11-04 (a different answer from the one this PR first recorded, which is superseded):** the **first
+install belongs to `fugaro setup`** — one of its listed steps, shown in its plan, at a real terminal only, **refused under a coding agent's marker**
+(the unit is installed by the person's own run, never by an agent), and in a managed project the step follows the no-prompt rule: **no extra
+confirmation, and the plan line names the unit and its path**. **Upgrades move out of `fugaro update`** and into **`fugaro orchestrator install`**,
+which installs, re-renders and restarts the unit; **`fugaro update` never touches the unit.** The collision is gone rather than decided: nothing
+asks a question the no-prompt rule forbids, and the install is a line of a plan the person already reads before it is applied. What the answer
+leaves behind is not a question about prompts but about the HARD RULE, which is **T7**.
+
+**T7. The daemon-unit carve-out of the HARD RULE (OPEN; the owner is asked to rule, and the plan does not resolve it).** `CLAUDE.md`'s HARD RULE is
+that **`fugaro update` is the whole upgrade**, with no other operator step: one missed or broken update loses the user's trust. Q2's answer takes the
+unit *out* of `update`, so after `brew upgrade` an installed daemon would keep running the old binary until somebody ran `fugaro orchestrator
+install` — exactly the hole the HARD RULE exists to close. The plan refuses to leave it open and closes the parts of it that need no operator step:
+**the daemon checks its own binary version each tick and, when the binary on disk is newer than the running process, exits cleanly, so launchd
+(`KeepAlive`) or systemd (`Restart=always`) starts the new binary from the stable path it already points at**, and **the state node's
+`schema_version` migration runs in the daemon's start-up** (O0's `Migrate`) rather than in `update`. What is left outside that is the **unit's own
+text**: a release that changes the rendered plist or unit template is re-rendered when a person runs `fugaro orchestrator install`, and Check 301 has
+the owner exercise a brew-style upgrade on a throwaway machine to see the self-restart work end to end. **This is a deliberate carve-out reading of
+the HARD RULE** — the daemon upgrades itself, `fugaro update` is still the one documented command, and the second command is run only when the unit's
+template changes, which a release may never do. **Unanswered: the owner rules.**
 
 **Round-3 open items (reported; two of the three are now ruled).** (1) **Answered 2026-11-04 (D1242): no task is gated on the paired-device channel.** It names no gated task because approvals are consumed in O6 and O8 and the terminal Typed confirmation stands for now; the later channel may reshape O0's `Approval`, and nothing here fixes that shape. (2) **Answered 2026-11-04, not the recommendation: the spec's retry row stands — an approval covers the first attempt and at most one automatic retry of the same approved spec.** The owner allowed the retry the spec's table wanted ("Task failed, first time: Code retries"); the plan had made one approval cover one attempt. `spec.md` is not edited; the correction is that one approval can now launch two runs, bounded by the caps, `Precheck` and the kill switch (section 3, "One approval covers the first attempt and at most one automatic retry"). (3) An ambiguous launch error stays in flight up to `ClaimTTL` (10 minutes, `launchRun`'s contract; the runner's `ErrDuplicateExecution` is the second fence), and a daemon's repeated "still in flight" ticks must not count toward the circuit breaker.
 
