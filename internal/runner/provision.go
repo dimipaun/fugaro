@@ -29,13 +29,17 @@ import (
 const CheckoutEnv = "FUGARO_CHECKOUT"
 
 // RemoteEnv is the job environment variable internal/infra sets to the
-// repository's credential-free clone URL on a checkout: clone or checkout:
-// shared workflow's job: the image has no checkout baked into it, so
-// bootstrap has to clone one, and this says from where. It is what fugaro
-// exec's --remote flag defaults to (internal/cli/exec.go), so the repository
-// reaches the runner the way every other job setting does, from the job's own
-// environment — without it a clone job on Cloud Run has no remote at all and
-// fails bootstrap with "this job has no repository to clone".
+// repository's credential-free clone URL on a job whose image has no checkout
+// of this repository baked into it: a checkout: clone or checkout: shared
+// workflow's job, and a job whose image is a prebuilt catalog entry (whose
+// image is shared by every repository that names the entry, so it can bake no
+// checkout). Bootstrap has to clone one, and this says from where. It is what
+// fugaro exec's --remote flag defaults to (internal/cli/exec.go), so the
+// repository reaches the runner the way every other job setting does, from the
+// job's own environment — without it such a job on Cloud Run has no remote at
+// all and fails bootstrap ("this job has no repository to clone" for a clone
+// job; gitops.OpenOrClone's "no git checkout and no remote to clone" for a
+// prebuilt entry's, which is not a clone job and so takes that path).
 //
 // Named here, in the runner, for the same reason CheckoutEnv is: the runner
 // is what reads it (Deps.Remote), and internal/infra sets it from this
