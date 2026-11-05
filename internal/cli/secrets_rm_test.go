@@ -282,6 +282,57 @@ func TestSecretsRmRefusesDryRunWithYes(t *testing.T) {
 	}
 }
 
+// TestSecretsRmRefusesAWorkflowSecretsKey: a name the local config holds in
+// workflow_secrets is refused, not half-removed. The two blocks are disjoint —
+// a workflow_secrets key may not be a reserved name and a project_secrets key
+// may not be anything else — and a workflow secret's container is the same
+// derived ID, so without this refusal the deletion would run and leave
+// workflow_secrets.NAME promising a value nothing mounts. Withdrawing that
+// block's entry together with its container is the workflow-secret work's, so
+// this command says so and removes nothing.
+func TestSecretsRmRefusesAWorkflowSecretsKey(t *testing.T) {
+	secretsRmFugaro(t)
+	sm := secretsFixture(t)
+	projectSecretFixture(t, "workflow_secrets:\n  deploy-token: { allow_data_to: [\"acme/app\"] }\n")
+	id := gcp.ProjectSecretID("aurora", "deploy-token")
+	sm.Seed(id, map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue,
+		gcp.LabelProject: "aurora",
+		gcp.LabelSecret:  "deploy-token",
+	}, []byte(tokenValue))
+	path := os.Getenv("FUGARO_CONFIG")
+	before := readFileString(t, path)
+
+	// The dry run is refused with the same sentence: a document describing a
+	// removal this command cannot make whole would read as a plan for one.
+	for _, args := range [][]string{
+		{"secrets", "rm", "deploy-token", "--yes"},
+		{"secrets", "rm", "deploy-token", "--dry-run", "--json"},
+	} {
+		out, errOut, err := execute(t, args...)
+		if err == nil {
+			t.Fatalf("%s removed a workflow secret's container:\nstdout %s\nstderr %s", strings.Join(args, " "), out, errOut)
+		}
+		for _, want := range []string{"workflow_secrets", "deploy-token", "project_secrets", "nothing was removed"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: the refusal does not carry %q:\n%v", strings.Join(args, " "), want, err)
+			}
+		}
+		if strings.Contains(out+errOut+err.Error(), tokenValue) {
+			t.Fatalf("%s leaked the value: %q %q %v", strings.Join(args, " "), out, errOut, err)
+		}
+	}
+	if got := sm.Deleted(); len(got) != 0 {
+		t.Fatalf("deleted %v", got)
+	}
+	if got := sm.Latest(id); got == nil {
+		t.Fatal("the container was taken away")
+	}
+	if after := readFileString(t, path); after != before {
+		t.Fatalf("the refusal wrote the config:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
 // TestSecretsRmReportsNothingToRemove: a name this project never stored and
 // whose entry the config does not hold is a state to report, not an error to
 // hand back — and nothing is deleted, because a delete of a derived ID that

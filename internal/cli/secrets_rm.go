@@ -64,6 +64,11 @@ Both halves go, and neither is left behind: an entry whose container is gone
 promises a value no job can mount, and a container with no entry is a value
 the project still holds after its owner asked for it to be withdrawn.
 
+A name your local config holds in workflow_secrets is refused rather than
+half-removed: this command takes project_secrets entries back, so the
+container would go and that block's entry would stay, which is the first of
+the two failures above.
+
 Deleting the container revokes nothing retroactively. A repository whose own
 copy has an enabled version keeps using it, and a job already deployed keeps
 the mount it was applied with until its next update — the command says which
@@ -127,6 +132,22 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 	sel, lc, err := settingsSelection()
 	if err != nil {
 		return err
+	}
+	// A name this config holds in workflow_secrets is refused rather than
+	// half-removed. The two blocks are disjoint by construction — a
+	// workflow_secrets key may not be one of the reserved names, and a
+	// project_secrets key may not be anything else — so this can never refuse a
+	// name this command was about to remove a project_secrets entry for. What
+	// it stops is the other half: a workflow secret's container is the same
+	// derived ID (F2), so the lookup below would find it and the deletion would
+	// run while workflow_secrets.NAME stayed in the file — an entry promising a
+	// value nothing can mount, which is the state D1171 gives this command the
+	// job of preventing. Removing that block's entry with its container is
+	// docs/project-workflow-secrets' W3, which extends this command; until it
+	// lands the name is refused here, before anything is read or deleted.
+	if _, workflow := lc.WorkflowSecrets[name]; workflow {
+		return userErr("refusing to remove %s: this local config holds it in workflow_secrets, not in project_secrets, and this command removes the project_secrets entry and the Secret Manager container together — deleting the container alone would leave workflow_secrets.%s promising a value nothing mounts; a workflow secret's own removal is not built yet, so nothing was removed",
+			pluginwire.Printable(name), pluginwire.Printable(name))
 	}
 	ctx := cmd.Context()
 	env, err := openCloud(ctx, o.cloud)

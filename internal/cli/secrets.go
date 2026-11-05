@@ -731,8 +731,15 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 	// anything is read — and before the session fence, because a name this
 	// block cannot hold is a mistake the person fixes whether or not a session
 	// is what refused the rest.
+	//
+	// The other block is named for the same reason: workflow_secrets holds
+	// exactly the names this one cannot, so an operator who wrote one there
+	// would read this sentence as a typo rather than as "that block's entry is
+	// not this flag's to write". Wiring the flag to it is
+	// docs/project-workflow-secrets' W3, and until that lands the name is
+	// refused here, so the sentence has to be the one that says so.
 	if _, reserved := config.ReservedSecrets[name]; !reserved {
-		return userErr("project_secrets holds the secrets Fugaro stores project-wide, and %s is not one of %s: it has no policy entry to write",
+		return userErr("project_secrets holds the secrets Fugaro stores project-wide, and %s is not one of %s: it has no project_secrets entry to write — a name this local config holds in workflow_secrets has an entry of that block instead, which this flag does not write yet",
 			pluginwire.Printable(name), strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "))
 	}
 	if cmd.Flags().Changed("repo") {

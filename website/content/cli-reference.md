@@ -4083,6 +4083,11 @@ Both halves go, and neither is left behind: an entry whose container is gone
 promises a value no job can mount, and a container with no entry is a value
 the project still holds after its owner asked for it to be withdrawn.
 
+A name your local config holds in workflow_secrets is refused rather than
+half-removed: this command takes project_secrets entries back, so the
+container would go and that block's entry would stay, which is the first of
+the two failures above.
+
 Deleting the container revokes nothing retroactively. A repository whose own
 copy has an enabled version keeps using it, and a job already deployed keeps
 the mount it was applied with until its next update — the command says which

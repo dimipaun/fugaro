@@ -212,6 +212,11 @@ func TestSecretsSetPolicyRefusesWhatItCannotWrite(t *testing.T) {
 		want string
 	}{
 		{"a name project_secrets cannot hold", []string{"secrets", "set", "web-token", "--proxy", "--yes"}, "project_secrets holds the secrets Fugaro stores project-wide"},
+		// The other block's names land here too, and the sentence has to say
+		// which block they belong to: workflow_secrets holds exactly the names
+		// project_secrets cannot, so a person who wrote one there would read a
+		// bare "not one of the reserved names" as a typo of their own.
+		{"a workflow secret's name", []string{"secrets", "set", "deploy-token", "--allow-data-to", "acme/web", "--yes"}, "workflow_secrets"},
 		{"a repository that is not owner/name", []string{"secrets", "set", "bitbucket-token", "--allow-data-to", "acme", "--yes"}, "must be a repository as owner/name"},
 		{"an owner wildcard", []string{"secrets", "set", "bitbucket-token", "--allow-data-to", "*/app", "--yes"}, "the owner segment must be literal"},
 		{"proxy on a name that is not the Bitbucket token", []string{"secrets", "set", "claude-oauth-token", "--proxy", "--yes"}, "the Bitbucket token's switch"},
