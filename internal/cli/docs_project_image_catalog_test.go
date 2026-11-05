@@ -243,6 +243,119 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		"An installation that names none takes no step at",
 	})
 
+	// The amendment: a repository build context for a dockerfile entry. It is a
+	// design, it decides nothing that is the owner's, and the assertions below
+	// hold the controls it turns on — the amended sentence kept verbatim beside
+	// its amendment, the record of what was built, the trigger the check reads
+	// without cloning, the credential kept out of the image, the skew a new
+	// member causes, and the tasks with their red steps and their order.
+	ctxPath := dir + "/context-design.md"
+	ctx := readDoc(t, ctxPath)
+	ctxSection := docSection(t, ctxPath, ctx, "# A repository build context for catalog `dockerfile` entries")
+	projectImageCatalogMustContain(t, ctxSection, ctxPath, "fact", []string{
+		// A design, and not an approval.
+		"**Status: design only. This is an amendment to [spec.md](spec.md), it is not approved, and no task in",
+		"**Nothing here is approved to build.**",
+		// The amended spec sentence, kept verbatim, and the amendment beside it.
+		"the amended sentence is quoted here verbatim and marked",
+		"Build context: a catalog entry can set it explicitly. By default, a repo-referenced Dockerfile uses",
+		"**AMENDED AFTER REVIEW (this design):**",
+		"**amended**: there is **no such default**.",
+		// The numbers: no D taken, no finding added.
+		"They are **not findings**",
+		"and **this amendment takes no",
+		// The four gaps, each read against the code.
+		"**G1. The owner's spec asks for a context and the code has none.**",
+		"**G2. The catalog build's context is the Dockerfile and nothing else.**",
+		"**G3. \"One commit\" is not guaranteed today.**",
+		"**G4. The removal works around G2 by hand.**",
+		"*\"a catalog build never clones a repository into the build context\"*",
+		// A1: the key, its own path rule, and no change for an entry without one.
+		"### A1. `context:` on a `source: { kind: dockerfile }` entry",
+		"gets `catalogContextMessage`, the same rules as the Dockerfile's path",
+		"An entry with **no** `context` keeps today's meaning exactly",
+		// A2: one commit.
+		"### A2. The Dockerfile and its context come from **one commit**",
+		"**One commit, named in",
+		// A3: the clone outside the Docker build.
+		"### A3. The context reaches the build by a clone **outside** the Docker build",
+		"`git -c credential.helper='store --file=/creds/git-credentials'`",
+		// A4: .dockerignore, and the checkout contract.
+		"### A4. What the context holds, `.dockerignore`, and the checkout contract",
+		"`.dockerignore` is read by Docker from the context root",
+		"**does not call `finalize-checkout`**",
+		// A5: the record and the trigger.
+		"### A5. The record, and the rebuild triggers",
+		"**`context_sha256`**, the identity of the context the image was built from.",
+		"**The check never clones.**",
+		"and never a checkout, never a blob tree, never a clone.",
+		// A6: the bounds, and what a huge context costs.
+		"### A6. Bounds, and what a huge context costs",
+		"**The context has no bound in the code today and this amendment does not add one**",
+		// A7: the node, the schema and the skew.
+		"### A7. The node, the schema and the skew",
+		"**`checkMemberNames` before the decoder runs**",
+		"**Whether the policy `Version` moves is the owner's, and it is O1**",
+		"and therefore the registry's **325 → 326** rows",
+		// A8: what does not change.
+		"### A8. What this amendment does not change",
+		"**An entry without `context`.** Byte for byte today's build",
+		// The D1208 pointer: no bake, and the original decision stands.
+		"entry's own Dockerfile does the clone, the warm-up and a final `finalize-checkout`, and the engine",
+		"is a reason against a bake, not",
+		// The security analysis, as an attacker would see it.
+		"### 4.1 Who can change the context's contents between the pin and the build",
+		"### 4.2 One commit means one tree",
+		"the Dockerfile cannot come from a newer commit than the context",
+		"### 4.3 A compromised repository already controls its Dockerfile",
+		"**A context adds no new principal and no new",
+		"### 4.4 The credential stays out of the image",
+		"- The credential's value lives in `/creds/git-credentials` on the `fugaro-creds` **volume**",
+		"### 4.5 What the amendment does not widen",
+		// The tasks, their red steps and their order.
+		"**Red step.** `TestCatalogContextAcceptsTheRepositoryRoot` fails",
+		"**Red step.** `TestCatalogCopyResolvesTheRefToOneCommit` fails",
+		"**Red step.** `TestCatalogContextStepClonesAtThePinnedCommit` fails",
+		"**Red step.** `TestCheckTriggersOnAContextChange` fails",
+		"**Depends on.** C1 (the field) and C2 (the commit).",
+		"**Critical path:** C1 or C2 → C3 → C4.",
+		"**Shared files.** No level has two writers of one file.",
+		// The live check is owner-run, and the release carries no second command.
+		"**no agent performs any step of it**",
+		"**no second command**, per the HARD RULE.",
+		// The four open items, and not one of them decided.
+		"### O1. Does the policy `Version` move?",
+		"### O2. How does the nightly check learn that the context moved?",
+		"### O3. Is the context bounded, and where?",
+		"### O4. Which release carries this build, and in what order against the removal?",
+		"**Recommendation: it does not.**",
+		"**Recommendation: the precise read**",
+		"**Recommendation: bounded where the CLI resolves it**",
+		"**Alternative: the context rides `max-age`.**",
+		"**Alternative: no bound.**",
+	})
+	projectImageCatalogMustContain(t, ctxSection, ctxPath, "structure", []string{
+		"## Numbers this amendment holds",
+		"## 1. The gaps (G1–G4)",
+		"## 2. The amendment (A1–A8)",
+		"## 3. What of the spec this amends, verbatim, with the original kept visible",
+		"## 4. The security analysis, as an attacker would see it",
+		"## 5. The build tasks (C1–C4)",
+		"## 6. Parallel execution",
+		"## 7. The live check",
+		"## 8. Release actions",
+		"## 9. Open items (O1–O4) — the owner's, and none is decided here",
+		"## 10. What this amendment is not",
+		"### C1. `context` in the source grammar, and its row",
+		"### C2. One commit: the copy resolves the ref and reads at it",
+		"### C3. The clone step, the `--file` build, and the record's field",
+		"### C4. The trigger, and the check's read",
+		"### 3.1 [spec.md](spec.md) §Where Dockerfiles live, last bullet — **amended after review**",
+		"| L0 | C1, C2 |",
+		"| L1 | C3 |",
+		"| L2 | C4 |",
+	})
+
 	// The README: the status, the two releases, the relationship to the shared
 	// images, the numbers and the file table.
 	readmePath := dir + "/README.md"
@@ -270,6 +383,14 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		"**How a `:line` in this folder reads.**",
 		"| **D1140–D1159** | this work's block.",
 		"**F1–F16** are this folder's own",
+		// The amendment, and the one thing it takes from nothing: the folder's
+		// D-block and its findings stay exactly what they are.
+		"**The amendment in [context-design.md](context-design.md) is reconciled against",
+		"It takes **no `D` number** and adds **no finding**",
+		"**The amendment does not edit the three files above.**",
+		"**The amendment takes no `D` number and adds no finding**",
+		"**Nothing in it is approved to build**",
+		"**It touches the removal's order and not its decisions.**",
 		// What the folder is not.
 		"**Not code.** It is a design",
 		"**Not a multi-repo job.**",
@@ -283,7 +404,9 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		"| [spec.md](spec.md) |",
 		"| [reconciliation.md](reconciliation.md) |",
 		"| [implementation-plan.md](implementation-plan.md) |",
+		"| [context-design.md](context-design.md) |",
 		"## How this relates to `docs/forge-authorship-images/`",
+		"## The amendment: a repository build context",
 		"## Numbers this work holds",
 		"## At merge, and before implementation",
 		"## What this folder is not",
