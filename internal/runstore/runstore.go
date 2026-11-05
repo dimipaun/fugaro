@@ -667,9 +667,11 @@ type Record struct {
 	// it — the runner's stage-start resolution: the account a
 	// stages.<stage>.claude_account override or default_claude_account names,
 	// and the one a failover took over with — so that writer needs no version
-	// move of its own. Nothing writes the field and nothing reads it: a map of
-	// account names is a new shape, and putting it on a screen goes through
-	// the console's redactor, which is a task of its own. Additive:
+	// move of its own. The runner writes it as each stage is given its
+	// environment (recordStageAccount, internal/runner/accountchoice.go), and
+	// nothing reads it yet: a map of account names is a new shape, and putting
+	// it on a screen goes through the console's redactor, which is a task of
+	// its own. Additive:
 	// OAuthAccount keeps the meaning it has (the account the run used last), a
 	// record written before this field decodes unchanged, and the format's
 	// version does not move (schemas/result.schema.json declares the
