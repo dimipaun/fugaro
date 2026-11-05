@@ -516,7 +516,7 @@ Three things make this the right carrier rather than an OCI label.
   `TemplateSalt: gcp.TemplateSalt(Version)`, and `Edition` is written on the next line, from the
   binary's own edition.
 
-The OCI labels are still set — `images/base/Dockerfile:313` already writes
+The OCI labels are still set — `images/base/Dockerfile:334` already writes
 `org.opencontainers.image.*`, and E1.4 adds the licence label naming MIT plus the Subscription Edition
 licence — they are simply not what the gate judges.
 
