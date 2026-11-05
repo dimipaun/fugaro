@@ -34,8 +34,8 @@ items in **O1–O7**:
 | --- | --- |
 | **G1–G4** | the gaps this amendment closes, read against the code. They are **not findings**: the folder's findings are **F1–F16** ([reconciliation.md](reconciliation.md) §1) and stay exactly those sixteen. A gap here is a place where the code and a sentence of the folder's own documents disagree; a finding is an ambiguity in the owner's spec. |
 | **A1–A8** | this amendment's own decisions, stated here in §2 with the recommendation and the cost of the alternative, the shape [reconciliation.md](reconciliation.md) §2 already uses for D1140–D1159 |
-| **O1–O4** | the **open items** — the owner's to answer, §9. **None of them is decided here.** |
-| **C1–C4** | the build tasks, §5. **Nothing is built and no task is approved.** |
+| **O1–O6** | the **open items** — the owner's to answer, §9. **None of them is decided here.** |
+| **C1–C5** | the build tasks, §5. **Nothing is built and no task is approved.** |
 
 ## 1. The gaps (G1–G4)
 
@@ -216,16 +216,23 @@ an entry built before this amendment rebuilds once and records the field. `Catal
 The trigger table ([reconciliation.md](reconciliation.md) §4) keeps its four rows, and
 **`catalog-definition` means one thing more**: the entry's definition changed when *either* the
 Dockerfile copy's sha256 **or** the context's identity differs from the record's. The context's
-identity is:
+identity is **the entry's branch head commit**, read once per entry per night: a change under the
+context on the branch means the branch moved, and the check rebuilds. That is wider than "a file under
+the context changed" — a commit anywhere on the branch fires it — and honest about it: it is one
+bounded ref read, it needs no tree walk, and `max-age` already rebuilds an idle entry on its own
+schedule. A **narrower** identity — a named path list, the shape `image.key_files` has, so a commit
+that touches nothing on it does not fire — is **not** part of this amendment: it would be a second key
+on the source with its own grammar, its own settings row and its own tests, and it is **O6**.
 
-- **the narrower path list, when the entry names one** (`context` carrying a `paths` list, the shape
-  `image.key_files` already has): a digest over the paths' identities at the entry's branch head. A
-  path that is gone fires the trigger; a path whose content changed fires it; a commit that touches
-  nothing on the list does not.
-- **the branch head's commit, when it does not**: a change under the context on the branch means the
-  branch moved, and the check rebuilds. Wider than "a file under the context changed" — a commit
-  anywhere on the branch fires it — and honest about it: it is one bounded ref read per entry per
-  night, it needs no tree walk, and `max-age` already rebuilds an idle entry on its own schedule.
+**A scheduled rebuild cannot advance that commit, and that has to be said before the trigger is
+believed.** `catalogCheckTarget.submit` (`internal/cli/image_check_catalog.go`) submits a rebuild with
+`SourceCommit: rec.SourceCommit` — the commit the entry's last build recorded — because the check job
+holds no repository credential and clones nothing, and its own comment says so: *"this job clones
+nothing, so the record is the only place it could read one"*. So a trigger that fires because the
+branch head moved would have the nightly rebuild clone the **old** commit again, build the same tree,
+record the same identity and fire again the next night. **What commit a scheduled rebuild of a
+context entry uses is the owner's, and it is O5**, and §4.2's one-commit rule is what rules out the
+cheap answer: advancing the context alone would put the Dockerfile and the tree at two commits.
 
 **The check never clones.** Today it reads bucket objects and no repository at all: the copied
 definition, the entry's record and the check's own state object, all through `t.bucket`
@@ -396,13 +403,22 @@ Three moments, and the answer at each:
    (`git fetch` of the recorded SHA), so a push changes nothing; a force-push that rewrites the commit
    and garbage-collects it makes the **fetch fail** — the build fails, it does not build a different
    tree. That is the property to want, and it is the one `imagecheck.GitTree.IsAncestor` gives the
-   workflow check's `built-commit-gone` today.
+   workflow check's `built-commit-gone` today. The Cloud Build step that clones today does **not** do
+   this: `images/derived/cloudbuild.yaml`'s `source` is `git clone --depth 1 --branch "$$BASE_BRANCH"`,
+   a branch tip. The fetch-by-SHA shape itself is already in the tree — inside the Dockerfile the
+   derived `render` writes, which the derived path runs against both providers — so what C3 adds is
+   that shape **as a Cloud Build step**, outside the Docker build, with the credential-helper file
+   instead of a BuildKit secret.
 3. **Between the build and the record.** The record step reads the pushed digest, the base digest, the
    commit and the definition's identity from files the pin step wrote and refuses anything that is not
    a digest; the record's `context_sha256` is the pin step's value, like the rest.
 
-Nothing here is new machinery: it is the shape the catalog path already has, with the commit brought
-into agreement with it (G3, A2).
+**Almost none of this is new machinery.** The credential file, the volume, the pin step's two
+verifications, the record's read-back and even the fetch of a commit that has left the branch are the
+shape the tree already has — the last of them inside the Dockerfile the derived `render` writes, which
+the derived path runs against GitHub and Bitbucket today — with the commit brought into agreement with
+the rest (G3, A2). The one thing that moves is **where** that fetch runs: from inside the Docker build,
+on a BuildKit secret, to a Cloud Build step outside it, on the credential-helper file (C3).
 
 ### 4.2 One commit means one tree
 
@@ -427,9 +443,16 @@ image — has always been a command the repository writes. **A context adds no n
 capability to that.** The same repository supplies both inputs, from the same commit, read with the
 same credential:
 
-- the repository cannot reach **another** repository's context: `context` is a path inside the entry's
-  **own** repository (`Source.Repo`), and the clone URL, its host and its port are checked by
-  `CheckRepoURL` before the credential is used, exactly as they are for the definition fetch;
+- the repository cannot reach **another** repository's context, and the fence that holds this is the
+  pair the tree already has rather than the URL check alone. `CheckRepoURL` (`internal/backend/gcp/build.go`)
+  checks the **host and the port** — it is what stops a credential being sent somewhere it is not
+  scoped to — but an entry naming another repository on the *same* provider host passes it. What keeps
+  the clone inside the entry's own repository is `sameRepo` (`internal/cli/init_repo_target.go`) and
+  `catalogEntryGuardOf` (`internal/cli/image_build_catalog.go`), which return `catalogEntryOtherRepo`
+  for a dockerfile source whose `Source.Repo` is not this checkout's repository, and
+  `catalogBuildWrongRepo` is the refusal. `context` is a path inside that same repository and adds no
+  second repository to reach: it is resolved at the entry's (already fenced) `Source.Repo`, at the
+  entry's branch, with the same credential the definition copy uses;
 - the repository cannot reach the **credentials service** or another repository's secret: the clone
   uses the same per-repository provider credential the copy already uses, and no build secret is added
   by a context (`_SECRET_ENVS`'s path is unchanged, D1150);
@@ -460,13 +483,16 @@ same credential:
 No new secret is read, no secret's scope changes, no bucket prefix is added, the copy stays read-only to
 the build account, the registry and its retention are untouched, and an entry that names no `context`
 submits the request it submits today. The one **new** read this design proposes is on the **check** side
-and it is not decided here (A5, **O2**): if the owner takes the precise trigger, the project-level
+and it is not decided here (A5, **O2**): if the owner takes the branch-head read, the project-level
 catalog check job gains a repository credential read per entry with a context, which is a grant a
 reviewer must read beside `internal/infra/tf/cover.go` the way every new principal's grant is read —
 and if the owner takes the alternative, no credential is read at all and the context's freshness rests
-on `max-age`.
+on `max-age`. **O5** prices the second new thing on that side, which is not a read but a **write**: a
+job that resolves the head and re-copies the Dockerfile would need a write grant on `builds/catalog/`
+that `CatalogReadCondition` deliberately withholds today — *"its catalog grant is read-only … and must
+stay so, or a repository's build could rewrite a definition every other repository's jobs run"*.
 
-## 5. The build tasks (C1–C4)
+## 5. The build tasks (C1–C5)
 
 **Nothing here is approved to build.** The task shape is
 [implementation-plan.md](implementation-plan.md)'s and [docs/bitbucket-credentials/](../bitbucket-credentials/implementation-plan.md)'s:
@@ -534,7 +560,20 @@ own pins did.
   `credential` and `dockerfile`; the Dockerfile copy written into the tree at its own
   repository-relative path; `--file` added to the build step only for such an entry; the record's new
   `context_sha256`; `_FUGARO_COMMIT` reaching the build as the resolved commit. **SEC** — it runs a
-  clone with the repository's credential.
+  fetch with the repository's credential.
+- **The fetch-by-SHA shape, and where it comes from.** Checking the context out **at a commit** needs
+  a fetch of a bare SHA, and the Cloud Build step that clones today does not have one:
+  `images/derived/cloudbuild.yaml`'s `source` step is `git clone --quiet --depth 1 --branch
+  "$$BASE_BRANCH"` — a branch tip. **The shape itself is not new to the tree**, and this is worth
+  saying precisely because the obvious reading is the other one: the Dockerfile the derived `render`
+  writes already fetches a commit that has left the branch —
+  `git cat-file -e "$commit^{commit}" || git fetch --quiet origin "$commit" || fail`, under the comment
+  *"which is fetched by itself when it is no longer on the branch. When it can't be fetched either, the
+  build fails, saying so"* — and the derived path runs that against GitHub **and Bitbucket** today. What
+  is new is doing it **as a step of the Cloud Build request, outside the Docker build**, with the
+  credential-helper file rather than a BuildKit secret. So the task **reuses** the rendered Dockerfile's
+  shape and its own failure message instead of inventing a second one, and the thing that needs a test
+  is the *location*, not the git invocation.
 - **Files (8).** `internal/backend/gcp/catalog.go`, `internal/backend/gcp/build.go` (the copy's
   destination path), `internal/backend/gcp/catalog_test.go` (the *no step clones* assertion becomes
   *an entry without a context has no clone step, and one with a context has exactly that step*),
@@ -543,6 +582,9 @@ own pins did.
   `fugaro-creds` volume the new step uses), `internal/backend/gcp/build_test.go`, and
   `internal/cli/image_build_catalog.go` (read: the confirmation and the copy order).
 - **Tests.** `TestCatalogContextStepClonesAtThePinnedCommit`,
+  `TestCatalogContextStepFetchesACommitThatHasLeftTheBranch` (the fetch-by-SHA half, against the fake
+  provider: the step fetches the commit, and a commit the remote no longer has fails the step with the
+  rendered Dockerfile's own message rather than building something else),
   `TestCatalogContextStepUsesTheCredentialFileAndNeverAURLArgument`,
   `TestCatalogContextKeepsTheCredentialOutOfTheImage`
   (no `/workspace/…creds` path, the teardown, the helper passed with `-c`),
@@ -561,23 +603,31 @@ own pins did.
 
 ### C4. The trigger, and the check's read
 
-- **Interface.** `imagecheck.CatalogRecordState.ContextSHA256` and the
-  `catalog-definition` rule of §A5 — the context's identity from the narrower path list, or from the
-  branch head's commit — with the check reading it **without cloning**. Its size depends on **O2**:
-  under the recommendation it is a bounded provider read per entry with a context; under the
-  alternative the trigger covers the copy alone and the context rides `max-age`. **SEC** — under the
-  recommendation the check reads a repository credential.
-- **Files (7).** `internal/imagecheck/check.go`, `internal/imagecheck/check_test.go`,
-  `internal/imagecheck/catalog.go`, `internal/cli/image_check_catalog.go`,
-  `internal/cli/image_check_catalog_test.go`, `internal/gitprov/gitprov.go` (read, if the path list is
-  taken: the file read that also answers an identity), and the folder's docs under
-  `docs/project-image-catalog/` **only if** this file's §A5 changes its recommendation when O2 is
+- **Interface.** `imagecheck.CatalogRecordState.ContextSHA256` and the `catalog-definition` rule of
+  §A5 — the context's identity is the entry's **branch head commit**, read once per entry with a
+  context, **without cloning** — plus whatever **O1** and **O5** are answered: an O5-answered-by-report
+  check returns a decision that names the command to run instead of submitting, and an
+  O5-answered-by-resolving check resolves the head and re-copies the Dockerfile (which needs the write
+  grant `CatalogReadCondition` withholds). Its size depends on **O2**: under the recommendation it is a
+  bounded provider read per entry with a context; under the alternative the trigger covers the copy
+  alone and the context rides `max-age`. **SEC** — under O2's recommendation the check reads a
+  repository credential, and under O5's resolving answer it also writes.
+- **Files (8).** `internal/imagecheck/check.go`, `internal/imagecheck/check_test.go`,
+  `internal/imagecheck/catalog.go`, `internal/cli/image_check_catalog.go` — in particular
+  **`catalogCheckTarget.submit`**, which is where a rebuilt entry's commit is chosen and where O5's
+  answer lands — `internal/cli/image_check_catalog_test.go`, `internal/gitprov/gitprov.go` (read: the
+  ref read the branch-head identity goes through), `internal/catalog/fetch.go` (read, if O5 is answered
+  by re-copying: the resolver the job would call), and the folder's docs under
+  `docs/project-image-catalog/` **only if** this file's §A5 changes its recommendation when O2 or O5 is
   answered.
 - **Tests.** `TestCheckTriggersOnAContextChange`,
-  `TestCheckDoesNotRebuildWhenOnlyTheNarrowerPathsAreUnchanged` (the negative that makes the trigger
-  worth having), `TestCheckRebuildsOnceWhenTheRecordPredatesTheContextField`,
+  `TestCheckDoesNotRebuildWhenNothingOnTheBranchMoved` (the negative that makes the trigger worth
+  having), `TestCheckRebuildsOnceWhenTheRecordPredatesTheContextField`,
   `TestCatalogCheckClonesNothing` (the property: no step, no clone, one bucket read and one bounded
-  provider read), `TestCatalogCheckRefusesUnreadableContextState`.
+  provider read), `TestCatalogCheckRefusesUnreadableContextState`,
+  `TestCatalogCheckDoesNotAdvanceTheCommit` (the honest half of A5, and it is the one that pins the
+  defect rather than the fix: the submission's `SourceCommit` is the record's, so a rebuild that fires
+  on a moved branch head rebuilds the **old** tree, and the test says so until O5 is answered).
 - **Command.** `GOFLAGS=-p=2 go test ./internal/imagecheck/ -run 'Catalog' -count=1` and
   `GOFLAGS=-p=2 go test ./internal/cli/ -run 'CatalogCheck' -count=1`.
 - **Red step.** `TestCheckTriggersOnAContextChange` fails: the record has no context field and the
@@ -589,26 +639,68 @@ own pins did.
   named live check below, and **no agent performs any step of it**.
 - **Commit:** `feat(imagecheck): the context is part of a catalog entry's definition`.
 
+### C5. `context`'s own skew gate, before a node carrying it is written
+
+- **Why this task exists, stated as the blast radius.** A7 says an older reader fails the whole
+  `image_catalog` decode, and the consequence is not local to the entry: `internal/runner/projectpolicy.go`
+  routes that failure through `policyReadError`, so **the run is refused** — in **every repository of
+  the project**, not only the one whose entry carries the `context`. One entry published with a
+  `context`, against an installation whose job image predates C1, stops every run that project
+  launches. The amendment's own release note ("upgrade every launcher before publishing it") is a
+  sentence, and a sentence is not a gate.
+- **Interface.** A `contextSince` constant and a `contextShipped` flag beside `imageCatalogSince` and
+  `imageCatalogShipped` (`internal/cli/recipes_skew.go`), and a `catalogContextSkew(where, ref, shipped,
+  warn)` in **exactly the shape `imageCatalogSkew` already has**: it judges the installation's **base
+  image** — the one a job that no catalog entry describes is built from, and therefore the one whose
+  fugaro must read `context` — and it refuses a ref whose release predates `contextSince`. It is asked
+  **where the entry is written** (the shape `imageCatalogGate` has: *"an entry added, removed or
+  promoted — and never where it is only read"*), so a `context` cannot reach the published node from an
+  installation that cannot run it. The remedy the refusal names is the one the tree already names —
+  `fugaro update --base base` in the operator's own terminal window, then `fugaro update`, which is
+  what moves the installation's base image pin and therefore converges the installation.
+- **Files (5).** `internal/cli/recipes_skew.go` (the constant, the flag and `catalogContextSkew`),
+  `internal/cli/recipes_skew_test.go`, `internal/cli/image_catalog.go` (the gate's call site beside
+  `imageCatalogGate`), `internal/cli/image_catalog_test.go`, and `docs/release.md`'s ("Before you tag")
+  checklist line for the new constant — which the tree's own comment asks for in the same commit that
+  adds one (*"update docs/release.md's checklist line for catalogSince in that commit too"*).
+- **Tests.** `TestCatalogContextSkewRefusesAnOlderBase`,
+  `TestCatalogContextSkewPassesAnImageAtContextSince`,
+  `TestCatalogContextSkewIsSpelledApartFromImageCatalogSince` (the pair F14 already guards for
+  `imageCatalogSince` vs `catalogSince`: one constant for two keys means a release can no longer ship
+  one without judging the other), `TestCatalogContextSkewWarnsOnAnUndatedRefWhenShipped`,
+  `TestCatalogContextIsNotWrittenAgainstAnOlderBase` (the gate is on the write path, not on the read).
+- **Command.** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'Skew|CatalogContext' -count=1`.
+- **Red step.** `TestCatalogContextSkewRefusesAnOlderBase` fails: `catalogContextSkew` does not exist,
+  so nothing refuses a `context` written against a base image that cannot read it.
+- **Depends on.** C1 (the field the gate judges) and the constant the release that ships C1 takes
+  (which is O4's to place).
+- **Reviewer:** standard (it is a refusal and a constant, not a credential path). **Owner-run:** no.
+- **Commit:** `feat(cli): refuse a context against a base image that cannot read one`.
+
 ## 6. Parallel execution
 
-**Edges** (from each "Depends on"): C1 → C3, C2 → C3, C2 → C4, C3 → C4.
+**Edges** (from each "Depends on"): C1 → C3, C2 → C3, C2 → C4, C3 → C4, C1 → C5.
 
 | Level | Tasks |
 | --- | --- |
 | L0 | C1, C2 |
-| L1 | C3 |
+| L1 | C3, C5 |
 | L2 | C4 |
 
 **Critical path:** C1 or C2 → C3 → C4. It is short and it is serial where it has to be: C3 is the only
 task that changes what a build submits, and C4 is the only one that changes what the check decides
 about a build it did not make, so a reviewer reads them **in order** — the record's field (C3) is the
-thing C4 reads.
+thing C4 reads. C5 hangs off C1 on the side and is not on the path: it adds a refusal in the CLI, and
+the record, the build and the check know nothing about it.
 
 **Must be sequential, and why.** C3 → C4 share `internal/backend/gcp/catalog.go`'s record shape and
 `internal/imagecheck`'s reader of it: the writer and the reader of one wire field land in that order,
 and a reader that lands first reads a field nobody writes. C1 → C3 share `internal/config/catalog.go`
 (C1 writes the field, C3 reads it), and C2 → C3 share the commit (C3 clones at the value C2's producer
-records).
+records). C1 → C5 is an ordering of **meaning**, not of files: the gate exists to judge a key, and it
+must not land before there is a key to judge. C5 is placed in the same release as C1 for that reason —
+a release that ships the field without the gate is the release whose node can stop every run in a
+project.
 
 **Shared files.** No level has two writers of one file. Recheck this whenever a task's Files line
 changes.
@@ -622,6 +714,8 @@ changes.
 | `internal/backend/gcp/catalog.go`, `internal/backend/gcp/build.go` | C3 (L1) |
 | `internal/imagecheck/check.go`, `catalog.go` | C4 (L2) |
 | `internal/cli/image_check_catalog.go` | C4 (L2) |
+| `internal/cli/recipes_skew.go`, `recipes_skew_test.go`, `docs/release.md` | C5 (L1) |
+| `internal/cli/image_catalog.go`, `image_catalog_test.go` | C5 (L1) — C5 **reads** the field C1 (L0) writes and does not write `internal/config/catalog.go`, so the two levels do not contend for a file |
 | `docs/project-image-catalog/context-design.md` | this design's own pull request (no task) |
 
 ## 7. The live check
@@ -635,9 +729,24 @@ on the sandbox and launches a run on it — and it is **owner-run**: **no agent 
 **The added step:** an entry whose source is a Dockerfile **with a `context`** is published, built
 (`fugaro image build <entry>`), and launched from; the owner confirms the run, confirms
 `docker history`/the image's `/work/repo` is at the commit in the record's `source_commit`, and confirms
-that a commit pushed to a path **outside** the context does **not** rebuild the entry while one pushed
-inside it does. Cost: one sandbox build and one run's spend; nothing created, enabled or deleted
-outside the sandbox.
+the checkout is the tree that commit holds — which is what the smoke's own `checkCheckout` asserts, and
+what exercises the one shape nothing has run before: the **fetch of a commit** as a Cloud Build step,
+against a **real** provider, on the installation's own repository.
+
+Then the trigger, and it must be observed rather than assumed, because the honest answer today is not
+the one a reader expects:
+
+- **Push an ordinary commit** to the entry's branch. The entry has no narrower identity (§A5), so the
+  branch head moved and `catalog-definition` fires — and the owner confirms **what the rebuild then
+  does**. Under O5's recommended answer the check **reports** rather than submitting, and the owner
+  confirms the report names the command; under O5's other answer the nightly rebuild **resolves the
+  head and re-copies the Dockerfile**, and the owner confirms the image's `/work/repo` is at the
+  **new** commit and not the one the previous record named. *The step exists because the second half is
+  a defect today*: `catalogCheckTarget.submit` submits `rec.SourceCommit`, so a rebuild that fires on a
+  moved branch head rebuilds the old tree, records the same identity and fires again the next night.
+
+Cost: one sandbox build, one run's spend and one pushed commit the owner reverts. Nothing created,
+enabled or deleted outside the sandbox.
 
 ## 8. Release actions
 
@@ -645,13 +754,19 @@ These go in the `### For operators` section of the release notes, in the pull re
 build ([docs/releases/README.md](../../docs/releases/README.md); each step labelled per-installation or
 per-repository).
 
-- **C1–C4, per installation: `fugaro update`**, and nothing else. The image pin moves, the field
+- **C1–C5, per installation: `fugaro update`**, and nothing else. The image pin moves, the field
   arrives in the code, and the node is published by the same policy stage that publishes
-  `verifier_accounts` — **no second command**, per the HARD RULE.
-- **C1–C4, per person, and only for an installation that publishes an entry carrying a `context`:
+  `verifier_accounts` — **no second command**, per the HARD RULE. C5's convergence is this same line
+  seen from the other side: the gate C5 adds refuses a `context` against an older base, and the command
+  the refusal names, `fugaro update --base base` followed by `fugaro update`, is what moves that base
+  and makes the refusal stop firing.
+- **C1–C5, per person, and only for an installation that publishes an entry carrying a `context`:
   upgrade every launcher before publishing it.** This is D1156's skew extended to a member (§A7): a
-  launcher whose CLI predates `context` **fails to decode the whole `image_catalog` block**, in the CLI
-  and in the runner, because the member names are checked strictly before the decoder runs. An
+  launcher whose CLI predates `context` **fails to decode the whole `image_catalog` block** — the block
+  is read with `dec.DisallowUnknownFields()`, so a member the reader does not know is an error and not
+  an ignored field — and in the **runner** that failure is not a warning: it routes through
+  `policyReadError` and **refuses the run**, in every repository of the project. C5 is the gate that
+  makes this sentence unnecessary rather than merely true, and it is why C5 ships in C1's release. An
   installation whose entries name no `context` writes the node it writes today and takes no step at
   all.
 - **Under O2's recommendation, per installation:** the catalog check job's service account gains its
@@ -659,7 +774,7 @@ per-repository).
   Terraform. This line exists **only if O2 is answered the recommended way**; the alternative adds no
   grant and no line.
 
-## 9. Open items (O1–O4) — the owner's, and none is decided here
+## 9. Open items (O1–O6) — the owner's, and none is decided here
 
 ### O1. Does the policy `Version` move?
 
@@ -668,9 +783,17 @@ per-repository).
   every older CLI one clean `SkewSentence` (*"this node is version 5; policy version 5 arrived in
   fugaro <release>"*, `internal/projectpolicy/version.go`) instead of a decode error about a member
   name, and it covers readers that predate `image_catalog` entirely.
+- **What the recommendation now rests on is C5**, and this is the price to read: without a gate, the
+  recommendation's failure mode is not a confusing error, it is **every run in the project refused**
+  (§C5) — the runner routes the failed decode through `policyReadError`. So the recommendation is only
+  sound if **C5 lands in C1's release**, in the same commit series: a release that models `context` and
+  publishes it before anything refuses it against an older base is the release that can stop a whole
+  project's runs from one entry.
 - **Cost of the recommendation:** a launcher that predates `context` but knows `image_catalog` fails
   with a member-name decode error rather than a version sentence — accurate but less helpful, and it
-  reaches the **runner** as well as the CLI.
+  reaches the **runner** as well as the CLI — plus C5's constant, its tests, its `docs/release.md`
+  checklist line and its own level in §6. C5 is a real cost, and it is the cost of choosing this
+  recommendation over the version bump.
 - **Cost of the alternative:** `version` is written into **every** node, so bumping it changes every
   project's bytes and forces an upgrade on installations that never write a catalog or a context —
   which is the byte-for-byte promise D1156's keep rule is built on. It is the heavier change and
@@ -678,12 +801,19 @@ per-repository).
 
 ### O2. How does the nightly check learn that the context moved?
 
-- **Recommendation: the precise read** (§A5's rule: the narrower path list where the entry names one,
-  the branch head's commit where it does not). The check reads one bounded provider read per entry with
-  a context and **never clones**, which is what keeps the catalog check's cost where D1148 put it.
+- **Recommendation: the branch-head read** (§A5's rule: the context's identity is the entry's branch
+  head commit). The check reads one bounded provider read per entry with a context and **never clones**,
+  which is what keeps the catalog check's cost where D1148 put it.
+- **A narrower read — a named path list, so a commit that touches nothing under the context does not
+  fire — is a second key on the source**, with its own grammar, its own settings row (which would move
+  the 325 → 326 in A7 to 327) and its own tests. This amendment does **not** define it, and **O6** is
+  where it sits.
 - **Cost of the recommendation:** the project-level check job gains a **repository credential read**
   per entry with a context, which is a new grant on a job that holds none today — Terraform, a
-  reviewer's read of `internal/infra/tf/cover.go`, and C4 becoming a **SEC** task.
+  reviewer's read of `internal/infra/tf/cover.go`, and C4 becoming a **SEC** task. And the read is only
+  worth paying for if **O5** is answered: a trigger that fires on a moved branch head, over a job that
+  cannot submit a build at the new commit, is a nightly rebuild of the same old tree — the read is the
+  trigger's precondition, and O5 is the trigger's point.
 - **Alternative: the context rides `max-age`.** No repository read at all, no grant, no Terraform, and
   C4 shrinks to the record's field and the age rule. The cost is the spec's own §Building rule: an
   upstream change the context depends on lands up to `max_age` late (14 days today, 7 once the
@@ -698,7 +828,8 @@ per-repository).
   and its refusal names the size it read and the number it may not exceed.
 - **Cost of the recommendation:** the publish path grows one provider read of the tree (a new
   capability beside the file read) and one more refusal to document; a repository over the bound must
-  narrow its context with a `paths` list or move the Dockerfile.
+  move its Dockerfile or narrow what it `COPY`s, because the named-path-list escape this design's first
+  draft assumed does not exist here (A5, **O6**).
 - **Alternative: no bound.** Cloud Build's own limits are the ceiling (the `3600s` timeout, the
   worker's disk, the daemon's context upload), the failure is a failed build the operator reads, and
   nothing new is added to the publish path. The cost is that a context bigger than a build can take is
@@ -706,24 +837,75 @@ per-repository).
 
 ### O4. Which release carries this build, and in what order against the removal?
 
-- **The reading in the tree.** [docs/repo-image-removal/](../repo-image-removal/README.md) puts the
-  removal of the per-repository `image:`/`dockerfile:` keys in **0.19.0** (the owner's move of
-  2026-11-04). This brief names the same removal chain as the **0.20.0** one. The two readings differ
-  by one release, and this file does not settle it: a reader should trust the folder that owns the
-  removal, and re-read it at merge.
-- **Recommendation: C1–C4 land in the removal's own release, ordered ahead of its first removal task.**
-  The removal's order ([implementation-plan.md](../repo-image-removal/implementation-plan.md) §2) and
-  its spec's own §How a repository migrates already require the entry to exist and be built before any
-  key is removed;
-  C3 is what lets an entry be a repository's ordinary CI Dockerfile, so it belongs in the same window
-  as R0 and ahead of R2–R8. Under either slot the ordering is identical — **catalog ships → C1–C4 →
-  R0 → … → R10** — and only the release number in the notes changes.
-- **Cost of the recommendation:** the removal's release carries one more SEC task (C2, C3, and C4 under
-  O2's recommendation) beside a slice that already carries four independent reviews, and the 0.19.0
-  tag's owner-run check reads one more step.
-- **Alternative: C1–C4 land in the release before the removal (0.19.0, with the removal moving to
-  0.20.0).** The removal's tasks then rest on a context key that has already shipped and been used at
-  least once, at the cost of a release's worth of delay in removing keys nobody is meant to keep using.
+- **The reading in the tree, settled by 0.19.0 shipping.** 0.19.0 is out and it did **not** carry the
+  removal: [docs/releases/v0.19.0.md](../releases/v0.19.0.md) states it — *"repository-image removal is
+  planned for 0.20.0"*. So the two readings this item used to hold open are closed: the removal is
+  **0.20.0's**, and the question that remains is only where C1–C5 sit against it.
+- **Recommendation: C1–C5 land in the removal's own release (0.20.0), ordered ahead of its first
+  removal task.** The removal's order ([implementation-plan.md](../repo-image-removal/implementation-plan.md)
+  §2) and its spec's own §How a repository migrates already require the entry to exist and be built
+  before any key is removed; C3 is what lets an entry be a repository's ordinary CI Dockerfile, so it
+  belongs in the same window as R0 and ahead of R2–R8. The ordering is — **catalog ships → C1–C5 →
+  R0 → … → R10**.
+- **Cost of the recommendation:** 0.20.0 carries four more SEC reviews (C2, C3, and C4 and C5 where O2
+  and O5 send them) beside a slice that already carries four of its own, and its owner-run check reads
+  one more step. That is the whole cost, and it is paid once.
+- **The alternative this item used to name — C1–C5 in a release before the removal — is gone.** 0.19.0
+  is the release that would have been it, and 0.19.0 shipped without this amendment, so the choice is
+  no longer available; there is nothing to decide here and the item is kept only so a reader of the
+  previous text is not left looking for it.
+
+### O5. What commit does a scheduled rebuild of a context entry use?
+
+This is A5's honest half, and it has to be answered before O2 is worth anything: the trigger fires on a
+moved branch head, and the job that fires it **cannot submit a build at the new commit**.
+
+- **The defect, in the tree.** `catalogCheckTarget.submit` (`internal/cli/image_check_catalog.go`)
+  submits with `SourceCommit: rec.SourceCommit` — the commit the entry's last build recorded — and its
+  own comment gives the reason: *"this job clones nothing, so the record is the only place it could read
+  one"*. So a rebuild fired by a moved branch head clones the **old** commit again, builds the same
+  tree, records the same `context_sha256` and fires again the next night: a nightly build that can never
+  move the entry.
+- **Recommendation: the trigger only reports.** The check fires `catalog-definition`, does not submit,
+  and says so: *"the context of <entry> moved at <commit>; run `fugaro image build <entry>` from its
+  repository's checkout"* — the shape the job already has for an entry **with no record at all**, whose
+  refusal currently reads *"fugaro image build <entry> from <repo>'s checkout builds it once, and the
+  schedule rebuilds it from then on"*. It needs **no new grant**, it keeps
+  `CatalogReadCondition` read-only — which its own comment says must stay so, *"or a repository's build
+  could rewrite a definition every other repository's jobs run"* — and it puts the build where the
+  operator's own credential already is.
+- **Cost of the recommendation:** the scheduled entry with a context is **not** rebuilt by the schedule;
+  the operator runs one command. That is a real loss against D1148's promise (*"scheduled security
+  rebuilds"*), and it is the smaller loss: the alternative rebuilds the *same* tree every night while
+  saying it rebuilt a new one.
+- **Alternative: the job resolves the head and re-copies the Dockerfile.** The check resolves the branch
+  head, reads the Dockerfile at it, writes the copy (read-compare-write, as `writeCatalogDockerfile`
+  does) and submits at the resolved commit — the same shape C2 gives the manual path, run by the job.
+  The entry is then genuinely rebuilt by the schedule.
+- **Cost of the alternative:** the check job needs a **write** grant on `builds/catalog/`, which
+  `CatalogReadCondition` deliberately withholds — the prefix every repository's jobs read and none may
+  write — so the fence that makes a catalog definition unrewritable by the thing that consumes it is
+  opened, and a reviewer has to judge that. It also needs the repository credential read O2 prices, and
+  it makes the scheduled path a second writer of the same objects the operator's `fugaro image build`
+  writes, which is a race the manual path does not have today.
+
+### O6. Does a context entry get a narrower identity than its branch head?
+
+- **Recommendation: not now.** A5's identity is the branch head, which is one bounded ref read, needs no
+  tree walk and fires on a commit that touches nothing under the context. That is wider than the spec's
+  *"rebuilds it only if its definition changed"* would like, and `max-age` already rebuilds an idle
+  entry; the cost of the wider read is a build, not a wrong image, because the build it fires rebuilds a
+  tree that did change somewhere on the branch.
+- **The alternative: a named path list on the source** — the shape `image.key_files` has, so only a
+  commit under those paths fires. It is a **second key** (`context_paths`, say), and it is not free: its
+  own grammar and refusal messages, its own `internal/settings/registry.go` row and
+  `schemas/settings.schema.json` member (moving A7's 325 → 326 to **325 → 327**), its own
+  `projectpolicy` member-name entry (a second skew surface, C5's subject), and its own tests — and it
+  only pays off for a repository whose branch churns outside its context, which is the case the
+  amendment has not seen yet.
+- **Cost of the recommendation:** the entry rebuilds more often than its context changed. **Cost of the
+  alternative:** a whole second key on the source for an optimisation, shipped before anyone has asked
+  for it.
 
 ## 10. What this amendment is not
 
