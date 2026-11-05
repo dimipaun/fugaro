@@ -467,7 +467,7 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 		// The plugin wiring is not in this list: its y/N is one of the
 		// prompts a managed project does not ask (init_plugin_stage.go).
 		if e.previewState(initflow.Checkout) == initflow.Todo {
-			sep = append(sep, "the checkout's image refresh, of which the gate judges one thing: the base image it pins by digest and the daily image check job's config ask as they always have, and each billable build of the checkout's job images goes through the gate's own per-build verdict and its bound (D1013) instead of a typed name")
+			sep = append(sep, "the checkout's image refresh, which asks nothing here either: the base image it pins by digest, the daily image check job's config and the checkout: clone workflow's job move are answered by the gate's own read of the marks (each still prints its diff), and each billable build of the checkout's job images goes through the gate's own per-build verdict and its bound (D1013) instead of a typed name")
 		}
 		if e.previewState(initflow.Policy) == initflow.Todo {
 			sep = append(sep, "migrating the published policy node in place when the migration loosens a ceiling, which takes the project's name: a Typed step is money or permanence, and no plan gate admits one (D1026)")
