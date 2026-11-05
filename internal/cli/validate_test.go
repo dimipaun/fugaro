@@ -3149,3 +3149,170 @@ func TestValidateReportsACatalogEntryItsProviderCannotFetch(t *testing.T) {
 		t.Errorf("catalogSourceProblems with no config = %+v, want none", ps)
 	}
 }
+
+// reviewInstallation writes the fugaro.yaml of a repository whose installation
+// has named a Claude account — the state the independent cloud review was built
+// for (D888: the first slice is `fugaro accounts add` plus the review job) and
+// the state CSR6's notes speak in. naming is false for the installation that
+// has named none, which is the state every one of those notes is silent in.
+func reviewInstallation(t *testing.T, naming bool, local, agent, fileBlock string) string {
+	t.Helper()
+	isolateProjects(t, t.TempDir())
+	if naming {
+		local += "claude_accounts:\n  team-a:\n    allow_data_to:\n      - acme/sandbox\n"
+	}
+	projectRouting(t, local)
+	body := cliMinimalYAML
+	if agent != "" {
+		body = strings.Replace(cliMinimalYAML, "workflows:", "agent:\n"+agent+"\nworkflows:", 1)
+	}
+	return writeConfig(t, body+fileBlock)
+}
+
+// TestValidateNotesTheArtifactOutputCap (CSR6, D886): the reviewer's per-call
+// output limit is what the review job's verdict artifact is written under, and
+// a figure sized for a conversational reply clips it — a truncated artifact is
+// a failed review and never a shorter ship — so validate says how the artifact
+// needs it set. The figure is a policy key, so the note names the installation
+// ceiling too.
+//
+// It is a note and never a refusal: whether a review is ever launched is not a
+// fact this file decides, and a repository that wants a tighter cap for its
+// other stages keeps it. An installation that has named no Claude account gets
+// no note, and neither does a file that leaves the key unset.
+func TestValidateNotesTheArtifactOutputCap(t *testing.T) {
+	capNote := func(errOut string) []string {
+		t.Helper()
+		var got []string
+		for _, line := range strings.Split(errOut, "\n") {
+			if rest, ok := strings.CutPrefix(line, "note: agent.max_output_tokens.reviewer: "); ok {
+				got = append(got, rest)
+			}
+		}
+		return got
+	}
+	for _, tc := range []struct {
+		name     string
+		accounts bool
+		agent    string
+		want     bool
+	}{
+		{name: "below the artifact", accounts: true, agent: "  max_output_tokens: { reviewer: 8192 }", want: true},
+		{name: "at the artifact", accounts: true, agent: "  max_output_tokens: { reviewer: 32000 }"},
+		{name: "no cap", accounts: true, agent: "  max_output_tokens: { coder: 8192 }"},
+		{name: "no named account", agent: "  max_output_tokens: { reviewer: 8192 }"},
+	} {
+		path := reviewInstallation(t, tc.accounts, "", tc.agent, "")
+		out, errOut, err := execute(t, "validate", path)
+		if err != nil || !strings.Contains(out, "is valid") {
+			t.Fatalf("%s: validate must not refuse a tight cap: %v\nout: %s\nerr: %s", tc.name, err, out, errOut)
+		}
+		got := capNote(errOut)
+		if !tc.want {
+			if len(got) != 0 {
+				t.Fatalf("%s: noted though no review job's artifact is at stake: %q", tc.name, got)
+			}
+			continue
+		}
+		if len(got) != 1 {
+			t.Fatalf("%s: cap notes = %q (stderr %q)", tc.name, got, errOut)
+		}
+		for _, want := range []string{"8192", "D886", "a policy key"} {
+			if !strings.Contains(got[0], want) {
+				t.Errorf("%s: the note does not say %q: %q", tc.name, want, got[0])
+			}
+		}
+	}
+}
+
+// TestValidateNotesTheCredentialsServicePrecondition (CSR6, E7): a review job
+// mounts no credential of its own, so its read-only installation token and its
+// account's model calls both come from the installation's credentials service
+// — and the installation must be able to see, before anything is launched,
+// which half of that precondition it is missing. Validate says it as a note,
+// never a refusal: nothing in a fugaro.yaml is what is missing.
+//
+// The two halves are named separately because only one of them is reachable
+// from `fugaro update`: the note names the command that supplies the first, and
+// says in as many words that no fugaro update supplies the second, which is the
+// admission of a project-scoped caller inside the service itself (C3.9). A note
+// that told the owner to run a second command for it would send them looking
+// for one that does not exist, and one that stayed silent about it would read
+// as "the review will work once the service is deployed".
+func TestValidateNotesTheCredentialsServicePrecondition(t *testing.T) {
+	const service = "credentials_service: { url: https://fugaro-credentials-abcde-uc.a.run.app }\n"
+	preconditionNote := func(errOut string) []string {
+		t.Helper()
+		var got []string
+		for _, line := range strings.Split(errOut, "\n") {
+			if rest, ok := strings.CutPrefix(line, "note: credentials_service: "); ok {
+				got = append(got, rest)
+			}
+		}
+		return got
+	}
+	for _, tc := range []struct {
+		name     string
+		local    string
+		accounts bool
+		admitted bool
+		want     []string
+		avoid    []string
+	}{
+		{
+			name: "both halves, on this tree", accounts: true,
+			want: []string{"both halves", "fugaro update --provision-credentials", "fugaro creds set github-app-key",
+				"the service's own admission of the review job's caller", "no fugaro update supplies that half"},
+		},
+		{
+			name: "the admission is the missing half", accounts: true, local: service, admitted: false,
+			want:  []string{"does not admit the review job's own caller", "No fugaro update supplies this half"},
+			avoid: []string{"--provision-credentials"},
+		},
+		{
+			name: "the service is off, and the admission is built", accounts: true, admitted: true,
+			want:  []string{"fugaro update --provision-credentials", "fugaro creds set github-app-key"},
+			avoid: []string{"does not admit"},
+		},
+		{
+			name: "both halves hold", accounts: true, local: service, admitted: true,
+		},
+		{
+			name: "no named account", local: service,
+		},
+	} {
+		if tc.admitted {
+			admitReviewJob(t)
+		}
+		path := reviewInstallation(t, tc.accounts, tc.local, "", "")
+		out, errOut, err := execute(t, "validate", path)
+		if err != nil || !strings.Contains(out, "is valid") {
+			t.Fatalf("%s: validate must not refuse the installation's own state: %v\nout: %s\nerr: %s", tc.name, err, out, errOut)
+		}
+		got := preconditionNote(errOut)
+		if len(tc.want) == 0 {
+			if len(got) != 0 {
+				t.Fatalf("%s: noted though the cloud reviewer is not at stake: %q", tc.name, got)
+			}
+			continue
+		}
+		if len(got) != 1 {
+			t.Fatalf("%s: precondition notes = %q (stderr %q)", tc.name, got, errOut)
+		}
+		for _, want := range tc.want {
+			if !strings.Contains(got[0], want) {
+				t.Errorf("%s: the note does not say %q: %q", tc.name, want, got[0])
+			}
+		}
+		for _, avoid := range tc.avoid {
+			if strings.Contains(got[0], avoid) {
+				t.Errorf("%s: the note says %q, which is not the half that is missing: %q", tc.name, avoid, got[0])
+			}
+		}
+		// No half's note may read as "deploy the service and the review works":
+		// the command that cannot run yet is named in every one of them.
+		if !strings.Contains(got[0], "fugaro review --pr N refuses") {
+			t.Errorf("%s: the note does not name the launch that refuses: %q", tc.name, got[0])
+		}
+	}
+}
