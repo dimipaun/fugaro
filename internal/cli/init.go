@@ -527,6 +527,15 @@ type initRun struct {
 	// confirmations they always had.
 	gate *initGate
 
+	// refresh is `fugaro image refresh`'s own read of the same marks
+	// (openRefreshManaged), set by runImageRefresh and nil in every other run.
+	// It is what the refresh's steps that are not builds — the base pin, the
+	// daily image check job's config and the clone workflow's job move — ask
+	// whether the gate has taken their confirmation
+	// (refreshManaged.asksNothing): they judge no document of the gate's, and
+	// their confirmation is the ruling of 2026-11-01 rather than a verdict.
+	refresh *refreshManaged
+
 	// managed is true once this run read that the project it installs into
 	// is managed (managedProject): a guard refusal's text is then the managed
 	// one. Only true is remembered; false and an error are read again.
@@ -1628,9 +1637,24 @@ func (r *initRun) yesRoute() string {
 // a terminal and without --yes it isn't. In a coding agent's session it is
 // an *initflow.AgentError before anything is shown as confirmed: nothing a
 // run applies is confirmed there.
+//
+// The one session that is shown the banner and asked nothing is the owner's
+// own, in a managed project, at the step of the one command whose gate is its
+// own: `fugaro image refresh`'s non-build steps (r.refresh). The banner and
+// the diff above it are the whole of what the owner reads there, the sentence
+// says why, and the step goes on — the ruling of 2026-11-01, and the same
+// shape the plugin wiring's y/N and the IAM removals already have
+// (gateUnderway). Nothing else moves: a project that is not managed, a mark
+// that did not answer and a session with no terminal or with --yes reach the
+// lines below exactly as they always did.
 func (r *initRun) ask(what string) (bool, error) {
 	if m := agentMarker(os.Getenv); m != "" {
 		return false, &initflow.AgentError{Marker: m}
+	}
+	if r.refresh.asksNothing(r.conditions()) {
+		fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+		fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
+		return true, nil
 	}
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 	if r.o.yes && !r.o.planOnly {

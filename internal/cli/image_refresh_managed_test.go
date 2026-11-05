@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	managed "github.com/dimipaun/fugaro/internal/infra/managed"
@@ -579,6 +581,211 @@ func TestImageRefreshManagedOwnerTerminalAsksNoBuildQuestion(t *testing.T) {
 				t.Errorf("what the owner read is not the cost line and the verdict:\n%s", got)
 			}
 			if strings.Contains(out.String(), "Type "+initProjectName+" to confirm") {
+				t.Errorf("a managed project's own terminal was asked for the project's name anyway:\n%s", out)
+			}
+		})
+	}
+}
+
+// terminalRefresh is the owner's own run of this rig's refresh: no coding
+// agent's marker, a fake terminal whose output the caller reads, and the gate's
+// read put on the run where runImageRefresh puts it (r.refresh, which is what
+// the steps that are not builds ask). It fails the test when the door answered
+// something other than want, because every caller below means one of the two
+// worlds and needs the other one to be the one it says.
+func (r *managedRefresh) terminalRefresh(t *testing.T, want bool) *syncBuf {
+	t.Helper()
+	noAgentSession(t)
+	out := atTerminal(t, r.e, "")
+	m := openRefreshManaged(t.Context(), r.e.r.cmd, refreshOptions{}, &initOptions{})
+	if (m != nil) != want {
+		t.Fatalf("the gate's door answered %v, want managed=%v", m != nil, want)
+	}
+	r.e.r.refresh = m
+	return out
+}
+
+// managedOrUnproven is the two worlds every test below is run in: a managed
+// project, whose marks the gate read and where the owner is asked nothing, and
+// a project whose creation fact this program does not believe (a marker a newer
+// Fugaro wrote), which is where every question this command has always asked
+// stays exactly as it was.
+func managedOrUnproven() []struct {
+	what    string
+	marker  []byte
+	managed bool
+} {
+	return []struct {
+		what    string
+		marker  []byte
+		managed bool
+	}{
+		{"managed: the marks are read and the step asks nothing", managedRefreshMarker(1), true},
+		{"unproven: the step is the question it has always been", managedRefreshUnknownVersionMarker(), false},
+	}
+}
+
+// The daily image check job (step 3) takes no confirmation in a managed
+// project's own terminal either (the ruling of 2026-11-01: the whole point of a
+// managed project is that the gate manages it on the owner's behalf, without
+// the prompts). What replaces the typed project name is the gate's own read of
+// the marks and the sentence that says so, printed under the diff the typed
+// name would have been asked above; the job is updated.
+//
+// The control is the whole of what makes that safe, and it is the same step
+// with the same terminal: an unproven project is asked exactly as it always
+// was, and with nothing typed the job is not written.
+//
+// The mutation caught: refreshManaged.asksNothing answering true whatever it is
+// handed — the unproven project's job is then updated with no question asked at
+// all and this test fails on its own control (1 patch, no error, no typed
+// name).
+func TestImageRefreshManagedOwnerTerminalAsksNoCheckJobQuestion(t *testing.T) {
+	useVersion(t, "0.5.1")
+	for _, tc := range managedOrUnproven() {
+		t.Run(tc.what, func(t *testing.T) {
+			r := newManagedRefreshRig(t, tc.marker)
+			out := r.terminalRefresh(t, tc.managed)
+			slug, label := checkJobOwner(t, "github", "acme/app")
+			oldRef, newRef := managedRef("base", "0.4.0"), managedRef("base", "0.5.1")
+			spec, err := json.Marshal(infra.CheckJobSpec{Repo: r.tg.spec.Name, BaseImages: map[string]string{"base": oldRef}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.run.SetJob(gcp.CheckJobName(slug), map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRole: gcp.RoleCheck, gcp.LabelRepo: label}, oldRef)
+			r.run.SetJobEnv(gcp.CheckJobName(slug), map[string]string{infra.CheckSpecEnv: string(spec)})
+			r.tg.spec.Label, r.tg.kinds = label, []string{"base"}
+			r.tg.lc.BaseImages = map[string]string{"base": newRef}
+			err = r.e.r.refreshCheckJob(t.Context(), r.tg)
+			if !tc.managed {
+				if err == nil || len(r.run.Patches()) != 0 {
+					t.Fatalf("an unproven project's check job was updated without the typed name: %v, %d patches\n%s", err, len(r.run.Patches()), out)
+				}
+				if !strings.Contains(out.String(), "Type "+initProjectName+" to apply to GCP project") {
+					t.Errorf("the terminal was not asked for the project's name:\n%s", out)
+				}
+				if strings.Contains(out.String(), initflow.GateOrdinary()) {
+					t.Errorf("the gate's sentence was printed for a project it did not judge:\n%s", out)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a managed project's own terminal was stopped at the check job: %v\n%s", err, out)
+			}
+			for _, want := range []string{"image " + oldRef + " -> " + newRef, initflow.GateOrdinary(), "updated the daily image check job"} {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("output lacks %q:\n%s", want, out)
+				}
+			}
+			if strings.Contains(out.String(), "Type "+initProjectName+" to apply to GCP project") {
+				t.Errorf("a managed project's own terminal was asked for the project's name anyway:\n%s", out)
+			}
+			if n := len(r.run.Patches()); n != 1 {
+				t.Fatalf("%d patches, want 1 (the check job's image and its spec moved together)", n)
+			}
+		})
+	}
+}
+
+// The checkout: clone workflow's job move (step 4's first half) takes no
+// confirmation in a managed project's own terminal either, and it submits no
+// Cloud Build: what the owner reads is the old and new image, the sentence
+// that says why nothing is asked, and the line that the job was updated. The
+// control is the same move in the same terminal with a creation fact this
+// program does not believe: the typed name is asked, and a terminal with
+// nothing typed leaves the job at the image it had.
+//
+// The mutation caught: refreshManaged.asksNothing answering true whatever it is
+// handed — the control's job is moved with no question asked, which is the
+// write this whole rule exists to keep behind the marks.
+func TestImageRefreshManagedOwnerTerminalAsksNoCloneJobQuestion(t *testing.T) {
+	useVersion(t, "0.5.1")
+	for _, tc := range managedOrUnproven() {
+		t.Run(tc.what, func(t *testing.T) {
+			r := newManagedRefreshRig(t, tc.marker)
+			out := r.terminalRefresh(t, tc.managed)
+			fb := useFakeBuilder(t)
+			slug, label := checkJobOwner(t, "github", "acme/app")
+			oldRef, newRef := managedRef("base", "0.4.0"), managedRef("base", "0.5.1")
+			jobName := gcp.JobName(slug, "app")
+			r.run.SetJob(jobName, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelWorkflow: "app"}, oldRef)
+			r.run.SetJobEnv(jobName, map[string]string{infra.CheckoutEnv: config.CheckoutClone})
+			r.tg.lc.BaseImages = map[string]string{config.BaseKind: newRef}
+			cfg, problems := config.Parse([]byte(cloneOnlyYAML))
+			if cfg == nil {
+				t.Fatal(problems)
+			}
+			r.tg.cfg, r.tg.spec.Label = cfg, label
+			r.tg.spec.Workflows = map[string]infra.WorkflowSpec{"app": {Job: jobName}}
+			p := &refreshPlan{workflows: []string{"app"}}
+			err := r.e.r.refreshBuilds(t.Context(), p, r.tg)
+			if !tc.managed {
+				if err == nil || len(r.run.Patches()) != 0 {
+					t.Fatalf("an unproven project's clone job was moved without the typed name: %v, %d patches\n%s", err, len(r.run.Patches()), out)
+				}
+				if !strings.Contains(out.String(), "Type "+initProjectName+" to apply to GCP project") {
+					t.Errorf("the terminal was not asked for the project's name:\n%s", out)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a managed project's own terminal was stopped at the clone job: %v\n%s", err, out)
+			}
+			for _, want := range []string{"app: image " + oldRef + " -> " + newRef, initflow.GateOrdinary(), "updated app's job"} {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("output lacks %q:\n%s", want, out)
+				}
+			}
+			if strings.Contains(out.String(), "Type "+initProjectName+" to apply to GCP project") {
+				t.Errorf("a managed project's own terminal was asked for the project's name anyway:\n%s", out)
+			}
+			if n := len(r.run.Patches()); n != 1 {
+				t.Fatalf("%d patches, want 1 (the clone job's image moved)", n)
+			}
+			if len(fb.specs) != 0 {
+				t.Fatalf("a Cloud Build was submitted for a checkout: clone workflow: %+v", fb.specs)
+			}
+		})
+	}
+}
+
+// The base pin (step 2) is the third of the refresh's steps that are not
+// builds, and it asks through the images stage's own confirmOrdinary — the
+// route this test drives, with the empty notCovered a refresh run gives it (a
+// refresh sets no review, so there is no run confirmation for a plan to be
+// outside of). In a managed project's own terminal it is confirmed by the
+// gate's read and the sentence that says so; in a project the gate did not
+// believe, it is the typed question it has always been, which a terminal with
+// nothing typed leaves unconfirmed.
+//
+// The mutation caught: refreshManaged.asksNothing answering true whatever it is
+// handed — the control is confirmed with nothing typed, so the caller is told
+// nothing was copied and nothing was pinned and this test fails on its own
+// control.
+func TestImageRefreshManagedOwnerTerminalAsksNoBasePinQuestion(t *testing.T) {
+	useVersion(t, "0.5.1")
+	const what = "copies the release base image into this project's registry and pins it by digest in the local config, as listed above"
+	for _, tc := range managedOrUnproven() {
+		t.Run(tc.what, func(t *testing.T) {
+			r := newManagedRefreshRig(t, tc.marker)
+			out := r.terminalRefresh(t, tc.managed)
+			err := r.e.r.confirmOrdinary(what, "nothing was copied and nothing was pinned", "")
+			if !tc.managed {
+				if err == nil || !strings.Contains(err.Error(), "not confirmed") {
+					t.Fatalf("an unproven project's base pin was confirmed without the typed name: %v\n%s", err, out)
+				}
+				if !strings.Contains(out.String(), "Type "+initProjectName+" to apply to GCP project") {
+					t.Errorf("the terminal was not asked for the project's name:\n%s", out)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a managed project's own terminal was stopped at the base pin: %v\n%s", err, out)
+			}
+			if got := out.String(); !strings.Contains(got, what) || !strings.Contains(got, initflow.GateOrdinary()) {
+				t.Errorf("what the owner read is not the plan and the sentence that says why nothing is asked:\n%s", got)
+			}
+			if strings.Contains(out.String(), "Type "+initProjectName+" to apply to GCP project") {
 				t.Errorf("a managed project's own terminal was asked for the project's name anyway:\n%s", out)
 			}
 		})

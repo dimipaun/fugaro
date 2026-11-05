@@ -497,13 +497,20 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 		return err
 	}
 	// yes carries --yes to r.confirm/r.ask (steps 2 and 3) and to
-	// refreshBuilds (step 4, which keeps its own rule: see askBuild).
+	// refreshBuilds (step 4, which keeps its own rule: see askBuild). The steps
+	// behind r.confirm/r.ask ask the gate beside it: in a managed project's own
+	// terminal the marks are read and the typed name is replaced
+	// (refreshManaged.asksNothing, and r.refresh below).
 	iopts := &initOptions{cloud: o.cloud, imageSource: o.imageSource, expectDigests: o.expectDigests, yes: o.yes}
 	o.managed = openRefreshManaged(ctx, cmd, o, iopts)
 	if err := refuseRefreshHere(cmd, o.yes, o.managed); err != nil {
 		return err
 	}
 	r := newInitRun(cmd, iopts)
+	// The steps that are not builds ask the run whether the gate has taken
+	// their confirmation (r.ask, refreshManaged.asksNothing): the read above is
+	// the whole of the permission there, and a nil one is every other session.
+	r.refresh = o.managed
 	if o.in != nil {
 		// The caller's reader, not a second one over the same stdin: see
 		// refreshOptions.in.

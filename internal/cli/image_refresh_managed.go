@@ -44,13 +44,23 @@ import (
 // helper. The command's own write (the Cloud Build submission) and the
 // helper's `recorded` call follow in refreshBuilds.
 //
-// What this file does NOT gate, said here rather than left to be discovered.
-// Steps 2 and 3 — the base pin and the daily image check job — keep their own
-// confirmations and their own coding-agent refusal: they are not builds, they
-// are not billable, and the confirmations they take are not this task's files
-// (init_images.go and init_review.go). A session that reaches either of them
-// with work to do is refused there, which is the pre-M4 behaviour and not a
-// widening of it.
+// What this file does NOT judge, said here rather than left to be discovered.
+// Steps 2 and 3 — the base pin and the daily image check job — and step 4's
+// first half (the clone workflow's job move) are not builds, they are not
+// billable, and no per-build document of the gate's names them. Two things
+// follow, and they are different for two different readers:
+//
+//   - The owner at their own terminal is asked nothing for any of them, which
+//     is the ruling of 2026-11-01 and what asksNothing below decides. The
+//     gate's read is the whole of the permission there: the marks say the
+//     project is managed, and what the owner would have typed is replaced by
+//     the sentence that says so (initflow.GateOrdinary), printed under the
+//     same diff the typed name would have been asked above.
+//   - A coding agent's session keeps the refusal it has always had at these
+//     three steps, because a step the gate has no document for is not a step
+//     this design admits a session to (D1016, D1021) — and a refusal is not a
+//     prompt. The build that IS the gate's document is admitted per build
+//     (admitBuild), and that is the widening M4 exists for.
 
 // refreshManaged is a managed project's refresh in progress: the one gate
 // helper M6 owns, the installation the gate read, and the count of builds this
@@ -122,6 +132,32 @@ func openRefreshManaged(ctx context.Context, cmd *cobra.Command, o refreshOption
 		return nil
 	}
 	return &refreshManaged{gate: gate, lc: lc, lcPath: path, lcOld: old, s: c.Storage, crm: c.CRM, db: db}
+}
+
+// asksNothing is whether one of this refresh's own steps — the base pin (step
+// 2), the daily image check job's config (step 3) and the checkout: clone
+// workflow's job move (step 4's first half) — takes no confirmation here: the
+// marks the gate read say the project is managed (m is non-nil exactly then),
+// and the person who would have been asked is at their own terminal.
+//
+// Why each condition is asked, and what each one keeps out. m is the gate's
+// own read, so an unreadable mark, a project this program cannot prove is
+// managed and a command that never read at all answer false (openRefreshManaged
+// reads only where the refusal would have been made or the typed name asked).
+// The marker is asked for because a coding agent's session is NOT answered
+// here: these three steps judge no document of the gate's, so a session that
+// reached one with work to do is refused at it, exactly as it was before this
+// row — that is initflow's AgentError, and it is the reply ask gives before
+// this question is even reached. --yes is asked for because a run with it has
+// answered every step itself ("confirmed by --yes" is the line it reads), and
+// the three ways a run cannot be asked at all — --non-interactive, --json and
+// a pipe — because a step nobody can confirm is not a step this replaces.
+//
+// What is NOT here is any verdict about a document: the class rule is
+// untouched (these are the ordinary YesOrTyped steps of their own command),
+// and no admission is invented for a step the gate never judged.
+func (m *refreshManaged) asksNothing(c initflow.Conditions) bool {
+	return m != nil && c.Agent == "" && c.Terminal && !c.Yes && !c.NonInteractive && !c.JSON
 }
 
 // refreshGateFacts is this command's own facts about itself, as M6's helper
