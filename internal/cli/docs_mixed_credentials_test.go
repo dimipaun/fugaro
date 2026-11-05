@@ -257,12 +257,15 @@ func TestSecurityMdStatesTheMixedRunResidual(t *testing.T) {
 		"no dollar cap of the gateway's on the stages that use it",
 		"revocable at the account",
 		"design/mixed-credentials.md",
-		// The ruling is a ruling, not behaviour: a security document that
-		// states an unbuilt mechanism in the present tense, inside a list of
-		// today's gaps, claims a boundary the tree does not have yet. B1 (the
-		// config rule and the launch) is built, and what this bullet describes
-		// — the token's mount and the stage's own environment — is not.
-		"not built yet (B2",
+		// The ruling is a ruling, and the mechanism it rules on shipped: a
+		// security document that describes a built mechanism as unbuilt, inside
+		// a list of today's gaps, tells a reader their exposure is smaller than
+		// it is. B1–B5 are built (the config rule and the launch, the mount,
+		// the stage's own environment and its managed settings, the notional
+		// accounting, and the usage-limit text), and the only half still unbuilt
+		// is the separate job execution the section says is not.
+		"its tasks B1–B5 shipped in 0.19.0",
+		"the job's mount of the account's token (B2)",
 	} {
 		if !strings.Contains(limits, want) {
 			t.Errorf("%s's \"### Known limits\" never says %q: the residual the ruling accepts is a limit this document states, not behaviour it leaves a reader to infer", path, want)
@@ -439,15 +442,60 @@ func TestDocsCheck290IsTheMixedRunsSmokeTest(t *testing.T) {
 		}
 	}
 
+	// A step is runnable only if it names the right command, and that is what
+	// these pins hold: making the config reach a run (the stage keys are the
+	// machine's, and the runner reads the published policy node, which
+	// `fugaro update` does not republish for these keys), committing and pushing
+	// the repository's own change (the run fetches the ref), and telling the
+	// refusals apart — three of them are not `fugaro validate`'s, and a check
+	// that attributes a refusal to a command which never raises it sends the
+	// owner looking in the wrong place.
+	for _, want := range []string{
+		"fugaro project policy publish",
+		"policyConfigDrift",
+		"Commit the `fugaro.yaml` change and push",
+		"config.CheckStageAccountMix",
+		"mixedStageAccount",
+		"config.CheckMixBudget",
+		"the agent made no commits",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("%s's `## Check 290` never says %q: a step that does not name the command behind it, or names the wrong one, is a step whose FACT an owner cannot read", path, want)
+		}
+	}
+
+	// Every place the check states who runs it, and not only the section: the
+	// row is what an owner skims before deciding to run anything, and the
+	// register paragraph is where the number is recorded. A check whose "no
+	// agent runs any step of it" lives only in a section 11,000 lines down is
+	// one an agent can be pointed at by the two lines a reader meets first.
+	start := strings.Index(doc, "\n| 290 |")
+	if start < 0 {
+		t.Fatalf("%s has no `| 290 |` row: this test's marker has moved", path)
+	}
+	rest := doc[start+1:]
+	row := flattenDoc(rest[:strings.Index(rest, "\n")])
+	for _, want := range []string{"no agent runs any step of it", "never `belong`", "NOT RUN"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("%s's row for 290 never says %q: how a check is run, and by whom, is what its row states first", path, want)
+		}
+	}
+
 	// The register paragraph is the record of the number, and 290 is a
 	// reservation taken above the register's own top rather than a number this
 	// work held: it is free because the console auto-update plan declared it
 	// so, and a section written without that stated is a number nobody can
 	// audit.
-	register := flattenDoc(doc[:strings.Index(doc, "**That is the end of the register.**")])
-	for _, want := range []string{"Check 290", "290–299", "declared unused", "274–289", "Check 273"} {
+	const register290Marker = "**Check 290 is this change's"
+	regStart := strings.Index(doc, register290Marker)
+	regEnd := strings.Index(doc, "**That is the end of the register.**")
+	if regStart < 0 || regEnd < regStart {
+		t.Fatalf("%s has no register paragraph for 290 (%q … %q): the record of the number is what this test reads", path, register290Marker, "**That is the end of the register.**")
+	}
+	register := flattenDoc(doc[regStart:regEnd])
+	for _, want := range []string{"Check 290", "290–299", "declared unused", "274–289", "Check 273", "no agent runs any step of it"} {
 		if !strings.Contains(register, want) {
-			t.Errorf("%s's register never says %q: the number's provenance is what makes it a claim rather than a collision", path, want)
+			t.Errorf("%s's register paragraph for 290 never says %q: the number's provenance, and who runs the check, are what make it a claim rather than a collision", path, want)
 		}
 	}
 }

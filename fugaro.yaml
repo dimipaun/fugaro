@@ -24,9 +24,13 @@ agent:
   # §11), so an api-key run may name ONE stage-scoped account for its `review` and `adversarial`
   # stages — `stages.<stage>.claude_account`, or the project's `default_claude_account` where that
   # stage's own model is an Anthropic one — and those two stages go direct to Anthropic on an Opus
-  # model, priced by nobody's ledger and capped by no gateway. Naming an account here is the
-  # owner's own step, and the evidence for it is the mixed run's smoke test, Check 290 of
-  # docs/gcp-live-checklist.md (owner-run, not yet run); these models stay DeepSeek until then.
+  # model, which the gateway's ledger does not price at all (their dollars are the agent's own
+  # figure, recorded as notional) and which no gateway caps. Both keys are the machine's and not
+  # this file's: they live in the local project config, and the account reaches a run only once
+  # that config is published into the project's policy node (`fugaro project policy publish`).
+  # Naming an account is the owner's own step, and the evidence for it is the mixed run's smoke
+  # test, Check 290 of docs/gcp-live-checklist.md (owner-run, not yet run); these models stay
+  # DeepSeek until then.
   auth: api-key
   max_budget_usd: 500  # Claude Code prices a non-Anthropic model at Sonnet-like rates, about 25 times what the gateway charges for DeepSeek, so this per-stage limit is set high on purpose; the gateway's per-run cap (budget set --repo) is the real hard stop
   models:
