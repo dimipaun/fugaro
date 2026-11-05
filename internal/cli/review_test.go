@@ -388,21 +388,30 @@ func (v *fixBriefVerify) recorded() []credsvc.VerifyRequest {
 	return append([]credsvc.VerifyRequest(nil), v.calls...)
 }
 
+// setFixBriefVerifierAt points the launcher's verifier at one URL. It is the
+// seam's single assignment — one write and one t.Cleanup, so a test never has
+// to overwrite a seam another helper set (the shape in which a cleanup order,
+// or a test that started in between, would leave the wrong verifier in place).
+func setFixBriefVerifierAt(t *testing.T, url string) {
+	t.Helper()
+	prev := reviewVerifierSeam
+	reviewVerifierSeam = func(_ context.Context, account, run, repository string) (runner.SignatureVerifier, error) {
+		return runner.ServiceVerifier{
+			URL:     url,
+			IDToken: func(context.Context) (string, error) { return "verifier-id-token", nil },
+			Account: account, Run: run, Repository: repository,
+		}, nil
+	}
+	t.Cleanup(func() { reviewVerifierSeam = prev })
+}
+
 // setFixBriefVerifier points the launcher's verifier at the stand-in service:
 // the launcher's own client runs against it, so the call the wire carries is
 // the real one and only the identity and the URL are a test's.
 func setFixBriefVerifier(t *testing.T) *fixBriefVerify {
 	t.Helper()
 	svc := fixBriefVerifyStart()
-	prev := reviewVerifierSeam
-	reviewVerifierSeam = func(_ context.Context, account, run, repository string) (runner.SignatureVerifier, error) {
-		return runner.ServiceVerifier{
-			URL:     svc.srv.URL,
-			IDToken: func(context.Context) (string, error) { return "verifier-id-token", nil },
-			Account: account, Run: run, Repository: repository,
-		}, nil
-	}
-	t.Cleanup(func() { reviewVerifierSeam = prev })
+	setFixBriefVerifierAt(t, svc.srv.URL)
 	return svc
 }
 
@@ -493,13 +502,23 @@ func TestFixBriefRefusesASignatureTheServiceDoesNotOwn(t *testing.T) {
 	f, reviewID := fixBriefSeed(t)
 	data := putReviewObject(t, f, reviewID, fixFirstArtifact(reviewID))
 	putReviewTask(t, f, reviewID, "acme-personal")
-	setFixBriefVerifier(t)
+	svc := setFixBriefVerifier(t)
 	putBuildObject(t, f, "runs/"+appSlug+"/"+reviewID+"/"+runstore.ArtifactPrefix+runner.ReviewSignName,
 		[]byte(strings.Repeat("c", 64)+"\n"))
 
+	before := len(svc.recorded())
 	wantFixBriefRefused(t, f, reviewID, "signature")
-	if len(data) == 0 {
-		t.Fatal("the fixture wrote no artifact")
+	// The service answered about the artifact this launcher actually read: a
+	// reader that asked it about some other bytes would be refused by a service
+	// answering correctly — the same refusal for the wrong reason — so the
+	// digest the call carried is checked against the stored bytes here.
+	calls := svc.recorded()[before:]
+	if len(calls) != 1 {
+		t.Fatalf("the verify route was called %d times, want 1", len(calls))
+	}
+	sum := sha256.Sum256(data)
+	if want := hex.EncodeToString(sum[:]); calls[0].Digest != want {
+		t.Errorf("the service was asked about the digest %s, want the SHA-256 of the stored bytes %s", calls[0].Digest, want)
 	}
 }
 
@@ -509,20 +528,18 @@ func TestFixBriefRefusesASignatureTheServiceDoesNotOwn(t *testing.T) {
 // exactly the launch this task exists to stop.
 func TestFixBriefRefusesWhenTheServiceIsUnreachable(t *testing.T) {
 	f, reviewID := fixBriefSeed(t)
-	putReviewArtifact(t, f, reviewID, fixFirstArtifact(reviewID))
+	// The fixture is written by hand rather than with putReviewArtifact: that
+	// helper sets the verifier seam itself, and a test that replaced the seam
+	// after it would be two writes with two cleanups over one package-wide
+	// variable. Here the seam is written once, at the dead URL.
+	data := putReviewObject(t, f, reviewID, fixFirstArtifact(reviewID))
+	putReviewTask(t, f, reviewID, "acme-personal")
+	putReviewSignature(t, f, reviewID, appSlug, reviewID, data)
 
 	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	deadURL := dead.URL
 	dead.Close()
-	prev := reviewVerifierSeam
-	reviewVerifierSeam = func(_ context.Context, account, run, repository string) (runner.SignatureVerifier, error) {
-		return runner.ServiceVerifier{
-			URL:     deadURL,
-			IDToken: func(context.Context) (string, error) { return "verifier-id-token", nil },
-			Account: account, Run: run, Repository: repository,
-		}, nil
-	}
-	t.Cleanup(func() { reviewVerifierSeam = prev })
+	setFixBriefVerifierAt(t, deadURL)
 
 	wantFixBriefRefused(t, f, reviewID, "could not be reached")
 }
@@ -683,11 +700,38 @@ func TestFixBriefRefusesAVerdictThatAsksForNoFix(t *testing.T) {
 // is a verdict policy and not a reader that refuses everything.
 func TestFixBriefBuildsTheBriefForFixFirst(t *testing.T) {
 	f, reviewID := fixBriefSeed(t)
-	putReviewArtifact(t, f, reviewID, fixFirstArtifact(reviewID))
+	// The fixture is written by hand, and the stand-in service's calls are read
+	// back, because a launch that succeeds is not by itself evidence that a
+	// signature was checked: this test has to hold both halves — the brief the
+	// launch built AND the verify call that let it be built.
+	data := putReviewObject(t, f, reviewID, fixFirstArtifact(reviewID))
+	putReviewTask(t, f, reviewID, "acme-personal")
+	svc := setFixBriefVerifier(t)
+	putReviewSignature(t, f, reviewID, appSlug, reviewID, data)
 
+	before := len(svc.recorded())
 	if err := fixBriefLaunch(t, f, reviewID); err != nil {
 		t.Fatalf("a fix round on a fix first review: %v", err)
 	}
+	calls := svc.recorded()[before:]
+	if len(calls) != 1 {
+		t.Fatalf("the verify route was called %d times, want 1: a brief built without one is the launch this task exists to stop", len(calls))
+	}
+	// The call the accepted launch made is the call every refusal above is
+	// about: the review run's own account, the review run, the repository, and
+	// the digest of the artifact's stored bytes.
+	sum := sha256.Sum256(data)
+	wantCall := credsvc.VerifyRequest{
+		Account:    "acme-personal",
+		Digest:     hex.EncodeToString(sum[:]),
+		Signature:  fixBriefSign(appSlug, reviewID, data),
+		Run:        reviewID,
+		Repository: appSlug,
+	}
+	if calls[0] != wantCall {
+		t.Errorf("the accepted launch's verify call is %+v, want %+v", calls[0], wantCall)
+	}
+
 	spec := readSpec(t, f, fuID)
 	for _, want := range []string{reviewID, "the lock is released before the write"} {
 		if !strings.Contains(spec.Task, want) {

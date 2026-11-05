@@ -430,48 +430,31 @@ func reviewArtifactUnreadable(run string, err error) error {
 // — bounded, quoted, nonce-delimited, and naming the review run — for the
 // launcher to put in front of the follow-up's own instructions.
 //
-// It reads the review's own artifact, from exactly where fugaro review show
-// reads it, and refuses rather than returning anything a brief could carry
-// when that read or the decode fails: a fix round whose brief does not say
-// what it was launched to fix is worse than no run at all, so an unreadable
-// verdict never becomes a brief (spec §6). The refusal names the review run,
-// which is the one thing its reader has to look at.
-//
 // reviewRun is the reference the launcher passed: <repo-slug>/<run-id>, or a
 // bare run id, read from the repository this fix round is for. A reference
-// that names another repository is refused — the artifact is read from the
-// path the reference names, and a brief carrying a review of somewhere else
-// would be quoting the wrong code.
-//
-// The path the reference names is not evidence of what the artifact inside it
-// says, so the artifact's own claims are checked against this launch before any
-// of its text is used: the review run, the repository and the pull request must
-// all be the ones this launch is for. A review of another pull request would
-// otherwise reach the brief under a sentence that calls it "this pull request",
-// and the brief would name a run nobody read. What a mismatch prints is the
-// three values that disagree — never a field of the artifact's own prose — and
-// the section that is rendered names the reference this launcher actually read
-// rather than the artifact's claim about itself.
+// that names another repository is refused, and so is a reference whose path
+// and whose artifact disagree: the artifact is read from exactly where fugaro
+// review show reads it, and its own claims are checked against this launch
+// before any of its text is used, so a brief cannot quote a review of
+// somewhere else nor name a run nobody read. The section that is rendered
+// names the reference this launcher read, never the artifact's claim about
+// itself.
 //
 // A verdict is a verdict only once its signature is checked (CSR10, D892(a)),
-// so this reader is a VERIFYING one: it reads the sidecar object beside the
-// artifact (review.json.sig), has the installation's credentials service
-// verify that signature over the artifact's exact bytes — the digest is over
-// those bytes, so the review's prose never travels to the service and nothing
-// is re-encoded — and reads the verdict only after that answer is yes. It
-// FAILS CLOSED on every way the answer can be other than yes: no sidecar, no
-// service, an unreachable service, a service that answers that the signature
-// is not its own, an answer that is not the verify route's, a head the forge
-// cannot be asked for, and a review run whose own task (which carries the
-// account the verify call names) cannot be read. Each refusal names the review
-// run and quotes no field of the review's own prose (spec §7).
+// so this reader is a VERIFYING one: the sidecar beside the artifact is
+// verified by the installation's credentials service over the artifact's exact
+// stored bytes before the verdict is read at all, and it FAILS CLOSED (spec
+// §6): a read or a decode that fails, and every way the service's answer can
+// be other than yes, refuses the launch — never "nothing to check" — because a
+// brief whose findings nobody verified is worse than no run at all. Every
+// refusal names the review run and quotes no field of the review's own prose
+// (spec §7).
 //
-// And the verdict the artifact carries is acted on only when it is the one
-// verdict that asks for a fix: a `fix first` becomes the brief, while a `ship`
-// or a `reject` refuses in a sentence that names the verdict word and points
-// at fugaro review show for the findings (Open item 2's answer, 2026-11-05) —
-// a brief built from a verdict that asked for no fix is a fix round nobody
-// asked for.
+// The verdict is acted on only when it is the one that asks for a fix: a
+// `fix first` becomes the brief, while a `ship` or a `reject` refuses and
+// points at fugaro review show for the findings (Open item 2's answer,
+// 2026-11-05) — a brief built from a verdict that asked for no fix is a fix
+// round nobody asked for.
 func reviewFindings(ctx context.Context, env *cloudEnv, repo, reviewRun string, pr int) (string, error) {
 	slug, id := "", reviewRun
 	if strings.Contains(reviewRun, "/") {
