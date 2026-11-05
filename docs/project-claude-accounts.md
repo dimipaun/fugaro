@@ -214,7 +214,10 @@ they are about to deploy against the same block. The rules, and what a refusal s
 - **An account may not be named so that its name ends in `-review`.** The suffix is the review-only
   job variant's (`internal/config`'s `ReviewVariantSuffix`): `fugaro update` deploys, beside every
   `(profile, provider, account)` job, a variant of that job whose account segment carries the suffix
-  — the container a project's own senior review runs on, which mounts no credential at all. A
+  — the container a project's own senior review runs on, which mounts no credential at all. Since
+  0.19.0 that container has a reader: the independent cloud senior review of a pull request runs on
+  an account's variant, and it refuses until the installation's credentials service is enabled and
+  admits the review job's caller (E7), which no `fugaro update` supplies. A
   coding account named `acme-personal-review` therefore derives the job name and the service account
   of `acme-personal`'s variant, and the variant would run as an account whose coding job mounts the
   GitHub App key — the one thing it exists not to be. The name is refused where it is written:

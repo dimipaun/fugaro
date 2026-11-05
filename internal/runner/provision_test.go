@@ -549,6 +549,44 @@ func TestCloneJobReusesAnExistingCheckout(t *testing.T) {
 	}
 }
 
+// TestPrebuiltCatalogEntryJobClonesWhole (#1752): a job whose image is a
+// prebuilt catalog entry carries no checkout — the entry's image is shared by
+// every repository that names it, so it can bake none — and is no clone kind:
+// the entry's own build installed its tools, so FUGARO_CHECKOUT is unset (the
+// harness's ordinary baked job) while internal/infra writes FUGARO_REMOTE on
+// it. The run opens a checkout by cloning the job's own remote at bootstrap,
+// and the clone is a whole one — git records no partial-clone filter, and the
+// repository's branch is checked out — not the blobless one a clone job makes:
+// the history a follow-up and merge-base read is all there.
+//
+// Mutation (run, restore): drop the `|| ws.CatalogPrebuilt` arm from
+// internal/infra/spec.go's remote condition — the job a cloud deploy gives
+// this run carries no FUGARO_REMOTE, so bootstrap fails with "no git checkout
+// and no remote to clone", which is the failure this test's own half (the
+// runner clones from the job's remote when the work directory is empty)
+// carries the fix to.
+func TestPrebuiltCatalogEntryJobClonesWhole(t *testing.T) {
+	h := newHarnessFiles(t, "", nil, nil)
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("record = %+v", rec)
+	}
+	if got := testutil.Git(t, h.deps.WorkDir, "config", "remote.origin.url"); got != h.remote {
+		t.Errorf("the checkout's origin = %q, want the job's own remote %q", got, h.remote)
+	}
+	if got := testutil.Git(t, h.deps.WorkDir, "rev-parse", "--abbrev-ref", "HEAD"); got != "fugaro/"+runID {
+		t.Errorf("the checkout is on %q, want the run's own branch", got)
+	}
+	for line := range strings.Lines(testutil.Git(t, h.deps.WorkDir, "config", "--local", "--list")) {
+		if strings.HasPrefix(line, "remote.origin.partialclonefilter") {
+			t.Errorf("the checkout is a partial clone (%s), want a whole one: a prebuilt entry's job is no clone kind", strings.TrimSpace(line))
+		}
+	}
+}
+
 // TestBakedRunProvisionsNothing: a baked job's image installed the tools at
 // build time, so it runs no mise and records no provision stage.
 func TestBakedRunProvisionsNothing(t *testing.T) {

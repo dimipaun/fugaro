@@ -77,12 +77,14 @@ const (
 	// so the constant lives there (runner.CheckoutEnv), the same way the
 	// budget variables do.
 	CheckoutEnv = runner.CheckoutEnv
-	// RemoteEnv, set to the repository's credential-free clone URL on a
-	// checkout: clone or checkout: shared workflow's job (and on no other):
-	// the job's image carries no checkout, so fugaro exec clones one from
-	// this URL — its --remote flag defaults to it (runner.RemoteEnv).
-	// Without it the clone job would have no remote to clone at all (review
-	// C1).
+	// RemoteEnv, set to the repository's credential-free clone URL on a job
+	// whose image carries no checkout of this repository: a checkout: clone
+	// or checkout: shared workflow's job, and a job whose image is a
+	// prebuilt catalog entry. fugaro exec clones one from this URL — its
+	// --remote flag defaults to it (runner.RemoteEnv) — and without it such
+	// a job has no remote to clone at all: a clone job fails bootstrap with
+	// "this job has no repository to clone", a prebuilt entry's with "no git
+	// checkout and no remote to clone" (#1752, review C1).
 	RemoteEnv = runner.RemoteEnv
 )
 
@@ -1105,12 +1107,27 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 		ws.LegacyImage = gcp.ImageName(lc.Registry, slug, name)
 	}
 	// One writer for the job's clone shape: a job whose image holds no
-	// repository's source — clone, which runs the installation's base image,
-	// and shared, which runs the dependency layer alone — carries the two
-	// markers the run needs to fetch the source itself, and the value is the
-	// workflow's own kind, which is what the runner switches on.
+	// checkout of this repository carries the markers the run needs to fetch
+	// the source itself, and the value of the kind marker is the workflow's
+	// own kind, which is what the runner switches on.
+	//
+	// The two markers are not one set. FUGARO_CHECKOUT goes on the two kinds
+	// whose image is not built from this repository at all — clone, which
+	// runs the installation's base image, and shared, which runs the
+	// dependency layer alone — and on no other, because it is what makes the
+	// run install the checkout's own mise tools and clone blobless.
+	// FUGARO_REMOTE goes on those two and on a job whose image is a prebuilt
+	// catalog entry, which is a baked workflow: its image is the operator's
+	// own reference, shared by every repository that names the entry, so it
+	// can carry no repository's checkout and the run has to clone one (#1752).
+	// It is not a clone kind: the entry's image holds the tools it was built
+	// with, so the run leaves the checkout kind alone and makes a whole
+	// clone — the history a follow-up and merge-base need — through
+	// gitops.OpenOrClone.
 	if w.Checkout == config.CheckoutClone || w.Checkout == config.CheckoutShared {
 		ws.Env[CheckoutEnv] = w.Checkout
+	}
+	if w.Checkout == config.CheckoutClone || w.Checkout == config.CheckoutShared || ws.CatalogPrebuilt {
 		// Where the run clones from: the repository's own URL, which
 		// c.repoURL already checked is https, credential-free and this
 		// repository's (see repoURL).
