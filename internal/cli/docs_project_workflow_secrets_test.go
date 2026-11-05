@@ -41,6 +41,12 @@ package cli
 //     folder's subject is a credential stored once for 65 repositories, so
 //     it is exactly the place a real value would be pasted "for
 //     illustration".
+//   - **The sentences outside the folder that the feature cannot ship
+//     without.** D1272 makes five documents load-bearing — a reach a reader
+//     believes and acts on — and all but one of them sit outside this folder,
+//     where an operator meets the scope of a secret name, the setup flow's
+//     prompts and the `set` help at the command itself: three of those W6
+//     writes, and the help is W3's, pinned here because nothing else reads it.
 //
 // Nothing here asserts the design is *right*: the decisions are the owner's,
 // and this file pins that the folder records them rather than re-argues them.
@@ -758,6 +764,143 @@ func TestDocsProjectWorkflowSecretsResidualNamesTheManagedExposure(t *testing.T)
 	for _, want := range []string{"settings_set.go:412", "settings.go:170"} {
 		if !strings.Contains(d1270, want) {
 			t.Errorf("reconciliation.md D1270 does not cite %q: the registry answer has to name the line it comes from", want)
+		}
+	}
+}
+
+// TestDocsProjectWorkflowSecretsReachIsSaidWhereAPersonMeetsIt (W6, D1272,
+// D1273): the feature's reach is invisible in a repository's own fugaro.yaml —
+// nothing in that file says its `db-password` is stored once for sixty-five
+// repositories — so the pages a person reads round the command are the only
+// place the decision is made. Four of them said a workflow's own secret could
+// not be shared at all, which was true before this design and is not true of a
+// name an operator's `workflow_secrets` entry covers:
+//
+//   - docs/project-layer.md's "outside this table" paragraph, where the scope
+//     of a secret name is decided and the layer's own non-secrets are
+//     enumerated;
+//   - docs/design/project-secrets.md §4's list of what `fugaro secrets set`
+//     accepts, where a reader of the parent design lands on the refusal this
+//     design adds a second form beside — a pointer, not a rewrite;
+//   - the setup skill, whose step 9 is the other place a value is stored, and
+//     whose sentence about a covered name has to hold for a workflow secret
+//     too;
+//   - SECURITY.md's project-scope section, which is the only page a reader who
+//     never opens a terminal meets the fence on, and which owes the new
+//     block's two readings besides: the shared copy's reach is its entry, and
+//     a wildcard in that entry means every repository it matches now and later
+//     (D1273).
+//
+// The reach itself is elsewhere and is not re-argued here: the store-time note
+// and the `set` help say it at the command (W3, secrets_test.go's own pins,
+// which hold the wildcard clause too), SECURITY.md's project-scope section
+// says it for the reader who never opens a terminal, and the folder states it
+// in full — so what this test pins of SECURITY.md is the sentences that page
+// owes this design, not the reach it already stated. The sentences wrap in the
+// files, so the assertions are made against the whitespace-normalized text,
+// and the page the website serves is generated from SECURITY.md by
+// internal/clidoc, so a pin here is a pin on both.
+//
+// The pins are word for word, and the banned strings are the wording these
+// pages carried before W6: a sentence that leaves the block out is the claim
+// this task exists to replace, so a revert has to fail here rather than read
+// plausibly.
+func TestDocsProjectWorkflowSecretsReachIsSaidWhereAPersonMeetsIt(t *testing.T) {
+	cases := []struct {
+		path   string
+		want   []string
+		banned []string
+	}{
+		{"docs/project-layer.md", []string{
+			// The block, its operator-locality, and the pointer: a reader who
+			// stops at this paragraph must be able to reach the design that
+			// decides what the entry may name and who may mount it.
+			"a workflow's own secret is shared once for the project through the operator-local `workflow_secrets` block instead",
+			"[project-workflow-secrets/](project-workflow-secrets/)",
+		}, []string{
+			// The unqualified sentence: the parenthesis that names the block
+			// is what makes it true, so the clause may not stand alone again.
+			"cannot be shared through a workflow's block;",
+		}},
+		{"docs/design/project-secrets.md", []string{
+			"which has no project-wide meaning (§3; a workflow's own secret has a project-wide form of its own since 0.19.0",
+			"[project-workflow-secrets/](../project-workflow-secrets/)",
+		}, []string{
+			"which has no project-wide meaning (§3).",
+		}},
+		{"SECURITY.md", []string{
+			// The paragraph D1273 asks for, in the shape the Bitbucket token's
+			// warning already has in this file: the entry decides the reach,
+			// a wildcard reaches what it matches now and later, the value is
+			// what the repository's build and tests read, and a repository's
+			// own copy wins.
+			"A workflow secret's entry is where its reach is decided.",
+			"so the reach of a name like `db-password` is that entry and not the whole installation",
+			"With no entry, or with an entry that lists nothing, the name mounts nowhere and stays a repository copy.",
+			"A wildcard inside a segment (`myworkspace/*`) means every repository it matches **now and later**",
+			"**The value is whatever the repository's build and tests read**",
+			"A repository that stores its own copy keeps it, as every other name does.",
+			// And the two clauses that stopped being true, corrected in place.
+			"`workflows.<n>.secrets` **can** be shared this way, through the operator's own `workflow_secrets.<name>` entry",
+			"A **shared project job** never mounts one at all",
+			"A name that has no project-wide meaning (a workflow's own `secrets:` entry that no `workflow_secrets` entry in the operator's local config covers",
+		}, []string{
+			// The two sentences the feature made false. A security page is
+			// where this costs most: the reader acts on it without running
+			// anything, so the old wording may not return as a plausible
+			// paraphrase.
+			"`workflows.<n>.secrets` cannot be shared this way at all",
+			"A name that has no project-wide meaning (a workflow's own `secrets:` entry, or the default Claude account's `claude-oauth-token`) keeps the repository scope it had.",
+		}},
+		{"plugin/skills/setup/SKILL.md", []string{
+			// The skill says it in its own vocabulary — "covered" is what it
+			// already calls a name the project's copy answers for — because
+			// the skill carries a hard byte budget (plugin/skills_lint_test.go's
+			// 24576) and the sentence has to pay for itself; the block is named
+			// where the block is decided, in the documents above.
+			"a covered name is not asked for, nor is a covered workflow secret",
+		}, nil},
+	}
+	for _, tc := range cases {
+		doc := strings.Join(strings.Fields(readDoc(t, tc.path)), " ")
+		for _, want := range tc.want {
+			if !strings.Contains(doc, strings.Join(strings.Fields(want), " ")) {
+				t.Errorf("%s does not say %q: it is where a person decides whether storing one value for many repositories is safe", tc.path, want)
+			}
+		}
+		for _, banned := range tc.banned {
+			if strings.Contains(doc, strings.Join(strings.Fields(banned), " ")) {
+				t.Errorf("%s still says %q: a workflow's own secret can be stored once for the project through the operator-local workflow_secrets block, and a page that says it cannot is a reach a reader believes and acts on wrongly", tc.path, banned)
+			}
+		}
+	}
+	// The sentences say the block is built, so they may only say it while the
+	// store path reads it: the doc pins and this one fail together rather than
+	// outliving the code they describe.
+	for _, want := range []string{"workflow_secrets", "lc.WorkflowSecrets", "projectSecretAllowed"} {
+		if !strings.Contains(readDoc(t, "internal/cli/secrets.go"), want) {
+			t.Errorf("the pages say a workflow secret is stored once for the project through the new block, and internal/cli/secrets.go no longer carries %q", want)
+		}
+	}
+}
+
+// TestDocsProjectWorkflowSecretsSetHelpSaysTheWorkflowBlock (W6, D1272): the
+// other sentence D1272 makes load-bearing is the `set` help's, which W3 wrote
+// and nothing read: the generated page (website/content/cli-reference.md)
+// proves the help reached the document, never that the document says what the
+// store path does. It is the text a person reads at the command, before
+// typing a value, so it is pinned here — the two readings it has to give are
+// which block stores a workflow secret once for the project, and that an
+// entry with an empty list mounts nowhere (D1274). The help wraps, so the
+// assertions are made against its whitespace-normalized text.
+func TestDocsProjectWorkflowSecretsSetHelpSaysTheWorkflowBlock(t *testing.T) {
+	help := flattenDoc(newSecretsSetCmd().Long)
+	for _, want := range []string{
+		"or a secret a workflow declares that your local config's workflow_secrets block lists at least one repository for",
+		"A workflow's own secret is stored once for the project only through such an entry: with no workflow_secrets entry it stays in the repository's own container as before, and an entry present with an empty allow_data_to is refused, since it would mount nowhere.",
+	} {
+		if !strings.Contains(help, strings.Join(strings.Fields(want), " ")) {
+			t.Errorf("`fugaro secrets set`'s help does not say %q: the store path is decided there, before the value is typed", want)
 		}
 	}
 }
