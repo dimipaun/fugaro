@@ -94,7 +94,7 @@ adjacent code), `.claude/rules/terraform.md` (O2 edits `internal/infra/firebased
 - **Release notes**: a task that changes what `fugaro update` does adds its line to the release notes' `### For operators` in the same PR
   (`docs/releases/README.md`); the file is `docs/releases/vX.Y.Z.md` of the release the owner assigns under D1240 (O2 creates the entry). **A release
   that changes the daemon unit's template is carried by `fugaro update` like any other upgrade** (T7 ruled, O9): it adds no operator line, and no
-  release's `### For operators` names `fugaro orchestrator install` — the HARD RULE's promise is that the one command is the whole upgrade.
+  release's `### For operators` requires `fugaro orchestrator install`; the release that first ships the orchestrator may name it as the optional adoption command for an installation that predates it (`update` neither offers nor performs the first install) — the HARD RULE's promise is that the one command is the whole upgrade.
 - **Comments explain why**; no TODO, no section headers. A fix round adds no functionality.
 - **Plugin tests** check every command and flag a skill names against the CLI: O5 and O10 move together (O10 depends on O5).
 - **Docs tests**: a task that edits a doc runs `GOFLAGS=-p=2 go test ./internal/cli/ -run 'Docs' -count=1`.
