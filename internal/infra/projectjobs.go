@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -198,6 +199,178 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 		}
 	}
 	return out, nil
+}
+
+// ProjectReviewJobs is the installation's review-only job variants, by job
+// name: one per (profile, provider, account) the coding set deploys (design
+// docs/cloud-senior-review/reconciliation.md's CSR7 entry, D883, D893(c) and
+// the owner's ruling O1 of 2026-11-01). They are the jobs a project's own
+// senior review runs on, so the container that runs a test from the head under
+// review (D885) is never the container a coding run holds its credentials in.
+//
+// It is a set of its own rather than entries in ProjectJobs', and that is load
+// bearing: the coding set is `config.ProjectJobAccounts`' axis read once (the
+// one function the deployer, the launcher and the runner compute it with), and
+// every consumer of that set — the credentials service's admitted accounts
+// (credsvc.ReviewJobAccountsFor derives the variants FROM the axis, not from a
+// second job set), doctor's census, the golden plan's count of `module.project`
+// instances — would see a doubled axis if the variants were in it. The root
+// deploys this map as a module instance of its own, with the installation's
+// secrets deliberately NOT handed in (roots/installation/main.tf): a variant
+// that is not offered a container cannot mount one.
+//
+// What a variant mounts is nothing (O1): no github-app-key, no review-signing
+// key and no Claude OAuth token either. The block is D892(a)'s ruling of the
+// same day — the credentials service signs, so no key is in the container — and
+// the reason is one property of the job, not three: a variant runs untrusted
+// code with the job's service account, so every credential in its environment
+// is a credential that code can read (and, on the shared OS user, one whose
+// /proc residual it can read).
+//
+// What it is handed instead is the credentials service's address
+// (providers.EnvCredentialsServiceURL, D893(c)), the way a per-repository
+// launch hands it to a repository's own job. Its git provider is therefore the
+// keyless one (internal/gitprov/providers reads the variable), which fetches the
+// read-only installation token from the service by name when it is needed and
+// refreshes it through the Token(ctx, minValid) contract; the request carries
+// the App's ID alone and the repository and permissions are the service's
+// decision (credsvc/github.go). Nothing is handed in — no per-launch secret is
+// created and no execution's environment carries a token value — and an
+// installation that has opted into no service gets no variant URL, exactly as a
+// repository job gets none: the variable's presence is the opt-in
+// (credentialsServiceLaunchEnv's rule, read here off the same local config).
+//
+// A variant's name, service account and account segment are
+// credsvc.ReviewJobName's and credsvc.ReviewServiceAccountID's, over the axis
+// spelled the way the policy speaks it: the one spelling the service admits a
+// caller by. Its mounts, resources and timeout are its coding twin's — it
+// serves the same profile, over the same repositories, and it reaches the same
+// buckets (F15 records that reach: a review job writes one run's record and
+// artifact, and the whole of runs/ is more than that; the owner accepted it on
+// 2026-10-17 and narrowing it is a bucket-layout change). The one environment
+// entry it drops is the coding job's redaction list (runner.SecretEnvsVar):
+// there are no mounts for it to name, and an empty list beside no secret would
+// claim a redactor had something to hide.
+//
+// It holds no Vertex grant either (the owner's ruling of 2026-11-04): the
+// design's grant list is the two conditions, the account's own bucket reach
+// and nothing else, and under O1 the reviewer's model calls are served by the
+// credentials service, so roles/aiplatform.user on this account would be a
+// reach no task of the design names. reviewVariant says what stays in its
+// environment.
+func ProjectReviewJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]ProjectJob, error) {
+	coding, err := ProjectJobs(lc, bucket, vertex)
+	if err != nil {
+		return nil, err
+	}
+	if len(coding) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]ProjectJob, len(coding))
+	for _, j := range coding {
+		v := reviewVariant(lc, j)
+		// The variant's name and service account are derived over the same
+		// axis as the coding set, so an account whose own name ends in the
+		// review suffix collides with the variant of the account it names: a
+		// profile listing acme-review gets a coding job named exactly as the
+		// review variant of acme, and the two derive ONE service account — so
+		// the variant would run as a job account that mounts the App key,
+		// which is the whole of what it exists not to be. addProjectJob's
+		// check is within a set; this is the same check across the two, and it
+		// fails closed rather than deploying the variant onto an account that
+		// may read a secret.
+		//
+		// The name rule (config.ValidClaudeAccountRef, over the accounts a
+		// policy admits) now refuses such an account before this is reached,
+		// and this stays the last line: it is the only place the two sets are
+		// compared, so a config that arrives by another road is refused here
+		// too.
+		for name, c := range coding {
+			if c.Job != v.Job && c.ServiceAccount.AccountID != v.ServiceAccount.AccountID {
+				continue
+			}
+			return nil, userErr("profiles.%s: the review variant of the account %q derives the job name %s and the service account %s, and the shared job %s of the account %q already holds them: a Claude account whose name ends in %q is the review variant of the account it names, and the review job would run as an account that mounts the App key. Rename that account (claude_accounts) and run fugaro update again",
+				j.Profile, v.Account, v.Job, v.ServiceAccount.AccountID, name, c.Account, credsvc.ReviewVariantSuffix)
+		}
+		if err := addProjectJob(out, v); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// ReviewVariantAccount is one entry of config.ProjectJobAccounts' axis as the
+// review variant's names spell it: the policy's own spelling of the account,
+// which writes the default account as config.DefaultClaudeAccount where the
+// axis writes it as the empty string.
+//
+// It is exported because the variant's names are computed in two places — the
+// deployer here and the launcher (internal/cli's project job lookup) — and a
+// second spelling of the mapping would be a launcher that resolves a job
+// nobody deployed, or a service that admits an account that does not exist.
+// The service makes the same mapping for its own table
+// (credsvc.ReviewJobAccountsFor), over the same axis.
+func ReviewVariantAccount(account string) string {
+	if account == "" {
+		return config.DefaultClaudeAccount
+	}
+	return account
+}
+
+// reviewVariant is one coding job's review-only twin. j is the coding job the
+// deployer built for that (profile, provider, account), so the variant inherits
+// everything about the triple — its provider, its resources, its timeout, its
+// bucket and token conditions and its environment — and differs from it in
+// exactly four things: the name and service account carry the review suffix (so
+// no account of the deployment is ever shared with a coding job), the mounts
+// are empty, the environment is the credentials service's address, and the
+// Vertex grant is not carried (the owner's ruling of 2026-11-04: the design's
+// grant list names no aiplatform role, and under O1 the reviewer's model calls
+// go through the credentials service).
+func reviewVariant(lc *localcfg.Config, j ProjectJob) ProjectJob {
+	// The account segment is the policy's spelling, not the axis's: the axis
+	// writes the default account as the empty string (config.ProjectJobAccounts)
+	// and the review job holds no token of its own to join, so the mapping
+	// config.ProjectJobTokenAccount makes for the token-carrying entries is made
+	// here for the variant's name — the same mapping, and the same account name,
+	// credsvc.ReviewJobAccountsFor computes the admitted set with.
+	account := ReviewVariantAccount(j.Account)
+	saID := credsvc.ReviewServiceAccountID(j.Profile, j.Provider, account)
+	env := maps.Clone(j.Env)
+	delete(env, runner.SecretEnvsVar)
+	if cs := lc.CredentialsService; cs != nil && cs.URL != "" {
+		env[providers.EnvCredentialsServiceURL] = cs.URL
+	}
+	return ProjectJob{
+		Profile:        j.Profile,
+		Provider:       j.Provider,
+		Account:        account,
+		Job:            credsvc.ReviewJobName(j.Profile, j.Provider, account),
+		ServiceAccount: ServiceAccount{AccountID: saID, DisplayName: gcp.ProjectSADisplayName(j.Profile, j.Provider, account+credsvc.ReviewVariantSuffix)},
+		Image:          j.Image,
+		CPU:            j.CPU,
+		Memory:         j.Memory,
+		TaskTimeoutS:   j.TaskTimeoutS,
+		Env:            env,
+		SecretEnv:      map[string]string{},
+		BucketCondition: Condition{
+			Title:      gcp.BucketConditionTitle(saID),
+			Expression: j.BucketCondition.Expression,
+		},
+		TokenCondition: Condition{
+			Title:      gcp.ProjectTokenBucketConditionTitle(saID),
+			Expression: j.TokenCondition.Expression,
+		},
+		// No Vertex grant, whatever the coding job's: the module's one
+		// aiplatform member is what this field drives (modules/project/sa.tf),
+		// and the design's grant list for a review variant does not name it.
+		// The two Vertex names in the environment above stay, because they are
+		// not a grant: an agent on `agent.auth: vertex` refuses to start
+		// without CLOUD_ML_REGION and ANTHROPIC_VERTEX_PROJECT_ID
+		// (internal/agent/env.go), and a variant that cannot start is not a
+		// narrower variant.
+		Vertex: false,
+	}
 }
 
 // addProjectJob adds j to the job set, refusing a job whose name or service
@@ -526,14 +699,21 @@ func projectSecretEnv(lc *localcfg.Config, name string) (string, bool) {
 
 // projectJobAddress is the address of a project job's Cloud Run job in the
 // installation root (roots/installation/main.tf calls modules/project as
-// "project", one instance per job name).
-var projectJobAddress = regexp.MustCompile(`^module\.project\["[^"]+"\]\.google_cloud_run_v2_job\.this$`)
+// "project", one instance per job name, and as "project_review" for the
+// review-only variants of CSR7). The variant is the same module over the same
+// axis, so its job is the same resource under the second instance's address and
+// is refused the same way.
+var projectJobAddress = regexp.MustCompile(`^module\.project(?:_review)?\["[^"]+"\]\.google_cloud_run_v2_job\.this$`)
 
 // RefuseProjectJobDeletes refuses a plan that deletes or replaces a project
-// job, whatever --allow-delete names. Retiring a project job is deferred: the
-// module protects its job from deletion and, unlike the workflow module
-// (modules/workflow/job.tf's allow_job_delete, internal/infra/retire.go), has
-// no switch to lift it. A profile removed, or one whose provider or secrets
+// job, whatever --allow-delete names, and a review-only variant with it: the
+// variant is the same module instance under the same axis, it is protected
+// from deletion the same way, and a plan that removes the coding job of a
+// triple removes its variant too (the variant is derived from the coding set,
+// so the profile that disappears takes both). Retiring a project job is
+// deferred: the module protects its job from deletion and, unlike the workflow
+// module (modules/workflow/job.tf's allow_job_delete, internal/infra/retire.go),
+// has no switch to lift it. A profile removed, or one whose provider or secrets
 // change and so its job's name, plans the old instance's delete, and an apply
 // let through would destroy the launchers' grants on the job and then fail on
 // the deletion protection, leaving the job unlaunchable. So the plan is

@@ -211,6 +211,17 @@ they are about to deploy against the same block. The rules, and what a refusal s
   `anthropic-api-key` among them, since the bundle finds the App key by its kind rather than in the
   index of names, and refuses the paid key only where one document carries both it and an account of
   its own name.
+- **An account may not be named so that its name ends in `-review`.** The suffix is the review-only
+  job variant's (`internal/config`'s `ReviewVariantSuffix`): `fugaro update` deploys, beside every
+  `(profile, provider, account)` job, a variant of that job whose account segment carries the suffix
+  — the container a project's own senior review runs on, which mounts no credential at all. A
+  coding account named `acme-personal-review` therefore derives the job name and the service account
+  of `acme-personal`'s variant, and the variant would run as an account whose coding job mounts the
+  GitHub App key — the one thing it exists not to be. The name is refused where it is written:
+  `fugaro accounts add` and `fugaro validate` refuse the key of `claude_accounts`, and `fugaro
+  project policy publish` refuses a profile that lists it or an `accounts` entry of that name.
+  **Fix:** rename the account (and store its token under the new name). Only the suffix is refused —
+  a name that merely mentions review is an ordinary account name.
 
 The subset rule is an **intersection, not a union**: a profile is not "some account of mine carries
 this repository" — the repositories it admits are the ones **every** account it lists carries. So a

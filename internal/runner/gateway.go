@@ -547,11 +547,18 @@ func (r *run) lastWaited() int {
 // The billed side is cost.TotalUSD, which WithNotional keeps money-only --
 // a cascade run's tier-A dollars are in the model figure and in no total and
 // against no cap (D140).
+//
+// It is the ledger's figures that overwrite the run's, so a stage the run's
+// stage-scoped Claude OAuth account served is added back in (r.direct): the
+// ledger never saw its calls, and without the third term the next gateway
+// stage would erase the figure from the run's own record (P11). Nothing of
+// this stage is asked of the gateway, which is why runner.go does not call
+// this for one.
 func (r *run) recordGatewayStageCost(stage string, claudeUSD float64, stopped bool) {
 	r.drainHalt()
 	r.crossCheckCost(stage, claudeUSD, stopped)
 	r.mu.Lock()
-	r.rec.CostUSD = (r.gwUsed + r.gwNotional).USD()
+	r.rec.CostUSD = (r.gwUsed + r.gwNotional + r.direct).USD()
 	r.mu.Unlock()
 }
 
@@ -657,8 +664,13 @@ func (r *run) closeGateway() {
 	// what the splits (model_by, route_by) are built from.
 	r.gwUsed, r.gwNotional = led.Used, led.Notional
 	r.gwCacheRead, r.gwCacheWrite = led.CacheReadTokens, led.CacheWriteTokens
+	// The run's own model figure is the ledger's totals plus the stages the
+	// ledger never saw, an account stage's own among them (P11, P12): the
+	// ledger's figure alone would drop them from the record here, at the last
+	// gateway write of the run, however carefully the stages kept them.
+	spent := r.gwUsed + r.gwNotional + r.direct
 	r.mu.Unlock()
-	r.rec.CostUSD = (led.Used + led.Notional).USD()
+	r.rec.CostUSD = spent.USD()
 	r.updateCost()
 	r.warnReportedGap()
 }
