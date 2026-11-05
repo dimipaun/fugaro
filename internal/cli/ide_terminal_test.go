@@ -5,7 +5,22 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agentenv"
+	"github.com/dimipaun/fugaro/internal/initflow"
 )
+
+// TestTheIDEMarkerIsOneName: the IDE extension's variable is named in two
+// packages — agentenv's classification, which decides whether a session is a
+// person's, and initflow's IDEHint, which is the one refusal that tells a
+// person to unset it — and a name that drifted between them would be a hint
+// for a variable nobody sets, or a classification of one nobody reads. The
+// two are asserted equal here rather than left to a reader: initflow keeps
+// its own copy on purpose (its package doc: it names no other package), so
+// this is the one place that can hold them together.
+func TestTheIDEMarkerIsOneName(t *testing.T) {
+	if agentenv.IDEMarker != initflow.IDEMarker {
+		t.Fatalf("agentenv.IDEMarker is %q and initflow.IDEMarker is %q", agentenv.IDEMarker, initflow.IDEMarker)
+	}
+}
 
 // ideTerminalTypedConfirmationCase is one row of the ruling of 2026-11-05: the
 // Claude Code IDE extension sets CLAUDE_CODE_SSE_PORT in a person's own
