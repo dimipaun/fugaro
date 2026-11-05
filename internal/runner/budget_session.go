@@ -497,13 +497,20 @@ func (r *run) noteVerify() {
 // (r.gatewayOn(), true for every mixed run) the account stage's dollars are
 // dropped in silence.
 //
+// Silence is the gateway's, and only for the stages it serves — which is why
+// the gate is the two conditions and not either alone. Under a run with no
+// gateway at all (an oauth run: GatewayOn never sends an oauth token through
+// one) every stage is Claude Code's own and every figure is notional, exactly
+// as before a mixed run existed; a gate that admitted only the account stage
+// would leave an oauth installation's notional counters at zero, in silence.
+//
 // A write that fails is kept and retried by the heartbeat; the grace decides
 // about an outage.
 func (r *run) reportNotional(ctx context.Context, name string, res agent.Result) {
 	r.mu.Lock()
 	sess := r.sess
 	r.mu.Unlock()
-	if sess == nil || !r.stageDirect(name) {
+	if sess == nil || (r.gatewayOn() && !r.stageDirect(name)) {
 		return
 	}
 	notional := r.usdMicros(res.CostUSD)

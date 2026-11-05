@@ -176,3 +176,42 @@ func TestReportNotionalIsTheAccountStagesAlone(t *testing.T) {
 		t.Fatalf("the account stage's notional leaves are %v, want %d each", got, want)
 	}
 }
+
+// TestReportNotionalStaysForOauthRuns is the other half of that gate, and the
+// one it is easiest to take away while adding the account stage's. An oauth
+// run has no gateway at all (GatewayOn: an oauth token never goes through
+// one), so every stage of it is Claude Code's own, every figure is notional,
+// and every stage reports -- exactly as it did before a mixed run existed.
+//
+// The mutation this fails on is the gate narrowed to the account stage alone
+// (`!r.stageDirect(name)`), under which no stage of an oauth run reports
+// anything: the run's, the repository's and the project's notional counters
+// stay at zero for the subscription's whole spend, in silence. r.spend.Mode is
+// "enforce" here to make the point that the mode is not what silences a stage:
+// the gateway is, and only for the stages it serves.
+func TestReportNotionalStaysForOauthRuns(t *testing.T) {
+	const stageUSD = 0.42
+	db := gcpfake.NewRTDB(t)
+	r := svcRun(t, "oauth", func(r *run) {
+		r.rec = &runstore.Record{Version: 1, RunID: svcRunID, Repo: "acme/app", Status: runstore.StatusRunning}
+		r.spend = Spend{Mode: "enforce", Prices: pricing.Embedded()}
+		r.sess = svcSessionOn(t, db)
+	})
+	today := budget.Day(time.Now())
+	r.reportNotional(context.Background(), "implement", agent.Result{
+		CostUSD:    stageUSD,
+		ModelUsage: map[string]agent.Usage{"claude-opus-5": {Output: 1000}},
+	})
+	want, err := pricing.FromUSD(stageUSD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := [3]int64{
+		rtdbMicros(t, db, budget.PathRun(svcSlug, svcRunID)+"/notional"),
+		rtdbMicros(t, db, budget.PathSpendRepo(today, svcSlug)+"/notional"),
+		rtdbMicros(t, db, budget.PathSpendGlobal(today)+"/notional"),
+	}
+	if got != [3]int64{int64(want), int64(want), int64(want)} {
+		t.Fatalf("an oauth run's stage left its notional counters at %v, want %d each (day %d): the subscription paid the whole run", got, want, today)
+	}
+}
