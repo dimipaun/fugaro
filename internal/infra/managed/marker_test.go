@@ -1854,6 +1854,34 @@ var runAccountGrants = setOf(
 	// the right to send a request to a Cloud Run service — and the target is
 	// the service, not a job and not the runs bucket.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.name | google_service_account.job.member | for_each= | perms=`,
+	// Reviewed for M4 (the coordinator's front door): D920 makes the front
+	// door public, and this is therefore the one grant in the tree whose
+	// member is not an identity at all — everyone on the network, including
+	// callers with no Google account and no relation to the project.
+	//
+	// What it grants is roles/run.invoker, which carries no storage
+	// permission, no permission to grant a role, no actAs and no token
+	// minting: it is the right to send a request to one Cloud Run service.
+	// The target is the front door's own service and not the runs bucket,
+	// the installation project, the credentials service or a job, so the
+	// holder reaches none of the resources this test is about.
+	//
+	// What the member reaches THROUGH it is a container and not a
+	// permission, and the account that container runs as is the one whose
+	// grants this allowlist already pins entry by entry: the coordinator's
+	// own account — roles/firebasedatabase.admin on the Firebase project
+	// (D194/P3, modules/firebase/iam.tf) and roles/storage.objectViewer on
+	// the runs bucket (coordinator.tf) — neither of which is a write path to
+	// the bucket's root. The process itself holds no model credential and no
+	// forge credential, which is asserted at both layers
+	// (modules/installation/coordinator_service_test.go and
+	// ee/coordinator/service.go's own refusal), and every path behind the
+	// port is refused without a bearer token this service mints (spec.md §8).
+	// The endpoint exists only on an installation whose owner asked for it
+	// (D934), and the plan that creates it is refused by init's cover
+	// (internal/infra/tf), so the owner confirms this binding in so many
+	// words.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=google_cloud_run_v2_service.coordinator_front_door[0].name | "allUsers" | for_each= | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=var.runs_bucket | google_service_account.job.member | for_each= | perms=`,
 	// The same account's read-only grant on the budget token objects, in the
 	// workflow module (tokens/<slug>/, one repository) and in the project
