@@ -224,9 +224,12 @@ type Policy struct {
 	//
 	// It is the same member as DefaultClaudeAccount from the other side, copied
 	// by the same publish and refused in the shared file for the same reason,
-	// and it is what gives an api-key run the one Claude account the B0 ruling
-	// admits (docs/design/mixed-credentials.md §11): the stage key and no other
-	// rung may opt such a run into the mix.
+	// and it is one of the two keys that give an api-key run the one Claude
+	// account the ruling admits (docs/design/mixed-credentials.md §11): this
+	// one is the stage's own declaration, DefaultClaudeAccount the project's
+	// (owner ruling 2026-11-05, which takes rung 4 too where the stage's own
+	// model is an Anthropic one). Which stage may take an account either way is
+	// the run's own rule.
 	//
 	// The segment is held to config.RunStages and the name to
 	// config.ValidClaudeAccountRef here. What the account may *serve* is the
