@@ -80,7 +80,7 @@ func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 		// already covers into a mix nobody declared.
 		"one stage-scoped Claude OAuth account",
 		"`stages.<stage>.claude_account`",
-		"never opts an `api-key` run into this mix",
+		"`default_claude_account` (rung 4) never opts an `api-key` run into this mix",
 		"`agent.auth` is `api-key`",
 		// The rule is an allow-list, so a stage the tree does not have yet is
 		// refused by the rule rather than by omission.
