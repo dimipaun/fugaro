@@ -876,7 +876,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 	// owner as a front door that exists.
 	if o.MCPServer {
 		if !o.BudgetBackend || !o.Coordinator {
-			return InstallationSpec{}, userErr("--mcp-server needs the coordinator's own opt-in: the front door runs as the coordinator's account and serves the coordinator's state (the MCP server's design §1), so run fugaro update --firebase-project <gcp-project-id> --coordinator --mcp-server")
+			return InstallationSpec{}, userErr("--mcp-server needs the coordinator's own opt-in: the front door runs as the coordinator's account and serves the coordinator's state (the MCP server's design §1), and the coordinator itself is planned only on an installation that has the budget backend, which --firebase-project declares; so run fugaro update --firebase-project <gcp-project-id> --coordinator --mcp-server")
 		}
 		m, err := MCPServer(lc)
 		if err != nil {

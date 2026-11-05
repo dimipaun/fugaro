@@ -107,7 +107,6 @@ func TestMCPServerNeedsTheCoordinator(t *testing.T) {
 		"no coordinator":    {BudgetBackend: true, MCPServer: true},
 		"no budget backend": {Coordinator: true, MCPServer: true},
 		"neither beside it": {MCPServer: true},
-		"budget, no coord.": {BudgetBackend: true, MCPServer: true},
 	} {
 		spec, err := Installation(lc, o)
 		if err == nil {
