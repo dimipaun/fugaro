@@ -14,7 +14,7 @@ then — is kept only where it is still checkable. Each finding is **Exists**, *
 
 The headline: **the loop the owner asked for on 2026-10-25 was designed the next day (D320–D328,
 `docs/task-governance`) and has shipped**, through 0.13.0's recipe and digest step, carried by every
-release since (0.17.0 is the current one). What this design owns is the part that makes a user who is
+release since (0.19.0 is the current one). What this design owns is the part that makes a user who is
 not asking keep the cadence, and four smaller gaps. Every finding below is therefore about a claim of
 the request, not about the request's core.
 
@@ -301,9 +301,12 @@ refuses to commit an untracked file that is not text (`internal/runner/stray.go:
 nothing else, so the finalize guard's reading — the diff against the base is exactly the generated
 files — is unchanged. No task changes.
 
-**M8: 0.15.0, 0.16.0 and 0.17.0 have all shipped, so every release slot in this design moved.**
-*Consequence:* the plan's slot is re-cut to **0.19.0** ([implementation-plan.md](implementation-plan.md),
-"Release slot"); nothing else in the plan names a version.
+**M8: 0.15.0, 0.16.0, 0.17.0, 0.18.0 and 0.19.0 have all shipped, so every release slot in this
+design moved — twice.** *Consequence:* the plan's slot is re-cut to **0.20.0**
+([implementation-plan.md](implementation-plan.md), "Release slot"): the earlier cut named 0.19.0, and
+that release shipped on `main` while this plan was open and without any of this work
+(`docs/releases/v0.19.0.md`, whose own `### Known limits` put the config-management tasks that remain
+in 0.20.0 beside it — two works may ride one release). Nothing else in the plan names a version.
 
 **M9: `doctor` classifies its checks now, and an unclassified check is not printed.** The classes
 are `actionable`, `update`, `decision`, `measure`, `audit` and `security`
@@ -438,16 +441,31 @@ now decided:
   `objectViewer` on `runs/` **through the prefix-limited listing mechanism**
   (`storage.googleapis.com/objectListPrefix`, unverified — bucket-iam §4, V7). **And the reverse
   holds too, which the plan states in full:** a condition carrying only `objectListPrefix` **cannot
-  read an object**, so **both** grants carry **both** clauses for their own prefix — the
-  `resource.name` one for the reads, the writes and the deletes, the listing one for the listing —
-  `objectViewer` on `runs/` and `objectUser` on `reports/`. The listing half is not a `runs/`
-  speciality either: R11's stored reader lists `reports/<slug>/<YYYY>/` the way today's reader lists a
-  checkout's folder twice over, so `reports/`'s grant needs its listing clause as well. The owner
-  ruled that **an owner-run live check proves it before the job's Terraform lands**: a service account
+  read an object**, so **both** grants carry **both** clause halves for their own prefix —
+  `objectViewer` on `runs/` and `objectUser` on `reports/` — and **the halves are joined by `||`,
+  never by `&&`**: the shape is the one `gcp.ProjectBucketCondition` already builds, per-prefix
+  clauses joined with `" || "` (`internal/backend/gcp/names.go:537`), each grant reading
+
+  ```
+  resource.name.startsWith("projects/_/buckets/<b>/objects/<p>/") ||
+  api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith("<list prefix>")
+  ```
+
+  A conjunction is the shape a reader reaches for first and it matches nothing — a `get` carries no
+  `objectListPrefix`, a `list` names no object — and a single half is a job that fails on its first
+  run: the `resource.name` half grants no listing, and the listing half cannot read an object.
+  **`<list prefix>` is left to the check, not decided here:** the attribute's value form — the
+  request's own prefix (`runs/`) or the full `projects/_/buckets/<b>/objects/runs/` path — is
+  unverified offline, and no code in this repo reads the attribute today. The listing half is not a
+  `runs/` speciality either: R11's stored reader lists `reports/<slug>/<YYYY>/` the way today's reader
+  lists a checkout's folder twice over, so `reports/`'s grant needs its listing clause as well. Its
+  scope is the prefix and not one repository: the job summarises every repository, so it lists under
+  `runs/` and `reports/` and no wider — the root listing is refused. The owner ruled that **an
+  owner-run live check proves it before the job's Terraform lands**: a service account
   holding both conditioned grants lists `runs/<slug>/` and `reports/`, reads one object under `runs/`,
-  and is refused reading a `tokens/` object and listing `tokens/` or `cache/`. **If it fails, the plan
-  stops and asks** — the bucket-wide viewer a listing otherwise needs is not planned as a fallback,
-  because it would read `tokens/` and `cache/` too.
+  and is refused the **root listing** (`gs://<bucket>/`), reading a `tokens/` object and listing
+  `tokens/` or `cache/`. **If it fails, the plan stops and asks** — the bucket-wide viewer a listing
+  otherwise needs is not planned as a fallback, because it would read `tokens/` and `cache/` too.
 - **`reports/` has one writer, the job, and launchers read it.** The job holds
   `roles/storage.objectUser` on `reports/`; a person holds **read only** — which their existing
   unconditioned bucket-wide `objectViewer` already gives, so nothing new is granted to a person and
@@ -574,7 +592,8 @@ person who wants the files, which is why `--dir` survives rather than being repl
   carries), D970, D971 (the learning's two ends) and the whole of the learning channel.**
 - **They leave Check 136 where it is** (F13): a report run's own pull request is still the owner's
   registered check. The **two** live checks the rulings add — the owner proving the prefix-limited
-  listing grant (`objectListPrefix`) lists `runs/<slug>/` and nothing else, and the owner enabling the
+  listing grant (`objectListPrefix`) lists `runs/<slug>/` **and `reports/`** while refusing the root
+  listing and `tokens/` and `cache/`, and the owner enabling the
   reports job by the setting and reading its first stored report — are **named and not numbered**;
   the folder holds no check block, so the task that writes each takes the number free at its merge,
   under the register's own rule for a work that reserved none

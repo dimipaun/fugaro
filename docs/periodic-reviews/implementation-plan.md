@@ -143,7 +143,7 @@ run — the module has no test of its own that a hermetic test can hold — and 
 | `internal/cli/runs.go` | R11 | the one line that registers `runs reports` beside `runs digest` |
 | `internal/infra/tfvars.go` | R13, R7 | R13 renders the two `paused` settings into the installation's options; R7 renders the `reports` node and `bucket_lifecycle.reports_days` — levels 0 and 1 |
 | `internal/infra/testdata/installation-accounts.tfvars.json`, `-budget-job`, `-budget`, `-coordinator`, `-credentials` | R7 | the five golden renders every installation shape carries: an always-present `reports` node regenerates all five |
-| `internal/backend/gcp/names.go` (new) | R12 | the two-prefix condition's one definition, and the titles the guard recognises |
+| `internal/backend/gcp/names.go` | R12 | the two-prefix condition's one definition, and the titles the guard recognises (the file exists: the builder is added beside `ProjectBucketCondition`) |
 | `internal/infra/tf/cover.go` | R12 | the reports account's own principal kind, and the grants it must refuse |
 | `deploy/terraform/gcp/modules/installation/reports.tf`, `variables.tf`, `bucket.tf` | R12 | the job, its account, its Scheduler job, its grants, **its own alert** and the `reports/` lifecycle rule |
 | `deploy/terraform/gcp/roots/installation/` | R7 | the `reports` variable and its pass-through to the module |
@@ -337,29 +337,51 @@ commit.
   scheduler region** — `scheduler_region`, the one the catalog check's Scheduler job carries
   (`modules/installation/catalogcheck.tf:191`), not the installation's `region` — and its schedule
   ships paused.
-- **IAM, exactly (E4), and the FULL condition the owner's answer needs.** Two grants, each carrying
-  **two kinds of clause** for its own prefix:
+- **IAM, exactly (E4), and the FULL condition the owner's answer needs.** **One conditioned binding per
+  prefix, and the two clause kinds are joined by `||`, never by `&&`:** a conjunction is the shape an
+  implementer reaches for first and it matches nothing — a `get` request carries no `objectListPrefix`
+  and a `list` request names no object, so `A && B` refuses every request the job makes. The shape is
+  the one `gcp.ProjectBucketCondition` already builds, per-prefix clauses joined with `" || "`
+  (`internal/backend/gcp/names.go:537`, each clause `projectBucketPrefixClause`, `:547`), with one of
+  the clauses the listing attribute instead of `resource.name`:
 
-  - **`roles/storage.objectViewer` on `runs/`**: `resource.name.startsWith("projects/_/buckets/<b>/objects/runs/")`
-    **for the reads** — the records the reports summarise — **and** the listing clause
-    `api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith('projects/_/buckets/<b>/objects/runs/')`,
-    because the job lists `runs/<slug>/` to find a repository's records.
-  - **`roles/storage.objectUser` on `reports/`**: the same two clauses with `reports/` — the
-    `resource.name` one for `get`, write, overwrite and delete under the lifecycle, the listing one
-    because R11's stored reader lists `reports/<slug>/<YYYY>/` the way today's reader lists a
-    checkout's folder twice over (`internal/cli/runs_digest.go:438` and `:466`, both `os.ReadDir`),
-    and the year roll-up lists the same prefix again.
+  ```
+  roles/storage.objectViewer on runs/:
+    resource.name.startsWith("projects/_/buckets/<b>/objects/runs/") ||
+    api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith("<list prefix>")
 
-  **Neither clause alone is enough, and that is the finding this round fixes.** A condition on
-  `resource.name` **grants no listing** (`docs/design/bucket-iam.md` §2.3; live check 7 recorded a 403
-  on listing `runs/` for a job account), and a condition carrying only `objectListPrefix` **cannot
-  read an object** — so a grant with one clause and not the other is a job that fails on its first
-  run, and an implementer who hits that 403 is one step from the bucket-wide viewer the owner
-  refused. The prefix-limited listing mechanism is **unverified in this repo** (bucket-iam §4, V7);
-  **the owner ruled it is verified first**, by an owner-run check and not assumed (below), and
-  **R12's Terraform waits for its result**. **One definition, as with every other condition:** the
-  two clauses are built by a new builder in `internal/backend/gcp/names.go` beside
-  `ProjectBucketCondition` and `CatalogReadCondition` — a condition that differs in one byte is
+  roles/storage.objectUser on reports/:
+    resource.name.startsWith("projects/_/buckets/<b>/objects/reports/") ||
+    api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith("<list prefix>")
+  ```
+
+  The `resource.name` half covers the **reads** — the records the reports summarise — and, on
+  `reports/`, the `get`, write, overwrite and delete under the lifecycle; the listing half is what
+  grants the **listing**, because the job lists `runs/<slug>/` to find a repository's records and
+  R11's stored reader lists `reports/<slug>/<YYYY>/` the way today's reader lists a checkout's folder
+  twice over (`internal/cli/runs_digest.go:438` and `:466`, both `os.ReadDir`), with the year roll-up
+  listing the same prefix again.
+  **`<list prefix>` is deliberately not spelled here.** The attribute's value form — whether it
+  carries the request's own prefix (`runs/`) or the full `projects/_/buckets/<b>/objects/runs/` path —
+  is exactly what the owner-run listing check below settles: it is **unverified offline** (bucket-iam
+  §4, V7), **no code in this repo reads the attribute today** (grepping the tree finds it in the
+  design alone), and the wrong form is a grant that lists nothing. The check fixes the value before
+  R12's Terraform lands, and the builder takes it as its one argument. **The listing half's own scope
+  is `runs/` and not one repository's `runs/<slug>/`**, which is what the job needs and what the
+  mechanism can express: the job summarises every repository and so lists each slug's records under
+  the one prefix — the narrowness the owner asked for is "the listing prefixes and nothing else", not
+  a per-slug listing.
+
+  **Neither half alone is enough, and that is the finding the round before this one fixed.** A
+  condition on `resource.name` **grants no listing** (`docs/design/bucket-iam.md` §2.3; live check 7
+  recorded a 403 on listing `runs/` for a job account), and a condition carrying only
+  `objectListPrefix` **cannot read an object** — so a grant with one half and not the other is a job
+  that fails on its first run, and an implementer who hits that 403 is one step from the bucket-wide
+  viewer the owner refused. The prefix-limited listing mechanism is **unverified in this repo**
+  (bucket-iam §4, V7); **the owner ruled it is verified first**, by an owner-run check and not assumed
+  (below), and **R12's Terraform waits for its result**. **One definition, as with every other
+  condition:** the two clause kinds are built by a new builder in `internal/backend/gcp/names.go`
+  beside `ProjectBucketCondition` and `CatalogReadCondition` — a condition that differs in one byte is
   another binding, and `cover.go` compares them byte for byte — and the module consumes the titles
   and expressions as data, the way `catalog_check` carries `definitions_condition`.
   **No git credential, no model credential, no secret**: the account holds no project role, the job
@@ -389,11 +411,15 @@ commit.
   opened**: the catalog check's alert is there (`alert.tf:55`) and moving it would replace a live
   resource, so the reports job's alert is written beside the reports job.
 - **Red step:** `TestReportsReadConditionCarriesBothClauses` and
-  `TestReportsWriteConditionCarriesBothClauses` fail while `names.go` has no builder for them — and
-  they are the red step for the reason this task exists: a condition with one clause passes a
-  "listing works" review and fails the job's first run.
+  `TestReportsWriteConditionCarriesBothClauses` fail while `names.go` has no builder for them, and
+  `TestReportsConditionJoinsItsClausesWithOr` fails against the `&&` shape — which is the red step
+  for the reason this task exists: a condition joined the wrong way passes a "both halves are
+  written" review and matches nothing, and a condition with one half passes a "listing works" review
+  and fails the job's first run.
   `TestReportsAccountIsItsOwnPrincipalKind` fails while the guard has no kind for the new account.
 - **Tests:** `TestReportsReadConditionCarriesBothClauses`, `TestReportsWriteConditionCarriesBothClauses`,
+  `TestReportsConditionJoinsItsClausesWithOr` (the built expression contains `" || "` and no `" && "`,
+  and is byte for byte `ProjectBucketCondition`'s join over the two clause kinds),
   `TestReportsConditionTitlesAreBuiltFromTheAccount`,
   `TestReportsReadConditionCoversNoOtherPrefix` (`tokens/`, `cache/` and a wider prefix are refused),
   `TestReportsAccountIsItsOwnPrincipalKind`. The module's own plan is asserted by R7's Terraform-tagged
@@ -407,12 +433,18 @@ commit.
   performs any step of it**, and it settles R12's first Terraform plan. The owner, at their terminal,
   on the sandbox installation, signs in as the project and grants a throwaway service account **both
   conditioned grants** — `roles/storage.objectViewer` on `runs/` and `roles/storage.objectUser` on
-  `reports/`, each with the two clauses above — then, as that account: `gcloud storage ls --recursive
-  gs://<bucket>/runs/<slug>/` (must list), `gcloud storage ls --recursive gs://<bucket>/reports/`
-  (must list), reading one object under `runs/` with `gcloud storage cat` (must read), and the
-  refusals — `gcloud storage cat` of a `tokens/` object, `gcloud storage ls gs://<bucket>/tokens/`
-  and `gcloud storage ls gs://<bucket>/cache/` (all three must be refused). The throwaway account is
-  removed afterwards. **If any of it fails, the plan stops and asks the owner** — the bucket-wide
+  `reports/`, each with the two clause halves above joined by `||` — then, as that account:
+  `gcloud storage ls --recursive gs://<bucket>/runs/<slug>/` (must list), `gcloud storage ls
+  --recursive gs://<bucket>/reports/` (must list), reading one object under `runs/` with
+  `gcloud storage cat` (must read), and the refusals — `gcloud storage cat` of a `tokens/` object,
+  `gcloud storage ls gs://<bucket>/` (the **root listing**, which the two prefixes must not reach),
+  `gcloud storage ls gs://<bucket>/tokens/` and `gcloud storage ls gs://<bucket>/cache/` (all four
+  must be refused). **The check is also what settles `<list prefix>`:** the owner tries each candidate
+  form — the request's own prefix (`runs/`) and the full `projects/_/buckets/<b>/objects/runs/` path —
+  and the one under which `ls gs://<bucket>/runs/<slug>/` and `ls gs://<bucket>/reports/` both list,
+  with the root listing still refused, is the form R12's builder writes. A form the attribute does not
+  carry lists nothing, which is why the check runs before the Terraform lands rather than the value
+  being reasoned about here. The throwaway account is removed afterwards. **If any of it fails, the plan stops and asks the owner** — the bucket-wide
   viewer a listing needs when the condition cannot carry one is **not** planned as a fallback here,
   because it would also read `tokens/` and `cache/`.
 
@@ -441,6 +473,11 @@ counts.
   (`docs/config-management/README.md:47`, "164 of the registry's 325 rows"). **Open items carries
   it**; what this task ships is the key, refused by the generic path, written by hand in the project
   layer.
+- **And what the managed gate makes of the value it writes is Open item 7**, not decided here: the
+  gate's Scheduler rule reads the job's name and its account and not its `paused` value, so a
+  `true → false` flip in a managed project is a schedule an agent session's `update` could start
+  without the owner. R13 ships no gate rule and, if the answer is to add one, it lands in this task's
+  own release rather than as an operator step.
 - **Its own files, and the pins that move.** Registry rows `layer.jobs.reports.paused` and
   `layer.jobs.catalog_check.paused` (`internal/settings`' own rule: a `config.ProjectLayer` field
   without a row fails `TestRegistryCoversEveryConfigField`), the schema, and the three count pins
@@ -677,9 +714,9 @@ writing locally for a person who wants the files in a checkout.
 
 ## Open items
 
-Six questions the rulings raise and **this plan does not decide** — four from the rulings of
-2026-11-05 and two the answers to this round's review open — each one written where the task that
-meets it says so:
+Seven questions the rulings raise and **this plan does not decide** — four from the rulings of
+2026-11-05, two opened by the answers the review of round 3 drew, and one by the review of round 4 —
+each one written where the task that meets it says so:
 
 1. **The project's designated repository or folder (E6, ruling 5).** The place a project may name for
    project-level material — the cross-repo backlog filing design already speaks of it
@@ -714,14 +751,27 @@ meets it says so:
    decision: saying yes adds `layer.jobs.reports.paused` (and its sibling) to the allowlist and moves
    that list's own count pin (`docs/config-management/README.md:47`, "164 of the registry's 325
    rows"). **R13 ships the refused state**; the answer is one allowlist line and one count.
+7. **Whether the managed gate reads a Scheduler `paused` flip as a loosening (E4, and the review of
+   round 4).** R13 makes enabling a job a setting `fugaro update` writes — and in a **managed** project
+   an `update` prompts for nothing, the gate judging the plan instead and refusing a loosening "in its
+   own words" (`docs/releases/v0.19.0.md`, `### Highlights`). But the gate's own rule for a Scheduler
+   job is its name and the account it runs as (`internal/infra/tf/managed_cover.go:930`), and **neither
+   of those changes when `paused` goes from `true` to `false`** — so `jobs.reports.paused: false` is,
+   on today's tables, not a loosening the gate sees, and an agent session's `update` could start a
+   schedule in the owner's project without the owner. Whether that flip should be read as one (a
+   schedule that begins spending is a change the owner should make, in a project where the gate
+   otherwise asks nothing), or whether "the deployer holds what the allowlist admits" is answer enough,
+   is **not decided here**. R13 ships no gate rule for it; the answer is one rule in
+   `managed_cover.go` — or none at all.
 
 ## Release slot
 
-**CLI 0.19.0.** 0.15.0, 0.16.0 and 0.17.0 have all shipped since this design was written,
-`docs/config-management`'s own plan is 0.18.0, and the rulings of 2026-11-05 make this a cloud
-change, so **0.19.0 is still the first release this work can ride**
-([reconciliation.md](reconciliation.md) §4, M8) — and it now has to carry the whole of R12, R13, R7
-and R11, because a schedule without the job that reads it is worse than no schedule. The release notes'
+**CLI 0.20.0.** 0.15.0, 0.16.0, 0.17.0, 0.18.0 and 0.19.0 have all shipped since this design was
+written, and the rulings of 2026-11-05 make this a cloud change, so **0.20.0 is the first release
+this work can ride** ([reconciliation.md](reconciliation.md) §4, M8). The slot said 0.19.0 until this
+round: that release shipped on `main` while the plan was open and carries none of this work
+(`docs/releases/v0.19.0.md`). **It now has to carry the whole of R12, R13, R7 and R11**, because a
+schedule without the job that reads it is worse than no schedule. The release notes'
 `### Highlights` carry the two sentences the rulings are: **the reports are written into your
 project's runs bucket, and committing them anywhere is your choice** (`fugaro runs reports --job`
 behind a paused schedule, and `fugaro runs digest` writing to the bucket by default).
