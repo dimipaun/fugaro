@@ -717,8 +717,7 @@ func reviewJobNotes(cfg *config.Config, lc *localcfg.Config) []config.Problem {
 			n, reviewArtifactTokens)})
 	}
 	if cfg.Budget != nil && cfg.Budget.PerRunUSD > 0 {
-		notes = append(notes, config.Problem{Path: "budget.per_run_usd", Message:
-			"is the cap on a run whose model calls reach the gateway, and a review job's do not: it runs on a Claude account, so the only ceiling over it is agent.max_budget_usd — Claude Code's own estimate, accurate for a Claude model and about twenty-five times too high for a provider model (F10). No fugaro.yaml key lowers that estimate: a review job that costs more than this cap is not what refuses it"})
+		notes = append(notes, config.Problem{Path: "budget.per_run_usd", Message: "is the cap on a run whose model calls reach the gateway, and a review job's do not: it runs on a Claude account, so the only ceiling over it is agent.max_budget_usd — Claude Code's own estimate, accurate for a Claude model and about twenty-five times too high for a provider model (F10). No fugaro.yaml key lowers that estimate: a review job that costs more than this cap is not what refuses it"})
 	}
 	if msg := reviewPreconditionNote(lc); msg != "" {
 		notes = append(notes, config.Problem{Path: "credentials_service", Message: msg})
