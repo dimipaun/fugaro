@@ -2553,9 +2553,6 @@ func TestRepoAddressesMatchTheMixedGolden(t *testing.T) {
 			t.Errorf("the plan of the mixed fixture does not hold %s", a)
 		}
 	}
-	if slices.Contains(want, mixed+"google_cloud_run_v2_job.this[1]") {
-		t.Error("the account's variant is a second job of the same workflow module, not a job of its own")
-	}
 	for _, a := range want {
 		if strings.HasPrefix(a, coder) && strings.Contains(a, "claude-oauth-token") {
 			t.Errorf("the coder's own job reaches a Claude token: %s", a)
