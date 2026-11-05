@@ -138,6 +138,16 @@ func TestParseSharedRefusals(t *testing.T) {
 			return s + "project_secrets:\n    bitbucket-token:\n        allow_data_to: [belong/edgeweb]\n"
 		}, "project_secrets"},
 		{"empty project_secrets section", func(s string) string { return s + "project_secrets: {}\n" }, "project_secrets"},
+		// workflow_secrets is project_secrets' case for the block D1260 adds:
+		// its entries' allow_data_to is what makes a repository's own workflow
+		// secret mountable project-wide, so a writer of the runs bucket must
+		// not be able to widen who mounts one by publishing a document
+		// (localcfg.Config.Shared nils it). Both spellings are refused, as for
+		// project_secrets.
+		{"workflow_secrets section", func(s string) string {
+			return s + "workflow_secrets:\n    deploy-token:\n        allow_data_to: [belong/edgeweb]\n"
+		}, "workflow_secrets"},
+		{"empty workflow_secrets section", func(s string) string { return s + "workflow_secrets: {}\n" }, "workflow_secrets"},
 		{"firebase triple of another project", func(s string) string {
 			s = strings.Replace(s, "https://fugaro-belong-default-rtdb.firebaseio.com", "https://evil-proj-default-rtdb.firebaseio.com", 1)
 			s = strings.Replace(s, "firebase_project: fugaro-belong", "firebase_project: evil-proj", 1)

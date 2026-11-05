@@ -33,12 +33,17 @@ type Options struct {
 	// window"); checks and plans still run. A mitigation, not a barrier.
 	Agent string
 	// ManagedGate is the managed project's gate (D1016), when the caller has
-	// one, asked per stage and only in a coding agent's session: true means
-	// the project is managed and this stage is one the gate judges, so the
-	// loop applies it here and the stage's own steps judge their own documents
-	// at the point of each write — a step the gate refuses comes back as this
-	// stage's needs-you, in the gate's own words (GatedError) and not in the
-	// session's.
+	// one, asked per stage: true means the project is managed and this stage
+	// is one the gate judges, so the loop applies it here and the stage's own
+	// steps judge their own documents at the point of each write — a step the
+	// gate refuses comes back as this stage's needs-you, in the gate's own
+	// words (GatedError) and not in the session's.
+	//
+	// It is asked in a coding agent's session and in the owner's own terminal
+	// (the ruling of 2026-11-01: a managed project converges with no prompt),
+	// and never in a run nobody is at: a pipe, `--json` and `--non-interactive`
+	// keep the refusal they always had, because what the gate stands in for is
+	// a document a person reads.
 	//
 	// It is a bool and not an error because every way it can go wrong is the
 	// same answer: a mark that is absent, unreadable or of another project is
@@ -398,6 +403,32 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 		// Something to apply.
 		if l.o.Agent != "" {
 			if done, err := l.agentStage(ctx, s); err != nil {
+				l.fail(name, err)
+				stopped = name
+				continue
+			} else if done {
+				continue
+			}
+			stopped = name
+			continue
+		}
+		// The managed project's gate, for the owner at their own terminal:
+		// the same path the agent's session takes below, and the reason it is
+		// asked here and not only there is the owner's ruling of 2026-11-01 —
+		// a managed project is one Fugaro converges on their behalf, with no
+		// prompt, whoever started the run. The stage's own steps judge their
+		// own documents at the point of each write, so what this opens is the
+		// run, not the write; a step the gate did not admit comes back as a
+		// GatedError and stops the stage in the gate's own sentence.
+		//
+		// A run nobody is at is not this case: interactive is a real terminal
+		// with no --non-interactive, and --json is asked for here because a
+		// document a person reads is what the gate stands in for. A pipe
+		// without --yes keeps its refusal (NoTerminalError below), which is
+		// the one thing a managed project must never lose: an unattended run
+		// that applies because a mark is present.
+		if l.interactive && !l.o.JSON && l.o.ManagedGate != nil && l.o.ManagedGate(name) {
+			if done, err := l.gatedStage(ctx, s); err != nil {
 				l.fail(name, err)
 				stopped = name
 				continue

@@ -184,6 +184,17 @@ type Config struct {
 	// can collide with a ReservedSecrets key in the first place, so
 	// ValidateProjectSecrets checks membership in ReservedSecrets only.
 	ProjectSecrets map[string]config.ProjectSecret `yaml:"project_secrets,omitempty"`
+	// WorkflowSecrets are the repositories' own application secrets the owner
+	// has opted into project-wide storage for, by allow-listed repository
+	// (design docs/project-workflow-secrets, D1260). A key is any secret name
+	// no existing reservation claims — a repository's workflows.<w>.secrets
+	// name, which is why it cannot live in project_secrets, whose keys are the
+	// reserved names. Only the owner sets them, here, never in fugaro.yaml,
+	// and like ProjectSecrets the block is operator-local: Shared drops it and
+	// the shared-config reader refuses it, because each entry's allow_data_to
+	// is what makes the value mountable, and a launcher who could publish one
+	// would be widening the grant.
+	WorkflowSecrets map[string]config.ProjectSecret `yaml:"workflow_secrets,omitempty"`
 	// BitbucketAPIRoots are the Bitbucket API roots the owner allow-lists
 	// (D474), for an installation that sends its Bitbucket token to a root of
 	// its own rather than to Bitbucket's: a cloud run refuses any
@@ -1612,6 +1623,28 @@ func (c *Config) validate() error {
 	}
 	for _, p := range config.ValidateProjectSecrets(c.ProjectSecrets) {
 		bad("%s: %s", p.Path, p.Message)
+	}
+	// workflow_secrets' name-only rules are config.ValidateWorkflowSecrets';
+	// the two that read the operator's providers can only be asked here, where
+	// lc.Providers is in hand (D1261). They are CheckWorkflowProviderSecrets'
+	// two collisions and its order, restated for this block rather than worded
+	// anew: a key that is a configured provider's own secret:, then the
+	// conventional <entry>-api-key ReservedProviderSecret reserves whatever the
+	// entry's .secret says. Both refuse a key that would mount the owner's
+	// provider credential as a repository's own workflow variable, and the
+	// refusal names the entry and never a value.
+	for _, p := range config.ValidateWorkflowSecrets(c.WorkflowSecrets) {
+		bad("%s: %s", p.Path, p.Message)
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.WorkflowSecrets)) {
+		at := "workflow_secrets." + pluginwire.Printable(name)
+		if provider, ok := config.ProviderBySecret(c.Providers, name); ok {
+			bad("%s: %s is the secret of model provider %s in this local config: a provider's key is the owner's, stored and mounted by that config alone (fugaro secrets set stores it there and nowhere else), so storing a workflow secret under it would mount the owner's provider credential into a job as a repository's own variable. Name the workflow secret something else", at, pluginwire.Printable(name), pluginwire.Printable(provider))
+			continue
+		}
+		if provider, ok := config.ReservedProviderSecret(c.Providers, name); ok {
+			bad("%s: %s is reserved for model provider %s's key: the convention names a provider's key after its entry in the local config (%s), and that name belongs to that provider whatever its .secret says today, so a value stored under it would become the provider's credential the day the key is renamed to the convention. Name the workflow secret something else", at, pluginwire.Printable(name), pluginwire.Printable(provider), pluginwire.Printable(config.ProviderSecretConvention(provider)))
+		}
 	}
 	if w := c.Watch; w != nil && w.BurnAlertUSDPerHour != nil {
 		if _, err := pricing.FromUSD(*w.BurnAlertUSDPerHour); err != nil {
