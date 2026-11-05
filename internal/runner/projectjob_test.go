@@ -536,7 +536,9 @@ func TestRunnerRefusesNonOAuthOnAccountJob(t *testing.T) {
 }
 
 // TestReviewVariantIsNotTheCodingJob (CSR8): the end-to-end half of the class
-// check. A run that is not a review — no launcher marker, no pull request in
+// check, and the pair of TestReviewClassIsDecidedByTheMarkerAndTheJob, the
+// other direction of the same check (a review run in the shared coding job).
+// A run that is not a review — no launcher marker, no pull request in
 // its task — sitting in the review variant's job is refused at the runner's own
 // admission, before any git credential is requested, before anything is cloned
 // and before any lease: the class is decided by the launcher's marker and the

@@ -167,8 +167,9 @@ func (r *run) checkJobClass(id jobTriple) error {
 		return nil
 	}
 	if class == classReview {
-		return fmt.Errorf("this run is a review, and it is in the Cloud Run job %s, which is the shared project job of the profile %q: a review runs on the review-only variant of that job — the same (profile, provider, account) axis with %q on the account segment — whose container mounts no App key and no Claude token, and never on the shared job, whose container holds both. What class a run is, is the launcher's marker (the task's review pull requests) and the job the run is in, never the job's name. The run stops before any git credential is requested",
-			gcp.ProjectJobName(id.Profile, id.Provider, id.Account), id.Profile, config.ReviewVariantSuffix)
+		return fmt.Errorf("this run is a review, and it is in the Cloud Run job %s, which is the shared project job of the profile %q: a review runs on the review-only variant of that job, %s, whose container mounts no App key and no Claude token, and never on the shared job, whose container holds both. What class a run is, is the launcher's marker (the task's review pull requests) and the job the run is in, never the job's name. The run stops before any git credential is requested",
+			gcp.ProjectJobName(id.Profile, id.Provider, id.Account), id.Profile,
+			gcp.ProjectJobName(id.Profile, id.Provider, reviewVariantAccount(id.Account)))
 	}
 	return fmt.Errorf("this run is in the Cloud Run job %s, which is the review-only variant of the project job of the profile %q: the variant exists for a review that reads a pull request and pushes nothing, its container mounts no App key and no Claude token, and this run is not a review. Every other run of the profile belongs on the shared project job of that profile. What class a run is, is the launcher's marker (the task's review pull requests) and the job the run is in, never the job's name: this name is not read back out of the job. The run stops before any git credential is requested",
 		gcp.ProjectJobName(id.Profile, id.Provider, id.Account), id.Profile)
@@ -586,7 +587,10 @@ func (r *run) checkProjectJobAccount(ctx context.Context, auth string) error {
 // The arm is keyed on the run's own marker and on the candidate's class, never
 // on the job name's suffix parsed back out (R2-5).
 func (r *run) checkProjectReviewJobAccount(job jobTriple) error {
-	if !r.review {
+	// The run's class is read through the same function checkJobClass reads it
+	// through (r.runClass), so the two doors on the credential a review job
+	// holds cannot come to disagree about which class a run is.
+	if r.runClass() != classReview {
 		// Unreachable: checkJobClass refuses a non-review run in a review job
 		// in jobIdentity, which runs first and is the one place the class is
 		// decided. Kept as the halt it would be, because this check is the

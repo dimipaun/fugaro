@@ -985,34 +985,55 @@ func TestCodingRunIsNotHandedTheReviewCandidate(t *testing.T) {
 	}
 }
 
-// TestReviewVariantIsNotTheCodingJob (CSR8): the other direction of the same
-// check. A run the launcher marked as a review is refused when it is in the
-// shared coding job — the class is the launcher's marker and the job, not
-// anything about the job's name — because the shared job's container holds the
-// App key and (for a profile serving the default account) a Claude token, and
-// the review container exists to be without both.
+// TestReviewClassIsDecidedByTheMarkerAndTheJob (CSR8): the other direction of
+// the same check, and the pair of TestReviewVariantIsNotTheCodingJob, which is
+// the end-to-end test of a run with no review marker in the variant's job. A
+// run the launcher marked as a review is refused when it is in the shared
+// coding job — the class is the launcher's marker and the job, not anything
+// about the job's name — because the shared job's container holds the App key
+// and (for a profile serving the default account) a Claude token, and the
+// review container exists to be without both.
+//
+// The refusal names the job the run should have been launched onto, because
+// that is the operator's next move, and the two cases are the two spellings of
+// the variant's account segment: a named account's variant carries the name
+// (acme-personal-review) and the no-account job's carries the policy's own
+// spelling of the default account (default-review, config.ReviewVariantAccount
+// over the axis's empty string). A message that printed the suffix alone would
+// send the operator looking for a job named "-review".
 //
 // Mutation (run, restored): admit a review run wherever its name matches. This
 // run is admitted to the shared job.
 func TestReviewClassIsDecidedByTheMarkerAndTheJob(t *testing.T) {
-	p := servingPolicy([]string{"acme-personal"}, map[string][]string{
-		"acme-personal": {"github/acme/app"},
-	})
 	slug := identitySlug(t, "github", "acme/app")
-	coding := gcp.ProjectJobName("standard", "github", "acme-personal")
-	r := identityRun(t, coding, slug, nil, p, true)
-	r.review = true
-	if _, _, _, err := r.jobIdentity(context.Background()); err == nil {
-		t.Fatalf("a review run was admitted to the shared coding job (%s)", coding)
-	} else {
-		for _, want := range []string{coding, "is a review", "review-only variant", "The run stops"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("the refusal %q lacks %q", err, want)
+	for _, tc := range []struct {
+		name    string
+		serves  []string
+		account string
+	}{
+		{"a named account's coding job", []string{"acme-personal"}, "acme-personal"},
+		{"the no-account coding job of a profile serving the default account", []string{config.DefaultClaudeAccount}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := policyOf(map[string]config.JobProfile{"standard": profileOf("github", tc.serves...)})
+			coding := gcp.ProjectJobName("standard", "github", tc.account)
+			variant := gcp.ProjectJobName("standard", "github",
+				config.ReviewVariantAccount(tc.account)+config.ReviewVariantSuffix)
+			r := identityRun(t, coding, slug, nil, p, true)
+			r.review = true
+			if _, _, _, err := r.jobIdentity(context.Background()); err == nil {
+				t.Fatalf("a review run was admitted to the shared coding job (%s)", coding)
+			} else {
+				for _, want := range []string{coding, variant, "is a review", "review-only variant", "The run stops"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal %q lacks %q", err, want)
+					}
+				}
 			}
-		}
-	}
-	if _, project := r.projectJob(); project {
-		t.Fatal("a review run adopted the shared job's identity")
+			if _, project := r.projectJob(); project {
+				t.Fatal("a review run adopted the shared job's identity")
+			}
+		})
 	}
 }
 
