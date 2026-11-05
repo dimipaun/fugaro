@@ -5,7 +5,9 @@ package cli
 // docs/cloud-senior-review/ is a design-only folder: README.md (the index),
 // spec.md (the design), reconciliation.md (every claim of the spec against the
 // code on `main`, and the owner's decisions) and implementation-plan.md (the
-// tasks CSR1-CSR7, with CSR4a and CSR4b where the old CSR4 split). It adds no
+// tasks CSR1-CSR7, with CSR4a and CSR4b where the old CSR4 split, and §6 --
+// the follow-up, CSR8-CSR11, written after those merged without making
+// `fugaro review` reachable). It adds no
 // code, and the whole folder is a draft pull request
 // the owner has not approved, so nothing here pins a command or a flag.
 //
@@ -25,7 +27,10 @@ package cli
 //    index's status, that an answer is not an approval, the owner's block of
 //    decision numbers and the check number claimed, and the plan's own "nothing
 //    here is approved", the gate outside this design named beside the
-//    observation that used to be the second.
+//    observation that used to be the second, and the follow-up section's own
+//    headings, its owner-run task and its Open items -- the part a later edit
+//    is most likely to soften, because four of its tasks say "nothing above is
+//    decided here" about exactly the things the next round will want to decide.
 //  * TestDocsCloudSeniorReviewDecisionsAreAnswered -- D880-D894 are written and
 //    answered, D895-D899 reserved and unused, and the four the later rounds
 //    raised (D891, D892, D893, D894) each carry the option the owner took, in
@@ -176,6 +181,35 @@ func TestDocsCloudSeniorReviewIsWritten(t *testing.T) {
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s no longer says %q", csrPlan, want)
+		}
+	}
+	// Section 6 is the follow-up: four tasks for the things CSR1-CSR7 left
+	// between the plan and a review that runs. It is pinned for the same reason
+	// the rest is -- it is a claim about the tree (a command registered nowhere,
+	// a container that cannot place the job the launcher picks, a signature
+	// nothing checks) and about who owns each -- and because its own rules are
+	// the ones a later round shortens first: the security hole an environment
+	// switch would be, the level rule that keeps one file one writer's, and the
+	// sentence that leaves every open item to the owner rather than deciding it
+	// here. The four headings are pinned because the section is read by task id.
+	for _, want := range []string{
+		"## 6. Follow-up after CSR1–CSR7",
+		"**Seven gaps, each with the owner it has after this section.**",
+		"### CSR8. The runner places the review variant's execution (SEC)",
+		"### CSR9. Register `fugaro review`, so the command exists before it can launch",
+		"### CSR10. The launcher verifies the verdict before it uses it (SEC)",
+		"### CSR11. Flip `reviewJobAdmitted` — after the owner's live check, and only then (SEC, OWNER-RUN)",
+		"**OWNER-RUN: yes, and no agent performs any step of it.**",
+		"within a level no two tasks may hold one",
+		// The one security sentence that must survive every edit of the
+		// follow-up: a production switch that bypasses the refusal is not a
+		// convenience, it is the hole the refusal exists to keep shut.
+		"**Security consequence: it is a security hole, and the plan says so plainly.**",
+		"The refusal exists because the service answers 401 to a caller it does not admit",
+		"**Nothing above is decided here, and nothing above is built.**",
+	} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("%s no longer says %q: §6 is the follow-up that carries the four tasks CSR1–CSR7 left, and its own rules (the owner-run gate, the level rule, the switch that would be a hole, the open items it does not decide) are what a later edit shortens first", csrPlan, want)
 		}
 	}
 }
