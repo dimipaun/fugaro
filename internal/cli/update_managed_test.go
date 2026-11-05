@@ -404,6 +404,97 @@ func TestUpdateManagedLeavesAnOwnersRunAlone(t *testing.T) {
 	}
 }
 
+// The owner's own terminal on a managed project takes no confirmation either,
+// and this is the ruling of 2026-11-01 in one test: "the whole point of a
+// managed project is that YOU manage it on my behalf without all these
+// prompts". The marks are read because this is exactly the session the run's
+// one confirmation would have stopped, the gate judges each document as the
+// stage reaches it, and the verdict is what applies it — the plan the stages
+// print is still printed, and the admission is in the owner's own bucket.
+//
+// Nothing is typed: the terminal's stdin is empty, so a run that asked at all
+// would stop where it asked (the typed name never arrives) and no apply would
+// run. That is what makes "the apply ran" the assertion about the prompt.
+func TestUpdateManagedTerminalAsksNothing(t *testing.T) {
+	const additive = "module.installation.google_service_account.scheduler"
+	r := updateRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	isolateGateCredentials(t)
+	fakeTerminal(t)
+	updating(t, r)
+	r.setPlan(t, change(additive, "create"))
+
+	got, err := updateRun(t, r, "update")
+	if err != nil {
+		t.Fatalf("a managed project's own terminal was refused: %v\n%s", err, got)
+	}
+	if n := len(r.ran(t, "apply")); n == 0 {
+		t.Errorf("no apply ran, so the gate's verdict did not stand in for the confirmation:\n%s", got)
+	}
+	for _, no := range []string{"Type " + initProjectName + " to apply all of the above", "confirmed by --yes", "Type " + initProjectName + " to confirm"} {
+		if strings.Contains(got, no) {
+			t.Errorf("a managed project's own terminal printed the question %q:\n%s", no, got)
+		}
+	}
+	if !strings.Contains(got, initflow.GateProceeded()) {
+		t.Errorf("the run does not say what decided the step:\n%s", got)
+	}
+	if !strings.Contains(got, "Review: project ") {
+		t.Errorf("the run took no confirmation and printed no review of what it would do:\n%s", got)
+	}
+	recs := audits(t, r)
+	if len(recs) == 0 {
+		t.Fatal("a managed project's own terminal applied a step and filed nothing: the record is the half of the safety the prompt used to carry")
+	}
+	admitted := 0
+	for _, rec := range recs {
+		if rec.Verdict == managedmode.AuditAdmitted {
+			admitted++
+		}
+		if rec.AgentMarker != "" {
+			t.Errorf("a record of a person's own run names the marker %q", rec.AgentMarker)
+		}
+	}
+	if admitted == 0 {
+		t.Errorf("the day holds no admission for a step that applied: %+v", recs)
+	}
+}
+
+// The other half, and the control the whole rule is read against: the same run
+// with the same empty terminal on a project that is NOT managed keeps every
+// prompt exactly as it was — the run's one confirmation is asked, nothing is
+// typed, and no stage applies.
+func TestUpdateManagedTerminalControlKeepsEveryPrompt(t *testing.T) {
+	const additive = "module.installation.google_service_account.scheduler"
+	r := updateRig(t)
+	r.markedRuns(t, "", "")
+	isolateGateCredentials(t)
+	fakeTerminal(t)
+	updating(t, r)
+	r.setPlan(t, change(additive, "create"))
+
+	got, err := updateRun(t, r, "update")
+	if err == nil {
+		t.Fatalf("a project that is not managed ran to completion with nothing typed at its terminal:\n%s", got)
+	}
+	// The stage's own question, which is the one this path asks: this rig has no
+	// checkout, so the run's review is not the owner's to confirm and each stage
+	// asks separately — exactly the sentence the docs carry ("a terminal run
+	// still asks separately, never covered by this confirmation").
+	if !strings.Contains(got, "Type "+initProjectName+" to apply to GCP project") {
+		t.Errorf("the step's own confirmation was not asked:\n%s", got)
+	}
+	if strings.Contains(got, initflow.GateProceeded()) || strings.Contains(got, initflow.GateOrdinary()) {
+		t.Errorf("a project that is not managed printed the managed gate's sentence:\n%s", got)
+	}
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("a project that is not managed applied %d steps with nothing confirmed", n)
+	}
+	if recs := audits(t, r); len(recs) != 0 {
+		t.Errorf("a project that is not managed filed %+v", recs)
+	}
+}
+
 // The secrets stage is never admitted (§3.2), whatever the project is: a step
 // whose whole subject is a secret the user types has nothing a gate could read
 // — no plan, no digest, no rule — so the gate does not name it, and a coding
