@@ -74,6 +74,12 @@ fifth rule to `internal/digest/patterns.go`, and R7 (level 3) changes where the 
 come from — the same file, one level apart; and R10 (level 4) edits `internal/cli/runs_digest.go`
 after R1 and R2 (levels 1 and 2) have finished with it. The shared-files table below is the check.
 
+**The critical path is R0 → R1 → R4 → R7 → R8**, and it is the rulings that lengthened it: before
+2026-11-05 the longest chain was three levels (R0 → R1 → R6). **R7 is what everything new waits on** —
+R8 writes the aggregate in its own loop, R9 commits what it stored, R10 writes through its writer — so
+a schedule enabled before R7 lands has nothing to run, which is the other reason the whole of R7 has
+to be in the release that ships the plan.
+
 ## Gates (every task)
 
 `go build ./... && gofmt -l . && go vet ./...` (gofmt prints nothing); the task's named tests with
@@ -281,7 +287,8 @@ model call and nothing about it is a commit.
   workflow jobs, and the alert policies match the prefix (`internal/infra/catalogcheck.go:44`,
   `alert.tf:55`). The account is `fugaro-reports`, the Scheduler job `fugaro-reports` in the
   installation's region, and **`paused` defaults to `true`** exactly as the catalog job's does
-  (`internal/infra/spec.go:340`).
+  (`deploy/terraform/gcp/roots/installation/variables.tf:173`, `paused = optional(bool, true)`, with
+  the module writing it straight through at `modules/installation/catalogcheck.tf:195`).
 - **Its command:** `fugaro runs reports --job`, registered beside its sibling in
   `internal/cli/runs.go:232` (not `root.go`, which another work stream holds). It reads its whole
   assignment from **`FUGARO_REPORTS_JOB_SPEC`** — a versioned JSON document on the
@@ -393,8 +400,8 @@ project repo**.
   its own).
 - **What is not written until the designated-repo design item lands:** the recipe's name,
   `fugaro.yaml` keys if any, and the file list. **The task is blocked on that design item, and this
-  plan does not guess its shape** — which is why it takes no level before it and why its row in the
-  level table is last.
+  plan does not guess its shape** — which is why it is the last level's second task, with R7 behind
+  it and nothing else waiting on it.
 - **Files (to be completed by that design item):** a recipe under `internal/recipe/catalog/` and its
   runner step — itself a `docs/periodic-reviews` decision the design item's files settle.
 - **Reviewer:** opus + mandatory independent review (the only path in this design that writes into a

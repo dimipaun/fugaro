@@ -7,9 +7,10 @@ Read against `origin/main` at `b41709ea` on 2026-11-04, and **refreshed against 
 day: line numbers are that commit's, and §4 lists what `main` has overtaken since the design was
 first written. **§5 is the second refresh: the owner's rulings of 2026-11-05, which amend D321, D322
 and G2 of the 2026-11-04 reconciliation and move the reports out of the repositories and into the
-project's runs bucket.** Where §5 disagrees with §1, §2, §3 or [spec.md](spec.md), §5 wins. The 2026-11-01 reading this file first carried — the block census taken from the 23
-pull requests open then — is kept only where it is still checkable. Each finding is **Exists**,
-**Missing** or **Conflicts**, with its consequence for the spec or the plan.
+project's runs bucket.** Where §5 disagrees with §1, §2, §3 or [spec.md](spec.md), §5 wins. The
+2026-11-01 reading this file first carried — the block census taken from the 23 pull requests open
+then — is kept only where it is still checkable. Each finding is **Exists**, **Missing** or
+**Conflicts**, with its consequence for the spec or the plan.
 
 The headline: **the loop the owner asked for on 2026-10-25 was designed the next day (D320–D328,
 `docs/task-governance`) and has shipped**, through 0.13.0's recipe and digest step, carried by every
