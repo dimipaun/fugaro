@@ -6,7 +6,7 @@ package cli
 // spec.md (the design), reconciliation.md (every claim of the spec against the
 // code on `main`, and the owner's decisions) and implementation-plan.md (the
 // tasks CSR1-CSR7, with CSR4a and CSR4b where the old CSR4 split, and §6 --
-// the follow-up, CSR8-CSR11, written after those merged without making
+// the follow-up, CSR8-CSR12, written after those merged without making
 // `fugaro review` reachable). It adds no
 // code, and the whole folder is a draft pull request
 // the owner has not approved, so nothing here pins a command or a flag.
@@ -29,8 +29,11 @@ package cli
 //    here is approved", the gate outside this design named beside the
 //    observation that used to be the second, and the follow-up section's own
 //    headings, its owner-run task and its Open items -- the part a later edit
-//    is most likely to soften, because four of its tasks say "nothing above is
-//    decided here" about exactly the things the next round will want to decide.
+//    is most likely to soften, because its tasks say "nothing above is decided
+//    here" about exactly the things the next round will want to decide, and
+//    because the three the owner answered on 2026-11-05 (the switch, the verdict
+//    policy, the release) are the sentences a later edit could turn back into
+//    recommendations.
 //  * TestDocsCloudSeniorReviewDecisionsAreAnswered -- D880-D894 are written and
 //    answered, D895-D899 reserved and unused, and the four the later rounds
 //    raised (D891, D892, D893, D894) each carry the option the owner took, in
@@ -183,15 +186,17 @@ func TestDocsCloudSeniorReviewIsWritten(t *testing.T) {
 			t.Errorf("%s no longer says %q", csrPlan, want)
 		}
 	}
-	// Section 6 is the follow-up: four tasks for the things CSR1-CSR7 left
+	// Section 6 is the follow-up: five tasks for the things CSR1-CSR7 left
 	// between the plan and a review that runs. It is pinned for the same reason
 	// the rest is -- it is a claim about the tree (a command registered nowhere,
 	// a container that cannot place the job the launcher picks, a signature
-	// nothing checks) and about who owns each -- and because its own rules are
-	// the ones a later round shortens first: the security hole an environment
-	// switch would be, the level rule that keeps one file one writer's, and the
-	// sentence that leaves every open item to the owner rather than deciding it
-	// here. The four headings are pinned because the section is read by task id.
+	// nothing checks, a verifier identity the service refuses to start with) and
+	// about who owns each -- and because its own rules are the ones a later round
+	// shortens first: the environment switch the owner chose and the sentence that
+	// says what it does NOT do (it admits nothing), the level rule that keeps one
+	// file one writer's, and the three answers of 2026-11-05 beside the two items
+	// that are still open. The five headings are pinned because the section is
+	// read by task id.
 	for _, want := range []string{
 		"## 6. Follow-up after CSR1–CSR7",
 		"**Seven gaps, each with the owner it has after this section.**",
@@ -199,17 +204,36 @@ func TestDocsCloudSeniorReviewIsWritten(t *testing.T) {
 		"### CSR9. Register `fugaro review`, so the command exists before it can launch",
 		"### CSR10. The launcher verifies the verdict before it uses it (SEC)",
 		"### CSR11. Flip `reviewJobAdmitted` — after the owner's live check, and only then (SEC, OWNER-RUN)",
+		"### CSR12. The live-check switch: a launch that starts, and admits nothing (SEC)",
 		"**OWNER-RUN: yes, and no agent performs any step of it.**",
 		"within a level no two tasks may hold one",
 		// The one security sentence that must survive every edit of the
-		// follow-up: a production switch that bypasses the refusal is not a
-		// convenience, it is the hole the refusal exists to keep shut.
-		"**Security consequence: it is a security hole, and the plan says so plainly.**",
-		"The refusal exists because the service answers 401 to a caller it does not admit",
-		"**Nothing above is decided here, and nothing above is built.**",
+		// follow-up, now that the owner has answered item 1 with the switch: the
+		// refusal it skips is a convenience, the boundary is the service, and a
+		// sentence that let the switch read as an admission would be the hole the
+		// original item warned about.
+		"**The switch lets a launch start; it makes the service admit nothing.**",
+		"**removed by CSR11 in the same commit as the flip**",
+		"**a launch the service then refuses**",
+		"which still answers 401 to a review caller it does not admit",
+		// The three answers of 2026-11-05, each pinned in its own item's marker:
+		// a later edit that turned one back into a recommendation ("0.20.0 is the
+		// recommendation", "if the owner wants it anyway") would be the folder
+		// disagreeing with the owner, which is the one thing these pins exist for.
+		"**1. How the owner reaches the launch the live check's step 3 needs, while the command refuses. —",
+		"ANSWERED 2026-11-05: an ENVIRONMENT SWITCH, and not this item's recommendation.**",
+		"**2. Whether a verdict policy applies in the launcher. — ANSWERED 2026-11-05: the launcher's own rule",
+		"**3. The release that carries this. — ANSWERED 2026-11-05: 0.20.0 \"Quokka\"**",
+		"gives **`ship` and `reject` refused, `fix first` accepted**",
+		// The correction §6 needed and the item it became: the verifier cannot be
+		// a person, because the service refuses to start with one address in two
+		// classes -- the sentence a later edit is most likely to write back.
+		"**The verifier the launcher authenticates as is not a person**",
+		"**5. *(found while reviewing the first draft of §6)* Who may verify a verdict — and it cannot be the owner.**",
+		"**Nothing above is decided here except what the owner answered on 2026-11-05",
 	} {
 		if !strings.Contains(plan, want) {
-			t.Errorf("%s no longer says %q: §6 is the follow-up that carries the four tasks CSR1–CSR7 left, and its own rules (the owner-run gate, the level rule, the switch that would be a hole, the open items it does not decide) are what a later edit shortens first", csrPlan, want)
+			t.Errorf("%s no longer says %q: §6 is the follow-up that carries the five tasks CSR1–CSR7 left, and its own rules (the owner-run gate, the level rule, the switch that admits nothing, the answers the owner gave and the items it still does not decide) are what a later edit shortens first", csrPlan, want)
 		}
 	}
 }
