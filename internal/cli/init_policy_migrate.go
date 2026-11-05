@@ -92,6 +92,15 @@ type policyMigration struct {
 	// re-seed rewrites the file's policy keys under the same config struct, and
 	// a plan that read them again afterwards would be comparing two states.
 	recorded string
+
+	// firstPublish is whether the write this plan holds is the project's FIRST
+	// published node: nothing is at the path today, so the write creates it
+	// rather than replacing one. The distinction is not decoration — every other
+	// sentence of this stage is worded for a node that is already there ("this
+	// rewrites the published policy node in place", the diff against it, the
+	// generation the file was written from) — and the publish that admits no
+	// repository is confirmed differently when it is the first (#1674).
+	firstPublish bool
 }
 
 // policyNodeUnreachable is whether this project has no published policy node to
@@ -168,7 +177,16 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 		return nil, false, err
 	}
 	if !found {
-		return nil, false, nil
+		// #1656: a project that has never published a node is not always a
+		// project with nothing to do. The local config can state something only
+		// the node can carry — an image_catalog, which no job's environment
+		// carries — and a stage that reported done here left the operator's
+		// catalog in a file no run reads, with `fugaro project policy publish`
+		// as the second command `fugaro update`'s one command must not need.
+		if !firstPublishCarriesCatalog(lc) {
+			return nil, false, nil
+		}
+		return firstPolicyPublish(ctx, db, lc, etag, configPath)
 	}
 	node, derr := withDerivedMembers(raw, lc)
 	moved, changes, err := projectpolicy.Migrate(node)
@@ -265,6 +283,58 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 	return m, true, nil
 }
 
+// firstPublishCarriesCatalog is whether the local config states an image
+// catalog the node would carry, which is the one member a first publish is made
+// for. ImageCatalogEffective is nil for a config that names none and for one
+// that writes an empty catalog, and an empty catalog publishes no member at all
+// (D1156), so neither is a reason to write a node where none was — the publish
+// would create a policy that admits nothing and carry no catalog with it.
+//
+// The other members the local config states are not this stage's to publish
+// here: a budget ceiling, a base branch or a model list reaches every run
+// through the job's own environment and the shared config, so a project that has
+// never published a node is a project those are already read for. A catalog is
+// not among them, which is what makes it the whole of this case.
+func firstPublishCarriesCatalog(lc *localcfg.Config) bool {
+	return lc.ImageCatalogEffective(nil) != nil
+}
+
+// firstPolicyPublish is the publish half of a project that has never published a
+// node: the document the local config states, built by the publisher's own
+// function (policyNodeForPublish), so the node this stage writes and the node
+// `fugaro project policy publish` writes are the same document from the same
+// config.
+//
+// The write creates the node rather than replacing one, which is what makes it
+// the one write of this stage that is not a "rewrite" and the only one with a
+// first-publishing question to ask (the empty allow-list, in
+// policyMigrationConfirm). Everything else is the stage's ordinary posture: the
+// ETag the read found absent is the precondition the create is conditional on
+// (rtdb.PutIfMatch), the publisher's rules gate is asked before the write
+// (requirePolicyRules, P3), and the generation the write lands is recorded in
+// the file it was built from (D854).
+//
+// The drift is measured against an empty node rather than a nil one: there is no
+// published policy for the local config to agree with, so every member the
+// config states is a member the node does not carry yet — which is what the
+// operator's diff is a diff OF. policyConfigDrift reads a nil node as "nothing
+// to differ from" and would print no diff at all.
+func firstPolicyPublish(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, etag, configPath string) (*policyMigration, bool, error) {
+	body, pol, sources, err := policyNodeForPublish(ctx, lc, nil, nil, false, false, false)
+	if err != nil {
+		return nil, false, err
+	}
+	m := &policyMigration{lc: lc, db: db, etag: etag, path: configPath,
+		recorded: lc.PolicyGeneration, firstPublish: true}
+	m.drift = policyConfigDrift(lc, &projectpolicy.Policy{})
+	m.pub = &policyPublish{body: body, pol: pol, drift: m.drift, sources: sources,
+		adopted: lc.PolicyGeneration == ""}
+	if err := requirePolicyRules(ctx, db, lc); err != nil {
+		return nil, false, err
+	}
+	return m, false, nil
+}
+
 // publishPlanFor works out what this run does about a node that does not carry
 // what the local config states: publish it, or — when this machine's file was
 // written from a generation the node has moved past — refuse the publish and
@@ -326,7 +396,19 @@ func policyMigrationRefusal(err error) error {
 //
 // What each door does around it is its own: the agent-session refusal and the
 // absent node's detail, and how a failure is worded where the door reports one.
-func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer) error {
+//
+// admitted is the managed project's gate's answer for this node (M1, D1016):
+// true means the document the write puts at the shared path was judged and
+// admitted, so the confirmations that exist to make the operator read it are
+// the gate's own and are not asked again. It is a parameter and not a field of
+// the migration for the reason initflow.Managed gives for its own: a caller
+// that could assert an admission could assert it for a node nobody judged, and
+// `fugaro upgrade` — the other door into this function, and the one with no
+// gate at all — passes false and gets exactly the code that was here before.
+// The refusals that are not confirmations stay: a run in flight is refused
+// whatever admitted the write, because that refusal is about the runs that read
+// the node and not about who approved this one.
+func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer, admitted bool) error {
 	// The in-flight refusal is about the NODE this run rewrites, and it is asked
 	// before the branch below: D854's re-seed carries a pending migration with it
 	// (confirmReseed writes the re-seeded file and then the migrated node), and a
@@ -338,7 +420,7 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		return err
 	}
 	if m.generations != nil {
-		return m.confirmReseed(ctx, cmd, yes, w)
+		return m.confirmReseed(ctx, cmd, yes, w, admitted)
 	}
 	if !m.writesNode() {
 		// The one write of this run is the generation record in this machine's
@@ -349,28 +431,52 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		return m.recordGeneration(ctx, cmd)
 	}
 	m.print(w)
-	what := m.what() + ": every run of the project reads it, and the fields you edited into it by hand are carried over rather than published again"
-	// D846 reaches this door too: a publish that raises a ceiling, removes one
-	// or widens the model list is the widening the settings commands reserve for
-	// the project's own hand, and the two are one decision — what every run of
-	// the project is admitted by. So the typed name is asked for it and --yes
-	// does not stand in, which is what the sentence says to the operator whose
-	// script (or agent session) has just passed --yes and been refused.
-	if loosening := m.loosening(); len(loosening) > 0 {
-		why := m.looseningWhy(loosening)
-		// The sentence is said once. A session with no terminal is refused with
-		// it inside the error (confirmTypedStrict), and a door that reported
-		// that error next to the sentence it already printed said the same
-		// thing twice; the person at a terminal reads it here and only here,
-		// because the prompt below names the step and never the widening.
-		if stdinIsTerminal(cmd.InOrStdin()) {
-			fmt.Fprintf(w, "%s\n", why)
-		}
-		if err := confirmTypedStrict(cmd, m.lc, why, what); err != nil {
+	what := m.what() + ": every run of the project reads it"
+	if !m.firstPublish {
+		// A node that is there carries the fields the operator edited into it by
+		// hand; the first one has no such fields to carry over, and saying it did
+		// would describe a document the project does not have.
+		what += ", and the fields you edited into it by hand are carried over rather than published again"
+	}
+	if m.firstPublish && admitsNoRepository(m.pub) {
+		// The first node of a project whose local config lists no repository
+		// admits nothing, and from the moment it is published every run of the
+		// project stops before it starts (doctor's allow-list-empty). The diff
+		// above shows the empty list as one line among the ones a first publish
+		// adds, which reads as harmless, so the consequence is said before the
+		// write and a person has to type the project's name — the publisher's own
+		// confirmation, reused rather than worded a second time, and the same one
+		// the explicit door asks (#1674). It replaces the confirmations below
+		// rather than joining them: it is the stricter of the two (no flag stands
+		// in, and a session with no terminal or a coding agent's is refused), and
+		// a document this node's confirmation already covers needs no second
+		// question.
+		if err := confirmEmptyAllowList(cmd, m.lc, agentMarker(os.Getenv)); err != nil {
 			return err
 		}
-	} else if err := confirmRemoval(cmd, m.lc, yes, what); err != nil {
-		return err
+	} else if !admitted {
+		// D846 reaches this door too: a publish that raises a ceiling, removes one
+		// or widens the model list is the widening the settings commands reserve for
+		// the project's own hand, and the two are one decision — what every run of
+		// the project is admitted by. So the typed name is asked for it and --yes
+		// does not stand in, which is what the sentence says to the operator whose
+		// script (or agent session) has just passed --yes and been refused.
+		if loosening := m.loosening(); len(loosening) > 0 {
+			why := m.looseningWhy(loosening)
+			// The sentence is said once. A session with no terminal is refused with
+			// it inside the error (confirmTypedStrict), and a door that reported
+			// that error next to the sentence it already printed said the same
+			// thing twice; the person at a terminal reads it here and only here,
+			// because the prompt below names the step and never the widening.
+			if stdinIsTerminal(cmd.InOrStdin()) {
+				fmt.Fprintf(w, "%s\n", why)
+			}
+			if err := confirmTypedStrict(cmd, m.lc, why, what); err != nil {
+				return err
+			}
+		} else if err := confirmRemoval(cmd, m.lc, yes, what); err != nil {
+			return err
+		}
 	}
 	if err := m.write(ctx); err != nil {
 		return err
@@ -402,11 +508,21 @@ func (m *policyMigration) refuseRunsInFlight(ctx context.Context, yes bool) erro
 // node: the migration, the publish, or both in one write.
 func (m *policyMigration) writesNode() bool { return m.moved != nil || m.pub != nil }
 
+// admitsNoRepository is whether the document this publish would write admits no
+// repository at all, which is the node that stops every run of the project
+// before it starts. It is asked of the built publish and not of the local
+// config: the allow-list a publish writes also carries what the shared config's
+// repositories add and the entries a node already had, and a confirmation keyed
+// on the file alone would refuse a write whose allow-list is not empty.
+func admitsNoRepository(p *policyPublish) bool { return p != nil && len(p.pol.AllowRepos) == 0 }
+
 // what names this run's write as the confirmation and the outcome read it: the
 // migration and the publish are one write and are worded as one, and either
 // alone is worded as itself.
 func (m *policyMigration) what() string {
 	switch {
+	case m.firstPublish:
+		return "this writes the project's first published policy node, from your local config"
 	case m.moved != nil && m.pub != nil:
 		return "this rewrites the published policy node in place, carrying the migration and what your local config states"
 	case m.pub != nil:
@@ -430,6 +546,8 @@ func (m *policyMigration) payload() []byte {
 // doneDetail is the line both doors report the write with.
 func (m *policyMigration) doneDetail() string {
 	switch {
+	case m.firstPublish:
+		return "published the project's first policy node, carrying what the local config states"
 	case m.moved != nil && m.pub != nil:
 		return fmt.Sprintf("migrated the published policy from version %d to %d in place, with what the local config states", m.from, projectpolicy.Version)
 	case m.pub != nil:
@@ -470,10 +588,20 @@ func (m *policyMigration) recordGeneration(ctx context.Context, cmd *cobra.Comma
 // older file says. A migration pending beside it is carried out afterwards,
 // because the re-seed has just made the file the node's own, so writing the
 // migrated node no longer replaces anything a newer publish decided.
-func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command, yes bool, w io.Writer) error {
+//
+// admitted is policyMigrationConfirm's (M1, D1016): a re-seed that carries a
+// pending migration with it does write the node (writesNode), and that node is
+// the document the gate judged — the move of this machine's file is the same
+// kind of write as the local config an admitted installation apply writes
+// afterwards. A bare re-seed never reaches here admitted: nothing is published,
+// so there is no document for a verdict to be about, and the gate keeps the
+// session's own refusal for it.
+func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command, yes bool, w io.Writer, admitted bool) error {
 	m.printGenerationState(w)
-	if err := confirmRemoval(cmd, m.lc, yes, policyReseedWhat); err != nil {
-		return err
+	if !admitted {
+		if err := confirmRemoval(cmd, m.lc, yes, policyReseedWhat); err != nil {
+			return err
+		}
 	}
 	written, err := applyPolicyReseed(cmd, m.path, m.lc, m.node, m.drift)
 	if err != nil {
@@ -672,7 +800,11 @@ func (m *policyMigration) print(w io.Writer) {
 		}
 	}
 	if m.pub != nil {
-		printPolicyPublishDiff(w, m.pub.drift, m.pub.sources)
+		if m.firstPublish {
+			printFirstPublishDiff(w, m.pub.drift, m.pub.sources)
+		} else {
+			printPolicyPublishDiff(w, m.pub.drift, m.pub.sources)
+		}
 		if m.pub.adopted {
 			// D854's other half: an installation that records no generation has
 			// no baseline to compare against, so this run adopts the node it is
@@ -758,8 +890,13 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 		return initflow.Status{}, err
 	}
 	switch {
-	case !published:
+	case !published && m == nil:
 		return initflow.Status{State: initflow.Done, Detail: policyNoneDetail()}, nil
+	case !published:
+		// The project has no node and the local config states a catalog, so the
+		// check is not the no-policy state: it is the first publish this run
+		// would make, and it says so rather than reporting the stage done.
+		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("no policy is published at %s, and the local config states an image_catalog that only the node carries: this run publishes the project's first node, after your confirmation", projectpolicy.PathShared())}, nil
 	case m == nil:
 		return initflow.Status{State: initflow.Done, Detail: fmt.Sprintf("the published policy is version %d", projectpolicy.Version)}, nil
 	case m.generations != nil:
@@ -795,7 +932,7 @@ func (s *policyMigrateStage) Plan(ctx context.Context, env initflow.Env) (initfl
 		return initflow.Plan{}, err
 	}
 	switch {
-	case !published:
+	case !published && m == nil:
 		return initflow.Plan{NothingToDo: true, Detail: policyNoneDetail()}, nil
 	case m == nil:
 		return initflow.Plan{NothingToDo: true, Detail: fmt.Sprintf("the published policy is version %d", projectpolicy.Version)}, nil
@@ -811,6 +948,8 @@ func (s *policyMigrateStage) Plan(ctx context.Context, env initflow.Env) (initfl
 // file.
 func (m *policyMigration) planDetail() string {
 	switch {
+	case m.firstPublish:
+		return "publish the project's first policy node, carrying the image_catalog the local config states, after your confirmation"
 	case m.generations != nil:
 		return fmt.Sprintf("re-seed %s from the published policy node, after your confirmation", m.path)
 	case m.record != "":
@@ -832,8 +971,19 @@ func (m *policyMigration) planDetail() string {
 // is what that refusal itself tells them — the same reading
 // `fugaro project policy publish --delete` has (internal/cli/project_cmd.go).
 func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
-	if marker := agentMarker(os.Getenv); marker != "" {
-		return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
+	// A managed project's gate is asked FIRST, and only this door has one: in a
+	// coding agent's session on a managed project the step that rewrites the
+	// published node is judged by the gate before it writes, and an admitted
+	// one proceeds (M1, D1016). The session's own refusal is kept for every
+	// other case, which is why it moves below the plan rather than going away:
+	// the plan is read-only, so a session that is going to refuse refuses after
+	// the same reads it has always made in the loop's preview pass, and the
+	// sentence it reads is the one it always read.
+	gate := s.e.r.gateUnderway()
+	if !gate {
+		if marker := agentMarker(os.Getenv); marker != "" {
+			return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
+		}
 	}
 	if policyNodeUnreachable(s.e.lc) {
 		return initflow.Outcome{Detail: policyNoDBReason}, nil
@@ -849,9 +999,26 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 	if m == nil {
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
-	cmd := s.e.r.cmd
-	if err := policyMigrationConfirm(ctx, cmd, m, env.Yes, cmd.OutOrStdout()); err != nil {
+	admitted, err := s.gateStep(ctx, m)
+	if err != nil {
 		return initflow.Outcome{}, err
+	}
+	if !admitted {
+		if marker := agentMarker(os.Getenv); marker != "" {
+			return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
+		}
+	}
+	cmd := s.e.r.cmd
+	if err := policyMigrationConfirm(ctx, cmd, m, env.Yes, cmd.OutOrStdout(), admitted); err != nil {
+		return initflow.Outcome{}, err
+	}
+	if admitted {
+		// The record follows the write (D1014) and not the admission: what an
+		// owner reads is that this node was published, and a step that failed
+		// inside the write has published nothing to record.
+		if err := s.e.r.gateApplied(ctx); err != nil {
+			return initflow.Outcome{}, err
+		}
 	}
 	return initflow.Outcome{Changed: true, Detail: m.doneDetail()}, nil
 }

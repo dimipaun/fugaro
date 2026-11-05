@@ -16,6 +16,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -185,7 +186,18 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		specLC.BaseImages = map[string]string{}
 	}
 	specLC.BaseImages[kind] = cmp.Or(specLC.BaseImages[kind], base)
-	rs, err := infra.Repo(infra.Inputs{LC: &specLC, Repo: repo, Cfg: cfg, FileSetsBaseBranch: fileSetsBaseBranch(rf), RepoURL: repoURL})
+	// The App ID reaches infra.Repo as an input rather than being left to its
+	// own lookup of the local config alone: a repository whose ID is only in
+	// the environment has one too (catalogGitHubAppID), and the spec's
+	// credential and the provider this command reads the Dockerfile with must
+	// be named from the same answer.
+	appID := ""
+	if cfg.Git.Provider == gitprov.KindGitHub {
+		if appID, err = catalogGitHubAppID(lc, repo, os.Getenv); err != nil {
+			return err
+		}
+	}
+	rs, err := infra.Repo(infra.Inputs{LC: &specLC, Repo: repo, Cfg: cfg, FileSetsBaseBranch: fileSetsBaseBranch(rf), RepoURL: repoURL, GitHubAppID: appID})
 	if err != nil {
 		return userErr("%v", err)
 	}
@@ -248,7 +260,16 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	if err != nil {
 		return remote(err)
 	}
-	_, opener, err := openCatalogProvider(os.Environ(), func(w string) {
+	// The provider's credential comes from where it actually is -- the local
+	// config and the repository's github-app-key secret -- rather than from
+	// the process environment, which holds neither (catalogProviderEnv). That
+	// read, like the copies below, waits for the typed confirmation: a
+	// declined build reads no secret.
+	providerEnv, err := catalogProviderEnv(ctx, cmd.ErrOrStderr(), lc, rs, entries, os.Getenv)
+	if err != nil {
+		return err
+	}
+	_, opener, err := openCatalogProvider(providerEnv, func(w string) {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
 	})
 	if err != nil {

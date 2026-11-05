@@ -361,13 +361,22 @@ func TestDisplayNamesAndConditions(t *testing.T) {
 		{ProjectTokenBucketCondition("fugaro-runs-proj-1234"),
 			`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/")`},
 		{ProjectTokenBucketConditionTitle("fugaro-x-12345678"), "fugaro-project-tokens-fugaro-x-12345678"},
-		// The three title prefixes the plan reader matches on
-		// (internal/infra/tf) are these, and a project job's title must not
-		// read as a per-repository job's: the prefix of one is not a prefix of
-		// the other's titles.
+		// The catalog check job's two (D1148): the copied definitions'
+		// project-wide read under the job account's own title, and one
+		// repository's build records under that repository's.
+		{CatalogReadCondition("b"), `resource.name.startsWith("projects/_/buckets/b/objects/builds/catalog/")`},
+		{CatalogReadConditionTitle("fugaro-catalog-check"), "fugaro-catalog-read-fugaro-catalog-check"},
+		{CatalogRecordsCondition("b", "acme-app-0123456789abcdef"),
+			`resource.name.startsWith("projects/_/buckets/b/objects/builds/acme-app-0123456789abcdef/catalog/")`},
+		{CatalogRecordsConditionTitle("acme-app-0123456789abcdef"), "fugaro-catalog-records-acme-app-0123456789abcdef"},
+		// The title prefixes the plan reader matches on (internal/infra/tf) are
+		// these, and a project job's title must not read as a per-repository
+		// job's: the prefix of one is not a prefix of the other's titles.
 		{BucketConditionTitlePrefix, "fugaro-"},
 		{TokenBucketConditionTitlePrefix, "fugaro-tokens-"},
 		{ProjectTokenBucketConditionTitlePrefix, "fugaro-project-tokens-"},
+		{CatalogReadConditionTitlePrefix, "fugaro-catalog-read-"},
+		{CatalogRecordsConditionTitlePrefix, "fugaro-catalog-records-"},
 	} {
 		if c.got != c.want {
 			t.Errorf("got %q, want %q", c.got, c.want)

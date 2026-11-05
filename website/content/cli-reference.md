@@ -52,7 +52,7 @@ Subcommands:
 - `fugaro restore` -- Rebuild a managed project from zero, into a new GCP project ID, and print what is not restored
 - `fugaro run` -- Launch a task in the cloud; it always ends with a PR
 - `fugaro runs` -- List and inspect runs
-- `fugaro secrets` -- Store and list a repository's secrets in Secret Manager
+- `fugaro secrets` -- Store, list and withdraw a repository's secrets in Secret Manager
 - `fugaro settings` -- Show every setting, what decides it, and its default
 - `fugaro setup` -- Create a fresh GCP project and stand up its installation, or a repository's cloud resources, through Terraform
 - `fugaro stats` -- Aggregate one installation's run records into figures a page can publish
@@ -124,6 +124,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this declaration would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --yes |
 | `--claude` | bool | `false` | no | run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt |
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one) |
@@ -2193,6 +2194,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmations this run would otherwise skip (the project's name typed at each step, and before each billable build) instead of applying on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. Refused where nobody can answer them (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --yes |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--expect-digest` | stringArray | `[]` | no | cross-check the digest of a base image's release signature, KIND=sha256:<hex>, as for the converge (repeatable) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
@@ -3988,7 +3990,7 @@ This command has no subcommands.
 
 ## `fugaro secrets`
 
-Store and list a repository's secrets in Secret Manager
+Store, list and withdraw a repository's secrets in Secret Manager
 
 Usage: `fugaro secrets`
 
@@ -4001,6 +4003,7 @@ Flags:
 Subcommands:
 
 - `fugaro secrets ls` -- List the project's (or, with --repo, a repository's) secrets: names, scope and versions, never values
+- `fugaro secrets rm` -- Withdraw a project secret: delete its Secret Manager container and its config entry
 - `fugaro secrets set` -- Store a secret's value, read from stdin or a hidden prompt, as a new version
 
 ## `fugaro secrets ls`
@@ -4067,6 +4070,59 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro secrets rm`
+
+Withdraw a project secret: delete its Secret Manager container and its config entry
+
+Delete the project-wide secret NAME and the local config entry that makes it
+reachable.
+
+NAME is stored once for the whole Fugaro project — in project_secrets, or in
+workflow_secrets for a name your local config holds there — and this is the
+command that takes it back: it deletes the Secret Manager container, with
+every version in it, and removes the entry that made it reachable from your
+local config in the same run, behind one confirmation and one diff.
+
+Both halves go, and neither is left behind: an entry whose container is gone
+promises a value no job can mount, and a container with no entry is a value
+the project still holds after its owner asked for it to be withdrawn.
+
+The entry removed is the one the name has: project_secrets.NAME for a
+reserved name, workflow_secrets.NAME for a workflow secret. Only those two
+blocks are this command's — a provider's key or a Claude account's token
+shares the container's derived ID and is refused, since that name's entry is
+not here to remove.
+
+Deleting the container revokes nothing retroactively. A repository whose own
+copy has an enabled version keeps using it, and a job already deployed keeps
+the mount it was applied with until its next update — the command says which
+repositories of this project hold their own copy.
+
+This command never prints a value: the entry it removes holds an allow-list
+and a switch, and a value is not a setting and is never in a diff.
+
+Run it at your own terminal: a removal of a secret is a value no plan shows,
+so a coding agent's session is refused, --yes included.
+
+Usage: `fugaro secrets rm NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--dry-run` | bool | `false` | no | print what the removal would do and write nothing |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--json` | bool | `false` | no | print the dry run's document as JSON (with --dry-run) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--yes` | bool | `false` | no | confirm the removal without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro secrets set`
 
 Store a secret's value, read from stdin or a hidden prompt, as a new version
@@ -4093,13 +4149,20 @@ Scope: with neither flag, a NAME that has a project-wide meaning is stored
 once for the whole Fugaro project, in the project's own Secret Manager --
 the API key, the GitHub App key, a model provider's own key (any provider,
 allow_data_to or not), a reserved secret your local config's project_secrets
-block allow-lists, or a named Claude account's token whose account
-allow-lists at least one repository. --project-wide is accepted as a
-synonym of that default, so existing scripts keep working. Inside a shared
-job there is no IAM boundary between repositories: the profile is the
-boundary, and the value reaches every enrolled repository. A workflow's own
-secret has no project-wide meaning and is stored in the repository's own
-container as before.
+block allow-lists, a named Claude account's token whose account
+allow-lists at least one repository, or a secret a workflow declares that
+your local config's workflow_secrets block lists at least one repository
+for. --project-wide is accepted as a synonym of that default, so existing
+scripts keep working. Inside a shared job there is no IAM boundary between
+repositories: the profile is the boundary. What the project copy reaches is
+the name's own entry, and the store says which: a reserved name with no
+project_secrets entry, and a model provider's key with no allow_data_to (or
+an explicit ["*"]), reach every enrolled repository, while an entry that
+names repositories -- project_secrets', workflow_secrets' or a named
+account's -- reaches exactly those. A workflow's own secret is stored once
+for the project only through such an entry: with no workflow_secrets entry
+it stays in the repository's own container as before, and an entry present
+with an empty allow_data_to is refused, since it would mount nowhere.
 
 bitbucket-token has no project-wide default: a Bitbucket credential is
 normally a repository access token, issued for one repository and usable for
@@ -4128,20 +4191,52 @@ value is stored as the repository's own copy instead. That copy overrides
 the project copy from then on: disabling its last enabled version is the
 only way back.
 
+The policy flags write the entry that decides who may mount the value,
+instead of reading one:
+
+  --allow-data-to OWNER/NAME   add a repository to
+                               project_secrets.NAME.allow_data_to -- or to
+                               workflow_secrets.NAME.allow_data_to for a
+                               name your local config holds there -- the
+                               list of repositories the value is stored for
+  --proxy[=true|false]         set project_secrets.NAME.proxy, the Bitbucket
+                               token's switch for the credentials service
+
+NAME must be one of the reserved names above, or a name your local config
+already holds in workflow_secrets (that block can hold no reserved name),
+and --repo cannot be combined with either flag: the entry is the project's
+own and no repository owns it. --proxy is refused for a workflow secret,
+because no workflow_secrets entry holds the switch. Adding a repository to
+the list, or turning proxy on, is a widening, so it takes the project's own
+name at a terminal — or --yes outside a coding agent's session. --dry-run
+says what the write would do and writes nothing, and --json prints that as
+the settings-write document.
+
+A value is not a setting: it has no row, it is never in a diff, and no dry
+run of this command prints one. secrets set with neither policy flag is the
+value write and reads the value from stdin; to store a value and change its
+policy, run the command twice. A coding agent's session is refused the
+policy flags outright, --yes included (spec §5), because a secret's policy is
+a value no plan shows.
+
 Usage: `fugaro secrets set NAME`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--allow-data-to` | stringSlice | `[]` | no | add a repository (owner/name) to NAME's allow_data_to — project_secrets.NAME.allow_data_to, or workflow_secrets.NAME.allow_data_to for a workflow secret — the list of repositories the value is stored for; comma-separated or repeated |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--dry-run` | bool | `false` | no | print what the policy write would do and write nothing |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--project-wide` | bool | `false` | no | the default for a name that has a project-wide meaning, accepted as a synonym so existing scripts keep working (cannot be combined with --repo) |
+| `--proxy` | bool | `false` | no | set project_secrets.NAME.proxy, the Bitbucket token's switch for the credentials service (--proxy=false turns it off) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | work on one repository's own copy, given as owner/name (no value: this checkout's origin); without it, a name that has a project-wide meaning is stored and listed project-wide |
+| `--yes` | bool | `false` | no | confirm the policy write without a prompt (outside a coding agent's session) |
 
 Subcommands:
 
@@ -4271,6 +4366,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--add` | string | "" | no | add an item to a string-list key |
 | `--add-entry` | stringArray | `[]` | no | add one entry to a map or an object list (field=value, once per member the entry has) |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmations this write would otherwise get (the y/N, or the typed project name for a widening direction) instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. Refused where nobody can answer them (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dry-run` | bool | `false` | no | print what the edit would do and write nothing |
 | `-h`, `--help` | bool | `false` | no | help for set |
@@ -4315,6 +4411,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this removal would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes, --dry-run and --json |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dry-run` | bool | `false` | no | print what the edit would do and write nothing |
 | `-h`, `--help` | bool | `false` | no | help for unset |
@@ -4759,7 +4856,12 @@ not lift the refusal (docs/design/managed-projects.md §10.2, "Rolling back").
 
 Everything else is setup's help word for word, because it is the same
 converge: the review screen and the one typed project name in a project Fugaro
-owns; the steps that keep their own typed confirmation — a project's creation
+owns — and in a managed project (fugaro managed flag) the gate's own read of
+the project's marks stands in for that name and for the steps the gate judges,
+at your own terminal exactly as in a coding agent's session: every plan is
+still printed exactly as it applies and every verdict is still recorded, and
+only a step that is money, permanence or a secret still asks for your own word
+(D1026). The steps that keep their own typed confirmation — a project's creation
 and the billing link are setup's, and here they cannot arise at all, and a
 secret is a value, typed in a hidden prompt, which --yes cannot supply — against
 the steps --yes covers, which by D12's answer of 2026-10-20 is every ordinary
@@ -4785,6 +4887,7 @@ Flags:
 | `--allow-fork` | bool | `false` | no | let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise |
 | `--allow-job-delete` | bool | `false` | no | with --repo: lower the jobs' deletion protection, for offboarding |
 | `--anchor` | bool | `false` | no | in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro 0.4.0 or later and built FROM a release base image of 0.4.0 or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then --yes writes or a terminal asks) |
+| `--ask` | bool | `false` | no | ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the project's name typed at the review, each step's own, the y/Ns. It is the symmetric half of --yes, which is the same flag for a project that is NOT managed, and the two contradict each other: pass one, or neither. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never reaches a Typed step (money, permanence, a secret: the owner's own word, which no door relaxes). In a project whose marks do not answer "managed" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, --non-interactive, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed |
 | `--base` | stringSlice | `[]` | no | copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated) |
 | `--base-image` | stringArray | `[]` | no | a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs) |
 | `--billing-account` | string | "" | no | the billing account the budget is on |

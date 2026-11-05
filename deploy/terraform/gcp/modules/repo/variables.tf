@@ -56,6 +56,12 @@ variable "installation" {
       name   = string
       region = string
     }))
+    # The project's catalog check job account (D1148), its email, or "" on an
+    # installation whose project publishes no catalog. It is what
+    # catalogcheck.tf grants actAs on this repository's build account to, so a
+    # scheduled catalog rebuild of one of this repository's entries runs as
+    # this repository and not as the project.
+    catalog_check_service_account = optional(string, "")
   })
 
   validation {

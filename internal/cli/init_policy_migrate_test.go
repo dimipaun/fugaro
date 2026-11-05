@@ -285,6 +285,128 @@ func TestUpdatePolicyMigrationSaysWhenNothingIsPublished(t *testing.T) {
 	}
 }
 
+// TestUpdatePublishesTheFirstPolicyNodeForACatalog is #1656's red step. The
+// stage returned Done with the no-policy detail for every project that had
+// never published a node, so an image_catalog the operator had written into the
+// local config reached no run: the catalog lives in the published node and in
+// nowhere else — no job's environment carries one — and the operator who had
+// just added one was told there was nothing to do, with
+// `fugaro project policy publish` as the second command `fugaro update`'s one
+// command must not need. Every later catalog edit goes through this stage; only
+// the first publish was missing.
+func TestUpdatePublishesTheFirstPolicyNodeForACatalog(t *testing.T) {
+	f := newProjectFixture(t, catalogConfigYAML)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the check says %s %q, want the first publish left to do", st.State, st.Detail)
+	}
+	if !strings.Contains(st.Detail, "no policy is published") {
+		t.Errorf("the check does not say the project has no node: %q", st.Detail)
+	}
+	plan, err := h.s.Plan(context.Background(), initflow.Env{Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.NothingToDo {
+		t.Errorf("the plan leaves the first publish out: %+v", plan)
+	}
+	if v := f.db.Value(projectpolicy.PathShared()); v != nil {
+		t.Fatalf("the preview wrote a node of its own: %v", v)
+	}
+
+	// The write is behind the confirmation the stage's other node writes take.
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the first publish was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "⚠ CONFIRM (project aurora)") {
+		t.Errorf("the first publish was not behind the confirmation:\n%s", out)
+	}
+	if !strings.Contains(out, "this publish creates the node") || !strings.Contains(out, "image_catalog") {
+		t.Errorf("the diff the operator confirmed does not name the catalog it creates the node with:\n%s", out)
+	}
+	p := publishedPolicy(t, f)
+	if p.ImageCatalog == nil {
+		t.Fatalf("the published node carries no catalog: %+v", p)
+	}
+	var names []string
+	for _, e := range p.ImageCatalog.Entries {
+		names = append(names, e.Name)
+	}
+	if want := []string{"universal", "rust"}; !slices.Equal(names, want) {
+		t.Errorf("the published catalog carries %v, want %v", names, want)
+	}
+}
+
+// catalogConfigWithNoRepos rewrites the fixture's config so the project lists no
+// repository while the catalog the fixture's extra block states stays: a first
+// publish from it would write a node whose allow-list admits nothing, which is
+// doctor's allow-list-empty state and stops every run of the project before it
+// starts.
+func setCatalogConfigWithNoRepos(t *testing.T, f *projectFixture) {
+	t.Helper()
+	raw, err := os.ReadFile(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const repos = "repos:\n  acme/app: { provider: github, workflows: [web] }\n  acme/other: { provider: bitbucket, workflows: [web] }\n"
+	text := strings.Replace(string(raw), repos, "repos: {}\n", 1)
+	if !strings.Contains(text, "repos: {}\n") || !strings.Contains(text, "image_catalog") {
+		t.Fatal("the fixture's config does not carry the repositories this helper replaces")
+	}
+	if err := os.WriteFile(f.path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestUpdatePolicyFirstPublishIsRefusedWithoutAConfirmation: the node the stage
+// now writes when nothing is published is the one every run of the project is
+// admitted by from here on, chosen where none was, so it is the operator's own
+// write and not one a session makes: --yes does not stand in for the project's
+// name, and a session with no terminal is refused — the confirmation D846
+// reserves for the boundary every run is admitted by, and the class a coding
+// agent's session never reaches under the managed gate (D1026).
+func TestUpdatePolicyFirstPublishIsRefusedWithoutAConfirmation(t *testing.T) {
+	f := newProjectFixture(t, catalogConfigYAML)
+	h := newMigrationRig(t, f, &initOptions{})
+	noTerminal(t)
+
+	out, err := h.apply(t, true)
+	if err == nil {
+		t.Fatalf("--yes published the project's first policy node with no terminal:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "does not stand in") {
+		t.Errorf("the refusal does not say that --yes is no stand-in: %v", err)
+	}
+	if v := f.db.Value(projectpolicy.PathShared()); v != nil {
+		t.Fatalf("the refused publish wrote a node: %v", v)
+	}
+
+	// A config that lists no repository is the other refusal of the same write,
+	// and the sentence is the publisher's own (#1674): the node admits nothing,
+	// so every run of the project stops before it starts.
+	ger := newProjectFixture(t, catalogConfigYAML)
+	setCatalogConfigWithNoRepos(t, ger)
+	h2 := newMigrationRig(t, ger, &initOptions{})
+	out, err = h2.apply(t, true)
+	if err == nil {
+		t.Fatalf("--yes published a policy that admits no repository:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "every run stops before it starts") {
+		t.Errorf("the refusal does not say the consequence: %v", err)
+	}
+	if v := ger.db.Value(projectpolicy.PathShared()); v != nil {
+		t.Fatalf("the refused publish wrote a node: %v", v)
+	}
+}
+
 func TestUpdatePolicyMigrationLeavesAMalformedNodeUntouched(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": 0})

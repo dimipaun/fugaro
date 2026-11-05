@@ -58,17 +58,32 @@ var readAppKey = func(ctx context.Context, lc *localcfg.Config, secretID string)
 // checkGitHubAppFlag is the flag that allows the key's Secret Manager read.
 const checkGitHubAppFlag = "--check-github-app"
 
-// refuseAppKeyReadInAgent is the refusal of the flag under a coding agent's
-// environment, before anything is read.
-func refuseAppKeyReadInAgent(getenv func(string) string) error {
-	return refuseKeyReadInAgent(getenv, checkGitHubAppFlag, "the GitHub App's private key")
+// appKeyReadNotice is the one line every path that reads the App's private key
+// from Secret Manager with the person's own credentials prints before the read:
+// the --check-github-app pre-check, and the catalog build's own read of it
+// (catalogProviderEnv, whose key is the same secret and whose JWT mints the
+// same installation token). Stated once, so the two cannot describe one read
+// two ways.
+const appKeyReadNotice = "reads the App's private key with your own credentials and holds it in memory only to sign a 9-minute token; only the PEM byte copy is cleared afterwards (the encoded payload and the parsed key live until garbage collection); GODEBUG=http2debug in your own environment would print the token's Authorization header, so unset it first"
+
+// refuseAppKeyReadInAgent is the refusal of the GitHub App's own key read
+// under a coding agent's environment, before anything is read. Every path that
+// reads that key goes through it -- the --check-github-app pre-check,
+// `project sync`, and the catalog build's own read -- so a second condition on
+// what an agent's session may read is one change here rather than one call
+// site at a time. who is what the operator would have to pass to allow the
+// read: the flag where there is one, and the command itself where the read
+// happens as part of it (`fugaro image build` takes no such flag).
+func refuseAppKeyReadInAgent(getenv func(string) string, who string) error {
+	return refuseKeyReadInAgent(getenv, who, "the GitHub App's private key")
 }
 
-// refuseKeyReadInAgent is that refusal for any command whose flag allows the
-// same read: flag is the flag that would allow it and what names the value, so
-// a command that reads the key for its own purpose (`project sync` lists the
-// App's installed repositories with it) refuses with its own name rather than
-// borrowing one the operator cannot pass here.
+// refuseKeyReadInAgent is that refusal for any value a command may read behind
+// its own flag or as part of what it does: flag names the flag or command that
+// would allow it and what names the value, so a command refuses with its own
+// name rather than borrowing one the operator cannot pass here. It is also the
+// way the credentials service's bundle is refused (doctor_brokering.go), which
+// is not the App's key.
 func refuseKeyReadInAgent(getenv func(string) string, flag, what string) error {
 	if agentEnv(getenv) {
 		return userErr("%s reads %s with your own credentials, so it is refused in a coding agent's session (the value must never reach an agent's process): run it in your own terminal window", flag, what)
@@ -139,7 +154,7 @@ func checkGitHubApp(ctx context.Context, lc *localcfg.Config, repo, appID string
 		pem = append([]byte(nil), src.Mem...)
 	case src.Read:
 		if src.Notice != nil {
-			fmt.Fprintln(src.Notice, "reads the App's private key with your own credentials and holds it in memory only to sign a 9-minute token; only the PEM byte copy is cleared afterwards (the encoded payload and the parsed key live until garbage collection); GODEBUG=http2debug in your own environment would print the token's Authorization header, so unset it first")
+			fmt.Fprintln(src.Notice, appKeyReadNotice)
 		}
 		var err error
 		pem, err = readAppKey(ctx, lc, src.SecretID)

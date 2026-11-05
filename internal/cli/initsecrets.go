@@ -697,7 +697,13 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 	// provider's allow_data_to does, and the reach is exactly what decides
 	// whether storing the shared copy is safe. The prompt fires only where the
 	// name has a project-wide meaning for this repository (projectScope), so
-	// projectReach's "no repository can mount it" is not reachable here.
+	// projectReach's "no repository can mount it" is not reachable here — which
+	// holds for the new block too (workflow_secrets), and only because both
+	// sides read it: projectScope asks ProjectSecretCandidate, and projectReach
+	// asks projectSecretAllowed, whose workflow_secrets source names the entry's
+	// own repositories. The two must move together: with the candidate reading
+	// the block and the reach not, this prompt told a person storing a workflow
+	// secret that no repository can mount it.
 	if s.projectScope(name) {
 		fmt.Fprintf(w, "%s for %s on %s (stored project-wide in project %s's Secret Manager, where %s; for this repository's own copy instead, press Ctrl-C here and run '%s secrets set %s --repo %s' in your own terminal, then start this again):\n",
 			name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject), projectReach(s.e.lc, name), selfCommand(), quoteWord(name), quoteWord(s.tg.repo))

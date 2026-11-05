@@ -118,7 +118,8 @@ func TestSecurityMdStatesTheProjectScopeDefault(t *testing.T) {
 		"every repository that policy admits",
 		"Inside a shared job there is no IAM boundary between repositories — the profile is the boundary.",
 		"**The data-policy gate is unchanged.**",
-		"`workflows.<n>.secrets` cannot be shared this way at all",
+		"`workflows.<n>.secrets` **can** be shared this way, through the operator's own `workflow_secrets.<name>` entry",
+		"A **shared project job** never mounts one at all",
 	} {
 		if !strings.Contains(doc, strings.Join(strings.Fields(want), " ")) {
 			t.Errorf("SECURITY.md does not say %q", want)
@@ -128,6 +129,12 @@ func TestSecurityMdStatesTheProjectScopeDefault(t *testing.T) {
 	// project-wide meaning keeps the repository scope it had.
 	if !strings.Contains(doc, "A name that has no project-wide meaning") {
 		t.Error("SECURITY.md does not say which names the default leaves alone")
+	}
+	// And it is no longer a claim that a workflow's own secret is never
+	// shared: the block that shares one exists, so the sentence that denied it
+	// is the pre-feature wording (W6, D1272) and may not come back.
+	if strings.Contains(doc, "`workflows.<n>.secrets` cannot be shared this way at all") {
+		t.Error("SECURITY.md denies that a workflow's own secret is shared this way: the operator's workflow_secrets block is what shares one, and a security page that says otherwise is a reach a reader believes")
 	}
 }
 

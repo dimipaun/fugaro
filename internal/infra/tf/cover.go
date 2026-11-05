@@ -89,6 +89,18 @@ var allowedTypes = map[string]bool{
 // own kind for the same reason: it holds the FP's database admin and nothing
 // else, and as one of FugaroAccounts every toAccounts row would have accepted
 // it. TestCoordinatorAccountIsItsOwnPrincipalKind holds that.
+//
+// CatalogCheck is the project's catalog check job account (D1148 task (ii)),
+// its own kind for the same reason and one more: its grants are things no job
+// account holds — actAs on EVERY repository's build account, a read of every
+// repository's build records and check state, the copied catalog definitions
+// project-wide — so as one of FugaroAccounts a plan could have added any
+// toAccounts row's role to it, and as its own kind every one of its grants
+// (and every other role) is refused and the step asks the owner. The rule that
+// accepts a build account's read of the copied definitions (catalogReadGrant)
+// would otherwise accept the project job's too: the expression is byte for
+// byte the same, and only the account differs
+// (TestCatalogCheckAccountIsItsOwnPrincipalKind).
 type who uint8
 
 const (
@@ -97,6 +109,7 @@ const (
 	toDeployer
 	toCredentials
 	toCoordinator
+	toCatalogCheck
 )
 
 // customKey is how grantRules names a custom role of the installation (by its
@@ -324,14 +337,25 @@ const (
 // project and nothing else, so it is its own kind (toCoordinator).
 const CoordinatorAccountID = "fugaro-coordinator"
 
+// CatalogCheckAccountID is the project's catalog check job account (D1148
+// task (ii)), the one modules/installation/catalogcheck.tf creates in the
+// installation's project; the module's variable validation pins the account ID
+// it is given to this constant, so a plan cannot hand the account a name this
+// package reads differently. It is NOT among FugaroAccounts, for the
+// credentials and coordinator accounts' reason: its grants are a project-wide
+// reach that no `fugaro update` confirmation announced, so every one of them
+// is refused here and the step asks its owner (toCatalogCheck).
+const CatalogCheckAccountID = "fugaro-catalog-check"
+
 // FugaroRoles are the custom role IDs the modules create; FugaroAccounts the
 // fixed service account IDs a toAccounts row accepts. Job and build accounts
 // are fugaro-<readable>-<8 hex>. The deployer account (DeployerAccountID) and
 // the credentials service's (CredentialsAccountID) are deliberately NOT among
 // FugaroAccounts: each holds roles of its own and nothing a job holds, so each
 // is its own kind of principal (toDeployer, toCredentials). The coordinator's
-// writer (CoordinatorAccountID) is not among them either, for the same reason
-// (toCoordinator).
+// writer (CoordinatorAccountID) is not among them either, and neither is the
+// project's catalog check job (CatalogCheckAccountID), for the same reason
+// (toCoordinator, toCatalogCheck).
 var (
 	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
@@ -656,6 +680,14 @@ func (c Cover) isCredentialsMember(m string) bool {
 func (c Cover) isCoordinatorMember(m string) bool {
 	p := c.installationProject()
 	return p != "" && m == "serviceAccount:"+CoordinatorAccountID+"@"+p+".iam.gserviceaccount.com"
+}
+
+// isCatalogCheckMember is whether m is exactly the project's catalog check job
+// account as an IAM member, in the installation's project: the account
+// catalogcheck.tf creates (var.project).
+func (c Cover) isCatalogCheckMember(m string) bool {
+	p := c.installationProject()
+	return p != "" && m == "serviceAccount:"+CatalogCheckAccountID+"@"+p+".iam.gserviceaccount.com"
 }
 
 // isDeployerMember is whether m is exactly this run's deployer account as an
@@ -1243,6 +1275,15 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			// The coordinator's writer likewise: its one row is the FP's
 			// database admin.
 			kind = toCoordinator
+		case c.isCatalogCheckMember(m):
+			// ... and the project's catalog check job (D1148): its own kind,
+			// which no row accepts, so every one of its grants — and every
+			// other role a plan might reach for — is refused and the update
+			// that carries them asks its owner. Read here, before the review
+			// screen's list, for the deployer's reason: a plan that listed its
+			// address would otherwise be able to grant it a launcher's or an
+			// operator's role.
+			kind = toCatalogCheck
 		case slices.Contains(c.Listed, m):
 			if !strings.HasPrefix(m, "user:") && !strings.HasPrefix(m, "group:") && !strings.HasPrefix(m, "serviceAccount:") {
 				return fmt.Sprintf("grants to %s, which is not a user, group or service account", m)
@@ -1679,7 +1720,18 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 // jobAccount's shape too (fugaro-<readable slug>-<workflow>-<8 hex>), so a
 // repository whose slug begins with "p" gets an ID of the project job's own
 // shape, and the widened condition would then be accepted for it.
-var projectModule = regexp.MustCompile(`^module\.project\["[^"]+"\]$`)
+//
+// The review-only variants (design docs/cloud-senior-review, CSR7) are a
+// second instance of the same module, "project_review"
+// (roots/installation/main.tf), and their grants are these same two widened
+// conditions for the account their own instance creates: reading them here is
+// what lets the one plan fugaro update writes be covered at all, and it widens
+// nothing — the second instance is the same module source, with its own
+// accounts, so the account rule below still binds every grant to the account
+// its own instance holds or creates. What the variant is NOT covered for is
+// anything a job account may not have: it holds no secret accessor, because
+// the root hands that instance no secret container.
+var projectModule = regexp.MustCompile(`^module\.project(?:_review)?\["[^"]+"\]$`)
 
 // projectJobCondition reports whether a bucket grant is a project job's
 // widened one (plan task 3.2 step 2, gcp.ProjectBucketCondition), for the

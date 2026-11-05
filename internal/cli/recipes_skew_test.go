@@ -378,6 +378,65 @@ func TestRecipesSkewRefusesReviewLevelsOnOldImage(t *testing.T) {
 	}
 }
 
+// TestRecipesSkewRefusesReviewJobOnAnOldImage is E6: a review launch is gated
+// on reviewJobSince, the release that deploys the review-only job variant and
+// whose runner reads the launch's marker. An older image has no variant beside
+// its coding job and no runner that would branch on the marker, so a review it
+// accepted in silence would run the coder's own job, with the App key the
+// review container exists to be without — the one failure this gate's wording
+// has to make impossible to mistake.
+func TestRecipesSkewRefusesReviewJobOnAnOldImage(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web",
+		Task: "x", Mode: recipe.ModeReview}
+	check := func(baseRef string) (string, error) {
+		var warn bytes.Buffer
+		writeBuildRecord(t, f, appSlug, "web", baseRef)
+		err := checkReviewJobImage(context.Background(), env, appSlug, spec, "base", &warn)
+		return warn.String(), err
+	}
+	for _, baseRef := range []string{"ghcr.io/dimipaun/fugaro-base:0.15.0", "ghcr.io/dimipaun/fugaro-base:0.18.9"} {
+		warn, err := check(baseRef)
+		if err == nil || ExitCode(err) != ExitUserError ||
+			!strings.Contains(err.Error(), "a review launch needs a job image whose runner knows "+reviewJobKnows+" (fugaro 0.19.0 or later)") {
+			t.Fatalf("%s: warn = %q, err = %v", baseRef, warn, err)
+		}
+		if !strings.Contains(err.Error(), "fugaro update") {
+			t.Errorf("%s: the refusal does not name the update that fixes it: %v", baseRef, err)
+		}
+		if warn != "" {
+			t.Errorf("%s: warning %q, want none", baseRef, warn)
+		}
+	}
+	if warn, err := check("ghcr.io/dimipaun/fugaro-base:0.19.0"); err != nil {
+		t.Fatalf("0.19.0: warn = %q, err = %v", warn, err)
+	}
+	warn, err := check("us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c")
+	if err != nil {
+		t.Fatalf("dev base: %v", err)
+	}
+	if !strings.Contains(warn, "not a release base image") {
+		t.Errorf("dev base: warning %q, want the not-a-release note", warn)
+	}
+	// The same launch on a checkout: clone workflow, whose job has no derived
+	// image and so no build record: the gate raises checkCloneImageSince's
+	// threshold on base_images.base itself.
+	lc := *env.lc
+	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.18.0"}
+	var cloneWarn bytes.Buffer
+	err = checkCloneReviewJobImage(&lc, spec, &cloneWarn)
+	if err == nil || ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), "a review launch needs a job image whose runner knows "+reviewJobKnows+" (fugaro 0.19.0 or later)") ||
+		!strings.Contains(err.Error(), "release 0.18.0") {
+		t.Fatalf("clone 0.18.0: warn = %q, err = %v", cloneWarn.String(), err)
+	}
+	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.19.0"
+	if err := checkCloneReviewJobImage(&lc, spec, &bytes.Buffer{}); err != nil {
+		t.Fatalf("clone 0.19.0: %v", err)
+	}
+}
+
 // TestRecipesSkewRefusesResolvedL3OnOldImage: the gate judges the run the
 // launch resolves, not only the task field. At critical the mode's own row
 // turns level 3 on with nothing in the task and nothing in fugaro.yaml

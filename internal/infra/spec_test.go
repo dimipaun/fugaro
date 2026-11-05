@@ -1934,11 +1934,14 @@ func TestRepoSpecHasNoVariantForDisallowedName(t *testing.T) {
 	}
 }
 
-// A named account's variants exist ONLY for oauth repositories: an api-key or
-// vertex repository that an account happens to list in allow_data_to still
-// gets exactly the one default job per workflow (the oauth gate at the loop in
-// Repo(): removing it stayed green until this test).
-func TestRepoSpecHasNoVariantForNonOAuthRepositories(t *testing.T) {
+// An account gets a job variant only where a key that selects it exists: under
+// oauth every account config.AllowedClaudeAccounts admits, and under api-key
+// only the review or adversarial account the B0 mix rule admits (B1, B2). An
+// api-key or vertex repository that an account merely lists in allow_data_to
+// — no stage key names it — still gets exactly the one default job per
+// workflow, which is the allow-list's own backstop: being allowed data is not
+// being chosen.
+func TestRepoSpecHasNoVariantForAnUnchosenAccount(t *testing.T) {
 	for _, auth := range []string{"api-key", "vertex"} {
 		in := sandboxInputs(t, m5Additions+claudeAccountsLC)
 		in.Cfg.Agent.Auth = auth
@@ -2094,6 +2097,37 @@ func TestProjectSecretContainers(t *testing.T) {
 	}
 }
 
+// TestProjectSecretContainerIsDerivedFromTheEntry: the plan creates the
+// project container for a workflow_secrets entry exactly as it does for a
+// project_secrets one -- a non-empty allow_data_to and nothing else, D1263 --
+// so a container Terraform creates and one the store path created first (F16)
+// are the same container.
+func TestProjectSecretContainerIsDerivedFromTheEntry(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		lc   string
+		want []string
+	}{
+		{"entry with a list", "workflow_secrets:\n  sandbox-probe: { allow_data_to: [acme/sandbox] }\n", []string{"sandbox-probe"}},
+		{"entry with an empty list", "workflow_secrets:\n  sandbox-probe: { allow_data_to: [] }\n", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			lc := parseLC(t, m4LocalConfig+m5Additions+tt.lc)
+			spec, err := Installation(lc, InstallOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := map[string]string{}
+			for _, logical := range tt.want {
+				want[logical] = gcp.ProjectSecretID(lc.Name, logical)
+			}
+			if !maps.Equal(spec.ProjectSecrets, want) {
+				t.Errorf("ProjectSecrets = %+v, want %+v", spec.ProjectSecrets, want)
+			}
+		})
+	}
+}
+
 // --- RepoSpec.Addresses (plan docs/plans/2026-10-14-config-transitions.md Task 1)
 
 // The golden fixtures' agent blocks. oauth with one named account and
@@ -2158,6 +2192,14 @@ const repoRootAPIKeyLC = repoRootLC + `providers:
     allow_data_to: ["acme/webapp"]
 `
 
+// repoRootMixedLC is repoRootAPIKeyLC with the one stage key the owner's B0
+// ruling admits (docs/design/mixed-credentials.md §11): the review stage's
+// Claude account, whose allow_data_to admits this repository. The coder's own
+// stages are untouched, so they keep the provider key the gateway holds.
+const repoRootMixedLC = repoRootAPIKeyLC + `stages:
+  review: { claude_account: bmb }
+`
+
 // repoRootCredentialsAPIKeyInputs is the api-key shape of the opt-in fixture:
 // the installation has a credentials service, and the one workflow mounts the
 // Anthropic API key (agent.auth api-key) and a provider's key — the other two
@@ -2200,10 +2242,11 @@ func variantKeys(addrs []string) []string {
 	return out
 }
 
-// A named Claude account is a workflow variant only under oauth: Repo
-// builds them only there, and the address set must follow the map rather
-// than drift from it (Review Focus 3).
-func TestRepoAddressesNamedVariantsOnlyUnderOAuth(t *testing.T) {
+// The address set must follow the map of jobs Repo built rather than drift
+// from it (Review Focus 3). The oauth fixture's local config defines one
+// account, which under oauth is a variant; the same config under api-key
+// names no stage for it, so the one job it has is the whole address set.
+func TestRepoAddressesFollowTheVariantMap(t *testing.T) {
 	oauth := repoRootSpec(t, repoRootOAuthAgent)
 	if got, want := slices.Sorted(maps.Keys(oauth.Workflows)), []string{"web", "web_bmb"}; !slices.Equal(got, want) {
 		t.Fatalf("oauth spec Workflows = %v, want %v", got, want)
@@ -2306,6 +2349,15 @@ type repoRootFixture struct {
 	// credentialsService sets the fixture's Installation.CredentialsService,
 	// the installation output the repository root reads.
 	credentialsService bool
+	// catalogCheckServiceAccount sets the fixture's
+	// Installation.CatalogCheckServiceAccount, the second installation output
+	// a repository root reads: the project's catalog check job's account
+	// (D1148), which the root grants actAs on its own build account.
+	catalogCheckServiceAccount string
+	// lc replaces the fixture's local config when the fixture's own shape
+	// lives there rather than in the agent block — the stage account B2's mix
+	// names is a local-config key, never a published one.
+	lc string
 }
 
 // repoRootFixtures are the fixture specs, keyed by the golden's name.
@@ -2332,6 +2384,17 @@ var repoRootFixtures = map[string]repoRootFixture{
 	"repo_root":             {agent: repoRootOAuthAgent},
 	"repo_root_vertex":      {agent: repoRootVertexAgent},
 	"repo_root_credentials": {agent: repoRootOAuthAgent, credentialsService: true},
+	// repo_root_catalog_check is the D1148 fixture: the same oauth spec with
+	// the installation's catalog check job account set, so the one address the
+	// mirror adds (the actAs on the build account, modules/repo/catalogcheck.tf)
+	// is compared with a real plan rather than trusted.
+	"repo_root_catalog_check": {agent: repoRootOAuthAgent, catalogCheckServiceAccount: "fugaro-catalog-check@proj-1234.iam.gserviceaccount.com"},
+	// repo_root_mixed is B2's fixture: an api-key spec whose local config
+	// names the one stage account the owner's B0 ruling admits, so a real plan
+	// holds the job variant that account gets, the token it mounts and the
+	// accessor beside them (docs/design/mixed-credentials.md §11). No other
+	// fixture has an api-key job at all.
+	"repo_root_mixed": {agent: `agent: { auth: api-key }`, lc: repoRootMixedLC},
 }
 
 // repoRootFixtureSpec builds one fixture's spec by name, the opt-in
@@ -2345,6 +2408,12 @@ func repoRootFixtureSpec(t *testing.T, name string) RepoSpec {
 	in := repoRootInputs(t, f.agent)
 	if f.credentialsService {
 		in.Installation.CredentialsService = &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	}
+	if f.catalogCheckServiceAccount != "" {
+		in.Installation.CatalogCheckServiceAccount = f.catalogCheckServiceAccount
+	}
+	if f.lc != "" {
+		in.LC = parseLC(t, f.lc)
 	}
 	rs, err := Repo(in)
 	if err != nil {
@@ -2448,6 +2517,46 @@ func TestRepoAddressesMatchTheCredentialsGolden(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("Addresses() differs from repo_root_credentials_addresses.golden:\nmissing: %v\nunexpected: %v",
 			missingFrom(want, got), missingFrom(got, want))
+	}
+}
+
+// The mixed fixture pins B2's address set against a real plan: the api-key
+// repository that names a stage account has two jobs, and the account's —
+// the variant whose name carries the account's own token — is the only one
+// that reaches a Claude credential. That is the whole shape of the ruling:
+// the run's review and adversarial stages are on the account, and no stage
+// of the coder's own job is (docs/design/mixed-credentials.md §11).
+func TestRepoAddressesMatchTheMixedGolden(t *testing.T) {
+	const (
+		account = "bmb"
+		token   = "claude-oauth-token-" + account
+		mixed   = `module.repo.module.workflow["web_` + account + `"].`
+		coder   = `module.repo.module.workflow["web"].`
+	)
+	spec := repoRootFixtureSpec(t, "repo_root_mixed")
+	want := addressesGolden(t, "repo_root_mixed")
+	if len(want) == 0 {
+		t.Fatal("the golden is empty")
+	}
+	got := spec.Addresses()
+	if !slices.Equal(got, want) {
+		t.Errorf("Addresses() differs from repo_root_mixed_addresses.golden:\nmissing: %v\nunexpected: %v",
+			missingFrom(want, got), missingFrom(got, want))
+	}
+	for _, a := range []string{
+		mixed + "google_cloud_run_v2_job.this[0]",
+		mixed + `google_secret_manager_secret_iam_member.job["` + token + `"]`,
+		coder + `google_secret_manager_secret_iam_member.job["anthropic-api-key"]`,
+		coder + `google_secret_manager_secret_iam_member.job["openrouter-api-key"]`,
+	} {
+		if !slices.Contains(want, a) {
+			t.Errorf("the plan of the mixed fixture does not hold %s", a)
+		}
+	}
+	for _, a := range want {
+		if strings.HasPrefix(a, coder) && strings.Contains(a, "claude-oauth-token") {
+			t.Errorf("the coder's own job reaches a Claude token: %s", a)
+		}
 	}
 }
 
@@ -3387,6 +3496,91 @@ func TestSpecBakedWorkflowRunsTheCatalogsChoice(t *testing.T) {
 		if len(rs.Workflows[name].Warnings) != 0 {
 			t.Errorf("%s's warnings = %q, want none: only a pin that does not cover warns", name, rs.Workflows[name].Warnings)
 		}
+	}
+}
+
+// TestSpecPrebuiltCatalogEntryCarriesTheRemoteEnv (#1752): a prebuilt entry's
+// image is the operator's own reference, shared by every repository that
+// names the entry, so it can bake no checkout of this repository: the run has
+// to clone one and the job must say from where. FUGARO_REMOTE is the
+// repository's own credential-free clone URL, exactly as on a clone or shared
+// job.
+//
+// FUGARO_CHECKOUT stays off that job: the entry's image holds the tools its
+// own build installed, so the run must not take the clone kind's path (a
+// blobless clone and a mise install), and the whole clone it makes instead is
+// what a follow-up and merge-base need.
+//
+// Mutation (run, restore): drop `|| ws.CatalogPrebuilt` from the remote's
+// condition in workflow() — this test then fails: the job carries no
+// FUGARO_REMOTE, and a run of it dies in bootstrap with "no git checkout and
+// no remote to clone".
+func TestSpecPrebuiltCatalogEntryCarriesTheRemoteEnv(t *testing.T) {
+	rs, err := Repo(catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, ws := range rs.Workflows {
+		if !ws.CatalogPrebuilt {
+			t.Fatalf("workflow %s runs %q, not a prebuilt entry: this test would prove nothing", name, ws.Image)
+		}
+		if got := ws.Env[RemoteEnv]; got != "https://github.com/acme/webapp.git" {
+			t.Errorf("%s's %s = %q, want the repository's clone URL: a prebuilt entry's image bakes no checkout, so the run clones one", name, RemoteEnv, got)
+		}
+		if got, ok := ws.Env[CheckoutEnv]; ok {
+			t.Errorf("%s carries %s = %q, want no such key: a prebuilt entry's image installed its own tools, so the run is no clone kind", name, CheckoutEnv, got)
+		}
+	}
+}
+
+// TestSpecBuiltCatalogEntryCarriesNoRemoteEnv (#1752): the remote is for a job
+// whose image bakes no checkout, and a built entry's image is this
+// repository's own build — the same Dockerfile the catalog builds into the
+// shared registry, with the repository baked into it — so its job carries no
+// FUGARO_REMOTE and nothing about a built entry's runs changes.
+//
+// Mutation (run, restore): widen the remote's condition to every catalog job
+// (`entry.Name != ""`) — this test then fails: api, web, bare and pinned each
+// carry a remote their image already holds a checkout for.
+func TestSpecBuiltCatalogEntryCarriesNoRemoteEnv(t *testing.T) {
+	rs, err := Repo(catalogInputs(t, &config.Catalog{Entries: catalogEntries()}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, ws := range rs.Workflows {
+		if ws.CatalogPrebuilt {
+			t.Fatalf("workflow %s runs a prebuilt entry: this test would prove nothing", name)
+		}
+		if got, ok := ws.Env[RemoteEnv]; ok {
+			t.Errorf("%s runs a built entry and carries %s = %q, want no such key: its image bakes the repository", name, RemoteEnv, got)
+		}
+	}
+}
+
+// TestSpecPrebuiltCatalogEntryRemoteIsCredentialFree (#1752, security): the
+// remote a prebuilt entry's job clones from is the repository's own https,
+// credential-free clone URL, because it is written by the same repoURL-checked
+// value a clone job's is, and a URL carrying credentials is refused outright,
+// before any job spec exists. No token reaches that job's environment: the
+// clone's credential is the run's own git auth, the way it is for every other
+// job.
+func TestSpecPrebuiltCatalogEntryRemoteIsCredentialFree(t *testing.T) {
+	in := catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()})
+	in.RepoURL = "https://person-1:token-shaped@github.com/acme/webapp.git"
+	if _, err := Repo(in); err == nil {
+		t.Fatal("Repo accepted a clone URL carrying credentials for a prebuilt catalog entry's job")
+	}
+
+	rs, err := Repo(catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := rs.Workflows["web"].Env[RemoteEnv]
+	if !strings.HasPrefix(remote, "https://") {
+		t.Errorf("web's %s = %q, want an https URL", RemoteEnv, remote)
+	}
+	if strings.Contains(remote, "@") || strings.Contains(remote, "person-1") {
+		t.Errorf("web's %s = %q, want the repository's own URL with no credential in it", RemoteEnv, remote)
 	}
 }
 
