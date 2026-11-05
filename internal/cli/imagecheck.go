@@ -596,7 +596,7 @@ func refuseJobSubmission(o imageCheckOptions, what string) error {
 	if o.dryRun {
 		return nil
 	}
-	if m := agentMarker(os.Getenv); m != "" {
+	if m := agentMarker(os.Getenv, processTerminal()); m != "" {
 		return userErr("%s", initflow.AgentRefusal(m))
 	}
 	if os.Getenv("CLOUD_RUN_JOB") == "" && os.Getenv("CLOUD_RUN_EXECUTION") == "" {

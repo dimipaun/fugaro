@@ -89,6 +89,6 @@ func askConditions(cmd *cobra.Command, json, nonInteractive bool) initflow.Condi
 		Terminal:       stdinIsTerminal(cmd.InOrStdin()),
 		JSON:           json,
 		NonInteractive: nonInteractive,
-		Agent:          agentMarker(os.Getenv),
+		Agent:          agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())),
 	}
 }

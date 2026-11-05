@@ -387,7 +387,7 @@ func (s *projectStage) Left() initflow.Left {
 // would be two places to widen by accident.
 func (r *initRun) canType() bool {
 	o := r.o
-	return !o.nonInteractive && !o.asJSON && !agentEnv(os.Getenv) && stdinIsTerminal(r.cmd.InOrStdin())
+	return !o.nonInteractive && !o.asJSON && agentMarker(os.Getenv, r.stdinTerminal()) == "" && stdinIsTerminal(r.cmd.InOrStdin())
 }
 
 // canType is this stage's typed confirmation, asked of the run it is in.
@@ -404,7 +404,11 @@ func (s *projectStage) typed(banner, want, prompt string) (bool, error) {
 		return false, userErr("reading the confirmation: %v", err)
 	}
 	fmt.Fprintln(r.w)
-	return strings.TrimSpace(line) == want, nil
+	if strings.TrimSpace(line) != want {
+		return false, nil
+	}
+	r.noteIDETerminal()
+	return true, nil
 }
 
 // resumeNote is what every confirmation and the plan say about a project

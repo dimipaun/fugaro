@@ -138,7 +138,7 @@ func (e *initEngine) options() initflow.Options {
 	}
 	return initflow.Options{
 		Yes: o.yes, NonInteractive: o.nonInteractive, PlanOnly: o.planOnly,
-		Terminal: stdinIsTerminal(r.cmd.InOrStdin()), JSON: o.asJSON, Agent: agentMarker(os.Getenv), Out: r.w,
+		Terminal: r.stdinTerminal(), JSON: o.asJSON, Agent: agentMarker(os.Getenv, r.stdinTerminal()), Out: r.w,
 		Program: o.loopProgram(),
 		Project: r.projectName, GCPProject: r.gcpProject, Region: e.lc.Region,
 		Redact: e.redact, OnPreview: func(rs []initflow.StageResult) { e.previewed = rs },
@@ -478,7 +478,7 @@ func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 //     credentials stage's (requireCredsRules), and only a run that TURNS THE
 //     SERVICE ON has to answer for it.
 func (e *initEngine) pinCredentialsImage(ctx context.Context) error {
-	if m := agentMarker(os.Getenv); m != "" {
+	if m := agentMarker(os.Getenv, e.r.stdinTerminal()); m != "" {
 		return nil
 	}
 	ver := releaseVersion()

@@ -121,7 +121,7 @@ import (
 // settingsGateMarker is the coding agent's session this command was run in, ""
 // for a person at a terminal. It is read once per command, here, so the two
 // places that ask "is the gate this command's business" cannot disagree.
-func settingsGateMarker() string { return agentMarker(os.Getenv) }
+func settingsGateMarker(terminal bool) string { return agentMarker(os.Getenv, terminal) }
 
 // settingsAsk is the caller's half of whether this command would ask: a real
 // terminal and no --yes. It is what the gate is read for in a session that is
@@ -254,7 +254,7 @@ func settingsWriteGate(ctx context.Context, lc *localcfg.Config, marker, subcomm
 // `selPath` is the selected project's own config file
 // (settingsConfigIsTheProjects).
 func settingsManagedStep(ctx context.Context, lc *localcfg.Config, selPath string, target settingsTarget, key string, typed bool, why string, old, newData []byte, subcommand string, asks bool) (initflow.Managed, managedGate, error) {
-	marker := settingsGateMarker()
+	marker := settingsGateMarker(processTerminal())
 	if lc == nil || !settingsGateAsks(marker, asks, target.kind, typed) {
 		return initflow.Managed{}, managedGate{}, nil
 	}

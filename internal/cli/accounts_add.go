@@ -234,7 +234,7 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// lifted by the same answer and for the same class, so a session the gate
 	// admitted to the declaration is not refused the step it declared.
 	if !changed {
-		if marker := agentMarker(os.Getenv); marker != "" && !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, m) {
+		if marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); marker != "" && !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, m) {
 			return userErr("refusing to write %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
 				sel.Path, marker, what, command)
 		}
@@ -257,7 +257,7 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// stores it and converges on it — so a coding agent's session is left with
 	// the declaration and nothing else, and with the sentence naming the command
 	// its owner runs at their own terminal (spec §4.2).
-	if marker := agentMarker(os.Getenv); marker != "" {
+	if marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); marker != "" {
 		return accountsAddTokenStep(marker, name, command)
 	}
 	if profile == "" {
