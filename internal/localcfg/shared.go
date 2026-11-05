@@ -77,6 +77,7 @@ func (c *Config) Shared() *Config {
 	s.Routing = nil
 	s.ClaudeAccounts = nil
 	s.ProjectSecrets = nil
+	s.WorkflowSecrets = nil
 	// BitbucketAPIRoots is the owner's policy as well, and it travels the same
 	// way ProjectSecrets does: `fugaro project policy publish` copies it into
 	// the policy node, which the runner reads and fails closed on. A launcher

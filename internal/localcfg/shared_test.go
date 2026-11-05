@@ -584,6 +584,36 @@ func TestMergeSharedNeverCarriesProjectSecrets(t *testing.T) {
 	}
 }
 
+// TestWorkflowSecretsAreRefusedInTheSharedConfig: workflow_secrets is
+// operator-only local config for project_secrets' reason (D1260): each entry's
+// allow_data_to is what makes a workflow secret mountable on the repositories
+// it names, so a launcher who could write the runs bucket's shared file would
+// be widening the grant. Neither the local nor a published config's block
+// reaches the output, and the receiver keeps its own.
+func TestWorkflowSecretsAreRefusedInTheSharedConfig(t *testing.T) {
+	block := "workflow_secrets:\n  deploy-token:\n    allow_data_to: [acme/web]\n"
+	existing := sharedBase(t, block)
+	local := sharedBase(t, strings.ReplaceAll(block, "deploy-token", "release-token"))
+	if len(existing.WorkflowSecrets) != 1 || len(local.WorkflowSecrets) != 1 {
+		t.Fatalf("fixtures: %v %v", existing.WorkflowSecrets, local.WorkflowSecrets)
+	}
+	for name, got := range map[string]*Config{"shared": local.Shared(), "merged": MergeShared(existing, local), "nil published": MergeShared(nil, local), "published only": MergeShared(existing, sharedBase(t, ""))} {
+		if got.WorkflowSecrets != nil {
+			t.Errorf("%s: workflow_secrets = %v", name, got.WorkflowSecrets)
+		}
+		out, err := got.Marshal()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(string(out), "workflow_secrets") {
+			t.Errorf("%s: output carries workflow_secrets:\n%s", name, out)
+		}
+	}
+	if len(local.WorkflowSecrets) != 1 {
+		t.Error("Shared cleared the receiver's own workflow_secrets")
+	}
+}
+
 // TestMergeSharedNeverCarriesBitbucketAPIRoots: the API-root allow-list is the
 // owner's policy about where a run may send the project's Bitbucket token
 // (D474), and it travels the way project_secrets does — through the policy
