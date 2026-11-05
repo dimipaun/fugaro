@@ -262,7 +262,6 @@ func (g *managedGate) admit(ctx context.Context, class initflow.ConfirmClass, co
 		// answer that was true at the first read is not the answer any more.
 		g.managed = false
 		g.revoked = true
-		g.revoked = true
 		return initflow.Managed{}, nil
 	}
 	g.marks = fresh
