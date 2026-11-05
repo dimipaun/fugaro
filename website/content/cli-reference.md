@@ -50,6 +50,7 @@ Subcommands:
 - `fugaro recipes` -- List, show, validate and publish recipes, the task loop a run follows after implement
 - `fugaro report` -- Report what the project spent, by day, week, month, year, repository, model, person or mode
 - `fugaro restore` -- Rebuild a managed project from zero, into a new GCP project ID, and print what is not restored
+- `fugaro review` -- Review a pull request in a job of its own, on a named account
 - `fugaro run` -- Launch a task in the cloud; it always ends with a PR
 - `fugaro runs` -- List and inspect runs
 - `fugaro secrets` -- Store, list and withdraw a repository's secrets in Secret Manager
@@ -3554,6 +3555,89 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for restore |
 | `--parent` | string | "" | no | with the creation: organizations/<number> or folders/<number> to create the project under (default: no parent; an organization is never guessed) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro review`
+
+Review a pull request in a job of its own, on a named account
+
+Launch an independent review of pull request N, in a container the coding
+run never ran in and with the account you name.
+
+The review runs on the review-only variant of the repository's job: no App
+key, no Claude token and no signing key are mounted in it, and its git
+credential is a read-only one it fetches from the installation's credentials
+service. It reads a fresh clone of the pull request's head, writes its verdict
+as an artifact (fugaro review show RUN prints it) and posts no comment and no
+review on the pull request: what reaches the pull request is the owner's and
+the coordinator's to decide.
+
+The account is picked as everywhere else: --token, else agent.oauth_token in
+fugaro.yaml at the run's ref, else the project's default_claude_account.
+
+--mutate FILE:TEST asks for one mutation check: the reviewer flips a boolean
+literal in FILE, which must be Go source in the head under review, and TEST —
+a Go test name — must then fail. The artifact carries what was observed; it is
+evidence and never a verdict.
+
+--json prints the launch's own result, the run id, its job and the account, as
+every other command's --json does. The verdict does not exist yet: it is
+written by the job, and `fugaro review show RUN` reads it back.
+
+A pull request whose own coding run is still going is refused: the review
+records the head it read, and a head that moves under it would leave the
+verdict about a commit that is no longer there.
+
+Usage: `fugaro review --pr N`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for review |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--mutate` | stringArray | `[]` | no | ask for one mutation check, as <file:test>: the Go source in the reviewed head to flip and the Go test name that must then fail; at most one |
+| `--pr` | int | `0` | no | the pull request to review (required) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--token` | string | "" | no | named Claude account (claude_accounts in the local config) this review runs as; default: agent.oauth_token in fugaro.yaml at the run's ref, else the project's default_claude_account |
+
+Subcommands:
+
+- `fugaro review show` -- Print a review run's verdict artifact and its markdown
+
+## `fugaro review show`
+
+Print a review run's verdict artifact and its markdown
+
+Print what a review run wrote: its verdict artifact (review.json), and the
+same review rendered as markdown (review.md). RUN is <repo-slug>/<run-id>.
+
+--json prints the artifact's own JSON alone, byte for byte as the review job
+wrote it, so the bytes are the ones the service signed and a reader that
+checks the signature (the sidecar object review.json.sig) is checking those
+bytes.
+
+A run that is still going has no artifact yet; the command says so rather than
+printing an empty review.
+
+Usage: `fugaro review show RUN`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for show |
+| `--json` | bool | `false` | no | print the artifact's own JSON alone, exactly as the review job wrote it |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
