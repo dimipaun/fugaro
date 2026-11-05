@@ -181,6 +181,34 @@ func TestClaudeRunNonZeroExitWithResult(t *testing.T) {
 	}
 }
 
+// TestClaudeRunAccountRefusalIsReadFromTheResultEvent is the shape the runner's
+// account failover reads its one signal off (A7b of accounts-add, spec §11.3):
+// an OAuth run has no gateway, so no credentials service answers, and the
+// account's own refusal exists only in the stage's output. What the runner
+// depends on is pinned here: the refusal arrives as a result event with the
+// error flag set and its own words in the text, the process still exits
+// non-zero, and Run reports no error at all -- procgroup reports a status
+// through the exit code, and a result event was emitted. A refusal that reached
+// the runner as an err instead would be an ordinary failed stage to every
+// reader of its endings, and the account's allowance would never be seen.
+func TestClaudeRunAccountRefusalIsReadFromTheResultEvent(t *testing.T) {
+	const refusal = `API Error: 429 {"type":"error","error":{"type":"rate_limit_error"}}`
+	script, err := json.Marshal(map[string]any{"calls": []any{
+		map[string]any{"text": refusal, "is_error": true, "exit": 1},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := testutil.FakeClaude(t, string(script))
+	res, err := Claude{Bin: bin}.Run(context.Background(), Request{SessionID: "s", Env: []string{"PATH=" + os.Getenv("PATH")}})
+	if err != nil {
+		t.Fatalf("err = %v, want nil: the refusal is the stage's own output, not a failed process", err)
+	}
+	if !res.IsError || res.Text != refusal || res.ExitCode != 1 {
+		t.Fatalf("result = %+v, want the error flag, the event's own text and the exit status", res)
+	}
+}
+
 func TestClaudeRunStructuredPassesThrough(t *testing.T) {
 	bin := testutil.FakeClaude(t, `{"calls":[{"text":"ok","structured":{"verdict":"ship","score":3}}]}`)
 	res, err := Claude{Bin: bin}.Run(context.Background(), Request{SessionID: "s", Env: []string{"PATH=" + os.Getenv("PATH")}})
