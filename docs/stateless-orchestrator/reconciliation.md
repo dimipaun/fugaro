@@ -488,8 +488,8 @@ later task, not this one.
 
 **T6. Q2, ruled a second time: the install moves to `fugaro setup` (CLOSED — the owner ruled it on 2026-11-04).** The answer this pull request first
 recorded put an **offer** in `fugaro update` behind a Typed confirmation, and that collided with the owner's standing **no prompts on a managed
-project** rule (terminal included): installing silently on a human's machine and never offering it there were both readings of a question that should
-not have been asked. **The owner's answer, 2026-11-04 (a different answer from the one this PR first recorded, which is superseded):** the **first
+project** rule (terminal included): the two readings it left — install silently on a human's machine, or never offer it there — were both about a
+prompt. **The owner's answer, 2026-11-04 (a different answer from the one this PR first recorded, which is superseded):** the **first
 install belongs to `fugaro setup`** — one of its listed steps, shown in its plan, at a real terminal only, **refused under a coding agent's marker**
 (the unit is installed by the person's own run, never by an agent), and in a managed project the step follows the no-prompt rule: **no extra
 confirmation, and the plan line names the unit and its path**. **Upgrades move out of `fugaro update`** and into **`fugaro orchestrator install`**,
