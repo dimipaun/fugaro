@@ -170,3 +170,147 @@ func TestReviewLaunchesOnTheNamedAccount(t *testing.T) {
 		t.Errorf("the stored task's account is %q, want acme-personal", spec.OAuthToken)
 	}
 }
+
+// wantReviewRefused runs the review command with args and wants exit 1 whose
+// error carries every want, and no execution started by it: a refusal is a
+// launch that did not happen, not one whose job failed.
+func wantReviewRefused(t *testing.T, f *cloudFixture, args []string, wants ...string) error {
+	t.Helper()
+	before := len(f.run.Executions())
+	out, errOut, err := reviewCLI(t, args...)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("review %v: out %q err %q, err = %v; want a refusal (exit 1)", args, out, errOut, err)
+	}
+	for _, want := range wants {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("review %v refused with %q, want it to say %q", args, err.Error(), want)
+		}
+	}
+	if after := len(f.run.Executions()); after != before {
+		t.Fatalf("review %v refused and still started %d executions", args, after-before)
+	}
+	return err
+}
+
+// TestReviewRefusesAnAccountTheRepoMayNotUse is the F4 allow-list rule the
+// other launches already carry (claudeAccountMembership), reused here: --token
+// names an account the repository's claude_accounts does not list, so the
+// review is refused before anything is written. A review is launched by hand
+// more often than most runs, which is exactly why the rule is not relaxed for
+// it: --token here is the operator naming the credential a job will run on.
+func TestReviewRefusesAnAccountTheRepoMayNotUse(t *testing.T) {
+	f := newReviewFixture(t)
+	admitReviewJob(t)
+	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+
+	err := wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-stranger"}, "is not one acme/app may use")
+	if !strings.Contains(err.Error(), "acme-stranger") {
+		t.Errorf("the refusal does not name the account asked for: %q", err.Error())
+	}
+}
+
+// TestReviewRefusesAnExhaustedAccount is D882: an account the credentials
+// service has marked holds no review at all — the launch refuses with the
+// reset time the upstream reported, rather than starting a job whose reviewer
+// is refused a minute later and whose run is then retried by hand.
+func TestReviewRefusesAnExhaustedAccount(t *testing.T) {
+	f := newReviewFixture(t)
+	admitReviewJob(t)
+	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+	until := time.Now().UTC().Truncate(time.Second).Add(3 * time.Hour)
+	f.db.Set(credsMarkPath("acme-personal"), map[string]any{
+		"state": "exhausted", "until": until.Format(time.RFC3339Nano)})
+
+	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"},
+		"the Claude account acme-personal is exhausted until "+until.Format("2006-01-02 15:04Z"),
+		"no review is started on it")
+}
+
+// TestReviewRefusesWhileTheCodingRunIsGoing is spec §5's moving-head refusal:
+// the review records the head it read, so a pull request whose own coding run
+// is still going is refused rather than reviewed against a commit that can move
+// under it.
+func TestReviewRefusesWhileTheCodingRunIsGoing(t *testing.T) {
+	f := newReviewFixture(t)
+	admitReviewJob(t)
+	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+	seedRoot(t, f.cloudFixture, rootID, time.Now().Add(-time.Hour))
+	active := wallRunIDAt(0, "000100", "bbbb")
+	exec := seedSpec(t, f.cloudFixture, followUpSpec(active, rootID, rootID, 7), true)
+	f.run.SetState(exec, backend.StateRunning)
+	writeRecord(t, f.cloudFixture, active, &runstore.Record{Version: 1, RunID: active, Repo: "acme/app",
+		Execution: exec, Status: runstore.StatusRunning, Stage: "implement", Branch: "fugaro/" + rootID,
+		PR: &runstore.PRRef{Number: 7}, StartedAt: time.Now(),
+		FollowUp: &runstore.FollowUp{PR: 7, PreviousRun: rootID}})
+
+	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"},
+		active, "is still running", "fugaro runs ls --pr 7 --repo acme/app")
+}
+
+// TestReviewShowPrintsTheArtifactAndItsMarkdown is the second verb: what the
+// review job wrote, read back as it is — the artifact's own bytes, and beside
+// them the same review as markdown. --json prints the artifact alone, because
+// its reader checks the sidecar signature over exactly those bytes.
+func TestReviewShowPrintsTheArtifactAndItsMarkdown(t *testing.T) {
+	f := newCloudFixture(t)
+	id := wallRunIDAt(0, "120000", "5eed")
+	artifact := `{"version":1,"pr":7,"verdict":"comment"}`
+	markdown := "# Review of PR #7\n\nNothing blocking.\n"
+	putBuildObject(t, f, "runs/"+appSlug+"/"+id+"/"+runstore.ArtifactPrefix+runner.ReviewArtifactName, []byte(artifact))
+	putBuildObject(t, f, "runs/"+appSlug+"/"+id+"/"+runstore.ArtifactPrefix+runner.ReviewMarkdownName, []byte(markdown))
+	ref := appSlug + "/" + id
+
+	out, errOut, err := reviewCLI(t, "show", ref)
+	if err != nil {
+		t.Fatalf("review show %s: %v (%s)", ref, err, errOut)
+	}
+	if !strings.Contains(out, artifact) || !strings.Contains(out, markdown) {
+		t.Errorf("review show printed %q, want the artifact and its markdown", out)
+	}
+
+	asJSON, _, err := reviewCLI(t, "show", ref, "--json")
+	if err != nil {
+		t.Fatalf("review show --json %s: %v", ref, err)
+	}
+	if asJSON != artifact+"\n" {
+		t.Errorf("review show --json printed %q, want the artifact's own bytes alone (%q)", asJSON, artifact+"\n")
+	}
+
+	// A run that has no artifact — a review still going, or a run that is not
+	// a review at all — says so instead of printing an empty review.
+	empty := wallRunIDAt(0, "120100", "6eed")
+	seedSpec(t, f, firstRunSpec(empty), false)
+	wantReviewRefused(t, f, []string{"show", appSlug + "/" + empty}, "has no review artifact")
+}
+
+// TestReviewRefusesWhereTheCredentialsServiceIsOff is E7's first half: the
+// review-only job mounts nothing, so its read-only installation token and its
+// account's model calls both come from the installation's credentials service,
+// and an installation without one has nothing for the job to fetch anything
+// from. The refusal names both commands that fix it, in order: the first is a
+// fugaro update, which is the whole upgrade.
+func TestReviewRefusesWhereTheCredentialsServiceIsOff(t *testing.T) {
+	f := newProjectJobServingFixture(t)
+	setBaseImage(t, reviewJobSince)
+	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+
+	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"},
+		"credentials_service is not published in this project's config",
+		"fugaro update --provision-credentials",
+		"fugaro creds set github-app-key")
+}
+
+// TestReviewRefusesAJobTheCredentialsServiceWillNotAdmit is E7's second half,
+// the one no operator command can supply: the deployed service admits a
+// repository's own job, and admitting a review caller of a project-scoped job
+// is C3.9, which is not built. The refusal has to say so — a sentence that
+// named a fugaro update would send the operator looking for one that does not
+// exist — and point at the verb that works today.
+func TestReviewRefusesAJobTheCredentialsServiceWillNotAdmit(t *testing.T) {
+	f := newReviewFixture(t)
+	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+
+	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"},
+		"does not admit the review job's own caller", "No fugaro update supplies this half",
+		"fugaro run --pr N --recipe review-only")
+}
