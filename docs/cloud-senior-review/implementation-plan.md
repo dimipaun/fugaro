@@ -762,6 +762,12 @@ because **there is no step the owner can run for the second half** (CSR6). This 
 design whose last link is another work stream's: nothing here pretends the reviewer runs on the day the
 release ships.
 
+**§6's four follow-up tasks do not move this slot, and they are what a release must carry to be worth
+cutting.** CSR8–CSR11 are what makes the command reachable (`fugaro review` was built and registered
+nowhere), the container placeable and the verdict verified; the release that deploys the variant is also
+the release `reviewJobSince` must name, and which release that is is Open item 3 — **0.20.0 "Quokka" is
+the recommendation**, because the 0.19.0 release in flight does not carry this work.
+
 ## 6. Follow-up after CSR1–CSR7: what still stands between this plan and a review that runs
 
 **Nothing in this section is approved either, and it adds no decision.** It was written on 2026-11-05,
@@ -784,7 +790,7 @@ while documenting the others is exactly the kind of thing a plan loses by not wr
 | 4 | the launcher reads `review.json` and never reads `review.json.sig`; `runner.VerifyReviewArtifact` exists and **nothing calls it**, because no implementation of `runner.SignatureVerifier` is in the tree | `internal/cli/review.go:455`, `internal/runner/reviewartifact.go:531`, `:223` | **CSR10** |
 | 5 | the owner-run live checks have not been run, and **cannot** be while gap 1 holds: the C3.9 check's step 3 launches `fugaro review --pr N`, and Check 125's steps 6 and 7 confirm the fence on the variant | `docs/c39-review-identity/live-check.md`, [spec.md](spec.md) §8 | **the owner** — CSR11 is the task whose gate it is, and Open item 1 is how the launch is reached |
 | 6 | the credentials service **ships dormant**: the opt-in, the App key and the verifier identity are the owner's own terminal (C3.9g1) | `internal/credsvc/auth.go:335` | **the owner** — no task here; it is the release's one conditional operator sentence (§6.5) |
-| 7 | *(found while writing this section)* the review variant holds no model credential (O1) and the service has a review class for its calls, but **the runner has no model path that reaches it**: `GatewayOn` is false unless `agent.auth` is one of its three, the service is reached only from the cascade arm, and that arm is refused in bootstrap unless the **operator publishes the coding cascade switch** — the two things [spec.md](spec.md) §1 says a review job does not need | `internal/runner/routing.go:158`, `:60`, `internal/credsvc/cascade.go:105` | **the owner** — Open item 4, and deliberately not a task here |
+| 7 | *(found while writing this section)* the review variant holds no model credential (O1) and the service has a review class for its calls, but **the runner has no model path that reaches it**: `GatewayOn` is false unless `agent.auth` is one of its three, the service is reached only from the cascade arm, and that arm is refused in bootstrap unless the **operator publishes the coding cascade switch** — the two things [spec.md](spec.md) §2 says a review job does not need | `internal/runner/routing.go:158`, `:60`, `internal/credsvc/cascade.go:105` | **the owner** — Open item 4, and deliberately not a task here |
 
 **CSR8–CSR11 follow §3's convention exactly**: decisions and findings named, an exact file list with its
 cap, interfaces, named tests, a **red step** quoted in the pull request, targeted hermetic tests
@@ -809,7 +815,7 @@ still decides is whether a placed review run reaches its first call** (§1), and
   variant's names spell, computed with the functions the deployer and the launcher already spell it with
   (`credsvc.ReviewJobName`, `internal/credsvc/review.go:88`, and the axis mapping
   `infra.ReviewVariantAccount`, `internal/infra/projectjobs.go:313`, whose `""` →
-  `config.DefaultClaudeAccount` is the one line the launcher's `projectJobForReview` gets right today,
+  `config.DefaultClaudeAccount` is the one line the launcher's `projectJobReviewFor` gets right today,
   `internal/cli/project_job.go:351`) — so `matchJobName` (`:143`) places a run in the variant, `jobIdentity`
   adopts its `(profile, provider, account)` and `admissionCheck` (`internal/runner/project.go:1114`) stops
   refusing it, and **the launcher, the deployer and the runner name one job rather than three**. The
@@ -818,9 +824,9 @@ still decides is whether a placed review run reaches its first call** (§1), and
   already owns the axis: the runner does not import `internal/infra` today and keeping the container out
   of the deployer's package is why it does not start to. `internal/infra`'s own function becomes that
   mapping's spelling. **`checkProjectJobAccount` (`internal/runner/projectjob.go:406`) gains the review
-  arm** and it is the half a name alone does not cover: the variant **holds no token** (`config.
-  ProjectJobTokenAccount` knows unsuffixed names only, so `serves` is false and an OAuth review run is
-  refused with "this job holds no Claude token"), and the run's own credential is not the account the axis
+  arm** and it is the half a name alone does not cover: the variant **holds no token** — `config.ProjectJobTokenAccount`
+  knows unsuffixed names only, so `serves` is false and an OAuth review run is refused with "this job
+  holds no Claude token" — and the run's own credential is not the account the axis
   names — for a review job the account is the **class's**, and the refusal that sentence belongs to
   (a run authenticating as something its configuration did not choose) does not apply to a job whose
   credential the class decides. The arm is keyed on the run's own marker and on the candidate's class,
@@ -861,7 +867,7 @@ reachable rather than true.
 
 - **Files:** `internal/cli/root.go`, `internal/cli/root_test.go`, `website/content/cli-reference.md`
   (**generated** — `go run ./ee/clidoc`, by the tagged tree, never hand-edited),
-  `plugin/skills/working/SKILL.md` (the command list at `plugin/skills/working/SKILL.md:52`), and
+  `plugin/skills/working/SKILL.md:52` (its command list), and
   `plugin/skills/routing/SKILL.md` **only if** that skill is where the review flow is routed. **At most
   5 files.**
 - **Interfaces:** `newReviewCmd()` joins the list `newCoreRoot` builds
@@ -886,7 +892,7 @@ reachable rather than true.
   (`plugin/skillcli_test.go`'s `resolveSkillCommand`): **a skill may only name a command the tree has**,
   which is why the sentence and the registration are one task and not two.
 - **Red step:** `TestReviewIsRegisteredInTheCoreRoot` fails on an unknown command: `fugaro review` is not
-  a name this binary answers to, and the `400`-line command file beside it is dead code.
+  a name this binary answers to, and the whole command file beside it is dead code.
   **SEC flag:** no. It adds no permission and removes no refusal; the one security-relevant sentence in it
   is the one it must **not** weaken — the refusal that stands until CSR11.
 - **Mutation to hold it:** drop `newReviewCmd()` from the list → the registration test and the reference
@@ -930,7 +936,7 @@ is untouched by anything here.
   is the launcher-side twin of the job's metadata identity and the reason the *owner's* address has to be
   a verifier.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/runner/ -run 'TestServiceVerifier|TestVerifyReviewArtifact' -count=1`
-  and `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestFixBriefRefusesAnUnverifiedVerdict|TestReviewRunFindings' -count=1`.
+  and `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestFixBrief|TestReviewRunFindings' -count=1`.
 - **Tests:** `TestFixBriefRefusesAVerdictWithNoSignature` (the sidecar is absent: the launch is refused —
   the red step), `TestFixBriefRefusesASignatureTheServiceDoesNotOwn` (a fake verifier answering invalid),
   `TestFixBriefRefusesWhenTheServiceIsUnreachable` (fail closed rather than fail open: a fix round is not
@@ -981,7 +987,7 @@ below, and **E7's first half** — the service enabled for the installation.
   same two facts it reports today, and the honest consequence is stated in its own words: **a green
   `doctor` is the two halves, and the release notes are where the constant's state is written** — a
   binary older than the flip keeps refusing whatever the installation says.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestReviewAdmitted|TestReviewRefuses|TestDoctorCredentialsService' -count=1`.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestReviewAdmitted|TestReviewStillRefuses' -count=1`.
 - **Tests:** `TestReviewLaunchIsAdmittedWhenTheConstantIsFlipped` (the release's own state: the launch
   proceeds and the two halves are still checked first — the constant removes one refusal, not the others),
   `TestReviewStillRefusesWhenTheCredentialsServiceIsOff` (E7's first half, unchanged by the flip), and
@@ -1024,12 +1030,12 @@ below, and **E7's first half** — the service enabled for the installation.
 ### 6.3 The edges, the levels and the critical path
 
 ```
-CSR8 (runner places the variant) ─┐
-CSR9 (the command is registered) ─┼─▶ [the owner's live checks: C3.9's eleven steps, Check 125's 6 and 7] ─▶ CSR11 (the flip)
-CSR10 (the launcher verifies)  ───┘                                                                              │
-        (parallel, off the path: it feeds the fix round, not the launch)                                          ▼
-                                                                                                    fugaro review launches; a verdict
-                                                                                                    that verifies becomes a fix brief
+CSR8 (the runner places the variant) ─┐
+CSR9 (the command is registered)     ─┼─▶ [the live checks: C3.9's eleven steps, Check 125's 6 and 7] ─▶ CSR11 (the flip)
+CSR10 (the launcher verifies)        ─┘        (a person's, and no level holds it)                       │
+     (parallel: it feeds the fix round, not the launch)                                                   ▼
+                                                                                          a review launches; a verdict that
+                                                                                          verifies becomes a fix brief
 ```
 
 - **Edges.** `CSR8 → CSR11` (a flip without the placement is a launch into a halt). `CSR9 → CSR11` (the
@@ -1037,9 +1043,11 @@ CSR10 (the launcher verifies)  ───┘                                     
   registry). `CSR10` has **no edge into this section's chain at all**: it is the *consumer* side, it needs
   only CSR3 and CSR5 (both merged) and C3.9f, and a fix round is launched by `fugaro run`, not by
   `fugaro review`. `CSR11 → nothing`: it is last, and nothing here depends on the flip.
-- **Levels.** **Level 1: CSR8, CSR9, CSR10** — none depends on another. **Level 2: CSR11** — after CSR8
-  and CSR9, and after a person's observation that no level can hold. **Everything in CSR10 sits outside
-  the levels** and may land in either.
+- **Levels.** **Level 1: CSR8, CSR9, CSR10** — none depends on another, and no two of them holds one
+  file (§6.4). **Level 2: CSR11** — after CSR8 and CSR9, and after the live checks, which are a person's
+  and which no level holds. **CSR10 is in level 1 for the one-writer rule** (it holds
+  `internal/cli/review.go` before CSR11 does) **and off the critical path**: nothing in this chain waits
+  for it, and a release could ship the launch before the verifier.
 - **Critical path.** `CSR8 → CSR9 → the owner's live checks → CSR11`: three tasks and one person's
   afternoon, and **the longest wait in it is not code** — it is the live check, which needs the
   credentials service enabled on a real installation (E7's first half) and an owner at a terminal. That
@@ -1139,7 +1147,7 @@ gateway — the only thing that can forward to the service — is enabled by `Ga
 (`internal/runner/routing.go:158`) only for `api-key`, `vertex` and `cascade`; the service is reached only
 from the cascade arm; and a run whose `agent.auth` is `cascade` is refused in bootstrap by O2's arm
 (`internal/runner/routing.go:60`) unless the **operator publishes `routing.claude: {via: cascade}` and
-`budget.allowed_models`** — the two things [spec.md](spec.md) §1 says a review job does not need, because
+`budget.allowed_models`** — the two things [spec.md](spec.md) §2 says a review job does not need, because
 that switch is the operator's consent for a *coding* run's cascade while a review job's credential is
 decided by its own class. So as the tree stands, a review run reaches a model only by an operator writing
 the coding cascade's consent for it. Two readings:
@@ -1147,7 +1155,7 @@ the coding cascade's consent for it. Two readings:
 - **an operator step**: a review-enabled repository writes `agent.auth: cascade` and the project policy
   publishes the switch and the allow-list. Cost: the repository's own file changes and the project's
   policy changes; the security consequence is that the switch's **meaning is stretched** — it becomes the
-  consent for a review job's credential too, while spec §1 says the review needs no such consent, and the
+  consent for a review job's credential too, while spec §2 says the review needs no such consent, and the
   next reader cannot tell which one the operator meant.
 - **a fourth runner task** (CSR12-shaped, not written here): the review job's model credential is keyed on
   its **class** and not on `agent.auth`, so a marked review run reaches the service's review class without
