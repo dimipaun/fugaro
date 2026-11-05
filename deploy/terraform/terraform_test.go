@@ -1549,17 +1549,24 @@ var (
 	// repository root reads it — the member of the actAs that root makes on its
 	// own build account, which is why it is a variable there and not a
 	// reference: the repository root never sees the installation module.
-	// "allUsers" is the ONE literal member of this list, and it is on it
-	// knowingly: it is D920's public invoker binding on the coordinator's
-	// front door (modules/installation/coordinator.tf), which the owner decided
-	// on 2026-11-04 — the endpoint is public, the handler is the gate, and a
-	// standard MCP client reaches it with no Google identity. It is a literal
-	// because it must be readable in the plan, and it is here rather than
-	// reached through a local so that the one resource that carries it is the
-	// one the scan accepts. The widening is not what makes the plan covered:
+	// google_service_account.mcp_server[0] is the coordinator's front door
+	// (M4): the account D920's public endpoint runs as, whose own grant list is
+	// one row long — the runs bucket's read (D932, modules/installation/
+	// coordinator.tf).
+	//
+	// "allUsers" is deliberately NOT on this list, and the absence is the
+	// point: D920's public invoker binding is one resource in one file, and a
+	// member expression admitted here is admitted for every IAM resource of
+	// every module and root — a `member = "allUsers"` on the runs bucket's
+	// reader, on the credentials service or on a project binding would have
+	// passed this whole suite while it was written that way. The one resource
+	// that may carry it is named in publicMemberPath/publicMemberBlock, and
+	// memberAllowed is what every IAM block is held to
+	// (TestAllUsersIsRefusedOnEveryOtherResource is its own mutation proof).
+	// The narrowing is not what makes the plan covered either:
 	// internal/infra/tf's grant rules do NOT accept an allUsers member, so the
 	// update whose plan carries this grant asks its own typed confirmation.
-	allowedMemberExprs = regexp.MustCompile(`^("allUsers"|each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator)\[0\]\.member|google_service_account\.catalog_check\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server)\[0\]\.member|google_service_account\.catalog_check\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
 
 	// A custom role of one of this run's projects, spelled as the literal path
 	// "projects/${var.<project>}/roles/<id>" rather than read from the role
@@ -1583,6 +1590,28 @@ var (
 	// Functions). Only the Firebase module may grant the first group.
 	backendRoleRE = regexp.MustCompile(`^roles/(firebase[A-Za-z.]*|datastore\.[A-Za-z]+|identitytoolkit\.[A-Za-z]+|serviceusage\.[A-Za-z]+|apikeys\.[A-Za-z]+|owner|editor|viewer|resourcemanager\.[A-Za-z]+|iam\.(admin|roleAdmin|securityAdmin|securityReviewer|serviceAccount[A-Za-z]*|workloadIdentity[A-Za-z]*|organizationRoleAdmin|denyAdmin)|run\.(admin|developer)|cloudfunctions\.[A-Za-z]+|aiplatform\.admin|cloudbuild\.[A-Za-z.]+|appengine\.[A-Za-z]+|compute\.[A-Za-z]*[aA]dmin|logging\.admin|secretmanager\.admin)$`)
 )
+
+// publicMemberPath and publicMemberBlock are the ONE resource in this tree an
+// allUsers member is reviewed on: D920's public invoker binding, which the
+// owner decided on 2026-11-04 — the endpoint is public, the handler is the
+// gate, and a standard MCP client reaches it with no Google identity. It is a
+// literal in the module because it must be readable in the plan, and it is
+// named here by path AND block so that neither copying the resource under
+// another name nor writing the same member into another file can pass: the
+// member is admitted for exactly one grant.
+const (
+	publicMemberPath  = "gcp/modules/installation/coordinator.tf"
+	publicMemberBlock = "google_cloud_run_v2_service_iam_member.coordinator_front_door_public"
+)
+
+// memberAllowed is allowedMemberExprs plus the one exception above, and it is
+// the single decision every IAM block of this tree is held to.
+func memberAllowed(path, name, member string) bool {
+	if member == `"allUsers"` {
+		return path == publicMemberPath && name == publicMemberBlock
+	}
+	return member != "" && allowedMemberExprs.MatchString(member)
+}
 
 // projectRoles are the roles (literal or by reference) a block grants.
 func projectRoles(body string) []string {
@@ -1628,7 +1657,10 @@ func TestIAMResourcesUseKnownExpressions(t *testing.T) {
 			case !allowedRoleExprs.MatchString(role):
 				t.Errorf("%s: %s: role expression %s is not on the allowlist (route it through a reviewed reference)", path, blk.name, role)
 			}
-			if member == "" || !allowedMemberExprs.MatchString(member) {
+			switch {
+			case member == `"allUsers"` && !memberAllowed(path, blk.name, member):
+				t.Errorf("%s: %s: an allUsers member is reviewed on %s's %s and nowhere else (D920): a public member is admitted for one resource, and this is another", path, blk.name, publicMemberPath, publicMemberBlock)
+			case !memberAllowed(path, blk.name, member):
 				t.Errorf("%s: %s: member expression %q is not on the allowlist", path, blk.name, member)
 			}
 			for _, r := range quotedRoleRE.FindAllStringSubmatch(blk.body, -1) {
@@ -1673,6 +1705,114 @@ func firstAttr(body, name string) string {
 		return ""
 	}
 	return m[1]
+}
+
+// withPublicMember returns src with the member attribute of one block rewritten
+// to allUsers: the edit a person makes by hand, applied to the file as it is
+// rather than written out beside it, so a fixture below cannot go on passing
+// after the block it names has been renamed or deleted.
+func withPublicMember(t *testing.T, path, src, block string) string {
+	t.Helper()
+	typ, name, ok := strings.Cut(block, ".")
+	if !ok {
+		t.Fatalf("%s is not a type.name block reference", block)
+	}
+	header := `resource "` + typ + `" "` + name + `"`
+	i := strings.Index(src, header)
+	if i < 0 {
+		t.Fatalf("%s declares no %s: this fixture is not reading the block it means to mutate", path, block)
+	}
+	rest := src[i:]
+	if j := strings.Index(rest, "\nresource "); j >= 0 {
+		rest = rest[:j]
+	}
+	line := attrRE("member").FindString(rest)
+	if line == "" {
+		t.Fatalf("%s: %s sets no member, so there is nothing to mutate", path, block)
+	}
+	return src[:i] + strings.Replace(rest, line, `member = "allUsers"`, 1) + src[i+len(rest):]
+}
+
+// TestAllUsersIsRefusedOnEveryOtherResource is finding 2's mutation proof, and
+// it exists because the allowlist used to carry a bare "allUsers": that
+// admitted the member for every IAM resource of every module and root, and a
+// `member = "allUsers"` on the runs bucket's reader — a public read of every
+// run's artefacts — passed this package's whole suite.
+//
+// Every fixture is the tree's OWN file with exactly that edit, read back
+// through the same parser the scan uses, and each must be refused; the last one
+// proves the other half of the rule, that the resource name alone is not enough
+// (the same binding under another path is another resource's grant).
+func TestAllUsersIsRefusedOnEveryOtherResource(t *testing.T) {
+	// Non-vacuity first: the binding D920 decided is admitted exactly where it
+	// is, or every fixture below would pass on a rule that refuses allUsers
+	// everywhere.
+	frontDoor, err := fs.ReadFile(FS, publicMemberPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawPublic bool
+	for _, blk := range allResourceBlocks(t, publicMemberPath, frontDoor) {
+		if blk.name != publicMemberBlock {
+			continue
+		}
+		sawPublic = true
+		if member := firstAttr(blk.body, "member"); member != `"allUsers"` {
+			t.Fatalf("%s: %s sets member = %s, want the literal allUsers this exception is for", publicMemberPath, publicMemberBlock, member)
+		}
+	}
+	if !sawPublic {
+		t.Fatalf("%s declares no %s: this test read the wrong file", publicMemberPath, publicMemberBlock)
+	}
+	if !memberAllowed(publicMemberPath, publicMemberBlock, `"allUsers"`) {
+		t.Fatalf("D920's public invoker binding is refused, so the exception this rule carries no longer admits the grant the owner decided on")
+	}
+
+	for name, m := range map[string]struct {
+		file  string // the file read and mutated
+		path  string // the path the scan is told it is — not the file's, for one fixture
+		block string
+	}{
+		// The review's own mutation: the runs bucket's reader, a public read of
+		// every run's artefacts.
+		"the coordinator's runs-bucket reader": {"gcp/modules/installation/coordinator.tf", "gcp/modules/installation/coordinator.tf", "google_storage_bucket_iam_member.coordinator_runs_reader"},
+		// The front door's own account's one grant, made public one line away
+		// from the account whose reach this rule exists to bound.
+		"the front door account's runs-bucket read": {"gcp/modules/installation/coordinator.tf", "gcp/modules/installation/coordinator.tf", "google_storage_bucket_iam_member.mcp_server_runs_reader"},
+		// Another module: a run account's write grant on the runs bucket.
+		"a run account's runs-bucket grant": {"gcp/modules/workflow/sa.tf", "gcp/modules/workflow/sa.tf", "google_storage_bucket_iam_member.job"},
+		// The credentials bundle, which is every model credential the
+		// installation holds.
+		"the credentials bundle's reader": {"gcp/modules/installation/credentials.tf", "gcp/modules/installation/credentials.tf", "google_secret_manager_secret_iam_member.credentials_bundle"},
+		// And the resource NAME is not the rule: the same binding, read as a
+		// path another file's, is refused.
+		"the public binding under another path": {publicMemberPath, "gcp/modules/installation/iam.tf", publicMemberBlock},
+	} {
+		t.Run(name, func(t *testing.T) {
+			src, err := fs.ReadFile(FS, m.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutated := withPublicMember(t, m.path, string(src), m.block)
+			var hit bool
+			for _, blk := range allResourceBlocks(t, m.path, []byte(mutated)) {
+				if blk.name != m.block {
+					continue
+				}
+				hit = true
+				member := firstAttr(blk.body, "member")
+				if member != `"allUsers"` {
+					t.Fatalf("the mutation did not take: %s.%s reads member = %s", m.path, m.block, member)
+				}
+				if memberAllowed(m.path, blk.name, member) {
+					t.Errorf("%s: %s admits member = \"allUsers\": a public member is reviewed on %s's %s and nowhere else, and this grant reaches what that binding never does", m.path, m.block, publicMemberPath, publicMemberBlock)
+				}
+			}
+			if !hit {
+				t.Fatalf("the mutated file no longer declares %s, so this fixture asserts nothing", m.block)
+			}
+		})
+	}
 }
 
 // TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant pins the

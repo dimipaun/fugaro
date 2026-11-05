@@ -91,15 +91,17 @@ type InstallOptions struct {
 	Coordinator bool
 	// MCPServer is the owner's SECOND opt-in, and the one that makes the
 	// installation reachable from the network (D920, D934): the coordinator's
-	// front door, its uploaded image and D920's public invoker binding. It
-	// needs Coordinator beside it — the front door runs as the coordinator's
-	// own account and serves the state that account writes (spec.md §1), so an
-	// installation that has not declared the coordinator has no identity for
-	// it and no state to serve. It is off unless fugaro update --mcp-server
-	// sets it, and an installation that never asked writes no mcp_server key
-	// at all, so its plan is exactly what it planned before the front door
-	// existed — including the installation that opted into the coordinator for
-	// its read-only view alone.
+	// front door, its own service account, its uploaded image and D920's
+	// public invoker binding. It needs Coordinator beside it — the front door
+	// is the coordinator's own service and serves the state the coordinator
+	// writes, so an installation that has not declared the coordinator has no
+	// state for one to answer about. Nothing in the CLI sets this yet: fugaro
+	// update carries no --mcp-server flag, so the field is reachable only from
+	// a caller that builds the options itself, and the release that turns the
+	// front door on adds the flag. An installation that never asked writes no
+	// mcp_server key at all, so its plan is exactly what it planned before the
+	// front door existed — including the installation that opted into the
+	// coordinator for its read-only view alone.
 	MCPServer bool
 	// ImageBuilds is M5's managed bound on image builds (the runs-bucket
 	// marker's max_image_builds), which the catalog check job's spec carries
@@ -157,9 +159,9 @@ type InstallationSpec struct {
 	Coordinator  *CoordinatorSpec `json:"coordinator,omitempty"`
 	// MCPServer is the coordinator's front door (D920, D934), left out of an
 	// installation the owner has not turned it on for: the module creates the
-	// service and its public invoker binding only for a variable that is
-	// there, so leaving it out plans exactly the installation that existed
-	// before the front door did (InstallOptions.MCPServer).
+	// account, the service and the public invoker binding only for a variable
+	// that is there, so leaving it out plans exactly the installation that
+	// existed before the front door did (InstallOptions.MCPServer).
 	MCPServer *MCPServerSpec `json:"mcp_server,omitempty"`
 	// ProjectSecrets are the installation module's project-wide secret
 	// containers (logical name -> gcp.ProjectSecretID), which fugaro update
@@ -876,7 +878,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 	// owner as a front door that exists.
 	if o.MCPServer {
 		if !o.BudgetBackend || !o.Coordinator {
-			return InstallationSpec{}, userErr("--mcp-server needs the coordinator's own opt-in: the front door runs as the coordinator's account and serves the coordinator's state (the MCP server's design §1), and the coordinator itself is planned only on an installation that has the budget backend, which --firebase-project declares; so run fugaro update --firebase-project <gcp-project-id> --coordinator --mcp-server")
+			return InstallationSpec{}, userErr("--mcp-server needs the coordinator's own opt-in: the front door is the coordinator's own service and serves the state the coordinator writes, and the coordinator itself is planned only on an installation that has the budget backend, which --firebase-project declares; so run fugaro update --firebase-project <gcp-project-id> --coordinator --mcp-server")
 		}
 		m, err := MCPServer(lc)
 		if err != nil {

@@ -209,18 +209,21 @@ variable "coordinator" {
 
 variable "mcp_server" {
   type = object({
-    service = string
-    image   = string
+    account_id = string
+    service    = string
+    image      = string
   })
-  # The coordinator's front door (D920, D934), OFF by default and each of the
-  # coordinator's own opt-ins beside it: null creates nothing, so an
-  # installation that never asked plans exactly what it planned before, and an
-  # installation that opted into the coordinator for its read-only view keeps
-  # its private aggregation job and acquires no public endpoint. service is the
-  # Cloud Run service's name and image is the coordinator's image — one CLI
-  # binary serves the sweep and the front door — both computed by
-  # internal/infra.MCPServer (the module's type is the same object, and its
-  # validations are the ones that hold the two to their shape).
+  # The coordinator's front door (D920, D934), OFF by default and separate from
+  # each of the coordinator's own opt-ins: null creates nothing, so an
+  # installation that never asked plans exactly what it planned before, and one
+  # that opted into the coordinator for its read-only view keeps its private
+  # aggregation job and acquires no public endpoint. account_id is the front
+  # door's own account — not the coordinator's, whose sweep holds the App key
+  # and the whole database — service is the Cloud Run service's name and image
+  # is the coordinator's image, one CLI binary serving the sweep and the front
+  # door; all three are computed by internal/infra.MCPServer (the module's type
+  # is the same object, and its validations are the ones that hold them to
+  # their shape).
   default = null
 }
 

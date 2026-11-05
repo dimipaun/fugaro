@@ -173,32 +173,70 @@ func TestCoordinatorServiceIsPublicAndCarriesNoCredential(t *testing.T) {
 }
 
 // TestCoordinatorServiceHasItsOwnAccount pins the identity the front door runs
-// as, which is the decision the whole design's identity story rests on: the
-// coordinator is ONE service with ONE account (spec.md §1 — "no second service
-// to run, no second identity to grant"), and that account is the module's own,
-// created with the coordinator's opt-in and holding the FP's database admin
-// through the Firebase root (D922's writer). A container that fell back to the
-// default compute account would run the front door as an identity nothing in
-// this tree granted anything to and nothing revoked from — and the refusal
-// would surface as a 500 nobody could read back to a variable.
+// as, and the whole of that identity's reach (M4's "its own service account").
 //
-// The mutation this fails on: a template with no service_account, a service
-// account that is not this module's own, or one created for the front door
-// alone (the second identity spec.md §1 refuses).
+// It is a dedicated account and NOT the coordinator's, which is the finding
+// this test was rewritten for: the sweep's account reads the GitHub App's
+// private key (secretAccessor on its one container), mints Bitbucket read
+// tokens at the credentials service and holds the FP's database admin through
+// the Firebase root (D922's writer), and a public endpoint whose identity held
+// any of those would make spec.md §8's "no forge credential … there is none to
+// reach" false the day it is turned on. What this account holds is one grant —
+// the runs bucket's read (D932) — and nothing else in this tree or the Firebase
+// root grants it anything.
+//
+// A container that fell back to the default compute account would run the
+// front door as an identity nothing in this tree granted anything to and
+// nothing revoked from, and the refusal would surface as a 500 nobody could
+// read back to a variable.
+//
+// The mutations this fails on: a template with no service_account, a service
+// account that is not the front door's own (the coordinator's, whose comment
+// above says what it holds), an account created on the coordinator's opt-in
+// rather than the front door's, and a second grant — a secret, a project role,
+// a database role — named anywhere in this file for that account.
 func TestCoordinatorServiceHasItsOwnAccount(t *testing.T) {
 	code := tfSource(t, coordinatorTF)
 	svc := tfResource(t, code, "google_cloud_run_v2_service", "coordinator_front_door")
-	if !regexp.MustCompile(`(?m)^\s*service_account\s*=\s*google_service_account\.coordinator\[0\]\.email\s*$`).MatchString(svc) {
-		t.Errorf("%s: the front door must run as the coordinator's own account (google_service_account.coordinator), the one the Firebase root grants the FP's database admin (D922):\n%s", coordinatorTF, svc)
+	if !regexp.MustCompile(`(?m)^\s*service_account\s*=\s*google_service_account\.mcp_server\[0\]\.email\s*$`).MatchString(svc) {
+		t.Errorf("%s: the front door must run as its OWN account (google_service_account.mcp_server), not the coordinator's: the sweep's account holds the App key, a Bitbucket read at the credentials service and the FP's database admin, and none of the three may sit behind a public endpoint:\n%s", coordinatorTF, svc)
 	}
-	account := tfResource(t, code, "google_service_account", "coordinator")
-	if !regexp.MustCompile(`(?m)^\s*account_id\s*=\s*var\.coordinator\.account_id\s*$`).MatchString(account) {
-		t.Errorf("%s: the front door's account is the coordinator's own — the far side of this test is the account the module already creates, not a second one:\n%s", coordinatorTF, account)
+	if strings.Contains(svc, "google_service_account.coordinator") {
+		t.Errorf("%s: the front door's service names the coordinator's own account: that is the identity which reads the App key and the whole database (M4 makes the front door's account a separate one):\n%s", coordinatorTF, svc)
 	}
-	// Nobody may act as it: whoever could deploy a revision as it could read
-	// and rewrite every token record the front door holds (the account
-	// comment above it).
+	account := tfResource(t, code, "google_service_account", "mcp_server")
+	if !regexp.MustCompile(`(?m)^\s*account_id\s*=\s*var\.mcp_server\.account_id\s*$`).MatchString(account) {
+		t.Errorf("%s: the front door's account ID comes from var.mcp_server (internal/infra's MCPServerAccountID), so the name is the Go side's one constant:\n%s", coordinatorTF, account)
+	}
+	if !regexp.MustCompile(`(?m)^\s*count\s*=\s*local\.mcp_server_on\b`).MatchString(account) {
+		t.Errorf("%s: the front door's account must be created on local.mcp_server_on and on nothing else, or an installation that asked for no front door gets an account:\n%s", coordinatorTF, account)
+	}
+
+	// The account's whole reach, and the reason it is a count rather than a
+	// list: the member reference may appear in exactly two places — the grant
+	// below and the service that runs as it — so a third one is a grant nobody
+	// reviewed. The number is deliberately not derived: reading it out of the
+	// file would make this assertion agree with whatever the file says.
+	if got := strings.Count(code, "google_service_account.mcp_server"); got != 2 {
+		t.Errorf("%s: the front door's account is named %d times, want exactly 2 (the runs-bucket read's member and the service's service_account): every other appearance is a grant this design has not decided, and spec.md §8's \"there is no credential to reach\" rests on there being none", coordinatorTF, got)
+	}
+	grant := tfResource(t, code, "google_storage_bucket_iam_member", "mcp_server_runs_reader")
+	for _, want := range []struct{ what, re string }{
+		{"roles/storage.objectViewer", `(?m)^\s*role\s*=\s*"roles/storage\.objectViewer"\s*$`},
+		{"the runs bucket", `(?m)^\s*bucket\s*=\s*google_storage_bucket\.runs\.name\s*$`},
+		{"the front door's own member", `(?m)^\s*member\s*=\s*google_service_account\.mcp_server\[0\]\.member\s*$`},
+		{"the front door's opt-in", `(?m)^\s*count\s*=\s*local\.mcp_server_on\b`},
+	} {
+		if !regexp.MustCompile(want.re).MatchString(grant) {
+			t.Errorf("%s: the front door's account's one grant sets no %s (D932: the tools behind the port answer with a run's recorded artefacts, and that read is the account's whole reach):\n%s", coordinatorTF, want.what, grant)
+		}
+	}
+	if strings.Contains(code, "roles/firebasedatabase.admin") {
+		t.Errorf("%s: the front door's file grants or names the FP's database admin: that is the sweep account's role, granted by the Firebase root, and what a front door may read in the coordinator's own store is D935 — an owner's answer this plan does not have, so no binding on one is planned here", coordinatorTF)
+	}
+	// Nobody may act as it: whoever could deploy a revision as it would serve
+	// the front door's answers as the installation's own identity.
 	if strings.Contains(code, "roles/iam.serviceAccountUser") {
-		t.Errorf("%s: nobody is granted actAs on the coordinator's account, operators included: a deployer as it would read the token records and rewrite a run's identity", coordinatorTF)
+		t.Errorf("%s: nobody is granted actAs on the front door's account, operators included: a deployer as it would serve every run artefact behind the port as this identity", coordinatorTF)
 	}
 }

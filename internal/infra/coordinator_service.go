@@ -11,19 +11,26 @@ import "github.com/dimipaun/fugaro/internal/localcfg"
 // second name to compute.
 const MCPServerServiceName = "fugaro-mcp"
 
+// MCPServerAccountID is the front door's own service account, and it is the
+// same name as the service because the two are one endpoint (the
+// CredentialsAccountID/CredentialsServiceName pair, and the same reason). It
+// is deliberately NOT the coordinator's account (CoordinatorAccountID,
+// internal/infra's Coordinator): that one reads the GitHub App's private key,
+// mints Bitbucket tokens at the credentials service and holds the FP's
+// database admin, and a public endpoint whose identity holds any of those
+// would make spec.md §8's "there is no credential to reach" false. The front
+// door's account holds the runs bucket's read (D932) and nothing else.
+const MCPServerAccountID = "fugaro-mcp"
+
 // MCPServerSpec is the installation root's var.mcp_server (D920, D934): the
-// front door's Cloud Run service and the image it runs. It is the whole
-// opt-in — an installation whose root carries no such variable plans no
-// service, no public invoker binding and no container, which is D934's OFF by
-// default.
-//
-// There is no account here, and that is spec.md §1: the front door runs as the
-// coordinator's own account (the module's service names
-// google_service_account.coordinator), so this design adds one privilege —
-// M9's launch grant — and no second identity to grant.
+// front door's own service account, its Cloud Run service and the image it
+// runs. It is the whole opt-in — an installation whose root carries no such
+// variable plans no account, no service, no public invoker binding and no
+// container, which is D934's OFF by default.
 type MCPServerSpec struct {
-	Service string `json:"service"`
-	Image   string `json:"image"`
+	AccountID string `json:"account_id"`
+	Service   string `json:"service"`
+	Image     string `json:"image"`
 }
 
 // MCPServer is the front door's spec for lc. Its image is the coordinator's
@@ -34,13 +41,12 @@ type MCPServerSpec struct {
 //
 // Nothing else about the installation is read here. The state the front door
 // serves is the coordinator's, so what it needs is the coordinator's own
-// opt-in and, with it, the account and the grants the module already creates
-// for the aggregation job; whether the job itself is deployed is a separate
-// opt-in and is not decided here.
+// opt-in beside it; whether the coordinator's job itself is deployed is a
+// separate opt-in and is not decided here.
 func MCPServer(lc *localcfg.Config) (MCPServerSpec, error) {
 	host, err := RegistryHost(lc)
 	if err != nil {
 		return MCPServerSpec{}, err
 	}
-	return MCPServerSpec{Service: MCPServerServiceName, Image: HistoryImage(host)}, nil
+	return MCPServerSpec{AccountID: MCPServerAccountID, Service: MCPServerServiceName, Image: HistoryImage(host)}, nil
 }

@@ -53,6 +53,17 @@ func TestMCPServerIsItsOwnOptInAndOffByDefault(t *testing.T) {
 	if on.MCPServer.Service != MCPServerServiceName || on.MCPServer.Image != wantImage {
 		t.Errorf("the front door = %+v, want the service %s running %s", *on.MCPServer, MCPServerServiceName, wantImage)
 	}
+	// The account is the front door's own and never the coordinator's: the
+	// sweep's holds the GitHub App's private key and the FP's database admin,
+	// and a public endpoint running as it would put both behind the port
+	// (M4's "its own service account", spec.md §8's "there is no credential to
+	// reach").
+	if on.MCPServer.AccountID != MCPServerAccountID {
+		t.Errorf("the front door's account = %q, want %q", on.MCPServer.AccountID, MCPServerAccountID)
+	}
+	if on.Coordinator != nil && on.MCPServer.AccountID == on.Coordinator.AccountID {
+		t.Errorf("the front door and the coordinator's sweep share the account %s: the sweep holds the App key, a Bitbucket read at the credentials service and the FP's database admin, and none of them may sit behind a public endpoint", on.MCPServer.AccountID)
+	}
 	if on.MCPServer.Image != on.Coordinator.Image {
 		t.Errorf("the front door runs %s and the aggregation job %s: one CLI binary serves both, so a second image is a second thing to build, push and re-pin", on.MCPServer.Image, on.Coordinator.Image)
 	}
@@ -82,8 +93,8 @@ func TestMCPServerIsItsOwnOptInAndOffByDefault(t *testing.T) {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		t.Fatal(err)
 	}
-	if len(fields) != 2 || fields["service"] == nil || fields["image"] == nil {
-		t.Errorf("the tfvars' mcp_server carries %v keys: the module's variable is exactly { service, image }, and Terraform refuses any other shape at plan time", len(fields))
+	if len(fields) != 3 || fields["account_id"] == nil || fields["service"] == nil || fields["image"] == nil {
+		t.Errorf("the tfvars' mcp_server carries %v keys: the module's variable is exactly { account_id, service, image }, and Terraform refuses any other shape at plan time", len(fields))
 	}
 }
 

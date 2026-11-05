@@ -1867,14 +1867,16 @@ var runAccountGrants = setOf(
 	// holder reaches none of the resources this test is about.
 	//
 	// What the member reaches THROUGH it is a container and not a
-	// permission, and the account that container runs as is the one whose
-	// grants this allowlist already pins entry by entry: the coordinator's
-	// own account — roles/firebasedatabase.admin on the Firebase project
-	// (D194/P3, modules/firebase/iam.tf) and roles/storage.objectViewer on
-	// the runs bucket (coordinator.tf) — neither of which is a write path to
-	// the bucket's root. The process itself holds no model credential and no
-	// forge credential, which is asserted at both layers
-	// (modules/installation/coordinator_service_test.go and
+	// permission, and the account that container runs as is the front door's
+	// OWN (M4's "its own service account", entry below): it is deliberately
+	// not the coordinator's, whose account holds the App key, a Bitbucket
+	// read at the credentials service and the FP's database admin, none of
+	// which may sit behind a public endpoint. That account's whole grant list
+	// is the runs bucket's read pinned in the entry below — one row, no
+	// secret, no project role and no database role — so the container behind
+	// the port reaches the bucket and nothing else. The process itself holds
+	// no model credential and no forge credential, which is asserted at both
+	// layers (modules/installation/coordinator_service_test.go and
 	// ee/coordinator/service.go's own refusal), and every path behind the
 	// port is refused without a bearer token this service mints (spec.md §8).
 	// The endpoint exists only on an installation whose owner asked for it
@@ -1882,6 +1884,19 @@ var runAccountGrants = setOf(
 	// (internal/infra/tf), so the owner confirms this binding in so many
 	// words.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=google_cloud_run_v2_service.coordinator_front_door[0].name | "allUsers" | for_each= | perms=`,
+	// Reviewed for M4: the front door's own account's whole reach, and it is
+	// one grant. objectViewer on the runs bucket is what a run's recorded
+	// artefacts — its logs and its diff (D932) — are read with; it carries no
+	// create, delete or update, and the bucket's root is something no read
+	// changes. The member is the account the service above runs as, created
+	// with the front door's own opt-in (D934) and not the coordinator's: the
+	// sweep's account reaches the App key, the credentials service and the FP
+	// database, and this one reaches none of them. It is the only grant that
+	// account has anywhere in this tree — no secret, no project role, no
+	// database role, and no binding on the coordinator's store, which is
+	// D935's unanswered question — so the public endpoint's identity is
+	// bounded by this one row.
+	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.mcp_server[0].member | for_each= | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=var.runs_bucket | google_service_account.job.member | for_each= | perms=`,
 	// The same account's read-only grant on the budget token objects, in the
 	// workflow module (tokens/<slug>/, one repository) and in the project

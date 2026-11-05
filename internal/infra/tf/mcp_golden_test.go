@@ -9,9 +9,10 @@ import (
 // The front door is the owner's second opt-in, and the goldens are real plans
 // of installations that did not pass it.
 //
-// D934 is OFF by default, and the two things it keeps off an installation that
+// D934 is OFF by default, and the things it keeps off an installation that
 // asked only for the coordinator's read-only view are the ones asserted here:
-// the Cloud Run service, and the `allUsers` invoker binding D920 puts on it.
+// the front door's own service account and its one grant, the Cloud Run
+// service, and the `allUsers` invoker binding D920 puts on it.
 // The variable is what decides both — the module's local is
 // `var.mcp_server != null && local.coordinator_on`, so no fixture's tfvars
 // carry an mcp_server key and no plan of one can create either resource.
@@ -32,7 +33,12 @@ func TestNoGoldenPlanCreatesTheFrontDoor(t *testing.T) {
 	var sawCoordinator bool
 	for _, name := range goldens {
 		for _, rc := range goldenPlan(t, name).ResourceChanges {
-			if strings.Contains(rc.Address, "front_door") {
+			// The front door's resources are named two ways — the service and
+			// its invoker binding after the front door, the account and its
+			// grant after the variable that switches them on — so the address
+			// check reads both, or a golden that created the account alone
+			// would pass this test.
+			if strings.Contains(rc.Address, "front_door") || strings.Contains(rc.Address, "mcp_server") {
 				t.Errorf("%s plans %s: the front door is OFF until the owner passes the flag, and no golden's tfvars pass it (D934)", name, rc.Address)
 			}
 			if strings.Contains(rc.Address, "coordinator") {
