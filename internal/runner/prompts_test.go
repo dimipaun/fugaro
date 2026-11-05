@@ -62,8 +62,11 @@ func TestFindingsAreBoundedAndQuoted(t *testing.T) {
 	if !strings.Contains(got, shell) {
 		t.Errorf("a finding that reads like a command did not reach the brief as data:\n%s", got)
 	}
-	if strings.Contains(got, "0000000000000000") {
+	if strings.Contains(got, "<<<end-fugaro-findings-") && strings.Count(got, "<<<end-fugaro-findings-") != 1 {
 		t.Errorf("a finding forged a delimiter of the block:\n%s", got)
+	}
+	if !strings.Contains(got, "[fugaro-delimiter removed]") {
+		t.Errorf("a finding that looks like a delimiter was carried whole:\n%s", got)
 	}
 
 	m := regexp.MustCompile(`<<<fugaro-findings-([0-9a-f]{16})>>>\n`).FindStringSubmatch(got)

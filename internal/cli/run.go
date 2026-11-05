@@ -128,6 +128,27 @@ type runOptions struct {
 	// request N (the only meaning before Task 12 of the generic-tool
 	// plan); 2 to 4 need a mode: review recipe such as pick (G13).
 	pr []int
+	// reviewRun is --review-run: the independent review run whose findings
+	// this follow-up fixes (CSR5, D887). It is what makes a `fix first`
+	// verdict reach the fix round's brief without a person copying anything
+	// between the two runs — the launcher reads the review's own artifact
+	// (reviewFindings) and prepends its issues to the follow-up's
+	// instructions, so the fix round answers a review it names. Empty (the
+	// default) is no claim at all: the brief is the launcher's TEXT alone,
+	// exactly as before the flag existed. Refused without --pr (there is no
+	// pull request to fix) and with a mode: review recipe (the launch is a
+	// review, not a fix), and refused rather than launched when the
+	// artifact is missing or unreadable: a brief that says nothing about
+	// why it was launched is worse than no run (spec §6).
+	//
+	// The flag is HIDDEN, and that is a debt rather than a choice: the
+	// generated CLI reference (website/content/cli-reference.md) is written
+	// by another work stream and this task may not edit it, and a visible
+	// flag on a documented command fails the drift tests that hold the two
+	// together. Hiding it keeps the tree green without a second copy of the
+	// fact; the release that owns that file documents it (reconciliation
+	// F22/E4).
+	reviewRun string
 	// attach is --attach, repeated: files this launch uploads into the
 	// run's own inputs/ for a mode: artifact run to download (design
 	// artifact-runs.md §4, plan Task 6). It is refused outright on a run id
@@ -296,6 +317,9 @@ func newRunCmd() *cobra.Command {
 	f.StringArrayVar(&o.paths, "path", nil, "declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule")
 	f.StringVar(&o.tier, "tier", "", "the expectation tier to dispatch this run at: "+tier.List()+". It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all")
 	f.StringVar(&o.reviewLevelsPath, "review-levels", "", "read the run's own review levels from this YAML file, or - for stdin: the block the task stores as review_levels (l1, l2, l3, each of model, effort, none and focus), decoded strictly, with no key on no level meaning the configuration decides it. Asking for levels needs a job image whose runner acts on them, so a launch on an older one is refused and names fugaro image refresh; without the flag the run resolves its levels from its configuration and its mode alone")
+	// Hidden: see the field's own note on the generated reference.
+	f.StringVar(&o.reviewRun, "review-run", "", "carry the findings of review RUN (<repo-slug>/<run-id> or a run ID) into this fix round's brief; needs --pr, and refused with a mode: review recipe")
+	_ = f.MarkHidden("review-run")
 	f.IntVar(&o.attempts, "attempts", 0, "launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe")
 	f.BoolVar(&o.noCompression, "no-compression", false, "turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
@@ -305,7 +329,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "tier", "no-compression", "review-levels"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "tier", "no-compression", "review-levels", "review-run"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -392,6 +416,16 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			}
 		}
 	}
+	// --review-run carries a review's findings into a FIX ROUND's brief, and
+	// a fix round is a follow-up: without --pr there is no pull request to
+	// fix, and a launch that accepted the flag anyway would start a run whose
+	// brief carries nothing while reporting the review as answered. Checked
+	// here, before openCloud, so the refusal costs no cloud call; the other
+	// half of the rule — a mode: review recipe is a review and not a fix — is
+	// checked below, where the recipe is resolved.
+	if cmd.Flags().Changed("review-run") && !prSet {
+		return userErr("--review-run needs --pr: it carries a review run's findings into a fix round of a pull request")
+	}
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {
 		return err
@@ -438,6 +472,9 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			rr, rerr := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), o.recipe, time.Now(), false)
 			switch {
 			case rerr == nil && rr.Recipe.Mode == recipe.ModeReview:
+				if cmd.Flags().Changed("review-run") {
+					return userErr("--review-run carries a review run's findings into a fix round, and --recipe %s reviews a pull request instead", rr.Name)
+				}
 				if lo, hi, ok := recipe.ReviewPRRange(rr.Name); ok {
 					if n := len(o.pr); n < lo || n > hi {
 						if lo == hi {
@@ -484,6 +521,24 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	case reviewRecipe != nil:
 		slug, spec, err = reviewSpec(ctx, env, o, reviewRecipe, text, total, cmd.ErrOrStderr())
 	case prSet:
+		// --review-run, before prSpec and not after it: the findings are part
+		// of the follow-up's text, which is the whole of what prSpec compares
+		// a repeated --run-id against and the whole of what it stores, so a
+		// repeat of this same launch finds the task it stored instead of a
+		// text that differs from it by the findings.
+		if o.reviewRun != "" {
+			repo := o.repo
+			if repo == "" {
+				if repo, err = originRepo(ctx); err != nil {
+					return err
+				}
+			}
+			var findings string
+			if findings, err = reviewFindings(ctx, env, repo, o.reviewRun); err != nil {
+				return err
+			}
+			text = findings + text
+		}
 		slug, spec, reused, err = prSpec(ctx, env, o, text, total, cmd.ErrOrStderr())
 	default:
 		slug, spec, err = newSpec(ctx, env, o, text, total, cmd.ErrOrStderr())

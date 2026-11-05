@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -422,6 +423,57 @@ func reviewArtifactUnreadable(run string, err error) error {
 		return userErr("%s has no review artifact: the review job writes review.json when it finishes, so this is a run that is still going, a review whose signature could not be made (it then writes nothing), or a run that is not a review. See fugaro diagnose %s", oneLineCLI(run), oneLineCLI(run))
 	}
 	return remote(err)
+}
+
+// reviewFindings is the findings section a fix round's brief opens with: the
+// issues of review run reviewRun (CSR5, D887), rendered by runner.FixFindings
+// — bounded, quoted, nonce-delimited, and naming the review run — for the
+// launcher to put in front of the follow-up's own instructions.
+//
+// It reads the review's own artifact, from exactly where fugaro review show
+// reads it, and refuses rather than returning anything a brief could carry
+// when that read or the decode fails: a fix round whose brief does not say
+// what it was launched to fix is worse than no run at all, so an unreadable
+// verdict never becomes a brief (spec §6). The refusal names the review run,
+// which is the one thing its reader has to look at.
+//
+// reviewRun is the reference the launcher passed: <repo-slug>/<run-id>, or a
+// bare run id, read from the repository this fix round is for. A reference
+// that names another repository is refused — the artifact is read from the
+// path the reference names, and a brief carrying a review of somewhere else
+// would be quoting the wrong code.
+func reviewFindings(ctx context.Context, env *cloudEnv, repo, reviewRun string) (string, error) {
+	slug, id := "", reviewRun
+	if strings.Contains(reviewRun, "/") {
+		var err error
+		if slug, id, err = parseRunRef(reviewRun); err != nil {
+			return "", err
+		}
+	} else if !task.ValidRunID(reviewRun) {
+		return "", userErr("--review-run %q must look like 20260926-221530-a1b2, or <repo-slug>/<run-id>", oneLineCLI(reviewRun))
+	}
+	own, err := env.repoSlug(repo, checkoutOf(ctx, repo))
+	if err != nil {
+		return "", err
+	}
+	if slug == "" {
+		slug = own
+	} else if slug != own {
+		return "", userErr("--review-run %s is a review of %s, and this fix round is for %s: a brief carries the findings of its own repository", oneLineCLI(reviewRun), oneLineCLI(slug), oneLineCLI(own))
+	}
+	ref := slug + "/" + id
+	data, err := runstore.Open(env.bucket.Bucket, slug, id).ReadFile(ctx, runstore.ArtifactPrefix+runner.ReviewArtifactName)
+	if err != nil {
+		if errors.Is(err, runstore.ErrNotFound) {
+			return "", reviewArtifactUnreadable(ref, err)
+		}
+		return "", remote(err)
+	}
+	art, err := runner.DecodeReviewArtifact(data)
+	if err != nil {
+		return "", userErr("%s has no readable review artifact: %s. A fix round carries a review's findings into its brief, so a verdict this launcher cannot read refuses the launch rather than starting a run that fixes nothing. See fugaro review show %s", oneLineCLI(ref), safetext.Field(err.Error()), oneLineCLI(ref))
+	}
+	return runner.FixFindings(art.ReviewRun, art.Issues), nil
 }
 
 // writeObject writes one object's bytes and a closing newline, so two objects
