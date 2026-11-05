@@ -268,11 +268,11 @@ are separate nodes: **the state compare-and-swap, not the lease, is what seriali
 
 **One approval covers one attempt (round-2 M1, M2).** A session's `work_item_upsert` must not be able to turn one approval into many launches. `Phase`,
 `RunID`, `Attempts` and the `Intents` are written only by the **Daemon** actor; a session's upsert that carries them is refused. An approval covers
-the attempt it was given for; a further attempt (a retry after `failed`) needs a person's new approval. The digest is one `SpecDigest(WorkItem)` over every
+the attempt it was given for (committing the intent clears `Approved` in the same `PutIfMatch`, and `Approved` is written only by `work_item_approve`, never by an upsert, because the digest is unkeyed); a further attempt (a retry after `failed`) needs a person's new approval. The digest is one `SpecDigest(WorkItem)` over every
 field except a named bookkeeping list (`Phase`, `RunID`, `Attempts`, `Note`, `Approved`), so a field added later is digested by default (a reflective
 test pins the list). The approve op carries the digest the person saw and is refused if it no longer equals the current one; the Typed confirmation
 shows the digested spec. State size: the ~4k-token target needs a retention rule, so finished items, resolved decisions and old `Intents`/briefs are
-archived out of the state node past a cap (O0).
+archived out of the state node past a cap (O0), except that an `Intent` younger than the longest cap window is never archived (the caps are derived from intents), and a node still over the cap then stops the daemon spawning.
 
 ### Cost of the cycle loop
 
@@ -322,9 +322,9 @@ that is **money**. Two repairs:
    flight". `--run-id` ("repeating one reports its launch instead of starting another"), `createTask` ("a repeated run ID must repeat its task") and
    `--retry` ("launches the stored task that never started") already make a launch idempotent per run id. **So the per-run-id claim IS the
    concurrency fence** (two daemons, a stale claim, a retry), and the corrected recipe is **re-issue, never mint again**: the intent records the minted run id before the
-   start; recovery **re-issues the same launch under that recorded run id through `launchRun` (the `--retry` path)**, which reports
+   start; recovery **re-issues the same launch under that recorded run id through `launchRun` (the `--retry` path when `task.json` exists)**, which reports
    "already-launched" if the start happened or launches exactly once if it did not. An "adopt only, never issue" recovery would leave an item stuck
-   in `running` forever (and holding a running-cap slot) if the crash fell between `task.json` and the start. It never mints a second run id.
+   in `running` forever (and holding a running-cap slot) if the crash fell between `task.json` and the start. It never mints a second run id. **Before `task.json` exists `--retry` cannot be used** (`retrySpec` in `internal/cli/run.go` refuses "has no task.json"), and rebuilding the task from the item's *current* spec is a check-then-write hole: a session edit after the intent was committed would launch an unapproved spec under the old intent. So recovery recreates the task under the recorded run id only when `SpecDigest(item)` equals the intent's digest and the approval still stands; otherwise the intent is marked abandoned (nothing started).
 2. **Level-triggered**: no cursor at all; the next cycle re-derives "task t-042 has no run" and acts again, with the per-run-id claim as the fence
    and the committed intent as the record that a run id was already minted for that attempt.
 
@@ -463,6 +463,8 @@ later task, not this one.
 
 **T5. The workspaces design reuses the MCP server** and was amended the same day; anything this design says about workspace caps
 (D1222's `ee/` part) waits on that design as well.
+
+**Round-3 open items (reported, not decided).** (1) D1242 names no gated task: approvals are consumed in O6 and O8 before it is answered, and this reconciliation accepts that. (2) One approval is one attempt, which overrides the spec's "Task failed, first time: Code retries" row; the owner is asked to confirm (`spec.md` is not edited). (3) An ambiguous launch error stays in flight up to `ClaimTTL` (10 minutes, `launchRun`'s contract; the runner's `ErrDuplicateExecution` is the second fence), and a daemon's repeated "still in flight" ticks must not count toward the circuit breaker.
 
 **Round-1 owner questions (new, unanswered; the plan decides none of them).**
 

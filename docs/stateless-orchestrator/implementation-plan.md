@@ -71,8 +71,8 @@ adjacent code), `.claude/rules/terraform.md` (O2 edits `internal/infra/firebased
 | G1 | The LLM never writes state: typed ops only, validated by code (spec) | O0 `TestUnknownOpIsRefused` |
 | G2 | A `waiting_on: person` decision, an approval and `goal_set` are closed only by a person-class actor, which at the CLI needs a Typed confirmation at a real terminal (`CanConfirm(Typed)`); the agent-marker check is a mitigation, not a barrier (`stage.go` `AgentAdvice`), so an `env -u CLAUDECODE` call or a direct node write is the residual, owner question D1242; the Typed confirmation is itself beatable by a pty wrapper (`script`, `expect`), so it stops an accident, not an adversary (D1225, F20) | O0 `TestAgentActorCannotResolveAPersonDecision`, O5 `TestPersonOpsNeedATypedConfirmation`, `TestPatchFromAnAgentSessionRefusesPersonOps` (the accident only) |
 | G3 | Free text (`facts`, `note`, titles, decision text) is data: length-capped, control characters stripped, fenced as untrusted in **every** surface that prints it into a session or a prompt, from slice 1 (O5's `state --brief`, O10's session-start print) and in O12's prompts, never above the system prompt | O0 `TestFactValuesAreCappedAndCleaned`, O5 `TestStateBriefFencesAndCleansStoredText`, O10 `TestSessionStartPrintFencesStoredText`, O12 `TestUntrustedTextIsFenced` |
-| G4 | A cycle launches only an approved work item under the **full launch spec the person approved** (every field but a named bookkeeping list, bound by one `SpecDigest(WorkItem)` in the approval; any edit clears the approval; **one approval covers one attempt**, a retry needs a person); caps per cycle, hour, day, running and per minute are code, derived from committed intents (D1226, D1239) | O0 `TestEditAfterApprovalRevokes`, `TestSessionCannotRequeueAnApprovedItem`, O6 `TestSpawnNeverLeavesTheApprovedItem`, `TestCapsStopALoop`, `TestCapsSurviveARestart` |
-| G5 | Money is at-most-once: the intent, with the minted run id, is committed before the launch; recovery re-issues the same launch under the recorded run id through `launchRun`/`--retry`, which reports "already-launched" or launches once, and never mints a second run id; **the per-run-id launch claim IS the concurrency fence** (`internal/cli/run.go` `launchRun`: the claim is never deleted after a launch, a stale claim is taken over by a generation-matched overwrite) (D1231) | O6 `TestRecoveryReissuesUnderTheRecordedRunID`, O8 `TestCrashBetweenIntentAndLaunchMakesOneRun`, `TestCrashAfterTaskJSONBeforeTheStartStillStartsOnce` (real runstore and gcpfake) |
+| G4 | A cycle launches only an approved work item under the **full launch spec the person approved** (every field but a named bookkeeping list, bound by one `SpecDigest(WorkItem)` in the approval; any edit clears the approval; **one approval covers one attempt**: committing the intent clears `Approved`, a retry needs a person); caps per cycle, hour, day, running and per minute are code, derived from committed intents (D1226, D1239) | O0 `TestEditAfterApprovalRevokes`, `TestSessionCannotRequeueAnApprovedItem`, O0 `TestUpsertCannotSetApproved`, `TestRetentionNeverDropsAnIntentInsideTheCapWindow`, O6 `TestSpawnNeverLeavesTheApprovedItem`, `TestAFailedAttemptNeedsANewApproval`, `TestCapsStopALoop`, `TestCapsSurviveARestart` |
+| G5 | Money is at-most-once: the intent, with the minted run id, is committed before the launch; recovery re-issues the same launch under the recorded run id (through `--retry` when `task.json` exists; when it does not, `--retry` refuses "has no task.json", so the task is recreated under the recorded run id **only if `SpecDigest(item)` still equals the intent's digest and the approval stands, otherwise the intent is marked abandoned, nothing having started**), which reports "already-launched" or launches once, and never mints a second run id; **the per-run-id launch claim IS the concurrency fence** (`internal/cli/run.go` `launchRun`: the claim is never deleted after a launch, a stale claim is taken over by a generation-matched overwrite) (D1231) | O6 `TestRecoveryReissuesUnderTheRecordedRunID`, O8 `TestCrashBetweenIntentAndLaunchMakesOneRun`, `TestCrashAfterTaskJSONBeforeTheStartStillStartsOnce`, `TestRecoveryBeforeTaskJSONAfterAnEditAbandonsTheIntent` (real runstore and gcpfake) |
 | G6 | The security-sensitive class is code over changed paths, never lowered by config or by the model (D1234) | O1 `TestPromptPathsAreAlwaysSensitive`, O4 `TestModelKeyOnlyTightens` |
 | G7 | Kill switch, `Precheck` and spend caps are always consulted; the daemon cannot widen a ceiling | O6 `TestKillSwitchStopsSpawning` |
 | G8 | The daemon and decision agents never run a gated converge or publish command, never pass `Yes` to a confirmation, and never answer a refusal with an action (D1238, F20) | O8 `TestDaemonDoesNotDependOnGatedCommands` (an import and dependency test), `TestDaemonNeverPassesYes`, O12 `TestDecisionAgentRunsWithTheAgentDenyRules` |
@@ -92,8 +92,8 @@ U3) and makes **no model call**. **Slice 2: the decision agent and the full cycl
 is unwritten and the bounds D1228 names are proposals not measurements (U4), so a first slice carrying it would carry the unmeasured part;
 the slice 1 daemon already contains the circuit-breaker and spawn caps the decision agent will run under (O6).
 
-Checks come from the reserved block **300-309**, verified free on 2026-11-04: the highest 3-digit Check in `docs/` on `origin/main` is 290, and
-no open pull request diff adds one in 300-399. **Checks 306-309 stay reserved.**
+Checks come from the reserved block **300-309**, verified free on 2026-11-04: the register's top Check in `docs/` on `origin/main` is 273 (274-299 are reserved by other designs, so they are not free either), and
+no open pull request diff adds one in 300-399. **One task, O2, writes Checks 300-305 into `docs/gcp-live-checklist.md` as NOT RUN** (the file has one writer, so no level holds two); the other tasks name their Check and do not edit the file. **Checks 306-309 stay reserved.**
 
 Common to every task: the **Command** is a targeted `go test` with `-count=1`, then `go build ./... && gofmt -l . && go vet ./...`.
 Tasks are mergeable one at a time. The commit message is `type(scope): subject (Oz)` and carries the attribution trailers.
@@ -105,7 +105,7 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   `internal/orchestrator/summary_test.go` (new), `internal/orchestrator/export_test.go` (new), `internal/orchestrator/testdata/state-a.json`
   (new), `schemas/orchestrator-state.schema.json` (new), `schemas/orchestrator-patch.schema.json` (new).
 - **Interfaces:** `type State struct{ SchemaVersion int; Rev int64; AgentID, Role, Goal string; WorkItems []WorkItem; Decisions []Decision;
-  Facts map[string]Fact; ... }`. `WorkItem{ID, Title, Repo, Recipe, RigorTier, Brief, DependsOn, Phase, RunID, Approved *Approval, Attempts, Note}`: **`Phase`, `RunID`, `Attempts` and `Intents` are written only by the `Daemon` actor** (a session's `work_item_upsert` carrying them is refused, so a session cannot requeue an approved item, bump `Attempts` or mark a dependency `done`); **one approval covers one attempt**, another attempt needs a person's new approval. **`Phase`
+  Facts map[string]Fact; ... }`. `WorkItem{ID, Title, Repo, Recipe, RigorTier, Brief, DependsOn, Phase, RunID, Approved *Approval, Attempts, Note}`: **`Phase`, `RunID`, `Attempts` and `Intents` are written only by the `Daemon` actor** (a session's `work_item_upsert` carrying them is refused, so a session cannot requeue an approved item, bump `Attempts` or mark a dependency `done`); **`Approved` is written only by `work_item_approve`, for every actor: an upsert carrying `Approved` is refused** (the digest is unkeyed, so a session could compute it and forge an approval through the CLI); **one approval covers one attempt**: committing an intent clears `Approved` in the same `PutIfMatch` (O6), so another attempt needs a person's new approval. **`Phase`
   is `queued|running|review|done|failed|blocked|cancelled`**, not `status`; the run's own state stays the run record's. `Approval{By, At, SpecDigest}`: **the digest is `func SpecDigest(WorkItem) Digest`, over every field except a named bookkeeping list** (`Phase`, `RunID`, `Attempts`, `Note`, `Approved`), so a field added later is digested by default and a reflective test pins the list; it is the **only** digest O6 and the approve op use, so the two cannot drift;
   any `work_item_upsert` that changes a digested field clears `Approved`, so a later upsert cannot rewrite a brief under a standing approval.
   `Intent{ID (item + attempt), RunID (minted before the start), SpecDigest, At (server time), Outcome}` and `Counters` (the per-hour and per-day
@@ -114,13 +114,13 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   WaitingOn (person|session|daemon), ...}`. `Fact{Value, By}` carries provenance (`by`: person, session, daemon, decision-agent). `Patch{BaseRev, Ops}`
   with ops `work_item_upsert`, `work_item_approve` (person only; it carries the digest the person saw and is refused if it no longer equals the current `SpecDigest`; the Typed confirmation shows that spec), `work_item_archive`, `decision_add`, `decision_resolve`, `fact_set`, `fact_delete`, `goal_set` (no
   `summary_replace`, D1233). `func Apply(State, Patch, Actor) (State, error)` with `Actor{Class: Person|Session|Daemon|DecisionAgent}`;
-  `func Summarize(State) string` generated on read, capped; a **retention rule** keeps the state node inside the ~4k-token target (done items, resolved decisions and old `Intents` and briefs are archived out past a cap), **free text fenced and cleaned** (G3). `func Migrate(State) (State, bool)` raises an
+  `func Summarize(State) string` generated on read, capped; a **retention rule** keeps the state node inside the ~4k-token target (done items, resolved decisions and old `Intents` and briefs are archived out past a cap, **but an `Intent` younger than the longest cap window, 24 hours, is never archived**: the caps are derived from committed intents, so a session that inflates facts, items or decisions must not force an eviction that lowers the per-day count; if the node is still over the cap with only in-window intents left, the daemon stops spawning, fail closed, O6), **free text fenced and cleaned** (G3). `func Migrate(State) (State, bool)` raises an
   older `schema_version` to the current one in place (the store and `fugaro update` call it). Imports no `ee/`, no cloud package (pure).
 - **Schema/rules/config change:** two new JSON Schemas; the decode is strict (unknown field is an error). No rules, no config.
 - **Tests:** `TestStateRefusesAnUnknownField`, `TestUnknownOpIsRefused`, `TestStaleBaseRevIsRejected`, `TestAllowedPhaseTransitions`,
   `TestAgentActorCannotResolveAPersonDecision`, `TestOnlyAPersonSetsGoalOrApprovesAWorkItem`, `TestFactValuesAreCappedAndCleaned`
   (uses `internal/safetext`), `TestWorkItemFieldsAreNotTheRunRecordsFields`, `TestSummaryIsGeneratedAndCapped`, `TestSchemasMatchTheStructs`,
-  `TestEditAfterApprovalRevokes` (an upsert touching rigor, brief, repo, recipe or `DependsOn` clears the approval), `TestApprovalBindsTheFullLaunchSpec`, `TestSpecDigestCoversEveryFieldButTheBookkeepingList` (reflective), `TestApproveCarriesTheDigestThePersonSaw`, `TestSessionCannotRequeueAnApprovedItem`, `TestOnlyTheDaemonWritesPhaseRunIDAndAttempts`, `TestRetentionKeepsStateUnderTheCap`,
+  `TestEditAfterApprovalRevokes` (an upsert touching rigor, brief, repo, recipe or `DependsOn` clears the approval), `TestApprovalBindsTheFullLaunchSpec`, `TestSpecDigestCoversEveryFieldButTheBookkeepingList` (reflective), `TestApproveCarriesTheDigestThePersonSaw`, `TestSessionCannotRequeueAnApprovedItem`, `TestOnlyTheDaemonWritesPhaseRunIDAndAttempts`, `TestRetentionKeepsStateUnderTheCap`, `TestRetentionNeverDropsAnIntentInsideTheCapWindow`, `TestUpsertCannotSetApproved` (an upsert carrying `Approved` is refused for every actor),
   `TestMigrateFromThePreviousSchemaVersion`.
 - **Command:** `go test ./internal/orchestrator/ -count=1 && go test ./schemas/ -count=1`
 - **Depends on:** none. **Level 0.**
@@ -151,9 +151,9 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 
 ### O2. The `orchestrator/` subtree, its rules and the `fugaro update` convergence
 
-- **Files (8; `internal/infra/firebasedb.go` is the marker's Plan and write, as the credentials marker is at `rules.PathCredsRulesMarker()` there; open PR #1715 (the mcpauth subtree) edits the same rules template, so the later of the two rebases), and the emulator and parity tests carry `//go:build firebase`:** `internal/budget/rules/rules.go`, `internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/marker.go`, `internal/infra/firebasedb.go`,
+- **Files (11; `internal/infra/firebasedb.go` is the marker's Plan and write, as the credentials marker is at `rules.PathCredsRulesMarker()` there; open PR #1715 (the mcpauth subtree) edits the same rules template, so the later of the two rebases), and the emulator and parity tests carry `//go:build firebase`:** `internal/budget/rules/rules.go`, `internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/marker.go`, `internal/infra/firebasedb.go`,
   `internal/budget/rules/emulator_orchestrator_test.go` (new), `internal/budget/rules/parity_test.go`, `internal/cli/update_converge_test.go`,
-  `docs/releases/vX.Y.Z.md` (the release the owner assigns; created or amended).
+  `docs/releases/vX.Y.Z.md` (the release the owner assigns; created or amended), `internal/budget/rules/rules_test.go` (edit: `isNamedAddition` and `TestRulesPreexistingPathsUnchanged` must name the new subtree; PR #1715 edits the same test and golden for `mcpauth`, so the later of the two rebases), `internal/budget/rules/testdata/rules.golden.json` (regenerated), `docs/gcp-live-checklist.md` (the one writer: Checks 300-305, NOT RUN).
 - **Interfaces:** a top-level `orchestrator/<id>/` subtree: `.read` for the signed-in person, a `.write` that **refuses every run-scoped job identity** and
   validates shape and size for a token-based writer; **the rules do not bind a person's OAuth write** (IAM bypasses them), so this task claims no
   write-own guarantee and the writer identity is **owner question D1241**, decided before this task starts (this task is not started until it is answered). Siblings under `orchestrator/<id>`:
@@ -163,13 +163,13 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 - **Tests:** emulator: `TestOrchestratorSubtreeIsReadableOnlyBySignedInPeople`, `TestOrchestratorWritesRefuseAJobIdentity`,
   `TestOrchestratorRejectsAnOversizeOrMalformedState`; `TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration` (an installation at the
   previous generation converges in one `fugaro update` run, nothing else needed), `TestUpdateRefusesToRewindTheOrchestratorMarker`.
-- **Command:** `go test -tags firebase ./internal/budget/rules/ -run 'Orchestrator|Parity' -count=1 && go test ./internal/cli/ -run 'TestUpdate.*Orchestrator' -count=1`
+- **Command:** `go test -tags firebase ./internal/budget/rules/ -run 'Orchestrator|Parity' -count=1 && go test ./internal/budget/rules/ -count=1 && go test ./internal/cli/ -run 'TestUpdate.*Orchestrator' -count=1`
 - **Depends on:** O0 (field names), and the owner's answer to D1241. **Level 1.**
 - **Commit:** `feat(rules): the orchestrator subtree, closed to job identities, converged by update (O2)`
 - **Red step:** `TestOrchestratorWritesRefuseAJobIdentity` fails against the unchanged rules (a deny-by-default root makes it pass vacuously, so the
   test first proves a person write succeeds, then a job write fails).
 - **OWNER-RUN, Check 300:** with a real installation that is **not** project `belong`: run `fugaro update`; confirm the writer D1241 names can write
-  the state node and a run's own token cannot. The agent writes the check text, the owner runs it. Operators' line: "run `fugaro update`".
+  the state node and a run's own token cannot. O2 writes the check text, the owner runs it. Operators' line: "run `fugaro update`".
 - **Reviewer:** security (rules and guards).
 
 ### O3. The state store, the audit log and the daemon lease
@@ -217,16 +217,16 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   `internal/cli/orchestrator_cmd_test.go` (new), `internal/cli/orchestrator_patch_test.go` (new), `internal/cli/root.go` (one line registering the command),
   `schemas/orchestrator-output.schema.json` (new).
 - **Interfaces:** `state [--brief]` prints the generated summary (the session-start print, D1237: short, one screen), **with stored text fenced and cleaned** (G3); `events [--since]` reads the
-  audit log; `patch -f file|-` validates with O0, with the actor class `session` by default; **person-only ops (`work_item_approve`, `goal_set`, resolving a person decision) need a Typed confirmation at a real
+  audit log; `patch -f file|-` validates with O0; **the actor is `Session`, raised to `Person` only by the Typed confirmation; no flag, environment variable or file selects `Daemon` or `DecisionAgent`, and `Approved` is written only by `work_item_approve`, never an upsert**; **person-only ops (`work_item_approve`, `goal_set`, resolving a person decision) need a Typed confirmation at a real
   terminal that shows the digested spec** (the approve op carries that digest) (`initflow.CanConfirm(Typed)`) and are refused otherwise, and `--yes` never covers them. The agent-marker check
   (`AgentRefusal`, `internal/initflow/stage.go`) stays as an extra refusal but **is a mitigation, not a barrier** (`env -u CLAUDECODE`, or a direct node
   write, passes it), so it is not what G2 rests on; the residual is owner question D1242. No `spawn`, no `retry`: launch is the daemon's (T2).
 - **Schema/rules/config change:** the `--json` output schema, additive, `schema_version` 1.
 - **Tests:** `TestStateBriefFitsOneScreen`, `TestEventsJSONMatchesTheSchema`, `TestPersonOpsNeedATypedConfirmation`,
-  `TestPatchFromAnAgentSessionRefusesPersonOps` (the accident only), `TestStateBriefFencesAndCleansStoredText`, `TestPatchRejectsAStaleRev`, `TestApproveShowsTheSpecItDigests`,
+  `TestPatchFromAnAgentSessionRefusesPersonOps` (the accident only), `TestStateBriefFencesAndCleansStoredText`, `TestPatchRejectsAStaleRev`, `TestApproveShowsTheSpecItDigests`, `TestPatchNeverActsAsTheDaemon`,
   `TestCommandIsRegisteredOnce`; `go test ./ee/clidoc/ -count=1` for the regenerated reference.
 - **Command:** `go test ./internal/cli/ -run 'TestOrchestrator|TestStateBrief|TestEventsJSON|TestPatch' -count=1`
-- **Depends on:** O0, O3. **Level 2.**
+- **Depends on:** O0, O3, O2 (`patch` writes the real node with the credential D1241 has not chosen, so it waits for O2 and for that answer). **Level 2.**
 - **Commit:** `feat(cli): fugaro orchestrator state, events and patch with --json (O5)`
 - **Red step:** `TestPersonOpsNeedATypedConfirmation` fails to build, then fails when a patch with no terminal closes a person decision. **P1 is resolved
   as negative:** the agent-session detection is not a barrier (`stage.go` `AgentAdvice`, `init.go`), so G2 rests on the Typed confirmation and the
@@ -238,18 +238,17 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 - **Files (8):** `internal/orchestrator/launch.go` (new), `internal/orchestrator/intent.go` (new), `internal/orchestrator/caps.go` (new),
   `internal/orchestrator/breaker.go` (new), `internal/orchestrator/launch_test.go` (new), `internal/orchestrator/caps_test.go` (new),
   `internal/orchestrator/breaker_test.go` (new), `internal/orchestrator/export_launch_test.go` (new).
-- **Interfaces:** `type Launcher interface{ Launch(ctx, Spec, RunID) (RunID, error) }` implemented in O8 over the `fugaro run` path (the core
+- **Interfaces:** `type RunView` (the read-only view `Plan` takes; **O6 defines it**, O7's `runview.go` only implements `RunViewReader` to fill it). `type Launcher interface{ Launch(ctx, Spec, RunID) (RunID, error) }` implemented in O8 over the `fugaro run` path (the core
   must not import `internal/cli`); `func Plan(State, RunView, Caps, Now) []Action`: an item is eligible only if `Approved` by a person **and the
   approval's `SpecDigest` equals O0's `SpecDigest` of the item's current state** (the same function, not a second list of fields), the item has no earlier `Intent` for the approved attempt, all `DependsOn` are `done`, the
   running count and the per-cycle, per-minute, per-hour and per-day counts are under `Caps`, and the kill switch is off (consulted through an
   interface over `budget`). **The per-minute, per-hour and per-day counts are derived from the committed `Intents` using their server time**
-  (`rtdb.ServerNow`), never from in-memory counters, so a launchd restart loop does not reset them. **Intent first (D1231, corrected):** the
-  committed intent carries the **run id minted before the start** (`task.NewRunID`) and the spec digest; `Launch` starts the run under that id;
-  **recovery re-issues the same launch under the recorded run id through `launchRun` (the `--retry` path), which reports "already-launched" if `launch.json` exists or launches once if not, and never mints a second run id** (`internal/cli/run.go` `launchRun`: the claim is `<run prefix>launching`, one per run id, never deleted after a launch, taken over only when stale by a generation-matched overwrite, so **the per-run-id claim IS the concurrency fence** for two daemons and a stale claim; "adopt, never issue" would strand an item in `running` if the crash fell between `task.json` and the start); `Breaker` counts consecutive failed or empty cycles (3) and writes a `pending_decisions` item.
+  (`rtdb.ServerNow`), never from in-memory counters, so a launchd restart loop does not reset them. **Intent first (D1231, corrected):** the committed intent carries the **run id minted before the start** (`task.NewRunID`) and the spec digest, **and committing it clears `Approved` in the same `PutIfMatch`** (one approval is one attempt, so a daemon requeue after a failure never relaunches under a standing approval); `Launch` starts the run under that id;
+  **recovery re-issues the same launch under the recorded run id: through `--retry` when `task.json` exists; when it does not, `retrySpec` refuses ("has no task.json"), and rebuilding the task from the item's current spec would launch a spec edited after the intent under the old intent, so the task is recreated under the recorded run id only when `SpecDigest(item)` equals the intent's digest and the approval still stands, else the intent is marked `abandoned` (nothing started). Through `launchRun`, which reports "already-launched" if `launch.json` exists or launches once if not, and never mints a second run id** (`internal/cli/run.go` `launchRun`: the claim is `<run prefix>launching`, one per run id, never deleted after a launch, taken over only when stale by a generation-matched overwrite, so **the per-run-id claim IS the concurrency fence** for two daemons and a stale claim; "adopt, never issue" would strand an item in `running` if the crash fell between `task.json` and the start); `Breaker` counts consecutive failed or empty cycles (3) and writes a `pending_decisions` item; **ticks that end "still in flight" do not count toward it**. If the state node is over its size cap with only in-window intents left, `Plan` returns no spawn (fail closed). An ambiguous launch error leaves the intent in flight up to `ClaimTTL` (10 minutes, the open item in section 6); the runner's `ErrDuplicateExecution` is the second fence.
 - **Schema/rules/config change:** none.
 - **Tests:** `TestSpawnNeverLeavesTheApprovedItem`, `TestUnapprovedItemIsNeverLaunched`, `TestCapsStopALoop`, `TestKillSwitchStopsSpawning`,
   `TestRecoveryReissuesUnderTheRecordedRunID` (a fake that records started run ids; the real-store crash test is O8's), `TestEditedSpecIsNeverLaunched`,
-  `TestCapsSurviveARestart` (a new process with the same committed intents has the same counts), `TestBreakerRaisesADecision`, `TestDependencyOrderIsRespected`.
+  `TestCapsSurviveARestart` (a new process with the same committed intents has the same counts), `TestBreakerRaisesADecision`, `TestStillInFlightTicksDoNotTripTheBreaker`, `TestAFailedAttemptNeedsANewApproval`, `TestOversizeStateStopsSpawning`, `TestRecoveryBeforeTaskJSONAfterAnEditAbandonsTheIntent` (the fake; the real-store run is O8's), `TestDependencyOrderIsRespected`.
 - **Command:** `go test ./internal/orchestrator/ -run 'Launch|Caps|Breaker|Plan' -count=1`
 - **Depends on:** O0, O4 (the `Caps` values; the type is defined here and O4 fills it in O8). **Level 1.**
 - **Commit:** `feat(orchestrator): the dependency-driven launcher with intent-first claims and spawn caps (O6)`
@@ -258,14 +257,14 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 
 ### O7. The reconcile tick and notifications
 
-- **Files (6):** `internal/orchestrator/tick.go` (new), `internal/orchestrator/runview.go` (new), `internal/orchestrator/notify.go` (new),
+- **Files (6):** `internal/orchestrator/tick.go` (new), `internal/orchestrator/runview.go` (new: implements `RunViewReader` only; O6 owns `RunView`), `internal/orchestrator/notify.go` (new),
   `internal/orchestrator/tick_test.go` (new), `internal/orchestrator/notify_test.go` (new), `internal/orchestrator/export_tick_test.go` (new).
 - **Interfaces:** `Tick(ctx, Store, RunViewReader, Launcher, Notifier)`: load, fold finished runs into the item phases **by joining on the run id the daemon recorded in the intent, never on a run-writable field** (a run's own heartbeat, title or label), ask `Plan` (O6), execute
   intents, commit; a `Notifier` interface (a sink per OS in O9; a log sink here) fires on a finished run or a decision needed; level-triggered, no cursor
   (D1229). Nothing in it calls a model (D1221).
 - **Schema/rules/config change:** none.
 - **Tests:** `TestTickMarksAFinishedRunDone`, `TestTickIsIdempotentOnRepeat`, `TestTickNotifiesOnceForADecision`, `TestTickMakesNoModelCall` (the
-  dependency list has no agent package), `TestTickLeavesAPersonDecisionOpen`, `TestTickJoinsOnTheRecordedRunIDOnly`.
+  dependency list has no agent package), `TestTickLeavesAPersonDecisionOpen`, `TestTickJoinsOnTheRecordedRunIDOnly`, `TestStillInFlightTicksAreNotFailures`.
 - **Command:** `go test ./internal/orchestrator/ -run 'Tick|Notify' -count=1`
 - **Depends on:** O3, O6. **Level 2.**
 - **Commit:** `feat(orchestrator): the reconcile tick and its notifications (O7)`
@@ -284,7 +283,7 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   and the daemon package does not depend on the gated-command packages.
 - **Schema/rules/config change:** none.
 - **Tests:** `TestDaemonDoesNotDependOnGatedCommands` (an import and dependency test over `go list -deps`, not a string check), `TestDaemonNeverPassesYes`,
-  `TestCrashBetweenIntentAndLaunchMakesOneRun` (the real `internal/runstore` and `internal/gcpfake`: crash after the intent, again after `task.json` and before the start, and again after the start; recover each time, one run, never a stuck `running` item), `TestCrashAfterTaskJSONBeforeTheStartStillStartsOnce`, `TestRunLauncherUsesTheLaunchClaim`, `TestRunLauncherRunsPrecheck`, `TestRunStopsWhenTheLeaseIsLost`,
+  `TestCrashBetweenIntentAndLaunchMakesOneRun` (the real `internal/runstore` and `internal/gcpfake`: crash after the intent, again after `task.json` and before the start, and again after the start; recover each time, one run, never a stuck `running` item), `TestCrashAfterTaskJSONBeforeTheStartStillStartsOnce`, `TestRecoveryBeforeTaskJSONAfterAnEditAbandonsTheIntent` (recover before `task.json`: an edit since the intent abandons it, an unchanged spec recreates the task under the recorded run id), `TestRunLauncherUsesTheLaunchClaim`, `TestRunLauncherRunsPrecheck`, `TestRunStopsWhenTheLeaseIsLost`,
   `TestRunReportsUpdateDueAndDoesNothingElse`.
 - **Command:** `go test ./internal/cli/ -run 'TestDaemon|TestRunLauncher|TestRunStops|TestRunReports' -count=1`
 - **Depends on:** O2 (the node must exist), O5, O7. **Level 3.**
@@ -315,7 +314,7 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 - **Depends on:** O8. **Level 4.**
 - **Commit:** `feat(cli): install the orchestrator daemon under launchd and a systemd user unit (O9)`
 - **Red step:** `TestInstallWritesOnlyUnderTheUserHome` fails to build, then fails when a path outside the home is accepted.
-- **OWNER-RUN, Check 301:** on the owner's Mac: `fugaro orchestrator install`, close the terminal, reboot, confirm the daemon is running and exactly one
+- **OWNER-RUN, Check 301 (text written by O2):** on the owner's Mac: `fugaro orchestrator install`, close the terminal, reboot, confirm the daemon is running and exactly one
   instance holds the lease (start a second by hand and see it refuse); on a Linux machine the same with systemd. No agent runs it.
 - **Reviewer:** security (code that runs at login).
 
@@ -353,7 +352,7 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 - **Depends on:** O5, O8, O9. **Level 5.**
 - **Commit:** `feat(cli): import the session dump and document the cutover and its rollback (O11)`
 - **Red step:** `TestImportNeverMarksAnItemApproved` fails to build, then fails when a dump's `approved` is honoured.
-- **OWNER-RUN, Check 302:** the cutover itself, on the owner's own installation (never `belong`'s sandbox from an agent): start the daemon, confirm
+- **OWNER-RUN, Check 302 (text written by O2):** the cutover itself, on the owner's own installation (never `belong`'s sandbox from an agent): start the daemon, confirm
   one finished run, one dependency-driven launch, one notification, with the spend caps and kill switch tested first. Because there is no shadow week
   (D1235), the owner runs this with the scripts still in place **but never launching at once**: the two share no launch key (the claim is per run id),
   so scripts and daemon both launching the same work would double-launch. The check starts with the scripts' launching stopped (their watching may
@@ -378,7 +377,7 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 - **Depends on:** O0, O1, O3, O4, O6. **Level 2.** Not started before the owner approves slice 2 by name.
 - **Commit:** `feat(orchestrator): the bounded decision agent (O12)`
 - **Red step:** `TestDecisionAgentRunsWithTheAgentDenyRules` fails to build, then fails when the runner omits the deny rules.
-- **OWNER-RUN, Check 303:** with the owner's own Claude login: one real decision call, the count caps and the breaker proved, the cost of a cycle
+- **OWNER-RUN, Check 303 (text written by O2):** with the owner's own Claude login: one real decision call, the count caps and the breaker proved, the cost of a cycle
   measured (this is what turns U4 from a target into a number).
 - **Reviewer:** security (prompts and the agent environment).
 
@@ -414,7 +413,7 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 - **Tests:** `TestHandoffNeedsOwnerOrAdmin`, `TestCoreBuildsWithoutEE` (the eeboundary guard is run), `TestAgentOwnedByTheProjectHasNoPersonIdentity`.
 - **Command:** `go test ./ee/... ./internal/eeboundary/ -count=1`
 - **Depends on:** O0, O3, O4. **Level 2.** **Commit:** `feat(ee): hand an orchestrator agent to another developer (O17)`. **Red step:** `TestHandoffNeedsOwnerOrAdmin`.
-  **Reviewer:** security. **OWNER-RUN, Check 304:** the handoff on a real installation, two people.
+  **Reviewer:** security. **OWNER-RUN, Check 304 (text written by O2):** the handoff on a real installation, two people.
 
 ### O18. `ee/`: batch approval (slice 3)
 
@@ -433,7 +432,7 @@ that design's tasks are. **Depends on:** O18 and the workspaces plan. Reviewer: 
 
 ## 4. Parallel execution
 
-Edges (a task depends on the tasks to its left): O2 <- O0; O3 <- O0; O6 <- O0, O4; O5 <- O0, O3; O7 <- O3, O6; O12 <- O0, O1, O3, O4, O6; O8 <- O2, O5, O7;
+Edges (a task depends on the tasks to its left): O2 <- O0; O3 <- O0; O6 <- O0, O4; O5 <- O0, O3, O2; O7 <- O3, O6; O12 <- O0, O1, O3, O4, O6; O8 <- O2, O5, O7;
 O10 <- O5; O17 <- O0, O3, O4; O9 <- O8 (and O0, O3 for `Migrate`); O13 <- O8, O12, O11; O18 <- O17; O11 <- O5, O8, O9. O16 and O19 are external-gated.
 
 | Level | Tasks (can all run at once) |
@@ -459,9 +458,12 @@ and O13 at level 6 (after O11, because both regenerate `cli-reference.md`), one 
 | `internal/orchestrator/tick.go` | O7 (2), O13 (6) | no |
 | `internal/cli/root.go` | O5 (2) | one writer |
 | `docs/releases/vX.Y.Z.md` | O2 (1), O11 (5) | no |
+| `docs/gcp-live-checklist.md` | O2 (1) only (Checks 300-305, NOT RUN); no other task edits it | one writer |
+| `internal/budget/rules/rules_test.go`, `internal/budget/rules/testdata/rules.golden.json` | O2 (1) | one writer |
+| `internal/orchestrator/runview.go` | O7 (2); O6 (1) defines the `RunView` type in `launch.go`, not there | one writer |
 | `ee/register/orchestrator.go` and its test | O17 (2), O18 (3) | no |
 | `plugin/plugin_test.go`, `plugin/readme_test.go` | O10 (3) | one writer |
-| `internal/budget/rules/*`, `internal/infra/firebasedb.go`, `internal/cli/update_converge_test.go` | O2 (1) | one writer |
+| `internal/budget/rules/*` (other than the two rows above), `internal/infra/firebasedb.go`, `internal/cli/update_converge_test.go` | O2 (1) | one writer |
 | `internal/projectpolicy/policy.go`, `internal/policy/merge.go`, `internal/localcfg/localcfg.go` | O4 (0) | one writer |
 | `internal/orchestrator/export_test.go` | O0 (0); O3, O6, O7 each add an `export_<area>_test.go` of their own | one writer |
 | `internal/cli/launch_budget.go` | O8 (3) | one writer |
@@ -483,6 +485,7 @@ a two-person handoff), 305 (O16: the MCP state group, when it exists). 306-309 a
 - **Q2.** Should `fugaro update` offer `fugaro orchestrator install` behind its own confirmation, or is the install a separate opt-in the owner runs once?
 - **Q3 (P2).** OS notifications, or the owner's existing push, for a finished run and a decision needed?
 - **Q4.** Whether the owner approves O12 and O13 (slice 2) before the O11 cutover has run for a while, or only after.
+- **Open items (round 3, not decided).** (1) D1242 names no gated task: approvals are consumed in O6 and O8 before it is answered, which the reconciliation accepts. (2) **One approval is one attempt, so the spec's "Task failed, first time: Code retries" row no longer holds as written** (the daemon cannot relaunch under a standing approval); the owner is asked to confirm, and `spec.md` is not edited. (3) An ambiguous launch error stays in flight up to `ClaimTTL` (10 minutes: `launchRun`'s contract, the runner's `ErrDuplicateExecution` is the second fence); a daemon's repeated "still in flight" ticks must not count toward the circuit breaker (O6, O7 tests).
 - **D1241, D1242, D1243** (new from the round-1 security review, numbered in this folder's block, reconciliation section 6): the state node's writer
   identity (gates O2: not started before the answer), a paired-device channel for person decisions (before anything consumes a resolved decision; the answer may reshape O0's `Approval`), and the session-start print
   versus D952's no-network rule (gates O10). D1244-D1249 stay reserved.
