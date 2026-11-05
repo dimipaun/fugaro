@@ -97,6 +97,19 @@ func agentEnvStates() []agentEnvState {
 	return out
 }
 
+// agentFor is the marker a run with this environment must report where its
+// input is (or is not) a real terminal. Every state reads the same either way
+// but one: the Claude Code IDE extension sets CLAUDE_CODE_SSE_PORT in a
+// person's own terminal too, so that marker alone, at a terminal, is a
+// person's terminal rather than a coding agent's session (the ruling of
+// 2026-11-05). Written here by hand, like the states themselves.
+func (s agentEnvState) agentFor(terminal bool) string {
+	if s.key == "CLAUDE_CODE_SSE_PORT" && s.value != "" && terminal {
+		return ""
+	}
+	return s.agent
+}
+
 // clearAgentEnv unsets every marker the oracle names (restored at the end of
 // the test): TestMain unsets agentMarkers only, which is the list under test.
 func clearAgentEnv(t *testing.T) {
@@ -566,6 +579,7 @@ func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads 
 		env.apply(t)
 		for _, row := range confirmTable {
 			withTerminal(t, row.terminal)
+			marker := env.agentFor(row.terminal)
 			for _, rd := range reads {
 				if rd.managed {
 					continue // the managed direction is Task 3.1's
@@ -578,7 +592,7 @@ func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads 
 							typed = initProjectName
 						}
 						want := false
-						if env.agent == "" {
+						if marker == "" {
 							switch {
 							case class.class == initflow.YesOrTyped && right:
 								want = row.ordRight
@@ -596,13 +610,13 @@ func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads 
 						if got != want {
 							bad = append(bad, fmt.Sprintf("%s: proceeds=%v, want %v (err %v)", where, got, want, err))
 						}
-						if env.agent != "" {
+						if marker != "" {
 							if spy.read {
 								bad = append(bad, where+": stdin was read in a coding agent's session")
 							}
 							var ae *initflow.AgentError
-							if class.class == initflow.YesOrTyped && (!errors.As(err, &ae) || ae.Marker != env.agent) {
-								bad = append(bad, fmt.Sprintf("%s: ask's refusal is %v, want the agent refusal naming %s", where, err, env.agent))
+							if class.class == initflow.YesOrTyped && (!errors.As(err, &ae) || ae.Marker != marker) {
+								bad = append(bad, fmt.Sprintf("%s: ask's refusal is %v, want the agent refusal naming %s", where, err, marker))
 							}
 						}
 					}
@@ -659,8 +673,9 @@ func TestManagedConfirmRuleMatchesTheTable(t *testing.T) {
 		env.apply(t)
 		for _, row := range confirmTable {
 			withTerminal(t, row.terminal)
+			marker := env.agentFor(row.terminal)
 			r, _ := confirmRig(t, row, "")
-			want := initflow.Conditions{Yes: row.condYes, NonInteractive: row.nonInteractive, JSON: row.json, Terminal: row.terminal, Agent: env.agent, Ask: row.ask}
+			want := initflow.Conditions{Yes: row.condYes, NonInteractive: row.nonInteractive, JSON: row.json, Terminal: row.terminal, Agent: marker, Ask: row.ask}
 			if got := r.conditions(); got != want {
 				t.Errorf("%s, %s: initRun.conditions() = %+v, want %+v", row, env.name, got, want)
 			}
@@ -669,9 +684,9 @@ func TestManagedConfirmRuleMatchesTheTable(t *testing.T) {
 			// stage has none of its own), so init must feed it the marker.
 			e := &initEngine{r: r, lc: &localcfg.Config{}}
 			o := e.options()
-			if o.Agent != env.agent || o.Yes != row.yes || o.PlanOnly != row.planOnly || o.NonInteractive != row.nonInteractive || o.JSON != row.json || o.Terminal != row.terminal {
+			if o.Agent != marker || o.Yes != row.yes || o.PlanOnly != row.planOnly || o.NonInteractive != row.nonInteractive || o.JSON != row.json || o.Terminal != row.terminal {
 				t.Errorf("%s, %s: initEngine.options() has Agent=%q Yes=%v PlanOnly=%v NonInteractive=%v JSON=%v Terminal=%v, want Agent=%q and the row's flags",
-					row, env.name, o.Agent, o.Yes, o.PlanOnly, o.NonInteractive, o.JSON, o.Terminal, env.agent)
+					row, env.name, o.Agent, o.Yes, o.PlanOnly, o.NonInteractive, o.JSON, o.Terminal, marker)
 			}
 			if row.planOnly {
 				continue
@@ -681,7 +696,7 @@ func TestManagedConfirmRuleMatchesTheTable(t *testing.T) {
 				fn   func(initflow.ConfirmClass, initflow.Conditions) bool
 			}{{"initflow.CanConfirm", initflow.CanConfirm}, {"canConfirmTyped", canConfirmTyped}} {
 				ord, typ := row.ordRight, row.typRight
-				if env.agent != "" {
+				if marker != "" {
 					ord, typ = false, false
 				}
 				if got := rule.fn(initflow.YesOrTyped, want); got != ord {
@@ -691,7 +706,7 @@ func TestManagedConfirmRuleMatchesTheTable(t *testing.T) {
 					t.Errorf("%s(Typed) under %s, %s = %v, want %v", rule.name, row, env.name, got, typ)
 				}
 			}
-			typ := row.typRight && env.agent == ""
+			typ := row.typRight && marker == ""
 			if got := initflow.CanConfirmRun(want); got != typ {
 				t.Errorf("initflow.CanConfirmRun under %s, %s = %v, want %v", row, env.name, got, typ)
 			}
@@ -831,7 +846,8 @@ func TestManagedEveryInlineAgentDecisionRefusesUnderEachMarker(t *testing.T) {
 				r.cmd.SetOut(&out)
 				r.cmd.SetErr(&out)
 				e := &initEngine{r: r, lc: &localcfg.Config{}}
-				if got, want := site.allowed(t, r, e, env.agent), env.agent == ""; got != want {
+				marker := env.agentFor(true) // this test sits at a terminal
+				if got, want := site.allowed(t, r, e, marker), marker == ""; got != want {
 					t.Errorf("allowed=%v, want %v", got, want)
 				}
 			})
@@ -1115,12 +1131,13 @@ func TestManagedPluginStageThroughTheLoopRefusesUnderEachMarker(t *testing.T) {
 				}
 				got, _ := os.ReadFile(settings)
 				written := string(got) != settingsWithOthers
-				if env.agent != "" {
+				marker := env.agentFor(how.terminal)
+				if marker != "" {
 					if written || stateOf(res, initflow.Plugin) != initflow.NeedsYou || strings.Contains(out.String(), "confirmed by --yes") || strings.Contains(out.String(), "[y/N]") {
-						t.Fatalf("under %s the plugin stage was not refused: written=%v stages %+v\n%s", env.agent, written, res.Stages, out.String())
+						t.Fatalf("under %s the plugin stage was not refused: written=%v stages %+v\n%s", marker, written, res.Stages, out.String())
 					}
-					if d := res.Stages[0].Detail; !strings.Contains(d, initflow.AgentRefusal(env.agent)) {
-						t.Errorf("the refusal %q does not name %s", d, env.agent)
+					if d := res.Stages[0].Detail; !strings.Contains(d, initflow.AgentRefusal(marker)) {
+						t.Errorf("the refusal %q does not name %s", d, marker)
 					}
 					return
 				}

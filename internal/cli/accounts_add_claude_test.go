@@ -407,8 +407,14 @@ func TestAccountsAddClaudeRefusesAHostileClaude(t *testing.T) {
 // settings write, which also stops the session, would not name the login, so a
 // fence placed only on the write fails here), it names the marker, nothing is
 // written, and the fake login's marker file is absent, so the login never ran.
+//
+// The markers are the five a coding agent's own processes set: the sixth,
+// CLAUDE_CODE_SSE_PORT, is the IDE extension's, and alone, at the real
+// terminal this test runs the command on, it is a person's terminal rather
+// than an agent's session (the ruling of 2026-11-05, and
+// internal/agentenv's own test of the classification).
 func TestAccountsAddClaudeRefusedInEveryAgentSession(t *testing.T) {
-	for _, marker := range agentenv.Markers {
+	for _, marker := range agentenv.AgentMarkers {
 		t.Run(marker, func(t *testing.T) {
 			path := accountsAddFixture(t, accountsAddLocal)
 			unsetClaudeLoginCredentials(t)
