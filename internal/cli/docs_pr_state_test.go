@@ -226,7 +226,9 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 var fcCensusRE = regexp.MustCompile(`[0-9]+ items: [0-9]+ open, [0-9]+ closed, [0-9]+ dropped\.`)
 
 // TestDocsFailureClassDesignCitationsResolve: every file and line the design
-// cites exists, and the shortened names it uses resolve to exactly one file.
+// cites exists, and the shortened names it uses resolve to exactly one file --
+// both halves of it, the `path:line` citations and the `:NNN` references that
+// name no file and mean the paragraph's nearest preceding one.
 //
 // It is the same check the other design documents carry, and it earned its keep
 // on this one before it was written: the draft cited `:62` for `summaryStates`
@@ -268,6 +270,16 @@ func TestDocsFailureClassDesignCitationsResolve(t *testing.T) {
 		}
 	}
 	t.Logf("%s: %d citations carrying a line, against a census of %d path-looking tokens with one", fcDoc, len(matches), census)
+
+	// The other half: a `:NNN` in this document names no file, so its meaning
+	// is the paragraph's nearest preceding citation -- the shape a rewrap or a
+	// reordered sentence silently repoints. Zero would mean the document
+	// stopped using the shape and this half checked nothing.
+	refs := csrCheckRelativeCitations(t, fcDoc, doc, bare)
+	if refs == 0 {
+		t.Errorf("%s holds no `:NNN` reference for the relative half of this check to resolve: the document cites lines that way, and a check that finds none is a check that passes vacuously", fcDoc)
+	}
+	t.Logf("%s: %d relative references resolved against their paragraph's anchor", fcDoc, refs)
 }
 
 // docLineish names the lines that mention gh, so a failure to find the sentence

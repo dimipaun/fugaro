@@ -656,16 +656,17 @@ classifier reads model output, so FC2 carries an SEC flag and needs an independe
 - FC5 → FC6, FC5 → FC7
 - FC6, FC7 → FC8
 
-**Levels** (the tasks in a level can run concurrently — and two of them share the runner, so the
-levels below are what the §10.2 table holds them to):
+**Levels** (a level's tasks can run concurrently: every task sits below all the tasks it depends on,
+and no level holds two writers of one file — the three tasks that write
+`internal/runner/runner.go` are three levels apart, which is what §10.2's rule costs):
 
 | Level | Tasks |
 | --- | --- |
 | L0 | FC1 (script) |
-| L1 | FC2, FC5 |
-| L2 | FC3, FC4 |
-| L3 | FC6 |
-| L4 | FC7 |
+| L1 | FC2 |
+| L2 | FC3 |
+| L3 | FC4, FC5 |
+| L4 | FC6, FC7 |
 | L5 | FC8 |
 
 **Critical path:** FC1 → FC2 → FC3 → FC5 → FC6 → FC8. FC4 and FC7 hang off it. **The long pole is
@@ -677,16 +678,16 @@ FC2's own test is a guard over the tree and not a fixture per site.
 | File | Writers (level) |
 | --- | --- |
 | `internal/runstore/runstore.go`, `schemas/result.schema.json` | FC1 (L0) |
-| `internal/runner/runner.go` | FC2 (L1), FC3 (L2), FC4 (L2) — three tasks in three levels, each a different function; the implementing runs land them in order and rebase once |
+| `internal/runner/runner.go` | FC2 (L1), FC3 (L2), FC4 (L3) — three tasks in three levels, each a different function; the implementing runs land them in order and rebase once |
 | `internal/runner/halt.go`, `outcome.go`, `refused.go`, `prflow.go` | FC3 (L2) |
-| `internal/runview/runview.go` | FC5 (L1) |
-| `internal/cli/runs.go` | FC6 (L3) |
+| `internal/runview/runview.go` | FC5 (L3) |
+| `internal/cli/runs.go` | FC6 (L4) |
 | `internal/digest/*.go` | FC7 (L4) |
 | `docs/design/v1.md`, `console/docs/json-contract.md` | FC8 (L5) |
 
 `internal/runner/runner.go` is the one file with three writers, and the table's rule is that a level
 holds at most one: FC2, FC3 and FC4 sit in three different levels, so no two runs write it at once.
-An implementing run that lands two of them at once rebases once, in the order L1, L2.
+An implementing run that lands two of them at once rebases once, in the order L1, L2, L3.
 
 ### 10.3 The HARD RULE, and the release
 
