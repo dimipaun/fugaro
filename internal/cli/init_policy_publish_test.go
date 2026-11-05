@@ -1214,8 +1214,17 @@ func accountChoiceFixture(t *testing.T) *projectFixture {
 func TestUpdateConvergesANodeThatLacksTheAccountChoiceKeys(t *testing.T) {
 	f := accountChoiceFixture(t)
 	h := typedRig(t, f)
-	if err := h.check(); err != nil {
+	st, err := h.s.Check(t.Context())
+	if err != nil {
 		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the stage says %s %q, want the publish these keys are the reason for", st.State, st.Detail)
+	}
+	for _, member := range []string{"default_claude_account", "claude_account_stages.review"} {
+		if !strings.Contains(st.Detail, member) {
+			t.Errorf("the check line does not name %s, the member that is the whole reason for this publish: %s", member, st.Detail)
+		}
 	}
 	out, err := h.apply(t, false)
 	if err != nil {
@@ -1230,12 +1239,12 @@ func TestUpdateConvergesANodeThatLacksTheAccountChoiceKeys(t *testing.T) {
 	// The convergence: a run of the same command afterwards reads a node that
 	// carries what the file states and has nothing to do.
 	next := newMigrationRig(t, f, &initOptions{})
-	st, err := next.s.Check(t.Context())
+	nextSt, err := next.s.Check(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.State != initflow.Done {
-		t.Errorf("the run after the publish says %s %q, want the stage done: the installation is not converged", st.State, st.Detail)
+	if nextSt.State != initflow.Done {
+		t.Errorf("the run after the publish says %s %q, want the stage done: the installation is not converged", nextSt.State, nextSt.Detail)
 	}
 }
 
