@@ -1096,7 +1096,7 @@
           "default": "unset = nobody"
         },
         "workflow_secrets.*.proxy": {
-          "default": "unset = none"
+          "default": "unset = none: refused, D1275"
         },
         "workflows.*.base": {
           "default": "unset = none; the key was removed in 0.7.0"
