@@ -74,15 +74,39 @@ func CheckStageSegment(stage, path string) []Problem {
 // refused rather than ignored, the way a segment outside RunStages is. An
 // unknown auth ("") is not judged: the launch resolves it from a checkout it
 // may not have yet, and the run itself judges it with the auth it resolves.
+// Every *other* value is refused rather than read as oauth: the auth here can
+// be a committed fugaro.yaml's own bytes (config.AgentOf validates nothing),
+// so a value nobody can place must not be the one that admits a stage account.
 func CheckStageAccountMix(auth string, stages map[string]string, path string) []Problem {
 	switch auth {
 	case "api-key":
 		return mixedAccountProblems(stages, path)
+	case "oauth", "":
+		return nil
 	case "vertex", AuthCascade:
 		return stageAccountUnderOtherAuth(auth, stages, path)
 	default:
-		return nil
+		return stageAccountUnderUnknownAuth(auth, stages, path)
 	}
+}
+
+// stageAccountUnderUnknownAuth refuses a stage account under an agent.auth
+// this binary cannot place. The launch refuses the same name with the same
+// sentence where it judges the run's own account (claudeAccountAllowed,
+// internal/cli/run.go), and it is here too because the stage keys are read
+// before that: an auth nothing knows admits no account, and a key that
+// silently never applies is what this whole rule refuses.
+func stageAccountUnderUnknownAuth(auth string, stages map[string]string, path string) []Problem {
+	var ps []Problem
+	for _, stage := range slices.Sorted(maps.Keys(stages)) {
+		if stages[stage] == "" {
+			continue
+		}
+		ps = append(ps, Problem{Path: path + "." + stage + ".claude_account",
+			Message: fmt.Sprintf("a stage account cannot be judged against an agent.auth of %q, which is not a value this Fugaro knows (agent.auth is one of %s): a stage account applies to a run whose agent.auth is oauth or api-key, so under a value nobody can place the account would never be used — fix agent.auth, or remove the key",
+				auth, strings.Join(AgentAuths, ", "))})
+	}
+	return ps
 }
 
 func mixedAccountProblems(stages map[string]string, path string) []Problem {

@@ -500,8 +500,12 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	// OAuthToken's shape was checked when it was first written (task.Parse),
 	// but whether this repository may still use that account was never
 	// re-checked here, the one place a repeated --run-id reuses it as is,
-	// before any build-record read or the launch itself.
-	if err := claudeAccountAllowed(env, have.Repo, cmp.Or(have.OAuthToken, config.DefaultClaudeAccount), checkoutAgentAuth(checkoutOf(ctx, have.Repo)())); err != nil {
+	// before any build-record read or the launch itself. It goes through the
+	// same resolver a fresh launch's account does (claudeAccountFor) rather
+	// than through the allow-list check alone, so this path is held to the
+	// whole rule every other launch is: the allow-list, the auth clause, and
+	// the mix a config may not declare (config.CheckStageAccountMix).
+	if _, err := claudeAccountFor(ctx, env, have.Repo, cmp.Or(have.OAuthToken, config.DefaultClaudeAccount), "", have.Ref, checkoutOf(ctx, have.Repo)()); err != nil {
 		return nil, err
 	}
 	return have, nil
@@ -549,10 +553,11 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// oauth tokens task 9b review): switching accounts after a usage limit
 	// needs this, and it widens nothing a launcher could not already do with
 	// a fresh run — the override is resolved exactly like claudeAccountFor
-	// resolves a first run's (§6b), and goes through the identical
-	// claudeAccountAllowed gate immediately below: the allow-list, the
-	// agent.auth oauth rule, and (via spec.OAuthToken below, the same field
-	// a first run sets) the namedTokensSince version gate and the
+	// resolves a first run's (§6b), and goes through the identical resolution
+	// immediately below (claudeAccountFor, holding the flag as its top rung):
+	// the allow-list, the agent.auth rule and the mix rule, and (via
+	// spec.OAuthToken below, the same field a first run sets) the
+	// namedTokensSince version gate and the
 	// job-variant-must-exist rule at launch. --token default is not
 	// special-cased: like a first run's empty default, it simply makes
 	// account the reserved name, which claudeAccountAllowed always allows.
@@ -571,8 +576,10 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// allowed when the first run launched, or a forged record naming one
 	// that never was, must not let a follow-up launch under it. An explicit
 	// override (o.token, a launcher's own flag) gets the identical check,
-	// never a lesser one.
-	if err := claudeAccountAllowed(env, repo, account, checkoutAgentAuth(checkout())); err != nil {
+	// never a lesser one. The check is the whole resolver's
+	// (claudeAccountFor), so a follow-up launch is refused a mix its config
+	// may not declare exactly as a fresh one is.
+	if _, err := claudeAccountFor(ctx, env, repo, account, "", c.Ref, checkout()); err != nil {
 		return nil, err
 	}
 	if o.token != "" && account != cmp.Or(c.OAuthToken, config.DefaultClaudeAccount) {
