@@ -1378,15 +1378,19 @@ func (c *repoCtx) projectSecretCandidates(rs RepoSpec) map[string]string {
 // account's own derived secret whose account lists repo, or a model
 // provider's own key whose provider lists repo -- AllowsData uniformly
 // across the last three, so §3a's no-list/["*"]-means-any-repository rule
-// applies to a provider's key exactly as it does everywhere else. ok is
-// false, id "" otherwise. It is exported because fugaro update's
-// secrets stage (before any RepoSpec exists) needs the identical answer.
+// applies to a provider's key exactly as it does everywhere else -- or,
+// last, an entry of workflow_secrets that lists repo, the one source with no
+// default at all (D1262). ok is false, id "" otherwise. It is exported
+// because fugaro update's secrets stage (before any RepoSpec exists) needs
+// the identical answer.
 func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id string, ok bool) {
 	if lc == nil || logical == "" {
 		return "", false
 	}
 	eligible := config.AllowedForProjectSecret(lc.ProjectSecrets, logical, repo)
-	if !eligible && config.ProjectScopeByDefault(logical) {
+	_, listed := lc.ProjectSecrets[logical]
+	swept := config.ProjectScopeByDefault(logical)
+	if !eligible && swept {
 		// D2 (plan Task 2.1 step 2, finding 13): a reserved name the platform
 		// itself mounts is eligible project-wide with no per-name list, which
 		// is the case this function refused before -- only an entry of
@@ -1396,24 +1400,32 @@ func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id strin
 		// Without one, the sweep applies, and every repository may read it --
 		// the same reach the CLI's default store announces, which is what
 		// makes "stored project-wide" mean what a person reads it to mean.
-		if _, listed := lc.ProjectSecrets[logical]; !listed {
+		if !listed {
 			eligible = true
 		}
 	}
-	if !eligible {
-		// ClaudeAccountBySecret always resolves the bare claude-oauth-token
-		// to DefaultClaudeAccount, which is never a key of the map
-		// (ValidateClaudeAccounts refuses it), so the default account's own
-		// secret is eligible only through project_secrets above -- the
-		// documented shape (design §3).
-		if name, found := config.ClaudeAccountBySecret(lc.ClaudeAccounts, logical); found {
-			eligible = lc.ClaudeAccounts[name].AllowsData(repo)
-		}
+	// ClaudeAccountBySecret always resolves the bare claude-oauth-token
+	// to DefaultClaudeAccount, which is never a key of the map
+	// (ValidateClaudeAccounts refuses it), so the default account's own
+	// secret is eligible only through project_secrets above -- the
+	// documented shape (design §3).
+	account, namedAccount := config.ClaudeAccountBySecret(lc.ClaudeAccounts, logical)
+	if !eligible && namedAccount {
+		eligible = lc.ClaudeAccounts[account].AllowsData(repo)
 	}
-	if !eligible {
-		if name, found := config.ProviderBySecret(lc.Providers, logical); found {
-			eligible = lc.Providers[name].AllowsData(repo)
-		}
+	provider, namedProvider := config.ProviderBySecret(lc.Providers, logical)
+	if !eligible && namedProvider {
+		eligible = lc.Providers[provider].AllowsData(repo)
+	}
+	claimed := listed || swept || namedAccount || namedProvider
+	if !eligible && !claimed {
+		// workflow_secrets is the fourth and last source, asked only for a
+		// name none of the others claims -- the order is the gate, so a
+		// hand-written entry cannot widen a name the sweep, an account or a
+		// provider already answers for (D1262). Unlike the sweep this block
+		// has no default: an entry is the whole gate, so a name with none
+		// mounts nowhere.
+		eligible = config.AllowedForWorkflowSecret(lc.WorkflowSecrets, logical, repo)
 	}
 	if !eligible {
 		return "", false

@@ -864,7 +864,8 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 // key unconditionally (§3a: a provider's key is eligible for project storage
 // whether or not its allow_data_to list exists, and an absent list is a
 // valid "every repository" state, not a reason to leave the container out),
-// and every named Claude account with a non-empty allow_data_to. A reserved
+// every named Claude account with a non-empty allow_data_to, and every
+// workflow_secrets entry with a non-empty allow_data_to (D1263). A reserved
 // name with no project_secrets entry has no container at all.
 //
 // This is only the config half: DiscoverInstallation unions the live
@@ -885,6 +886,11 @@ func projectSecretContainers(lc *localcfg.Config) map[string]string {
 		if len(lc.ClaudeAccounts[name].AllowDataTo) > 0 {
 			s := config.ClaudeAccountSecret(name)
 			out[s] = gcp.ProjectSecretID(lc.Name, s)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(lc.WorkflowSecrets)) {
+		if len(lc.WorkflowSecrets[name].AllowDataTo) > 0 {
+			out[name] = gcp.ProjectSecretID(lc.Name, name)
 		}
 	}
 	return out

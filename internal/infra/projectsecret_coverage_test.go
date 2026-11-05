@@ -106,32 +106,39 @@ func TestProjectSecretCoverageNeitherStoredNamesProjectWideFix(t *testing.T) {
 
 // A repository the allow-list does not name gets no project coverage at all,
 // whatever the project container holds, so its own copy is the only one that
-// counts and its fix names --repo.
+// counts and its fix names --repo. The workflow_secrets entry is held to the
+// same rule as the project_secrets one: the listing and Readiness read the
+// same predicate (ProjectSecretCandidate), so they cannot drift on it.
 func TestProjectSecretCoverageUnlistedRepoIsNotCovered(t *testing.T) {
 	ctx := context.Background()
-	f := newCloud(t)
-	spec := projectSpec(t, "project_secrets:\n  bitbucket-token: { allow_data_to: [acme/other] }\n")
-	if _, ok := spec.ProjectSecretCandidates["bitbucket-token"]; ok {
-		t.Fatal("an unlisted repository got a ProjectSecretCandidates entry")
-	}
-	f.sm.Seed(spec.Secrets["bitbucket-token"], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, "bitbucket-token"), nil)
-	f.sm.Seed(gcp.ProjectSecretID(spec.Installation.ProjectName, "bitbucket-token"),
-		with(managed, gcp.LabelProject, spec.Installation.ProjectName, gcp.LabelSecret, "bitbucket-token"), []byte("v"))
-	versions, err := SecretVersions(ctx, f.c, spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if versions["bitbucket-token"] {
-		t.Error("versions[bitbucket-token] = true for a repository the allow-list excludes")
-	}
-	var got string
-	for _, st := range SecretCommands(spec, versions, "fugaro", func(s string) string { return s }) {
-		if st.Name == "bitbucket-token" {
-			got = st.Commands[0]
-		}
-	}
-	if want := "fugaro secrets set bitbucket-token --repo acme/sandbox < PATH-TO-THE-VALUE-FILE"; got != want {
-		t.Errorf("command = %q, want %q", got, want)
+	for _, logical := range []string{"bitbucket-token", "sandbox-probe"} {
+		t.Run(logical, func(t *testing.T) {
+			f := newCloud(t)
+			spec := projectSpec(t, "project_secrets:\n  bitbucket-token: { allow_data_to: [acme/other] }\n"+
+				"workflow_secrets:\n  sandbox-probe: { allow_data_to: [acme/other] }\n")
+			if _, ok := spec.ProjectSecretCandidates[logical]; ok {
+				t.Fatal("an unlisted repository got a ProjectSecretCandidates entry")
+			}
+			f.sm.Seed(spec.Secrets[logical], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, logical), nil)
+			f.sm.Seed(gcp.ProjectSecretID(spec.Installation.ProjectName, logical),
+				with(managed, gcp.LabelProject, spec.Installation.ProjectName, gcp.LabelSecret, logical), []byte("v"))
+			versions, err := SecretVersions(ctx, f.c, spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if versions[logical] {
+				t.Errorf("versions[%s] = true for a repository the allow-list excludes", logical)
+			}
+			var got string
+			for _, st := range SecretCommands(spec, versions, "fugaro", func(s string) string { return s }) {
+				if st.Name == logical {
+					got = st.Commands[0]
+				}
+			}
+			if want := "fugaro secrets set " + logical + " --repo acme/sandbox < PATH-TO-THE-VALUE-FILE"; got != want {
+				t.Errorf("command = %q, want %q", got, want)
+			}
+		})
 	}
 }
 
