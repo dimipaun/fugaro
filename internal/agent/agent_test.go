@@ -408,14 +408,29 @@ func TestOAuthStageEnvDropsTheGatewayAndSetsTheToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A run environment that already carries an entry under the token's name
+	// — whatever put it there — ends with the account's token and that one
+	// entry: two would leave which credential the stage presents to the order
+	// a reader happens to take them in.
+	runEnv = append(runEnv, "CLAUDE_CODE_OAUTH_TOKEN=stale-token-abcdef")
 	env, err := OAuthStageEnv(runEnv, "oauth-token-abcdef")
 	if err != nil {
 		t.Fatal(err)
 	}
+	tokens := 0
 	for _, kv := range env {
 		if strings.HasPrefix(kv, "ANTHROPIC_BASE_URL=") || strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") {
 			t.Errorf("a stage on its own account still carries the gateway's routing: %q", kv)
 		}
+		if strings.HasPrefix(kv, "CLAUDE_CODE_OAUTH_TOKEN=") {
+			tokens++
+			if kv != "CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abcdef" {
+				t.Errorf("the stage presents %q, not the account's token", kv)
+			}
+		}
+	}
+	if tokens != 1 {
+		t.Errorf("the stage's environment carries %d entries for the token, want 1: %v", tokens, env)
 	}
 	for _, want := range []string{"CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abcdef", "PATH=/bin", "HOME=/h", "NPM_TOKEN=npm-456"} {
 		if !slices.Contains(env, want) {

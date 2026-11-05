@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -172,6 +173,33 @@ func envKeysOf(env []string) map[string]string {
 		}
 	}
 	return out
+}
+
+// TestModelCredentialsAreRegisteredForRedaction: the runner registers the
+// values of gitops.ModelCredentialVars it holds before anything runs
+// (registerModelCredentials, called at the top of Run beside
+// addMountedSecrets). A mixed run holds the stage-scoped account's token in
+// its own environment — the job mounts it, a local run is started with it —
+// and everything the run publishes about itself is redacted of what it holds:
+// the transcript, the relay, an error reason. A value too short to redact
+// safely is skipped, the way addMountedSecrets skips one, and the stage that
+// would have run on it is refused where its environment is built instead
+// (agent.OAuthStageEnv).
+func TestModelCredentialsAreRegisteredForRedaction(t *testing.T) {
+	r := &run{d: Deps{Env: []string{
+		"ANTHROPIC_API_KEY=key-123",
+		"CLAUDE_CODE_OAUTH_TOKEN=" + mixedToken,
+		"ANTHROPIC_AUTH_TOKEN=abc",
+	}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
+	r.registerModelCredentials()
+	for _, v := range []string{"key-123", mixedToken} {
+		if got := r.redact("the job's environment holds " + v); strings.Contains(got, v) {
+			t.Errorf("the redactor leaves a model credential readable: %q", got)
+		}
+	}
+	if slices.Contains(r.secretList(), "abc") {
+		t.Error("a value too short to redact safely was registered anyway")
+	}
 }
 
 // TestMixedRunStageEnvKeys is the B0 ruling's allow-list, read off the

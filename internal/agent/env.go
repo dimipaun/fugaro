@@ -251,7 +251,8 @@ var gatewayRouteVars = []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"}
 // OAuth credential of its own rather than on the run's gateway
 // (docs/design/mixed-credentials.md §11, the owner's B0 ruling): runEnv, the
 // environment BuildEnv built for the run's own stages, with the gateway's
-// routing dropped and the account's token set. What is left is the stage's
+// routing dropped, any credential under the token's own name dropped with it,
+// and the account's token set. What is left is the stage's
 // whole environment — the base variables, the declared secrets and the
 // directory variables are the run's, and the model the stage runs reaches
 // Claude Code as the --model flag (Args), never as a routing variable. The
@@ -270,7 +271,13 @@ func OAuthStageEnv(runEnv []string, token string) ([]string, error) {
 	}
 	out := make([]string, 0, len(runEnv)+1)
 	for _, kv := range runEnv {
-		if k, _, ok := strings.Cut(kv, "="); ok && slices.Contains(gatewayRouteVars, k) {
+		switch k, _, ok := strings.Cut(kv, "="); {
+		case !ok:
+		case slices.Contains(gatewayRouteVars, k), k == "CLAUDE_CODE_OAUTH_TOKEN":
+			// Appended below, once: what this stage presents is the account's
+			// token, and a second entry under the same name is an answer to
+			// which credential it presents that no reader agrees on (a
+			// getenv takes the first match, a map the last).
 			continue
 		}
 		out = append(out, kv)
