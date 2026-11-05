@@ -424,10 +424,18 @@ func TestProjectJobSecretsMustBeProjectWide(t *testing.T) {
 		}
 	}
 	// A name that is neither reserved nor a key is refused by the mount
-	// resolver itself. No local config can reach it — projectSecretContainers
-	// only ever produces names of the three kinds below — so this is the
-	// backstop that keeps that true if either list changes.
-	if env, ok := projectSecretEnv(parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions), "acme-workflow-secret"); ok {
+	// resolver itself, and a local config now DOES reach it with a workflow
+	// secret's name: projectSecretContainers derives a container for the
+	// entry (W2), so the check above passes and this one is what refuses the
+	// name. It still refuses — the resolver maps a reserved name and a
+	// configured provider's key and nothing else — which is the fence D1266
+	// rests on; TestProfileRefusesAProjectWorkflowSecret pins the same path
+	// end to end, through ProjectJobs.
+	workflowSecret := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectWorkflowSecretBlockLC)
+	if _, ok := projectSecretContainers(workflowSecret)["sandbox-probe"]; !ok {
+		t.Errorf("projectSecretContainers derives no container for a workflow_secrets entry: W2 derives one, and it is why the resolver below is the check that sees the name at all")
+	}
+	if env, ok := projectSecretEnv(workflowSecret, "sandbox-probe"); ok {
 		t.Errorf("a workflow's own secret resolves to the variable %s", env)
 	}
 
@@ -445,6 +453,99 @@ func TestProjectJobSecretsMustBeProjectWide(t *testing.T) {
 	}
 	if j.Account != "" {
 		t.Errorf("account = %q: a profile that mounts no Claude token runs as no account", j.Account)
+	}
+}
+
+// --- W5: the deployer's fence, pinned (D1266) -----------------------------
+
+// projectWorkflowSecretBlockLC is W5's fixture: one project workflow secret
+// whose entry lists this installation's one GitHub repository, so
+// projectSecretContainers derives its container.
+//
+// sandbox-probe is the name the tree's own fixture repository declares
+// (deploy/sandbox/fugaro.yaml), so this speaks about a workflow secret a
+// repository really has rather than one invented for the test.
+const projectWorkflowSecretBlockLC = `workflow_secrets:
+  sandbox-probe: { allow_data_to: [acme/webapp] }
+`
+
+// projectWorkflowSecretProfileLC is that block plus the profile D1266
+// refuses: a shared job whose secrets list the name.
+const projectWorkflowSecretProfileLC = projectWorkflowSecretBlockLC + `profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [sandbox-probe] }
+`
+
+// A profile is shared by every repository admitted to it, so a project
+// workflow secret — whose whole gate is one entry's allow_data_to, a
+// per-repository list — may not be mounted on a shared job (D1266). The
+// refusal is the deployer's own and it is already in the tree: no line of
+// W5's task writes it.
+//
+// The test pins the exact path the name takes today, and both halves of it:
+// projectSecretContainers derives a container from the entry (W2), so
+// projectJobSecrets' "not stored project-wide" check passes, and
+// projectSecretEnv — which maps a key of config.ReservedSecrets and a
+// configured provider's own secret, and nothing else — is the check that
+// refuses it. Asserting the sentence rather than the bare fact of an error is
+// what makes this fail if either half is widened: teach projectSecretEnv a
+// workflow secret's variable and ProjectJobs deploys the job (D1266's
+// rejected alternative, the one that would mount one value on every
+// repository the profile admits); stop deriving the container and a different
+// refusal fires.
+//
+// The rule cannot live in projectpolicy instead: CheckProfiles takes the
+// policy's profiles and accounts and never the local config, so where the
+// entry is absent — a teammate's machine, a CI checkout, a reader of the
+// published node — the rule would be asked anyway and the profile admitted,
+// which is a refusal that fails open and reads as enforced (F9).
+func TestProfileRefusesAProjectWorkflowSecret(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectWorkflowSecretProfileLC)
+	if _, ok := projectSecretContainers(lc)["sandbox-probe"]; !ok {
+		t.Fatalf("projectSecretContainers has no container for sandbox-probe: the entry's non-empty allow_data_to derives one (D1263), and without it the refusal below is the container check's rather than the fence's")
+	}
+	_, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false)
+	if err == nil {
+		t.Fatalf("ProjectJobs deployed a job for a profile mounting the project workflow secret sandbox-probe: a profile is shared by every repository admitted to it, and the entry's allow-list is not one a shared job can honour")
+	}
+	want := `profiles.standard.secrets[0]: "sandbox-probe" is neither a secret Fugaro reserves nor the key of a configured model provider`
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("err = %v, want the entry's own refusal %q", err, want)
+	}
+	if env, ok := projectSecretEnv(lc, "sandbox-probe"); ok {
+		t.Errorf("projectSecretEnv(sandbox-probe) = %q, true; want refused: this function is what the fence reads, and a workflow secret is neither a reserved name nor a configured provider's key", env)
+	}
+}
+
+// TestProfileStillAcceptsAProviderKey is the other side of the fence: it
+// refuses by what a name IS — a reserved name or a configured provider's
+// secret — and not by where its container came from, so the widening W2 added
+// to projectSecretContainers does not cost the mounts a shared job
+// legitimately has today.
+func TestProfileStillAcceptsAProviderKey(t *testing.T) {
+	jobs := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+providerLC+`profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [openrouter-api-key] }
+`)
+	j, ok := jobs[gcp.ProjectJobName("standard", "github", "")]
+	if !ok {
+		t.Fatalf("jobs = %v, want the standard profile's job", sortedJobNames(jobs))
+	}
+	if j.SecretEnv["FUGARO_PROVIDER_KEY_OPENROUTER_API_KEY"] != "openrouter-api-key" {
+		t.Errorf("secret env = %v, want the provider's own key mounted as its provider variable", j.SecretEnv)
+	}
+}
+
+// TestProfileStillAcceptsAReservedName is the same guard for the other kind
+// projectSecretEnv maps: a platform-reserved name stays mountable on a shared
+// job, so the fence refuses a workflow secret without narrowing to the names
+// of one block.
+func TestProfileStillAcceptsAReservedName(t *testing.T) {
+	jobs := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectProfilesLCBlock)
+	j, ok := jobs[gcp.ProjectJobName("standard", "github", "")]
+	if !ok {
+		t.Fatalf("jobs = %v, want the standard profile's job", sortedJobNames(jobs))
+	}
+	if j.SecretEnv["ANTHROPIC_API_KEY"] != "anthropic-api-key" {
+		t.Errorf("secret env = %v, want the reserved name mounted as its own variable", j.SecretEnv)
 	}
 }
 
