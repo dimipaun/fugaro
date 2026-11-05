@@ -65,6 +65,22 @@ import (
 // leave the zero Managed behind, which is this command's own behaviour exactly
 // as it was before this row landed.
 
+// accountsAddTypedEdit is whether any edit this command makes is a Typed class
+// one, and the answer is no: a widening is REFUSED rather than typed
+// (accountsAddRules) and a token entry is refused at its own step
+// (accountsAddTokenStep), so there is no confirmation here the gate has to
+// leave to the owner's own word.
+//
+// Why it is named rather than written as a literal at the call below. The value
+// reaches settingsGateAsks, whose answer for a coding agent's session is "read
+// the marks" for every document that is not repository-scoped, or for a typed
+// edit — and this command's document is the project layer, so the parameter
+// decides nothing today. What the name does is put the question where a later
+// typed edit has to answer it: a command that grows one (a rotation, say)
+// changes a line that says what the answer means, instead of a `false` a reader
+// would have to look up.
+const accountsAddTypedEdit = false
+
 // accountsAddGate is the whole of this command's call of the gate: read, judge,
 // admit. It answers the value the step's confirmation is decided under (the
 // zero value is "not managed", which keeps today's refusal), the gate itself —
@@ -83,7 +99,7 @@ func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Confi
 	// passes it (a refusal in a managed project's agent session, a sentence
 	// everywhere else), so it forces the read even where the declaration
 	// itself would have asked nothing (--yes, or no terminal at all).
-	if !settingsGateAsks(marker, settingsAsk(cmd, o.yes) || o.ask, settingsDocLocal, false) {
+	if !settingsGateAsks(marker, settingsAsk(cmd, o.yes) || o.ask, settingsDocLocal, accountsAddTypedEdit) {
 		return initflow.Managed{}, managedGate{}, nil
 	}
 	clients, err := newInitClients(ctx, lc)

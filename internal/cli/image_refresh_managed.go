@@ -117,7 +117,15 @@ func openRefreshManaged(ctx context.Context, cmd *cobra.Command, o refreshOption
 	// gets, the sentence every other session gets — so a run that passed it
 	// reads where it would otherwise have asked nothing (--yes, or no terminal
 	// at all).
-	if agentMarker(os.Getenv) == "" && !o.ask && (o.yes || !stdinIsTerminal(cmd.InOrStdin())) {
+	//
+	// The two flags are read from the run's own options (iopts), which are the
+	// ones this run's confirmations are decided from (initRun.conditions): the
+	// gate is read for exactly the session whose steps would ask, which is the
+	// question this door answers. runImageRefresh builds iopts' yes and ask from
+	// the same two flags as the refresh's own copy of them, so the two agree
+	// today; reading the copy here would be a second answer to one question, and
+	// the one that could drift from the confirmations the gate stands in for.
+	if agentMarker(os.Getenv) == "" && !iopts.ask && (iopts.yes || !stdinIsTerminal(cmd.InOrStdin())) {
 		return nil
 	}
 	lc, path, old, err := loadRepoConfig(ctx, iopts, o.checkoutDir())

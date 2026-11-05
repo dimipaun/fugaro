@@ -425,6 +425,55 @@ func TestImageRefreshManagedReadsTheKillSwitchBeforeEachBuild(t *testing.T) {
 	}
 }
 
+// The door asks the terminal question about THIS command's own stdin. Every
+// other test of this file stubs stdinIsTerminal with a function that ignores its
+// argument (fakeTerminal, noTerminal), so a door that asked about another
+// reader — the process's own stdin, the refresh's options — would pass all of
+// them; and the reader IS the question, because the gate is read for the run
+// that would have been asked, and a command wired to a different reader is a
+// different run.
+func TestImageRefreshManagedAsksAboutTheCommandsOwnStdin(t *testing.T) {
+	noAgentSession(t)
+	var seen io.Reader
+	old := stdinIsTerminal
+	stdinIsTerminal = func(in io.Reader) bool { seen = in; return false }
+	t.Cleanup(func() { stdinIsTerminal = old })
+
+	cmd := gateCmd()
+	cmd.SetIn(strings.NewReader(""))
+	openRefreshManaged(t.Context(), cmd, refreshOptions{}, &initOptions{})
+
+	if seen == nil {
+		t.Fatal("the door never asked whether this run has a terminal: the read is made where that question would have been asked")
+	}
+	if seen != cmd.InOrStdin() {
+		t.Errorf("the door asked about %T and this command's own stdin is %T: the session the gate is read for is the command's", seen, cmd.InOrStdin())
+	}
+}
+
+// The door reads --yes and --ask from the run's own options — the object this
+// run's confirmations are decided from (initRun.conditions) — and not from the
+// refresh's own copy of the two flags. runImageRefresh builds both from the same
+// values, so today the two agree; what this pins is which of them the read
+// follows, because the gate stands in for the confirmations the run's options
+// decide. Both halves are here: --yes on the run's options alone keeps the door
+// shut with a terminal present (the terminal is not what answers it), and --ask
+// on them alone opens it with no terminal at all (the flag has to answer for
+// the marks in every session that passes it).
+func TestImageRefreshManagedReadsTheFlagsFromTheRunsOwnOptions(t *testing.T) {
+	useVersion(t, "0.5.1")
+	newManagedRefreshRig(t, managedRefreshMarker(1))
+	noAgentSession(t)
+	fakeTerminal(t)
+	if m := openRefreshManaged(t.Context(), gateCmd(), refreshOptions{}, &initOptions{yes: true}); m != nil {
+		t.Fatal("a run whose own options carry --yes took the gate's path at a terminal: --yes answers every step itself")
+	}
+	noTerminal(t)
+	if m := openRefreshManaged(t.Context(), gateCmd(), refreshOptions{}, &initOptions{ask: true}); m == nil {
+		t.Fatal("a run whose own options carry --ask read no mark: the flag has to answer for them wherever no prompt can be answered")
+	}
+}
+
 // A run the gate has nothing to answer pays nothing for it (M6's review of
 // 2026-11-03, 2): --yes answers every build itself, and a run with no terminal
 // is refused before any step runs, so neither has a question the marks could
@@ -438,7 +487,7 @@ func TestImageRefreshManagedNoQuestionReadsNothing(t *testing.T) {
 	noTerminal(t)
 	// A read that would fail the gate: a run that asks nothing must not make it.
 	r.gcs.FailObjectGetsAfter(initRunsBucket, managed.MarkerObject, 0)
-	if m := openRefreshManaged(t.Context(), gateCmd(), refreshOptions{yes: true}, &initOptions{}); m != nil {
+	if m := openRefreshManaged(t.Context(), gateCmd(), refreshOptions{}, &initOptions{yes: true}); m != nil {
 		t.Fatal("a run with --yes took the gate's path, and --yes answers every build itself")
 	}
 	if m := openRefreshManaged(t.Context(), gateCmd(), refreshOptions{}, &initOptions{}); m != nil {
