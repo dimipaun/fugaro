@@ -41,6 +41,11 @@ package cli
 //     folder's subject is a credential stored once for 65 repositories, so
 //     it is exactly the place a real value would be pasted "for
 //     illustration".
+//   - **The sentences outside the folder that the feature cannot ship
+//     without.** D1272 makes five documents load-bearing — a reach a reader
+//     believes and acts on — and three of them sit outside this folder, where
+//     an operator meets the scope of a secret name and the setup flow's
+//     prompts. W6 writes them; the tests at the end of this file pin them.
 //
 // Nothing here asserts the design is *right*: the decisions are the owner's,
 // and this file pins that the folder records them rather than re-argues them.
@@ -758,6 +763,84 @@ func TestDocsProjectWorkflowSecretsResidualNamesTheManagedExposure(t *testing.T)
 	for _, want := range []string{"settings_set.go:412", "settings.go:170"} {
 		if !strings.Contains(d1270, want) {
 			t.Errorf("reconciliation.md D1270 does not cite %q: the registry answer has to name the line it comes from", want)
+		}
+	}
+}
+
+// TestDocsProjectWorkflowSecretsReachIsSaidWhereAPersonMeetsIt (W6, D1272,
+// D1273): the feature's reach is invisible in a repository's own fugaro.yaml —
+// nothing in that file says its `db-password` is stored once for sixty-five
+// repositories — so the pages a person reads round the command are the only
+// place the decision is made. Three of them said a workflow's own secret could
+// not be shared at all, which was true before this design and is not true of a
+// name an operator's `workflow_secrets` entry covers:
+//
+//   - docs/project-layer.md's "outside this table" paragraph, where the scope
+//     of a secret name is decided and the layer's own non-secrets are
+//     enumerated;
+//   - docs/design/project-secrets.md §4's list of what `fugaro secrets set`
+//     accepts, where a reader of the parent design lands on the refusal this
+//     design adds a second form beside — a pointer, not a rewrite;
+//   - the setup skill, whose step 9 is the other place a value is stored, and
+//     whose sentence about a covered name has to hold for a workflow secret
+//     too.
+//
+// The reach itself is elsewhere and is not re-argued here: the store-time note
+// and the `set` help say it at the command (W3, secrets_test.go's own pins),
+// SECURITY.md's project-scope section says it for the reader who never opens a
+// terminal, and the folder states it in full. The sentences wrap in the files,
+// so the assertions are made against the whitespace-normalized text.
+//
+// The pins are word for word, and the banned strings are the wording these
+// pages carried before W6: a sentence that leaves the block out is the claim
+// this task exists to replace, so a revert has to fail here rather than read
+// plausibly.
+func TestDocsProjectWorkflowSecretsReachIsSaidWhereAPersonMeetsIt(t *testing.T) {
+	cases := []struct {
+		path   string
+		want   []string
+		banned []string
+	}{
+		{"docs/project-layer.md", []string{
+			// The block, its operator-locality, and the pointer: a reader who
+			// stops at this paragraph must be able to reach the design that
+			// decides what the entry may name and who may mount it.
+			"a workflow's own secret is shared once for the project through the operator-local `workflow_secrets` block instead",
+			"[project-workflow-secrets/](project-workflow-secrets/)",
+		}, []string{
+			// The unqualified sentence: the parenthesis that names the block
+			// is what makes it true, so the clause may not stand alone again.
+			"cannot be shared through a workflow's block;",
+		}},
+		{"docs/design/project-secrets.md", []string{
+			"which has no project-wide meaning (§3; a workflow's own secret has a project-wide form of its own since 0.19.0",
+			"[project-workflow-secrets/](../project-workflow-secrets/)",
+		}, []string{
+			"which has no project-wide meaning (§3).",
+		}},
+		{"plugin/skills/setup/SKILL.md", []string{
+			"a covered name is not asked for, and neither is a workflow secret whose `workflow_secrets` entry in the local config lists this repository",
+		}, nil},
+	}
+	for _, tc := range cases {
+		doc := strings.Join(strings.Fields(readDoc(t, tc.path)), " ")
+		for _, want := range tc.want {
+			if !strings.Contains(doc, strings.Join(strings.Fields(want), " ")) {
+				t.Errorf("%s does not say %q: it is where a person decides whether storing one value for many repositories is safe", tc.path, want)
+			}
+		}
+		for _, banned := range tc.banned {
+			if strings.Contains(doc, strings.Join(strings.Fields(banned), " ")) {
+				t.Errorf("%s still says %q: a workflow's own secret can be stored once for the project through the operator-local workflow_secrets block, and a page that says it cannot is a reach a reader believes and acts on wrongly", tc.path, banned)
+			}
+		}
+	}
+	// The sentences say the block is built, so they may only say it while the
+	// store path reads it: the doc pins and this one fail together rather than
+	// outliving the code they describe.
+	for _, want := range []string{"workflow_secrets", "lc.WorkflowSecrets", "projectSecretAllowed"} {
+		if !strings.Contains(readDoc(t, "internal/cli/secrets.go"), want) {
+			t.Errorf("the pages say a workflow secret is stored once for the project through the new block, and internal/cli/secrets.go no longer carries %q", want)
 		}
 	}
 }
