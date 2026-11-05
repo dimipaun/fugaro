@@ -171,6 +171,11 @@ func servicePort(getenv func(string) string) (string, error) {
 	if err != nil || n < 1 || n > 65535 {
 		return "", fmt.Errorf("PORT is not a TCP port, and the front door was not started: Cloud Run gives the revision the port it must listen on, and a service listening elsewhere is one the platform's front end cannot reach")
 	}
+	// The number is read back out as the canonical port rather than passed on
+	// as it arrived: Atoi accepts a leading sign, and ":+80" is an address
+	// net.Listen refuses while "+80" is a port this function accepted, so
+	// handing the raw string to the listener would turn an accepted value into
+	// a bind failure further from the reason.
 	return strconv.Itoa(n), nil
 }
 
@@ -211,7 +216,9 @@ func serviceHTTPServer(ctx context.Context, h http.Handler, errw io.Writer) *htt
 // the platform kills the container seconds after the signal whatever this says,
 // the caller reads its own refusal from the closed connection, and a non-zero
 // exit from a revision that is being replaced anyway is a log line saying a
-// healthy shutdown failed.
+// healthy shutdown failed. A listener that stopped for a reason of its own is
+// not that: it is reported whether it failed before the cancellation or in the
+// same instant as it.
 func serveUntilStop(ctx context.Context, srv *http.Server, ln net.Listener, errw io.Writer) error {
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(ln) }()
@@ -221,16 +228,41 @@ func serveUntilStop(ctx context.Context, srv *http.Server, ln net.Listener, errw
 		// Serve returned on its own: the listener failed or was closed under
 		// it. Either way the service is not serving, and the process must not
 		// pretend otherwise.
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return fmt.Errorf("the coordinator's front door stopped: %w", err)
-		}
-		return nil
+		return serveResult(err)
 	case <-ctx.Done():
 	}
+	return drainAndReport(srv, done, errw)
+}
+
+// drainAndReport drains the requests in flight and then reports what Serve
+// returned. It is the second half of serveUntilStop and a function of its own
+// because the two halves answer different questions, and because this one is
+// where a failure that raced the cancellation is still read: a test drives it
+// with the failure already in the channel rather than hoping for the coin flip
+// that puts it there.
+func drainAndReport(srv *http.Server, done <-chan error, errw io.Writer) error {
 	shutCtx, cancel := context.WithTimeout(context.Background(), serviceShutdownGrace)
 	defer cancel()
 	if err := srv.Shutdown(shutCtx); err != nil {
 		fmt.Fprintf(errw, "coordinator front door: shutdown did not drain every request in %s: %v\n", serviceShutdownGrace, err)
+	}
+	// Serve's own result is read here whatever the drain did, because the
+	// select above picks between two ready cases at random: a listener that
+	// failed at the same instant the signal arrived would leave its failure in
+	// the channel, and the host would report a shutdown that never happened.
+	// Shutdown closes this listener before it drains, so Serve has returned by
+	// now and this receive cannot block (a listener that failed first has
+	// untracked itself already, and Serve returned then too).
+	return serveResult(<-done)
+}
+
+// serveResult is what Serve's return value means to this process:
+// http.ErrServerClosed is the shutdown itself and is not a failure, and every
+// other error is one. Both reads above ask the same question, and a second copy
+// of the rule is a second place for the two answers to differ.
+func serveResult(err error) error {
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("the coordinator's front door stopped: %w", err)
 	}
 	return nil
 }

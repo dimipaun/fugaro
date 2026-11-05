@@ -37,14 +37,17 @@ func tfSource(t *testing.T, name string) string {
 	if err != nil {
 		t.Fatalf("reading %s: %v", name, err)
 	}
-	return stripHCLComments(string(b))
+	return stripHashComments(string(b))
 }
 
-// stripHCLComments drops each line's trailing # comment, and only outside a
-// quoted string — the module's own Terraform carries URLs whose // would be a
-// comment to a naive stripper, and a mangled line is a check that passes for
-// the wrong reason.
-func stripHCLComments(src string) string {
+// stripHashComments drops each line's trailing "#" comment, and only outside a
+// quoted string. It reads one comment form and deliberately not the two others
+// HCL has: "#" is the only one this module's Terraform carries, and "//" is a
+// URL's, so a stripper that took it for a comment would cut lines the module
+// means to write — and a mangled line is a check that passes for the wrong
+// reason. The name is the form it handles rather than the language it reads,
+// so nobody takes it for a parser of the rest.
+func stripHashComments(src string) string {
 	var out []string
 	for _, line := range strings.Split(src, "\n") {
 		quoted := false

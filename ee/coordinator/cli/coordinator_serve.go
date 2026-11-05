@@ -41,7 +41,10 @@ import (
 // (coordinator.RefuseModelCredential); and only then a listener. os.Interrupt
 // is beside SIGTERM because the same binary is what a developer runs by hand,
 // and the context below is what drains the requests in flight before the
-// process returns.
+// process returns. That context is derived from the command's own, so it is
+// done on either: a signal, or a cancellation from whatever ran this command
+// (cobra's ExecuteContext), which reaches the same drain by the same path and
+// needs no second switch of its own.
 func newCoordinatorServeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:    "serve",

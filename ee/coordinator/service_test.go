@@ -6,6 +6,7 @@ package coordinator
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -147,6 +148,44 @@ func TestTheCoordinatorServiceServesAndStops(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "listening on") {
 		t.Errorf("the host's own line does not say what it listens on: %q", logs.String())
+	}
+}
+
+// TestTheCoordinatorServiceReportsAServeFailureThatRacedTheCancellation is the
+// drain's own half of the test above: what the host answers when the
+// cancellation and a listener's failure are ready at the same instant, which is
+// the one case serveUntilStop's first select decides by coin flip.
+//
+// The failure is put in the channel by hand rather than raced for, because that
+// is the state the coin flip can leave behind and a test that tried to produce
+// it through a real listener would assert on which case the runtime happened to
+// pick. The server below never served, so its drain is a drain with nothing in
+// flight, and the receive at the end of it is what has to report the failure
+// rather than a shutdown that never happened.
+func TestTheCoordinatorServiceReportsAServeFailureThatRacedTheCancellation(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		serve error
+		want  string
+	}{
+		{name: "a listener that failed", serve: errors.New("the listener stopped"), want: "the listener stopped"},
+		{name: "a listener the shutdown closed itself", serve: http.ErrServerClosed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			done := make(chan error, 1)
+			done <- tc.serve
+			var logs bytes.Buffer
+			err := drainAndReport(&http.Server{}, done, &logs)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("a drain after http.ErrServerClosed returned %v, want the clean shutdown the platform's own signal is", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("the drain returned %v, want the listener's own failure: a front door that reports a clean shutdown while its listener is down is a revision that stays down with nothing in its logs saying why", err)
+			}
+		})
 	}
 }
 
