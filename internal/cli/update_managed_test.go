@@ -495,6 +495,66 @@ func TestUpdateManagedTerminalControlKeepsEveryPrompt(t *testing.T) {
 	}
 }
 
+// The plugin pin's write is one of the questions `fugaro update` asks on a
+// managed project today — "Write this to .claude/settings.json? [y/N]" — and it
+// goes the same way as the rest: the gate being underway is the whole of what
+// admits the step, the diff is still printed, and nothing is typed. The stage
+// is called directly, which is the call the loop makes for a step that is not
+// SelfConfirming, and the stdin is EMPTY: a stage that asked would get no
+// answer and write nothing, so the file being wired at all is the assertion
+// about the question.
+//
+// The control is the same call with no gate: a terminal, the same empty stdin,
+// the same diff, and the y/N — which is what keeps this from being a stage
+// that simply stopped asking.
+func TestUpdateManagedPluginWiringAsksNothing(t *testing.T) {
+	releaseBuild(t, "0.2.0")
+	for _, tc := range []struct {
+		name    string
+		managed bool
+	}{
+		{"managed", true},
+		{"not managed", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			settings := wiringCheckout(t, settingsWithOthers)
+			withTerminal(t, true)
+			e, out := stageEngine(t, "", &initOptions{})
+			if tc.managed {
+				e.r.gate = &initGate{read: true, managed: true}
+			}
+			s := newPluginStage(e)
+			_, err := s.Apply(t.Context(), initflow.Env{Interactive: true})
+			got, _ := os.ReadFile(settings)
+			written := string(got) != settingsWithOthers
+			if !strings.Contains(out.String(), "extraKnownMarketplaces") {
+				t.Fatalf("the step printed no diff of what it would write:\n%s", out.String())
+			}
+			if tc.managed {
+				if err != nil {
+					t.Fatalf("a managed project at its own terminal was stopped: %v\n%s", err, out.String())
+				}
+				if !written {
+					t.Errorf("the settings were not wired, so the gate's verdict did not stand in for the y/N:\n%s", out.String())
+				}
+				if strings.Contains(out.String(), "[y/N]") || strings.Contains(out.String(), "confirmed by --yes") {
+					t.Errorf("a managed project's own terminal was asked:\n%s", out.String())
+				}
+				if !strings.Contains(out.String(), initflow.GateOrdinary()) {
+					t.Errorf("the write does not say what decided it:\n%s", out.String())
+				}
+				return
+			}
+			if err == nil || written {
+				t.Fatalf("a project that is not managed wired the settings with nothing typed (err %v):\n%s", err, out.String())
+			}
+			if !strings.Contains(out.String(), "Write this to "+settings+"? [y/N]") {
+				t.Errorf("a project that is not managed was not asked:\n%s", out.String())
+			}
+		})
+	}
+}
+
 // The secrets stage is never admitted (§3.2), whatever the project is: a step
 // whose whole subject is a secret the user types has nothing a gate could read
 // — no plan, no digest, no rule — so the gate does not name it, and a coding
