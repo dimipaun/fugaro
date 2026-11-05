@@ -11,6 +11,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // modelCredentialVars are kept out of the environment of every git call the
@@ -109,7 +111,28 @@ func (r *run) resolveMixedStages(ctx context.Context) (map[string]string, error)
 	for _, stage := range config.MixedAccountStages {
 		name := p.ClaudeAccountStages[stage]
 		if name == "" {
-			continue
+			def := r.mixedDefaultAccount(p, stage)
+			if def == "" {
+				continue
+			}
+			// The run holds one Claude account (design §11, "never a second
+			// provider's key"): the other mixed stage's own key names the mix's
+			// account when it names one, and a project default that names a
+			// different one would be a second credential this run may not
+			// hold. Refused rather than honoured, the way the launch refuses it
+			// (mixedStageAccount, internal/cli/run.go), so nothing the operator
+			// wrote reads as if it were in use. Asked here, where rung 4 can
+			// actually apply: a default no stage of this run reaches is not
+			// this run's to refuse.
+			for _, other := range config.MixedAccountStages {
+				if other == stage {
+					continue
+				}
+				if named := p.ClaudeAccountStages[other]; named != "" && named != def {
+					return nil, fmt.Errorf("the project's default_claude_account is %q and the %s stage's own claude_account is %q: an api-key run holds one Claude account beside the provider key the gateway holds, and %q is already this run's — name %q in both keys, or remove the project default", def, other, named, named, named)
+				}
+			}
+			name = def
 		}
 		// A stage the account serves goes straight to Anthropic on the account's
 		// token, so it can only run a Claude model. A stage model a provider
@@ -126,6 +149,48 @@ func (r *run) resolveMixedStages(ctx context.Context) (map[string]string, error)
 		out[stage] = name
 	}
 	return out, nil
+}
+
+// mixedDefaultAccount is rung 4's account for a stage: the project's
+// default_claude_account where the owner's ruling of 2026-11-05 admits it for
+// that stage, "" otherwise (docs/design/mixed-credentials.md §11). The launch
+// resolves the same rung for the same stage (mixedStageAccount,
+// internal/cli/run.go) and this is the run making the judgement again on the
+// node it reads — with the recipe's roles applied, which a launch that reads no
+// recipe cannot see — so a rung the launch admitted does not silently go out on
+// the gateway's credential here.
+//
+// Every one of the ruling's conditions is read off the run:
+//
+//   - the key names an account of its own: "" and the unsuffixed-default
+//     sentinel (config.DefaultClaudeAccount) are the same answer, because an
+//     api-key run's job carries no OAuth token for the default account;
+//   - the stage's own model is an Anthropic one (config.IsClaudeModel): the
+//     condition is the *default*'s and never rung 2's, because a default is
+//     what a project has for every stage it has by writing one key, and a
+//     project that sets it and reviews on another vendor has asked for no mix;
+//   - the coder is served by a provider route this repository may use: the mix
+//     is the coder on a provider route and the reviews on the subscription, and
+//     a coder Anthropic's own endpoint serves has no provider key in the
+//     gateway for the account to sit beside;
+//   - the mode the run resolved is enforce: only enforce routes a call to a
+//     provider at all (config.CheckProviderGateway), which is what
+//     "provider-served" means at run time.
+func (r *run) mixedDefaultAccount(p *projectpolicy.Policy, stage string) string {
+	def := p.DefaultClaudeAccount
+	if def == "" || def == config.DefaultClaudeAccount {
+		return ""
+	}
+	if !config.IsClaudeModel(r.stageModel(stage)) {
+		return ""
+	}
+	if _, _, served := config.ProviderFor(r.modelProviders(), r.cfg.Agent.ModelFor(config.RoleCoder)); !served {
+		return ""
+	}
+	if r.spend.Mode != policy.ModeEnforce {
+		return ""
+	}
+	return def
 }
 
 // stageDirect reports whether the stage runs on the run's stage-scoped Claude

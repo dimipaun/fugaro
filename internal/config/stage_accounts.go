@@ -36,6 +36,38 @@ func IsRunStage(stage string) bool {
 	return slices.Contains(RunStages, stage)
 }
 
+// IsClaudeModel reports whether id is a Claude model's ID, in either spelling a
+// pin may carry (a "claude-*" name or an explicit "anthropic/<id>"): it is the
+// overlap ladder ClaudePatterns holds, asked by the readers that have to say
+// whether a stage runs on Anthropic at all — rung 4's condition, and the mount
+// a repository's job is built for (docs/design/mixed-credentials.md §11).
+func IsClaudeModel(id string) bool {
+	return slices.ContainsFunc(ClaudePatterns, func(p string) bool { return PatternsOverlap(id, p) })
+}
+
+// MixedStageModel is the model a mixed run's stage runs, for the Anthropic
+// condition rung 4 carries: the review level's own model (level 2's for review,
+// level 3's for adversarial, config.ResolveLevels' own defaults) and the
+// reviewer role's when the level names none. A level's model is a pin of its
+// own — it runs in place of the role slot the level sits in — so a Claude
+// reviewer with a provider's level 2 is a stage the account has nothing to do
+// on, and rung 4 is not a rung for it.
+//
+// It reads the configuration's own model and not a run's: a recipe's roles
+// mapping and a task's level override are the run's, and the runner makes this
+// same judgement with them applied (r.stageModel, internal/runner). What is
+// shared is the rule, so the launch, the runner and the job set cannot drift.
+func MixedStageModel(a Agent, stage string) string {
+	level := a.Levels.L2
+	if stage == "adversarial" {
+		level = a.Levels.L3
+	}
+	if level != nil && level.Model != "" {
+		return level.Model
+	}
+	return a.ModelFor(RoleReviewer)
+}
+
 // CheckStageSegment refuses a stages.<stage> key whose segment is not a stage
 // a run spends a model call on. path is the key's own path ("stages", or the
 // node's spelling of it), so the problem names where it was written.

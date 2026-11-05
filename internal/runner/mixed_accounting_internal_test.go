@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -12,24 +13,52 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // accountStagesRun is the least a run needs to answer which stages a
-// stage-scoped Claude OAuth account serves (resolveMixedStages): the auth it
-// resolved, the models its stages run on, the providers that claim them, and
-// the published node. No gateway, no session: the question is the resolution's
-// own.
-func accountStagesRun(auth string, models config.ModelRoles, providers map[string]config.ModelProvider, stages map[string]string) *run {
+// stage-scoped Claude OAuth account serves (resolveMixedStages): the agent it
+// resolved (its auth, the models its stages run on, the levels that pin them),
+// the providers that claim them, the mode the run resolved, and the published
+// node. No gateway, no session: the question is the resolution's own.
+func accountStagesRun(agent config.Agent, providers map[string]config.ModelProvider, mode string, p *projectpolicy.Policy) *run {
 	r := &run{
-		cfg: &config.Config{Agent: config.Agent{Auth: auth, Models: models}},
-		d:   Deps{Providers: providers, Log: slog.New(slog.DiscardHandler)},
+		cfg:   &config.Config{Agent: agent},
+		d:     Deps{Providers: providers, Log: slog.New(slog.DiscardHandler)},
+		spend: Spend{Mode: mode},
 	}
-	r.projPolicy = policyRead{done: true, found: true, policy: &projectpolicy.Policy{
-		Version: projectpolicy.Version, ClaudeAccountStages: stages}}
+	if p != nil {
+		p.Version = projectpolicy.Version
+		r.projPolicy = policyRead{done: true, found: true, policy: p}
+	}
 	return r
+}
+
+// mixedStagesNode is a published node that declares the mix one way or the
+// other: the stage accounts named and the project's default, either of which
+// may be absent.
+func mixedStagesNode(stages map[string]string, def string) *projectpolicy.Policy {
+	return &projectpolicy.Policy{ClaudeAccountStages: stages, DefaultClaudeAccount: def}
+}
+
+// mixAccountModels is the agent of the run the ruling admits: a provider-served
+// coder, an Anthropic reviewer, and the two review levels pinning their own
+// models — the shape every rung of the mix is judged on.
+func mixAccountModels(coder, reviewer string) config.Agent {
+	return config.Agent{
+		Auth:   "api-key",
+		Models: config.ModelRoles{Coder: coder, Reviewer: reviewer},
+	}
+}
+
+// claudeAccountModels is mixAccountModels with an Anthropic model on the coding
+// stage too: no provider route serves the coder, so the gateway holds no
+// provider key for a Claude account to sit beside.
+func claudeAccountModels(reviewer string) config.Agent {
+	return mixAccountModels("claude-sonnet-5", reviewer)
 }
 
 // TestResolveMixedStagesOnlyUnderTheRunsOwnKey: the mix exists to give an
@@ -47,9 +76,10 @@ func accountStagesRun(auth string, models config.ModelRoles, providers map[strin
 // stage of a run that must not hold one.
 func TestResolveMixedStagesOnlyUnderTheRunsOwnKey(t *testing.T) {
 	stages := map[string]string{"review": "team-a"}
-	models := config.ModelRoles{Coder: "vendor/model-a", Reviewer: "claude-opus-5"}
 	for _, auth := range []string{"oauth", "vertex", config.AuthCascade, ""} {
-		r := accountStagesRun(auth, models, nil, stages)
+		r := accountStagesRun(mixAccountModels("vendor/model-a", "claude-opus-5"), nil, policy.ModeEnforce,
+			mixedStagesNode(stages, ""))
+		r.cfg.Agent.Auth = auth
 		got, err := r.resolveMixedStages(context.Background())
 		if err != nil {
 			t.Errorf("auth %q: resolveMixedStages = %v", auth, err)
@@ -61,7 +91,8 @@ func TestResolveMixedStagesOnlyUnderTheRunsOwnKey(t *testing.T) {
 	}
 	// The admitted run does resolve it, so the loop above is not passing
 	// because the fixture resolves nothing at all.
-	r := accountStagesRun("api-key", models, nil, stages)
+	r := accountStagesRun(mixAccountModels("vendor/model-a", "claude-opus-5"), nil, policy.ModeEnforce,
+		mixedStagesNode(stages, ""))
 	got, err := r.resolveMixedStages(context.Background())
 	if err != nil || got["review"] != "team-a" {
 		t.Fatalf("the api-key run resolved %v, %v, want the node's account for review", got, err)
@@ -80,9 +111,8 @@ func TestResolveMixedStagesRefusesAProviderServedStageModel(t *testing.T) {
 	providers := map[string]config.ModelProvider{
 		"acme": {Kind: config.ModelProviderKind, Models: []string{"vendor/*"}},
 	}
-	r := accountStagesRun("api-key",
-		config.ModelRoles{Coder: "vendor/model-a", Reviewer: "vendor/model-b"},
-		providers, map[string]string{"review": "team-a"})
+	r := accountStagesRun(mixAccountModels("vendor/model-a", "vendor/model-b"), providers, policy.ModeEnforce,
+		mixedStagesNode(map[string]string{"review": "team-a"}, ""))
 	got, err := r.resolveMixedStages(context.Background())
 	if err == nil {
 		t.Fatalf("a stage the account serves on a provider-claimed model was accepted: %v", got)
@@ -95,17 +125,128 @@ func TestResolveMixedStagesRefusesAProviderServedStageModel(t *testing.T) {
 	// The coder's own provider model is not the stage's: the same providers
 	// with a Claude reviewer resolve, so the refusal is about the stage's
 	// model and not about the run having a route at all.
-	r = accountStagesRun("api-key",
-		config.ModelRoles{Coder: "vendor/model-a", Reviewer: "claude-opus-5"},
-		providers, map[string]string{"review": "team-a"})
+	r = accountStagesRun(mixAccountModels("vendor/model-a", "claude-opus-5"), providers, policy.ModeEnforce,
+		mixedStagesNode(map[string]string{"review": "team-a"}, ""))
 	if got, err := r.resolveMixedStages(context.Background()); err != nil || got["review"] != "team-a" {
 		t.Fatalf("a Claude reviewer beside a provider coder resolved %v, %v, want the account for review", got, err)
 	}
 	// And a node naming nothing resolves nothing, whatever the models are.
-	r = accountStagesRun("api-key",
-		config.ModelRoles{Coder: "vendor/model-a", Reviewer: "vendor/model-b"}, providers, nil)
+	r = accountStagesRun(mixAccountModels("vendor/model-a", "vendor/model-b"), providers, policy.ModeEnforce,
+		mixedStagesNode(nil, ""))
 	if got, err := r.resolveMixedStages(context.Background()); err != nil || len(got) != 0 {
 		t.Fatalf("a node naming no stage account resolved %v, %v, want none", got, err)
+	}
+}
+
+// providerRoutes is the one route every rung-4 fixture's coder is pinned to:
+// a provider the owner allowed every repository to send code to, which is what
+// "the coder is served by a provider route this repository may use" means.
+func providerRoutes() map[string]config.ModelProvider {
+	return map[string]config.ModelProvider{
+		"acme": {Kind: config.ModelProviderKind, Models: []string{"vendor/*"}, AllowDataTo: []string{"*"}},
+	}
+}
+
+// pinnedAgent is the agent of a run whose two review levels pin their own
+// models: the levels a stage's own model is read off (stageModel), for the one
+// condition rung 4 attaches to a stage.
+func pinnedAgent(coder, l2, l3 string) config.Agent {
+	a := mixAccountModels(coder, "claude-opus-5")
+	a.Levels.L2 = &config.LevelSetting{Model: l2}
+	a.Levels.L3 = &config.LevelSetting{Model: l3}
+	return a
+}
+
+// TestResolveMixedStagesFollowsRungFour is the runner's half of the owner's
+// ruling of 2026-11-05 (docs/design/mixed-credentials.md §11): the project's
+// default_claude_account opts an api-key run into the mix for the two stages of
+// the allow-list, under the conditions the launch's mixedStageAccount applies —
+// an Anthropic model on that stage, a coder a provider route this repository
+// may use, and a mode the run resolves as enforce — and under no other.
+//
+// The runner has to make the same judgement the launch did: it reads the
+// published node the launch read the local config *from*, and a rung the launch
+// admits but the runner does not is a run whose review silently goes out on the
+// gateway credential — the very fallback §11 refuses — while a rung the runner
+// admits and the launch does not is a job with no token for the account.
+func TestResolveMixedStagesFollowsRungFour(t *testing.T) {
+	claude, vendor := "claude-opus-5", "vendor/model-b"
+	for _, tc := range []struct {
+		name   string
+		agent  config.Agent
+		mode   string
+		def    string
+		stages map[string]string
+		want   map[string]string
+	}{
+		{
+			name:  "the default names the mix's account",
+			agent: pinnedAgent("vendor/model-a", claude, claude), mode: policy.ModeEnforce,
+			def:  "team-a",
+			want: map[string]string{"review": "team-a", "adversarial": "team-a"},
+		},
+		{
+			name:  "a stage whose own model is not Anthropic takes no account",
+			agent: pinnedAgent("vendor/model-a", vendor, claude), mode: policy.ModeEnforce,
+			def:  "team-a",
+			want: map[string]string{"adversarial": "team-a"},
+		},
+		{
+			name:  "the sentinel default declares no mix",
+			agent: pinnedAgent("vendor/model-a", claude, claude), mode: policy.ModeEnforce,
+			def:  config.DefaultClaudeAccount,
+			want: nil,
+		},
+		{
+			name:  "a coder no provider route serves has no provider key to mix",
+			agent: pinnedAgent("claude-sonnet-5", claude, claude), mode: policy.ModeEnforce,
+			def:  "team-a",
+			want: nil,
+		},
+		{
+			name:  "a mode that routes no call to a provider",
+			agent: pinnedAgent("vendor/model-a", claude, claude), mode: policy.ModeObserve,
+			def:  "team-a",
+			want: nil,
+		},
+		{
+			name:  "rung 2 is served as written and wins over the default",
+			agent: pinnedAgent("vendor/model-a", claude, vendor), mode: policy.ModeEnforce,
+			def: "team-a", stages: map[string]string{"review": "team-b"},
+			want: map[string]string{"review": "team-b"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := accountStagesRun(tc.agent, providerRoutes(), tc.mode, mixedStagesNode(tc.stages, tc.def))
+			got, err := r.resolveMixedStages(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !maps.Equal(got, tc.want) {
+				t.Fatalf("resolveMixedStages = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	// The one-account rule (design §11, "never a second provider's key"): a
+	// project default that names a *different* account from the one the other
+	// stage's own key names is a second credential, and it is refused rather
+	// than honoured — with both rungs naming the same account it is the same
+	// run the ruling admits, which is the control.
+	r := accountStagesRun(pinnedAgent("vendor/model-a", claude, claude), providerRoutes(), policy.ModeEnforce,
+		mixedStagesNode(map[string]string{"review": "team-b"}, "team-a"))
+	got, err := r.resolveMixedStages(context.Background())
+	if err == nil {
+		t.Fatalf("a project default and a stage key naming two accounts were accepted: %v", got)
+	}
+	for _, want := range []string{"review", "team-b", "team-a"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	r = accountStagesRun(pinnedAgent("vendor/model-a", claude, claude), providerRoutes(), policy.ModeEnforce,
+		mixedStagesNode(map[string]string{"review": "team-a"}, "team-a"))
+	if got, err := r.resolveMixedStages(context.Background()); err != nil || got["review"] != "team-a" || got["adversarial"] != "team-a" {
+		t.Fatalf("one account named by both rungs resolved %v, %v, want the two stages on it", got, err)
 	}
 }
 
