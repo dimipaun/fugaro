@@ -5,7 +5,15 @@ approved.** The design is [spec.md](spec.md), the findings and the fifteen decis
 [reconciliation.md](reconciliation.md). **All fifteen were answered on 2026-11-04** — **every one of
 them the recommendation**, with the owner's own detail written into M3, M5, M6 and M9 — and this
 plan is written to those answers: the "Answered" column below is what the tasks build, and the last
-column is what a later answer the other way would move. **No task here is approved, and two things gate the whole plan:** the
+column is what a later answer the other way would move. **A sixteenth answer arrived on 2026-11-05
+(D935), from the independent review of PR #1715's M3**: the `mcpauth` records — the client list, the
+redirect URIs, the token hashes, the tool-call audit and the revocation state — **do not live in the
+project's shared Realtime Database**, because every launcher and operator holds
+`roles/firebasedatabase.viewer` on the whole project and the budget admins and the history account
+hold `roles/firebasedatabase.admin`, so the rules cannot keep them out. They move to a store whose
+IAM names only the coordinator's own service account, and §1's last subsection records the answer,
+M2, M3, M4, M5 and M10 are written to it, and §8 is the three candidates for that store and the
+**Open item** that decides between them. **No task here is approved, and two things gate the whole plan:** the
 independent SECURITY review of [spec.md](spec.md) §8 (which the coordinator runs), and D921's
 **unconfirmed licence** ([reconciliation.md](reconciliation.md) §6, checks 1 and 7).
 
@@ -28,28 +36,92 @@ independent SECURITY review of [spec.md](spec.md) §8 (which the coordinator run
 | D933 | Who a person is | **The project's launcher and operator lists**, read for exact `user:` entries only — the recommendation | **M7 and M10 change**, and a permission model that does not exist yet has to be designed. |
 | D934 | Whether the front door is on by default | **OFF until the owner turns it on** — the recommendation | **M4 gains the switch** and the live checklist gains a state; the other reading puts a public write endpoint on installations that asked only for a read-only view. |
 
-## 2. The order, and what forces it
+### The answer of 2026-11-05: D935, and what it moves
 
-```
-M1 ──▶ M2 ──▶ M5 ──▶ M7 ──▶ M8
-        │      ▲      │
-M3 ─────┘      │      └──▶ M9 ──▶ M10
-               │
-M4 ────────────┘        (M4 and M6 are the two that need a live installation)
-M6 ────────────┘
-```
+**One question was answered after that day, and it moves where the records live rather than what they
+are.** The independent review of PR #1715's M3 (the rules change) found that the closed `mcpauth` node
+could not do the job D922 gave it, and the reason is a fact about the installation rather than about
+the rule: the database grants are **project-level**, so every instance and every node in the project
+inherits them and the rules do not bind their holders. `deploy/terraform/gcp/modules/firebase/iam.tf:44`
+gives `roles/firebasedatabase.viewer` to every launcher and operator, `:53` gives
+`roles/firebasedatabase.admin` to every admin and budget admin, and `:81` gives it to the history
+account. `docs/design/roles.md:104` states the consequence in one line: **"[a]ny confidential thing
+placed in RTDB is readable by everyone on either list."** So spec.md §8's "read by the coordinator's
+account over IAM and by nobody else" does not hold in the project's database, whoever writes the
+rules, and [reconciliation.md](reconciliation.md) §3 carries it as **F32**.
+
+| D | The question | Answered 2026-11-05, and written to | If the owner later answers the other way |
+| --- | --- | --- | --- |
+| **D935** | Do the `mcpauth` records stay in the project's shared Realtime Database, behind the closed node D922 gave them? | **They move to a store of their own, whose IAM names the coordinator's own service account and no other member** — and the `mcpauth` node **stays in the rules as a defence in depth**, with `.read: false` and `.write: false` | **M2, M3, M4, M5 and M10 change**: M2 goes back to a database store, M3 becomes the only barrier rather than the second one, and M4 drops the store and its one grant. §8's table is where the cost of that is written down, and the cost is the whole reason for the answer. |
+
+**The one-line why**, in the owner's terms: **the rules bind client tokens and the installation's
+database grants are project-level, so no rule can keep a launcher, an operator, a budget admin or the
+history account out of the project's database** — the records have to leave it.
+
+**Which separate store is not decided here, and is not this answer's to decide.** A second Realtime
+Database instance, Firestore and a bucket prefix are all "a store of their own"; §8 compares the three,
+recommends the bucket, and carries the choice as an **Open item** for the owner, and **M2 and M4 name
+the recommended one and wait for that answer.** Nothing else about the design moves: D922's rule —
+hashes only, shown once at mint — stands, D930's rotation and one-delete revocation stand, and D933's
+operator read of the audit record stands, because it is served by a tool and never by a node.
+
+**spec.md is not edited, and this plan wins where the two disagree.** [spec.md](spec.md) §6 and §8
+still say the records live in the `mcpauth` subtree of the project's database: that file carries the
+owner's spec and the answers of 2026-11-04, and this round amends the plan rather than rewriting the
+spec. Where the two part — the store the records are at rest in, and whether the closed node is the
+barrier or the second barrier — **this document is the one the tasks build**, and the difference is
+recorded in [reconciliation.md](reconciliation.md) §3 (F32) and §4 (the answer) so that a reader of
+either file cannot meet it on their own.
+
+## 2. The edges, the levels and the critical path
+
+Eleven edges, and nothing else forces the shape. "A ← B" reads "A waits for B".
+
+**M1** ← nothing. **M2** ← M1, and the store answer of §8. **M3** ← nothing: it is a rules file and
+its tests, and it can land first. **M4** ← the SECURITY review of [spec.md](spec.md) §8, and the store
+answer of §8. **M5** ← M2, M4, D928, and D921's licence confirmed. **M6** ← M4, M5 (it wires a
+verifier into the server M5 mounts). **M7** ← M2, M5. **M8** ← M7. **M9** ← M4, M7, and the
+launch-override fence of [reconciliation.md](reconciliation.md) §6 (check 0), which is NOT BUILT.
+**M10** ← M5, M7.
 
 Three dependencies force that shape and nothing else does:
 
 1. **M4 before M5.** The endpoints have nowhere to run until the coordinator has a service and an
-   account of its own. M4 is the only task that needs Terraform and the only one that cannot be
-   proven hermetically beyond a plan test.
+   account of its own — and, since D935, nowhere to keep a record until the store and its one grant
+   exist. M4 is the only task that needs Terraform and the only one that cannot be proven
+   hermetically beyond a plan test.
 2. **M2 before M5.** The token endpoint's whole job is to mint a record M2 defines.
 3. **M1 before everything that reads a limit**, because "only narrows" is the one property every
    other task assumes.
 
-**M3 is independent** of all of them and can land first: it is a rules file and its tests, in a
-package that has nothing to do with the coordinator.
+### Levels
+
+A level is a set of tasks that may run at the same time. **No level has two writers of one file** —
+that is the rule §4's shared-files table exists to check, and the reason four tasks that share one
+registry end up four levels apart.
+
+| Level | Tasks | What holds a task out of an earlier level |
+| --- | --- | --- |
+| **L0** | M1, M3, M4 | nothing. M4's two gates (the review and §8's answer) stand in front of the level rather than in it |
+| **L1** | M2 | `token.go` is M1's file, and §8's answer decides `store_bucket.go` |
+| **L2** | M5 | M2's store, M4's service, and D921's licence |
+| **L3** | M7 | `server.go` and `service.go` are M5's |
+| **L4** | M6, M8 | M6: `server.go`, which M5 and M7 both write; M8: `tools.go`, M7's |
+| **L5** | M9 | `tools.go` is M8's, `limits.go` is M1's, and `spend.go` needs a release window of its own (§5) |
+| **L6** | M10 | `tools.go` is M9's |
+
+**Critical path:** the review and §8's answer → **M4 → M5 → M7 → M8 → M9 → M10**, six levels to the
+last task, with **M1 → M2 → M5** joining it at M5. **Off it:** M3 entirely (it can land at any point,
+and it is the one task that shares no file with any other), and M6, which takes the last of
+`server.go`'s three slots so that M7 does not have to.
+
+**Sequential by necessity**, and not by preference: **M7 → M8 → M9 → M10** are four writers of one
+registry (`ee/coordinator/mcpauth/tools.go`), which is the file that decides what a client can call —
+a planner who wants them in parallel is asking for four conflicts in the one file the whole front door
+answers through. **M5 → M7 → M6** are the three writers of `server.go`, and M6 is off the critical
+path, which is why it takes the third slot rather than the second. **M4 → M5 → M7** are the three
+writers of the service's own entry point (`ee/coordinator/service.go`). **M9** waits for a release
+window in which `internal/runner/spend.go` has no other writer (§4), which no level can schedule.
 
 ## 3. The tasks
 
@@ -60,11 +132,20 @@ is asked here for every task that changes who may reach what.
 **Two gates stand before the first line of any task.** The **independent SECURITY review of
 [spec.md](spec.md) §8** — **run by the coordinator**, per the owner's brief — comes first: no task
 starts until it has been read and its findings answered, and its scope is §8, every **SEC**-marked
-task below (the five whose marker says **mandatory** are M3, M4, M5, M7 and M9) and the one new
-privilege this design asks for (M9's launch grant). **D921's unconfirmed licence** is the second
+task below (the five whose marker says **mandatory** are M3, M4, M5, M7 and M9) and the two new
+privileges this design asks for (M9's launch grant, and M4's single binding on the store the
+`mcpauth` records moved to). **D921's unconfirmed licence** is the second
 ([reconciliation.md](reconciliation.md) §6, the first owner check): it gates **M5** specifically,
 because M5 is the task that takes the dependency, and a licence that turns out to be unusable sends
 D921 back to its alternatives before any code exists rather than after.
+
+**One gate more, and it stands in front of M2 and M4 alone.** D935 moved the records out of the
+project's database but left **which** separate store to the owner (§8), so M2's backend file and M4's
+Terraform are both written against an answer nobody has given yet: **M2 and M4 name §8's
+recommendation and do not start until the owner answers.** It is deliberately not a third gate on
+every task — M3, M5, M6, M7, M8, M9 and M10 are written to M2's `Store` interface, which does not
+name a store, so an answer the other way moves one implementation file and one Terraform file rather
+than any interface any other task builds against.
 
 ### M1 — The limits vocabulary, and "only narrows"
 
@@ -83,21 +164,38 @@ D921 back to its alternatives before any code exists rather than after.
   rests on.
 - **Depends on:** nothing.
 
-### M2 — Minting and the store: hashes only
+### M2 — Minting and the store: hashes only, in a store of their own (D935)
 
-- **Files (6):** `ee/coordinator/mcpauth/store.go`, `store_test.go`, `mint.go`, `mint_test.go`,
-  `ee/coordinator/mcpauth/fake_test.go`, `ee/coordinator/testdata/mcpauth/README.md`.
-- **Interface:** `Store` over the project's database with `PutClient`, `GetClient`, `PutToken`,
-  `LookupByHash`, `RevokeFamily`; `Mint(identity, client, limits) (access, refresh string, err error)`.
-- **Red step:** `TestMintStoresOnlyTheHash` — every value written through the fake database is
-  compared against the two strings `Mint` returned, and the test fails if any record contains either
-  or any prefix of either. Written first, it fails because there is no `Mint`.
+- **Files (8):** `ee/coordinator/mcpauth/store.go`, `store_test.go`, `store_bucket.go`,
+  `store_bucket_test.go`, `mint.go`, `mint_test.go`, `ee/coordinator/mcpauth/fake_test.go`,
+  `ee/coordinator/testdata/mcpauth/README.md`.
+- **Interface:** `Store` — `PutClient`, `GetClient`, `PutToken`, `LookupByHash`, `RevokeFamily` — over
+  **the store of D935's answer, and never the project's shared database**;
+  `Mint(identity, client, limits) (access, refresh string, err error)` writes through it. **`store.go`
+  is the interface, the key layout and the record shapes; `store_bucket.go` is the one concrete
+  backend**, so an owner who answers §8 with a different store changes that file and its own test and
+  nothing any other task builds against. The backend this plan names is §8's recommendation — **the
+  `mcpauth/` prefix of a bucket of its own, whose only member is the coordinator's service account** —
+  written with `internal/blobx` (`internal/blobx/blobx.go:1`): create-if-absent with the new
+  generation, generation-matched replace and delete, atomic on GCS. That is what makes rotation and
+  revocation compare-and-swaps rather than read-modify-writes, and it is why a bucket can carry a
+  store this design otherwise wants a transaction for.
+- **Red step:** `TestMintStoresOnlyTheHash` — every value written through the store is compared
+  against the two strings `Mint` returned, and the test fails if any record contains either or any
+  prefix of either. Written first, it fails because there is no `Mint`.
 - **Tests:** `TestMintStoresOnlyTheHash`, `TestLookupFindsByThePresentedToken`,
-  `TestRefreshRotatesAndReplayRevokesTheFamily`, `TestRevokedTokenIsNotFound`.
-- **SEC:** yes — it is the task that decides what is at rest.
-- **Depends on:** M1.
+  `TestRefreshRotatesAndReplayRevokesTheFamily`, `TestRevokedTokenIsNotFound`,
+  `TestARotationUnderAConcurrentRevokeLosesNeither` (the generation-matched write a bucket-backed
+  store needs — a database transaction used to give it away, and a bucket does not),
+  `TestTheStoreRefusesTheDatabaseAndTheRunsBucket` (the store opens one URL from the coordinator's own
+  configuration and refuses anything else at construction, so a later edit that pointed it back at
+  `mcpauth` in the database, or at the runs bucket, fails rather than works).
+- **SEC:** yes — it is the task that decides what is at rest **and where**, and D935's answer is only
+  worth anything if the store is the store and not the database under another name.
+- **Depends on:** M1, **and on the owner's answer to §8's open item.** The recommendation is the
+  bucket; the answer is what `store_bucket.go` is written to, and this task does not start before it.
 
-### M3 — The rules name the token records' home and close it to every client
+### M3 — The rules name the token records' old home, and keep it closed (D935)
 
 - **Files (3):** `internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/rules.go`,
   `internal/budget/rules/mcpauth_test.go`.
@@ -105,10 +203,23 @@ D921 back to its alternatives before any code exists rather than after.
   child of it** (D922's answer) — with **`.read: false` and `.write: false`**, named in the file so
   that the next person who adds a grant can see it is there, plus the constant the parity test reads
   it through. It deliberately does **not** copy `coordinator/`'s `.read: "USER"`
-  (`internal/budget/rules/rules.json.tmpl:10-13`, the claim at `internal/budget/rules/rules.go:517`):
-  the node is refused to every client, and the one account that writes it — the coordinator's own —
-  reaches it through `roles/firebasedatabase.admin`
-  (`deploy/terraform/gcp/modules/firebase/iam.tf:138`) and not through a rule.
+  (`internal/budget/rules/rules.json.tmpl:10`, the claim at `internal/budget/rules/rules.go:517`).
+- **What the node is now, and what its comment must say (D935, 2026-11-05).** **The records do not
+  live here any more**: they live in the store M2 defines, because this installation's database grants
+  are project-level and no rule can keep a launcher, an operator, a budget admin or the history
+  account out of this database (`deploy/terraform/gcp/modules/firebase/iam.tf:44`, `:53`, `:81`;
+  `docs/design/roles.md:104`, and [reconciliation.md](reconciliation.md) F32). **What #1715 added
+  stays as a defence in depth**, and the comment above the node must say exactly that, in these terms:
+  *that the node holds nothing* (nothing writes it any more, and the records are elsewhere);
+  *why it is closed anyway* (a value written here by mistake — an older build, a hand-run script, a
+  later task that reads this design's first revision — is then unreadable by every client, which costs
+  one rule and buys the one mistake nobody would notice); *where the records went* (the store of
+  D935, which only the coordinator's own service account reaches, over IAM); and *what the node must
+  not become* (a node the coordinator reaches through its `roles/firebasedatabase.admin` grant,
+  `deploy/terraform/gcp/modules/firebase/iam.tf:138` — that grant is for the coordinator's own
+  `coordinator/` subtree, and it is precisely the fact that it reaches the whole database that made
+  the records leave). The constant stays for the same reason it was added: a parity test over the
+  template is what says the node is still named, and a comment is not.
 - **Red step:** `TestMCPAuthIsNamedAndDeniedToEveryClient` — it asserts the subtree is **named** in
   the template, and that the emulator refuses a **read** as `USER` and as a run's `TOKEN` and refuses
   a **write** as `USER` and as `TOKEN`. It fails before the template change because the key is
@@ -116,37 +227,78 @@ D921 back to its alternatives before any code exists rather than after.
   has to assert the *name*: an unnamed subtree is protected by a rule nobody reading the file can
   see. It asserts the `USER` **refusal** too, because that is the half D922's restatement decides —
   a later change that gave `mcpauth` the `coordinator` node's read rule would be a decision, and this
-  test is what makes it a failing one rather than a quiet widening.)
+  test is what makes it a failing one rather than a quiet widening.) **D935 adds one assertion**: the
+  comment above the node must name the store the records actually live in, so that a reader who finds
+  the node cannot come away believing the token material is still at rest in the database — the
+  failure mode D935's answer creates, and the only new way this task can be wrong.
 - **Tests:** `TestMCPAuthIsNamedAndDeniedToEveryClient`, and `TestRulesParity` must stay green.
-- **SEC:** **yes, mandatory** — it is the rules change that decides who reads the token records, the
-  client list, the revocation state and the whole tool-call audit. **D922's answer is the closed
-  one**, so the review's question here is the reverse of the one an open read rule would raise: not
-  what the exposure accepts, but whether anything but the coordinator's account can reach a node the
-  rules refuse and the database admin grant reaches past them.
-- **Depends on:** nothing. **Can land first.**
+- **SEC:** **yes, mandatory** — it is still a rules change naming the token records, and the review's
+  question is now the reverse of the one the first version of this task asked. Not what the exposure
+  accepts, but whether a closed node beside records that have moved misleads its reader into thinking
+  the project's database is where the token material lives, and whether anything but the coordinator's
+  own account can reach a node the rules refuse and the database admin grant reaches past. M4 is the task
+  that decides who reaches the store they moved to.
+- **Depends on:** nothing. **Can land first**, and it is the one task that shares no file with any
+  other.
 - **Do not touch:** `internal/budget/rules/rules.go` is shared with every other rules work; the
   change is one constant and one template key, and a conflict there is a rebase, not a redesign.
 
-### M4 — The coordinator's public service, its own account and its grants
+### M4 — The coordinator's public service, its own account, its grants and the store (D935)
 
-- **Files (7):** `deploy/terraform/gcp/modules/installation/coordinator.tf`,
+- **Files (8):** `deploy/terraform/gcp/modules/installation/coordinator.tf`,
+  `deploy/terraform/gcp/modules/installation/mcpauth_store.tf` (new: the store and its one grant),
   `deploy/terraform/gcp/modules/installation/outputs.tf`,
   `deploy/terraform/gcp/modules/installation/coordinator_service_test.go` (a plan-level test),
-  `internal/infra/tf/cover.go` (only if a new type appears — F2 says one does not),
+  `internal/infra/tf/cover.go` (only if a new type appears — F2 says one does not, and the store's two
+  types, `google_storage_bucket` and `google_storage_bucket_iam_member`, are already covered at
+  `internal/infra/tf/cover.go:64`),
   `internal/infra/coordinator_service.go`, `internal/infra/coordinator_service_test.go`,
   `ee/coordinator/service.go`.
 - **Interface:** a `google_cloud_run_v2_service` for the coordinator with `allUsers` invoker (D920),
   its own service account, no model credential mounted, and the launch role of M9 declared but not
-  yet used.
+  yet used. **And the store of D935, which is this task's because this is the task that writes IAM.**
+  The recommended store is **a bucket of its own — `fmgd-<gcp-project>-mcpauth`, a function of the
+  project alone, the convention the managed state bucket already follows
+  (`internal/managed/statebucket.go:75`)** — with uniform bucket-level access and public access
+  prevention enforced, because the installer's plan review refuses a bucket without both
+  (`internal/infra/tf/cover.go:2199`). **Three things about its IAM are deliberate:**
+  - **One binding, one member.** No project-level storage binding exists anywhere in this
+    installation: every grant is bucket-scoped (`deploy/terraform/gcp/modules/installation/iam.tf:207`,
+    `:222`, `:238`; `coordinator.tf:76`), so a bucket with one member has exactly one reader. That is
+    the whole of D935: the IAM names the coordinator's account and nobody else, where the database's
+    own grants name four sets of people.
+  - **`roles/storage.objectAdmin`, and not `objectUser`.** A bucket-scoped `objectAdmin` carries no
+    IAM permission and no `storage.buckets.delete`, so the account reads and writes objects in this
+    one bucket and can neither widen it nor remove it. It is also the narrowest role the plan review
+    accepts here with no condition (`internal/infra/tf/cover.go:1700` refuses an unconditioned
+    `objectUser`), and the same role operators already hold on the runs bucket — one bucket, one
+    account, one role, nothing new in shape.
+  - **The coordinator's sweep account is not the member.** The front door's own service account is
+    the only member. The sweep (P5) reads runs and never tokens, and the operator's read of the audit
+    record is served by a tool (M10) rather than by a credential — so the second the store gains a
+    second member is the second this design has widened, and the test below is what makes that fail
+    rather than happen.
+  - The name carries the `fmgd-` prefix because the managed deployer's storage role is fenced to it
+    (`deploy/terraform/gcp/modules/installation/deployer.tf:142`), which is what lets `fugaro update`
+    create the bucket and set its IAM with no permission it does not already hold (`:219`, `:242`).
 - **Red step:** `TestCoordinatorServiceIsPublicAndCarriesNoCredential` — it fails against the current
   Terraform because there is no service, and it asserts the two things that matter (the invoker
   binding is `allUsers`, and the container carries no secret whose value is a model credential).
 - **Tests:** `TestCoordinatorServiceIsPublicAndCarriesNoCredential`,
-  `TestCoordinatorServiceHasItsOwnAccount`, and the existing `cover.go` tests must stay green.
-- **SEC:** **yes, mandatory.** It creates a public endpoint and a new service account.
-- **Depends on:** D920 answered on 2026-11-04 (**it was, the recommendation**), and the SECURITY
-  review of [spec.md](spec.md) §8 read.
-- **Owner check:** the service is applied only by `fugaro update`, and this plan does not run it.
+  `TestCoordinatorServiceHasItsOwnAccount`,
+  `TestTheStoreHasExactlyOneMemberAndItIsTheCoordinator` (the plan's bindings on the store's bucket
+  name one member, that member is the service's own service account, and no other row of the plan
+  names that bucket), and the existing `cover.go` tests must stay green.
+- **SEC:** **yes, mandatory.** It creates a public endpoint, a new service account **and the store
+  the token records live in** — the one new store this design adds and the one new grant that keeps it
+  private. The review's question is the one D935 asks: whether a plan-level test can be trusted to
+  keep that grant's member list at one, and whether the store's name and its IAM are the only route to
+  it.
+- **Depends on:** D920 answered on 2026-11-04 (**it was, the recommendation**), the SECURITY
+  review of [spec.md](spec.md) §8 read, **and the owner's answer to §8's open item** — the
+  recommendation is the bucket, and this task does not start before the answer.
+- **Owner check:** the service and the store are applied only by `fugaro update`, and this plan does
+  not run it.
 
 #### For operators
 
@@ -164,6 +316,13 @@ That run creates, in the installation's GCP project:
 - the coordinator's Cloud Run **service** — the resident service D196 decided and the coordinator's
   own P7 builds, which is not the aggregation **job** P5 adds;
 - its own service account, and the public invoker binding D920 asks for;
+- **the store the `mcpauth` records live in and its one grant** (D935): the bucket §8 recommends and
+  the single `objectAdmin` binding for the service's own account. **It adds no operator step of its
+  own** — no second command, no `gcloud` line, no `terraform apply` by hand: the bucket and its
+  binding are Terraform this same `update` applies, and both names are functions of the project
+  alone. **The store has no flag and no opt-in of its own either**: it arrives with the front door's
+  opt-in, because it is the service's own state, and an installation that upgrades without the flag
+  acquires neither the store nor the grant;
 - the launch grant on the project's own job (M9), the one new privilege this design asks for;
 - the front door's own configuration: the redirect allowlist of D928 and the switch of D934.
 
@@ -171,7 +330,11 @@ An installation that opted into the coordinator for its read-only view acquires 
 aggregation job and the front door are separate opt-ins, and a public write endpoint is not something
 an upgrade should hand a project that asked for a dashboard. M4 carries the convergence test the
 repository requires of a migration: an installation at the previous version, updated with the flag,
-ends with exactly the resources above — and an installation that did not pass it ends with none.
+ends with exactly the resources above — **the store and its one grant included** — and an installation
+that did not pass it ends with none. **One line joins the release notes' `### For operators` section
+with D935**, and it is the only operator-facing sentence this section adds: the store is created and
+granted by the same `fugaro update` that creates the service, and the owner confirms it with the
+hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than with a step.
 
 ### M5 — The authorization server: its two metadata documents and its four endpoints
 
@@ -180,14 +343,21 @@ ends with exactly the resources above — and an installation that did not pass 
   `authorize_test.go`.
 - **Interface:** `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`,
   `POST /oauth/register`, `GET /oauth/authorize`, `POST /oauth/token`, `POST /oauth/revoke`, mounted
-  on the service M4 creates.
+  on the service M4 creates. **Every record it writes — a registered client, a code, an access token,
+  a refresh token, a revocation — goes through M2's `Store`, and nothing here opens a database or a
+  bucket of its own** (D935): the store is the one place a token record is at rest, and the endpoints
+  reach it the way every other task does, through the interface rather than through a client. Nothing
+  in this task names the bucket, and nothing in it names the project's database.
 - **Red step:** `TestNoTokenIsA401NamingTheMetadataURL` — the MCP endpoint answers 401 with a
   `WWW-Authenticate` header whose resource-metadata URL resolves, and the test fails because the
   endpoint does not exist.
 - **Tests:** `TestNoTokenIsA401NamingTheMetadataURL`, `TestMetadataPointsAtItsOwnServer`,
   `TestRegisterIsOpenAndGrantsNothing`, `TestPKCEIsRequiredAndPlainIsRefused`,
   `TestCodeIsSingleUseAndBoundToTheRedirectURI`, `TestRedirectURIMustMatchExactly`,
-  `TestRedirectURIMustBeLoopbackOrAllowlisted`, `TestRefreshTokenIsSingleUse`, and the three
+  `TestRedirectURIMustBeLoopbackOrAllowlisted`, `TestRefreshTokenIsSingleUse`,
+  `TestNoRecordIsWrittenOutsideTheStore` (a store handed to the whole server: every write the five
+  endpoints make arrives through the `Store` interface, and none of them opens a second client — the
+  test that keeps D935's "the store is the only place" true as the endpoints are added), and the three
   D928 tightenings' own: `TestRegistrationRefusesANonLoopbackURI` (a non-loopback URI that is not on
   the allowlist is refused **at registration**, not at a person's sign-in),
   `TestConsentNamesTheRedirectHost` (the page a person consents on carries the redirect URI's host),
@@ -289,7 +459,10 @@ ends with exactly the resources above — and an installation that did not pass 
   flight rather than starting a second), `TestSpawnRunsTheBudgetPrecheck` (a kill switch that refuses
   `fugaro run` refuses `spawn_task`), `TestCancelOfAnotherProjectsRunIsRefused`.
 - **SEC:** **yes, mandatory.** It adds the launch grant, and it is the one task that spends money.
-- **Depends on:** M4 (the grant), M7, D924.
+- **Depends on:** M4 (the grant **and the store it writes its records into**), M7, D924, and the
+  launch-override fence of [reconciliation.md](reconciliation.md) §6 (check 0), which is NOT BUILT —
+  the privilege this task asks for is a launcher's, and §8 of [spec.md](spec.md) says what an unfenced
+  environment means until the fence exists.
 - **Hand-off:** `internal/runner/spend.go` is a core file and **every release's** runner work has
   other writers on it — the 0.15.0 window that made this a hand-off has shipped, and the property it
   named has not gone away. This task belongs to a release where the file has no other writer, and its
@@ -303,36 +476,53 @@ ends with exactly the resources above — and an installation that did not pass 
 - **Interface:** one structured line per call and per refusal, naming the identity, the tool, the
   scopes and the outcome and never a value, on `internal/credsvc/audit.go`'s pattern; a bounded
   per-identity record an operator can read; and revocation reachable from the API and from a
-  person's own surface. **The record is written into M3's subtree**, which D922's answer closes to
-  every client, so "an operator can read it" is the **tool surface's** rule alone (D933): an operator
-  reads the record through a tool, a launcher does not read it at all, and no caller of any kind
-  reaches the raw nodes — the database rule and the tool rule agree here rather than parting
-  ([spec.md](spec.md) §4, §6 and §8).
+  person's own surface. **The record is written into the store of D935, through M2's `Store`** — the
+  store of D935 is the only place it is at rest, and M3's node is the second barrier and not the
+  home. Writing it into that node instead would put the audit back behind the database admin grant
+  D935 exists to get away from, and would leave it readable by everyone the ruling found the rules
+  cannot exclude. So "an operator can read it" is the **tool surface's** rule alone (D933): an
+  operator reads the record through a tool, a launcher does not read it at all, and no caller of any
+  kind reaches the raw objects — the store's IAM and the tool's rule agree here rather than parting
+  ([spec.md](spec.md) §4, §6 and §8). **Revocation is still one delete** (D930): one generation-
+  matched delete in the store, and the next call with the revoked token is refused — the shape a
+  bucket keeps and a transaction used to give for free.
 - **Red step:** `TestEveryRefusalWritesOneLineNamingNoValue` — the audit line for a refusal whose
   token is a recognizable marker string contains neither the marker nor its first eight characters.
   It fails because there is no audit writer.
 - **Tests:** `TestEveryRefusalWritesOneLineNamingNoValue`, `TestAuditRecordIsBounded`,
-  `TestRevokedFamilyIsRefusedOnTheNextCall`, `TestOperatorSeesTheRecordAndALauncherDoesNot`.
-- **SEC:** yes.
+  `TestRevokedFamilyIsRefusedOnTheNextCall`, `TestOperatorSeesTheRecordAndALauncherDoesNot`,
+  `TestTheRecordIsNotInTheProjectsDatabase` (the record the tools serve comes out of the store, and
+  the same read against the `mcpauth` node returns nothing — the assertion that fails the day a
+  later task decides to write the audit where it used to live).
+- **SEC:** yes — it decides who can read the audit record and what revocation destroys, and both are
+  now decided by an IAM binding rather than by a rule.
 - **Depends on:** M5, M7.
 
 ## 4. The shared-files table
 
-Files more than one task touches. A task that finds one of these already changed reads the change
-before writing, and a planner who finds two tasks in the same row in one release serialises them.
+Files more than one task touches, with the level each writer is in (§2). **No level has two writers of
+one file** — that is what the level column is for, and it is why four tasks that share one registry sit
+four levels apart. A task that finds one of these already changed reads the change before writing, and
+a planner who finds two tasks in the same row in one release serialises them.
 
-| File | Tasks | What each does to it |
+| File | Writers (level) | What each does to it |
 | --- | --- | --- |
-| `ee/coordinator/mcpauth/limits.go` | M1, M9 | M1 defines `Limits` and `Narrow`; M9 reads them at submit |
-| `ee/coordinator/mcpauth/token.go` | M1, M2 | M1 defines the token's shape; M2 mints it |
-| `ee/coordinator/mcpauth/store.go` | M2, M5, M10 | M2 defines the store; M5 writes through it; M10 revokes through it |
-| `ee/coordinator/mcpauth/server.go` | M5, M6, M7 | M5 mounts the five endpoints; M6 adds the token endpoint's verifier; M7 adds the resource handler |
-| `ee/coordinator/mcpauth/tools.go` | M7, M8, M9, M10 | the registry: each of the three tool tasks registers into it |
-| `ee/coordinator/service.go` | M4, M5, M7 | M4 creates the service's entry point; M5 and M7 mount handlers on it |
-| `deploy/terraform/gcp/modules/installation/coordinator.tf` | M4, M9 | M4 creates the service and the account; M9 adds the launch grant |
-| `deploy/terraform/gcp/modules/installation/outputs.tf` | M4, M9 | the service's URL, then the grant |
-| `internal/runner/spend.go` | M9 alone, but **shared with every other runner task in its release** | one variable and its merge; see §5 — which is why the release slot is chosen for the file's other writers, not only for this work |
-| `SECURITY.md` | M4, M9, M10 | a public endpoint, a launch grant, and what the audit does not record — **the repository's standing rule is that a security-relevant change updates it in the same PR** |
+| `ee/coordinator/mcpauth/limits.go` | M1 (L0), M9 (L5) | M1 defines `Limits` and `Narrow`; M9 reads them at submit |
+| `ee/coordinator/mcpauth/token.go` | M1 (L0), M2 (L1) | M1 defines the token's shape; M2 mints it |
+| `ee/coordinator/mcpauth/store.go` | M2 (L1), M5 (L2), M10 (L6) | M2 defines the store; M5 writes through it; M10 revokes through it |
+| `ee/coordinator/mcpauth/server.go` | M5 (L2), M7 (L3), M6 (L4) | M5 mounts the five endpoints; M7 adds the resource handler; M6 adds the authorize endpoint's verifier, off the critical path and therefore in the last of the three slots |
+| `ee/coordinator/mcpauth/tools.go` | M7 (L3), M8 (L4), M9 (L5), M10 (L6) | the registry: each of the three tool tasks registers into it |
+| `ee/coordinator/service.go` | M4 (L0), M5 (L2), M7 (L3) | M4 creates the service's entry point; M5 and M7 mount handlers on it |
+| `deploy/terraform/gcp/modules/installation/coordinator.tf` | M4 (L0), M9 (L5) | M4 creates the service and the account; M9 adds the launch grant |
+| `deploy/terraform/gcp/modules/installation/outputs.tf` | M4 (L0), M9 (L5) | the service's URL and the store's bucket, then the grant |
+| `internal/runner/spend.go` | M9 (L5) alone, but **shared with every other runner task in its release** | one variable and its merge; see §5 — which is why the release slot is chosen for the file's other writers, not only for this work |
+| `SECURITY.md` | M4 (L0), M9 (L5), M10 (L6) | a public endpoint, the store and the single grant that keeps it private, a launch grant, and what the audit does not record — **the repository's standing rule is that a security-relevant change updates it in the same PR** |
+
+**Files deliberately not in this table**, because one writer is not a shared file and a row for one
+would read as a conflict: `deploy/terraform/gcp/modules/installation/mcpauth_store.tf` and
+`internal/infra/tf/cover.go` are M4's alone, `ee/coordinator/mcpauth/store_bucket.go` is M2's alone,
+and `internal/budget/rules/*` is M3's alone — the last one being the reason M3 can land at any point
+in the schedule rather than at a level.
 
 ## 5. The release slot
 
@@ -350,10 +540,11 @@ Why the implementation is **0.20.0 or later**, and not the next minor:
    exist yet. A release cannot carry an MCP endpoint on a service the same release is still
    designing.
 2. **The work is big and security-heavy, and the owner's own instruction of 2026-11-04 is that it
-   takes a slot of its own for that reason.** Ten tasks, **four of them SEC-marked**, a public
-   endpoint, a new service account and **one new privilege** (M9's launch grant), behind an
-   independent review that has not run yet. A window that is not already carrying another feature of
-   this shape is the only one it fits in whole.
+   takes a slot of its own for that reason.** Ten tasks, **nine of them SEC-marked and five of those
+   mandatory**, a public endpoint, a new service account, **a new store with one IAM binding on it**
+   (M4, D935) and **one new privilege** (M9's launch grant), behind an independent review whose first
+   finding (F32) has already moved where the token records live. A window that is not already carrying
+   another feature of this shape is the only one it fits in whole.
 3. **M9 is a core change to a contention-prone file.** `internal/runner/spend.go` is core, and every
    runner task in whatever release carries M9 shares it (§4). Landing it in a full window means
    either a declared single writer is overridden or two changes are serialised by hand; neither is
@@ -363,9 +554,10 @@ Why the implementation is **0.20.0 or later**, and not the next minor:
    both Terraform that the update applies. Since this folder was written, **managed mode landed** and
    the gate covers `fugaro update` itself (`internal/cli/managed_gate.go`,
    `docs/managed-agent-converge/README.md`:20), so the migration this task carries — with the
-   convergence test that an installation at the previous version ends with exactly M4's resources —
-   runs through the gate like every other managed step. That is a heavier migration than it was, and
-   it belongs in a release that is not already carrying the same work for three other features.
+   convergence test that an installation at the previous version ends with exactly M4's resources,
+   **the store and its one grant included** — runs through the gate like every other managed step.
+   That is a heavier migration than it was, and it belongs in a release that is not already carrying
+   the same work for three other features.
 
 **What would move it earlier:** if the owner answers D920 the other way (P8's IAM invoker), M5's
 OAuth half disappears, and M1–M3 plus a small M7 fit into whatever release is next. Nothing else
@@ -374,9 +566,13 @@ here is small enough to pull forward.
 ## 6. Test rules for whoever implements this
 
 - **Hermetic, always.** No live project, no real Firebase, no real Cloud Logging: `internal/gcpfake`,
-  `internal/testutil`, `t.TempDir()`. The rules tests use the package's own emulator harness. The one
-  thing this plan cannot prove hermetically is the public reachability of M4's service, which is
-  [reconciliation.md](reconciliation.md) §6's first owner check.
+  `internal/testutil`, `t.TempDir()`. The rules tests use the package's own emulator harness; the
+  store's own tests use the GCS fake, whose conditional writes are the generation-matched ones a
+  bucket-backed store stands on (`internal/gcpfake/gcs.go:34`), so M2 is provable without a bucket.
+  **Two things this plan cannot prove hermetically, and both are owner checks in
+  [reconciliation.md](reconciliation.md) §6:** the public reachability of M4's service (check 2), and
+  **who the store's IAM actually admits (check 8)** — a plan-level test reads the plan, and the plan
+  is not the project's policy.
 - **Named tests, never whole packages.** `internal/cli` and `internal/runner` are never run whole;
   every command is `GOFLAGS=-p=2 go test ./<package>/ -run 'Name|Name' -count=1`.
 - **A test that reads a changed file runs.** For every file a task touches, the implementing run
@@ -415,3 +611,52 @@ here is small enough to pull forward.
   wrote this folder touched `docs/` and its own test and nothing else. The implementation tasks of §3
   may touch `SECURITY.md` when they run, because by then the change is theirs and the repository's
   standing rule is that a security-relevant change updates it in the same PR (§4).
+
+## 8. The store the records move to (D935): the three candidates, and the open item
+
+**This is the one thing D935 left open, and it is the owner's to answer.** All three candidates are
+"a store of their own whose IAM names the coordinator's account"; they differ in **what that IAM can
+name**, which is the whole question, and in what the store costs to write against. The record shapes,
+the rule that only hashes are stored, D930's rotation-and-replay revocation and D930's one-delete
+revocation are identical in all three. **The plan recommends the third, M2 and M4 name it, and both
+wait for the answer** (§3). **No price appears anywhere in this section**, because none appears
+anywhere in this folder ([README.md](README.md), "Names and figures"): "what it costs" is work and
+risk, and never money.
+
+| | A second Realtime Database instance | Firestore | **A bucket of its own, prefix `mcpauth/`** — recommended |
+| --- | --- | --- | --- |
+| **What it is** | a new `google_firebasedatabase_instance`, its own rules publish in the same `update`, its URL in the coordinator's configuration | a `mcpauth` collection in the project's existing database, or a named database of its own | a new bucket (`fmgd-<gcp-project>-mcpauth`) with every record under `mcpauth/` |
+| **What it costs** | **the most, and it does not work on its own.** The project-level bindings are inherited by every instance, so the new one is readable by every launcher and operator and writable by every admin, budget admin and the history account **until those three bindings are re-scoped** from the project to the default instance alone (`deploy/terraform/gcp/modules/firebase/iam.tf:44`, `:53`, `:81`) — a migration of the access every launcher already uses for `fugaro watch` and `budget show` (`:43`), in the release that also ships a public endpoint. The store code is the closest to what M2 first planned (the database client, key paths), which is the one thing in its favour | **the smallest to add and the one that cannot be made private at all.** `roles/datastore.viewer` is granted project-wide to `local.people ∪ local.admins` (`deploy/terraform/gcp/modules/firebase/iam.tf:65`) and the history account holds `roles/datastore.user` (`:96`); Firestore's data roles have **no per-database and no per-collection narrowing** to re-scope to, so a named database is reached by the same project-level binding as the default one. Getting out would mean withdrawing `datastore.viewer` from the people lists — which takes the spend history's own read with it — and the spend history is not this work's to break | **no transactions and no query language.** The store is objects, written with `internal/blobx`'s generation-matched primitives (`internal/blobx/blobx.go:1`), so the audit record is a prefix listing rather than a query, and each of rotate, replay-detect and revoke is a compare-and-swap that a test has to prove rather than a transaction that gives it. Everything else is a seam the repository already has, and the GCS fake implements the one precondition the store needs (`internal/gcpfake/gcs.go:34`) |
+| **The new Terraform** | one `google_firebasedatabase_instance`, plus the rules publish to it, plus **the re-scoping of the three project-level bindings above**, which is the part that touches what exists | one `google_firestore_database` for a named database, and **none at all** for a collection in the existing one | one `google_storage_bucket` — uniform bucket-level access and public access prevention enforced, because the installer's plan review refuses a bucket without both (`internal/infra/tf/cover.go:2199`) — and one `google_storage_bucket_iam_member`. Both types are already covered (`internal/infra/tf/cover.go:64`), and the managed deployer's conditioned storage role already reaches a bucket carrying the `fmgd-` prefix (`deploy/terraform/gcp/modules/installation/deployer.tf:142`, `:219`, `:242`), so `fugaro update` applies it with **no new operator permission and no second command** |
+| **The IAM binding it needs** | **none that is narrow.** There is no per-instance binding in the shape the rest of this installation uses: the only way to keep the four sets of people out is to stop granting them project-wide, which is the re-scoping above — and that changes what a launcher has today | **not available.** The binding cannot be narrowed to the records, so the store is readable by everyone `datastore.viewer` names and writable by the history account. This is the row that rules Firestore out rather than pricing it | **one binding, one member:** `roles/storage.objectAdmin` for the coordinator's own service account on that bucket, and nothing else. Every storage grant in this installation is bucket-scoped (`deploy/terraform/gcp/modules/installation/iam.tf:207`, `:222`, `:238`; `coordinator.tf:76`) and no project-level storage binding exists anywhere, so a bucket with one member has exactly one reader. **A prefix of the runs bucket is not this option:** every launcher reads that whole bucket (`deploy/terraform/gcp/modules/installation/iam.tf:222`) and every operator holds `objectAdmin` on it (`:207`), so the records would be readable by both lists — the finding F32 is, one resource over |
+| **The owner-run live check** | after the re-scoping: read the new instance's `mcpauth` node as a launcher and as a budget admin and expect a refusal — **and then confirm `fugaro watch` and `fugaro report` still work**, which is the half of this option that can break an installation | the same read, which **fails**: the launcher's own credentials reach the documents. The check is what turns this row from a preference into a fact | with a launcher's own credentials and with a budget admin's, read and list the store's prefix and expect a refusal; with the coordinator's service account, read one record and expect it to work; and confirm the store's bucket is not the runs bucket (check 8, [reconciliation.md](reconciliation.md) §6) |
+
+**Why the recommendation is the bucket.** The first candidate's IAM cannot be narrowed without
+re-scoping grants four sets of people already hold, which is a bigger change to a working
+installation than the store itself; the second's cannot be narrowed at all, so it is not a candidate
+— it is the finding again, one resource over. The third is the only one whose IAM **can be exactly one
+account**, which is the sentence D935 answered with, and the one thing the ruling actually requires.
+What it gives up is transactions, and the repository already has the primitives for the two places a
+transaction would otherwise be doing the work (`internal/blobx`, and the GCS fake's generation
+precondition), which is a smaller risk than either of the other two rows' IAM.
+
+**The open item, and what it blocks.** **The owner answers which of the three.** M2 and M4 do not
+start until then, and §2 puts both in the front levels for that reason; nothing else in this plan
+waits on it, because every other task builds against M2's `Store` interface and not against a store.
+
+**What the store adds to the live check** ([reconciliation.md](reconciliation.md) §6, check 8, which
+is owner-run like the rest): three readings no hermetic test can stand in for — a launcher refused, a
+budget admin refused, the coordinator's service account admitted — plus the confirmation that the
+store's bucket is not the runs bucket. It is check 2's shape for a second resource: the claim is about
+who reaches something, and only the project can answer it.
+
+**What the store adds to `### For operators`.** One resource and one binding, in the same
+`fugaro update` that already creates the service, its account and its invoker binding — **no second
+command, no `gcloud` line, no per-store flag, and no opt-in of its own** (§3, M4). That is the HARD
+RULE read at this section: the store's whole operator story is the one line the front door already
+carries, and an owner who never passes `--mcp-server` never acquires either the store or its grant.
+
+**What this section does not decide.** Nothing else. The record shapes belong to M2, the rule that
+only hashes are at rest belongs to D922, rotation and revocation belong to D930, and who may read the
+audit record belongs to D933 — none of them moves with the store, and a question any of them raises is
+a question for its own decision rather than a fourth candidate here.
