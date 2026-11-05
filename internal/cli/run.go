@@ -1793,12 +1793,19 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	if def := env.lc.DefaultClaudeAccount; def != "" && def != config.DefaultClaudeAccount {
 		switch auth {
 		case "api-key":
+			// The account it returns is the stage's resolution and not this
+			// launch's; what the launch wants here is the rule's own refusals,
+			// raised for a stage the run has whether or not this call asked for
+			// it.
 			for _, at := range config.MixedAccountStages {
 				if _, err := mixedStageAccount(ctx, env, repo, at, auth, co); err != nil {
 					return "", err
 				}
 			}
 		case "oauth", "vertex", config.AuthCascade:
+			// Nothing to check here: the oauth walk checks the default itself
+			// when it picks it, and neither of the other two reaches a Claude
+			// OAuth credential at all.
 		default:
 			if err := claudeAccountMembership(env, repo, def); err != nil {
 				return "", err
