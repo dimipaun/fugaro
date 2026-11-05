@@ -2361,6 +2361,40 @@ func TestSecretsSetRefusesAWorkflowSecretWithoutAnEntry(t *testing.T) {
 	}
 }
 
+// TestSecretsSetRefusesAWorkflowSecretWhoseEntryListsNobody: the new block's
+// entry is the whole gate, so an entry present with an empty allow_data_to
+// mounts nothing and --project-wide is refused for it (D1262) — and the
+// refusal is the one that names the member to write, not the "has no
+// project-wide meaning" sentence a name in neither block gets: the name does
+// have a project-wide meaning here, and this entry is exactly what it is
+// missing.
+func TestSecretsSetRefusesAWorkflowSecretWhoseEntryListsNobody(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, "workflow_secrets:\n  npm-token: {}\n")
+	appCheckout(t)
+	spy := &readerSpy{Reader: strings.NewReader(tokenValue)}
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetIn(spy)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"secrets", "set", "npm-token", "--project-wide"})
+	err := cmd.Execute()
+	want := "npm-token is not stored project-wide: workflow_secrets.npm-token must list at least one repository in allow_data_to"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want the sentence %q", err, want)
+	}
+	if spy.read {
+		t.Fatal("the value was read before the refusal")
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "npm-token")) != nil {
+		t.Fatal("a refused value was stored")
+	}
+	if strings.Contains(out.String()+errOut.String()+err.Error(), tokenValue) {
+		t.Fatal("the value leaked")
+	}
+}
+
 // TestSecretsSetStoresAWorkflowSecretTheEntryLists: the bare command from a
 // checkout the workflow_secrets entry lists stores the project's copy, exactly
 // as a project_secrets entry makes the bare command store one (D1265). The
@@ -2444,5 +2478,47 @@ func TestSecretsSetNeverStoresTheValueAsAnArgument(t *testing.T) {
 	}
 	if sm.Latest(gcp.SecretID(appSlug, "npm-token")) != nil {
 		t.Fatal("a value passed as an argument was stored in the repository's own copy")
+	}
+}
+
+// TestSecretsLsProjectWideShowsTheWorkflowBlocksReach: the ALLOWED column is
+// the operator's only view of who may mount a project copy, and the new block
+// is a source of that answer for a name no other source claims (D1262). A
+// workflow secret read through project_secrets alone would print the "-" that
+// reads as nobody over an entry that lists a repository, which is the same
+// false answer the store-time note and the init prompt must not give.
+func TestSecretsLsProjectWideShowsTheWorkflowBlocksReach(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, "workflow_secrets:\n  npm-token: { allow_data_to: [\"acme/app\"] }\n")
+	id := gcp.ProjectSecretID("aurora", "npm-token")
+	sm.Seed(id, map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue,
+		gcp.LabelProject: "aurora",
+		gcp.LabelSecret:  "npm-token",
+	}, []byte(tokenValue))
+
+	out, _, err := execute(t, "secrets", "ls", "--project-wide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "acme/app") {
+		t.Errorf("ALLOWED does not name the entry's repository:\n%s", out)
+	}
+	if strings.Contains(out, "no repository") {
+		t.Errorf("ALLOWED reads an entry that lists this repository as nobody:\n%s", out)
+	}
+	out, _, err = execute(t, "secrets", "ls", "--project-wide", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list []struct {
+		Name    string
+		Allowed []string
+	}
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		t.Fatalf("ls --project-wide --json = %s, %v", out, err)
+	}
+	if len(list) != 1 || strings.Join(list[0].Allowed, ",") != "acme/app" {
+		t.Errorf("allowed = %+v, want the entry's own list", list)
 	}
 }
