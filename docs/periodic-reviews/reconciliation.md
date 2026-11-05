@@ -333,13 +333,16 @@ already read "by default … with an explicit flag", so what actually moves is G
 (E2 below).
 
 **And the rulings were read against the code again on 2026-11-05, after the plan's own review.** Four
-things the ruling's sentences left implicit are decided, and each is written where the task meets it:
+things the ruling's sentences left implicit were put to the owner and **answered the same day, each
+as recommended**, and each is written where the task meets it:
 the job's listing is a **prefix-limited grant on `runs/`, proven by an owner-run check before its
 Terraform lands** (E4); **`reports/` has one writer, the job, and launchers read it** — no launcher
 write grant, and no job account but the reports job (E4, E5); enabling a job is **a setting `fugaro
 update` writes** for both the reports job and the 0.18.0 catalog check (E4); and the `reports/`
-lifecycle rule is the bucket's **fifth**, not its fourth (E3). One question they leave open is
-**Open items**: E8's bucket default has no writer a launcher may use (E8 below).
+lifecycle rule is the bucket's **fifth**, not its fourth (E3). **The answers are dated 2026-11-05 and
+marked "as recommended" where they sit** (E4's three bullets, E5's credential paragraph). Two
+questions they leave open are **Open items**: E8's bucket default has no writer a launcher may use
+(E8 below), and whether `fugaro settings set` may write `jobs.*.paused` (E4 below).
 
 **This run does not rewrite [spec.md](spec.md).** The README's file table reads spec.md below this
 file ("Where it disagrees with `spec.md`, it wins"), and spec §3, §5 and §6 keep the 2026-11-04 text
@@ -424,18 +427,27 @@ the repositories' summary blocks and the budget database's figures, as `fugaro r
 reads them — into the bucket. **A report key is the period**; a rerun overwrites with the same
 content or skips.
 
-**What the owner settled about that account on 2026-11-05, after the review of the plan.** Three
-things the ruling's own sentence left to the code, and each is now decided:
+**What the owner settled about that account on 2026-11-05, after the review of the plan (answered
+2026-11-05, as recommended).** Three things the ruling's own sentence left to the code, and each is
+now decided:
 
-- **The listing half, and the check that proves it.** Reading the run records is not one grant: a
-  condition on `resource.name` **grants no listing** (`docs/design/bucket-iam.md` §2.3, live check 7's
-  403 on listing `runs/`; `docs/task-governance/reconciliation.md` already flags the same doubt), so
-  the account needs `objectViewer` on `runs/` **through the prefix-limited listing mechanism**
-  (`storage.googleapis.com/objectListPrefix`, unverified — bucket-iam §4, V7). The owner ruled that
-  **an owner-run live check proves it before the job's Terraform lands**: a service account with that
-  grant lists `runs/<slug>/` and cannot list `tokens/` or `cache/`. **If it fails, the plan stops and
-  asks** — the bucket-wide viewer a listing otherwise needs is not planned as a fallback, because it
-  would read `tokens/` and `cache/` too.
+- **The listing half, the full condition it needs, and the check that proves it.** Reading the run
+  records is not one grant: a condition on `resource.name` **grants no listing**
+  (`docs/design/bucket-iam.md` §2.3, live check 7's 403 on listing `runs/`;
+  `docs/task-governance/reconciliation.md` already flags the same doubt), so the account needs
+  `objectViewer` on `runs/` **through the prefix-limited listing mechanism**
+  (`storage.googleapis.com/objectListPrefix`, unverified — bucket-iam §4, V7). **And the reverse
+  holds too, which the plan states in full:** a condition carrying only `objectListPrefix` **cannot
+  read an object**, so **both** grants carry **both** clauses for their own prefix — the
+  `resource.name` one for the reads, the writes and the deletes, the listing one for the listing —
+  `objectViewer` on `runs/` and `objectUser` on `reports/`. The listing half is not a `runs/`
+  speciality either: R11's stored reader lists `reports/<slug>/<YYYY>/` the way today's reader lists a
+  checkout's folder twice over, so `reports/`'s grant needs its listing clause as well. The owner
+  ruled that **an owner-run live check proves it before the job's Terraform lands**: a service account
+  holding both conditioned grants lists `runs/<slug>/` and `reports/`, reads one object under `runs/`,
+  and is refused reading a `tokens/` object and listing `tokens/` or `cache/`. **If it fails, the plan
+  stops and asks** — the bucket-wide viewer a listing otherwise needs is not planned as a fallback,
+  because it would read `tokens/` and `cache/` too.
 - **`reports/` has one writer, the job, and launchers read it.** The job holds
   `roles/storage.objectUser` on `reports/`; a person holds **read only** — which their existing
   unconditioned bucket-wide `objectViewer` already gives, so nothing new is granted to a person and
@@ -450,7 +462,10 @@ things the ruling's own sentence left to the code, and each is now decided:
   `gcloud scheduler jobs resume` is undone by the next update, because the module always applies
   `paused`. **The 0.18.0 catalog check has the same gap from the other side** — its `paused` is a
   Terraform variable with no field in `CatalogCheckSpec` — and the task that adds the reports job's
-  field adds the catalog check's with it, with the HARD RULE's convergence test.
+  field adds the catalog check's with it, with the HARD RULE's convergence test, which asserts both
+  jobs are kept rather than replaced and stay paused across two updates until the setting says
+  otherwise. The key is written by hand in the project layer: whether the generic `fugaro settings
+  set` may write it is **Open item 6**, not decided here.
 
 *Why:* a scheduler per orchestrator would write the same report many times, and each copy would need
 a credential; one job holds one narrow account and one schedule.
@@ -476,7 +491,7 @@ per-repository subfolders, the aggregate beside them) and opens a pull request. 
 a git credential**, and no code repository gets a report committed unless it is itself the designated
 project repo.
 
-**Whose credentials read the source (settled 2026-11-05).** Not the run's: a job account reaches
+**Whose credentials read the source (answered 2026-11-05, as recommended).** Not the run's: a job account reaches
 `runs/`, `cache/` and `locks/` only, and E4's answer gives `reports/` to **no** job account. The read
 is the **starting person's launcher account**, whose bucket-wide `objectViewer` covers the prefix, and
 how the bytes reach the run is the designated-repo design item's to settle (E6).
@@ -518,7 +533,7 @@ over time at all.
 [spec.md](spec.md) §5's "the reports **already committed** beside this one" and §3's three-writers
 list; this file's F4 and F2; the README's "What it is" ("the fixed pattern rules read the committed
 reports over time") and its file table; `plugin/skills/working/reference/periodic-reviews.md` §3's
-opening sentence; the comment at `internal/digest/patterns.go:91` — a code change, and R4's and R7's
+opening sentence; the comment at `internal/digest/patterns.go:91` — a code change, and R4's and R11's
 task, not this run's. Spec §5 is read through this section, not rewritten (see §5's opening).
 
 ### E8. `fugaro runs digest` generates to the bucket (ruling 7)
