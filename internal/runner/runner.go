@@ -3646,8 +3646,10 @@ var oauthLimitPhrases = []string{"usage limit", "hit your limit", "rate_limit_er
 
 // subscriptionUsageLimit reports whether a stage's own text says it stopped on
 // the OAuth account's subscription usage limit rather than on anything about
-// the work. Only an OAuth run is asked: these phrases are the subscription's,
-// and a stage authenticated any other way has no allowance to be out of.
+// the work. Only an OAuth run is asked: the phrases are the subscription's, and
+// a run authenticated any other way holds no allowance of its own -- a cascade
+// run's credential is the credentials service's, and a spent one there is the
+// service's own answer to give (C1.17), not this text's.
 func subscriptionUsageLimit(auth, text string) bool {
 	if auth != "oauth" {
 		return false
