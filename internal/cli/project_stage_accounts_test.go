@@ -151,4 +151,21 @@ func TestAccountChoiceKeysAreNeverShared(t *testing.T) {
 			t.Errorf("sharedForbidden does not name %s, so a published account choice would be read", key)
 		}
 	}
+	for name, block := range map[string]string{
+		"the project default": "default_claude_account: acme-overflow\n",
+		"a stage's account":   "stages:\n  review:\n    claude_account: acme-overflow\n",
+		"the auto switch":     "claude_account_auto: true\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseShared([]byte(validShared()+block), sharedAnchor)
+			if err == nil {
+				t.Fatalf("a shared config carrying %s was accepted", block)
+			}
+			for _, want := range []string{"never published", "fugaro update"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not name %q: %v", want, err)
+				}
+			}
+		})
+	}
 }
