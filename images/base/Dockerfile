@@ -76,6 +76,13 @@ ARG UV_SHA256_AMD64=1468ebd5a5541121837c5a2817b9972ba6090fa6caa3d142620850a47fb7
 ARG UV_SHA256_ARM64=3ccfb6af6e242433eb552f7d9676abd5412c6595c497e990d9c8cb7b5bd4d2c3
 ARG GRAPHIFY_PYTHON_VERSION=3.12.15
 ARG GRAPHIFY_VERSION=0.9.89
+# The date the build is taken to have happened on, which is what makes two
+# builds of the same tree agree on the byproducts that a package install writes
+# from the clock (images/base/byproducts.sh). It is not a pin: nothing passes
+# it by hand, and images/build-base.sh defaults it to the checkout's last
+# commit, so the CLI's `fugaro image build` path and CI agree without either
+# naming a date.
+ARG SOURCE_DATE_EPOCH=0
 ENV HOME=/home/fugaro \
     PATH=/home/fugaro/.local/share/mise/shims:/home/fugaro/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LANG=C.UTF-8 \
@@ -98,7 +105,8 @@ ENV HOME=/home/fugaro \
 # ~/.cache/mise, fugaro's and empty, like corepack and ms-playwright: a
 # derived build's mise cache mount needs a target, and BuildKit creates a
 # missing one as root, which the run's mise cannot write.
-RUN apt-get update \
+RUN --mount=type=bind,source=images/base/byproducts.sh,target=/tmp/byproducts.sh \
+    apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       autoconf automake bash bat bind9-dnsutils build-essential bzip2 ca-certificates clang cmake curl \
@@ -122,7 +130,8 @@ RUN apt-get update \
  && install -d -o fugaro -g fugaro -m 0700 /work/creds \
  && install -d -o fugaro -g fugaro -m 0755 /home/fugaro/.cache /home/fugaro/.cache/corepack \
       /home/fugaro/.cache/mise /home/fugaro/.cache/ms-playwright /home/fugaro/.config \
-      /home/fugaro/.local /home/fugaro/.local/bin /home/fugaro/.local/share
+      /home/fugaro/.local /home/fugaro/.local/bin /home/fugaro/.local/share \
+ && sh /tmp/byproducts.sh
 
 # 1b. Single-binary tools, each checksummed per architecture by fetch.sh: gh
 # (the runner configures it with the run's token at run time), Mike Farah's
@@ -202,7 +211,8 @@ RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
 # TestDeepSeekHarnessNotHalfWired pins that the three move together).
 COPY --chmod=0755 images/base/install-node.sh /usr/local/lib/fugaro/install-node
 COPY images/base/harnesses/package.json images/base/harnesses/package-lock.json /opt/fugaro/harnesses/
-RUN set -eu; \
+RUN --mount=type=bind,source=images/base/byproducts.sh,target=/tmp/byproducts.sh \
+    set -eu; \
     NODE_PREFIX=/opt/fugaro/node /usr/local/lib/fugaro/install-node keyring; \
     NODE_PREFIX=/opt/fugaro/node /usr/local/lib/fugaro/install-node "$HARNESS_NODE_VERSION"; \
     cd /opt/fugaro/harnesses; \
@@ -214,7 +224,8 @@ RUN set -eu; \
       printf '#!/bin/sh\n# %s on the harnesses'"'"' own Node, which is not on PATH (design base-image.md section 6).\nexec /opt/fugaro/node/bin/node %s "$@"\n' \
         "$name" "$entry" > "/usr/local/bin/$name"; \
       chmod 0755 "/usr/local/bin/$name"; \
-    done
+    done; \
+    sh /tmp/byproducts.sh
 # The binary harnesses: each release archive is checksummed per architecture
 # and its one executable installed into /usr/local/bin.
 RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
@@ -254,6 +265,14 @@ RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
 # pip there, and its vendored certifi/urllib3/msgpack (pip/_vendor/
 # bom.cdx.json, read by Trivy) would otherwise age into scan failures, as
 # pip 26.2.1's certifi 2026.6.17 did in v0.9.6 (GHSA-6q48-6c7w-9gw2).
+# `uv pip install --compile-bytecode` writes .pyc in the default, timestamp
+# invalidation mode, whose header carries each source's mtime as it was
+# extracted (and Python's own 99 .pyc under the managed CPython's lib were
+# written the same way): two builds of the same tree then disagree on every
+# bytecode file, which is a difference in the image with no difference in the
+# tree. compileall re-writes them all with unchecked-hash, whose header is the
+# source's hash instead, at both roots -- the venv graphify runs from and the
+# managed interpreter's own lib.
 COPY images/base/graphify/requirements.lock.txt /opt/fugaro/graphify/requirements.lock.txt
 RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
     set -eu; arch=$(dpkg --print-architecture); \
@@ -279,6 +298,8 @@ RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
     for p in /opt/fugaro/graphify/python/cpython-*/bin/python3; do \
       if "$p" -c 'import pip' 2>/dev/null; then echo "base: $p still has pip" >&2; exit 1; fi; \
     done; \
+    /opt/fugaro/graphify/venv/bin/python -m compileall -q -f --invalidation-mode unchecked-hash \
+      /opt/fugaro/graphify/venv/lib /opt/fugaro/graphify/python/cpython-*/lib; \
     /opt/fugaro/graphify/venv/bin/graphify --version >/dev/null; \
     printf '#!/bin/sh\n# graphify on its own private Python venv, which is not on PATH (design base-image.md section 6).\n# A caller'"'"'s PYTHONPATH/PYTHONHOME/PYTHONSTARTUP/PYTHONUSERBASE could reach into this private venv and shadow its own numpy/tree-sitter.\nunset PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONUSERBASE\nexport PYTHONNOUSERSITE=1\nexec /opt/fugaro/graphify/venv/bin/graphify "$@"\n' \
       > /usr/local/bin/graphify; \
