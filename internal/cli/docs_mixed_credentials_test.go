@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -17,16 +18,20 @@ import (
 //
 // The rule itself, in one sentence: a run whose own credential is a provider
 // key (`agent.auth: api-key`) may declare ONE stage-scoped Claude OAuth
-// account — a name of the owner's local `claude_accounts`, chosen by
-// `stages.<stage>.claude_account` or `default_claude_account` (accounts-add
-// spec §11.1-§11.2) — and use it for the senior `review` (level 2) and the
-// adversarial `adversarial` (level 3) stages only, never `implement` and
-// never `review_first`, and never alongside a second provider's key. What the
-// mix costs is stated rather than hidden: the account's token sits in the
-// runner's process environment like the provider key already does, so a
-// prompt-injected coder can read it from `/proc/<pid>/environ` — the same
-// exposure class, and the whole of the reason the coder's own environment is
-// an allow-list that carries neither.
+// account — a name of the owner's local `claude_accounts`, chosen by that
+// stage's own key, `stages.<stage>.claude_account` (accounts-add spec
+// §11.1-§11.2, rung 2; `default_claude_account` is the account an `oauth` run
+// gives every stage and never a way into this mix) — and use it for the senior
+// `review` (level 2) and the adversarial `adversarial` (level 3) stages only.
+// The stage rule is an allow-list rather than a denylist, so every other stage
+// is refused: `implement`, `review_first` (level 1 is the cheap first line and
+// runs on the coder's model), `fix`, `plan`, and any stage a later recipe adds.
+// A second provider's key is still never mixed in. What the mix costs is stated
+// rather than hidden: the account's token sits in the runner's process
+// environment like the provider key already does, so a prompt-injected coder
+// can read it from `/proc/<pid>/environ` — the same exposure class, and the
+// whole of the reason the coder's own environment is an allow-list that carries
+// neither.
 //
 // Mutation (run, restored on 2026-11-04): the rule sentence dropped from the
 // design note's §11, the exception dropped from docs/multi-model.md's §5
@@ -58,13 +63,31 @@ func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 			t.Errorf("%s §11 never names %s: the rule is about which stages the account may serve", path, want)
 		}
 	}
+	// The two stages the account may serve are the whole of the allow-list, and
+	// the sentence that permits them is where a reader learns the rule is a
+	// permission rather than a ban: read with "and no other stage", a rule that
+	// named a third stage and said nothing else would still fail here.
+	permitted := fmt.Sprintf("the account serves `%s` and `%s` and no other stage",
+		recipe.StepReview, recipe.StepAdversarial)
+	if !strings.Contains(section, permitted) {
+		t.Errorf("%s §11 does not state the allow-list as %q: the account may serve exactly those two stages, and a rule that lists refusals instead lets the next stage a recipe adds read as permitted", path, permitted)
+	}
 	for _, want := range []string{
-		// The rule, the one credential it permits and the two keys that
-		// choose it.
+		// The rule, the one credential it permits and the one key that chooses
+		// it — the stage's own. `default_claude_account` is named to refuse it:
+		// it is an oauth run's default for every stage, and reading it here
+		// would turn every api-key repository the account's allow_data_to
+		// already covers into a mix nobody declared.
 		"one stage-scoped Claude OAuth account",
 		"`stages.<stage>.claude_account`",
-		"`default_claude_account`",
+		"never opts an `api-key` run into this mix",
 		"`agent.auth` is `api-key`",
+		// The rule is an allow-list, so a stage the tree does not have yet is
+		// refused by the rule rather than by omission.
+		"An allow-list, not a denylist",
+		"any stage a later recipe adds",
+		"`fix`",
+		"`plan`",
 		// What the run may not do: the coder's stages are the coder's
 		// credential, and a second provider's key is still never mixed in.
 		"never `implement`",
@@ -75,11 +98,15 @@ func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 		// only ever reaches Anthropic's own endpoint.
 		"CheckProviderAuth",
 		// The threat model: who holds the token, what a hostile coder can
-		// reach, and what is allow-listed.
+		// reach, and what is allow-listed. The redaction is the run's from
+		// bootstrap rather than the stage's, and it builds on the check that
+		// already refuses to pair an oauth environment with a gateway.
 		"### The threat model",
 		"`/proc`",
 		"allow-list",
 		"BuildEnv",
+		"from bootstrap, for every stage",
+		"auth: oauth never goes through the gateway",
 		// Failure behaviour: no silent fallback to another credential and no
 		// ready verdict on a review that never ran.
 		"### A review stage that fails",
@@ -153,6 +180,14 @@ func TestDocsMultiModelRecordsTheReviewAccountException(t *testing.T) {
 		"the runner's environment",
 		"allow-list",
 		"design/mixed-credentials.md",
+		// The one key that admits the mix, and the one that does not: the
+		// project default an oauth run uses for every stage is not a way in.
+		"chosen by the stage's own key and no other",
+		"stages.review.claude_account",
+		"never a way into this mix",
+		// The run's own anthropic-api-key mount is not a third credential of
+		// this kind: it is what an api-key job already carries for the gateway.
+		"anthropic-api-key",
 		// The gateway does not see the stage, so its cap does not bound it:
 		// the limit §6 and §7 of the design note state, said where a reader
 		// meets the credential.
@@ -179,11 +214,16 @@ func TestSecurityMdStatesTheMixedRunResidual(t *testing.T) {
 		"`review`",
 		"`adversarial`",
 		"the coder's own environment is an allow-list",
+		"the coder's stages' environment carries neither",
 		"`/proc`",
 		"the same exposure class",
 		"no dollar cap of the gateway's on the stages that use it",
 		"revocable at the account",
 		"design/mixed-credentials.md",
+		// The ruling is a ruling, not behaviour: a security document that
+		// states an unbuilt mechanism in the present tense, inside a list of
+		// today's gaps, claims a boundary the tree does not have yet.
+		"not built yet (B1",
 	} {
 		if !strings.Contains(limits, want) {
 			t.Errorf("%s's \"### Known limits\" never says %q: the residual the ruling accepts is a limit this document states, not behaviour it leaves a reader to infer", path, want)
