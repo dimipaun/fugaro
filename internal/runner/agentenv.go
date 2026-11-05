@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"os"
@@ -21,6 +22,31 @@ var modelCredentialVars = gitops.ModelCredentialVars
 func strip(repo *gitops.Repo) *gitops.Repo {
 	repo.StripEnv = modelCredentialVars
 	return repo
+}
+
+// registerModelCredentials registers the model credentials the runner's own
+// environment holds with the redactor, before anything runs. A run whose own
+// credential is a provider key holds the gateway's key, and a mixed run
+// (docs/design/mixed-credentials.md §11) holds the stage-scoped account's
+// token besides: the job mounts it, or a local run is started with it, and one
+// of the run's stages is served from it. Every one of them is a value a print
+// of the runner's environment — a transcript, a stage's error reason — must
+// not carry.
+//
+// A value too short to redact safely is skipped with a warning that names only
+// the variable, the way addMountedSecrets skips one. A stage whose token is
+// too short to redact is refused where its environment is built
+// (agent.OAuthStageEnv) rather than run on it.
+func (r *run) registerModelCredentials() {
+	for _, k := range modelCredentialVars {
+		switch v := envLookup(r.d.Env, k); {
+		case v == "":
+		case len(v) < minSecretLen:
+			r.d.Log.Warn("a model credential is too short to redact", "env", k)
+		default:
+			r.addSecret(v)
+		}
+	}
 }
 
 // maxSettingsFile bounds a settings file the routing check reads.
@@ -45,6 +71,78 @@ func (r *run) parentEnv() map[string]string {
 	return m
 }
 
+// resolveMixedStages answers the run's stage accounts: the stages of the one
+// mix the owner's B0 ruling admits, and the account each of them runs on
+// (docs/design/mixed-credentials.md §11). A run whose own credential is a
+// provider key — agent.auth is api-key — may hold exactly one stage-scoped
+// Claude OAuth account, declared by that stage's own key in the project's
+// published policy, and it serves the senior review and the adversarial review
+// and no other stage. Every other run, and every node that names no stage
+// account, answers an empty map: a run's own stages are the gateway's.
+//
+// The stage list is an allow-list and it is this function's, never the node's:
+// a node that named a stage outside it — the coder's own, the cheap first
+// review, a fix — is not served by the account whatever that node says. Such a
+// node is refused before the launch (config.CheckStageAccountMix, applied by
+// the launcher and by `fugaro validate`); the run itself never puts the
+// account's token anywhere but the two stages the ruling names.
+//
+// It is read once, at bootstrap, and the answer is what every reader of a
+// stage's credential stands on: the stage's own environment (stageAgentEnv),
+// its pins (stagePins) and its managed settings (writeManagedSettings).
+func (r *run) resolveMixedStages(ctx context.Context) (map[string]string, error) {
+	if r.cfg == nil || r.cfg.Agent.Auth != "api-key" {
+		// The mix exists to give an api-key run a Claude review credential it
+		// otherwise has none of. Under oauth the keys keep the meaning the
+		// accounts design gives them, and that chain is not this one: a run
+		// under it holds one account, not a stage's.
+		return nil, nil
+	}
+	p, found, err := r.projectPolicy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !found || p == nil {
+		return nil, nil
+	}
+	out := map[string]string{}
+	for _, stage := range config.MixedAccountStages {
+		if name := p.ClaudeAccountStages[stage]; name != "" {
+			out[stage] = name
+		}
+	}
+	return out, nil
+}
+
+// stageAccount is the Claude OAuth account the stage runs on, "" for every
+// stage that runs on the run's own credential. The map it reads holds the two
+// stages the ruling admits and nothing else (resolveMixedStages).
+func (r *run) stageAccount(stage string) string { return r.mixedStages[stage] }
+
+// stageAgentEnv is the environment a stage's own process runs in: the run's
+// own, with the stage's pins, or — for a stage the run's stage account serves
+// — the run's own with the gateway's routing dropped and the account's token
+// in its place (agent.OAuthStageEnv), plus the level's effort where one
+// applies. The account is recorded as the stage is given it
+// (recordStageAccount, spec §11.5).
+//
+// A stage whose token the runner's environment does not hold is refused here,
+// before its agent starts: the run was configured to serve the stage with an
+// account it does not hold, and the one answer the ruling forbids is running
+// that stage on the coder's credential instead.
+func (r *run) stageAgentEnv(stage string, pins map[string]string) ([]string, error) {
+	account := r.stageAccount(stage)
+	if account == "" {
+		return gitops.WithVars(r.env, pins), nil
+	}
+	env, err := agent.OAuthStageEnv(r.env, envLookup(r.d.Env, config.ReservedSecrets[config.ClaudeOAuthToken]))
+	if err != nil {
+		return nil, err
+	}
+	r.recordStageAccount(stage, account)
+	return gitops.WithVars(env, pins), nil
+}
+
 // stagePins are the pins of a stage's role: its model, the background model
 // and its output limit per call. Its model is the review level's own when the
 // stage is a review stage a layer named one for (stageModel), and the role
@@ -53,8 +151,17 @@ func (r *run) parentEnv() map[string]string {
 // set. When the stage's model or the background model is served by a provider
 // route, agent.ProviderRouteVars are added: a Claude stage is never touched by
 // them.
+//
+// A stage the run's stage account serves has none either, whatever the
+// gateway's state: the pins are its route table's and its price table's, and
+// that stage's calls go straight to Anthropic on the account, where neither
+// applies. Its model reaches Claude Code as the --model flag (agent.Args), and
+// a pin left in place would be a second answer to which model the stage runs —
+// the coder's background pin among them, which named a provider model. The
+// review level's own effort is not a routing pin and is merged in by its
+// caller (applyStageEffort); a level that names one keeps it.
 func (r *run) stagePins(stage string) map[string]string {
-	if !r.gatewayOn() {
+	if !r.gatewayOn() || r.stageAccount(stage) != "" {
 		return nil
 	}
 	role := stageRole(stage)
@@ -95,13 +202,22 @@ func (r *run) stageOnProviderRoute(model, background string) bool {
 // what that stage must be launched under whatever the budget says. Such a run
 // writes the posture alone: the deny list is left out because both of its
 // halves exist for refusals the gateway itself makes.
+//
+// A stage the run's stage account serves writes none of the gateway's
+// variables and none of the pins, for the reason its own environment carries
+// none (stageAgentEnv, stagePins): its calls go straight to Anthropic on that
+// account. The file is still written, and that is the point of writing it —
+// the managed settings outrank the agent's environment, so the previous
+// stage's copy would otherwise route this one at the gateway whatever its
+// environment said (P5, the sidecar's own rule).
 func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 	gw := r.gateway()
-	if gw == nil && !r.review {
+	account := r.stageAccount(stage)
+	if gw == nil && !r.review && account == "" {
 		return nil
 	}
 	vars := map[string]string{}
-	if gw != nil {
+	if gw != nil && account == "" {
 		gwVars, err := agent.GatewayVars(r.cfg.Agent.Auth, *gw, r.parentEnv())
 		if err != nil {
 			return fmt.Errorf("writing Claude Code's managed settings: %w", err)

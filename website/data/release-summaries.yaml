@@ -23,6 +23,7 @@
 version: 1
 
 summaries:
+  v0.18.0: A coding agent can now manage a Fugaro-created project for you behind a fixed safety gate, a project's catalog images are checked and rebuilt on a schedule, and building a catalog image works end to end from your own login.
   v0.17.0: A project can keep its own named images, built in the cloud and picked by the tags a run needs, so a repository no longer needs a hand-made image of its own. Settings edits classify what they change before writing, and Bitbucket repositories can be read through a read-scoped consumer.
   v0.16.0: A repository can give each of its three review levels its own model, effort and focus and let a run follow them through to a harder adversarial review, the default recipe writes its adversarial step itself, fugaro accounts add sets a Claude account up end to end, fugaro models and fugaro settings can now change what a run gets, and fugaro runs ls and the coordinator command read a fleet's runs, pull requests and declared intents.
   v0.15.0: Review rounds now follow each rigor mode, so a repository that sets nothing runs three first-line and three senior rounds at Pro and costs more per run, fugaro update keeps the credentials service on its HTTP/2 image and publishes the settings your local config states, and a new fugaro settings command shows every setting with the layer that decided it.

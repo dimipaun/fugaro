@@ -827,8 +827,8 @@ func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
 	ctx := cmd.Context()
 	// SD8: sync writes the same allow_repos `repos add` writes, so it carries
 	// the same refusal and it carries it first — before the App key's own
-	// refusal (refuseKeyReadInAgent, which guards the secret read and not the
-	// write) and before the flag's own complaint, so an agent session is told
+	// refusal (refuseAppKeyReadInAgent, which guards the secret read and not
+	// the write) and before the flag's own complaint, so an agent session is told
 	// the one thing that is true of every way of running this command: the
 	// write is not its to make. And it comes before the GitHub call, so nothing
 	// of the project leaves the machine either.
@@ -912,7 +912,7 @@ func syncAppKey(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, al
 	if !allowed {
 		return nil, userErr("%s lists the repositories the GitHub App is installed on, which needs the project's github-app-key secret: rerun with %s, which reads it with your own credentials", "fugaro project sync", syncAppKeyFlag)
 	}
-	if err := refuseKeyReadInAgent(os.Getenv, syncAppKeyFlag, "the project's GitHub App private key"); err != nil {
+	if err := refuseAppKeyReadInAgent(os.Getenv, syncAppKeyFlag); err != nil {
 		return nil, err
 	}
 	secretID := gcp.ProjectSecretID(lc.Name, config.GitHubAppKeySecret)

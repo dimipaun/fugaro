@@ -199,6 +199,14 @@ type InstallationOutputs struct {
 	// stage. The repository roots read the same object from the tfvars'
 	// installation.credentials_service (RepoInstallation).
 	CredentialsService *CredentialsService `json:"credentials_service"`
+	// CatalogCheckServiceAccount is the project's catalog check job's account
+	// (D1148), its email, or "" on an installation whose project publishes no
+	// catalog: the value every repository root reads from its own tfvars
+	// (RepoInstallation.CatalogCheckServiceAccount) to grant that account
+	// actAs on its build account. Empty in the outputs of an installation
+	// applied before the job existed, which is what keeps those repository
+	// roots planning exactly what they planned.
+	CatalogCheckServiceAccount string `json:"catalog_check_service_account"`
 }
 
 // CredentialsService is the installation's credentials service (D146): the
@@ -382,6 +390,15 @@ type RepoInstallation struct {
 	// job account roles/run.invoker on it and drops that job's model-secret
 	// accessors (D135, D145).
 	CredentialsService *CredentialsService `json:"credentials_service,omitempty"`
+	// CatalogCheckServiceAccount is the project's catalog check job's account
+	// (D1148), its email, from the installation's outputs, or "" on an
+	// installation whose project publishes no catalog. It is what
+	// modules/repo/catalogcheck.tf grants actAs on this repository's build
+	// account to, so a build of this repository's catalog entry runs as this
+	// repository. Omitted from the tfvars when empty, so a repository root
+	// planned against an installation with no job writes exactly what it
+	// wrote before the grant existed.
+	CatalogCheckServiceAccount string `json:"catalog_check_service_account,omitempty"`
 }
 
 // RepoRoleIDs are the custom roles a repository root grants.
@@ -745,12 +762,22 @@ func serviceAccountEmail(id, project string) string {
 
 // platformEnv is the M4 env every job and the check job get.
 func (c *repoCtx) platformEnv() map[string]string {
+	return platformEnvFor(c.lc, c.inst.ProjectName, c.bucket)
+}
+
+// platformEnvFor is platformEnv's five variables for the jobs that have no
+// repoCtx: the installation's own names, its Fugaro project's name and the
+// runs bucket its record lives in. The project's catalog check job gets these
+// too (CatalogCheckSpec.Env), and they have to be the same bytes the
+// repository check job's env carries — the module's own preconditions compare
+// two of them against its variables.
+func platformEnvFor(lc *localcfg.Config, projectName, bucket string) map[string]string {
 	return map[string]string{
-		BucketEnv:     "gs://" + c.bucket,
+		BucketEnv:     "gs://" + bucket,
 		BackendEnv:    backend.CloudRun,
-		GCPProjectEnv: c.lc.GCPProject,
-		ProjectEnv:    c.inst.ProjectName,
-		RegionEnv:     c.lc.Region,
+		GCPProjectEnv: lc.GCPProject,
+		ProjectEnv:    projectName,
+		RegionEnv:     lc.Region,
 	}
 }
 
@@ -875,12 +902,12 @@ type SecretMount struct{ Logical, Env string }
 
 // SecretMounts is what the job of workflow name, for Claude account token
 // (w) mounts, in order: the git provider's credential (gitSecret), the one
-// Claude credential agent.auth names (none for vertex; token's own derived
-// secret, config.ClaudeAccountSecret, for oauth), the keys of the model
+// Claude credential agent.auth names — none for vertex, token's own derived
+// secret (config.ClaudeAccountSecret) for oauth, and for an api-key job the
+// stage account's token when a stage key named one — the keys of the model
 // providers the owner's local config allows repo to send code to (only with
-// api-key: a run does not mix credentials), and the workflow's own secrets.
-// It is the one place that decides it, for the job's spec and for the
-// secrets init asks for.
+// api-key), and the workflow's own secrets. It is the one place that decides
+// it, for the job's spec and for the secrets init asks for.
 //
 // A provider's key is the runner's, for its gateway, and only a repository
 // the owner allowed to send code there gets it, as a variable the agent's
@@ -915,6 +942,11 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 				out = append(out, SecretMount{p.Secret, p.SecretEnv()})
 			}
 		}
+		// The one mix the owner's B0 ruling admits: the stage account's own
+		// job mounts its token (mixedStageAccounts).
+		if slices.Contains(mixedStageAccounts(lc, repo), token) {
+			out = append(out, SecretMount{config.ClaudeAccountSecret(token), config.ReservedSecrets["claude-oauth-token"]})
+		}
 	}
 	for _, s := range w.Secrets {
 		if p, ok := config.ProviderBySecret(lc.Providers, s.Name); ok {
@@ -943,12 +975,22 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 
 // WorkflowAccounts are the Claude accounts each of repo's workflows gets a
 // job for: under oauth every account config.AllowedClaudeAccounts allows repo
-// (the default first), and the default alone under every other auth. RepoSpec
+// (the default first), and mixedStageAccounts' accounts beside the default
+// under api-key, and the default alone under every other auth. RepoSpec
 // deploys one job per (workflow, account) from it, and RequiredSecrets reads
 // the same list, so the two cannot disagree about which tokens are mounted.
 func WorkflowAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []string {
-	if cfg.Agent.Auth == "oauth" {
+	switch cfg.Agent.Auth {
+	case "oauth":
 		return config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)
+	case "api-key":
+		out := []string{config.DefaultClaudeAccount}
+		for _, name := range mixedStageAccounts(lc, repo) {
+			if !slices.Contains(out, name) {
+				out = append(out, name)
+			}
+		}
+		return out
 	}
 	return []string{config.DefaultClaudeAccount}
 }
@@ -1242,17 +1284,18 @@ func Repo(in Inputs) (RepoSpec, error) {
 		GCPProject: lc.GCPProject,
 		Region:     lc.Region,
 		Installation: RepoInstallation{
-			ProjectName:             c.inst.ProjectName,
-			RunsBucket:              c.bucket,
-			RegistryHost:            c.registryHost,
-			BaseRegistry:            c.inst.BaseRegistry,
-			GhcrRegistry:            c.inst.GhcrRegistry,
-			SharedRegistry:          c.inst.SharedRegistry,
-			SchedulerServiceAccount: c.inst.SchedulerServiceAccount,
-			RoleIDs:                 RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter, TagMover: c.inst.RoleIDs.TagMover},
-			Launchers:               c.inst.Launchers,
-			Operators:               c.inst.Operators,
-			CredentialsService:      repoCredentialsService(c.inst.CredentialsService),
+			ProjectName:                c.inst.ProjectName,
+			RunsBucket:                 c.bucket,
+			RegistryHost:               c.registryHost,
+			BaseRegistry:               c.inst.BaseRegistry,
+			GhcrRegistry:               c.inst.GhcrRegistry,
+			SharedRegistry:             c.inst.SharedRegistry,
+			SchedulerServiceAccount:    c.inst.SchedulerServiceAccount,
+			RoleIDs:                    RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter, TagMover: c.inst.RoleIDs.TagMover},
+			Launchers:                  c.inst.Launchers,
+			Operators:                  c.inst.Operators,
+			CredentialsService:         repoCredentialsService(c.inst.CredentialsService),
+			CatalogCheckServiceAccount: c.inst.CatalogCheckServiceAccount,
 		},
 		BitbucketProxied: c.bitbucketProxied,
 
@@ -1272,6 +1315,11 @@ func Repo(in Inputs) (RepoSpec, error) {
 		// backstop of the allow-list, design §6b.3). Every other auth kind
 		// has exactly the default account, unchanged from before this field
 		// existed.
+		// catalogImage is what catalogJobImage answered for the workflow's
+		// job, read back from the spec it built rather than asked again:
+		// the check below and the job's own image must never disagree about
+		// which jobs are the catalog's.
+		catalogImage := false
 		for _, tok := range WorkflowAccounts(in.Cfg, lc, in.Repo) {
 			ws, err := c.workflow(name, tok)
 			if err != nil {
@@ -1281,13 +1329,20 @@ func Repo(in Inputs) (RepoSpec, error) {
 			rs.Workflows[key] = ws
 			maps.Copy(rs.Secrets, ws.SecretIDs)
 			rs.BuildSecrets = append(rs.BuildSecrets, ws.BuildSecrets...)
+			catalogImage = ws.CatalogEntry != ""
 		}
 		// The daily check covers the workflow's image, the same image
 		// across every token variant: once per logical workflow, not once
 		// per variant. A checkout: clone workflow has no derived image to
 		// rebuild, so the daily check never covers it, whatever its
-		// rebuild.check says.
-		if in.Cfg.Workflows[name].Checkout != config.CheckoutClone && in.Cfg.Workflows[name].Rebuild.Defaults().Check != "off" {
+		// rebuild.check says. Neither does a workflow a catalog entry gives
+		// its image to: the check rebuilds the repository's own derived
+		// tag, which that job never runs — a prebuilt entry's image is
+		// pushed by the operator, and a built one belongs to the catalog's
+		// own check — so a repository whose every workflow runs an entry
+		// needs no base image at all.
+		w := in.Cfg.Workflows[name]
+		if w.Checkout != config.CheckoutClone && !catalogImage && w.Rebuild.Defaults().Check != "off" {
 			checked = append(checked, name)
 		}
 	}
@@ -1338,15 +1393,19 @@ func (c *repoCtx) projectSecretCandidates(rs RepoSpec) map[string]string {
 // account's own derived secret whose account lists repo, or a model
 // provider's own key whose provider lists repo -- AllowsData uniformly
 // across the last three, so §3a's no-list/["*"]-means-any-repository rule
-// applies to a provider's key exactly as it does everywhere else. ok is
-// false, id "" otherwise. It is exported because fugaro update's
-// secrets stage (before any RepoSpec exists) needs the identical answer.
+// applies to a provider's key exactly as it does everywhere else -- or,
+// last, an entry of workflow_secrets that lists repo, the one source with no
+// default at all (D1262). ok is false, id "" otherwise. It is exported
+// because fugaro update's secrets stage (before any RepoSpec exists) needs
+// the identical answer.
 func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id string, ok bool) {
 	if lc == nil || logical == "" {
 		return "", false
 	}
 	eligible := config.AllowedForProjectSecret(lc.ProjectSecrets, logical, repo)
-	if !eligible && config.ProjectScopeByDefault(logical) {
+	_, listed := lc.ProjectSecrets[logical]
+	swept := config.ProjectScopeByDefault(logical)
+	if !eligible && swept {
 		// D2 (plan Task 2.1 step 2, finding 13): a reserved name the platform
 		// itself mounts is eligible project-wide with no per-name list, which
 		// is the case this function refused before -- only an entry of
@@ -1356,24 +1415,32 @@ func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id strin
 		// Without one, the sweep applies, and every repository may read it --
 		// the same reach the CLI's default store announces, which is what
 		// makes "stored project-wide" mean what a person reads it to mean.
-		if _, listed := lc.ProjectSecrets[logical]; !listed {
+		if !listed {
 			eligible = true
 		}
 	}
-	if !eligible {
-		// ClaudeAccountBySecret always resolves the bare claude-oauth-token
-		// to DefaultClaudeAccount, which is never a key of the map
-		// (ValidateClaudeAccounts refuses it), so the default account's own
-		// secret is eligible only through project_secrets above -- the
-		// documented shape (design §3).
-		if name, found := config.ClaudeAccountBySecret(lc.ClaudeAccounts, logical); found {
-			eligible = lc.ClaudeAccounts[name].AllowsData(repo)
-		}
+	// ClaudeAccountBySecret always resolves the bare claude-oauth-token
+	// to DefaultClaudeAccount, which is never a key of the map
+	// (ValidateClaudeAccounts refuses it), so the default account's own
+	// secret is eligible only through project_secrets above -- the
+	// documented shape (design §3).
+	account, namedAccount := config.ClaudeAccountBySecret(lc.ClaudeAccounts, logical)
+	if !eligible && namedAccount {
+		eligible = lc.ClaudeAccounts[account].AllowsData(repo)
 	}
-	if !eligible {
-		if name, found := config.ProviderBySecret(lc.Providers, logical); found {
-			eligible = lc.Providers[name].AllowsData(repo)
-		}
+	provider, namedProvider := config.ProviderBySecret(lc.Providers, logical)
+	if !eligible && namedProvider {
+		eligible = lc.Providers[provider].AllowsData(repo)
+	}
+	claimed := listed || swept || namedAccount || namedProvider
+	if !eligible && !claimed {
+		// workflow_secrets is the fourth and last source, asked only for a
+		// name none of the others claims -- the order is the gate, so a
+		// hand-written entry cannot widen a name the sweep, an account or a
+		// provider already answers for (D1262). Unlike the sweep this block
+		// has no default: an entry is the whole gate, so a name with none
+		// mounts nowhere.
+		eligible = config.AllowedForWorkflowSecret(lc.WorkflowSecrets, logical, repo)
 	}
 	if !eligible {
 		return "", false
@@ -1595,6 +1662,15 @@ func (rs RepoSpec) Addresses() []string {
 	// gcp.CatalogReadCondition): declared without a gate, so an address of
 	// every repository root, like the build account's own grant above.
 	add(root + "google_storage_bucket_iam_member.catalog_read")
+	// The project's catalog check job's actAs on this repository's build
+	// account (D1148, modules/repo/catalogcheck.tf), gated on the
+	// installation having such a job at all: its account arrives in this
+	// root's tfvars, and an installation that publishes no catalog sends
+	// none, so the resource is not planned and its address is not one this
+	// spec has.
+	if rs.Installation.CatalogCheckServiceAccount != "" {
+		add(root + "google_service_account_iam_member.catalog_check_build[0]")
+	}
 	// modules/repo/check.tf
 	if rs.Check != nil && rs.Check.DeployJob {
 		add(root + "google_cloud_run_v2_job.check[0]")
@@ -1695,4 +1771,40 @@ func Schedule(slug string) string {
 	sum := sha256.Sum256([]byte(slug))
 	n := binary.BigEndian.Uint16(sum[:2]) % 120
 	return fmt.Sprintf("%d %d * * *", n%60, 5+n/60)
+}
+
+// mixedStageAccounts are the Claude accounts an api-key repository's runs mix
+// with their provider key: the account each of config.MixedAccountStages'
+// stage keys names, held to config.AllowedClaudeAccounts the way every other
+// account name is, deduplicated and in the stages' own order. The review and
+// the adversarial review may name one account and no other stage may name any
+// (docs/design/mixed-credentials.md §11): that is the one mix the owner's B0
+// ruling admits, the coder's own stages keeping the provider key the gateway
+// holds.
+//
+// The account is a job of its own rather than a second token on the default
+// job, so an api-key repository that names no stage account keeps the single
+// job it had: the run that holds a Claude account is the run whose stage keys
+// asked for one, and its review is the stage that goes direct to Anthropic.
+//
+// The allow-list is what keeps the mount to what the owner admitted: a token's
+// mount is this repository's runs reading that account's credential, and only
+// the account's own allow_data_to says whether this repository may put its
+// code where that token is. An account the list does not carry is not an entry
+// here — `fugaro validate` and the launch refuse the key — so the operator
+// hears about it rather than a job quietly appearing without the token.
+func mixedStageAccounts(lc *localcfg.Config, repo string) []string {
+	if lc == nil {
+		return nil
+	}
+	allowed := config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)
+	var out []string
+	for _, stage := range config.MixedAccountStages {
+		name := lc.ClaudeAccountStages[stage].ClaudeAccount
+		if name == "" || !slices.Contains(allowed, name) || slices.Contains(out, name) {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
 }

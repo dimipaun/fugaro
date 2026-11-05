@@ -283,6 +283,69 @@ variable "history" {
   }
 }
 
+variable "catalog_check" {
+  description = "The project's catalog check job (PIC4, D1148 task (ii)), or null on an installation whose project publishes no catalog: the one scheduled Cloud Run job that runs `fugaro image check --job --catalog` over every entry of the project's image catalog and submits at most one build per entry that fires, each build running as the build account of the repository the entry belongs to (modules/repo/catalogcheck.tf grants the actAs). Its job name must start with fugarochk-: fugaro runs ls and max_parallel count the fugaro- jobs, and the alert policies match ^fugarochk- (alert.tf). env is internal/infra's, and carries FUGARO_CATALOG_CHECK_SPEC — the whole run's assignment as JSON, which the job refuses to start without — beside the platform variables every job has. The two IAM conditions are the input's (the definitions read under builds/catalog/, internal/backend/gcp's gcp.CatalogReadCondition, and one records condition per repository, gcp.CatalogRecordsCondition): what makes a grant narrow here is its condition, and it is the bytes the plan review reads. paused is the schedule's own state and defaults to true, so a project that publishes a catalog deploys the schedule stopped and the installation that wants the nightly run writes a false."
+  type = object({
+    account_id       = string
+    job              = string
+    image            = string
+    scheduler_job    = string
+    scheduler_region = string
+    schedule         = optional(string, "17 4 * * *")
+    paused           = optional(bool, true)
+    env              = map(string)
+    definitions_condition = object({
+      title      = string
+      expression = string
+    })
+    repositories = list(object({
+      slug = string
+      records_condition = object({
+        title      = string
+        expression = string
+      })
+    }))
+  })
+  default = null
+
+  validation {
+    condition = var.catalog_check == null ? true : (
+      # Pinned to the one ID the plan review knows as the catalog check's
+      # account (tf.CatalogCheckAccountID), rather than to the shape every
+      # service account ID has: an ID the review reads as one of the project's
+      # job accounts (fugaro-<readable>-<8 hex>, tf's jobAccount) would be a
+      # member every toAccounts row accepts, which covers the repository root's
+      # roles/iam.serviceAccountUser on a build account — the one grant of this
+      # account that IS in a repository, and the one the owner's typed
+      # confirmation exists to ask about.
+      var.catalog_check.account_id == "fugaro-catalog-check" &&
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.catalog_check.job)) &&
+      startswith(var.catalog_check.job, "fugarochk-") &&
+      can(regex("^[a-zA-Z][a-zA-Z0-9_-]{0,62}$", var.catalog_check.scheduler_job)) &&
+      can(regex("^[a-z]+-[a-z]+[0-9]+$", var.catalog_check.scheduler_region)) &&
+      length(var.catalog_check.schedule) > 0 &&
+      length(var.catalog_check.image) > 0 &&
+      length(var.catalog_check.repositories) > 0 &&
+      alltrue([for r in var.catalog_check.repositories : can(regex("^[a-z0-9-]+$", r.slug))]) &&
+      alltrue([for r in var.catalog_check.repositories :
+        length(r.records_condition.title) > 0 && length(r.records_condition.expression) > 0
+      ]) &&
+      length(var.catalog_check.definitions_condition.title) > 0 &&
+      length(var.catalog_check.definitions_condition.expression) > 0
+    )
+    error_message = "catalog_check needs the service account ID fugaro-catalog-check — the one internal/infra/tf reads as this job's own kind of principal, so a job-account-shaped ID would be covered by the rows that accept those — an image, a job name that starts with fugarochk- (ls counts the fugaro- ones as workflow jobs, and the alert policies match ^fugarochk-), a Scheduler job name and region, and at least one repository with a slug and the two IAM conditions."
+  }
+
+  # The job's whole assignment arrives in its environment: internal/cli's mode
+  # refuses to start without it, so an installation that deployed the job
+  # without the variable would deploy a job that can only fail, once a night,
+  # unnoticed until the alert fires.
+  validation {
+    condition     = var.catalog_check == null ? true : contains(keys(var.catalog_check.env), "FUGARO_CATALOG_CHECK_SPEC")
+    error_message = "catalog_check.env must carry FUGARO_CATALOG_CHECK_SPEC: it is the whole run's assignment (fugaro image check --job --catalog refuses to start without it)."
+  }
+}
+
 variable "coordinator" {
   description = "The coordinator's aggregation job (P5, D194), used only with enable_budget: the scheduled sweep that re-reads each repository's runs and pull requests and writes the view. Its job name must not start with fugaro-, which fugaro runs ls and max_parallel count as workflow jobs. deploy_job stays false in the first apply and is set once the Firebase root has output rtdb_url (the third apply), the job's image exists and the credentials its repositories need are recorded: a GitHub App ID where it reconciles a GitHub repository (the sweep mints its own read-only installation token from the App), and the credentials service where it reconciles a Bitbucket one (the sweep mints a read token there — F24)."
   type = object({

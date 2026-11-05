@@ -1,5 +1,7 @@
 # Central orchestrators — the documents
 
+*Amended by [docs/stateless-orchestrator](../stateless-orchestrator/README.md) (2026-11-04): its state store, auto-compact and Firestore text are superseded there; this folder's owner-verbatim spec is unchanged.*
+
 **Status: plan only; no code is implemented.** This directory holds the owner's spec for
 **central orchestrators** — Fugaro orchestrators that run permanently in the cloud instead of
 on a developer's machine (`spec.md`, verbatim) — the reconciliation of that spec against the

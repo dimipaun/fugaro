@@ -1934,11 +1934,14 @@ func TestRepoSpecHasNoVariantForDisallowedName(t *testing.T) {
 	}
 }
 
-// A named account's variants exist ONLY for oauth repositories: an api-key or
-// vertex repository that an account happens to list in allow_data_to still
-// gets exactly the one default job per workflow (the oauth gate at the loop in
-// Repo(): removing it stayed green until this test).
-func TestRepoSpecHasNoVariantForNonOAuthRepositories(t *testing.T) {
+// An account gets a job variant only where a key that selects it exists: under
+// oauth every account config.AllowedClaudeAccounts admits, and under api-key
+// only the review or adversarial account the B0 mix rule admits (B1, B2). An
+// api-key or vertex repository that an account merely lists in allow_data_to
+// — no stage key names it — still gets exactly the one default job per
+// workflow, which is the allow-list's own backstop: being allowed data is not
+// being chosen.
+func TestRepoSpecHasNoVariantForAnUnchosenAccount(t *testing.T) {
 	for _, auth := range []string{"api-key", "vertex"} {
 		in := sandboxInputs(t, m5Additions+claudeAccountsLC)
 		in.Cfg.Agent.Auth = auth
@@ -2094,6 +2097,37 @@ func TestProjectSecretContainers(t *testing.T) {
 	}
 }
 
+// TestProjectSecretContainerIsDerivedFromTheEntry: the plan creates the
+// project container for a workflow_secrets entry exactly as it does for a
+// project_secrets one -- a non-empty allow_data_to and nothing else, D1263 --
+// so a container Terraform creates and one the store path created first (F16)
+// are the same container.
+func TestProjectSecretContainerIsDerivedFromTheEntry(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		lc   string
+		want []string
+	}{
+		{"entry with a list", "workflow_secrets:\n  sandbox-probe: { allow_data_to: [acme/sandbox] }\n", []string{"sandbox-probe"}},
+		{"entry with an empty list", "workflow_secrets:\n  sandbox-probe: { allow_data_to: [] }\n", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			lc := parseLC(t, m4LocalConfig+m5Additions+tt.lc)
+			spec, err := Installation(lc, InstallOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := map[string]string{}
+			for _, logical := range tt.want {
+				want[logical] = gcp.ProjectSecretID(lc.Name, logical)
+			}
+			if !maps.Equal(spec.ProjectSecrets, want) {
+				t.Errorf("ProjectSecrets = %+v, want %+v", spec.ProjectSecrets, want)
+			}
+		})
+	}
+}
+
 // --- RepoSpec.Addresses (plan docs/plans/2026-10-14-config-transitions.md Task 1)
 
 // The golden fixtures' agent blocks. oauth with one named account and
@@ -2158,6 +2192,14 @@ const repoRootAPIKeyLC = repoRootLC + `providers:
     allow_data_to: ["acme/webapp"]
 `
 
+// repoRootMixedLC is repoRootAPIKeyLC with the one stage key the owner's B0
+// ruling admits (docs/design/mixed-credentials.md §11): the review stage's
+// Claude account, whose allow_data_to admits this repository. The coder's own
+// stages are untouched, so they keep the provider key the gateway holds.
+const repoRootMixedLC = repoRootAPIKeyLC + `stages:
+  review: { claude_account: bmb }
+`
+
 // repoRootCredentialsAPIKeyInputs is the api-key shape of the opt-in fixture:
 // the installation has a credentials service, and the one workflow mounts the
 // Anthropic API key (agent.auth api-key) and a provider's key — the other two
@@ -2200,10 +2242,11 @@ func variantKeys(addrs []string) []string {
 	return out
 }
 
-// A named Claude account is a workflow variant only under oauth: Repo
-// builds them only there, and the address set must follow the map rather
-// than drift from it (Review Focus 3).
-func TestRepoAddressesNamedVariantsOnlyUnderOAuth(t *testing.T) {
+// The address set must follow the map of jobs Repo built rather than drift
+// from it (Review Focus 3). The oauth fixture's local config defines one
+// account, which under oauth is a variant; the same config under api-key
+// names no stage for it, so the one job it has is the whole address set.
+func TestRepoAddressesFollowTheVariantMap(t *testing.T) {
 	oauth := repoRootSpec(t, repoRootOAuthAgent)
 	if got, want := slices.Sorted(maps.Keys(oauth.Workflows)), []string{"web", "web_bmb"}; !slices.Equal(got, want) {
 		t.Fatalf("oauth spec Workflows = %v, want %v", got, want)
@@ -2306,6 +2349,15 @@ type repoRootFixture struct {
 	// credentialsService sets the fixture's Installation.CredentialsService,
 	// the installation output the repository root reads.
 	credentialsService bool
+	// catalogCheckServiceAccount sets the fixture's
+	// Installation.CatalogCheckServiceAccount, the second installation output
+	// a repository root reads: the project's catalog check job's account
+	// (D1148), which the root grants actAs on its own build account.
+	catalogCheckServiceAccount string
+	// lc replaces the fixture's local config when the fixture's own shape
+	// lives there rather than in the agent block — the stage account B2's mix
+	// names is a local-config key, never a published one.
+	lc string
 }
 
 // repoRootFixtures are the fixture specs, keyed by the golden's name.
@@ -2332,6 +2384,17 @@ var repoRootFixtures = map[string]repoRootFixture{
 	"repo_root":             {agent: repoRootOAuthAgent},
 	"repo_root_vertex":      {agent: repoRootVertexAgent},
 	"repo_root_credentials": {agent: repoRootOAuthAgent, credentialsService: true},
+	// repo_root_catalog_check is the D1148 fixture: the same oauth spec with
+	// the installation's catalog check job account set, so the one address the
+	// mirror adds (the actAs on the build account, modules/repo/catalogcheck.tf)
+	// is compared with a real plan rather than trusted.
+	"repo_root_catalog_check": {agent: repoRootOAuthAgent, catalogCheckServiceAccount: "fugaro-catalog-check@proj-1234.iam.gserviceaccount.com"},
+	// repo_root_mixed is B2's fixture: an api-key spec whose local config
+	// names the one stage account the owner's B0 ruling admits, so a real plan
+	// holds the job variant that account gets, the token it mounts and the
+	// accessor beside them (docs/design/mixed-credentials.md §11). No other
+	// fixture has an api-key job at all.
+	"repo_root_mixed": {agent: `agent: { auth: api-key }`, lc: repoRootMixedLC},
 }
 
 // repoRootFixtureSpec builds one fixture's spec by name, the opt-in
@@ -2345,6 +2408,12 @@ func repoRootFixtureSpec(t *testing.T, name string) RepoSpec {
 	in := repoRootInputs(t, f.agent)
 	if f.credentialsService {
 		in.Installation.CredentialsService = &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	}
+	if f.catalogCheckServiceAccount != "" {
+		in.Installation.CatalogCheckServiceAccount = f.catalogCheckServiceAccount
+	}
+	if f.lc != "" {
+		in.LC = parseLC(t, f.lc)
 	}
 	rs, err := Repo(in)
 	if err != nil {
@@ -2448,6 +2517,46 @@ func TestRepoAddressesMatchTheCredentialsGolden(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("Addresses() differs from repo_root_credentials_addresses.golden:\nmissing: %v\nunexpected: %v",
 			missingFrom(want, got), missingFrom(got, want))
+	}
+}
+
+// The mixed fixture pins B2's address set against a real plan: the api-key
+// repository that names a stage account has two jobs, and the account's —
+// the variant whose name carries the account's own token — is the only one
+// that reaches a Claude credential. That is the whole shape of the ruling:
+// the run's review and adversarial stages are on the account, and no stage
+// of the coder's own job is (docs/design/mixed-credentials.md §11).
+func TestRepoAddressesMatchTheMixedGolden(t *testing.T) {
+	const (
+		account = "bmb"
+		token   = "claude-oauth-token-" + account
+		mixed   = `module.repo.module.workflow["web_` + account + `"].`
+		coder   = `module.repo.module.workflow["web"].`
+	)
+	spec := repoRootFixtureSpec(t, "repo_root_mixed")
+	want := addressesGolden(t, "repo_root_mixed")
+	if len(want) == 0 {
+		t.Fatal("the golden is empty")
+	}
+	got := spec.Addresses()
+	if !slices.Equal(got, want) {
+		t.Errorf("Addresses() differs from repo_root_mixed_addresses.golden:\nmissing: %v\nunexpected: %v",
+			missingFrom(want, got), missingFrom(got, want))
+	}
+	for _, a := range []string{
+		mixed + "google_cloud_run_v2_job.this[0]",
+		mixed + `google_secret_manager_secret_iam_member.job["` + token + `"]`,
+		coder + `google_secret_manager_secret_iam_member.job["anthropic-api-key"]`,
+		coder + `google_secret_manager_secret_iam_member.job["openrouter-api-key"]`,
+	} {
+		if !slices.Contains(want, a) {
+			t.Errorf("the plan of the mixed fixture does not hold %s", a)
+		}
+	}
+	for _, a := range want {
+		if strings.HasPrefix(a, coder) && strings.Contains(a, "claude-oauth-token") {
+			t.Errorf("the coder's own job reaches a Claude token: %s", a)
+		}
 	}
 }
 
@@ -3437,6 +3546,65 @@ func TestSpecCatalogIsTheProjectsOwnWhenTheLocalConfigWritesOne(t *testing.T) {
 	}
 	if got, want := rs.Workflows["api"].Image, shared+"/catalog-minimal:latest"; got != want {
 		t.Errorf("api's image = %q, want %q", got, want)
+	}
+}
+
+// prebuiltCatalogEntries are the same three entries with a prebuilt image
+// source: nothing in Fugaro builds them, so the daily check has nothing of
+// theirs to rebuild.
+func prebuiltCatalogEntries() []config.Entry {
+	return []config.Entry{
+		{Name: "minimal", Tags: []string{"postgres", "redis"}, Source: config.Source{Kind: config.SourceImage, Image: "example.invalid/catalog-minimal:1"}},
+		{Name: "standard", Default: true, Tags: []string{"node", "postgres", "redis"}, Source: config.Source{Kind: config.SourceImage, Image: "example.invalid/catalog-standard:1"}},
+		{Name: "universal", Tags: []string{"node", "postgres", "redis", "firebase-emulator"}, Source: config.Source{Kind: config.SourceImage, Image: "example.invalid/catalog-universal:1"}},
+	}
+}
+
+// TestSpecCatalogOnlyRepoNeedsNoBaseImage: the daily check rebuilds the
+// repository's own derived image, and a workflow a catalog entry gives its
+// image to never runs one — a prebuilt entry's image is pushed by the
+// operator, and a built one is the catalog's own project-level check's to
+// rebuild (D1148), never this repository's. Such a workflow is therefore
+// never checked here, so a repository whose every workflow runs a catalog
+// entry needs no base_images entry at all and fugaro update --repo must not
+// refuse it for one (issue 1661 item 3). Both entry sources are covered
+// because the reason is the same for both: what the check rebuilds is not
+// what the job runs.
+func TestSpecCatalogOnlyRepoNeedsNoBaseImage(t *testing.T) {
+	for name, entries := range map[string][]config.Entry{
+		"prebuilt":          prebuiltCatalogEntries(),
+		"built from a repo": catalogEntries(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := catalogInputs(t, &config.Catalog{Entries: entries})
+			delete(in.LC.BaseImages, config.BaseKind)
+			rs, err := Repo(in)
+			if err != nil {
+				t.Fatalf("Repo = %v, want no error: no workflow of this repository runs a per-repository image", err)
+			}
+			if rs.Check != nil {
+				t.Errorf("the repository has a daily image check job %s, want none: every workflow runs a catalog entry", rs.Check.Job)
+			}
+		})
+	}
+}
+
+// TestSpecCheckCoversTheWorkflowsWithoutACatalogImage: the exclusion is per
+// workflow, not per repository. A workflow that keeps its own image
+// definition is not the catalog's (catalog.Applies), so the repository keeps
+// its daily check and the check covers that workflow alone.
+func TestSpecCheckCoversTheWorkflowsWithoutACatalogImage(t *testing.T) {
+	in := catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()})
+	w := in.Cfg.Workflows["api"]
+	w.Needs = nil
+	w.Image = config.Image{Tools: config.MiseTools{"node": "24"}}
+	in.Cfg.Workflows["api"] = w
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Check == nil || !slices.Equal(rs.Check.Workflows, []string{"api"}) {
+		t.Fatalf("the daily check covers %v, want only the workflow that builds an image of its own", rs.Check)
 	}
 }
 

@@ -337,10 +337,16 @@ func TestRunConfirmationCallSites(t *testing.T) {
 			t.Errorf("%s has %d calls of the run confirmation, want %d", f, got, want[f])
 		}
 	}
-	// And the typed-only steps' own source never mentions it.
+	// And the typed-only steps' own source never mentions it. What is read is
+	// the call, not the word: a gate-admitted step prints the sentence of
+	// initflow.GateOrdinary, which is not the run's one confirmation but what
+	// stands where a step's own prompt would have been in a managed project
+	// (update_managed.go's gateUnderway, and the plugin wiring's y/N is one of
+	// the prompts it replaces), so the plugin stage names that sentence in a
+	// file that must still make no call of this one.
 	for _, f := range []string{"init_project.go", "initsecrets.go", "init_repo_gate.go", "init_plugin_stage.go"} {
 		b, _ := os.ReadFile(f)
-		if strings.Contains(string(b), "Ordinary") || strings.Contains(string(b), "runCovers") {
+		if re.Match(b) || strings.Contains(string(b), "runCovers") {
 			t.Errorf("%s uses the run confirmation", f)
 		}
 	}
