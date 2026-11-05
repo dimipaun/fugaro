@@ -4153,13 +4153,13 @@ for. --project-wide is accepted as a synonym of that default, so existing
 scripts keep working. Inside a shared job there is no IAM boundary between
 repositories: the profile is the boundary. What the project copy reaches is
 the name's own entry, and the store says which: a reserved name with no
-project_secrets entry reaches every enrolled repository, while an entry that
-names repositories -- project_secrets', workflow_secrets', a provider's or a
-named account's -- reaches exactly those. A workflow's own secret is stored
-once for the project only through such an entry: with no workflow_secrets
-entry it stays in the repository's own container as before, and an entry
-present with an empty allow_data_to is refused, since it would mount
-nowhere.
+project_secrets entry, and a model provider's key with no allow_data_to (or
+an explicit ["*"]), reach every enrolled repository, while an entry that
+names repositories -- project_secrets', workflow_secrets' or a named
+account's -- reaches exactly those. A workflow's own secret is stored once
+for the project only through such an entry: with no workflow_secrets entry
+it stays in the repository's own container as before, and an entry present
+with an empty allow_data_to is refused, since it would mount nowhere.
 
 bitbucket-token has no project-wide default: a Bitbucket credential is
 normally a repository access token, issued for one repository and usable for

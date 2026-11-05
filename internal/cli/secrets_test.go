@@ -2522,3 +2522,41 @@ func TestSecretsLsProjectWideShowsTheWorkflowBlocksReach(t *testing.T) {
 		t.Errorf("allowed = %+v, want the entry's own list", list)
 	}
 }
+
+// TestSecretsSetStatesTheWorkflowCaveatForAWorkflowSecretAlone: the sentence
+// about a workflow's own secret is read where it is true -- for a workflow
+// secret -- and for no other name. A reserved name has no workflow_secrets
+// entry, so over one the clause describes a block that cannot hold it, and it
+// reads as a rule about the copy the person is not storing. The reach sentence
+// in front of it stays every project-wide store's, since who mounts the copy is
+// the question for all of them.
+func TestSecretsSetStatesTheWorkflowCaveatForAWorkflowSecretAlone(t *testing.T) {
+	sm := secretsFixture(t)
+	appCheckout(t)
+	projectSecretFixture(t, "workflow_secrets:\n  npm-token: { allow_data_to: [acme/app] }\n")
+	_, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "anthropic-api-key")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, errOut)
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "anthropic-api-key")) == nil {
+		t.Fatal("the reserved name did not take the project-wide path under test")
+	}
+	if !strings.Contains(errOut, "is stored project-wide for aurora") {
+		t.Errorf("the reach sentence is missing over a reserved name: %q", errOut)
+	}
+	if strings.Contains(errOut, "workflows.<n>.secrets") {
+		t.Errorf("the workflow caveat is read over a reserved name, which no workflow_secrets entry holds: %q", errOut)
+	}
+
+	_, errOut, err = executeStdin(t, tokenValue, "secrets", "set", "npm-token")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, errOut)
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "npm-token")) == nil {
+		t.Fatal("the workflow secret did not take the project-wide path under test")
+	}
+	if !strings.Contains(errOut, "A workflow's own secret (workflows.<n>.secrets) is shared this way only through its workflow_secrets entry") {
+		t.Errorf("the workflow caveat is missing over a workflow secret: %q", errOut)
+	}
+	noLeak(t, tokenValue, errOut)
+}

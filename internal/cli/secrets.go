@@ -326,13 +326,13 @@ for. --project-wide is accepted as a synonym of that default, so existing
 scripts keep working. Inside a shared job there is no IAM boundary between
 repositories: the profile is the boundary. What the project copy reaches is
 the name's own entry, and the store says which: a reserved name with no
-project_secrets entry reaches every enrolled repository, while an entry that
-names repositories -- project_secrets', workflow_secrets', a provider's or a
-named account's -- reaches exactly those. A workflow's own secret is stored
-once for the project only through such an entry: with no workflow_secrets
-entry it stays in the repository's own container as before, and an entry
-present with an empty allow_data_to is refused, since it would mount
-nowhere.
+project_secrets entry, and a model provider's key with no allow_data_to (or
+an explicit ["*"]), reach every enrolled repository, while an entry that
+names repositories -- project_secrets', workflow_secrets' or a named
+account's -- reaches exactly those. A workflow's own secret is stored once
+for the project only through such an entry: with no workflow_secrets entry
+it stays in the repository's own container as before, and an entry present
+with an empty allow_data_to is refused, since it would mount nowhere.
 
 bitbucket-token has no project-wide default: a Bitbucket credential is
 normally a repository access token, issued for one repository and usable for
@@ -1320,9 +1320,17 @@ func secretsSetProjectWide(cmd *cobra.Command, env *cloudEnv, o secretsOptions, 
 	// (projectSecretAllowed), so the note and the entry cannot disagree about
 	// who mounts the copy -- the workflow sentence says where the reach comes
 	// from and is otherwise the entry's own.
-	fmt.Fprintf(cmd.ErrOrStderr(),
-		"note: %s is stored project-wide for %s, where %s. Inside a shared job there is no IAM boundary between repositories: the profile is the boundary. A workflow's own secret (workflows.<n>.secrets) is shared this way only through its workflow_secrets entry, and that entry's allow_data_to is what decides which repositories mount the copy: with no entry, or with an entry that lists nothing, the name stays a repository copy instead.\n",
+	//
+	// It is said for a workflow secret alone: the name reaches this path with a
+	// workflow_secrets entry exactly when it is one, and a reserved name or a
+	// provider's key has no such entry and nothing to read in the sentence
+	// (code review, nit).
+	note := fmt.Sprintf("note: %s is stored project-wide for %s, where %s. Inside a shared job there is no IAM boundary between repositories: the profile is the boundary.",
 		pluginwire.Printable(name), pluginwire.Printable(env.lc.Name), projectReach(env.lc, name))
+	if _, workflow := env.lc.WorkflowSecrets[name]; workflow {
+		note += " A workflow's own secret (workflows.<n>.secrets) is shared this way only through its workflow_secrets entry, and that entry's allow_data_to is what decides which repositories mount the copy: with no entry, or with an entry that lists nothing, the name stays a repository copy instead."
+	}
+	fmt.Fprintln(cmd.ErrOrStderr(), note)
 	return nil
 }
 
