@@ -456,8 +456,6 @@ func TestProjectJobSecretsMustBeProjectWide(t *testing.T) {
 	}
 }
 
-// --- W5: the deployer's fence, pinned (D1266) -----------------------------
-
 // projectWorkflowSecretBlockLC is W5's fixture: one project workflow secret
 // whose entry lists this installation's one GitHub repository, so
 // projectSecretContainers derives its container.
@@ -475,11 +473,11 @@ const projectWorkflowSecretProfileLC = projectWorkflowSecretBlockLC + `profiles:
   standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [sandbox-probe] }
 `
 
-// A profile is shared by every repository admitted to it, so a project
-// workflow secret — whose whole gate is one entry's allow_data_to, a
-// per-repository list — may not be mounted on a shared job (D1266). The
-// refusal is the deployer's own and already in the tree: this task writes no
-// line of it.
+// TestProfileRefusesAProjectWorkflowSecret is W5's red step, and its subject
+// is D1266: a profile is shared by every repository admitted to it, so a
+// project workflow secret — whose whole gate is one entry's allow_data_to, a
+// per-repository list — may not be mounted on a shared job. The refusal is
+// the deployer's own and already in the tree: this task writes no line of it.
 //
 // The test pins the exact path the name takes today, and both halves of it:
 // projectSecretContainers derives a container from the entry (W2), so
