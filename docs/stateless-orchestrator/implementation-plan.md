@@ -17,7 +17,7 @@ This plan builds [spec.md](spec.md) (the owner's spec, verbatim) **as amended by
 disagree the reconciliation wins. Nothing here is implemented. **No task is approved: each needs the owner's explicit go, by name.**
 Findings are cited as F#, decisions as D#, open tensions as T# (reconciliation section 6).
 
-**The owner's answers of 2026-11-04 that shaped this plan** (all the recommendation except D1235):
+**The owner's answers of 2026-11-04 that shaped this plan** (all the recommendation except D1235, the retry rule and Q2):
 
 | Decision | What the plan builds | Binds |
 | --- | --- | --- |
@@ -36,7 +36,7 @@ Findings are cited as F#, decisions as D#, open tensions as T# (reconciliation s
 | D1233 | No `summary_replace`; the summary is generated on read | O0 |
 | D1234 | The security-sensitive class is deterministic code over changed paths; the model per class is a tightening-only local key | O1, O4, O12 |
 | **D1235 (not the recommendation)** | **Cut over at once, no shadow week** | O11, T1 |
-| D1236 | The two owner-verbatim specs are not edited; the README notes are written (added by this branch, not yet on `main`) | done |
+| D1236 | The two owner-verbatim specs are not edited; the README notes are written (on `main` since #1682 merged the folder) | done |
 | D1237 | One session-start hook slot shared with `docs/plugin-user-scope` | O10 |
 | D1238 | The daemon and decision agents never run a gated converge or publish command | O8, O12 |
 | D1239 | Project-policy guardrail fields, tightening-only, conservative defaults | O4 |
