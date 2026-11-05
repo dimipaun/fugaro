@@ -136,7 +136,7 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 		"Eleven tasks **R0–R10**",
 		// The safeguard, which is the difference between this removal and a
 		// removal: the tag waits for a check the owner runs.
-		"**An owner-run live check gates the 0.18.0 tag.**",
+		"**An owner-run live check gates the 0.19.0 tag.**",
 		"findings **F1–F25**",
 	} {
 		if !strings.Contains(readme, want) {
@@ -155,7 +155,7 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 		// The two halves of the migration the design leans on: promote is the
 		// migration and is itself removed.
 		"already is the migration — and it is removed (D1192)",
-		"## 7. The safeguard: the owner-run live check that gates the 0.18.0 tag",
+		"## 7. The safeguard: the owner-run live check that gates the 0.19.0 tag",
 	} {
 		if !strings.Contains(spec, want) {
 			t.Errorf("%s lacks %q", rirSpec, want)
@@ -167,7 +167,7 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 	for _, want := range []string{
 		"**Status: plan only; nothing is implemented; no task approved.**",
 		"**catalog ships → R0 → D1148 (both tasks) → R1 → R2 → R3 → R4 → R5 → R6 → R7 → R8 → R9 → R10.**",
-		"**0.18.0 — the same release as D1148's two tasks",
+		"**0.19.0 — one release after D1148's two tasks",
 		// The ceiling, and the one subject that exceeds it: a reader checking
 		// the plan against the brief's twelve-file rule has to find the reason.
 		"**The ceiling of twelve files is per commit.**",
@@ -189,7 +189,7 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 		"| `internal/cli/docs_repo_image_removal_test.go` | **R2**, **R3**, R4 (and R10 reads it) |",
 		"**R2 moves `Config scope rows` (93 → 82)**",
 		"## R0. The dogfood repository's entry, its build and its pin",
-		"## R10. The owner-run live check, and the 0.18.0 tag (the final task)",
+		"## R10. The owner-run live check, and the 0.19.0 tag (the final task)",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s lacks %q", rirPlan, want)

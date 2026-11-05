@@ -404,3 +404,340 @@ func TestRepoCopyStillWins(t *testing.T) {
 		t.Errorf("missing = %v, want none: the repository's own copy resolves", missing)
 	}
 }
+
+// --- W2: a workflow_secrets entry is the whole eligibility gate -----------
+
+// workflowSecretLC makes sandbox-probe -- a secret the sandbox repository's
+// own workflow declares (deploy/sandbox/fugaro.yaml) -- project-wide for
+// acme/sandbox alone.
+const workflowSecretLC = `workflow_secrets:
+  sandbox-probe: { allow_data_to: [acme/sandbox] }
+`
+
+// TestProjectSecretCandidateTakesAWorkflowSecret: the new block is a fourth
+// source of project-wide eligibility, so a repository its entry lists is a
+// candidate for the project's own container (D1262, D1263).
+func TestProjectSecretCandidateTakesAWorkflowSecret(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions+workflowSecretLC)
+	id, ok := ProjectSecretCandidate(lc, "sandbox-probe", "acme/sandbox")
+	if !ok {
+		t.Fatalf("ProjectSecretCandidate = %q, false; want the project's ID: the entry lists acme/sandbox", id)
+	}
+	if want := gcp.ProjectSecretID(lc.Name, "sandbox-probe"); id != want {
+		t.Errorf("id = %q, want the project's own ID %q", id, want)
+	}
+}
+
+// TestProjectSecretCandidateRefusesAnUnlistedRepository: the entry is the
+// whole gate, so a repository it does not name mounts nothing -- the issue's
+// own guarantee, that a project copy never widens to a repository the
+// operator did not list.
+func TestProjectSecretCandidateRefusesAnUnlistedRepository(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions+`workflow_secrets:
+  sandbox-probe: { allow_data_to: [acme/other] }
+`)
+	if id, ok := ProjectSecretCandidate(lc, "sandbox-probe", "acme/sandbox"); ok {
+		t.Fatalf("ProjectSecretCandidate = %q, true; want not a candidate: the entry names acme/other", id)
+	}
+	if _, ok := ProjectSecretCandidate(lc, "sandbox-probe", "acme/other"); !ok {
+		t.Error("ProjectSecretCandidate(acme/other) is not a candidate, want the entry's own answer")
+	}
+}
+
+// TestWorkflowSecretHasNoProjectScopeDefault is D1262's line in the sand: no
+// sweep, for any workflow secret, ever. A name with no entry is not eligible
+// however the rest of the block is written, and this assertion is what keeps
+// the decision from being quietly reversed into mounting a stored value on
+// sixty-five repositories.
+func TestWorkflowSecretHasNoProjectScopeDefault(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions+`workflow_secrets:
+  other-probe: { allow_data_to: ["acme/*"] }
+`)
+	if id, ok := ProjectSecretCandidate(lc, "sandbox-probe", "acme/sandbox"); ok {
+		t.Errorf("ProjectSecretCandidate = %q, true; want not a candidate: absent means nobody", id)
+	}
+}
+
+// TestWorkflowSecretEntryCannotWidenAReservedName holds the predicate's
+// order: the new block is asked last, only for a name no other source claims,
+// so a hand-written entry can neither widen nor narrow what the sweep, an
+// account or a provider already answers (D1262).
+//
+// The map is built here rather than parsed: internal/config refuses these
+// keys as workflow secrets, which is the first fence, and this is the second
+// one behind it -- the predicate's own order.
+func TestWorkflowSecretEntryCannotWidenAReservedName(t *testing.T) {
+	lc := &localcfg.Config{
+		Name: "aurora",
+		Providers: map[string]config.ModelProvider{
+			"openrouter": {Secret: "openrouter-api-key", AllowDataTo: []string{"acme/other"}},
+		},
+		WorkflowSecrets: map[string]config.ProjectSecret{
+			"openrouter-api-key": {AllowDataTo: []string{"acme/sandbox"}},
+			"github-app-key":     {AllowDataTo: []string{"acme/other"}},
+		},
+	}
+	if id, ok := ProjectSecretCandidate(lc, "openrouter-api-key", "acme/sandbox"); ok {
+		t.Errorf("ProjectSecretCandidate = %q, true; want the provider's own answer (false): an entry cannot widen a name a provider already answers for", id)
+	}
+	if _, ok := ProjectSecretCandidate(lc, "github-app-key", "acme/sandbox"); !ok {
+		t.Error("ProjectSecretCandidate(github-app-key) is not a candidate, want D2's sweep: the entry lists the other repository only and is asked last")
+	}
+}
+
+// mixedLC is the local config every mixed-credentials case builds on: two
+// Claude accounts (one this repository may use, one it may not) and the
+// provider whose key the coder's gateway holds. The stage keys are the case's
+// own, appended to it.
+const mixedLC = `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry_host: us-east5-docker.pkg.dev/proj-1234
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
+repos:
+  acme/app: { provider: github, base_branch: main, workflows: [app], github_app_id: "123456" }
+claude_accounts:
+  bmb: { allow_data_to: [acme/app] }
+  other: { allow_data_to: [acme/other] }
+providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["deepseek/*"]
+    allow_data_to: ["acme/app"]
+`
+
+// TestMixedStageAccountMountsTheTokenOnTheApiKeyJob: B2's whole point
+// (docs/design/mixed-credentials.md §11, the ruled table). An api-key run
+// keeps its coder on the provider key the gateway holds AND runs its review
+// and adversarial stages on one Claude OAuth account, so the run's own job —
+// the one built for that account, gcp.WorkflowVariant — mounts the account's
+// token beside the OpenRouter key, and the repository's other jobs mount
+// nothing new.
+func TestMixedStageAccountMountsTheTokenOnTheApiKeyJob(t *testing.T) {
+	lc := parseLC(t, mixedLC+"stages:\n  review: { claude_account: bmb }\n")
+	cfg := parseCfg(t, []byte(`version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+agent: { auth: api-key }
+workflows:
+  app:
+    commands: { build: npm run build, test: npm test }
+`))
+	if got, want := WorkflowAccounts(cfg, lc, "acme/app"), []string{config.DefaultClaudeAccount, "bmb"}; !slices.Equal(got, want) {
+		t.Fatalf("WorkflowAccounts = %v, want %v: the account's own job variant is what holds the token", got, want)
+	}
+	mountsFor := func(token string) []string {
+		t.Helper()
+		ms, err := SecretMounts("github-app-key", cfg, "app", token, cfg.Workflows["app"], lc, "acme/app")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, m := range ms {
+			out = append(out, m.Logical)
+		}
+		return out
+	}
+	// The account's job mounts both credentials: the provider key the coder's
+	// gateway reads, and the account's token.
+	if got, want := mountsFor("bmb"), []string{"github-app-key", "anthropic-api-key", "openrouter-api-key", "claude-oauth-token-bmb"}; !slices.Equal(got, want) {
+		t.Errorf("the stage account's job mounts %v, want %v", got, want)
+	}
+	// The provider's key and the token are the ONE pair the ruling admits: no
+	// second account, and no account at all on the run that names none.
+	if got := mountsFor(config.DefaultClaudeAccount); slices.Contains(got, "claude-oauth-token-bmb") {
+		t.Errorf("the base job mounts %v, want no stage account's token", got)
+	}
+	required, err := RequiredSecrets(cfg, lc, "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"claude-oauth-token-bmb", "github-app-key", "openrouter-api-key"}; !slices.Equal(required, want) {
+		t.Errorf("RequiredSecrets = %v, want %v: a deployed job mounts the token, so secrets ls must flag it MISSING", required, want)
+	}
+}
+
+// The ruling's refusals, at the variant and at the mount
+// (docs/design/mixed-credentials.md §11, "An allow-list, not a denylist"): an
+// api-key run's account serves review and adversarial and no other stage, its
+// name is held to claude_accounts' own allow-list for the repository, and no
+// other auth has a provider key to mix it with.
+func TestMixedStageAccountIsTheRulingsAllowList(t *testing.T) {
+	cfgFor := func(auth string) *config.Config {
+		return parseCfg(t, []byte(`version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+agent: { auth: `+auth+` }
+workflows:
+  app:
+    commands: { build: npm run build, test: npm test }
+`))
+	}
+	for _, c := range []struct {
+		name, stages, auth string
+		variants           []string
+		// mounted are the variant tokens whose own job mounts a token: the
+		// accounts the stage keys name, and no other variant.
+		mounted []string
+	}{
+		{"the senior review's key", "  review: { claude_account: bmb }\n", "api-key",
+			[]string{config.DefaultClaudeAccount, "bmb"}, []string{"bmb"}},
+		{"the adversarial review's own key", "  adversarial: { claude_account: bmb }\n", "api-key",
+			[]string{config.DefaultClaudeAccount, "bmb"}, []string{"bmb"}},
+		{"both keys naming the one account", "  review: { claude_account: bmb }\n  adversarial: { claude_account: bmb }\n", "api-key",
+			[]string{config.DefaultClaudeAccount, "bmb"}, []string{"bmb"}},
+		// The default account named by a stage key is the unsuffixed token,
+		// which the base job then carries: the one case where the run that
+		// names no account and the run that names this one share a job.
+		{"the keys naming the default account", "  review: { claude_account: default }\n", "api-key",
+			[]string{config.DefaultClaudeAccount}, []string{config.DefaultClaudeAccount}},
+		{"a stage that is not one of the two", "  fix: { claude_account: bmb }\n", "api-key",
+			[]string{config.DefaultClaudeAccount}, nil},
+		{"the coder's own stage", "  implement: { claude_account: bmb }\n", "api-key",
+			[]string{config.DefaultClaudeAccount}, nil},
+		{"an account no allow_data_to admits here", "  review: { claude_account: other }\n", "api-key",
+			[]string{config.DefaultClaudeAccount}, nil},
+		// oauth keeps every name claude_accounts admits for the repository,
+		// which is the accounts design's own rung and not this mix (an oauth
+		// run has no provider key to mix with).
+		{"an oauth run", "", "oauth", []string{config.DefaultClaudeAccount, "bmb"}, nil},
+		{"a vertex run", "", "vertex", []string{config.DefaultClaudeAccount}, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			yaml := mixedLC
+			if c.stages != "" {
+				yaml += "stages:\n" + c.stages
+			}
+			lc, cfg := parseLC(t, yaml), cfgFor(c.auth)
+			if got := WorkflowAccounts(cfg, lc, "acme/app"); !slices.Equal(got, c.variants) {
+				t.Errorf("WorkflowAccounts = %v, want %v", got, c.variants)
+			}
+			if c.auth != "api-key" {
+				return
+			}
+			// Every variant, the mix's own included: a job mounts the token
+			// only when its variant is the account's, and a name no job
+			// exists for is a mount that could never be read.
+			for _, token := range append(append([]string{}, c.variants...), "other") {
+				ms, err := SecretMounts("github-app-key", cfg, "app", token, cfg.Workflows["app"], lc, "acme/app")
+				if err != nil {
+					t.Fatal(err)
+				}
+				logical := config.ClaudeAccountSecret(token)
+				got := slices.ContainsFunc(ms, func(m SecretMount) bool { return m.Logical == logical })
+				if want := slices.Contains(c.mounted, token); got != want {
+					t.Errorf("token %q mounted = %v, want %v (mounts %+v)", token, got, want, ms)
+				}
+			}
+		})
+	}
+}
+
+// mixedRungFourCfg is an api-key repository whose reviews run on the model the
+// case names: the shape the owner's ruling of 2026-11-05 is about, where the
+// project's default_claude_account and not a stage key is what asks for the
+// mix (docs/design/mixed-credentials.md §11).
+func mixedRungFourCfg(t *testing.T, reviewer string) *config.Config {
+	t.Helper()
+	return parseCfg(t, []byte(`version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+agent:
+  auth: api-key
+  models: { coder: deepseek/chat, reviewer: `+reviewer+` }
+workflows:
+  app:
+    commands: { build: npm run build, test: npm test }
+`))
+}
+
+// TestMixedStageAccountRungFourIsTheProjectDefault: the ruling's second way
+// into the mix. A repository whose project default_claude_account names an
+// account and whose review stage runs an Anthropic model is a mixed repository
+// — the account's own job is built for it, gcp.WorkflowVariant, and that job
+// mounts the token — and one whose reviews are on another vendor is not: the
+// key is then the account an oauth run would use and nothing about this run's
+// stages, so it gets no job and no mount, exactly as a stage key naming an
+// account the repository may not use does.
+func TestMixedStageAccountRungFourIsTheProjectDefault(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		reviewer string
+		def      string
+		variants []string
+		mounted  []string
+	}{
+		{"an Anthropic reviewer", "claude-sonnet-5", "default_claude_account: bmb\n",
+			[]string{config.DefaultClaudeAccount, "bmb"}, []string{"bmb"}},
+		{"a reviewer on another vendor", "deepseek/chat", "default_claude_account: bmb\n",
+			[]string{config.DefaultClaudeAccount}, nil},
+		// The sentinel names no account of its own: an api-key run's job
+		// carries no OAuth token for the default account, so the key declares
+		// no mix and gets no variant of its own.
+		{"the sentinel default", "claude-sonnet-5", "default_claude_account: " + config.DefaultClaudeAccount + "\n",
+			[]string{config.DefaultClaudeAccount}, nil},
+		// The allow-list is what keeps the mount to what the owner admitted:
+		// the project's default is a name like any other, and one whose
+		// allow_data_to does not list this repository is not this
+		// repository's to mount.
+		{"an account no allow_data_to admits here", "claude-sonnet-5", "default_claude_account: other\n",
+			[]string{config.DefaultClaudeAccount}, nil},
+		{"no default at all", "claude-sonnet-5", "",
+			[]string{config.DefaultClaudeAccount}, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			lc, cfg := parseLC(t, mixedLC+c.def), mixedRungFourCfg(t, c.reviewer)
+			if got := WorkflowAccounts(cfg, lc, "acme/app"); !slices.Equal(got, c.variants) {
+				t.Errorf("WorkflowAccounts = %v, want %v", got, c.variants)
+			}
+			for _, token := range []string{config.DefaultClaudeAccount, "bmb", "other"} {
+				ms, err := SecretMounts("github-app-key", cfg, "app", token, cfg.Workflows["app"], lc, "acme/app")
+				if err != nil {
+					t.Fatal(err)
+				}
+				logical := config.ClaudeAccountSecret(token)
+				got := slices.ContainsFunc(ms, func(m SecretMount) bool { return m.Logical == logical })
+				if want := slices.Contains(c.mounted, token); got != want {
+					t.Errorf("token %q mounted = %v, want %v (mounts %+v)", token, got, want, ms)
+				}
+			}
+		})
+	}
+}
+
+// TestMixedStageAccountRungFourIsOneAccount: the mix is one Claude account and
+// no second (config.CheckStageAccountMix; design §11, "never a second
+// provider's key"), and the project default is held to it here the way the
+// launch holds it (mixedStageAccount, internal/cli/run.go): where a stage's own
+// key names a different account, the default is not an account of this
+// repository's mix and gets no job — the launch refuses that configuration
+// outright, so a job built for the default would be a credential no run of this
+// repository may hold.
+func TestMixedStageAccountRungFourIsOneAccount(t *testing.T) {
+	// A second account this repository may use, so the case is about the two
+	// names and not about the allow-list.
+	lc := parseLC(t, strings.Replace(mixedLC,
+		"  bmb: { allow_data_to: [acme/app] }",
+		"  bmb: { allow_data_to: [acme/app] }\n  team-b: { allow_data_to: [acme/app] }", 1)+
+		"default_claude_account: bmb\nstages:\n  review: { claude_account: team-b }\n")
+	cfg := mixedRungFourCfg(t, "claude-sonnet-5")
+	// The default alone is the mix's account, and it is the same run as the
+	// stage keys naming it: the control, so the case below is about the two
+	// names and not about rung 4 being read at all.
+	got := WorkflowAccounts(cfg, parseLC(t, mixedLC+"default_claude_account: bmb\n"), "acme/app")
+	if want := []string{config.DefaultClaudeAccount, "bmb"}; !slices.Equal(got, want) {
+		t.Errorf("WorkflowAccounts = %v, want %v: the project default alone is the mix's account", got, want)
+	}
+	// Both keys written, naming two accounts: the stage key is rung 2 and the
+	// default is not an account of this repository's mix, so no job is built
+	// for it — a job for it would be a token no run of this repository may
+	// hold, and the launch refuses that configuration outright.
+	if got := WorkflowAccounts(cfg, lc, "acme/app"); !slices.Equal(got, []string{config.DefaultClaudeAccount, "team-b"}) {
+		t.Errorf("WorkflowAccounts = %v, want the stage key's account alone: a second account is what the rule refuses", got)
+	}
+}

@@ -26,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -311,7 +312,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// Before anything is read: neither the App's key nor the bundle's Bitbucket
 	// token is read in a coding agent's session.
 	if checkApp {
-		if err := refuseAppKeyReadInAgent(os.Getenv); err != nil {
+		if err := refuseAppKeyReadInAgent(os.Getenv, checkGitHubAppFlag); err != nil {
 			return err
 		}
 	}
@@ -1497,6 +1498,15 @@ type projectAccountJob struct {
 	Token   string   // config.ClaudeAccountSecret(account): the container the job mounts
 	Repos   []string // the account's own repositories, as the local config writes them
 	Source  string   // the key those repositories are written in
+	// ReviewJob is the review-only variant of Job (design
+	// docs/cloud-senior-review, CSR7): the second job the same axis deploys,
+	// with its own service account and no secret. It is named by the census
+	// because it is a job of this installation's job set — an owner reading
+	// the reach of a job the installation deploys reads the set that is
+	// deployed, not the coding jobs alone — and it is named with no token,
+	// because it mounts nothing: there is no container of its own for the
+	// owner to store.
+	ReviewJob string
 	// NoAccountJob is true when the account rides the profile's no-account
 	// job rather than one of its own: the default account's case (D5), the
 	// one account whose token is mounted into a job whose name does not carry
@@ -1508,11 +1518,18 @@ type projectAccountJob struct {
 // Claude account, sorted by job name: one entry per (profile, provider,
 // account) triple a deploy builds — each profile's no-account job when it
 // lists the default account, plus one job per named account it lists — with
-// the token that job mounts and the repositories that token may be used by.
+// the token that job mounts, the repositories that token may be used by, and
+// the review-only variant the same triple deploys (CSR7).
 //
 // A profile that lists no account contributes nothing: its no-account job
 // carries no Claude token, and an installation that uses no accounts gets no
 // check at all from this (the same silence claudeAccountsStoredCheck keeps).
+//
+// The review variant is named rather than counted: it is the triple's second
+// job (CSR7), so the census is the job set the installation deploys, but it
+// mounts no secret at all (O1) — no token of the account's, no App key, no
+// signing key — so it is no job this check can ask the project's secrets
+// about, and its entry carries the variant's name and no container.
 //
 // The two halves come from the local config rather than from the published
 // policy, because that is the document doctor can read on a machine that has
@@ -1533,6 +1550,7 @@ func projectAccountJobs(lc *localcfg.Config) []projectAccountJob {
 			j := projectAccountJob{
 				Profile: name, Account: token, Job: gcp.ProjectJobName(name, pr.Provider, account),
 				Token: config.ClaudeAccountSecret(token), NoAccountJob: account == "",
+				ReviewJob: credsvc.ReviewJobName(name, pr.Provider, infra.ReviewVariantAccount(account)),
 			}
 			if token == config.DefaultClaudeAccount {
 				// The default account is not definable in claude_accounts
@@ -1554,10 +1572,14 @@ func projectAccountJobs(lc *localcfg.Config) []projectAccountJob {
 
 // projectAccountReach is one account job's reach, as one line: which job it
 // is, which account and container it holds, and the repositories that token
-// may be used by. The list is spelled the way the local config writes it (a
-// slug, owner/name); the policy qualifies each entry with the job's provider
-// when it is published (projectpolicy.DeriveAccounts), and `fugaro project
-// policy show` prints that node.
+// may be used by — and beside them the job's review-only variant, which holds
+// no token and mounts no secret at all (CSR7, O1). The variant is on the line
+// because the two jobs are deployed together and read apart: an owner who took
+// the coding job's line for the whole of what the installation deploys would
+// be reading a job set that is not there. The list is spelled the way the local
+// config writes it (a slug, owner/name); the policy qualifies each entry with
+// the job's provider when it is published (projectpolicy.DeriveAccounts), and
+// `fugaro project policy show` prints that node.
 func projectAccountReach(j projectAccountJob) string {
 	repos := "none"
 	if len(j.Repos) > 0 {
@@ -1567,8 +1589,12 @@ func projectAccountReach(j projectAccountJob) string {
 		}
 		repos = strings.Join(printable, ", ")
 	}
-	return fmt.Sprintf("%s (profile %s, account %s, token %s, repositories %s in %s)",
-		j.Job, pluginwire.Printable(j.Profile), pluginwire.Printable(j.Account), j.Token, repos, j.Source)
+	review := ""
+	if j.ReviewJob != "" {
+		review = fmt.Sprintf(", review job %s mounts no secret", pluginwire.Printable(j.ReviewJob))
+	}
+	return fmt.Sprintf("%s (profile %s, account %s, token %s, repositories %s in %s%s)",
+		j.Job, pluginwire.Printable(j.Profile), pluginwire.Printable(j.Account), j.Token, repos, j.Source, review)
 }
 
 // defaultAccountNote is the sentence doctor owes the owner about a profile
@@ -1611,6 +1637,12 @@ func defaultAccountNote(jobs []projectAccountJob) string {
 // project-wide one (infra.ProjectSecretCandidate, gcp.ProjectSecretID), so a
 // repository copy does not reach it — this check asks the project's listing
 // for that name and nothing else.
+//
+// The reach it prints carries each job's review-only variant beside it
+// (CSR7): the variant is deployed by the same update and mounts nothing, so
+// naming it is what keeps the census the installation's real job set, and the
+// clause that says so is what keeps it out of the containers this check asks
+// for.
 //
 // It reads no value: project is doctorProjectSecrets' metadata listing, read
 // with the credentials doctor already holds (the launcher role lists secret

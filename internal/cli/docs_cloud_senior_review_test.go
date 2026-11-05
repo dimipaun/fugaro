@@ -259,8 +259,13 @@ func TestDocsCloudSeniorReviewDecisionsAreAnswered(t *testing.T) {
 // The path character class carries `.` and `-` for the file names in this tree.
 // A backticked token with no extension (a package name, a symbol on its own) is
 // not a citation of a file and is left alone, which is why the extension is
-// part of the pattern rather than a later filter.
-var csrCitationRE = regexp.MustCompile("`([A-Za-z0-9_][A-Za-z0-9_./-]*\\.(?:go|md|json|tf|tmpl|yaml|yml))(:[0-9]+)`")
+// part of the pattern rather than a later filter. `ts` is here because these
+// folders cite the console's TypeScript (`installlist.ts`, whose
+// `DiscoveredInstallation` is the picker's wire type), and an alternation that
+// stopped at Go and Terraform let one such citation through the census unseen --
+// a citation inside a shape the pattern does not know is a citation the check
+// reports as passing.
+var csrCitationRE = regexp.MustCompile("`([A-Za-z0-9_][A-Za-z0-9_./-]*\\.(?:go|md|json|ts|tf|tmpl|yaml|yml))(:[0-9]+)`")
 
 // csrCensusRE is the independent count of how many path-looking tokens carry a
 // line number anywhere in them, deliberately looser than the citation regexp
@@ -268,7 +273,7 @@ var csrCitationRE = regexp.MustCompile("`([A-Za-z0-9_][A-Za-z0-9_./-]*\\.(?:go|m
 // the floor the citation check is measured against, so a regexp that has stopped
 // matching the documents' shapes fails the test instead of passing it vacuously
 // -- the failure mode that lets a drifted citation go on reading as checked.
-var csrCensusRE = regexp.MustCompile("`[^`\\n]*\\.(?:go|md|json|tf|tmpl|yaml|yml)[^`\\n]*:[0-9]+`")
+var csrCensusRE = regexp.MustCompile("`[^`\\n]*\\.(?:go|md|json|ts|tf|tmpl|yaml|yml)[^`\\n]*:[0-9]+`")
 
 // TestDocsCloudSeniorReviewCitationsResolve: every file and line these
 // documents cite exists. This is the test that keeps a reconciliation honest --
@@ -330,9 +335,9 @@ func TestDocsCloudSeniorReviewCitationsResolve(t *testing.T) {
 // is the shape a citation check written for `path:line` cannot see at all.
 var csrRelativeRE = regexp.MustCompile("`:[0-9]+`")
 
-// TestDocsCloudSeniorReviewRelativeCitationsResolve: every `:NNN` reference
-// resolves against the nearest full citation before it in its own paragraph, to
-// a line that is in that file.
+// TestDocsCloudSeniorReviewRelativeCitationsResolve: every `:NNN` reference in
+// these documents resolves against the nearest full citation before it in its
+// own paragraph, to a line that is in that file.
 //
 // This is the second half of the citation check and it exists because the first
 // half cannot see this shape: a token that names no file is invisible to a
@@ -344,48 +349,58 @@ var csrRelativeRE = regexp.MustCompile("`:[0-9]+`")
 func TestDocsCloudSeniorReviewRelativeCitationsResolve(t *testing.T) {
 	bare := csrBareNames(t)
 	for _, path := range csrDocs {
-		doc := readDoc(t, path)
-		refs := 0
-		for _, block := range strings.Split(doc, "\n\n") {
-			for _, loc := range csrRelativeRE.FindAllStringIndex(block, -1) {
-				// The anchor is the last citation that starts before the
-				// reference: the paragraph's own nearest preceding file, which
-				// is the rule the documents are written to.
-				anchor := ""
-				for _, m := range csrCitationRE.FindAllStringSubmatchIndex(block[:loc[0]], -1) {
-					anchor = block[m[2]:m[3]] + block[m[4]:m[5]]
-				}
-				if anchor == "" {
-					t.Errorf("%s holds %s with no citation before it in its own paragraph: a line reference resolves against the paragraph's nearest file, and there is none, so the reference names nothing",
-						path, block[loc[0]:loc[1]])
-					continue
-				}
-				cut := strings.LastIndex(anchor, ":")
-				file, ok := csrResolveCitation(anchor[:cut], bare)
-				if !ok {
-					t.Errorf("%s holds %s anchored to %q, which is not a file in this tree", path, block[loc[0]:loc[1]], anchor[:cut])
-					continue
-				}
-				refs++
-				line, err := strconv.Atoi(strings.Trim(block[loc[0]:loc[1]], "`:"))
-				if err != nil {
-					t.Errorf("%s holds %s, whose line is not a number: %v", path, block[loc[0]:loc[1]], err)
-					continue
-				}
-				body, err := os.ReadFile("../../" + filepath.FromSlash(file))
-				if err != nil {
-					t.Errorf("%s holds %s anchored to %q, which could not be read: %v", path, block[loc[0]:loc[1]], file, err)
-					continue
-				}
-				lines := len(strings.Split(strings.TrimSuffix(string(body), "\n"), "\n"))
-				if line < 1 || line > lines {
-					t.Errorf("%s holds %s anchored to %q, but %s holds %d lines: the reference names a line that is not there",
-						path, block[loc[0]:loc[1]], anchor, file, lines)
-				}
-			}
-		}
+		refs := csrCheckRelativeCitations(t, path, readDoc(t, path), bare)
 		t.Logf("%s: %d relative references resolved against their paragraph's anchor", path, refs)
 	}
+}
+
+// csrCheckRelativeCitations is that half of the check, as the one function both
+// the documents it was written for and the ones that came after it call: a
+// second implementation of the anchor rule would be a second answer to what a
+// `:NNN` means. It returns how many references it resolved, so a caller can say
+// what it checked.
+func csrCheckRelativeCitations(t *testing.T, path, doc string, bare map[string][]string) int {
+	t.Helper()
+	refs := 0
+	for _, block := range strings.Split(doc, "\n\n") {
+		for _, loc := range csrRelativeRE.FindAllStringIndex(block, -1) {
+			// The anchor is the last citation that starts before the
+			// reference: the paragraph's own nearest preceding file, which
+			// is the rule the documents are written to.
+			anchor := ""
+			for _, m := range csrCitationRE.FindAllStringSubmatchIndex(block[:loc[0]], -1) {
+				anchor = block[m[2]:m[3]] + block[m[4]:m[5]]
+			}
+			if anchor == "" {
+				t.Errorf("%s holds %s with no citation before it in its own paragraph: a line reference resolves against the paragraph's nearest file, and there is none, so the reference names nothing",
+					path, block[loc[0]:loc[1]])
+				continue
+			}
+			cut := strings.LastIndex(anchor, ":")
+			file, ok := csrResolveCitation(anchor[:cut], bare)
+			if !ok {
+				t.Errorf("%s holds %s anchored to %q, which is not a file in this tree", path, block[loc[0]:loc[1]], anchor[:cut])
+				continue
+			}
+			refs++
+			line, err := strconv.Atoi(strings.Trim(block[loc[0]:loc[1]], "`:"))
+			if err != nil {
+				t.Errorf("%s holds %s, whose line is not a number: %v", path, block[loc[0]:loc[1]], err)
+				continue
+			}
+			body, err := os.ReadFile("../../" + filepath.FromSlash(file))
+			if err != nil {
+				t.Errorf("%s holds %s anchored to %q, which could not be read: %v", path, block[loc[0]:loc[1]], file, err)
+				continue
+			}
+			lines := len(strings.Split(strings.TrimSuffix(string(body), "\n"), "\n"))
+			if line < 1 || line > lines {
+				t.Errorf("%s holds %s anchored to %q, but %s holds %d lines: the reference names a line that is not there",
+					path, block[loc[0]:loc[1]], anchor, file, lines)
+			}
+		}
+	}
+	return refs
 }
 
 // csrResolveCitation resolves a cited path against the tree: a path from the

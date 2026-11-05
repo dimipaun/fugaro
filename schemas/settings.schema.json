@@ -1062,6 +1062,12 @@
         "watch.burn_alert_usd_per_hour": {
           "default": "unset = Fugaro's own alert threshold"
         },
+        "workflow_secrets.*.allow_data_to": {
+          "default": "unset = nobody"
+        },
+        "workflow_secrets.*.proxy": {
+          "default": "unset = none: refused, D1275"
+        },
         "workflows.*.base": {
           "default": "unset = none; the key was removed in 0.7.0"
         },

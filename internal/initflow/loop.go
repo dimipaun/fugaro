@@ -32,6 +32,27 @@ type Options struct {
 	// not: every applying stage is needs-you ("run this in your own terminal
 	// window"); checks and plans still run. A mitigation, not a barrier.
 	Agent string
+	// ManagedGate is the managed project's gate (D1016), when the caller has
+	// one, asked per stage: true means the project is managed and this stage
+	// is one the gate judges, so the loop applies it here and the stage's own
+	// steps judge their own documents at the point of each write — a step the
+	// gate refuses comes back as this stage's needs-you, in the gate's own
+	// words (GatedError) and not in the session's.
+	//
+	// It is asked in a coding agent's session and in the owner's own terminal
+	// (the ruling of 2026-11-01: a managed project converges with no prompt),
+	// and never in a run nobody is at: a pipe, `--json` and `--non-interactive`
+	// keep the refusal they always had, because what the gate stands in for is
+	// a document a person reads.
+	//
+	// It is a bool and not an error because every way it can go wrong is the
+	// same answer: a mark that is absent, unreadable or of another project is
+	// "not managed", which is today's refusal word for word, and a caller that
+	// could not tell would otherwise have to invent a third sentence for it.
+	// The gate is never a widening — a nil field is every caller that is not a
+	// command in the managed set, and this field can only ever hand a stage to
+	// the loop's own apply path, which is the same path LocalUnderAgent takes.
+	ManagedGate func(stage string) bool
 	// OnPreview, when set, receives the read-only preview's stages before the
 	// first apply of an applying run (the one confirmation's review screen
 	// says what is left to do, and what asks separately, from it).
@@ -391,6 +412,32 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 			stopped = name
 			continue
 		}
+		// The managed project's gate, for the owner at their own terminal:
+		// the same path the agent's session takes below, and the reason it is
+		// asked here and not only there is the owner's ruling of 2026-11-01 —
+		// a managed project is one Fugaro converges on their behalf, with no
+		// prompt, whoever started the run. The stage's own steps judge their
+		// own documents at the point of each write, so what this opens is the
+		// run, not the write; a step the gate did not admit comes back as a
+		// GatedError and stops the stage in the gate's own sentence.
+		//
+		// A run nobody is at is not this case: interactive is a real terminal
+		// with no --non-interactive, and --json is asked for here because a
+		// document a person reads is what the gate stands in for. A pipe
+		// without --yes keeps its refusal (NoTerminalError below), which is
+		// the one thing a managed project must never lose: an unattended run
+		// that applies because a mark is present.
+		if l.interactive && !l.o.JSON && l.o.ManagedGate != nil && l.o.ManagedGate(name) {
+			if done, err := l.gatedStage(ctx, s); err != nil {
+				l.fail(name, err)
+				stopped = name
+				continue
+			} else if done {
+				continue
+			}
+			stopped = name
+			continue
+		}
 		if !YesCovers(name) && (!l.interactive || l.o.JSON) {
 			// Never auto-confirmed, never prompted: left for the user.
 			l.needsYou(name, "needs your own confirmation, which --yes does not give", s.Left())
@@ -456,6 +503,13 @@ func (l *loop) agentStage(ctx context.Context, s Stage) (done bool, err error) {
 	if _, local := s.(LocalUnderAgent); local {
 		return l.localStage(ctx, s)
 	}
+	// The managed project's gate comes before the read-only plan below: a
+	// gated stage is applied here, which is the one case in which a coding
+	// agent's session writes anything (D1016), and the stage's own steps are
+	// what judge it.
+	if l.o.ManagedGate != nil && l.o.ManagedGate(name) {
+		return l.gatedStage(ctx, s)
+	}
 	if _, self := s.(SelfConfirming); self {
 		p, perr := planStage(ctx, s, l.env(name))
 		var ag *AgentError
@@ -486,13 +540,41 @@ func (l *loop) agentStage(ctx context.Context, s Stage) (done bool, err error) {
 // it returns is the same needs-you it is in the ordinary path, and it is what
 // keeps whatever the stage would have done outside the machine undone.
 func (l *loop) localStage(ctx context.Context, s Stage) (done bool, err error) {
+	return l.agentApplied(ctx, s)
+}
+
+// gatedStage is a stage the managed project's gate opened in a coding agent's
+// session (D1016): the loop applies it, exactly as it applies a
+// LocalUnderAgent stage, because the gate's admission is per step and it is
+// the stage's own steps that judge their own documents before they write. The
+// difference between the two is only why the stage runs — a write that is
+// this machine's own, or a plan the gate admitted — so the handling of what
+// comes back is one function: a step the gate refused is a GatedError, and it
+// is the user's to do in the gate's own sentence, which names the document
+// rather than the session.
+func (l *loop) gatedStage(ctx context.Context, s Stage) (done bool, err error) {
+	return l.agentApplied(ctx, s)
+}
+
+// agentApplied applies a stage in a coding agent's session and sorts what it
+// returned by who the step is for: the session's own refusal, a step left to
+// the user, and the gate's refusal are all the user's (needs-you, and the
+// stage stops without failing the run), and anything else is a failure.
+func (l *loop) agentApplied(ctx context.Context, s Stage) (done bool, err error) {
 	name := s.Name()
 	out, err := applyStage(ctx, s, l.env(name))
 	var ag *AgentError
 	var ny *NeedsYouError
+	var ge *GatedError
 	switch {
 	case errors.As(err, &ag):
 		l.needsYou(name, ag.Error(), s.Left())
+		return false, nil
+	case errors.As(err, &ge):
+		// The gate's sentence is the detail, and the stage's own Left is where
+		// the user is told to run it: the step is theirs to confirm, at their
+		// own terminal, and the gate says nothing a session could act on.
+		l.needsYou(name, ge.Error(), s.Left())
 		return false, nil
 	case errors.As(err, &ny):
 		l.needsYou(name, "", ny.Left)

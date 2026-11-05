@@ -81,6 +81,18 @@ type Secrets struct {
 	// the last read of a successful run without hard-coding how many there
 	// are.
 	FailVersionsAfter int
+	// FailDeleteWith, when non-zero, makes secrets.delete answer that HTTP
+	// status and delete nothing: the container stays, with every version in
+	// it. It is the refusal a member who may add a version but not remove the
+	// container gets, and the one a caller that wrote something before the
+	// deletion has to undo.
+	FailDeleteWith int
+	// OnDelete, when set, is called with the secret ID before a delete is
+	// handled (without the fake's lock). A delete is the one call a caller
+	// makes after it has already written elsewhere, so this is how a test
+	// moves that other document between the caller's write and the undo it
+	// owes when the delete fails.
+	OnDelete func(id string)
 
 	mu          sync.Mutex
 	secrets     map[string]*fakeSecret // by ID
@@ -255,6 +267,9 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	if r.Method == http.MethodPost && addVersionRE.MatchString(r.URL.Path) && f.OnAddVersion != nil {
 		f.OnAddVersion(addVersionRE.FindStringSubmatch(r.URL.Path)[2])
 	}
+	if r.Method == http.MethodDelete && secretPathRE.MatchString(r.URL.Path) && f.OnDelete != nil {
+		f.OnDelete(secretPathRE.FindStringSubmatch(r.URL.Path)[2])
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	p := r.URL.Path
@@ -314,6 +329,10 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		m := secretPathRE.FindStringSubmatch(p)
 		if f.secrets[m[2]] == nil {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "not found")
+			return
+		}
+		if f.FailDeleteWith != 0 {
+			writeError(w, f.FailDeleteWith, http.StatusText(f.FailDeleteWith), "injected failure")
 			return
 		}
 		f.deletes = append(f.deletes, m[2])

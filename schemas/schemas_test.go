@@ -1460,6 +1460,51 @@ func TestResultSchemaStageCallsAndAgents(t *testing.T) {
 	}
 }
 
+// TestResultSchemaStageCredential pins the schema half of the record's one
+// per-stage credential (docs/design/mixed-credentials.md §5, P12): the value
+// is the closed set the design's contract names — "oauth" for a stage a
+// stage-scoped Claude OAuth account served — and the field is optional, so a
+// record whose stages all ran on the run's own credential carries none.
+func TestResultSchemaStageCredential(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	validate := func(stage string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(
+			`{"version":1,"run_id":"20261105-100000-abcd","status":"running","stage":"review",` +
+				`"outcome":"none","cost_usd":0,"started_at":"2026-11-05T10:00:00Z","stages":[` + stage + `]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	const head = `{"name":"review","started_at":"2026-11-05T10:00:00Z","duration_s":42`
+	for _, tc := range []struct {
+		name  string
+		stage string
+	}{
+		{"the account's stage", head + `,"credential":"oauth","model_usd":0.42,"model_notional_usd":0.42}`},
+		{"no credential", head + `,"model_usd":0.04}`},
+	} {
+		if err := validate(tc.stage); err != nil {
+			t.Errorf("schema rejects a stage with %s: %v", tc.name, err)
+		}
+	}
+	// A value outside the closed set is refused rather than kept: the field
+	// says which credential served the stage, and a word nobody defined would
+	// be a reader's guess.
+	for _, tc := range []struct {
+		name  string
+		stage string
+	}{
+		{"a credential nobody defined", head + `,"credential":"api-key"}`},
+		{"an empty credential", head + `,"credential":""}`},
+		{"a non-string credential", head + `,"credential":5}`},
+	} {
+		if err := validate(tc.stage); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.stage)
+		}
+	}
+}
+
 func TestResultSchemaImageBlock(t *testing.T) {
 	sch := compile(t, "result.schema.json")
 	base := `{"version":1,"run_id":"20260927-100000-abcd","status":"running","stage":"bootstrap","outcome":"none","cost_usd":0,"started_at":"2026-09-27T10:00:00Z"`

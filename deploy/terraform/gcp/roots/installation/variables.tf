@@ -161,6 +161,32 @@ variable "history" {
   default = null
 }
 
+variable "catalog_check" {
+  description = "The project's catalog check job (PIC4, D1148 task (ii)), or null when the project publishes no catalog: modules/installation/catalogcheck.tf and its variable of the same name. fugaro update writes it; it is passed through unchanged, and the module validates it."
+  type = object({
+    account_id       = string
+    job              = string
+    image            = string
+    scheduler_job    = string
+    scheduler_region = string
+    schedule         = optional(string, "17 4 * * *")
+    paused           = optional(bool, true)
+    env              = map(string)
+    definitions_condition = object({
+      title      = string
+      expression = string
+    })
+    repositories = list(object({
+      slug = string
+      records_condition = object({
+        title      = string
+        expression = string
+      })
+    }))
+  })
+  default = null
+}
+
 variable "coordinator" {
   type = object({
     account_id       = string
@@ -231,6 +257,37 @@ variable "project_secrets" {
 
 variable "project_jobs" {
   description = "The shared project jobs (design project-centric §4.1), by Cloud Run job name: one entry per (profile, provider, account), each the module's own object type. fugaro update writes it from the local config's profiles; empty for an installation that names none, which creates no project job at all."
+  type = map(object({
+    profile  = string
+    provider = string
+    account  = string
+    job      = string
+    service_account = object({
+      account_id   = string
+      display_name = string
+    })
+    image          = string
+    cpu            = string
+    memory         = string
+    task_timeout_s = number
+    env            = map(string)
+    secret_env     = map(string)
+    bucket_condition = object({
+      title      = string
+      expression = string
+    })
+    token_condition = object({
+      title      = string
+      expression = string
+    })
+    vertex = bool
+  }))
+  default  = {}
+  nullable = false
+}
+
+variable "project_review_jobs" {
+  description = "The review-only variants of those jobs (design docs/cloud-senior-review, CSR7), by Cloud Run job name: one entry per (profile, provider, account), the module's own object type, with an empty secret_env. Deployed as a module instance of its own, with no secret container handed in. fugaro update writes it from the same profiles; empty for an installation that names none."
   type = map(object({
     profile  = string
     provider = string

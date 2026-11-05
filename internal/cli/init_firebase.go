@@ -157,19 +157,30 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 		return false, false, remote(err)
 	}
 	fmt.Fprint(r.w, tf.Summary(plan))
-	if err := r.guard(ctx, c, plan, r.o.allowDelete); err != nil {
-		return false, false, err
-	}
 	counts := infra.CountPlan(plan)
-	if r.o.planOnly {
-		fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
-		return false, true, nil
-	}
-	if err := r.confirmOrdinary("applies "+counts.String()+" "+what, "nothing was applied", r.notCoveredFirebase(plan, imports)); err != nil {
+	// The managed gate first, and the guard and the confirmation only when it
+	// does not admit this plan (D1016, update_managed.go).
+	gated, err := r.gateStep(ctx, t, imports, r.coverOf(r.notCoveredFirebase))
+	if err != nil {
 		return false, false, err
+	}
+	if !gated {
+		if err := r.guard(ctx, c, plan, r.o.allowDelete); err != nil {
+			return false, false, err
+		}
+		if r.o.planOnly {
+			fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
+			return false, true, nil
+		}
+		if err := r.confirmOrdinary("applies "+counts.String()+" "+what, "nothing was applied", r.notCoveredFirebase(plan, imports)); err != nil {
+			return false, false, err
+		}
 	}
 	if err := t.Apply(ctx, infra.PlanFile); err != nil {
 		return false, false, remote(err)
+	}
+	if err := r.gateApplied(ctx); err != nil {
+		return false, false, err
 	}
 	return true, false, nil
 }

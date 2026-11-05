@@ -99,9 +99,9 @@ const (
 // Both figures moved again with the repository-image removal's R2, which deleted
 // the twenty-one registry rows of `image.*`, `dockerfile:` and `rebuild.*` -- all
 // twenty-one of them keys the allowlist carried by name, so the gap the audit's
-// §1 is about (the rows no generic writer reaches) is the same 159 it was.
+// §1 is about (the rows no generic writer reaches) is the same 161 it was.
 const (
-	cfmRegistryRows   = 302
+	cfmRegistryRows   = 304
 	cfmAllowlistNamed = 67
 )
 
@@ -329,11 +329,11 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 }
 
 // TestDocsConfigManagementAllowlistCounts: the figure the audit's whole argument
-// is made of is re-counted here rather than trusted. The registry holds 302 rows
+// is made of is re-counted here rather than trusted. The registry holds 304 rows
 // and the generic write path's allowlist carries sixty-seven of them by name
 // plus the rows its nine prefixes reach; the documents state the registry's
 // count and the allowlist's, and a row added to either -- which moves the gap
-// between the two -- fails here rather than leaving §1's "159 rows have no
+// between the two -- fails here rather than leaving §1's "161 rows have no
 // generic writer" reading as checked when it is not.
 //
 // It counts through the same predicate the write path uses, so the test and the

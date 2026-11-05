@@ -684,6 +684,119 @@ func reviewFloorUnpublishable(lc *localcfg.Config) []config.Problem {
 		strings.Join(missing, " and "), lc.Name)}}
 }
 
+// reviewArtifactTokens is the per-call output the review job's verdict
+// artifact is written under: the verdict, one entry per issue with a location
+// and a suggested fix, and the prose around them (spec §3), which is more than
+// the conversational reply the per-call limit is usually sized for. The figure
+// is the one the design sizes D886 against — a reviewer model whose own maximum
+// output is under it needs agent.max_output_tokens.reviewer raised — and it is
+// what the stage asks for when no limit of Fugaro's is set.
+const reviewArtifactTokens = 32000
+
+// reviewJobNotes are `fugaro validate`'s notes about the independent cloud
+// review job (CSR6): the reviewer's output cap against the artifact it writes
+// (D886), the one ceiling a subscription run has beside the gateway's (F10),
+// and E7's precondition — the credentials service enabled for the installation
+// and admitting the review job's own caller — which is the state CSR2's launch
+// refusal mirrors.
+//
+// All three speak for an installation that has named a Claude account, and are
+// silent without one: the review job is the first thing in this design that a
+// named account is needed for (D888: the first slice is `fugaro accounts add`
+// plus the review job), and a validate run against an installation that has
+// named none is one whose output this release does not change — the same
+// silence doctor's own account checks keep.
+func reviewJobNotes(cfg *config.Config, lc *localcfg.Config) []config.Problem {
+	if lc == nil || len(lc.ClaudeAccounts) == 0 {
+		return nil
+	}
+	var notes []config.Problem
+	if n := cfg.Agent.MaxOutputTokens.Reviewer; n > 0 && n < reviewArtifactTokens {
+		notes = append(notes, config.Problem{Path: "agent.max_output_tokens.reviewer", Message: fmt.Sprintf(
+			"is %d, and a review job's verdict is written as a structured artifact — the verdict, one entry per issue with a file:line and a fix, and the prose around them — which needs up to %d output tokens: a reviewer clipped at this cap writes a truncated artifact, and a truncated artifact is a failed review and never a shorter ship (D886). The figure is a policy key: agent.max_output_tokens.reviewer in the project layer is this installation's ceiling and this file may only tighten it",
+			n, reviewArtifactTokens)})
+	}
+	if cfg.Budget != nil && cfg.Budget.PerRunUSD > 0 {
+		notes = append(notes, config.Problem{Path: "budget.per_run_usd", Message: "is the cap on a run whose model calls reach the gateway, and a review job's do not: it runs on a Claude account, so the only ceiling over it is agent.max_budget_usd — Claude Code's own estimate, accurate for a Claude model and about twenty-five times too high for a provider model (F10). No fugaro.yaml key lowers that estimate: a review job that costs more than this cap is not what refuses it"})
+	}
+	if msg := reviewPreconditionNote(lc); msg != "" {
+		notes = append(notes, config.Problem{Path: "credentials_service", Message: msg})
+	}
+	return notes
+}
+
+// reviewPreconditionNote is E7's precondition in one sentence, naming the half
+// or halves this installation is missing (CSR6). It is a note and never a
+// refusal: nothing in a fugaro.yaml is what is missing, and whether a review is
+// ever launched is the owner's decision rather than this file's.
+//
+// The two halves are named apart because only one of them is reachable from
+// `fugaro update`. The note never offers a second command for the admission
+// half — none exists — and it never reads as "deploy the service and the review
+// works": the launch refuses until both hold, and so does this sentence.
+func reviewPreconditionNote(lc *localcfg.Config) string {
+	const launch = "fugaro review --pr N refuses until it holds"
+	enabled := lc.CredentialsService != nil && lc.CredentialsService.URL != ""
+	switch {
+	case !enabled && !reviewJobAdmitted:
+		return "a cloud review cannot launch on this installation, and both halves of its precondition are missing. The first is the credentials service itself: a review job mounts no credential of its own, so its read-only installation token and its account's model calls both come from the installation's service, and no credentials_service block is published for this project — run fugaro update --provision-credentials to deploy it, then fugaro creds set github-app-key, the App the review's read-only token is issued for. The second is the service's own admission of the review job's caller: the review's account belongs to a project-scoped job, which the service refuses whole, and no fugaro update supplies that half, because it is a change to the service's own admission (C3.9) — so " + launch + " either way"
+	case !enabled:
+		return "a cloud review cannot launch on this installation: a review job mounts no credential of its own, so its read-only installation token and its account's model calls both come from the installation's credentials service, and no credentials_service block is published for this project — run fugaro update --provision-credentials to deploy it, then fugaro creds set github-app-key, the App the review's read-only token is issued for, and " + launch
+	case !reviewJobAdmitted:
+		return "a cloud review cannot launch on this installation, and the half an update cannot supply is the one missing: the service is enabled, and it does not admit the review job's own caller — the review's account belongs to a project-scoped job, and the service refuses one whole (its admission is built for a repository's own job). No fugaro update supplies this half, because it is a change to the service's own admission (C3.9), which this release ships the command, the gate and the review-only job variant ahead of, and " + launch
+	default:
+		return ""
+	}
+}
+
+// stageAccountProblems is the B0 ruling judged over the file in hand
+// (docs/design/mixed-credentials.md §11, decision 1: "the rule is the rule at
+// every layer that judges it, and fugaro validate says the same as the run").
+// The rule needs both halves — the auth, which is the file's, and the stage
+// accounts, which are the machine's local config — so this is the one place
+// offline that holds them together; the launch makes the same call
+// (claudeAccountFor) and the runner will make it again with the auth its task
+// resolves.
+//
+// The file's auth is the *effective* one (ecfg, the file over the project
+// layer, as the run resolves it), for claudeAccountFor's reason: a layer whose
+// defaults say agent.auth: api-key over a file that names none is a mixed run,
+// and reading the raw file would report a valid file as invalid or the
+// reverse. What the check does not do is hold the stage accounts to the
+// repository's allow-list: that needs the repository, which a file in hand
+// does not name, and the launch is where it is enforced.
+func stageAccountProblems(lc *localcfg.Config, ecfg *config.Config) []config.Problem {
+	if lc == nil || ecfg == nil {
+		return nil
+	}
+	return config.CheckStageAccountMix(ecfg.Agent.Auth, stageAccountsOf(lc), "stages")
+}
+
+// catalogSourceProblems are the project's own catalog entries whose
+// Dockerfile this installation cannot fetch: a dockerfile source on a
+// provider with no reader (catalog.Readable) is refused by `fugaro image
+// build` -- the same sentence, catalog.UnreadableRefusal -- but only after
+// the operator has typed the confirmation for a billable build, so it is
+// reported here instead, where the entry can still be changed. The entry's
+// index is in the path because that is how every other problem about a
+// catalog entry in this file is addressed.
+//
+// The catalog read is the local config's, which is the one this machine
+// writes and publishes; a repository the config does not list has no kind
+// here and is not judged (see catalogUnfetchable).
+func catalogSourceProblems(lc *localcfg.Config) []config.Problem {
+	var out []config.Problem
+	if lc == nil || lc.ImageCatalog == nil {
+		return nil
+	}
+	for i, e := range lc.ImageCatalog.Entries {
+		if err := catalogUnfetchable(lc, e); err != nil {
+			out = append(out, config.Problem{Path: fmt.Sprintf("image_catalog.entries[%d].source.repo", i), Message: err.Error()})
+		}
+	}
+	return out
+}
+
 // claudePin is one of the run's three pins whose model is a canonical Claude
 // ID: the pins the routing switch applies to, because D1a's list is a list of
 // exactly those IDs.
@@ -1891,6 +2004,9 @@ func newValidateCmd() *cobra.Command {
 				rlp, rlw := reviewLevelProblems(filepath.Dir(path), cfg, lc, lcErr, claimed)
 				problems, warnings = append(problems, rlp...), append(warnings, rlw...)
 				warnings = append(warnings, reviewFloorUnpublishable(lc)...)
+				notes = append(notes, reviewJobNotes(cfg, lc)...)
+				problems = append(problems, stageAccountProblems(lc, ecfg)...)
+				problems = append(problems, catalogSourceProblems(lc)...)
 				annotateProjectRecipe(filepath.Dir(path), cfg, problems)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {
 					if n := branchNote(cmd.Context(), path); n != "" {

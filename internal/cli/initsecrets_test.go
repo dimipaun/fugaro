@@ -173,6 +173,15 @@ func (r *secretsRig) writeConfig(t *testing.T, yaml string) {
 	fetched(t, r.dir)
 }
 
+// workflowSecretConfig is a default branch whose workflow declares the
+// application secret name, so the stage's wanted list carries it (the names
+// the repository's jobs mount, one of which is a workflow's own).
+func (r *secretsRig) workflowSecretConfig(t *testing.T, name string) {
+	t.Helper()
+	provider := r.e.lc.Repos["acme/app"].Provider
+	r.writeConfig(t, checkoutYAML(provider, "oauth", "aurora", ", secrets: [{ name: "+name+", env: APP_SIGNING_KEY }]"))
+}
+
 // removeConfig is a default branch with no fugaro.yaml.
 func (r *secretsRig) removeConfig(t *testing.T) {
 	t.Helper()
@@ -922,6 +931,55 @@ func TestInitSecretsFindSkipsNameWithProjectVersion(t *testing.T) {
 		got, err := r.stage.find(ctx, r.store)
 		if err != nil || !slices.Contains(got, "bitbucket-token") {
 			t.Fatalf("find = %v, %v; want the git credential still missing", got, err)
+		}
+	})
+
+	// The workflow_secrets block's half of the same rule (D1262, W4): an
+	// entry listing this repository is the whole gate, so the project copy
+	// covers the name exactly as a project_secrets entry makes one -- and the
+	// stage must not prompt for a value that would then be stored as the
+	// repository's own copy and win over the project's forever.
+	t.Run("a workflow secret the entry lists", func(t *testing.T) {
+		r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+		r.workflowSecretConfig(t, "app-signing-key")
+		r.e.lc.WorkflowSecrets = map[string]config.ProjectSecret{
+			"app-signing-key": {AllowDataTo: []string{"acme/app"}},
+		}
+		r.stage.resolve(ctx)
+		if _, ok := infra.ProjectSecretCandidate(r.e.lc, "app-signing-key", "acme/app"); !ok {
+			t.Fatal("the workflow secret is not a project candidate here: the test would prove nothing")
+		}
+		want := []string{"bitbucket-token", "claude-oauth-token", "app-signing-key"}
+		if got, err := r.stage.find(ctx, r.store); err != nil || !slices.Equal(got, want) {
+			t.Fatalf("with nothing stored: find = %v, %v; want %v", got, err, want)
+		}
+		r.store.seedProject(r.e.lc.Name, "app-signing-key", tokenValue)
+		if got, err := r.stage.find(ctx, r.store); err != nil || slices.Contains(got, "app-signing-key") {
+			t.Fatalf("with the project copy stored: find = %v, %v; want the workflow secret covered", got, err)
+		}
+	})
+
+	// The other half, and the half that fails closed: an entry naming another
+	// repository gives this one no project-wide meaning at all, so a project
+	// copy of the name is not a value this repository may mount -- it is
+	// still missing, and the stage stores it in the repository's own copy.
+	t.Run("a workflow secret the entry excludes", func(t *testing.T) {
+		r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+		r.workflowSecretConfig(t, "app-signing-key")
+		r.e.lc.WorkflowSecrets = map[string]config.ProjectSecret{
+			"app-signing-key": {AllowDataTo: []string{"acme/other"}},
+		}
+		r.stage.resolve(ctx)
+		if _, ok := infra.ProjectSecretCandidate(r.e.lc, "app-signing-key", "acme/app"); ok {
+			t.Fatal("the workflow secret is a project candidate for acme/app: the test would prove nothing")
+		}
+		r.store.seedProject(r.e.lc.Name, "app-signing-key", tokenValue)
+		got, err := r.stage.find(ctx, r.store)
+		if err != nil || !slices.Contains(got, "app-signing-key") {
+			t.Fatalf("find = %v, %v; want the workflow secret still missing: the entry does not name this repository", got, err)
+		}
+		if r.stage.projectScope("app-signing-key") {
+			t.Fatal("the stage would announce and store the project copy for a repository the entry excludes")
 		}
 	})
 }
