@@ -3585,13 +3585,80 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	case res.IsError && opts.Skippable && r.skippable(ctx, stageCtx):
 		r.save(ctx)
 		return res, false, skippedError{fmt.Errorf("the agent reported an error (%s)", res.Subtype)}
+	// A stage that reported an error carries its own words for it in the
+	// result event's text, and its subtype says nothing: Claude Code reports
+	// a refused API call as subtype "success". The reason therefore quotes
+	// that text, and one stop gets a name of its own (stageErrorReason): the
+	// OAuth account's subscription usage limit.
 	case res.IsError:
-		r.fail(fmt.Sprintf("stage %s: the agent reported an error (%s)", name, res.Subtype))
+		r.fail(r.stageErrorReason(name, res))
 		r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
 		return res, false, nil
 	}
 	r.save(ctx)
 	return res, true, nil
+}
+
+// stageErrorReason is the failure reason for a stage that reported an error
+// result (is_error). The subtype does not describe such an error -- Claude
+// Code reports a refused API call as subtype "success" with is_error set --
+// so the reason quotes the event's own text, redacted, on one line and
+// clipped: what the agent was told is the only thing that says why the call
+// failed, and without it the record, the report and the draft pull request
+// say nothing.
+//
+// The one error that gets a name of its own is the OAuth account's
+// subscription usage limit (subscriptionUsageLimit): the allowance is the
+// account's, shared with the owner's own use, and it resets on its own
+// schedule, so the stage is not going to succeed by being run again. A stage
+// on an API key, a provider route or Vertex has no such allowance and keeps
+// the reason above.
+func (r *run) stageErrorReason(stage string, res agent.Result) string {
+	what := "the agent reported an error"
+	if res.Subtype != "" && res.Subtype != "success" {
+		what += " (" + res.Subtype + ")"
+	}
+	if subscriptionUsageLimit(r.cfg.Agent.Auth, res.Text) {
+		what = "the OAuth account's subscription usage limit was reached, so the run stops here: " +
+			"the account's allowance is shared with the owner's own Claude Code use and resets on its own schedule"
+	}
+	reason := "stage " + stage + ": " + what
+	if text := stageErrorText(r.redact(res.Text)); text != "" {
+		reason += ": " + text
+	}
+	return reason
+}
+
+// stageErrorText is a result event's text as a reason may carry it: the
+// agent's own words, so redacted first, then put on one line (a reason is a
+// sentence), then clipped to one log line's length. The stage's transcript
+// holds the whole of it either way.
+func stageErrorText(text string) string {
+	return logtail.Clip(safetext.OneLine(text), logtail.DefaultLineBytes)
+}
+
+// oauthLimitPhrases are what Claude Code and Anthropic print when an OAuth
+// account has spent its subscription allowance: the CLI's own wall, and the
+// API error type a token past its allowance gets, matched as that type rather
+// than as English wording -- a repository's own "hit a rate limit" in a
+// result text is not the account's allowance.
+var oauthLimitPhrases = []string{"usage limit", "hit your limit", "rate_limit_error"}
+
+// subscriptionUsageLimit reports whether a stage's own text says it stopped on
+// the OAuth account's subscription usage limit rather than on anything about
+// the work. Only an OAuth run is asked: these phrases are the subscription's,
+// and a stage authenticated any other way has no allowance to be out of.
+func subscriptionUsageLimit(auth, text string) bool {
+	if auth != "oauth" {
+		return false
+	}
+	lower := strings.ToLower(text)
+	for _, p := range oauthLimitPhrases {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // skippable reports whether a failed Skippable stage may be skipped: the run
