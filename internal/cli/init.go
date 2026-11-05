@@ -59,6 +59,16 @@ var stdinIsTerminal = func(in io.Reader) bool {
 // stdinIsTerminal, so this follows them.
 func processTerminal() bool { return stdinIsTerminal(os.Stdin) }
 
+// noteIDETerminalCmd is noteIDETerminal for a confirmation path that holds a
+// command rather than an initRun: it prints the one IDE-terminal line when the
+// command's own stdin is a real terminal and only the IDE extension's marker is
+// set. It is called once, at the point one typed confirmation is accepted.
+func noteIDETerminalCmd(cmd *cobra.Command, out io.Writer) {
+	if ideTerminal(os.Getenv, stdinIsTerminal(cmd.InOrStdin())) {
+		fmt.Fprintln(out, ideNotice)
+	}
+}
+
 type initOptions struct {
 	// strictCreate and created are fugaro restore's, and nothing else sets
 	// them: no flag reaches either (restore.go builds the child with

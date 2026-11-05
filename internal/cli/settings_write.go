@@ -269,5 +269,6 @@ func confirmSettingsWrite(cmd *cobra.Command, lc *localcfg.Config, path string, 
 	if ans := strings.ToLower(strings.TrimSpace(line)); ans != "y" && ans != "yes" {
 		return userErr("not confirmed; nothing was written")
 	}
+	noteIDETerminalCmd(cmd, out)
 	return nil
 }

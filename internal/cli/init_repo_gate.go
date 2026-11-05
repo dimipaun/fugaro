@@ -403,6 +403,7 @@ func (e *initEngine) confirmRepo(root string, o originInfo) (bool, error) {
 		e.authorized = map[string]bool{}
 	}
 	e.authorized[strings.ToLower(o.typed())] = true
+	e.r.noteIDETerminal()
 	return true, nil
 }
 
