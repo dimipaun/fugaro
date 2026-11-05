@@ -1964,6 +1964,34 @@ func TestFixBriefCarriesTheFindingsAndNamesTheReviewRun(t *testing.T) {
 	}
 }
 
+// TestFixBriefIsTheSameWhenTheLaunchIsRepeated: the findings are part of the
+// task this launch stores, and repeating --run-id is the one way a launcher
+// that is unsure whether its launch went through reports it instead of starting
+// another. So the brief has to be the same bytes on the repeat — the block's
+// own delimiter included — or the second call is refused as a different task
+// and the repeat a person relies on stops working.
+func TestFixBriefIsTheSameWhenTheLaunchIsRepeated(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	reviewID := wallRunIDAt(0, "121900", "9eed")
+	putReviewArtifact(t, f, reviewID, fixFirstArtifact(reviewID))
+
+	args := []string{"run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--review-run", reviewID, "also rename x"}
+	if _, _, err := execute(t, args...); err != nil {
+		t.Fatalf("a fix round carrying the findings of %s: %v", reviewID, err)
+	}
+	first := readSpec(t, f, fuID)
+	if _, _, err := execute(t, args...); err != nil {
+		t.Fatalf("repeating the launch of %s: %v", fuID, err)
+	}
+	if again := readSpec(t, f, fuID); again.Task != first.Task {
+		t.Errorf("the repeated launch did not find the brief it stored:\n%s\n---\n%s", first.Task, again.Task)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 1 {
+		t.Fatalf("the repeat asked Cloud Run for %d executions, want 1", len(calls))
+	}
+}
+
 // TestFindingsFromAnUnreadableArtifactRefuseTheLaunch is spec §6's posture at
 // the launcher: a missing or unreadable verdict is never carried into a brief.
 // A fix round whose findings nobody can read would be launched to fix

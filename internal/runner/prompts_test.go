@@ -53,6 +53,12 @@ func TestFindingsAreBoundedAndQuoted(t *testing.T) {
 	if !strings.Contains(got, run) {
 		t.Errorf("the findings do not name the review run %s:\n%s", run, got)
 	}
+	// The text is stored as the fix round's own task and a repeated launch is
+	// compared against what it stored, so two renders of the same findings
+	// must be the same bytes — the delimiter included.
+	if again := runner.FixFindings(run, issues); again != got {
+		t.Errorf("two renders of the same findings differ:\n%s\n---\n%s", got, again)
+	}
 	if strings.Contains(got, long) {
 		t.Errorf("an over-long summary reached the brief whole (%d runes):\n%s", len([]rune(long)), got)
 	}
