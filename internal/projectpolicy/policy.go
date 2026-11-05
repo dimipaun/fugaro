@@ -197,6 +197,47 @@ type Policy struct {
 	// profiles it deploys against the same block.
 	Accounts map[string]Account `json:"accounts,omitempty"`
 
+	// DefaultClaudeAccount is the project's default Claude account: the one
+	// every stage of a run uses when nothing more specific does
+	// (docs/accounts-add/spec.md §11.1, D873). It names an account of the
+	// owner's local claude_accounts, or the reserved "default" for the
+	// unsuffixed secret.
+	//
+	// It travels here rather than through the shared config for Accounts'
+	// reason and one of its own: a launcher who could write the runs bucket's
+	// shared file could otherwise choose the credential a run's stages go out
+	// on, which is a way around the account's own allow_data_to — and the
+	// shared file is writable by any launcher, while this node is written only
+	// by the owner and the runner fails closed on it. `fugaro project policy
+	// publish` copies it from the local config, which is its only store
+	// (localcfg.Config.Shared nils it, and sharedForbidden refuses the key
+	// there). A project that names none publishes no member at all, so its node
+	// is byte for byte what it was before the key existed.
+	DefaultClaudeAccount string `json:"default_claude_account,omitempty"`
+
+	// ClaudeAccountStages is the account one stage of a run uses instead of the
+	// default, keyed by the run's own stage name (docs/accounts-add/spec.md
+	// §11.1): "review" is "the reviewer uses this account". A stage is not a
+	// role — config.StageRole folds every stage but review into the coder's, so
+	// a role-keyed block could not give review_first an account implement does
+	// not use.
+	//
+	// It is the same member as DefaultClaudeAccount from the other side, copied
+	// by the same publish and refused in the shared file for the same reason,
+	// and it is what gives an api-key run the one Claude account the B0 ruling
+	// admits (docs/design/mixed-credentials.md §11): the stage key and no other
+	// rung may opt such a run into the mix.
+	//
+	// The segment is held to config.RunStages and the name to
+	// config.ValidClaudeAccountRef here. What the account may *serve* is the
+	// auth's business and this node carries no agent.auth: an api-key run may
+	// name an account for the senior review and the adversarial review and no
+	// other stage, and config.CheckStageAccountMix is that rule, applied at the
+	// launch and in `fugaro validate`, where the run's auth is known. An absent
+	// member and a written empty one are the same: the publisher writes nothing
+	// for a project that names no stage account.
+	ClaudeAccountStages map[string]string `json:"claude_account_stages,omitempty"`
+
 	// CloneURLs are the project's clone URLs, keyed by canonical repository
 	// (Canonical: "github/owner/name", the spelling allow_repos patterns and
 	// the runner's slug already use). A repository that is not listed here
@@ -321,7 +362,8 @@ var knownTopLevelKeys = map[string]bool{
 	"credentials": true, "base_branch": true,
 	"bitbucket_token": true, "bitbucket_api_roots": true,
 	"review_floor": true, "verifier_accounts": true,
-	"image_catalog": true,
+	"image_catalog":          true,
+	"default_claude_account": true, "claude_account_stages": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -931,6 +973,53 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 		p.Accounts = as
 		if err := validAccounts(p.Accounts); err != nil {
 			return nil, true, err
+		}
+	}
+	// The account-choice members are read here, beside the accounts block they
+	// name entries of, and they are held to the shape rules only: the node
+	// carries no agent.auth, so which stage may take an account is the run's
+	// own rule (config.CheckStageAccountMix) and fires where the auth is known.
+	if draw, ok := doc["default_claude_account"]; ok && !IsNull(draw) {
+		if err := json.Unmarshal(draw, &p.DefaultClaudeAccount); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: default_claude_account: %w", err)
+		}
+		if msg := config.ValidClaudeAccountRef(p.DefaultClaudeAccount); msg != "" {
+			return nil, true, fmt.Errorf("projectpolicy: default_claude_account: %s", msg)
+		}
+	}
+	if sraw, ok := doc["claude_account_stages"]; ok && !IsNull(sraw) {
+		// The member names are stage names, so the duplicate check is
+		// checkNoDuplicateNames' rather than checkMemberNames': a stage name is
+		// not one of a closed list of member names this reader looks up, it is
+		// the key of a map it decodes into.
+		names, err := objectMemberNames(sraw)
+		if err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: claude_account_stages: %w", err)
+		}
+		if err := checkNoDuplicateNames("claude_account_stages", names); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: %w", err)
+		}
+		if err := json.Unmarshal(sraw, &p.ClaudeAccountStages); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: claude_account_stages: %w", err)
+		}
+		for _, stage := range sortedStringKeys(p.ClaudeAccountStages) {
+			// A written empty entry names nothing, the way an absent member
+			// does: it is dropped rather than refused, and a member left with no
+			// entry at all is normalized to nil, so a project that names no
+			// stage account carries no member.
+			if p.ClaudeAccountStages[stage] == "" {
+				delete(p.ClaudeAccountStages, stage)
+				continue
+			}
+			if ps := config.CheckStageSegment(stage, "claude_account_stages"); len(ps) > 0 {
+				return nil, true, fmt.Errorf("projectpolicy: %s: %s", ps[0].Path, ps[0].Message)
+			}
+			if msg := config.ValidClaudeAccountRef(p.ClaudeAccountStages[stage]); msg != "" {
+				return nil, true, fmt.Errorf("projectpolicy: claude_account_stages.%s: %s", stage, msg)
+			}
+		}
+		if len(p.ClaudeAccountStages) == 0 {
+			p.ClaudeAccountStages = nil
 		}
 	}
 	// The Bitbucket block is judged *before* the profiles block, and the

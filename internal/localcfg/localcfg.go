@@ -1585,17 +1585,25 @@ func (c *Config) validate() error {
 	// A name this file does not define is refused too (choiceRefProblem): the
 	// key would otherwise name an account no run can use.
 	//
-	// The stage SEGMENT is not validated here: this package holds no closed
-	// vocabulary of run stages, so `stages.<anything>.claude_account` is
-	// accepted whatever the segment is and only the account reference above is
-	// judged. Refusing a segment that names no stage needs that vocabulary to
-	// exist first, and it does not.
+	// The stage SEGMENT is held to config.RunStages, the run's own stage names
+	// for the stages that spend a model call: `stages.<anything>.claude_account`
+	// would otherwise be accepted whatever the segment is and silently never
+	// apply, which is the state the design refuses rather than the one it
+	// admits (docs/accounts-add/spec.md §11.1). What the segment may *name* is
+	// the auth's business and not this file's: under an api-key run only the
+	// senior review and the adversarial review take an account
+	// (config.CheckStageAccountMix), and this loader holds no repository and so
+	// no auth. That rule fires at the launch and in `fugaro validate`, where
+	// the auth is known.
 	if c.DefaultClaudeAccount != "" {
 		if msg := c.choiceRefProblem(c.DefaultClaudeAccount); msg != "" {
 			bad("default_claude_account: %s", msg)
 		}
 	}
 	for _, stage := range slices.Sorted(maps.Keys(c.ClaudeAccountStages)) {
+		for _, p := range config.CheckStageSegment(stage, "stages") {
+			bad("%s: %s", p.Path, p.Message)
+		}
 		if ref := c.ClaudeAccountStages[stage].ClaudeAccount; ref != "" {
 			if msg := c.choiceRefProblem(ref); msg != "" {
 				bad("stages.%s.claude_account: %s", pluginwire.Printable(stage), msg)
