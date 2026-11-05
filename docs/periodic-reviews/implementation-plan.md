@@ -39,7 +39,7 @@ ends at the gates below.
   changes `fugaro runs digest`'s default target** (E8) without touching what it writes.
 - **`plugin/**` is owned, and it is being renamed** by the `docs/plugin-user-scope` design (PR
   #1488, which moves the skills to user scope and rewrites the setup skill's session-start
-  behaviour). **R3, R4's rule list and R6's §7 sentence touch it, so all three are sequenced after
+  behaviour). **R3's rule list and R6's §7 sentence touch it, so both are sequenced after
   #1488 lands**: the same file has to be edited once, at the path it will have. R3 also waits for R4,
   because the skill's §3 lists the rules and R4 is what adds the fifth, and #1488's rename is what
   R3's own citations follow.
@@ -65,19 +65,26 @@ ends at the gates below.
 | 1 | R1 | R0 |
 | 2 | R2, R4 | R1 |
 | 3 | R3, R7 | R3: R4 (the skill's rule list names the rules R4 adds) and #1488 landed; R7: R0 and R4 (the rules' source, E7) |
-| 4 | R8, R10 | R8: R7 (the job's own loop); R10: R7 (the bucket writer) and R2 (the same file, once R2 has finished with it) |
+| 4 | R8 | R7 (the job's own loop) |
 | 5 | R6, R9 | R6: R1–R4 and R7, and #1488; R9: R7 **and the designated-repo design item (E6, Open items)** |
+| 6 | R10 | R7 (the bucket writer), R8 (the writer it writes through), R1 and R2 (`internal/cli/runs_digest.go`) and R6 (`docs/recipes.md`) |
 | — | R5 | the owner, at their terminal; no agent step |
 
-**No level holds two writers of one file.** The two rows that moved are why: R4 (level 2) adds the
+**No level holds two writers of one file.** The rows that moved are why: R4 (level 2) adds the
 fifth rule to `internal/digest/patterns.go`, and R7 (level 3) changes where the summaries it reads
-come from — the same file, one level apart; and R10 (level 4) edits `internal/cli/runs_digest.go`
-after R1 and R2 (levels 1 and 2) have finished with it. The shared-files table below is the check.
+come from — the same file, one level apart. Three files have three writers each, and each is ordered
+the same way: `internal/digest/store.go` (R7 the reader, R8 the aggregate's writer, R10 the command's
+own write path), `internal/cli/runs_digest.go` (R1, R2, R10) and `docs/recipes.md` (R1, R6, R10).
+**R10 is therefore alone at level 6, not beside R8 at level 4**: its three files are held by tasks at
+levels 1, 2, 3, 4 and 5, and level 5 — the one that clears R8 — already holds R6, the second writer
+of `docs/recipes.md`, so a level 5 R10 would trade one collision for another. The shared-files table
+below is the check.
 
-**The critical path is R0 → R1 → R4 → R7 → R8**, and it is the rulings that lengthened it: before
-2026-11-05 the longest chain was three levels (R0 → R1 → R6). **R7 is what everything new waits on** —
-R8 writes the aggregate in its own loop, R9 commits what it stored, R10 writes through its writer — so
-a schedule enabled before R7 lands has nothing to run, which is the other reason the whole of R7 has
+**The critical path is R0 → R1 → R4 → R7 → R8 → R10**, and it is the rulings that lengthened it:
+before 2026-11-05 the longest chain was three levels (R0 → R1 → R6). **R7 is what everything new waits
+on** — R8 writes the aggregate in its own loop, R9 commits what it stored, R10 makes the bucket the
+shipped command's default target through that writer — so a schedule enabled before R7 lands has
+nothing to run, which is the other reason the whole of R7 has
 to be in the release that ships the plan.
 
 ## Gates (every task)
@@ -96,15 +103,15 @@ the convergence test is a Terraform-tagged one.
 | --- | --- | --- |
 | `internal/digest/due.go` (new) | R0, R1 | R0 writes it; R1 reads it |
 | `internal/runner/digest.go` | R0 | the constants and the function move out of it |
-| `internal/cli/runs_digest.go` | R1, R2, R10 | R1 adds `--due`; R2 calls the same reading for doctor; R10 changes the default target (E8) |
+| `internal/cli/runs_digest.go` | R1, R2, R10 | R1 adds `--due`; R2 calls the same reading for doctor; R10 changes the default target (E8) — levels 1, 2 and 6 |
 | `internal/digest/patterns.go` | R4, R7 | R4 adds the fifth rule; R7 changes where the summaries it reads come from (E7) |
-| `internal/digest/store.go` (new) | R7, R8, R10 | R7 writes the bucket-backed reader; R8 adds the aggregate's writer; R10 is the command's default path into it |
+| `internal/digest/store.go` (new) | R7, R8, R10 | R7 writes the bucket-backed reader; R8 adds the aggregate's writer; R10 is the command's default path into it — levels 3, 4 and 6, one writer per level |
 | `internal/cli/runs_reports.go` (new) | R7, R8 | R7 writes the job's loop over the repositories; R8 writes the aggregate after it |
 | `internal/cli/runs.go` | R7 | the one line that registers `runs reports` beside `runs digest` |
 | `internal/infra/tfvars.go`, `internal/infra/testdata/installation-*.tfvars.json` | R7 | the new `reports` node and the fixtures that carry every installation shape |
 | `deploy/terraform/gcp/modules/installation/bucket.tf`, `variables.tf`, `roots/installation/` | R7 | the `reports/` lifecycle rule and the job's variable |
 | `plugin/skills/working/reference/periodic-reviews.md` | R3, R6 | R3 adds the due signal, the schedule and the rule list; R6 adds §7's sentences |
-| `docs/recipes.md` | R1, R6, R10 | the `--due` pointer, the checklist line, and the sentence E8 changes (R10) |
+| `docs/recipes.md` | R1, R6, R10 | the `--due` pointer, the checklist line, and the sentence E8 changes (R10) — levels 1, 5 and 6 |
 | `docs/periodic-reviews/README.md` | R6 | the status line, once a task lands |
 
 ## R0. The due computation moves into `internal/digest`
@@ -400,8 +407,8 @@ project repo**.
   its own).
 - **What is not written until the designated-repo design item lands:** the recipe's name,
   `fugaro.yaml` keys if any, and the file list. **The task is blocked on that design item, and this
-  plan does not guess its shape** — which is why it is the last level's second task, with R7 behind
-  it and nothing else waiting on it.
+  plan does not guess its shape** — which is why R7 is the only task behind it, and nothing at all
+  waits on it.
 - **Files (to be completed by that design item):** a recipe under `internal/recipe/catalog/` and its
   runner step — itself a `docs/periodic-reviews` decision the design item's files settle.
 - **Reviewer:** opus + mandatory independent review (the only path in this design that writes into a
@@ -419,8 +426,11 @@ writing locally for a person who wants the files in a checkout.
   periods and the closed-period refusal, `--stdout`, `--json`, `--submit-draft`, the byte-identical
   rule between writers (F2), and **`fugaro runs digest` still commits nothing** (D964, E5).
 - **Files (4):** `internal/cli/runs_digest.go`, `internal/cli/runs_digest_test.go` (the default
-  target), `docs/recipes.md`, and `internal/digest/store.go` (the write path, if R7's reader needs a
-  writer's twin).
+  target), `docs/recipes.md`, and `internal/digest/store.go` (the write path beside R7's reader — the
+  file R8 has just finished its own side of, which is what puts this task a level above it).
+- **Why it is last:** it touches three files earlier tasks hold — `internal/cli/runs_digest.go` (R1,
+  R2), `docs/recipes.md` (R1, R6) and `internal/digest/store.go` (R7, R8) — so it sits alone at
+  **level 6**, above every one of them, and the shipped command's default changes once, at the end.
 - **Red step:** `TestRunsDigestWritesToTheBucketByDefault` fails while the command still writes into
   the checkout without `--dir`, and `TestRunsDigestStillWritesLocallyWithDir` fails if `--dir` is
   quietly dropped — the person's path is a feature, not a fallback.
