@@ -132,6 +132,59 @@ func mixedAccountProblems(stages map[string]string, path string) []Problem {
 	return ps
 }
 
+// CheckMixBudget is the mix's budget-mode clause, and the second half of the
+// same rule (docs/design/mixed-credentials.md §11): an api-key run's one
+// Claude account exists because the gateway holds the provider key and routes
+// the coder's calls to it, and only budget.mode: enforce routes a call to a
+// provider at all (CheckProviderGateway). So the mix is admitted only when the
+// mode the run resolves is enforce — and the clause is judged only where the
+// run has the shape that could mix: a coder pin a route this repository may
+// use serves. With no such coder there is no provider key in the gateway, the
+// account would never be used, and the config is none of this rule's business.
+//
+// auth, mode, coder and routes are the run's as the caller resolves them (the
+// launch and `fugaro validate` each build them the way the run does); def is
+// the project default_claude_account, "" when none is set; stages is the
+// declared stage accounts, as CheckStageAccountMix reads them. path is where
+// the caller spells the budget mode ("budget.mode" today), and it is the key
+// the problem points at: the fix is to raise the mode, or to drop the keys
+// that declare a mix this run cannot carry.
+func CheckMixBudget(auth, mode, coder, def string, stages map[string]string, routes map[string]ModelProvider, repo, path string) []Problem {
+	if auth != "api-key" || mode == BudgetEnforce {
+		return nil
+	}
+	var keys []string
+	for _, stage := range slices.Sorted(maps.Keys(stages)) {
+		if stages[stage] != "" && slices.Contains(MixedAccountStages, stage) {
+			keys = append(keys, "stages."+stage+".claude_account")
+		}
+	}
+	if def != "" {
+		keys = append(keys, "default_claude_account")
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	name, _, served := ProviderFor(routes, coder)
+	if !served {
+		return nil
+	}
+	return []Problem{{Path: path, Message: fmt.Sprintf(
+		"an api-key run may hold one Claude account for %s only with budget.mode: enforce, and this run resolves %s: the provider key lives in the gateway, which is what routes a call to %s (a provider model is refused in any other mode), so under %s the account named by %s would never be used — set budget.mode: enforce, or remove those keys",
+		strings.Join(MixedAccountStages, " and "), modeName(mode), name, modeName(mode), strings.Join(keys, ", "))}}
+}
+
+// modeName is a resolved budget mode as a person reads it: the merged layers
+// spell "no gateway" as "" (policy's own zero value) and the config's own
+// vocabulary spells it "off" (config.BudgetOff), and a sentence that printed
+// the empty string would name nothing.
+func modeName(mode string) string {
+	if mode == "" {
+		return BudgetOff
+	}
+	return mode
+}
+
 func stageAccountUnderOtherAuth(auth string, stages map[string]string, path string) []Problem {
 	var ps []Problem
 	for _, stage := range slices.Sorted(maps.Keys(stages)) {

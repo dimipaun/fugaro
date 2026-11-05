@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -181,25 +182,181 @@ func TestClaudeAccountForResolvesTheStagesOwnKey(t *testing.T) {
 	}
 }
 
-// TestClaudeAccountForIgnoresTheProjectDefaultUnderApiKey pins the ruling's
-// conservative reading: default_claude_account is how an oauth run picks its
-// one credential, and it never opts an api-key run into the mix — such a run
-// resolves the unsuffixed default, so its coder stays on the provider key the
-// gateway holds.
-func TestClaudeAccountForIgnoresTheProjectDefaultUnderApiKey(t *testing.T) {
+// The mix's own fixtures. An api-key run mixes only where the run has the
+// shape the ruling names: the coder on a provider route this repository may
+// use, budget.mode: enforce (the only mode that routes a call to a provider at
+// all), and a Claude model on the review stage the account would serve.
+const (
+	// mixCoderModel is the coder's pin: a model the route below claims.
+	mixCoderModel = "deepseek/deepseek-v4-flash"
+	// claudeReviewer is a review model the account may serve.
+	claudeReviewer = "claude-sonnet-5"
+	// mixRouteConfig is the project's own route table: openrouter serves acme/other
+	// (the fixture checkout's repository) and claims the coder's model.
+	mixRouteConfig = "providers:\n" +
+		"  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n    allow_data_to: [\"acme/other\"]\n" +
+		"model_prices:\n  \"" + mixCoderModel + "\": { input_per_m: 0.1, output_per_m: 0.2 }\n"
+	// mixEnforce is the budget mode a provider-served coder requires.
+	mixEnforce = "budget: { mode: enforce, per_run_usd: 5 }\n"
+)
+
+// mixCase is one row's fixture: the accounts (keys adds the account-choice
+// keys the row is about), the routes and the budget mode, over a checkout of
+// acme/other whose coder is on the provider route and whose reviews run on
+// reviewer. It returns the env and the checkout's own document, which is what
+// claudeAccountFor is asked with.
+func mixCase(t *testing.T, keys, reviewer, budget string) (*cloudEnv, *config.Config) {
+	t.Helper()
 	f := newCloudFixture(t)
-	f.appendConfig(t, defaultClaudeAccountConfig)
-	recipeCheckout(t, f, "", nil) // agent.auth: api-key
+	f.appendConfig(t, claudeAccountsConfig+mixRouteConfig+budget+keys)
+	// agent.auth: api-key (recipeCheckout's own line), the coder on the
+	// provider route, and the reviews on reviewer.
+	recipeCheckout(t, f, "  models: { coder: "+mixCoderModel+", reviewer: "+reviewer+", background: "+mixCoderModel+" }\n", nil)
 	env := gcsEnv(t, f)
 	co := checkoutConfig(context.Background(), "acme/other")
 	if co == nil {
 		t.Fatal("checkoutConfig found no checkout")
 	}
+	return env, co
+}
+
+// TestClaudeAccountForTheMixMatrix is the whole rule of the owner's ruling of
+// 2026-11-05 (docs/design/mixed-credentials.md §11, amending the 2026-11-04
+// conservative reading) as a matrix: which account a *stage* resolves for an
+// api-key run, over the rung the account is named by, the stage asked for and
+// the model that stage runs.
+//
+// An account is served to the senior review and the adversarial review and no
+// other stage, from rung 2 (the stage's own key) or rung 4 (the project
+// default, which is what this ruling adds) or both. Every other stage resolves
+// the run's own credential (the unsuffixed default), which is the ruling's
+// "never implement, never review_first, never a later stage".
+//
+// The stage's own model is what separates the two rungs, and the matrix says so
+// twice: rung 4 is a *default*, so the ruling conditions it on the stage (an
+// Anthropic reviewer), and with a provider reviewer it is not a rung at all —
+// nothing changes and nothing is refused. Rung 2 is a declaration about that
+// very stage, which B1 serves as written.
+//
+// Two mutations fail this test: dropping the allow-list from mixedStageAccount
+// serves the account to implement, review_first and fix, and dropping the
+// model condition from it serves the project default to a review stage that
+// runs on the provider.
+func TestClaudeAccountForTheMixMatrix(t *testing.T) {
+	// rung 2 is the stage's own key — both mixed stages name one account,
+	// which is the shape the one-account rule admits; rung 4 is the project
+	// default alone; "both" names the same account in each; "neither" declares
+	// no mix at all and is the control.
+	rungs := []struct{ name, keys string }{
+		{"rung 2", stagesBlock("review", "acme-overflow", "adversarial", "acme-overflow")},
+		{"rung 4", "default_claude_account: acme-overflow\n"},
+		{"both", "default_claude_account: acme-overflow\n" + stagesBlock("review", "acme-overflow", "adversarial", "acme-overflow")},
+		{"neither", ""},
+	}
+	models := []struct {
+		name      string
+		reviewer  string
+		anthropic bool
+	}{
+		{"an Anthropic reviewer", claudeReviewer, true},
+		{"a provider reviewer", mixCoderModel, false},
+	}
+	stages := []string{"review", "adversarial", "implement", "review_first", "fix", "plan"}
+	for _, rung := range rungs {
+		for _, model := range models {
+			t.Run(rung.name+", "+model.name, func(t *testing.T) {
+				env, co := mixCase(t, rung.keys, model.reviewer, mixEnforce)
+				for _, stage := range stages {
+					mixed := (rung.name == "rung 2" || rung.name == "both" ||
+						(rung.name == "rung 4" && model.anthropic)) &&
+						slices.Contains(config.MixedAccountStages, stage)
+					want := config.DefaultClaudeAccount
+					if mixed {
+						want = "acme-overflow"
+					}
+					got, err := claudeAccountFor(context.Background(), env, "acme/other", "", stage, "", co)
+					if err != nil {
+						t.Fatalf("stage %q: %v", stage, err)
+					}
+					if got != want {
+						t.Errorf("stage %q: account = %q, want %q", stage, got, want)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestClaudeAccountForLeavesTheRunsOwnCredentialAlone: the account a mixed
+// stage is served by is the stages' and never the run's. Under an api-key run
+// the run's own resolution (no stage asked for) stays the unsuffixed default,
+// whatever default_claude_account says — that key is rung 4 for a *stage*, not
+// a run's own credential, and such a run's coder stays on the provider key the
+// gateway holds.
+func TestClaudeAccountForLeavesTheRunsOwnCredentialAlone(t *testing.T) {
+	env, co := mixCase(t, "default_claude_account: acme-overflow\n", claudeReviewer, mixEnforce)
 	got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != config.DefaultClaudeAccount {
-		t.Fatalf("account = %q, want %q: default_claude_account never opts an api-key run into the mix", got, config.DefaultClaudeAccount)
+		t.Fatalf("account = %q, want %q: an api-key run's own credential is not a stage's", got, config.DefaultClaudeAccount)
+	}
+}
+
+// TestClaudeAccountForRefusesAMixThatWouldBeASecondAccount: the run holds one
+// Claude account beside the provider key the gateway holds. A project default
+// that disagrees with the other mixed stage's own key would be a second one,
+// and it is refused rather than ignored — naming the same account in both keys
+// is the fix, and the matrix above pins that shape as admitted.
+func TestClaudeAccountForRefusesAMixThatWouldBeASecondAccount(t *testing.T) {
+	env, co := mixCase(t, "default_claude_account: acme-overflow\n"+stagesBlock("review", "acme-personal"),
+		claudeReviewer, mixEnforce)
+	_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "adversarial", "", co)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a refusal", err)
+	}
+	for _, want := range []string{"acme-overflow", "acme-personal", "stages.review.claude_account", "second credential"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+}
+
+// TestClaudeAccountForRefusesAMixTheModeCannotCarry: the mix exists because
+// the gateway holds the provider key and routes the coder's calls to it, and
+// only budget.mode: enforce routes a call to a provider at all. A
+// configuration that declares a mix under any other mode declares a key that
+// could never apply, so the launch refuses it and names the mode.
+func TestClaudeAccountForRefusesAMixTheModeCannotCarry(t *testing.T) {
+	for _, mode := range []string{"off", "observe"} {
+		t.Run(mode, func(t *testing.T) {
+			env, co := mixCase(t, "default_claude_account: acme-overflow\n", claudeReviewer, "budget: { mode: "+mode+", per_run_usd: 5 }\n")
+			_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "review", "", co)
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want a refusal", err)
+			}
+			for _, want := range []string{"budget.mode", mode, "enforce", "default_claude_account"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not name %q: %v", want, err)
+				}
+			}
+		})
+	}
+}
+
+// TestClaudeAccountForHoldsTheDeclaredAccountsToTheAllowList: the allow-list
+// covers every declared name, not only the one a launch could resolve. A
+// stage account is a name the *run's review stages* will use, so it is checked
+// wherever it is written — including a launch that resolves no auth at all
+// (no checkout), which is exactly the state that used to skip the check.
+func TestClaudeAccountForHoldsTheDeclaredAccountsToTheAllowList(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, "claude_accounts:\n  acme-elsewhere:\n    allow_data_to: [\"acme/person-1\"]\n"+
+		stagesBlock("review", "acme-elsewhere")+"default_claude_account: acme-elsewhere\n")
+	env := gcsEnv(t, f)
+	_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", nil)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme-elsewhere") {
+		t.Fatalf("err = %v, want the allow-list refusal", err)
 	}
 }

@@ -1694,7 +1694,11 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // under vertex or cascade may name none at all. That refusal belongs to the
 // launch rather than to the stage it was asked about: a config that declares a
 // mix the ruling does not admit is refused before anything is read or started,
-// and the sentence names the key that has to change.
+// and the sentence names the key that has to change. Its budget-mode clause
+// follows it in the same place (config.CheckMixBudget): a declared mix is
+// admitted only under budget.mode: enforce, because that is the only mode that
+// routes a call to a provider at all, and only there does a provider key sit in
+// the gateway beside the account.
 //
 // Rung 4 (default_claude_account) fills a *stage* account for an api-key run
 // too, under the condition the owner ruled on 2026-11-05 (§11, amending the
@@ -1769,6 +1773,17 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 			return "", err
 		}
 	}
+	// The mix's budget-mode clause (config.CheckMixBudget, §11), asked of what
+	// the config *declares* and whatever stage was asked for: the one Claude
+	// account an api-key run may hold exists because the gateway holds the
+	// provider key and routes the coder's calls to it, and only budget.mode:
+	// enforce routes a call to a provider at all, so a configuration that
+	// declares a mix under any other mode declares a key that could never apply
+	// — refused at the launch that picks the account, not left to a stage that
+	// would never be handed one.
+	if ps := config.CheckMixBudget(auth, mixMode(ctx, env, repo, co), mixCoder(co), env.lc.DefaultClaudeAccount, declared, mixRoutes(env, repo, co), repo, "budget.mode"); len(ps) > 0 {
+		return "", userErr("%s: %s", ps[0].Path, ps[0].Message)
+	}
 	name := flag
 	if name == "" && stage != "" {
 		if account := stageAccountOf(env.lc, auth, stage); account != "" {
@@ -1823,6 +1838,45 @@ func stageAccountOf(lc *localcfg.Config, auth, stage string) string {
 	return lc.ClaudeAccountStages[stage].ClaudeAccount
 }
 
+// mixRoutes is the provider routes this repository may use, as the run resolves
+// them: the local config's table with the document's own claims merged over it
+// (layerRoutes), narrowed to the entries that may see this repository
+// (runner.ProvidersFor — an entry whose allow_data_to does not name it is not a
+// route this run has). It is what "the coder is served by a provider" is asked
+// of, here and in the runner.
+func mixRoutes(env *cloudEnv, repo string, co *config.Config) map[string]config.ModelProvider {
+	if co == nil {
+		return nil
+	}
+	routes, _, _ := layerRoutes(env.lc, co.Layer, repo)
+	return runner.ProvidersFor(routes, repo)
+}
+
+// mixCoder is the coder's model as the mix's conditions read it: the document's
+// own pin with the recipe's role aliasing applied, and "" when no document was
+// read — a stage account is admitted for no coder the launch cannot see.
+func mixCoder(co *config.Config) string {
+	if co == nil {
+		return ""
+	}
+	return co.Agent.ModelFor(config.RoleCoder)
+}
+
+// mixMode is the budget mode the run resolves, over the three layers the runner
+// merges (runner's own policy resolution): the installation's ceiling, the
+// default branch's policy keys and the document at hand. It reads no network —
+// the published policy is the job environment's ceiling, which ceilingLayer
+// already carries — so a launch and the run itself agree on every layer they
+// both can see, and a launch with no checkout judges the layers it has (an
+// absent document contributes no mode of its own, runner.FileLayer(nil)).
+func mixMode(ctx context.Context, env *cloudEnv, repo string, co *config.Config) string {
+	var layer policy.Layer
+	if co != nil {
+		layer = runner.FileLayer(co)
+	}
+	return policy.Merge(ceilingLayer(env.lc), defaultBranchPolicyLayer(ctx, repo), layer).Mode
+}
+
 // mixedStageAccount is the account rung 4 puts on one of the mix's two stages
 // of an api-key run, its whole rule, and "" when the mix is not admitted for
 // that stage (docs/design/mixed-credentials.md §11, the owner's ruling of
@@ -1868,12 +1922,10 @@ func mixedStageAccount(ctx context.Context, env *cloudEnv, repo, stage, auth str
 	if !isClaudeModel(mixedStageModel(co.Agent, stage)) {
 		return "", nil
 	}
-	routes, _, _ := layerRoutes(env.lc, co.Layer, repo)
-	if _, _, served := config.ProviderFor(runner.ProvidersFor(routes, repo), co.Agent.ModelFor(config.RoleCoder)); !served {
+	if _, _, served := config.ProviderFor(mixRoutes(env, repo, co), mixCoder(co)); !served {
 		return "", nil
 	}
-	mode := policy.Merge(ceilingLayer(env.lc), defaultBranchPolicyLayer(ctx, repo), runner.FileLayer(co)).Mode
-	if mode != policy.ModeEnforce {
+	if mixMode(ctx, env, repo, co) != policy.ModeEnforce {
 		return "", nil
 	}
 	// The run holds one Claude account (docs/design/mixed-credentials.md §11,
