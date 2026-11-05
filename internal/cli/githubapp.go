@@ -85,7 +85,7 @@ func refuseAppKeyReadInAgent(getenv func(string) string, who string) error {
 // way the credentials service's bundle is refused (doctor_brokering.go), which
 // is not the App's key.
 func refuseKeyReadInAgent(getenv func(string) string, flag, what string) error {
-	if agentEnv(getenv) {
+	if agentMarker(getenv, processTerminal()) != "" {
 		return userErr("%s reads %s with your own credentials, so it is refused in a coding agent's session (the value must never reach an agent's process): run it in your own terminal window", flag, what)
 	}
 	return nil

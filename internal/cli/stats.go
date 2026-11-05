@@ -155,7 +155,7 @@ func runStatsRuns(cmd *cobra.Command, o *statsOptions) error {
 	// The records are data about an installation of the owner's own, so this
 	// is refused under the marker every owner-only path uses, before anything
 	// is read.
-	if m := agentMarker(os.Getenv); m != "" {
+	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
 		return userErr("fugaro stats runs reads one installation's run records, so it is refused in a coding agent's session (%s is set): run it in your own terminal window", m)
 	}
 	if strings.TrimSpace(o.cloud.project) == "" {

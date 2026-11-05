@@ -146,7 +146,7 @@ func TestCredsRulesTargetRefusesEverythingButTheSandbox(t *testing.T) {
 			c.change(env)
 			var got crTarget
 			var err error
-			crNoNetwork(t, func() { got, err = crTargetFrom(crGetenv(env)) })
+			crNoNetwork(t, func() { got, err = crTargetFrom(crGetenv(env), false) })
 			if err == nil {
 				t.Fatalf("crTargetFrom accepted %s (%s): it reached the target %+v", c.name, c.why, got)
 			}
@@ -169,7 +169,7 @@ func TestCredsRulesTargetAcceptsOnlyTheSandbox(t *testing.T) {
 		env[crRTDBVar] = url
 		var got crTarget
 		var err error
-		crNoNetwork(t, func() { got, err = crTargetFrom(crGetenv(env)) })
+		crNoNetwork(t, func() { got, err = crTargetFrom(crGetenv(env), false) })
 		if err != nil {
 			t.Fatalf("crTargetFrom refused the sandbox's own environment (%s): %v", url, err)
 		}
@@ -190,7 +190,7 @@ func TestCredsRulesTargetAcceptsOnlyTheSandbox(t *testing.T) {
 	var got crTarget
 	crNoNetwork(t, func() {
 		var err error
-		if got, err = crTargetFrom(crGetenv(env)); err != nil {
+		if got, err = crTargetFrom(crGetenv(env), false); err != nil {
 			t.Fatalf("crTargetFrom refused an environment that names its launcher: %v", err)
 		}
 	})
@@ -210,7 +210,7 @@ func TestCredsRulesTargetRequiresTheExactOptIn(t *testing.T) {
 		env := crSandboxEnv()
 		env[crOKVar] = v
 		var err error
-		crNoNetwork(t, func() { _, err = crTargetFrom(crGetenv(env)) })
+		crNoNetwork(t, func() { _, err = crTargetFrom(crGetenv(env), false) })
 		if err == nil {
 			t.Errorf("crTargetFrom accepted %s=%q: the opt-in is exactly \"1\"", crOKVar, v)
 		}
@@ -221,7 +221,7 @@ func TestCredsRulesTargetRequiresTheExactOptIn(t *testing.T) {
 	env := crSandboxEnv()
 	delete(env, crOKVar)
 	var err error
-	crNoNetwork(t, func() { _, err = crTargetFrom(crGetenv(env)) })
+	crNoNetwork(t, func() { _, err = crTargetFrom(crGetenv(env), false) })
 	if err == nil || errors.Is(err, crSkip) {
 		t.Fatalf("crTargetFrom with the aim set and %s unset = %v, want a refusal (never a skip)", crOKVar, err)
 	}
@@ -234,13 +234,13 @@ func TestCredsRulesTargetRequiresTheExactOptIn(t *testing.T) {
 // refusal is about who is running the check, not about where it points (F33).
 func TestCredsRulesTargetSkipsOnlyWhenNothingAimsIt(t *testing.T) {
 	var err error
-	crNoNetwork(t, func() { _, err = crTargetFrom(crGetenv(map[string]string{})) })
+	crNoNetwork(t, func() { _, err = crTargetFrom(crGetenv(map[string]string{}), false) })
 	if !errors.Is(err, crSkip) {
 		t.Fatalf("crTargetFrom on an empty environment = %v, want the skip", err)
 	}
-	crNoNetwork(t, func() { _, err = crTargetFrom(nil) })
+	crNoNetwork(t, func() { _, err = crTargetFrom(nil, false) })
 	if !errors.Is(err, crSkip) {
-		t.Fatalf("crTargetFrom(nil) = %v, want the skip", err)
+		t.Fatalf("crTargetFrom(nil, false) = %v, want the skip", err)
 	}
 
 	// Every marker the repository knows. Alone — nothing aiming the check at a
@@ -252,7 +252,7 @@ func TestCredsRulesTargetSkipsOnlyWhenNothingAimsIt(t *testing.T) {
 	for _, marker := range agentenv.Markers {
 		env := map[string]string{marker: "1"}
 		var gotErr error
-		crNoNetwork(t, func() { _, gotErr = crTargetFrom(crGetenv(env)) })
+		crNoNetwork(t, func() { _, gotErr = crTargetFrom(crGetenv(env), false) })
 		if !errors.Is(gotErr, crSkip) {
 			t.Errorf("crTargetFrom with %s set and nothing aiming it = %v, want the skip: an agent marker on its own is not an aim", marker, gotErr)
 		}
@@ -260,7 +260,7 @@ func TestCredsRulesTargetSkipsOnlyWhenNothingAimsIt(t *testing.T) {
 		env = crSandboxEnv()
 		env[marker] = "1"
 		var aimedErr error
-		crNoNetwork(t, func() { _, aimedErr = crTargetFrom(crGetenv(env)) })
+		crNoNetwork(t, func() { _, aimedErr = crTargetFrom(crGetenv(env), false) })
 		if aimedErr == nil || errors.Is(aimedErr, crSkip) {
 			t.Errorf("crTargetFrom with %s set and the sandbox aimed = %v, want a refusal: a check that writes to a real installation's database is the owner's, not the agent's that wrote it (F33)", marker, aimedErr)
 			continue
@@ -273,7 +273,7 @@ func TestCredsRulesTargetSkipsOnlyWhenNothingAimsIt(t *testing.T) {
 	env := crSandboxEnv()
 	env["CLAUDECODE"] = ""
 	var err2 error
-	crNoNetwork(t, func() { _, err2 = crTargetFrom(crGetenv(env)) })
+	crNoNetwork(t, func() { _, err2 = crTargetFrom(crGetenv(env), false) })
 	if err2 != nil {
 		t.Errorf("crTargetFrom with CLAUDECODE= (empty) refused: %v", err2)
 	}
@@ -299,7 +299,7 @@ func TestCredsRulesRefusalNeverPrintsTheURL(t *testing.T) {
 		env := crSandboxEnv()
 		env[crRTDBVar] = url
 		var err error
-		crNoNetwork(t, func() { _, err = crTargetFrom(crGetenv(env)) })
+		crNoNetwork(t, func() { _, err = crTargetFrom(crGetenv(env), false) })
 		if err == nil {
 			t.Fatalf("crTargetFrom accepted %q", url)
 		}

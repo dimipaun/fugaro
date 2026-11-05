@@ -167,7 +167,7 @@ func (e *claudeLoginStatus) Unwrap() error { return e.err }
 // the command around it stores that credential project-wide. A session writes
 // nothing here, and --yes does not lift it.
 func accountsAddClaudePrepare(cmd *cobra.Command, path, what, command string) (string, error) {
-	if marker := agentMarker(os.Getenv); marker != "" {
+	if marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); marker != "" {
 		return "", userErr("refusing to run Anthropic's login for %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
 			path, marker, what, command)
 	}

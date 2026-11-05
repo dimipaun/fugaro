@@ -565,7 +565,7 @@ func (r *initRun) retireConfirm(rets []infra.Retirement, spec infra.RepoSpec, un
 		return err
 	}
 	if !reachable {
-		if m := agentMarker(os.Getenv); m != "" {
+		if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 			return &initflow.AgentError{Marker: m}
 		}
 		return userErr("%s; %s", retireUnaskable(r.conditions()), undone)

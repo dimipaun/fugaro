@@ -328,7 +328,7 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 // direction, and the refusal a person then reads is initflow's own
 // NoTerminalAdvice.
 func managedConditions(cmd *cobra.Command) initflow.Conditions {
-	return initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), Agent: agentMarker(os.Getenv)}
+	return initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), Agent: agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))}
 }
 
 // managedAsk is the question a person at a terminal answers before a managed

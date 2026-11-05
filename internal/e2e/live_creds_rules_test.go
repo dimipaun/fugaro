@@ -162,7 +162,7 @@ func (f *crFacts) checkSecrets() {
 // write under /creds, accepts its own well-formed writes of the credentials
 // children the cascade adds, and refuses everything else those children admit.
 func TestLiveCredsRules(t *testing.T) {
-	target, err := crTargetFrom(os.Getenv)
+	target, err := crTargetFrom(os.Getenv, crStdinIsTerminal())
 	if errors.Is(err, crSkip) {
 		t.Skip("the credentials-service plan's check 92 is yours, against the sandbox installation: set " + crOKVar + "=1 and the variables this file's comment names")
 	}

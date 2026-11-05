@@ -135,9 +135,13 @@ func TestSecretManagerRefusalIsNeedsYou(t *testing.T) {
 }
 
 // With a coding agent's environment present the stage never prompts and
-// never reads the terminal; it leaves the commands with the reason.
+// never reads the terminal; it leaves the commands with the reason. The
+// markers a coding agent's own processes set are written by hand here and are
+// the five below: the sixth, CLAUDE_CODE_SSE_PORT, is the IDE extension's and
+// is not one of them where a terminal is there, which is its own case at the
+// end of this test.
 func TestAgentEnvNeverPrompts(t *testing.T) {
-	for _, marker := range agentMarkers {
+	for _, marker := range []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_REMOTE", "CURSOR_AGENT", "AI_AGENT"} {
 		t.Run(marker, func(t *testing.T) {
 			f := newTTY(t)
 			r := newSecretsRig(t, bitbucketOrigin, f.tty)
@@ -152,9 +156,6 @@ func TestAgentEnvNeverPrompts(t *testing.T) {
 			if !strings.Contains(res.Left[0].Text, "not through a coding agent") {
 				t.Errorf("left = %q", res.Left[0].Text)
 			}
-			// An IDE extension sets one marker in a person's own terminal: only
-			// that refusal says how to get past it, and in no text an agent
-			// could take as a recipe for the other markers.
 			detail := ""
 			for _, st := range res.Stages {
 				if st.Name == "secrets" {
@@ -164,17 +165,40 @@ func TestAgentEnvNeverPrompts(t *testing.T) {
 			if !strings.Contains(detail, "run fugaro secrets set in your own terminal window") {
 				t.Errorf("detail = %q", detail)
 			}
-			if hint := strings.Contains(detail, "unset"); hint != (marker == "CLAUDE_CODE_SSE_PORT") {
-				t.Errorf("the unset hint is for CLAUDE_CODE_SSE_PORT only: %s: %q", marker, detail)
-			}
-			if marker == "CLAUDE_CODE_SSE_PORT" && !strings.Contains(detail, "if this is your own IDE terminal") {
-				t.Errorf("the hint is not worded for the person: %q", detail)
+			if strings.Contains(detail, "unset") {
+				t.Errorf("no agent-set marker carries the unset hint: %s: %q", marker, detail)
 			}
 			if queued(t, f) != before || before == 0 {
 				t.Error("the terminal was read")
 			}
 		})
 	}
+
+	// The IDE extension sets its one marker in a person's own terminal as
+	// well, so what it refuses is a run with no terminal — and only that
+	// refusal says how to get past it, in words no agent could take as a
+	// recipe for the other markers.
+	t.Run("CLAUDE_CODE_SSE_PORT with no terminal", func(t *testing.T) {
+		r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+		t.Setenv("CLAUDE_CODE_SSE_PORT", "1")
+		res, err := r.run(t)
+		if err != nil || stateOf(res, "secrets") != initflow.NeedsYou || r.store.setCalls() != 0 || strings.Contains(r.errOut.String(), "hidden") {
+			t.Fatalf("%v, %+v, stderr %q", err, res.Stages, r.errOut.String())
+		}
+		if !strings.Contains(res.Left[0].Text, "not through a coding agent") {
+			t.Errorf("left = %q", res.Left[0].Text)
+		}
+		detail := ""
+		for _, st := range res.Stages {
+			if st.Name == "secrets" {
+				detail = st.Detail
+			}
+		}
+		if !strings.Contains(detail, "run fugaro secrets set in your own terminal window") || !strings.Contains(detail, "unset") ||
+			!strings.Contains(detail, "if this is your own IDE terminal") {
+			t.Errorf("the IDE marker's refusal does not say how to get past it: %q", detail)
+		}
+	})
 }
 
 // A redirected stderr or stdout (the prompt would go to a file and the user

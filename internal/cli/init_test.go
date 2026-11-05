@@ -563,6 +563,25 @@ func noTerminal(t *testing.T) {
 	t.Cleanup(func() { stdinIsTerminal = old })
 }
 
+// The two helpers above are what every terminal-dependent test says with, and
+// processTerminal is the one reader that asks with no command in hand (init's
+// own flag validation, before a run exists). It asks by CALLING
+// stdinIsTerminal with os.Stdin, so a test's replacement — which answers
+// whatever it is given — decides for it too. Pinned because the other spelling
+// is the trap: reading term.IsTerminal(int(os.Stdin.Fd())) there would make
+// those sites follow the real process's stdin, green on a developer's terminal
+// and red in CI, with nothing failing to say so.
+func TestProcessTerminalFollowsTheReplacedStdinIsTerminal(t *testing.T) {
+	noTerminal(t)
+	if processTerminal() {
+		t.Error("processTerminal reads a terminal where the test said there is none")
+	}
+	fakeTerminal(t)
+	if !processTerminal() {
+		t.Error("processTerminal reads no terminal where the test said there is one")
+	}
+}
+
 // typedThroughYes lets a test that is about something else answer a typed-only
 // confirmation (the Firestore location, a billable build, replacing a tag) from
 // its stdin while it passes --yes, which the real rule never allows (its own

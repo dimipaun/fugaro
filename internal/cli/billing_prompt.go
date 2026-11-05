@@ -304,6 +304,7 @@ func (r *initRun) billingAPIOff(ctx context.Context, opts billing.Options, err e
 		r.billingEnableLeft(off)
 		return nil, billing.SourceNone, err
 	}
+	r.noteIDETerminal()
 	if !r.enableBillingAPI(ctx, opts, off) {
 		return nil, billing.SourceNone, err
 	}

@@ -285,11 +285,11 @@ func catalogEntryDigest(ctx context.Context, env *cloudEnv, records *blobx.Bucke
 
 func newImageAddCmd() *cobra.Command {
 	var (
-		o                   cloudOptions
-		tags                []string
-		dockerfile, branch  string
-		inline, description string
-		def                 bool
+		o                          cloudOptions
+		tags                       []string
+		dockerfile, branch         string
+		inline, image, description string
+		def                        bool
 	)
 	cmd := &cobra.Command{
 		Use:   "add <name>",
@@ -297,16 +297,18 @@ func newImageAddCmd() *cobra.Command {
 		Long: "Add a named image to the project's image catalog, in this machine's project\n" +
 			"config: the copy fugaro update publishes to the project's policy node\n" +
 			"(image_catalog). The entry's source is a Dockerfile in one of the project's\n" +
-			"repositories (--dockerfile owner/name:path, with --branch) or a Dockerfile\n" +
-			"written out here (--inline <file>), and its tags are what a repository's\n" +
-			"needs: is matched against.\n\n" +
+			"repositories (--dockerfile owner/name:path, with --branch), a Dockerfile\n" +
+			"written out here (--inline <file>), or an image that already exists\n" +
+			"(--image <ref>), and its tags are what a repository's needs: is matched\n" +
+			"against. The three are one entry's alternatives and are refused together\n" +
+			"rather than resolved.\n\n" +
 			"Nothing is built and nothing is published here: fugaro image build <name>\n" +
 			"builds the entry's image, and fugaro update publishes the catalog. --default\n" +
 			"marks the entry a job whose repositories name no needs runs; a catalog marks\n" +
 			"one entry, or none.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runImageAdd(cmd, o, args[0], tags, dockerfile, branch, inline, description, def)
+			return runImageAdd(cmd, o, args[0], tags, dockerfile, branch, inline, image, description, def)
 		},
 	}
 	f := cmd.Flags()
@@ -314,6 +316,7 @@ func newImageAddCmd() *cobra.Command {
 	f.StringVar(&dockerfile, "dockerfile", "", "a Dockerfile in one of the project's repositories, as owner/name:path")
 	f.StringVar(&branch, "branch", "", "the branch --dockerfile reads (default: the repository's base branch)")
 	f.StringVar(&inline, "inline", "", "a file whose contents are the entry's Dockerfile")
+	f.StringVar(&image, "image", "", "a prebuilt image reference, such as ghcr.io/owner/image:1.2: nothing is built and the image is used as it is")
 	f.StringVar(&description, "description", "", "what the entry is for, printed by fugaro image ls")
 	f.BoolVar(&def, "default", false, "the entry a job whose repositories name no needs runs (one entry, or none)")
 	addCloudFlags(cmd, &o)
@@ -325,7 +328,7 @@ func newImageAddCmd() *cobra.Command {
 // It never publishes: the node is fugaro update's (the HARD RULE), and an
 // entry that reached the cloud from here would be a second publication path
 // beside it.
-func runImageAdd(cmd *cobra.Command, o cloudOptions, name string, tags []string, dockerfile, branch, inline, description string, def bool) error {
+func runImageAdd(cmd *cobra.Command, o cloudOptions, name string, tags []string, dockerfile, branch, inline, image, description string, def bool) error {
 	ctx := cmd.Context()
 	// The read of the project config is the operator's own and may fetch the
 	// shared one, so the GODEBUG that prints requests with their credentials
@@ -333,7 +336,7 @@ func runImageAdd(cmd *cobra.Command, o cloudOptions, name string, tags []string,
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
 	}
-	e, err := catalogEntryFromFlags(name, tags, dockerfile, branch, inline, description, def)
+	e, err := catalogEntryFromFlags(name, tags, dockerfile, branch, inline, image, description, def)
 	if err != nil {
 		return err
 	}
@@ -382,11 +385,15 @@ func runImageAdd(cmd *cobra.Command, o cloudOptions, name string, tags []string,
 // catalogEntryFromFlags builds the entry the flags describe, refusing what is
 // not exactly one definition: an entry holding two sources would leave which
 // one a build reads unstated (validateCatalogSource's rule).
-func catalogEntryFromFlags(name string, tags []string, dockerfile, branch, inline, description string, def bool) (config.Entry, error) {
+func catalogEntryFromFlags(name string, tags []string, dockerfile, branch, inline, image, description string, def bool) (config.Entry, error) {
 	e := config.Entry{Name: name, Tags: tags, Description: description, Default: def}
 	switch {
 	case dockerfile != "" && inline != "":
 		return config.Entry{}, userErr("--dockerfile and --inline are two definitions for one entry: set one of them")
+	case dockerfile != "" && image != "":
+		return config.Entry{}, userErr("--dockerfile and --image are two definitions for one entry: --dockerfile is a Dockerfile in one of the project's repositories and --image names an image that already exists, so set one of them")
+	case inline != "" && image != "":
+		return config.Entry{}, userErr("--inline and --image are two definitions for one entry: --inline is a Dockerfile written out here and --image names an image that already exists, so set one of them")
 	case dockerfile != "":
 		repo, path, ok := strings.Cut(dockerfile, ":")
 		if !ok || repo == "" || path == "" {
@@ -402,8 +409,17 @@ func catalogEntryFromFlags(name string, tags []string, dockerfile, branch, inlin
 			return config.Entry{}, userErr("reading %s: %v", pluginwire.Printable(inline), err)
 		}
 		e.Source = config.Source{Kind: config.SourceInline, Inline: string(data)}
+	case image != "":
+		// A prebuilt image has no repository, no path and no branch to read a
+		// definition from: --branch beside it is the pointer of a source this
+		// entry is not, and a value silently dropped would be a flag a person
+		// set believing it did something.
+		if branch != "" {
+			return config.Entry{}, userErr("--branch applies to --dockerfile; --image names a prebuilt image, and nothing is read for it")
+		}
+		e.Source = config.Source{Kind: config.SourceImage, Image: image}
 	default:
-		return config.Entry{}, userErr("the entry needs a definition: --dockerfile <owner/name:path> for a Dockerfile in one of the project's repositories, or --inline <file> for one written out here")
+		return config.Entry{}, userErr("the entry needs a definition: --dockerfile <owner/name:path> for a Dockerfile in one of the project's repositories, --inline <file> for one written out here, or --image <ref> for an image that already exists")
 	}
 	if problems := config.ValidateCatalog("image_catalog", config.Catalog{Entries: []config.Entry{e}}); len(problems) > 0 {
 		return config.Entry{}, userErr("the entry %s: %s: %s", pluginwire.Printable(e.Name), problems[0].Path, problems[0].Message)
