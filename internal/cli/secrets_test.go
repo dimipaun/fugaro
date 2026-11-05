@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -2320,5 +2321,128 @@ func TestSecretsSetAnthropicKeyWithAnthropicNamedProvider(t *testing.T) {
 	}
 	if got := string(sm.Latest(gcp.SecretID(appSlug, config.AnthropicSecret))); got != key {
 		t.Fatalf("stored %q", got)
+	}
+}
+
+// TestSecretsSetRefusesAWorkflowSecretWithoutAnEntry: `secrets set NAME
+// --project-wide` for a name no block holds keeps the sentence it has had
+// since before this block existed (D1265): a workflow secret is project-wide
+// only through an entry of workflow_secrets, and that entry is the whole gate
+// (D1262), so a name with none falls to the refusal that names what does have
+// a project-wide meaning.
+func TestSecretsSetRefusesAWorkflowSecretWithoutAnEntry(t *testing.T) {
+	sm := secretsFixture(t)
+	appCheckout(t)
+	spy := &readerSpy{Reader: strings.NewReader(tokenValue)}
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetIn(spy)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"secrets", "set", "npm-token", "--project-wide"})
+	err := cmd.Execute()
+	want := "npm-token has no project-wide meaning: only a reserved secret (" +
+		strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", ") +
+		"), a model provider's key, or a named Claude account's token is stored project-wide"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want the sentence %q", err, want)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit = %d, want the user-error code", ExitCode(err))
+	}
+	if spy.read {
+		t.Fatal("the value was read before the refusal")
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "npm-token")) != nil {
+		t.Fatal("a refused value was stored")
+	}
+	if strings.Contains(out.String()+errOut.String()+err.Error(), tokenValue) {
+		t.Fatal("the value leaked")
+	}
+}
+
+// TestSecretsSetStoresAWorkflowSecretTheEntryLists: the bare command from a
+// checkout the workflow_secrets entry lists stores the project's copy, exactly
+// as a project_secrets entry makes the bare command store one (D1265). The
+// entry is operator-local and lists this repository, so the value stored once
+// here is the one this repository's jobs mount.
+func TestSecretsSetStoresAWorkflowSecretTheEntryLists(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, "workflow_secrets:\n  npm-token: { allow_data_to: [acme/app] }\n")
+	appCheckout(t)
+	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "npm-token")
+	if err != nil {
+		t.Fatalf("the bare command from a checkout the entry lists: %v (%s)", err, errOut)
+	}
+	id := gcp.ProjectSecretID("aurora", "npm-token")
+	if got := string(sm.Latest(id)); got != tokenValue {
+		t.Fatalf("the project copy = %q, want the value just stored", got)
+	}
+	if sm.Latest(gcp.SecretID(appSlug, "npm-token")) != nil {
+		t.Error("a repository copy was stored as well")
+	}
+	if !strings.Contains(out, id) {
+		t.Errorf("stdout does not name the container it stored to: %q", out)
+	}
+	if strings.Contains(out+errOut, tokenValue) {
+		t.Fatalf("a value leaked: %q %q", out, errOut)
+	}
+}
+
+// TestSecretsSetRefusesAWorkflowSecretForAnUnlistedRepository: from a checkout
+// the entry excludes, the bare command stores this repository's own copy and
+// says which copy it wrote and where the project copy is instead (D1265). It
+// must not store the shared copy: that is the copy the repositories the entry
+// lists mount, written from a repository the entry leaves out.
+func TestSecretsSetRefusesAWorkflowSecretForAnUnlistedRepository(t *testing.T) {
+	sm := secretsFixture(t)
+	shared := gcp.ProjectSecretID("aurora", "npm-token")
+	sm.Seed(shared, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: "aurora", gcp.LabelSecret: "npm-token"}, []byte("shared-token-EXAMPLE"))
+	projectSecretFixture(t, "workflow_secrets:\n  npm-token: { allow_data_to: [acme/web] }\n")
+	appCheckout(t)
+	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "npm-token")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, errOut)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, "npm-token"))); got != tokenValue {
+		t.Errorf("acme/app's own copy = %q, want the value just stored", got)
+	}
+	if got := string(sm.Latest(shared)); got != "shared-token-EXAMPLE" {
+		t.Errorf("the shared copy = %q: a checkout the entry excludes overwrote it", got)
+	}
+	if !strings.Contains(errOut, "acme/app") || !strings.Contains(errOut, "--project-wide") {
+		t.Errorf("stderr does not say where the value went, or what the other intent is: %q", errOut)
+	}
+	if strings.Contains(out+errOut, tokenValue) || strings.Contains(errOut, "shared-token-EXAMPLE") {
+		t.Fatalf("a value leaked: %q %q", out, errOut)
+	}
+}
+
+// TestSecretsSetNeverStoresTheValueAsAnArgument: the value path takes a value
+// from stdin alone, and an argument carrying one is refused before anything is
+// read or stored. Held here because this task moves the scope decision around
+// it: the project copy a workflow secret may now reach must not become a way
+// for a value to arrive on the command line.
+func TestSecretsSetNeverStoresTheValueAsAnArgument(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, "workflow_secrets:\n  npm-token: { allow_data_to: [acme/app] }\n")
+	appCheckout(t)
+	for _, args := range [][]string{
+		{"secrets", "set", "npm-token", tokenValue},
+		{"secrets", "set", "npm-token", "--project-wide", tokenValue},
+	} {
+		out, errOut, err := execute(t, args...)
+		if err == nil || !strings.Contains(err.Error(), "stdin, never as an argument") {
+			t.Fatalf("%s: err = %v, want the value-as-argument refusal", strings.Join(args, " "), err)
+		}
+		if strings.Contains(out+errOut+err.Error(), tokenValue) {
+			t.Fatalf("%s: the refusal echoed the value: %q %q %v", strings.Join(args, " "), out, errOut, err)
+		}
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "npm-token")) != nil {
+		t.Fatal("a value passed as an argument was stored project-wide")
+	}
+	if sm.Latest(gcp.SecretID(appSlug, "npm-token")) != nil {
+		t.Fatal("a value passed as an argument was stored in the repository's own copy")
 	}
 }

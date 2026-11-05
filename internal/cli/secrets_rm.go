@@ -19,9 +19,11 @@ import (
 
 // This file is `fugaro secrets rm NAME`: the withdrawal D1171 gives a project
 // secret. It deletes the Secret Manager container with every version in it and
-// the local config's project_secrets.NAME entry that made the value reachable
-// project-wide — the pair nothing could remove before it, which left a
-// withdrawn value's policy standing and a policy's value unreachable.
+// the local config entry that made the value reachable project-wide — the pair
+// nothing could remove before it, which left a withdrawn value's policy
+// standing and a policy's value unreachable. The entry is the one the name's
+// block holds: project_secrets.NAME, or workflow_secrets.NAME for a workflow
+// secret (D1260).
 //
 // The config half is the settings commands' one write path (applySettingsEdit),
 // so the diff, the confirmation, the backup and the compare-and-swap are the
@@ -36,8 +38,8 @@ import (
 // gate or not).
 
 // secretsRmOptions are the flags `fugaro secrets rm` takes. It takes no
-// --repo: the entry this command removes is the project_secrets one, which only
-// a project-wide copy has, so the copy it deletes is the project's own. A
+// --repo: the entry this command removes is a block's own, which only a
+// project-wide copy has, so the copy it deletes is the project's own. A
 // repository's own copy is the repository's, and `secrets ls --repo` names it.
 type secretsRmOptions struct {
 	cloud  cloudOptions
@@ -55,19 +57,21 @@ func newSecretsRmCmd() *cobra.Command {
 		Long: `Delete the project-wide secret NAME and the local config entry that makes it
 reachable.
 
-NAME is stored once for the whole Fugaro project (project_secrets.NAME), and
-this is the command that takes it back: it deletes the Secret Manager
-container, with every version in it, and removes project_secrets.NAME from
-your local config in the same run, behind one confirmation and one diff.
+NAME is stored once for the whole Fugaro project — in project_secrets, or in
+workflow_secrets for a name your local config holds there — and this is the
+command that takes it back: it deletes the Secret Manager container, with
+every version in it, and removes the entry that made it reachable from your
+local config in the same run, behind one confirmation and one diff.
 
 Both halves go, and neither is left behind: an entry whose container is gone
 promises a value no job can mount, and a container with no entry is a value
 the project still holds after its owner asked for it to be withdrawn.
 
-A name your local config holds in workflow_secrets is refused rather than
-half-removed: this command takes project_secrets entries back, so the
-container would go and that block's entry would stay, which is the first of
-the two failures above.
+The entry removed is the one the name has: project_secrets.NAME for a
+reserved name, workflow_secrets.NAME for a workflow secret. Only those two
+blocks are this command's — a provider's key or a Claude account's token
+shares the container's derived ID and is refused, since that name's entry is
+not here to remove.
 
 Deleting the container revokes nothing retroactively. A repository whose own
 copy has an enabled version keeps using it, and a job already deployed keeps
@@ -133,30 +137,23 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 	if err != nil {
 		return err
 	}
-	// A name this config holds in workflow_secrets is refused rather than
-	// half-removed. The two blocks are disjoint by construction — a
-	// workflow_secrets key may not be one of the reserved names, and a
-	// project_secrets key may not be anything else — so this can never refuse a
-	// name this command was about to remove a project_secrets entry for. What
-	// it stops is the other half: a workflow secret's container is the same
-	// derived ID (F2), so the lookup below would find it and the deletion would
-	// run while workflow_secrets.NAME stayed in the file — an entry promising a
-	// value nothing can mount, which is the state D1171 gives this command the
-	// job of preventing. Removing that block's entry with its container is
-	// docs/project-workflow-secrets' W3, which extends this command; until it
-	// lands the name is refused here, before anything is read or deleted.
+	// The entry this command removes is the block's the name is in (D1260): a
+	// name this config holds in workflow_secrets has that block's entry, and a
+	// reserved name has project_secrets'. The container is the same derived ID
+	// for both (F2), so removing the wrong block's key would be the state D1171
+	// gives this command the job of preventing — a container gone with the entry
+	// that promised it still in the file.
+	block := secretsBlockProject
 	if _, workflow := lc.WorkflowSecrets[name]; workflow {
-		return userErr("refusing to remove %s: this local config holds it in workflow_secrets, not in project_secrets, and this command removes the project_secrets entry and the Secret Manager container together — deleting the container alone would leave workflow_secrets.%s promising a value nothing mounts; a workflow secret's own removal is not built yet, so nothing was removed",
-			pluginwire.Printable(name), pluginwire.Printable(name))
-	}
-	// project_secrets holds only the reserved names. Any other name sharing the
-	// derived ID and labels (a provider's key, a named Claude account's token, a
-	// workflow secret this config does not list) belongs to another block, and
-	// deleting its container here would leave that block promising a value
-	// nothing mounts.
-	if _, reserved := config.ReservedSecrets[name]; !reserved {
-		return userErr("refusing to remove %s: project_secrets holds only %s, and a container of any other name belongs to another block (a provider's key, a Claude account's token or a workflow secret) that this command does not remove; nothing was removed",
-			pluginwire.Printable(name), strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "))
+		block = secretsBlockWorkflow
+	} else if _, reserved := config.ReservedSecrets[name]; !reserved {
+		// project_secrets holds only the reserved names. Any other name sharing
+		// the derived ID and labels (a provider's key, a named Claude account's
+		// token, a workflow secret this config does not list) belongs to another
+		// block, and deleting its container here would leave that block promising
+		// a value nothing mounts.
+		return userErr("refusing to remove %s: %s holds only %s, and a container of any other name belongs to another block (a provider's key, a Claude account's token or a workflow secret this local config does not list) that this command does not remove; nothing was removed",
+			pluginwire.Printable(name), secretsBlockProject, strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "))
 	}
 	ctx := cmd.Context()
 	env, err := openCloud(ctx, o.cloud)
@@ -184,12 +181,12 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 	if err != nil {
 		return err
 	}
-	// DropEmptyParents, so the entry's removal is the whole of it: a
-	// project_secrets block this command empties is a block the file no longer
-	// needs, and the entry was the last thing it held.
-	next, err := yamledit.RemoveKeyWithOptions(old, []string{"project_secrets", name}, yamledit.RemoveOptions{DropEmptyParents: true})
+	// DropEmptyParents, so the entry's removal is the whole of it: a block this
+	// command empties is a block the file no longer needs, and the entry was the
+	// last thing it held.
+	next, err := yamledit.RemoveKeyWithOptions(old, []string{block, name}, yamledit.RemoveOptions{DropEmptyParents: true})
 	if err != nil {
-		return userErr("project_secrets.%s: %v", name, err)
+		return userErr("%s.%s: %v", block, name, err)
 	}
 	changed := yamledit.Changed(old, next)
 	if changed {
@@ -201,11 +198,11 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 		}
 	}
 	if !held && !changed {
-		return userErr("nothing to remove: no Fugaro-managed secret %s exists in %s and this local config has no project_secrets.%s entry",
-			id, pluginwire.Printable(lc.Name), name)
+		return userErr("nothing to remove: no Fugaro-managed secret %s exists in %s and this local config has no %s.%s entry",
+			id, pluginwire.Printable(lc.Name), block, pluginwire.Printable(name))
 	}
 
-	what := secretsRmWhat(id, name, held, changed)
+	what := secretsRmWhat(id, block, name, held, changed)
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
 		Path:    sel.Path,
 		Old:     old,
@@ -214,7 +211,7 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 		Kind:    settingsDocLocal,
 		Command: command,
 		Yes:     o.yes,
-		DryRun:  secretsRmDryRun(o, name, old),
+		DryRun:  secretsRmDryRun(o, block, name, old),
 	}); err != nil {
 		return err
 	}
@@ -240,7 +237,7 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 	}
 	if held {
 		if err := sm.Delete(ctx, id); err != nil {
-			return secretsRmUndo(id, sel.Path, name, old, next, changed, err)
+			return secretsRmUndo(id, sel.Path, block, name, old, next, changed, err)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "deleted %s\n", id)
 	}
@@ -265,49 +262,59 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 // installation grants secretVersionAdder and viewer on the project's secrets
 // get, a connection that drops — must not leave the entry gone with the value
 // still stored.
-// It matters most for the names D2 shares project-wide: there, no entry reads
-// as every repository, so a run that stopped here would have widened the value
-// at the next `fugaro update`, for a value whose owner asked to withdraw it.
+// What the state costs depends on the block, and that is why the entry is worth
+// putting back: with no project_secrets entry the reserved names fall to D2's
+// sweep — every repository mounts them — so a run that stopped here would have
+// widened a value whose owner asked to withdraw it; with no workflow_secrets
+// entry nobody mounts the copy, so the state to state is a value still stored
+// with no entry that mounts it (D1262).
 //
 // The restore pays the compare-and-swap the settings write path itself pays:
 // the file is read again and has to be the bytes this run wrote. A file that
 // moved in between is someone else's edit — another terminal, another tool, a
 // person who saw the entry go — and is not overwritten with the bytes this run
 // had read.
-func secretsRmUndo(id, path, name string, old, next []byte, changed bool, cause error) error {
+func secretsRmUndo(id, path, block, name string, old, next []byte, changed bool, cause error) error {
 	if !changed {
 		// Nothing was written, so nothing is owed: this is the delete's own
 		// failure, reported as it was before this command wrote anything.
 		return remote(cause)
 	}
-	key := "project_secrets." + pluginwire.Printable(name)
+	key := block + "." + pluginwire.Printable(name)
+	stored := "a secret shared project-wide with no entry is one every repository may mount, so write the policy you want again"
+	if block == secretsBlockWorkflow {
+		stored = "a workflow secret with no entry is one no repository mounts, so write the entry you want again"
+	}
 	failed := oneLine(cause.Error())
 	current, err := readSettingsCurrent(settingsEdit{Kind: settingsDocLocal, Path: path})
 	if err != nil {
-		return userErr("deleting %s failed: %s; %s was not put back either, so reading %s back: %v — a secret shared project-wide with no entry is one every repository may mount, so write the policy you want again; the value is still stored",
-			id, failed, key, path, err)
+		return userErr("deleting %s failed: %s; %s was not put back either, so reading %s back: %v — %s; the value is still stored",
+			id, failed, key, path, err, stored)
 	}
 	if !bytes.Equal(current, next) {
 		return userErr("deleting %s failed: %s; %s was not put back: %s changed since this run removed it, so what is there now is someone else's edit and it was left alone; the value is still stored",
 			id, failed, key, path)
 	}
 	if err := writeFileAtomic(path, old); err != nil {
-		return userErr("deleting %s failed: %s; %s was not put back, so writing %s: %v — a secret shared project-wide with no entry is one every repository may mount, so write the policy you want again; the value is still stored",
-			id, failed, key, path, err)
+		return userErr("deleting %s failed: %s; %s was not put back, so writing %s: %v — %s; the value is still stored",
+			id, failed, key, path, err, stored)
 	}
 	return userErr("deleting %s failed: %s; %s was put back exactly as it was, so nothing changed; the value is still stored — run this command again when the deletion can succeed",
 		id, failed, key)
 }
 
 // secretsRmWhat is the sentence the confirmation shows. It names both halves
-// this command removes, because the diff below it shows only one of them.
+// this command removes, because the diff below it shows only one of them, and
+// it names the block the entry lives in: a confirmation that said
+// project_secrets.NAME for a workflow secret would describe a key the run does
+// not touch.
 //
 // The name reaches a prompt here and nowhere else in this command, so it is
 // wrapped the way every other message of the family wraps it: the shape check
 // above is what makes a stray control character or bidi override impossible
 // today, and this is the one sentence that would carry one if it stopped being.
-func secretsRmWhat(id, name string, held, changed bool) string {
-	key := "project_secrets." + pluginwire.Printable(name)
+func secretsRmWhat(id, block, name string, held, changed bool) string {
+	key := block + "." + pluginwire.Printable(name)
 	switch {
 	case held && changed:
 		return fmt.Sprintf("delete the Secret Manager container %s with every version in it, and remove %s from this local config", id, key)
@@ -321,35 +328,40 @@ func secretsRmWhat(id, name string, held, changed bool) string {
 // secretsRmDryRun is the classification a --dry-run answers with. The document
 // is the settings write path's own — key, layer, path, changed, old and new are
 // the config half it describes — and operation is this command's own
-// "remove-secret": what the run takes away is the whole project_secrets.NAME
-// entry *and* the Secret Manager container behind it, which is more than the
-// entry pair's one member of a block and is not what "remove-entry" means. The
-// container is named on stderr as well, because a document whose members are
-// the settings write contract carries no member for it.
-func secretsRmDryRun(o secretsRmOptions, name string, old []byte) *settingsDryRun {
+// "remove-secret": what the run takes away is the whole entry — in whichever
+// block holds the name — *and* the Secret Manager container behind it, which is
+// more than the entry pair's one member of a block and is not what
+// "remove-entry" means. The container is named on stderr as well, because a
+// document whose members are the settings write contract carries no member for
+// it.
+func secretsRmDryRun(o secretsRmOptions, block, name string, old []byte) *settingsDryRun {
 	if !o.dryRun {
 		return nil
 	}
 	return &settingsDryRun{
-		key:       "project_secrets." + name,
+		key:       block + "." + name,
 		layer:     settingsLayerLocal,
-		oldValue:  secretsEntryFields(old, name),
+		oldValue:  secretsEntryFields(old, block, name),
 		newValue:  "",
 		operation: "remove-secret",
 		jsonOut:   o.asJSON,
 	}
 }
 
-// secretsEntryFields renders project_secrets.NAME's own members the one way the
-// dry run's old and new carry an entry: one field=value pair each, sorted by
-// field and comma-separated. A value has no member here and never has — the
-// entry holds an allow-list and a switch, and this is the whole of it.
-func secretsEntryFields(data []byte, name string) string {
+// secretsEntryFields renders NAME's own members in the block the run removes,
+// the one way the dry run's old and new carry an entry: one field=value pair
+// each, sorted by field and comma-separated. A value has no member here and
+// never has — the entry holds an allow-list and, in the reserved names' block
+// alone, a switch, and this is the whole of it.
+func secretsEntryFields(data []byte, block, name string) string {
 	lc, err := localcfg.Parse(data)
 	if err != nil {
 		return ""
 	}
 	entry, ok := lc.ProjectSecrets[name]
+	if block == secretsBlockWorkflow {
+		entry, ok = lc.WorkflowSecrets[name]
+	}
 	if !ok {
 		return ""
 	}

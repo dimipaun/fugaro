@@ -282,15 +282,14 @@ func TestSecretsRmRefusesDryRunWithYes(t *testing.T) {
 	}
 }
 
-// TestSecretsRmRefusesAWorkflowSecretsKey: a name the local config holds in
-// workflow_secrets is refused, not half-removed. The two blocks are disjoint —
-// a workflow_secrets key may not be a reserved name and a project_secrets key
-// may not be anything else — and a workflow secret's container is the same
-// derived ID, so without this refusal the deletion would run and leave
-// workflow_secrets.NAME promising a value nothing mounts. Withdrawing that
-// block's entry together with its container is the workflow-secret work's, so
-// this command says so and removes nothing.
-func TestSecretsRmRefusesAWorkflowSecretsKey(t *testing.T) {
+// TestSecretsRmRemovesTheWorkflowBlockEntry: a name the local config holds in
+// workflow_secrets is withdrawn whole — the Secret Manager container, which is
+// the same derived ID a project secret has (F2), and the workflow_secrets.NAME
+// entry — and both places this command names the entry say which block it lives
+// in. Removing one half only is the state D1171 gives this command the job of
+// preventing, and the block a name belongs to is the only thing that changes
+// about it.
+func TestSecretsRmRemovesTheWorkflowBlockEntry(t *testing.T) {
 	secretsRmFugaro(t)
 	sm := secretsFixture(t)
 	projectSecretFixture(t, "workflow_secrets:\n  deploy-token: { allow_data_to: [\"acme/app\"] }\n")
@@ -303,33 +302,54 @@ func TestSecretsRmRefusesAWorkflowSecretsKey(t *testing.T) {
 	path := os.Getenv("FUGARO_CONFIG")
 	before := readFileString(t, path)
 
-	// The dry run is refused with the same sentence: a document describing a
-	// removal this command cannot make whole would read as a plan for one.
-	for _, args := range [][]string{
-		{"secrets", "rm", "deploy-token", "--yes"},
-		{"secrets", "rm", "deploy-token", "--dry-run", "--json"},
-	} {
-		out, errOut, err := execute(t, args...)
-		if err == nil {
-			t.Fatalf("%s removed a workflow secret's container:\nstdout %s\nstderr %s", strings.Join(args, " "), out, errOut)
-		}
-		for _, want := range []string{"workflow_secrets", "deploy-token", "project_secrets", "nothing was removed"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("%s: the refusal does not carry %q:\n%v", strings.Join(args, " "), want, err)
-			}
-		}
-		if strings.Contains(out+errOut+err.Error(), tokenValue) {
-			t.Fatalf("%s leaked the value: %q %q %v", strings.Join(args, " "), out, errOut, err)
+	// The dry run's document names the key the run would remove, so a person
+	// reading a plan for this removal reads the block the entry lives in.
+	out, errOut, err := execute(t, "secrets", "rm", "deploy-token", "--dry-run", "--json")
+	if err != nil {
+		t.Fatalf("secrets rm --dry-run: %v\nstdout %s\nstderr %s", err, out, errOut)
+	}
+	var doc struct {
+		Key     string `json:"key"`
+		Old     string `json:"old"`
+		Changed bool   `json:"changed"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("the document does not read back: %v\n%s", err, out)
+	}
+	if doc.Key != "workflow_secrets.deploy-token" {
+		t.Errorf("the dry run's key = %q, want the block the entry lives in", doc.Key)
+	}
+	if !doc.Changed || doc.Old != "allow_data_to=acme/app" {
+		t.Errorf("changed/old = %t/%q, want the entry the run would remove", doc.Changed, doc.Old)
+	}
+	for _, want := range []string{"workflow_secrets.deploy-token", "deploy-token"} {
+		if !strings.Contains(errOut, want) && !strings.Contains(out, want) {
+			t.Errorf("the dry run does not name %q: %q %q", want, out, errOut)
 		}
 	}
 	if got := sm.Deleted(); len(got) != 0 {
-		t.Fatalf("deleted %v", got)
-	}
-	if got := sm.Latest(id); got == nil {
-		t.Fatal("the container was taken away")
+		t.Fatalf("a dry run deleted %v", got)
 	}
 	if after := readFileString(t, path); after != before {
-		t.Fatalf("the refusal wrote the config:\nbefore:\n%s\nafter:\n%s", before, after)
+		t.Fatalf("a dry run wrote the config:\n%s", after)
+	}
+
+	out, errOut, err = execute(t, "secrets", "rm", "deploy-token", "--yes")
+	if err != nil {
+		t.Fatalf("secrets rm: %v\nstdout %s\nstderr %s", err, out, errOut)
+	}
+	if got := sm.Deleted(); len(got) != 1 || got[0] != id {
+		t.Fatalf("deleted %v, want just %s", got, id)
+	}
+	if got := sm.Latest(id); got != nil {
+		t.Fatalf("the container still holds %q", got)
+	}
+	after := readFileString(t, path)
+	if strings.Contains(after, "workflow_secrets") || strings.Contains(after, "deploy-token") {
+		t.Fatalf("the config entry is still there:\n%s", after)
+	}
+	if strings.Contains(out+errOut, tokenValue) {
+		t.Fatalf("the value leaked: %q %q", out, errOut)
 	}
 }
 
