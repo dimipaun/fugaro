@@ -72,6 +72,15 @@ func TestIDETerminalTypedConfirmation(t *testing.T) {
 				if err == nil {
 					t.Fatalf("nothing was refused:\n%s%s", out, errOut)
 				}
+				// The refusal is the marker's and not the route's: every row
+				// here carries a marker the classification reads as an agent's
+				// session — the IDE marker's rows with no terminal included —
+				// so the variable is named. A refusal that only said "type it
+				// at a terminal" would leave the marker rule unpinned, which is
+				// the half this test exists for.
+				if !strings.Contains(err.Error(), tc.markers[0]) {
+					t.Errorf("the refusal does not name the marker %s: %v", tc.markers[0], err)
+				}
 			}
 			if notices != tc.notice {
 				t.Errorf("the IDE-terminal line is printed %d times, want %d:\n%s%s", notices, tc.notice, out, errOut)
