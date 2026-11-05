@@ -125,7 +125,7 @@ knows what to do without reading a sentence:
 - `needs_owner` — whether a person has to do something before the class can be avoided at all.
 - a definition, which is what the runner tests its own state against.
 
-| `failure_class` | The run ended because | kind | retryable | needs owner |
+| **`failure_class`** | The run ended because | kind | retryable | needs owner |
 | --- | --- | --- | --- | --- |
 | `review_not_converged` | the deciding review round's verdict was `changes` and the mode did not tolerate its findings, or a level that had shipped was held back by one that did not (`review round N still has N findings`, `heldBackReason`, `internal/runner/outcome.go:73`, `:81`). The work is on the branch and the pull request is a draft. | quality | no — a follow-up on the pull request is the retry | yes |
 | `review_unread` | no round the rule can read: no deciding round at all, or a verdict of `none` after the retry (`no review verdict`, `review round N returned no parseable verdict after a retry`, `outcome.go:54`, `:65`) | quality | no | yes |
@@ -463,7 +463,7 @@ not, so one bucket tells a reader to re-run runs that will fail again.
 The class plus the `delivered` column answers the report's question, and a *status* change is a wire
 change read by five clients — the console (`console/src/renderer/screens/run.ts`'s
 `RUN_FAILURE_OUTCOMES` vocabulary), `mobile/`, `internal/userstats`'s census (`userstats.go:198`),
-`internal/cli/runs_summary.go`'s `summaryStates` (`:62`) and `internal/watch`'s `isFailure`
+`internal/cli/runs_summary.go`'s `summaryStates` (`internal/cli/runs_summary.go:62`) and `internal/watch`'s `isFailure`
 (`finished.go:43`) — and the sibling design already introduces one new terminal value for the
 no-verdict case (`binary-allow-rule` NV0–NV2, `StatusUnreviewed`, D994–D996, *not on `main`*), so
 the owner has one decision about the vocabulary's shape, not two. **This is Open item O1**: whether
@@ -504,8 +504,8 @@ that is already long; no reader of it is a contract.
 - **O4 — the report's audience.** `runs ls --group-by` reads the installation's own bucket and
   prints nothing to a repository; the digest commits into the repository. Whether the committed
   Failures table may name run ids at all is the owner's call — the table above recommends the
-  report's existing practice (it already prints run ids, `internal/digest/render.go:70`), and a run id is not task
-  text.
+  report's existing practice (it already prints run ids, `internal/digest/render.go:70`), and a run id
+  is not task text.
 - **O5 — the thresholds (§8 D7)** if the owner has a view on what "high" means.
 
 ## 10. Tasks
