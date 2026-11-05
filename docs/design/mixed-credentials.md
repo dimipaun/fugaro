@@ -1,6 +1,6 @@
 # Mixed credentials and a stronger senior reviewer in a cheap-coder loop
 
-Status: draft for the owner's review, 2026-10-14, corrected after an independent review against the code. Nothing here is built. Related: [m10-multi-model.md](m10-multi-model.md) (provider routes, §7 auth modes, §11a two-tier review), [named-oauth-tokens.md](named-oauth-tokens.md), [recipes.md](recipes.md), [m9-budget-and-dashboard.md](m9-budget-and-dashboard.md) (D2).
+Status: draft for the owner's review, 2026-10-14, corrected after an independent review against the code; **§11 records the owner's B0 ruling of 2026-11-04**, which reverses the "a run does not mix credentials" rule for one stage credential. Nothing here is built: §11 is a ruling the tasks B1–B5 build against, not a description of behaviour the tree has. Related: [m10-multi-model.md](m10-multi-model.md) (provider routes, §7 auth modes, §11a two-tier review), [named-oauth-tokens.md](named-oauth-tokens.md), [recipes.md](recipes.md), [m9-budget-and-dashboard.md](m9-budget-and-dashboard.md) (D2).
 
 ## 1. Summary and recommendation
 
@@ -67,6 +67,8 @@ Facts from OpenRouter's public API, 2026-10-14 (to re-verify at build time; the 
 
 ## 5. Path B: the OAuth token for the reviewer stage only
 
+**Owner ruling (2026-11-04): B is approved in one shape, and it is not this section's** (task B0). The rule this section's shape was parked behind — *a run does not mix credentials* (§2, and [multi-model.md](../multi-model.md) §5) — is **reversed for exactly one case**: an `api-key` run may declare one stage-scoped Claude OAuth account and run its `review` and `adversarial` stages on it. §11 is the rule, its threat model, its failure behaviour and the decisions the tasks B1–B5 follow; it supersedes this section's tentative `stage_auth` key, because the accounts design's own per-stage keys ([accounts-add](../accounts-add/spec.md) §11.1–§11.2) are the shape the ruling is written on. What this section says about the cost stands and is what §11's threat model repeats: the token shares the job with the coder, the gateway cannot cap the stage, the `/proc` read is the accepted residual.
+
 **Proposed shape (names tentative):**
 
 ```yaml
@@ -116,7 +118,7 @@ Decided (owner, 2026-10-14): B is worth the residual risk; opt-in is enough; the
 Open, still for the owner, and the plan's remaining tasks and live checks do not wait on any of them:
 
 1. Is a non-Claude senior (GPT or Gemini through OpenRouter) acceptable as the first step, before any Claude senior? The owner rules it; **Check 45** is the by-hand comparison the ruling is made from, and it has not been run.
-2. Should `stage_auth` generalize later to the coder role? Recommendation: no.
+2. Should the stage credential generalize later to the coder role? **Ruled 2026-11-04: no** (§11). The coder's own stages keep the run's `api-key` credential, and a stage-scoped account on `implement` or `review_first` is refused — the recommendation this list carried, now a rule.
 3. §4's own question, kept open on purpose: do Claude Code's prompt-cache markers survive the Anthropic-compatible endpoint? **Check 46** measures it — `cache_read`/`cache_write_5m` and the charge, the same task run routed against direct — and it has not been run. The owner-written switch that supersedes this interim claim path is phase 1b's `routing.claude`: its owner-facing paragraph (the object, the explicit list, absent-means-direct, the `allow_data_to` requirement, and this same cache-marker question with the cost attached) is [multi-model.md](../multi-model.md)'s §2, the resolution it licenses is what `fugaro validate` prints or calls unresolved offline, and **Check 50** ([gcp-live-checklist.md](../gcp-live-checklist.md)) is the same measurement on the switch's route — also not yet run.
 
 ## 9. Testing and live checks
@@ -131,3 +133,52 @@ Open, still for the owner, and the plan's remaining tasks and live checks do not
 2. The §4 change (the explicit opt-in) and C for Claude.
 3. B: infra, runner per-stage spec, validation, with mitigations 1 and 2.
 4. Optional hardening: the separate-job reviewer, only for repositories with outside contributors.
+
+## 11. The B0 ruling (2026-11-04): the one credential a run may mix
+
+**A ruling recorded; nothing built.** The owner ruled on 2026-11-04 that the rule §5 was parked behind — *a run does not mix credentials* — is **reversed for exactly one case**, so that a run keeps its cheap coder on a provider route **and** runs its in-job reviews on an Opus model through the owner's own Claude subscription account. The rest of the requirement (the senior review at level 2, the adversarial review at level 3, both inside the job) is the in-job review work's; this section is the one rule that work needs from this document, and the tasks **B1–B5** build against it. It allocates no D-number and no check number, and it changes no behaviour on its own: this is the rule, the threat model it is accepted under, what a failure does, and the decisions the five tasks follow.
+
+### The rule
+
+A run whose own credential is a provider key — `agent.auth` is `api-key`, the only value a provider pin is admitted under (`CheckProviderAuth`, [internal/config/providers.go](../../internal/config/providers.go)) — may declare **exactly one stage-scoped Claude OAuth account**, and use it for two stages and no others: the senior `review` (review level 2) and the adversarial/security `adversarial` (level 3, `recipe.StepAdversarial`). The account is a name of the owner's local `claude_accounts`, held to this repository by that account's `allow_data_to` (`claudeAccountAllowed`, `config.AllowedClaudeAccounts`), and chosen by the accounts design's two keys ([accounts-add](../accounts-add/spec.md) §11.1–§11.2): `stages.<stage>.claude_account` for a stage's own choice and `default_claude_account` for the run's default — rungs 2 and 4 of that spec's §11.2 chain, which `claudeAccountFor` ([internal/cli/run.go](../../internal/cli/run.go)) does not walk yet.
+
+| | The run's own credential | The stage's |
+| --- | --- | --- |
+| `implement`, `review_first` | the provider key, through the gateway | — |
+| `review`, `adversarial` | — | the one Claude OAuth account, direct to Anthropic |
+| anything else | the provider key, through the gateway | — |
+
+Four refusals carry the rule — the account serves the two review stages and nothing else: never `implement`, never `review_first`, never a second provider's key, never under `oauth`, `vertex` or `cascade`. Each is a decision B1 implements rather than an accident of the code today:
+
+- **Never `implement`.** The coding stage is the coder's, and the coder's credential is the provider key the gateway holds. A stage-scoped account on the coder's own stage is refused, not ignored.
+- **Never `review_first`.** Level 1 is the cheap first line, pinned to the coder's role (`reviewStages`, [internal/runner/routing.go](../../internal/runner/routing.go)) and served by the coder's model: it is a coder stage that happens to be a review, and the same refusal applies.
+- **Never a second provider's key.** The mix is exactly one provider key plus one Claude subscription account. No run holds two provider keys, and no run holds two Claude accounts for this purpose.
+- **Never under another auth.** `oauth`, `vertex` and `cascade` are unchanged: a provider pin under any of them is refused as it is today, and the stage account exists only to give an `api-key` run a Claude review credential it otherwise has none of.
+
+Two things are **not** bent by the reversal. An OAuth token is still only ever sent to Anthropic's own endpoint — that invariant is checked on the route and on the destination ([SECURITY.md](../../SECURITY.md), "The invariant") — and the stage that uses it goes **direct to Anthropic**, so the invariant holds rather than being relaxed: what the reversal changes is *how many credentials one run holds*, not where any of them may be sent. And every name is still held to `claude_accounts`'s allow-list for the repository before any launch, whatever rung it came from.
+
+### The threat model
+
+**Who holds the token, and when.** The job mounts the account's token into the **runner's** environment, where it is present for the whole run — the runner is what builds each stage's environment, so it is the process that has to hold the credential the `review` and `adversarial` stages are given. The **coder's own environment is an allow-list** and carries no model credential at all: `BuildEnv` ([internal/agent/env.go](../../internal/agent/env.go)) keeps `baseEnv`, the auth variables and the workflow's declared secrets, the provider key stays in the runner where the gateway reads it, and the review account's token is added for the review stage's own process and no other (B4). Every value the runner does put in an agent environment is registered with the redactor, so the token is not written to a stage transcript or a log line — the same treatment the provider key already gets.
+
+**What a hostile coder can reach.** Everything it can reach today, and the token with it. The agent runs as the same OS user in the same container as the runner, so a prompt-injected coder reads the runner's environment through `/proc` (`/proc/<pid>/environ`) and finds the account's token exactly where it already finds the OpenRouter key, the git token, the gateway token and every declared secret. **That is the accepted residual, and the whole of the owner's argument for accepting it: the token is the same exposure class as the provider key the loop already carries.** Nothing in this rule narrows it, and the allow-listed coder environment must not be read as narrowing it — it keeps the token out of the coder's *own* environment and out of what Fugaro publishes, not out of the process tree. The job's service account also holds `secretAccessor` on that account's secret and the metadata server stays reachable, so the credential is reachable by two routes and not one. §6.4's separate execution for the reviewer — its own container and service account — is the only mitigation that closes the `/proc` read, and **it is not built**: the owner's ruling does not require it.
+
+**What the token's own blast radius is.** A subscription credential, not a scoped key: usable anywhere Anthropic accepts it, with shared rate limits against the owner's own interactive use, and revocable at the account. **The gateway does not bound it.** The stage's calls go direct to Anthropic and never through the gateway, so they are neither priced nor refused by the run's cap; the stage is bounded only by `agent.max_budget_usd`, which is Claude Code's own estimate — accurate for a Claude model, unlike for a provider-served coder (§7's table records the comparison). What bounds *which repositories* may put code where that token is: the account's own `allow_data_to`, the same list every named account stands on.
+
+### A review stage that fails
+
+A stage whose account the launch refuses — a name that is not in `claude_accounts`, one whose `allow_data_to` does not list this repository, or, on a project job, an account the job does not carry — is refused **before any model call**: there is no silent fallback. It is never quietly run on the coder's credential, and never on another account: the coder's credential is the provider key the gateway holds, and a review that silently ran on the model it was meant to be independent of would be worse than one that did not run at all.
+
+**A stage that starts and fails ends as a failed stage.** An expired or revoked token, a rate limit, a provider error, or an agent that reports an error (`res.IsError`, [internal/runner/runner.go](../../internal/runner/runner.go)) takes the runner's ordinary failure path (`r.fail`): the stage is recorded as failed, no verdict is recorded for it, and the run cannot come back ready for review on a review that never ran. There is no new failure mode here — the same path a review stage takes today when its model call fails.
+
+**Failover is a decision the owner makes, not a default.** With `claude_account_auto` on, A7's dormant failover walks to the next **review-class** account ([accounts-add](../accounts-add/spec.md) §11.3) — never mid-stage, always logged, and writing the account that took over into the record's `stage_accounts` map, which is on `main` and read by nothing ([internal/runstore/runstore.go](../../internal/runstore/runstore.go)). With the switch off — which is its default — a rate limit ends the stage as the paragraph above says. The record's own limit stands either way: `oauth_account` is one scalar and names the account the run used *last*, so `stage_accounts` is what says which account served which stage.
+
+### The decisions the tasks B1-B5 follow
+
+One per area, each with the thing that is missing on `main` today; the tasks' own split across B1–B5 is the plan's to make.
+
+1. **Config: admit exactly one mix, refuse every other.** `agent.auth` is one value per run ([internal/config/config.go](../../internal/config/config.go)), and a provider pin is admitted only under `api-key` (`CheckProviderAuth`). The permitted combination is `api-key` plus one stage account for `review` and `adversarial`; refused are the account on `implement` or `review_first`, a second account, a second provider's key, and the stage account under `oauth`, `vertex` or `cascade`. No compat shim: the rule is the rule at every layer that judges it, and `fugaro validate` says the same as the run.
+2. **Infra: mount the account's token for such a workflow.** Today the mount and the per-account variant jobs exist only for `agent.auth: oauth` (`WorkflowAccounts`, [internal/infra/spec.go](../../internal/infra/spec.go)), and a job mounts **one** account's token — so a workflow that declares a stage account has to be given that account's secret, and the job that serves it has to be the one built for it. `fugaro update` carries the migration in the same release (CLAUDE.md's hard rule: no operator step, no second command).
+3. **Launch: resolve the account through the accounts design's chain.** `claudeAccountFor` ([internal/cli/run.go](../../internal/cli/run.go)) lacks §11.2's rungs 2 and 4 — the stage key and the project default — while the keys themselves are parsed and read by nothing ([internal/localcfg](../../internal/localcfg/localcfg.go)). Every rung ends in `claudeAccountAllowed`, so a key can only name an account the owner already admitted for the repository.
+4. **Runner: give the review stage its own environment.** One gateway, one managed settings file and one `spec.Auth` switch serve the whole run; `stagePins` ([internal/runner/agentenv.go](../../internal/runner/agentenv.go)) reads the gateway's routing, and returns nothing when the gateway is off. The review stage's process needs the token and no gateway URL, the coder's the reverse, and the managed settings file — which points Claude Code at the gateway — has to be right for each. The stage's calls are outside the gateway's ledger by construction, which is exactly why §7's table and SECURITY.md's residual both say the cap does not bound them.
+5. **Record: write what happened per stage.** `stage_accounts` in the run record ([internal/runstore/runstore.go](../../internal/runstore/runstore.go), on `main` since A2) is where a stage's account is recorded, and the `res.IsError` path in [internal/runner/runner.go](../../internal/runner/runner.go) is what keeps a stage that reported an error from being read as a review that ran. The field is record-only: nothing reads it until a later task surfaces it, and `oauth_account` keeps the meaning it has.
