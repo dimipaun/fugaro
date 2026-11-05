@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -64,7 +65,7 @@ func processTerminal() bool { return stdinIsTerminal(os.Stdin) }
 // command's own stdin is a real terminal and only the IDE extension's marker is
 // set. It is called once, at the point one typed confirmation is accepted.
 func noteIDETerminalCmd(cmd *cobra.Command, out io.Writer) {
-	if ideTerminal(os.Getenv, stdinIsTerminal(cmd.InOrStdin())) {
+	if agentenv.IDETerminal(os.Getenv, stdinIsTerminal(cmd.InOrStdin())) {
 		fmt.Fprintln(out, ideNotice)
 	}
 }
@@ -1649,7 +1650,7 @@ func (r *initRun) stdinTerminal() bool {
 // once: the classification is asked many times per run and the fact about who
 // is there is one.
 func (r *initRun) noteIDETerminal() {
-	if r.ideNoted || !ideTerminal(os.Getenv, r.stdinTerminal()) {
+	if r.ideNoted || !agentenv.IDETerminal(os.Getenv, r.stdinTerminal()) {
 		return
 	}
 	r.ideNoted = true

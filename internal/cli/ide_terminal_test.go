@@ -75,7 +75,18 @@ func TestIDETerminalTypedConfirmation(t *testing.T) {
 				t.Setenv(m, "1")
 			}
 			out, errOut, err := executeStdin(t, "aurora\n", "image", "build", "--base", "b:1")
-			notices := strings.Count(out+errOut, ideNotice)
+			// The line is counted per stream, not over both: the build's
+			// confirmation shows its ⚠ CONFIRM banner and reads the name on
+			// stderr, so the line that says the name was accepted from an IDE
+			// terminal belongs there and nowhere else. Counting the two
+			// together would also pass for a line printed by some other
+			// writer of the same command, which is the thing this asserts
+			// against.
+			noticeErr, noticeOut := strings.Count(errOut, ideNotice), strings.Count(out, ideNotice)
+			notices := noticeErr + noticeOut
+			if noticeOut != 0 {
+				t.Errorf("the IDE-terminal line is on stdout, where the build's confirmation does not write:\n%s", out)
+			}
 			if tc.want {
 				if err != nil || buildPosts(fb) != 1 {
 					t.Fatalf("the typed confirmation was not accepted: err %v, %d build(s)\n%s%s", err, buildPosts(fb), out, errOut)

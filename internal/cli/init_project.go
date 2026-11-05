@@ -387,7 +387,7 @@ func (s *projectStage) Left() initflow.Left {
 // would be two places to widen by accident.
 func (r *initRun) canType() bool {
 	o := r.o
-	return !o.nonInteractive && !o.asJSON && !agentEnv(os.Getenv, r.stdinTerminal()) && stdinIsTerminal(r.cmd.InOrStdin())
+	return !o.nonInteractive && !o.asJSON && agentMarker(os.Getenv, r.stdinTerminal()) == "" && stdinIsTerminal(r.cmd.InOrStdin())
 }
 
 // canType is this stage's typed confirmation, asked of the run it is in.

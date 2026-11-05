@@ -55,7 +55,7 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 		return authNeeded, userErr("--onboard-repo %s does not name this checkout's origin repository (%s)", pluginwire.Printable(opts.onboardRepo), pluginwire.Printable(o.Repo))
 	}
 	// A coding agent never opts a repository in, by the flag either.
-	flagOK := opts.onboardRepo != "" && o.standardHost() && !o.Rewritten && !agentEnv(os.Getenv, e.r.stdinTerminal())
+	flagOK := opts.onboardRepo != "" && o.standardHost() && !o.Rewritten && agentMarker(os.Getenv, e.r.stdinTerminal()) == ""
 	switch {
 	case repoKnown(e.lc, o), flagOK, e.authorized[strings.ToLower(o.typed())]:
 		return authOK, nil
@@ -299,7 +299,7 @@ func (e *initEngine) theSetupDoor() bool { return e.r.o.door == setupDoor.name }
 // secrets stage does: never with --yes, --non-interactive or --json, nor
 // behind a coding agent.
 func (e *initEngine) canConfirmRepo() bool {
-	return e.r.canAsk() && !agentEnv(os.Getenv, e.r.stdinTerminal())
+	return e.r.canAsk() && agentMarker(os.Getenv, e.r.stdinTerminal()) == ""
 }
 
 // onboardLeft is what the user does to opt a repository in: the one-line
@@ -307,7 +307,7 @@ func (e *initEngine) canConfirmRepo() bool {
 // agent's session it is never the flag, which would be a line for the agent to
 // paste: only the typed route, in the user's own terminal.
 func onboardLeft(o originInfo, door string) initflow.Left {
-	if o.standardHost() && !o.Rewritten && !agentEnv(os.Getenv, processTerminal()) {
+	if o.standardHost() && !o.Rewritten && agentMarker(os.Getenv, processTerminal()) == "" {
 		return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand, Text: selfCommand() + " " + door + " --onboard-repo " + quoteWord(o.Repo)}
 	}
 	return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftConsole, Text: "in your own terminal window, or in a fresh clone of the real remote, type " + pluginwire.Printable(o.typed()) + " at the prompt of", Commands: []string{selfCommand() + " " + door}}
@@ -353,7 +353,7 @@ func convergeOptIn(lc *localcfg.Config, o originInfo) string {
 		return ", and --yes does not give it for an origin whose identity is not the one it claims: type its owner/name at your own terminal"
 	case repoNameListed(lc, o):
 		return ", and --yes does not give it here: the project's config knows this name at another host, so the origin is this gate's own question"
-	case agentEnv(os.Getenv, processTerminal()):
+	case agentMarker(os.Getenv, processTerminal()) != "":
 		return " (a coding agent's session confirms nothing, --yes included): type its owner/name in your own terminal window"
 	}
 	return " — --yes covers it, or type its owner/name at your own terminal"

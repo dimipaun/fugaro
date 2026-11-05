@@ -47,7 +47,10 @@ import (
 //   - what a non-managed project's confirmation does under each combination of
 //     flags and terminal is a literal table (confirmTable);
 //   - which environment variables are a coding agent's is a literal list
-//     (expectedAgentMarkers), not agentMarkers;
+//     (expectedAgentMarkers), not agentMarkers, and what each environment
+//     state must report with and without a terminal is written beside it in
+//     that same table (agentEnvStates/agentFor): the classification is stated
+//     once in this file, and the flag and ask tables do not restate it;
 //   - every flag of `fugaro setup` has a written entry (initFlagCases).
 //
 // The decision is computed over the program's real paths: the managed read
@@ -83,29 +86,46 @@ var expectedAgentMarkers = []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLA
 // An empty value is not a coding agent's session (agentMarker reads getenv's
 // value, and an agent that can set a variable empty can unset it), and that
 // is pinned here so a change to it is a decision rather than a drift.
+//
+// The two expectations are the whole of the classification this package
+// states by hand, and they are stated HERE, once, per state: which environment
+// is a coding agent's with no real terminal on the run's input, and which it
+// is with one. The package's other two hand-written tables ask different
+// questions and neither restates this one — confirmTable asks what a project
+// nothing recorded does under a combination of flags (its answer under any
+// marker is "nothing", and which marker that is comes from here), and
+// askSessions asks whether there is anyone to ask, over initflow.Conditions
+// rather than over an environment.
 type agentEnvState struct {
 	name, key, value string
 	agent            string // the marker the run must report, "" for none: written by hand
+	// agentTerminal is the same with a real terminal on the run's input, and
+	// it differs for one state only: the Claude Code IDE extension sets
+	// CLAUDE_CODE_SSE_PORT in a person's own terminal too, so that marker
+	// alone, at a terminal, is a person's terminal and not a coding agent's
+	// session (the ruling of 2026-11-05).
+	agentTerminal string
 }
 
 func agentEnvStates() []agentEnvState {
 	out := []agentEnvState{{name: "no marker"}}
 	for _, k := range expectedAgentMarkers {
-		out = append(out, agentEnvState{name: k + "=1", key: k, value: "1", agent: k})
-		out = append(out, agentEnvState{name: k + "= (empty)", key: k, value: "", agent: ""})
+		s := agentEnvState{name: k + "=1", key: k, value: "1", agent: k, agentTerminal: k}
+		if k == "CLAUDE_CODE_SSE_PORT" {
+			s.agentTerminal = ""
+		}
+		out = append(out, s)
+		out = append(out, agentEnvState{name: k + "= (empty)", key: k, value: ""})
 	}
 	return out
 }
 
-// agentFor is the marker a run with this environment must report where its
-// input is (or is not) a real terminal. Every state reads the same either way
-// but one: the Claude Code IDE extension sets CLAUDE_CODE_SSE_PORT in a
-// person's own terminal too, so that marker alone, at a terminal, is a
-// person's terminal rather than a coding agent's session (the ruling of
-// 2026-11-05). Written here by hand, like the states themselves.
+// agentFor is the marker a run in this environment must report, given whether
+// its input is a real terminal. It returns the state's two written facts and
+// holds no rule of its own, so the classification is decided in one place.
 func (s agentEnvState) agentFor(terminal bool) string {
-	if s.key == "CLAUDE_CODE_SSE_PORT" && s.value != "" && terminal {
-		return ""
+	if terminal {
+		return s.agentTerminal
 	}
 	return s.agent
 }
@@ -725,7 +745,7 @@ type inlineAgentSite struct {
 }
 
 // inlineAgentSites holds the agent-marker decisions of init that are run here
-// one by one. Every agentMarker(, agentEnv( and Agent: site in init's non-test
+// one by one. Every agentMarker( and Agent: site in init's non-test
 // files is listed either here, in propertyAgentSites (driven by the property
 // and the loop tests) or in outsideAgentSites with a reason:
 // TestManagedEveryAgentSiteInInitHasACase scans the source and fails on a site
@@ -812,7 +832,6 @@ var propertyAgentSites = map[string]string{
 var outsideAgentSites = map[string]string{
 	"init.go runInit":                 "OUTSIDE: --publish-config's refusal before any write; not a confirmation (initFlagCases: publish-config)",
 	"init.go publishSharedConfig":     "OUTSIDE: the shared-config publish after the local config is written; not a confirmation, it skips with a note under a marker",
-	"initsecrets.go agentEnv":         "OUTSIDE: the definition of agentEnv itself (TestManagedAgentMarkersAreTheExpectedSix pins agentMarker)",
 	"initsecrets.go Check":            "OUTSIDE: the wording of the secrets stage's detail; whether it prompts is canPrompt (an inline site)",
 	"init_repo_gate.go convergeOptIn": "OUTSIDE: the wording of the repository gate's detail — it says whether --yes is named as a way in; whether the run may onboard at all is authState/onboardCovered (inline sites)",
 	// The marker only reaches the publisher's own empty-allow-list refusal
@@ -1017,7 +1036,7 @@ func TestManagedConfirmClassEnumerationIsComplete(t *testing.T) {
 }
 
 // agentSitesInInit scans init's non-test source (init*.go) for every
-// agentMarker( and agentEnv( call and every Agent: field, and names each by
+// agentMarker( call and every Agent: field, and names each by
 // its file and enclosing function ("init.go ask"). A site outside any
 // function is named "file (package level)".
 func agentSitesInInit(t *testing.T) map[string]bool {

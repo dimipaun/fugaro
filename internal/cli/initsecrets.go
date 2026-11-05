@@ -145,23 +145,19 @@ var agentMarkers = agentenv.Markers
 // package asks, so a person's own IDE terminal is treated as a person's
 // everywhere and an agent's tool call — which has no terminal — is refused
 // everywhere.
+//
+// It is this package's one seam to agentenv and holds no rule of its own: the
+// call sites have the same two facts (os.Getenv, and whether the run's input
+// is a terminal) and hand them over in one order, and the name is the one a
+// source scan requires a case for at every agent-marker site of init
+// (agentSitesInInit, managed_test.go). agentenv's own two questions keep their
+// own names, which is why this is not called Marker: Session is the session
+// this run is in, Marker is the first variable set. A caller that only wants
+// the yes/no asks this for "", and the accepted IDE terminal — the one session
+// that is a person's with a marker set — is agentenv.IDETerminal, asked where
+// the line that says so is printed.
 func agentMarker(getenv func(string) string, stdinTerminal bool) string {
 	return agentenv.Session(getenv, stdinTerminal)
-}
-
-// agentEnv reports whether getenv shows a coding agent's session. It is
-// agentMarker, so that a caller that only wants the yes/no cannot drift from
-// the caller that names the variable to unset.
-func agentEnv(getenv func(string) string, stdinTerminal bool) bool {
-	return agentMarker(getenv, stdinTerminal) != ""
-}
-
-// ideTerminal reports whether getenv is a person's own IDE terminal: the IDE
-// extension's marker alone, at a real terminal (agentenv.IDETerminal). It is
-// the one case a typed confirmation is accepted from without a marker refusal,
-// and the one case a run prints the IDE notice for.
-func ideTerminal(getenv func(string) string, stdinTerminal bool) bool {
-	return agentenv.IDETerminal(getenv, stdinTerminal)
 }
 
 // ideNotice is the one line a run prints when it accepts a confirmation from a
@@ -222,7 +218,7 @@ func (s *secretsStage) Name() string { return initflow.Secrets }
 // it: a hard rule, --json never prompts) is set.
 func (s *secretsStage) canPrompt() bool {
 	o, cmd := s.e.r.o, s.e.r.cmd
-	return !o.nonInteractive && !o.yes && !o.asJSON && !agentEnv(os.Getenv, stdinIsTerminal(cmd.InOrStdin())) &&
+	return !o.nonInteractive && !o.yes && !o.asJSON && agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())) == "" &&
 		stdinIsTerminal(cmd.InOrStdin()) && writerIsTerminal(cmd.ErrOrStderr()) && writerIsTerminal(cmd.OutOrStdout())
 }
 
@@ -603,7 +599,7 @@ func (s *secretsStage) Left() initflow.Left {
 		}
 	}
 	text := "run these in your own terminal window, one line at a time, in this order"
-	if agentEnv(os.Getenv, s.e.r.stdinTerminal()) {
+	if agentMarker(os.Getenv, s.e.r.stdinTerminal()) != "" {
 		text = "run these in your own terminal window, not through a coding agent, one line at a time, in this order"
 	}
 	return initflow.Left{Stage: initflow.Secrets, Kind: initflow.LeftCommand, Text: text, Commands: cmds}
