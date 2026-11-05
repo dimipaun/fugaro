@@ -143,6 +143,23 @@ func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 		"no silent fallback",
 		// And what the note deliberately does not build.
 		"### The decisions the tasks B1-B6 follow",
+		// Where the keys live and what carries them to a run: the file is the
+		// only store of the two, the node is the only thing a run reads, and
+		// `fugaro update` is the one command that closes the gap (B7). A note
+		// that named the keys and never said how they reach the node would
+		// leave an operator setting them and getting a mix the runner never
+		// sees.
+		"### Where the two keys live, and what carries them to a run",
+		"`fugaro update` publishes them",
+		"the project's **published policy node**",
+		"a mix no run of the project has",
+		"no second `fugaro project policy publish`",
+		// And the one step that command cannot take for these members: the D854
+		// re-seed refuses the account keys by name, and the doc says which
+		// command writes them, so the operator who meets that refusal has a path
+		// rather than a failure naming members no documented command sets.
+		"refuses the account keys **by name**",
+		"fugaro settings set default_claude_account <name>",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("%s §11 never says %q: the ruling is not recorded and the tasks B1-B6 have nothing to build against", path, want)
@@ -224,6 +241,12 @@ func TestDocsMultiModelRecordsTheReviewAccountException(t *testing.T) {
 		// the limit §6 and §7 of the design note state, said where a reader
 		// meets the credential.
 		"not priced or capped by the gateway",
+		// Where the two keys live and what carries them to a run: the reader
+		// who sets one has to learn that the file alone is not enough and that
+		// the one command they already run is what publishes it (B7).
+		"`fugaro update` publishes them",
+		"the project's published policy node",
+		"there is no second publish to run",
 		// And that the credential is not a plan any more: the reader who
 		// meets the rule here has to learn that the keys it names work, and
 		// which owner-run check the claim rests on.
