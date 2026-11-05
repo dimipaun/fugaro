@@ -254,15 +254,25 @@ refuse a run-scoped job identity and refuse an oversize or malformed value from 
 "a mitigation, not a barrier": `env -u CLAUDECODE fugaro orchestrator patch` or a direct node write (Bearer, no rules) passes it. So G2's CLI
 half (D1225) is **not enforced by an agent-session check**; **P1 is resolved as negative**. The honest bound: person-only ops (approve, `goal_set`,
 resolving a `waiting_on: person` decision) require at least a **Typed confirmation at a real terminal** (`initflow.CanConfirm(Typed)`, the control
-the repo's other person-only steps use), which stops the accident and a session that cannot type; the **residual** is stated: an adversary running
+the repo's other person-only steps use), which stops the accident and most sessions; it is itself beatable by a pty wrapper (`script`, `expect`), so "a session that cannot type" is overstated; the **residual** is stated: an adversary running
 as the person at a terminal is the person. A stronger channel (a paired-device approval) is an owner question (D1242), and nothing consumes a
 resolved person decision until it is answered.
 
 **Single-writer.** In RTDB, `PutIfMatch` on one state node plus a daemon lease (the mailbox heartbeat-lease pattern, F5/F16) gives one
 daemon per orchestrator id and a rejected write for any stale one. The spec's "Both modes coexist; transactions keep them from
 clobbering each other" is correct for state and silent about **side effects**: two cycles can each decide the same spawn from the same
-stale read; only the launch claim (one launch one run per key) stops the second. Idempotency keys must therefore be derived, not generated
+stale read; only the committed intent (a compare-and-swap of the state) and the per-run-id launch claim stop the second. The lease and the state ETag
+are separate nodes: **the state compare-and-swap, not the lease, is what serialises intents**, and a daemon that lost its lease can still win a
+`PutIfMatch` after a re-read, so `Save` re-checks the lease before each retry (plan O3, G9). Idempotency keys must therefore be derived, not generated
 (D1231).
+
+**One approval covers one attempt (round-2 M1, M2).** A session's `work_item_upsert` must not be able to turn one approval into many launches. `Phase`,
+`RunID`, `Attempts` and the `Intents` are written only by the **Daemon** actor; a session's upsert that carries them is refused. An approval covers
+the attempt it was given for; a further attempt (a retry after `failed`) needs a person's new approval. The digest is one `SpecDigest(WorkItem)` over every
+field except a named bookkeeping list (`Phase`, `RunID`, `Attempts`, `Note`, `Approved`), so a field added later is digested by default (a reflective
+test pins the list). The approve op carries the digest the person saw and is refused if it no longer equals the current one; the Typed confirmation
+shows the digested spec. State size: the ~4k-token target needs a retention rule, so finished items, resolved decisions and old `Intents`/briefs are
+archived out of the state node past a cap (O0).
 
 ### Cost of the cycle loop
 
@@ -303,11 +313,20 @@ that is **money**. Two repairs:
 
 1. **Intent first, at-most-once** (mailbox rule: "the record of a delivery is on disk before the action it asked for runs"): commit the
    intent `{action id, minted run id, launch-spec digest}` with a `PutIfMatch` of state, then launch **under that recorded run id**, then commit
-   the result. **Correction after the round-1 security review:** `runstore.Store.ClaimKey()` takes no key (it is `<run prefix>launching`, per
-   run id), run ids are random (`task.NewRunID`), and the claim is released after a launch and stale after `ClaimTTL` (10 minutes), so the
-   claim cannot be "the idempotency key under a derived id". The fence is the **run id itself**: the intent records the minted run id before the
-   start; recovery looks for an existing `task.json`/`launch.json` under it and **adopts** it, and never mints or issues a second one.
-2. **Level-triggered**: no cursor at all; the next cycle re-derives "task t-042 has no run" and acts again, with the claim as the fence.
+   the result. **Correction after the round-1 and round-2 security reviews (what `launchRun` in `internal/cli/run.go` does):**
+   `runstore.Store.ClaimKey()` is `<run prefix>launching`, one claim **per run id**, and run ids are random (`task.NewRunID`). `launchRun` starts a
+   run **at most once, however many CLIs race on the same run id**: it returns "already-launched" if `launch.json` (or `result.json`'s execution)
+   exists; otherwise it takes the claim with create-if-absent; the claim "is never deleted after a launch" (only a definitive `backend.ErrRejected`,
+   a cancel or a refusal before the start releases it); a stale claim (older than `ClaimTTL`, 10 minutes) is taken over by an overwrite matched to
+   the generation read, so two takers cannot both win; a fresh claim held by someone else makes the loser wait for `launch.json` or fail "still in
+   flight". `--run-id` ("repeating one reports its launch instead of starting another"), `createTask` ("a repeated run ID must repeat its task") and
+   `--retry` ("launches the stored task that never started") already make a launch idempotent per run id. **So the per-run-id claim IS the
+   concurrency fence** (two daemons, a stale claim, a retry), and the corrected recipe is **re-issue, never mint again**: the intent records the minted run id before the
+   start; recovery **re-issues the same launch under that recorded run id through `launchRun` (the `--retry` path)**, which reports
+   "already-launched" if the start happened or launches exactly once if it did not. An "adopt only, never issue" recovery would leave an item stuck
+   in `running` forever (and holding a running-cap slot) if the crash fell between `task.json` and the start. It never mints a second run id.
+2. **Level-triggered**: no cursor at all; the next cycle re-derives "task t-042 has no run" and acts again, with the per-run-id claim as the fence
+   and the committed intent as the record that a run id was already minted for that attempt.
 
 The cursor is then only a performance device (skip events already folded) and its advance can be the same `PutIfMatch` as the state
 write. A cursor that moved without the effect (the reverse crash) loses an event, which is why dead-lettering and a periodic full
@@ -385,7 +404,7 @@ Numbers **D1220-D1249** (section 0). Recommendation first; the cost of the alter
 | D1228 | What runs a decision agent, and what bounds its cost? | **Local `claude -p` first** on the person's own login, each call with a fixed brief, `--max-turns`, a pinned `max_output_tokens`, a **count cap** (proposal: 6 calls per hour, 40 per day) and a circuit breaker after 3 consecutive empty or failed cycles that pauses the daemon and raises a decision for the person. Cloud variant later on the cloud senior reviewer's pattern. | A Fugaro cloud run per decision: gateway-budgeted and isolated, but each cycle pays container start and a job slot; do it only for the security-sensitive class. Numbers are proposals, not measured (U4). | **Answered 2026-11-04.** Local `claude -p` with hard bounds (max-turns, pinned `max_output_tokens`, 6 per hour and 40 per day, circuit breaker after 3 failed or empty cycles): the recommendation. Why: the only dollar control on a person's own login. Numbers are proposals (U4). |
 | D1229 | Event log or level-triggered reconciliation? | **Level-triggered in v1**: each tick derives actions from state vs the run view (idempotent, no cursor, no replay). Keep a small append-only **decision/audit log** (deterministic ids) only for the daemon's decisions and `user.message`; add a cursor when a producer needs one. | The spec's full event stream with ULIDs and a cursor: more machinery, an ordering problem across clocks, a dead-letter path, and the crash window below. | **Answered 2026-11-04.** Level-triggered v1 plus a small audit log with deterministic ids: the recommendation. Why: no cursor, no replay, no ordering problem in the first slice. |
 | D1230 | Event ordering key, if a log exists | **Server-assigned** (RTDB push key / `ServerNow`), **deterministic ids** (`<run>:<transition>`) for producer retries; the cursor is a performance device, never the source of truth. | ULIDs minted by writers: laptop clocks make order ambiguous. | **Answered 2026-11-04.** Deterministic ids and a server-assigned order: the recommendation. Why: laptop clocks make writer-minted ULIDs ambiguous. |
-| D1231 | Order of effect and commit | **Intent first**: commit the action intent (derived id: work item + attempt, **plus the minted run id and the launch-spec digest**) with `PutIfMatch`, then launch under that recorded run id, then commit the outcome. At-most-once for money; recovery adopts an existing `task.json`/`launch.json` for that run id and never re-issues (the claim takes no key, so it is not the fence: round-1 finding 3). | The spec's act-then-commit: a crash between spawns twice because the id is not recorded yet. | **Answered 2026-11-04.** Intent first, launch under the derived id, then commit: the recommendation. Why: at-most-once for money across a crash. |
+| D1231 | Order of effect and commit | **Intent first**: commit the action intent (derived id: work item + attempt, **plus the minted run id and the launch-spec digest**) with `PutIfMatch`, then launch under that recorded run id, then commit the outcome. At-most-once for money; recovery re-issues the same launch under the recorded run id through `launchRun`/`--retry` (it reports an existing launch or launches once; it never mints a second run id), and the per-run-id launch claim is the concurrency fence (round-1 finding 3, corrected by round-2 W1). | The spec's act-then-commit: a crash between spawns twice because the id is not recorded yet. | **Answered 2026-11-04.** Intent first, launch under the derived id, then commit: the recommendation. Why: at-most-once for money across a crash. |
 | D1232 | Platforms for the local daemon | **macOS launchd and Linux systemd user unit** installed by `fugaro orchestrator install`, one instance by an RTDB heartbeat lease (the mailbox lease pattern); Windows out of v1 (`docs/windows-cli`). A sleeping laptop is fine: cloud runs continue and the next tick catches up (level state). | macOS only (cheapest, matches the owner's machine); or all three (a service-manager abstraction to test per OS). | **Answered 2026-11-04.** macOS launchd and Linux systemd user unit, one instance by an RTDB heartbeat lease, Windows out of v1: the recommendation. Why: the mailbox lease is the existing fence; `docs/windows-cli` is not ready. |
 | D1233 | Keep `summary_replace`? | **No in v1.** State is structured (items, decisions, facts); the human-readable summary is **generated** from them on read, never written by a model. Removes the narrative field a hostile or confused cycle can drift or poison, and the whole summary-versioning chain (spec Next step 7). | Keep it with version history and a periodic rebuild: more code, and a persistent prompt-injection carrier that re-enters every later prompt. | **Answered 2026-11-04.** Drop `summary_replace`: the recommendation. Why: no model-written narrative that re-enters every later prompt. |
 | D1234 | Where is the model pinned per decision type, and who classifies "security-sensitive"? | The classifier is **deterministic code over changed paths** (the owner's reviewer-routing rule, F15), not model judgement and not configurable downward; the model name per class is a local config key, tightening-only against any project layer. | Model picks its own tier or a project may lower it: a security change reviewed by Sonnet because the description said "docs". | **Answered 2026-11-04.** Security-sensitive is deterministic code over changed paths, never configurable downward; the model per class is a tightening-only local key: the recommendation. Why: the class must not depend on how a change describes itself. |
@@ -450,13 +469,13 @@ later task, not this one.
 - **D1241. Who writes the state node, before O2?** The rules do not bind a person's OAuth write (trust boundary above). Options: (a) the person's own
   credential, validation client-side only, the rules refusing only job and token identities; (b) a service-account writer behind the person's CLI (a new
   identity to provision and converge, the coordinator's shape); (c) a custom-token write with a claim the rules check, which any launcher can mint
-  through `signJwt`, so only a mitigation. Until answered, O2 builds the job-refusing rules and the converge only and claims no write-own guarantee.
+  through `signJwt`, so only a mitigation. **O2 is not started until this is answered** (the plan's gate); what O2 then builds is the job-refusing rules and the converge only, claiming no write-own guarantee.
 - **D1242. A paired-device channel for person decisions.** The terminal Typed confirmation stops an accident, not an adversary running as the person.
   Are approval, `goal_set` and a person decision to be resolved only from the paired phone or console? Nothing consumes a resolved person decision
-  until this is answered (the launch of an approved item stays bounded by the caps and the launch-spec digest, O0).
+  until this is answered (the launch of an approved item stays bounded by the caps, `Precheck` and the kill switch; the spec digest stops an edit made through the CLI after the approval, but it is an unkeyed hash, so a direct node writer can forge an item and its approval together, and `fugaro run` has no agent refusal, so the daemon adds no escalation over what that writer could do by running `fugaro run` itself). The answer may reshape O0's `Approval`.
 - **D1243. The session-start print versus D952.** `docs/plugin-user-scope` D952 says the session-start check never reaches the network; `fugaro
   orchestrator state --brief` reads the RTDB. Options: the print reads a local cache the daemon wrote (no network at session start, possibly
-  stale), or D952 is amended for this one read (the person's own project, opt-in by installing the daemon).
+  stale), or D952 is amended for this one read (the person's own project, opt-in by installing the daemon). O10 is gated on this answer; if the cache is chosen, O8 gains the cache writer and O10 depends on O8 (level 4).
 
 ## 7. What this reconciliation does not do
 
