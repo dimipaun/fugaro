@@ -350,16 +350,16 @@ func policyLoosening(old, new *projectpolicy.Policy) []policyCeiling {
 // project's default_claude_account, and each stage's own claude_account.
 //
 // It is a widening in the sense the typed name is asked for, and it is measured
-// against the node that replaces only the account-choice members for that
-// reason. The account is the credential a mixed run's review goes out on
-// (docs/design/mixed-credentials.md §11), so a node that starts naming one
-// hands a stage a credential it did not hold — and to an api-key run the mix
-// the ruling admits, which the launch resolver reads off this node and nothing
-// else, while the credential itself is mounted into the job's environment from
-// this machine's config. So the publish is the moment the operator's choice
-// becomes the project's, which is exactly what the ceiling widenings above are
-// asked for and why the settings commands write these keys under the same
-// typed confirmation (internal/settings, the claude_account entries).
+// member by member against the node it replaces for that reason. The account is
+// the credential a mixed run's review goes out on
+// (docs/design/mixed-credentials.md §11), so a node that starts naming one hands
+// a stage a credential it did not hold — and, to an api-key run, the mix the
+// ruling admits, which the launch resolver reads off this node and nothing else,
+// while the credential itself is mounted into the job's environment from this
+// machine's config. So the publish is the moment the operator's choice becomes
+// the project's, and that is the difference from the local write of the same key
+// `settings set` makes: both are confirmed, and only this one hands the account
+// to every run.
 //
 // A member this publish REMOVES — the node names one and this file names none —
 // is not a widening: it takes a credential away from a stage, and the
