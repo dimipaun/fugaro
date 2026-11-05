@@ -1268,6 +1268,44 @@ func TestReviewModeRefusalsPostANote(t *testing.T) {
 	}
 }
 
+// TestReviewOnAReadOnlyTokenPostsNoComment: the independent review job holds a
+// read-only installation token (CSR1's set, minted for it by the credentials
+// service), which is the permission the CALLER states and the run acts on
+// (reviewMayComment, EnvReviewJob) rather than one it guesses from a token's
+// scopes it cannot read. So the job's own refusal — the one review-mode path
+// that writes to the pull request — records the verdict in the run and posts
+// nothing. The control is the same refusal in a run the launcher did not mark:
+// it keeps its token and its note.
+func TestReviewOnAReadOnlyTokenPostsNoComment(t *testing.T) {
+	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	h.deps.Env = append(h.deps.Env, runner.EnvReviewJob+"=1")
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "")
+	h.provider.State.PRs[0].AuthorID = "outsider-id"
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "not a trusted author") {
+		t.Fatalf("the refusal is not in the run's own record (rec = %+v, err = %v), and it is the whole record the job's reader has", rec, err)
+	}
+	if c := h.provider.State.PRs[0].Comments; len(c) != 0 {
+		t.Fatalf("the read-only review job wrote %q on the pull request: its permission is to record the verdict, not to comment", c)
+	}
+
+	h2 := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h2, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h2, 7, "feature", "")
+	h2.provider.State.PRs[0].AuthorID = "outsider-id"
+	if _, err := h2.run(t); err == nil {
+		t.Fatal("want an error")
+	}
+	if c := h2.provider.State.PRs[0].Comments; len(c) != 1 || !strings.Contains(c[0], "not a trusted author") {
+		t.Fatalf("a review run the launcher did not mark posted %q, want its one refusal note: only the independent review job is read-only", c)
+	}
+}
+
 // TestReviewModeTrustedForkWithMatchingOwnerAccepted: the positive half of
 // TestReviewModeRefusesUntrustedFork's second sub-case — a trusted
 // author's own fork, where the fork repository's owner really is that

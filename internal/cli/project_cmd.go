@@ -929,20 +929,42 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		publishedCatalog = old.ImageCatalog
 	}
 	imageCatalog := lc.ImageCatalogEffective(publishedCatalog)
+	// The account-choice members are copied rather than derived — there is
+	// nothing to derive them from, they are the owner's own choice — and they
+	// are held to the node's own rules by the decode checkPolicyBytes runs on
+	// the document this function returns: the stage segment's vocabulary and the
+	// account name's shape. What a stage may *serve* is not judged here and
+	// cannot be: the node carries no agent.auth, so config.CheckStageAccountMix
+	// fires at the launch and in `fugaro validate`, where the run's auth is
+	// known. An empty entry names nothing and is dropped, and a config that
+	// names no stage account publishes no member at all, so the node of such a
+	// project is byte for byte what it was before the key existed.
+	var stageAccounts map[string]string
+	for stage, choice := range lc.ClaudeAccountStages {
+		if choice.ClaudeAccount == "" {
+			continue
+		}
+		if stageAccounts == nil {
+			stageAccounts = map[string]string{}
+		}
+		stageAccounts[stage] = choice.ClaudeAccount
+	}
 	pol := &projectpolicy.Policy{
-		Version:           projectpolicy.Version,
-		Budget:            projectpolicy.Budget{Mode: lc.Budget.Mode, PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
-		AllowRepos:        nonNil(allow),
-		BaseBranch:        lc.BaseBranch,
-		Providers:         policyProviders(lc),
-		Prices:            policyPrices(lc),
-		Profiles:          profiles,
-		Accounts:          accounts,
-		BitbucketToken:    token,
-		BitbucketAPIRoots: lc.BitbucketAPIRoots,
-		ReviewFloor:       floor,
-		VerifierAccounts:  verifierAccounts,
-		ImageCatalog:      imageCatalog,
+		DefaultClaudeAccount: lc.DefaultClaudeAccount,
+		ClaudeAccountStages:  stageAccounts,
+		Version:              projectpolicy.Version,
+		Budget:               projectpolicy.Budget{Mode: lc.Budget.Mode, PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
+		AllowRepos:           nonNil(allow),
+		BaseBranch:           lc.BaseBranch,
+		Providers:            policyProviders(lc),
+		Prices:               policyPrices(lc),
+		Profiles:             profiles,
+		Accounts:             accounts,
+		BitbucketToken:       token,
+		BitbucketAPIRoots:    lc.BitbucketAPIRoots,
+		ReviewFloor:          floor,
+		VerifierAccounts:     verifierAccounts,
+		ImageCatalog:         imageCatalog,
 	}
 	switch {
 	case !silent:

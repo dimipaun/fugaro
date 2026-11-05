@@ -1720,7 +1720,18 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 // jobAccount's shape too (fugaro-<readable slug>-<workflow>-<8 hex>), so a
 // repository whose slug begins with "p" gets an ID of the project job's own
 // shape, and the widened condition would then be accepted for it.
-var projectModule = regexp.MustCompile(`^module\.project\["[^"]+"\]$`)
+//
+// The review-only variants (design docs/cloud-senior-review, CSR7) are a
+// second instance of the same module, "project_review"
+// (roots/installation/main.tf), and their grants are these same two widened
+// conditions for the account their own instance creates: reading them here is
+// what lets the one plan fugaro update writes be covered at all, and it widens
+// nothing — the second instance is the same module source, with its own
+// accounts, so the account rule below still binds every grant to the account
+// its own instance holds or creates. What the variant is NOT covered for is
+// anything a job account may not have: it holds no secret accessor, because
+// the root hands that instance no secret container.
+var projectModule = regexp.MustCompile(`^module\.project(?:_review)?\["[^"]+"\]$`)
 
 // projectJobCondition reports whether a bucket grant is a project job's
 // widened one (plan task 3.2 step 2, gcp.ProjectBucketCondition), for the
