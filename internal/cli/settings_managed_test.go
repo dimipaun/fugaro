@@ -649,7 +649,9 @@ func TestSettingsSetYesReadsNoMark(t *testing.T) {
 //
 // The control is the same edit, the same terminal and a project the marks do
 // not prove is managed: the question is asked, and a terminal with nothing
-// typed writes nothing.
+// typed writes nothing. The mutation caught: Managed.Removes answering true for
+// every project, which leaves the control's question unasked and the edit
+// written.
 func TestSettingsSetManagedOwnerTerminalAsksNoConfirmation(t *testing.T) {
 	for _, tc := range []struct {
 		what    string

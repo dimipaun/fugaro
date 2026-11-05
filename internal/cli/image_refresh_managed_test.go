@@ -524,7 +524,9 @@ func TestImageRefreshReadsTheGateBeforeAnyWrite(t *testing.T) {
 // what "the gate is the confirmation" means — an unproven project keeps
 // today's behaviour exactly, so the same build is the typed question this
 // command has always asked, which a terminal with nothing to type leaves
-// unanswered.
+// unanswered. The mutations caught: Managed.Removes answering true for every
+// project (the control's question is skipped and the build confirmed), and the
+// gate's own read being dropped so that any project is treated as managed.
 func TestImageRefreshManagedOwnerTerminalAsksNoBuildQuestion(t *testing.T) {
 	useVersion(t, "0.5.1")
 	for _, tc := range []struct {

@@ -486,7 +486,8 @@ func TestAccountsAddYesReadsNoMark(t *testing.T) {
 //
 // The control is the same call, the same terminal and a project the marks do
 // not prove is managed: the read is made and answers nothing, the answer is the
-// zero value, and the y/N is asked exactly as it always was.
+// zero value, and the y/N is asked exactly as it always was. The mutation
+// caught: Managed.Removes answering true for every project.
 func TestAccountsAddManagedOwnerTerminalReadsTheGate(t *testing.T) {
 	for _, tc := range []struct {
 		what    string

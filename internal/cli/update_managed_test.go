@@ -463,7 +463,8 @@ func TestUpdateManagedTerminalAsksNothing(t *testing.T) {
 // The other half, and the control the whole rule is read against: the same run
 // with the same empty terminal on a project that is NOT managed keeps every
 // prompt exactly as it was — the run's one confirmation is asked, nothing is
-// typed, and no stage applies.
+// typed, and no stage applies. The mutations caught: initRun.gateUnderway
+// answering true for every project, and Managed.Removes with it.
 func TestUpdateManagedTerminalControlKeepsEveryPrompt(t *testing.T) {
 	const additive = "module.installation.google_service_account.scheduler"
 	r := updateRig(t)
@@ -506,7 +507,9 @@ func TestUpdateManagedTerminalControlKeepsEveryPrompt(t *testing.T) {
 //
 // The control is the same call with no gate: a terminal, the same empty stdin,
 // the same diff, and the y/N — which is what keeps this from being a stage
-// that simply stopped asking.
+// that simply stopped asking. The mutation caught: the wiring's managed branch
+// taken on anything but the project's own marks (gateUnderway answering true
+// for every project).
 func TestUpdateManagedPluginWiringAsksNothing(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	for _, tc := range []struct {
