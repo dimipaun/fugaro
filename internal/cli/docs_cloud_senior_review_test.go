@@ -5,7 +5,9 @@ package cli
 // docs/cloud-senior-review/ is a design-only folder: README.md (the index),
 // spec.md (the design), reconciliation.md (every claim of the spec against the
 // code on `main`, and the owner's decisions) and implementation-plan.md (the
-// tasks CSR1-CSR7, with CSR4a and CSR4b where the old CSR4 split). It adds no
+// tasks CSR1-CSR7, with CSR4a and CSR4b where the old CSR4 split, and §6 --
+// the follow-up, CSR8-CSR12, written after those merged without making
+// `fugaro review` reachable). It adds no
 // code, and the whole folder is a draft pull request
 // the owner has not approved, so nothing here pins a command or a flag.
 //
@@ -25,7 +27,13 @@ package cli
 //    index's status, that an answer is not an approval, the owner's block of
 //    decision numbers and the check number claimed, and the plan's own "nothing
 //    here is approved", the gate outside this design named beside the
-//    observation that used to be the second.
+//    observation that used to be the second, and the follow-up section's own
+//    headings, its owner-run task and its Open items -- the part a later edit
+//    is most likely to soften, because its tasks say "nothing above is decided
+//    here" about exactly the things the next round will want to decide, and
+//    because the three the owner answered on 2026-11-05 (the switch, the verdict
+//    policy, the release) are the sentences a later edit could turn back into
+//    recommendations.
 //  * TestDocsCloudSeniorReviewDecisionsAreAnswered -- D880-D894 are written and
 //    answered, D895-D899 reserved and unused, and the four the later rounds
 //    raised (D891, D892, D893, D894) each carry the option the owner took, in
@@ -176,6 +184,68 @@ func TestDocsCloudSeniorReviewIsWritten(t *testing.T) {
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s no longer says %q", csrPlan, want)
+		}
+	}
+	// Section 6 is the follow-up: five tasks for the things CSR1-CSR7 left
+	// between the plan and a review that runs. It is pinned for the same reason
+	// the rest is -- it is a claim about the tree (a command registered nowhere,
+	// a container that cannot place the job the launcher picks, a signature
+	// nothing checks, a verifier identity the service refuses to start with) and
+	// about who owns each -- and because its own rules are the ones a later round
+	// shortens first: the environment switch the owner chose and the sentence that
+	// says what it does NOT do (it admits nothing), the level rule that keeps one
+	// file one writer's, and the three answers of 2026-11-05 beside the two items
+	// that are still open. The five headings are pinned because the section is
+	// read by task id.
+	for _, want := range []string{
+		"## 6. Follow-up after CSR1–CSR7",
+		"**Seven gaps, each with the owner it has after this section.**",
+		"### CSR8. The runner places the review variant's execution (SEC)",
+		"### CSR9. Register `fugaro review`, so the command exists before it can launch",
+		"### CSR10. The launcher verifies the verdict before it uses it (SEC)",
+		"### CSR11. Flip `reviewJobAdmitted` — after the owner's live check, and only then (SEC, OWNER-RUN)",
+		"### CSR12. The live-check switch: a launch that starts, and admits nothing (SEC)",
+		"**OWNER-RUN: yes, and no agent performs any step of it.**",
+		"within a level no two tasks may hold one",
+		// The one security sentence that must survive every edit of the
+		// follow-up, now that the owner has answered item 1 with the switch: the
+		// refusal it skips is a convenience, the boundary is the service, and a
+		// sentence that let the switch read as an admission would be the hole the
+		// original item warned about.
+		"**The switch lets a launch start; it makes the service admit nothing.**",
+		"**removed by CSR11 in the same commit as the flip**",
+		"**a launch the service then refuses**",
+		// The conclusion has to hold for both states of the installation, not
+		// only for today's: an edit that kept the unmet-E7 case alone would let
+		// the switch read as harmless in the very state the owner's own check
+		// runs in, where a switched launch is a working review.
+		"**E7 is enabled and the constant is still `false`**",
+		"which still answers 401 to a review caller it does not admit",
+		// The verify call's account has ONE source, and it is named where the
+		// plan says it is: the account of the review job the launcher resolved,
+		// read from the review run's own task -- not the result record's
+		// oauth_account, which is informational and written by the job itself
+		// from whatever credential name the service answered with.
+		"has **one source: the account of the review job the launcher itself resolved**",
+		"**`oauth_account` in the run's record is deliberately not that source**",
+		// The three answers of 2026-11-05, each pinned in its own item's marker:
+		// a later edit that turned one back into a recommendation ("0.20.0 is the
+		// recommendation", "if the owner wants it anyway") would be the folder
+		// disagreeing with the owner, which is the one thing these pins exist for.
+		"**1. How the owner reaches the launch the live check's step 3 needs, while the command refuses. —",
+		"ANSWERED 2026-11-05: an ENVIRONMENT SWITCH, and not this item's recommendation.**",
+		"**2. Whether a verdict policy applies in the launcher. — ANSWERED 2026-11-05: the launcher's own rule",
+		"**3. The release that carries this. — ANSWERED 2026-11-05: 0.20.0 \"Quokka\"**",
+		"gives **`ship` and `reject` refused, `fix first` accepted**",
+		// The correction §6 needed and the item it became: the verifier cannot be
+		// a person, because the service refuses to start with one address in two
+		// classes -- the sentence a later edit is most likely to write back.
+		"**The verifier the launcher authenticates as is not a person**",
+		"**5. *(found while reviewing the first draft of §6)* Who may verify a verdict — and it cannot be the owner.**",
+		"**Nothing above is decided here except what the owner answered on 2026-11-05",
+	} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("%s no longer says %q: §6 is the follow-up that carries the five tasks CSR1–CSR7 left, and its own rules (the owner-run gate, the level rule, the switch that admits nothing, the answers the owner gave and the items it still does not decide) are what a later edit shortens first", csrPlan, want)
 		}
 	}
 }
@@ -335,9 +405,9 @@ func TestDocsCloudSeniorReviewCitationsResolve(t *testing.T) {
 // is the shape a citation check written for `path:line` cannot see at all.
 var csrRelativeRE = regexp.MustCompile("`:[0-9]+`")
 
-// TestDocsCloudSeniorReviewRelativeCitationsResolve: every `:NNN` reference
-// resolves against the nearest full citation before it in its own paragraph, to
-// a line that is in that file.
+// TestDocsCloudSeniorReviewRelativeCitationsResolve: every `:NNN` reference in
+// these documents resolves against the nearest full citation before it in its
+// own paragraph, to a line that is in that file.
 //
 // This is the second half of the citation check and it exists because the first
 // half cannot see this shape: a token that names no file is invisible to a
@@ -349,48 +419,58 @@ var csrRelativeRE = regexp.MustCompile("`:[0-9]+`")
 func TestDocsCloudSeniorReviewRelativeCitationsResolve(t *testing.T) {
 	bare := csrBareNames(t)
 	for _, path := range csrDocs {
-		doc := readDoc(t, path)
-		refs := 0
-		for _, block := range strings.Split(doc, "\n\n") {
-			for _, loc := range csrRelativeRE.FindAllStringIndex(block, -1) {
-				// The anchor is the last citation that starts before the
-				// reference: the paragraph's own nearest preceding file, which
-				// is the rule the documents are written to.
-				anchor := ""
-				for _, m := range csrCitationRE.FindAllStringSubmatchIndex(block[:loc[0]], -1) {
-					anchor = block[m[2]:m[3]] + block[m[4]:m[5]]
-				}
-				if anchor == "" {
-					t.Errorf("%s holds %s with no citation before it in its own paragraph: a line reference resolves against the paragraph's nearest file, and there is none, so the reference names nothing",
-						path, block[loc[0]:loc[1]])
-					continue
-				}
-				cut := strings.LastIndex(anchor, ":")
-				file, ok := csrResolveCitation(anchor[:cut], bare)
-				if !ok {
-					t.Errorf("%s holds %s anchored to %q, which is not a file in this tree", path, block[loc[0]:loc[1]], anchor[:cut])
-					continue
-				}
-				refs++
-				line, err := strconv.Atoi(strings.Trim(block[loc[0]:loc[1]], "`:"))
-				if err != nil {
-					t.Errorf("%s holds %s, whose line is not a number: %v", path, block[loc[0]:loc[1]], err)
-					continue
-				}
-				body, err := os.ReadFile("../../" + filepath.FromSlash(file))
-				if err != nil {
-					t.Errorf("%s holds %s anchored to %q, which could not be read: %v", path, block[loc[0]:loc[1]], file, err)
-					continue
-				}
-				lines := len(strings.Split(strings.TrimSuffix(string(body), "\n"), "\n"))
-				if line < 1 || line > lines {
-					t.Errorf("%s holds %s anchored to %q, but %s holds %d lines: the reference names a line that is not there",
-						path, block[loc[0]:loc[1]], anchor, file, lines)
-				}
-			}
-		}
+		refs := csrCheckRelativeCitations(t, path, readDoc(t, path), bare)
 		t.Logf("%s: %d relative references resolved against their paragraph's anchor", path, refs)
 	}
+}
+
+// csrCheckRelativeCitations is that half of the check, as the one function both
+// the documents it was written for and the ones that came after it call: a
+// second implementation of the anchor rule would be a second answer to what a
+// `:NNN` means. It returns how many references it resolved, so a caller can say
+// what it checked.
+func csrCheckRelativeCitations(t *testing.T, path, doc string, bare map[string][]string) int {
+	t.Helper()
+	refs := 0
+	for _, block := range strings.Split(doc, "\n\n") {
+		for _, loc := range csrRelativeRE.FindAllStringIndex(block, -1) {
+			// The anchor is the last citation that starts before the
+			// reference: the paragraph's own nearest preceding file, which
+			// is the rule the documents are written to.
+			anchor := ""
+			for _, m := range csrCitationRE.FindAllStringSubmatchIndex(block[:loc[0]], -1) {
+				anchor = block[m[2]:m[3]] + block[m[4]:m[5]]
+			}
+			if anchor == "" {
+				t.Errorf("%s holds %s with no citation before it in its own paragraph: a line reference resolves against the paragraph's nearest file, and there is none, so the reference names nothing",
+					path, block[loc[0]:loc[1]])
+				continue
+			}
+			cut := strings.LastIndex(anchor, ":")
+			file, ok := csrResolveCitation(anchor[:cut], bare)
+			if !ok {
+				t.Errorf("%s holds %s anchored to %q, which is not a file in this tree", path, block[loc[0]:loc[1]], anchor[:cut])
+				continue
+			}
+			refs++
+			line, err := strconv.Atoi(strings.Trim(block[loc[0]:loc[1]], "`:"))
+			if err != nil {
+				t.Errorf("%s holds %s, whose line is not a number: %v", path, block[loc[0]:loc[1]], err)
+				continue
+			}
+			body, err := os.ReadFile("../../" + filepath.FromSlash(file))
+			if err != nil {
+				t.Errorf("%s holds %s anchored to %q, which could not be read: %v", path, block[loc[0]:loc[1]], file, err)
+				continue
+			}
+			lines := len(strings.Split(strings.TrimSuffix(string(body), "\n"), "\n"))
+			if line < 1 || line > lines {
+				t.Errorf("%s holds %s anchored to %q, but %s holds %d lines: the reference names a line that is not there",
+					path, block[loc[0]:loc[1]], anchor, file, lines)
+			}
+		}
+	}
+	return refs
 }
 
 // csrResolveCitation resolves a cited path against the tree: a path from the
