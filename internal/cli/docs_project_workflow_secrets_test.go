@@ -819,7 +819,12 @@ func TestDocsProjectWorkflowSecretsReachIsSaidWhereAPersonMeetsIt(t *testing.T) 
 			"which has no project-wide meaning (§3).",
 		}},
 		{"plugin/skills/setup/SKILL.md", []string{
-			"a covered name is not asked for, and neither is a workflow secret whose `workflow_secrets` entry in the local config lists this repository",
+			// The skill says it in its own vocabulary — "covered" is what it
+			// already calls a name the project's copy answers for — because
+			// the skill carries a hard byte budget (plugin/skills_lint_test.go's
+			// 24576) and the sentence has to pay for itself; the block is named
+			// where the block is decided, in the two documents above.
+			"a covered name is not asked for, nor is a covered workflow secret",
 		}, nil},
 	}
 	for _, tc := range cases {
