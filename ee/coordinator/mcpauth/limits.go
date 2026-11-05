@@ -16,10 +16,12 @@ import (
 // and the scopes D927 mints.
 //
 // Every field is a bound and never a grant. A token narrows what the project
-// already allows and can never widen it (Narrow), and the zero value of every
-// field is "this token asks for nothing here" rather than "this token is
-// unbounded": an unset field passes the project's own value through, the same
-// reading rigor's zero Mode and policy's unset caps already have.
+// already allows and can never widen it (Narrow), and no field's zero value
+// widens anything: the three a layer can leave unset pass the project's own
+// value through, the same reading rigor's zero Mode and policy's unset caps
+// already have, and the flag — which a bool cannot leave unset — is a refusal
+// instead, because a project whose policy does not turn Hotfix on has turned
+// it off.
 type Limits struct {
 	// MinRigor is the weakest mode a run started with this token may ask
 	// for: the window's floor. MinRigor and MaxRigor are optional, and unset
@@ -118,7 +120,13 @@ var (
 	// ErrNoScope refuses limits that reach no tool at all: the token carries
 	// no scope, or the project's policy grants none of the ones it asked
 	// for. It is the scope half of the empty window's rule.
-	ErrNoScope = errors.New("scopes admits no tool")
+	//
+	// It says what the limits reach and not which side emptied them, because
+	// the two sites differ and each says its own half ("the scopes are
+	// empty", "the project grants none of the token's scopes"): a sentinel
+	// that named one of them would report the other failure mode at the site
+	// it was not written for.
+	ErrNoScope = errors.New("no scope admits a tool")
 )
 
 // Validate is the mint-time check (D926, D927, D929): the limits a token is
@@ -137,7 +145,7 @@ func (l Limits) Validate() error {
 		return err
 	}
 	if len(l.Scopes) == 0 {
-		return fmt.Errorf("mcpauth: scopes is empty: %w", ErrNoScope)
+		return fmt.Errorf("mcpauth: the scopes are empty: %w", ErrNoScope)
 	}
 	return nil
 }

@@ -5,6 +5,7 @@ package mcpauth_test
 
 import (
 	"errors"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -204,6 +205,47 @@ func TestNarrowTakesTheTighterCeilingWhicheverSideIsLower(t *testing.T) {
 	}
 }
 
+// TestNarrowTakesTheTighterSpendWhicheverSideSetsOne covers the spend limit
+// the same both ways, because D924's ceiling is the field a wrong comparison
+// hides in: the table above only ever has the token setting one, so the arm
+// where the project's is the lower — and the arm where the token writes none
+// at all — are the two a comparison written the other way round still passes.
+//
+// The unset arm is the last three cases, and it is the one that says a token
+// which writes no spend limit takes the project's: zero, a negative and NaN
+// all fail the comparison, which is how policy reads a layer that writes no
+// cap.
+func TestNarrowTakesTheTighterSpendWhicheverSideSetsOne(t *testing.T) {
+	scopes := []string{mcpauth.ScopeTasksRead}
+
+	for _, tc := range []struct {
+		name    string
+		token   float64
+		project float64
+		want    float64
+	}{
+		{"the project's cap is lower", 25, 5, 5},
+		{"the token's cap is lower", 2, 25, 2},
+		{"the two caps are equal", 5, 5, 5},
+		{"the project sets no cap", 2, 0, 2},
+		{"the token sets no cap and takes the project's", 0, 5, 5},
+		{"a negative cap is unset", -1, 5, 5},
+		{"NaN is unset", math.NaN(), 5, 5},
+		{"neither side sets one", 0, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := (mcpauth.Limits{SpendUSD: tc.token, Scopes: scopes}).
+				Narrow(mcpauth.Limits{SpendUSD: tc.project, Scopes: scopes})
+			if err != nil {
+				t.Fatalf("Narrow: %v", err)
+			}
+			if got.SpendUSD != tc.want {
+				t.Errorf("SpendUSD = %v; want %v", got.SpendUSD, tc.want)
+			}
+		})
+	}
+}
+
 // TestEmptyWindowIsRefusedAtMint pins D926's answer: a window that admits no
 // mode is refused where the token is written, so a token that could never
 // start a run cannot be issued, and the refusal names the two fields rather
@@ -250,6 +292,45 @@ func TestEmptyWindowIsRefusedAtMint(t *testing.T) {
 	}
 }
 
+// TestNarrowRefusesAProjectWindowItCannotRead is the project's half of the
+// check above: the project's limits are read by the same rule as the token's,
+// so a policy whose own window admits nothing, or whose bound is not on the
+// axis, is refused and named rather than read as if the project had said
+// nothing at all.
+//
+// That last reading is the failure the floor cases pin, and it comes from the
+// comparison rather than from a missing check: Strictest skips a mode it
+// cannot place, and both Hotfix and a value outside the vocabulary rank 0, so
+// a project floor naming either would lose to the token's own floor and hand
+// the token back unchanged. The ceiling cases are refused by the narrowed
+// window's own check as well, which is why they are here: the refusal is
+// taken before the two sides are compared, so it names the policy the operator
+// has to correct rather than the result of comparing it.
+func TestNarrowRefusesAProjectWindowItCannotRead(t *testing.T) {
+	token := mcpauth.Limits{MinRigor: rigor.POC, Scopes: []string{mcpauth.ScopeTasksRead}}
+
+	for _, tc := range []struct {
+		name    string
+		project mcpauth.Limits
+		want    error
+	}{
+		{"the project's floor is off the axis", mcpauth.Limits{MinRigor: rigor.Hotfix}, mcpauth.ErrOffAxisBound},
+		{"the project's ceiling is off the axis", mcpauth.Limits{MaxRigor: rigor.Hotfix}, mcpauth.ErrOffAxisBound},
+		{"the project's floor is outside the vocabulary", mcpauth.Limits{MinRigor: "fast"}, mcpauth.ErrUnknownMode},
+		{"the project's window admits nothing", mcpauth.Limits{MinRigor: rigor.Critical, MaxRigor: rigor.Pro}, mcpauth.ErrEmptyWindow},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := token.Narrow(tc.project)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("Narrow(%+v) = %v; want %v", tc.project, err, tc.want)
+			}
+			if !strings.Contains(err.Error(), "max_rigor") && !strings.Contains(err.Error(), "min_rigor") {
+				t.Errorf("Narrow() = %q; want it to name the project's bound", err)
+			}
+		})
+	}
+}
+
 // TestUnknownScopeIsRefusedNotIgnored pins D927: the v1 vocabulary is
 // tasks:read and tasks:write, and a value outside it is refused where the
 // token is written rather than dropped, because a scope a server silently
@@ -282,12 +363,20 @@ func TestUnknownScopeIsRefusedNotIgnored(t *testing.T) {
 	// Narrow refuses a token carrying a scope outside the vocabulary rather
 	// than intersecting it away: the token was never mintable, and a silent
 	// intersection would hide that behind a call that looks like a narrowing.
+	//
+	// The project named here grants a scope the token does hold, and nothing
+	// else, so the refusal can only come from the token's own list: a project
+	// that named the unknown scope too would satisfy the assertion through
+	// the project's check with the token's own removed.
 	_, err = (mcpauth.Limits{
 		MinRigor: rigor.POC,
-		Scopes:   []string{"roadmap:write"},
-	}).Narrow(mcpauth.Limits{Scopes: []string{"roadmap:write"}})
+		Scopes:   []string{mcpauth.ScopeTasksRead, "roadmap:write"},
+	}).Narrow(mcpauth.Limits{Scopes: []string{mcpauth.ScopeTasksRead}})
 	if !errors.Is(err, mcpauth.ErrUnknownScope) {
-		t.Errorf("Narrow() with an unknown scope = %v; want ErrUnknownScope", err)
+		t.Errorf("Narrow() with an unknown token scope = %v; want ErrUnknownScope", err)
+	}
+	if !strings.Contains(err.Error(), "roadmap:write") {
+		t.Errorf("Narrow() = %q; want it to name the token's scope", err)
 	}
 
 	// And it reads the project's side as strictly as the token's: a project
