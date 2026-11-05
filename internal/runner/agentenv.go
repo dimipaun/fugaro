@@ -107,12 +107,43 @@ func (r *run) resolveMixedStages(ctx context.Context) (map[string]string, error)
 	}
 	out := map[string]string{}
 	for _, stage := range config.MixedAccountStages {
-		if name := p.ClaudeAccountStages[stage]; name != "" {
-			out[stage] = name
+		name := p.ClaudeAccountStages[stage]
+		if name == "" {
+			continue
 		}
+		// A stage the account serves goes straight to Anthropic on the account's
+		// token, so it can only run a Claude model. A stage model a provider
+		// route claims would be handed to Anthropic under a model Anthropic does
+		// not serve -- an unknown model at best, another provider's own ID at
+		// worst -- so it is refused here, before any model call, the way a stage
+		// account the launch refuses is (design §11, "A review stage that
+		// fails"). It is never quietly run on the gateway's credential instead.
+		if model := r.stageModel(stage); model != "" {
+			if route, _, ok := config.ProviderFor(r.modelProviders(), model); ok {
+				return nil, fmt.Errorf("the %s stage is served by the Claude account %q and its model %q is served by the provider route %q: a stage the account serves goes straight to Anthropic, which neither model nor route reaches — name a Claude model for the stage, or remove the account named for it", stage, name, model, route)
+			}
+		}
+		out[stage] = name
 	}
 	return out, nil
 }
+
+// stageDirect reports whether the stage runs on the run's stage-scoped Claude
+// OAuth account rather than on the run's own credential, which for a stage
+// means its calls do not go through the gateway at all
+// (docs/design/mixed-credentials.md §11).
+//
+// It is the stage-scoped question every reader that used to ask it about the
+// run has to ask instead: for a mixed run both r.gw != nil and r.gatewayOn()
+// are true, and neither can tell the account stage's accounting from the
+// gateway's. What the answer decides, one site at a time (P11): the stage's
+// pins and managed settings (stagePins, writeManagedSettings), whether it
+// opens a stage in the gateway (stageOnce), whether the gateway's last stage
+// report is its figure (stageTiming), whether the cross-check compares its
+// figure with the gateway's (recordGatewayStageCost), where its dollars are
+// kept (recordAccountStageCost) and who reports them to the backend
+// (reportNotional).
+func (r *run) stageDirect(stage string) bool { return r.stageAccount(stage) != "" }
 
 // stageAccount is the Claude OAuth account the stage runs on, "" for every
 // stage that runs on the run's own credential. The map it reads holds the two

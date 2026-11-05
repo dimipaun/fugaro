@@ -484,25 +484,29 @@ func (r *run) noteVerify() {
 	r.noteRegistry(func(e *budget.AgentEntry) { e.Verify = summary })
 }
 
-// reportNotional hands an oauth stage's own cost figure to the backend:
-// notional dollars, advisory only, by model (plan R7). A write that fails is
-// kept and retried by the heartbeat; the grace decides about an outage.
-func (r *run) reportNotional(ctx context.Context, res agent.Result) {
+// reportNotional hands a stage's own cost figure to the backend: notional
+// dollars, advisory only, by model (plan R7).
+//
+// The stage is the judge of whether there is anything to report, and it is
+// asked per stage rather than per run (P13): a gateway stage's dollars are the
+// ledger's, and the session reports the gateway's settled usage itself, while a
+// stage the run's stage-scoped Claude OAuth account serves is outside the
+// gateway by construction — nobody else can report it, and its figure reaches
+// the repository's and the project's notional counters here alone
+// (docs/design/mixed-credentials.md §5, §11). Asked about the run instead
+// (r.gatewayOn(), true for every mixed run) the account stage's dollars are
+// dropped in silence.
+//
+// A write that fails is kept and retried by the heartbeat; the grace decides
+// about an outage.
+func (r *run) reportNotional(ctx context.Context, name string, res agent.Result) {
 	r.mu.Lock()
 	sess := r.sess
 	r.mu.Unlock()
-	if sess == nil || r.gatewayOn() {
+	if sess == nil || !r.stageDirect(name) {
 		return
 	}
-	notional := budget.Micros(0)
-	if res.CostUSD > 0 {
-		m, err := pricing.FromUSD(res.CostUSD)
-		if err != nil {
-			r.d.Log.Warn("a stage's cost figure is not usable as a notional amount", "usd", res.CostUSD)
-		} else {
-			notional = m
-		}
-	}
+	notional := r.usdMicros(res.CostUSD)
 	by := map[string]budget.ModelUse{}
 	for model, u := range res.ModelUsage {
 		use := budget.ModelUse{In: u.Input, Out: u.Output, CR: u.CacheRead, CW: u.CacheCreation}

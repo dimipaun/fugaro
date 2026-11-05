@@ -17,6 +17,14 @@ import (
 // event reported (an oauth run). Read this right after the stage's agent
 // returned, before anything else closes a stage in the gateway.
 //
+// A stage the run's stage-scoped Claude OAuth account served is the third
+// case and the one that is about the stage rather than about the run (P11):
+// the gateway is on for the run and saw none of this stage's calls, so its
+// figure is Claude Code's own result event and all of it is notional, with no
+// call count and the credential that says so (docs/design/mixed-credentials.md
+// §5). Asking the run instead — `r.gw != nil`, true for every mixed run — would
+// give the stage r.lastStage's figure, which is the PREVIOUS stage's.
+//
 // subAgents and repeats are the relay's counts over the stage's own stream:
 // its sub-agent tool calls, and the most times one identical shell command
 // ran (task-governance T1.3, T1.4).
@@ -29,10 +37,11 @@ import (
 //
 //	sum(stages[].model_usd) + cost.model_by["unattributed"] == cost.model_usd
 //
-// which TestStageTimingLateSpendIsUnattributed pins. Model names the model
-// the stage was pinned to, never what the upstream served, and a gateway
-// stage may also have made background-model calls: both are inside this
-// stage's ModelUSD, so it is the stage's spend, not the pinned model's.
+// which TestStageTimingLateSpendIsUnattributed pins, and which holds for a
+// mixed run because r.direct is in both sides of it (updateCost). Model names
+// the model the stage was pinned to, never what the upstream served, and a
+// gateway stage may also have made background-model calls: both are inside
+// this stage's ModelUSD, so it is the stage's spend, not the pinned model's.
 func (r *run) stageTiming(name string, started time.Time, claudeUSD float64, subAgents, repeats int) runstore.StageTiming {
 	st := runstore.StageTiming{
 		Name:      name,
@@ -48,6 +57,12 @@ func (r *run) stageTiming(name string, started time.Time, claudeUSD float64, sub
 		// in the stage, always set like Agents and for the same reason: 0 is a
 		// stage that ran no command, not a stage nobody counted (G5).
 		Repeats: &repeats,
+	}
+	if r.stageDirect(name) {
+		st.ModelUSD = claudeUSD
+		st.ModelNotionalUSD = claudeUSD
+		st.Credential = runstore.CredentialOAuth
+		return st
 	}
 	r.mu.Lock()
 	gateway, rep := r.gw != nil, r.lastStage
@@ -104,7 +119,13 @@ func (r *run) updateCost() {
 		// the call, so model_by adds up to model_usd -- with the late
 		// "unattributed" residual -- only when the total it is measured
 		// against is the same Used + Notional the stages carry.
-		model := r.gwUsed + r.gwNotional
+		//
+		// r.direct is in that total and in the split beside them: the account
+		// stage's dollars are Claude Code's own figure and no ledger's, and
+		// leaving them out of the split would bring them back as an
+		// "unattributed" residual (modelByUSD) that attributes them to
+		// nobody (P12).
+		model := r.gwUsed + r.gwNotional + r.direct
 		c.Unreconciled = r.unreconciled.USD()
 		c.ModelBy = modelByUSD(r.modelBy, model)
 		c.ReportedUSD = r.reported.USD()
@@ -120,7 +141,7 @@ func (r *run) updateCost() {
 		// pricing it). List bounds the names the record carries, however
 		// many distinct tiers the calls came back at.
 		c.ServiceTiers = r.serviceTiers.List()
-		notional = r.gwNotional.USD()
+		notional = r.gwNotional.USD() + r.direct.USD()
 		// The catalog only prices the routes' models, so its staleness is a
 		// fact about what this run charged: a table that holds a stale row for
 		// a model the run never called, or priced by hand, over-counted
@@ -130,6 +151,12 @@ func (r *run) updateCost() {
 		// No gateway and a subscription: Claude Code's own figure is the
 		// run's model spend and all of it is notional (C1.16, P12).
 		notional = c.ModelUSD
+	} else {
+		// No gateway and a list-price basis: every stage's figure is Claude
+		// Code's own, and the account stage's is still notional -- its calls
+		// were carried by the subscription whoever else was paying, so it is
+		// in no cap and in no bill (P12, P15).
+		notional = r.direct.USD()
 	}
 	r.mu.Unlock()
 	// The notional part is what tells the run's money from what its
@@ -144,6 +171,47 @@ func (r *run) updateCost() {
 		c.ModelSource = "gateway"
 	}
 	r.rec.Cost = &c
+}
+
+// recordAccountStageCost is the run's own account of a stage the stage-scoped
+// Claude OAuth account served, taken where runner.go takes a gateway stage's
+// figure: the gateway settled nothing for it, so its figure is Claude Code's
+// own result event, and it is kept in an accumulator of its own beside the
+// ledger's two.
+//
+// The accumulator is separate because both of a gateway stage's figures are
+// written from the ledger, which knows nothing of this stage (P11): accumulated
+// into r.rec.CostUSD alone -- the obvious reading of the ledger's overwrite --
+// the figure would be gone the moment the next gateway stage ran. It goes into
+// model_by under the model the stage ran on for the same reason the gateway's
+// spend does: the split is of the run's whole model figure, and a figure left
+// out of it comes back as the "unattributed" residual (modelByUSD).
+func (r *run) recordAccountStageCost(stage string, claudeUSD float64) {
+	m := r.usdMicros(claudeUSD)
+	r.mu.Lock()
+	r.direct += m
+	if r.modelBy != nil {
+		r.modelBy[r.stageModel(stage)] += m
+	}
+	r.rec.CostUSD = (r.gwUsed + r.gwNotional + r.direct).USD()
+	r.mu.Unlock()
+}
+
+// usdMicros is a stage's USD figure as the micro-dollars the ledger and the
+// splits are kept in. A figure that cannot be one is 0 and a warning, never a
+// failure: a stage that reported an unreadable cost is recorded as having cost
+// nothing rather than refused, which is the direction reportNotional takes with
+// the same figure.
+func (r *run) usdMicros(usd float64) pricing.Micros {
+	if usd <= 0 {
+		return 0
+	}
+	m, err := pricing.FromUSD(usd)
+	if err != nil {
+		r.d.Log.Warn("a stage's cost figure is not usable as a notional amount", "usd", usd)
+		return 0
+	}
+	return m
 }
 
 // unattributedModel is the model_by entry for spend no stage report
