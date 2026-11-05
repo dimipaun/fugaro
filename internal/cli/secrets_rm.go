@@ -149,6 +149,15 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 		return userErr("refusing to remove %s: this local config holds it in workflow_secrets, not in project_secrets, and this command removes the project_secrets entry and the Secret Manager container together — deleting the container alone would leave workflow_secrets.%s promising a value nothing mounts; a workflow secret's own removal is not built yet, so nothing was removed",
 			pluginwire.Printable(name), pluginwire.Printable(name))
 	}
+	// project_secrets holds only the reserved names. Any other name sharing the
+	// derived ID and labels (a provider's key, a named Claude account's token, a
+	// workflow secret this config does not list) belongs to another block, and
+	// deleting its container here would leave that block promising a value
+	// nothing mounts.
+	if _, reserved := config.ReservedSecrets[name]; !reserved {
+		return userErr("refusing to remove %s: project_secrets holds only %s, and a container of any other name belongs to another block (a provider's key, a Claude account's token or a workflow secret) that this command does not remove; nothing was removed",
+			pluginwire.Printable(name), strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "))
+	}
 	ctx := cmd.Context()
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {

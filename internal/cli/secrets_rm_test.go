@@ -378,3 +378,33 @@ func TestSecretsRmRefusesAValueInTheNamesPlace(t *testing.T) {
 		t.Fatalf("err = %v, want the name-shape refusal", err)
 	}
 }
+
+// TestSecretsRmRefusesANameAnotherBlockOwns: a provider's key, a named Claude
+// account's token and a workflow secret this config does not list share the
+// derived ID and the labels with a project secret, so only the reserved names
+// may be removed here.
+func TestSecretsRmRefusesANameAnotherBlockOwns(t *testing.T) {
+	secretsRmFugaro(t)
+	sm := secretsFixture(t)
+	for _, name := range []string{"openrouter-api-key", "claude-oauth-token-work", "deploy-token"} {
+		id := gcp.ProjectSecretID("aurora", name)
+		sm.Seed(id, map[string]string{
+			gcp.LabelManaged: gcp.ManagedValue,
+			gcp.LabelProject: "aurora",
+			gcp.LabelSecret:  name,
+		}, []byte(tokenValue))
+		_, _, err := execute(t, "secrets", "rm", name, "--yes")
+		if err == nil {
+			t.Fatalf("secrets rm %s deleted a container another block owns", name)
+		}
+		if !strings.Contains(err.Error(), "nothing was removed") {
+			t.Errorf("secrets rm %s: the refusal does not say nothing was removed: %v", name, err)
+		}
+		if sm.Latest(id) == nil {
+			t.Fatalf("the container %s was taken away", name)
+		}
+	}
+	if got := sm.Deleted(); len(got) != 0 {
+		t.Fatalf("deleted %v", got)
+	}
+}
