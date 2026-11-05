@@ -153,8 +153,11 @@ func mixedAccountProblems(stages map[string]string, path string) []Problem {
 // is the declared stage accounts, as CheckStageAccountMix reads them. path is
 // where the caller spells the budget mode ("budget.mode" today), and it is the
 // key the problem points at: the fix is to raise the mode, or to drop the keys
-// that declare a mix this run cannot carry.
-func CheckMixBudget(auth, mode, coder, def string, stages map[string]string, routes map[string]ModelProvider, repo, path string) []Problem {
+// that declare a mix this run cannot carry. The repository is deliberately not
+// a parameter: the routes it arrives with are already the ones this repository
+// may use (runner.ProvidersFor, the caller's own narrowing), and the clause has
+// nothing else to ask of it.
+func CheckMixBudget(auth, mode, coder, def string, stages map[string]string, routes map[string]ModelProvider, path string) []Problem {
 	if auth != "api-key" || mode == BudgetEnforce {
 		return nil
 	}

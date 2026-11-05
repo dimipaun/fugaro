@@ -188,7 +188,7 @@ func TestCheckMixBudgetIsTheModeClause(t *testing.T) {
 			if table == nil {
 				table = routes
 			}
-			ps := CheckMixBudget(tc.auth, tc.mode, tc.coder, tc.def, tc.stages, table, "acme/other", "budget.mode")
+			ps := CheckMixBudget(tc.auth, tc.mode, tc.coder, tc.def, tc.stages, table, "budget.mode")
 			if tc.want == nil {
 				if ps != nil {
 					t.Fatalf("CheckMixBudget(%q, %q, %q, %q, %v) = %+v, want no problem", tc.auth, tc.mode, tc.coder, tc.def, tc.stages, ps)

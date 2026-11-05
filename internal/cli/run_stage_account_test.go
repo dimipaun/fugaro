@@ -198,6 +198,13 @@ const (
 		"model_prices:\n  \"" + mixCoderModel + "\": { input_per_m: 0.1, output_per_m: 0.2 }\n"
 	// mixEnforce is the budget mode a provider-served coder requires.
 	mixEnforce = "budget: { mode: enforce, per_run_usd: 5 }\n"
+	// mixElsewhereConfig is claudeAccountsConfig plus an account this
+	// repository may not use: the name the rows about the default's allow-list
+	// write into default_claude_account, which must not refuse a launch that
+	// could never apply it.
+	mixElsewhereConfig = claudeAccountsConfig + "  acme-elsewhere:\n    allow_data_to: [\"acme/person-1\"]\n"
+	// mixElsewhereDefault is the key those rows write it in.
+	mixElsewhereDefault = "default_claude_account: acme-elsewhere\n"
 )
 
 // mixCase is one row's fixture: the accounts (keys adds the account-choice
@@ -207,11 +214,19 @@ const (
 // claudeAccountFor is asked with.
 func mixCase(t *testing.T, keys, reviewer, budget string) (*cloudEnv, *config.Config) {
 	t.Helper()
+	return mixCaseWith(t, claudeAccountsConfig, keys, reviewer, mixCoderModel, budget)
+}
+
+// mixCaseWith is mixCase with the accounts block, the reviewer and the coder
+// spelled out: the row about the coder's own route needs a coder no provider
+// route serves, and the rows about the default's allow-list need an account
+// this repository may not use. The checkout is agent.auth: api-key (recipeCheckout's
+// own line), with the coder and the reviews on the models given.
+func mixCaseWith(t *testing.T, accounts, keys, reviewer, coder, budget string) (*cloudEnv, *config.Config) {
+	t.Helper()
 	f := newCloudFixture(t)
-	f.appendConfig(t, claudeAccountsConfig+mixRouteConfig+budget+keys)
-	// agent.auth: api-key (recipeCheckout's own line), the coder on the
-	// provider route, and the reviews on reviewer.
-	recipeCheckout(t, f, "  models: { coder: "+mixCoderModel+", reviewer: "+reviewer+", background: "+mixCoderModel+" }\n", nil)
+	f.appendConfig(t, accounts+mixRouteConfig+budget+keys)
+	recipeCheckout(t, f, "  models: { coder: "+coder+", reviewer: "+reviewer+", background: "+coder+" }\n", nil)
 	env := gcsEnv(t, f)
 	co := checkoutConfig(context.Background(), "acme/other")
 	if co == nil {
@@ -238,11 +253,13 @@ func mixCase(t *testing.T, keys, reviewer, budget string) (*cloudEnv, *config.Co
 // nothing changes and nothing is refused. Rung 2 is a declaration about that
 // very stage, which B1 serves as written.
 //
-// Three mutations fail this test: dropping the allow-list from mixedStageAccount
+// Four mutations fail this test: dropping the allow-list from mixedStageAccount
 // serves the account to implement, review_first and fix; dropping the model
 // condition from it serves the project default to a review stage that runs on
-// the provider; and reading the sentinel default as an account serves the
-// unsuffixed default to the two review stages of a project that named none.
+// the provider; dropping the provider-served condition serves it to a run whose
+// coder is Claude's and whose gateway holds no provider key (the last row);
+// and reading the sentinel default as an account serves the unsuffixed default
+// to the two review stages of a project that named none.
 func TestClaudeAccountForTheMixMatrix(t *testing.T) {
 	// rung 2 is the stage's own key — both mixed stages name one account,
 	// which is the shape the one-account rule admits; rung 4 is the project
@@ -290,6 +307,23 @@ func TestClaudeAccountForTheMixMatrix(t *testing.T) {
 			})
 		}
 	}
+	// The coder's own route is a condition of the mix and not a detail of it: an
+	// api-key run whose coder is a Claude model reaches Anthropic's endpoint
+	// direct, so the gateway holds no provider key for the account to sit
+	// beside, and rung 4 admits nothing — whatever the stage's own model is and
+	// whatever the ruling's other conditions say.
+	t.Run("a coder no provider route serves", func(t *testing.T) {
+		for _, stage := range config.MixedAccountStages {
+			env, co := mixCaseWith(t, claudeAccountsConfig, "default_claude_account: acme-overflow\n", claudeReviewer, claudeReviewer, mixEnforce)
+			got, err := claudeAccountFor(context.Background(), env, "acme/other", "", stage, "", co)
+			if err != nil {
+				t.Fatalf("stage %q: %v", stage, err)
+			}
+			if got != config.DefaultClaudeAccount {
+				t.Errorf("stage %q: account = %q, want %q: a coder on Claude's own endpoint is served no provider key", stage, got, config.DefaultClaudeAccount)
+			}
+		}
+	})
 }
 
 // TestClaudeAccountForLeavesTheRunsOwnCredentialAlone: the account a mixed
@@ -400,4 +434,107 @@ func TestClaudeAccountForHoldsTheDeclaredAccountsToTheAllowList(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme-elsewhere") {
 		t.Fatalf("err = %v, want the allow-list refusal", err)
 	}
+}
+
+// TestClaudeAccountForHoldsTheDefaultWhereRungFourCanApply: the project default
+// is written once for every run the project has, so it is held to this
+// repository's allow-list exactly where rung 4 would hand it to something. The
+// finding this test answers was the first cut's unconditional check: a default
+// no stage of *this* run could use refused every launch of a repository its
+// allow_data_to does not name — an api-key run with a provider reviewer (the
+// ruling's own "no mix and no error"), an oauth run whose --token names an
+// allowed account, a vertex run — none of which could ever reach the name.
+//
+// What the check may not stop doing is guarding the rung it belongs to, and the
+// last three subtests are that half: an api-key run whose reviews *are* Claude's
+// is refused, an oauth run whose own credential is the default is refused by the
+// walk's own claudeAccountAllowed, and an auth the launch cannot place yet ("")
+// fails closed, because no rung of that launch reads the key.
+//
+// Mutation: restoring the unconditional check fails the first two subtests,
+// which is exactly the bug — a refusal for a name the launch could not use.
+func TestClaudeAccountForHoldsTheDefaultWhereRungFourCanApply(t *testing.T) {
+	t.Run("an api-key run whose reviews are not Claude's", func(t *testing.T) {
+		// The coder is on the provider route and the reviewer on the same
+		// provider model, so nothing about this run is Claude's: the default is
+		// not a way into any stage and is not judged.
+		env, co := mixCaseWith(t, mixElsewhereConfig, mixElsewhereDefault, mixCoderModel, mixCoderModel, mixEnforce)
+		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "review", "", co)
+		if err != nil {
+			t.Fatalf("err = %v, want no refusal: the default can never apply to this run", err)
+		}
+		if got != config.DefaultClaudeAccount {
+			t.Fatalf("account = %q, want %q", got, config.DefaultClaudeAccount)
+		}
+	})
+	t.Run("an oauth run that names its own account", func(t *testing.T) {
+		// agent.oauth_token (rung 3) and the --token flag (rung 1) both sit
+		// above the project default, so the walk never picks it, and a name the
+		// run does not use is not one this launch has to refuse.
+		f := newCloudFixture(t)
+		f.appendConfig(t, mixElsewhereConfig+mixElsewhereDefault)
+		oauthCheckout(t, f, "  oauth_token: acme-overflow\n")
+		env := gcsEnv(t, f)
+		co := checkoutConfig(context.Background(), "acme/other")
+		if co == nil {
+			t.Fatal("checkoutConfig found no checkout")
+		}
+		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co)
+		if err != nil {
+			t.Fatalf("err = %v, want no refusal: acme-overflow is this run's own account", err)
+		}
+		if got != "acme-overflow" {
+			t.Fatalf("account = %q, want acme-overflow (agent.oauth_token's rung)", got)
+		}
+		got, err = claudeAccountFor(context.Background(), env, "acme/other", "acme-personal", "", "", co)
+		if err != nil {
+			t.Fatalf("err = %v, want no refusal: the flag's own account is allowed here", err)
+		}
+		if got != "acme-personal" {
+			t.Fatalf("account = %q, want acme-personal (the flag's rung)", got)
+		}
+	})
+	t.Run("an api-key run whose reviews are Claude's", func(t *testing.T) {
+		// The mix is admitted for this stage, so the default is a name this run
+		// will use — and it is not one the repository may use.
+		env, co := mixCaseWith(t, mixElsewhereConfig, mixElsewhereDefault, claudeReviewer, mixCoderModel, mixEnforce)
+		_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "review", "", co)
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("err = %v, want the allow-list refusal", err)
+		}
+		for _, want := range []string{"acme-elsewhere", "not one acme/other may use", "allowed: default, acme-overflow, acme-personal"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not name %q: %v", want, err)
+			}
+		}
+	})
+	t.Run("an oauth run whose own account is the default", func(t *testing.T) {
+		// Nothing above rung 4 names an account, so the walk picks the default
+		// and the run would land on a job holding a token this repository may
+		// not use: the refusal is claudeAccountAllowed's, at the end of the walk.
+		f := newCloudFixture(t)
+		f.appendConfig(t, mixElsewhereConfig+mixElsewhereDefault)
+		oauthCheckout(t, f, "")
+		env := gcsEnv(t, f)
+		co := checkoutConfig(context.Background(), "acme/other")
+		if co == nil {
+			t.Fatal("checkoutConfig found no checkout")
+		}
+		_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co)
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme-elsewhere") {
+			t.Fatalf("err = %v, want the allow-list refusal", err)
+		}
+	})
+	t.Run("an auth the launch cannot place", func(t *testing.T) {
+		// No checkout means no resolved auth, and the committed fugaro.yaml may
+		// name anything: the launch fails closed on the default rather than
+		// leaving the allow-list to a rung it cannot see.
+		f := newCloudFixture(t)
+		f.appendConfig(t, mixElsewhereConfig+mixElsewhereDefault)
+		env := gcsEnv(t, f)
+		_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", nil)
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme-elsewhere") {
+			t.Fatalf("err = %v, want the allow-list refusal", err)
+		}
+	})
 }

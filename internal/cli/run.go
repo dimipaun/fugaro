@@ -1752,25 +1752,57 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	if ps := config.CheckStageAccountMix(auth, declared, "stages"); len(ps) > 0 {
 		return "", userErr("%s: %s", ps[0].Path, ps[0].Message)
 	}
-	// Every *declared* name is checked before any launch, whatever rung ends up
-	// using it, and the stage accounts and the project default are names too:
-	// this call may not use one as the run's own credential, but the run's
-	// review stages will, and the account's allow_data_to is what decides
-	// whether this repository may put its code where that token is. The check is
-	// the allow-list's, not claudeAccountAllowed's whole rule — its auth clause
-	// keeps a named *run* account out of every auth but oauth, and an api-key run
-	// is exactly the run the ruling gives a stage account to. It is asked of
-	// what the config *declares* rather than of what this call can resolve,
-	// because an auth the launch cannot place yet ("" — see stageAccountOf) must
-	// not be the thing that skips the allow-list.
+	// Every *declared* stage account is checked before any launch, whatever rung
+	// ends up using it: this call may not use one as the run's own credential,
+	// but the run's review stages will, and the account's allow_data_to is what
+	// decides whether this repository may put its code where that token is. The
+	// check is the allow-list's, not claudeAccountAllowed's whole rule — its
+	// auth clause keeps a named *run* account out of every auth but oauth, and
+	// an api-key run is exactly the run the ruling gives a stage account to. It
+	// is asked of what the config *declares* rather than of what this call can
+	// resolve, because an auth the launch cannot place yet ("" — see
+	// stageAccountOf) must not be the thing that skips the allow-list.
 	for _, at := range slices.Sorted(maps.Keys(declared)) {
 		if err := claudeAccountMembership(env, repo, declared[at]); err != nil {
 			return "", err
 		}
 	}
+	// The project default is a name too, and it is held to this repository's
+	// allow-list exactly where rung 4 would hand it to something. Untying it
+	// from the rung was a bug of the first cut: the key is written once for
+	// every run the project has, so a default no stage of *this* run can use
+	// must not refuse the launch — an api-key run with a provider reviewer is
+	// the ruling's own "no mix and no error", and under vertex and cascade no
+	// Claude OAuth credential reaches the run at all. Each auth's own reader
+	// therefore does the checking:
+	//
+	//   - api-key: the mix is the only way the default reaches a stage, so
+	//     mixedStageAccount holds it there (the two stages it may serve, and no
+	//     other), and a run whose reviews are not Claude's checks nothing;
+	//   - oauth: the walk below ends in claudeAccountAllowed, which checks the
+	//     default whenever it is what the run picked as its own credential,
+	//     while a --token or an agent.oauth_token that names an allowed account
+	//     leaves the default unused and unjudged;
+	//   - vertex, cascade: the key can never apply, and a refusal would be about
+	//     a name no rung of such a run reads.
+	//
+	// What no rung reads is an auth the launch cannot place yet (""): a
+	// repository whose own committed fugaro.yaml carries the value is exactly
+	// the launch that has to fail closed, so the default is checked here, where
+	// nothing else will.
 	if def := env.lc.DefaultClaudeAccount; def != "" && def != config.DefaultClaudeAccount {
-		if err := claudeAccountMembership(env, repo, def); err != nil {
-			return "", err
+		switch auth {
+		case "api-key":
+			for _, at := range config.MixedAccountStages {
+				if _, err := mixedStageAccount(ctx, env, repo, at, auth, co); err != nil {
+					return "", err
+				}
+			}
+		case "oauth", "vertex", config.AuthCascade:
+		default:
+			if err := claudeAccountMembership(env, repo, def); err != nil {
+				return "", err
+			}
 		}
 	}
 	// The mix's budget-mode clause (config.CheckMixBudget, §11), asked of what
@@ -1780,9 +1812,14 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	// enforce routes a call to a provider at all, so a configuration that
 	// declares a mix under any other mode declares a key that could never apply
 	// — refused at the launch that picks the account, not left to a stage that
-	// would never be handed one.
-	if ps := config.CheckMixBudget(auth, mixMode(ctx, env, repo, co), mixCoder(co), env.lc.DefaultClaudeAccount, declared, mixRoutes(env, repo, co), repo, "budget.mode"); len(ps) > 0 {
-		return "", userErr("%s: %s", ps[0].Path, ps[0].Message)
+	// would never be handed one. The auth is asked before the clause's own
+	// arguments are built, which is CheckMixBudget's first test said here: an
+	// oauth launch must not spend a local default-branch git read (mixMode) and
+	// a route resolution (mixRoutes) on a clause that cannot apply to it.
+	if auth == "api-key" {
+		if ps := config.CheckMixBudget(auth, mixMode(ctx, env, repo, co), mixCoder(co), env.lc.DefaultClaudeAccount, declared, mixRoutes(env, repo, co), "budget.mode"); len(ps) > 0 {
+			return "", userErr("%s: %s", ps[0].Path, ps[0].Message)
+		}
 	}
 	name := flag
 	if name == "" && stage != "" {
@@ -1884,10 +1921,14 @@ func mixMode(ctx context.Context, env *cloudEnv, repo string, co *config.Config)
 // for senior review and/or security review, then we get mixed runs"). rung 2 is
 // read before this call and wins, so the stage's own key is not consulted here.
 //
-// The mix is admitted for the stage when every one of these holds, and it is
-// read off the same facts `fugaro validate` reads (the checkout's own, layer
-// applied document and the project's local config), so the launch and the
-// offline report cannot disagree on the condition:
+// The mix is admitted for the stage when every one of these holds, and they are
+// read off what a launch has: the checkout's own, layer-applied document and
+// the project's local config. `fugaro validate` judges the other half of the
+// rule and not this one — stageAccountProblems asks
+// config.CheckStageAccountMix of the file's auth and the local stage keys, and
+// the offline report never calls config.CheckMixBudget, so the mode and the
+// provider routes below are the launch's own judgement (the runner makes it
+// again, with the recipe's roles applied, in the job):
 //
 //   - the run's credential is a provider key (api-key): the mix exists to give
 //     such a run a Claude review credential it otherwise has none of;
@@ -1905,9 +1946,16 @@ func mixMode(ctx context.Context, env *cloudEnv, repo string, co *config.Config)
 //     (config.CheckProviderGateway), which is what "provider-served" means at
 //     run time.
 //
+// The default is held to this repository's allow-list here, at the end of the
+// rule, and not at the top of a launch: it is a name rung 4 can use only where
+// the mix is admitted, so a launch whose reviews are not Claude's, or whose
+// coder has no provider key in the gateway, must not be refused for a key that
+// can never apply. The one-account refusal is raised here with it, and both are
+// the caller's to see — the launch asks this function per mixed stage for
+// exactly that reason.
+//
 // A launch that cannot read a document (no checkout) admits nothing: the mix is
-// a fact about the run's configuration, and a guess is not one. The refusal for
-// the one-account rule is the caller's to raise — see below.
+// a fact about the run's configuration, and a guess is not one.
 func mixedStageAccount(ctx context.Context, env *cloudEnv, repo, stage, auth string, co *config.Config) (string, error) {
 	if auth != "api-key" || !slices.Contains(config.MixedAccountStages, stage) {
 		return "", nil
@@ -1950,6 +1998,9 @@ func mixedStageAccount(ctx context.Context, env *cloudEnv, repo, stage, auth str
 			return "", userErr("default_claude_account is %s and stages.%s.claude_account is %s: an api-key run holds one Claude account beside the provider key the gateway holds, and %s is already this run's — the project default would be a second credential. Name %s in both keys, or remove the project default",
 				pluginwire.Printable(def), other, pluginwire.Printable(account), pluginwire.Printable(account), pluginwire.Printable(account))
 		}
+	}
+	if err := claudeAccountMembership(env, repo, def); err != nil {
+		return "", err
 	}
 	return def, nil
 }
