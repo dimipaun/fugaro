@@ -68,6 +68,13 @@ type EnvSpec struct {
 // BuildEnv builds the agent's environment from the runner's (parent), keeping
 // only allowlisted variables, the auth variables and declared secrets. It
 // returns the secret values so transcripts can be redacted.
+//
+// What it builds is the environment of the run's own stages. A stage that runs
+// on a stage-scoped Claude OAuth account instead gets one built from this one
+// (OAuthStageEnv), which is what keeps the coder's own environment an
+// allow-list: the account's token is in no environment this function returns,
+// whatever the runner's own environment holds
+// (docs/design/mixed-credentials.md §11).
 func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err error) {
 	p := map[string]string{}
 	for _, kv := range parent {
@@ -232,6 +239,43 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 		env = append(env, k+"="+out[k])
 	}
 	return env, secretValues, nil
+}
+
+// gatewayRouteVars are the variables GatewayVars routes Claude Code at the
+// gateway with: the address its calls go to and the credential it presents
+// there. A stage that runs on a Claude OAuth credential of its own carries
+// none of them (OAuthStageEnv), and its calls go to Anthropic's own endpoint.
+var gatewayRouteVars = []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"}
+
+// OAuthStageEnv returns the environment of a stage that runs on a Claude
+// OAuth credential of its own rather than on the run's gateway
+// (docs/design/mixed-credentials.md §11, the owner's B0 ruling): runEnv, the
+// environment BuildEnv built for the run's own stages, with the gateway's
+// routing dropped and the account's token set. What is left is the stage's
+// whole environment — the base variables, the declared secrets and the
+// directory variables are the run's, and the model the stage runs reaches
+// Claude Code as the --model flag (Args), never as a routing variable. The
+// caller registers the token for redaction for the whole run, not here.
+//
+// A token this build could not redact is refused rather than used, the way
+// BuildEnv refuses one: the alternative would be a stage that runs without the
+// credential its configuration gave it, which is the one thing the ruling
+// says a review stage must never do.
+func OAuthStageEnv(runEnv []string, token string) ([]string, error) {
+	switch {
+	case token == "":
+		return nil, fmt.Errorf("a stage that runs on a Claude OAuth account needs CLAUDE_CODE_OAUTH_TOKEN in the runner's environment, and this run holds none: the account's token is mounted into the runner's job — or, for a local run, put in the environment the runner was started with — before the run begins, and this run was given no token to run the stage on")
+	case len(token) < 4:
+		return nil, fmt.Errorf("CLAUDE_CODE_OAUTH_TOKEN is shorter than 4 bytes, so it cannot be redacted safely")
+	}
+	out := make([]string, 0, len(runEnv)+1)
+	for _, kv := range runEnv {
+		if k, _, ok := strings.Cut(kv, "="); ok && slices.Contains(gatewayRouteVars, k) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "CLAUDE_CODE_OAUTH_TOKEN="+token), nil
 }
 
 // Gateway is where Claude Code sends its model calls instead of the

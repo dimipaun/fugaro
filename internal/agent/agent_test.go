@@ -387,6 +387,52 @@ func TestBuildEnvOAuthNeverFallsBackToTheAPIKey(t *testing.T) {
 	}
 }
 
+// A stage that runs on a Claude OAuth credential of its own runs on that
+// account and not on the run's gateway: the environment it gets is the run's
+// own with the gateway's routing dropped — the address its calls would go to
+// and the per-run token they would present there, both of which the managed
+// settings file writes too — and the account's token set in their place
+// (docs/design/mixed-credentials.md §11, the owner's B0 ruling). Everything
+// else about the run's environment is the stage's: the base variables, the
+// declared secrets and the directory variables, which are what the stage's
+// own tools need and none of which is a credential.
+//
+// Mutation (run, restored): return runEnv with the token appended and the
+// gateway's variables left in place. The first loop fails: the stage's calls
+// would go to Fugaro's gateway on a token the gateway issued, and the
+// account's own credential would never be presented.
+func TestOAuthStageEnvDropsTheGatewayAndSetsTheToken(t *testing.T) {
+	runEnv, _, err := BuildEnv([]string{"PATH=/bin", "HOME=/h", "NPM_TOKEN=npm-456", "ANTHROPIC_API_KEY=key-123"},
+		EnvSpec{Auth: "api-key", Secrets: []string{"NPM_TOKEN"},
+			Gateway: &Gateway{BaseURL: "http://127.0.0.1:1", Token: "gw-token-abcdef"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := OAuthStageEnv(runEnv, "oauth-token-abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "ANTHROPIC_BASE_URL=") || strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") {
+			t.Errorf("a stage on its own account still carries the gateway's routing: %q", kv)
+		}
+	}
+	for _, want := range []string{"CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abcdef", "PATH=/bin", "HOME=/h", "NPM_TOKEN=npm-456"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("env lacks %s: %v", want, env)
+		}
+	}
+
+	// A token this build could not redact is refused rather than used: the
+	// stage would otherwise run on whatever the environment falls back to.
+	if _, err := OAuthStageEnv(runEnv, ""); err == nil || !strings.Contains(err.Error(), "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Errorf("no token: err = %v, want a refusal naming CLAUDE_CODE_OAUTH_TOKEN", err)
+	}
+	if _, err := OAuthStageEnv(runEnv, "abc"); err == nil || !strings.Contains(err.Error(), "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Errorf("short token: err = %v, want a refusal naming CLAUDE_CODE_OAUTH_TOKEN", err)
+	}
+}
+
 func TestBuildEnvShortSecret(t *testing.T) {
 	if _, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=abc"}, EnvSpec{Auth: "api-key"}); err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
 		t.Fatalf("short auth secret err = %v", err)
