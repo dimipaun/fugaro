@@ -772,7 +772,7 @@ func TestDocsProjectWorkflowSecretsResidualNamesTheManagedExposure(t *testing.T)
 // D1273): the feature's reach is invisible in a repository's own fugaro.yaml —
 // nothing in that file says its `db-password` is stored once for sixty-five
 // repositories — so the pages a person reads round the command are the only
-// place the decision is made. Three of them said a workflow's own secret could
+// place the decision is made. Four of them said a workflow's own secret could
 // not be shared at all, which was true before this design and is not true of a
 // name an operator's `workflow_secrets` entry covers:
 //
@@ -784,13 +784,22 @@ func TestDocsProjectWorkflowSecretsResidualNamesTheManagedExposure(t *testing.T)
 //     design adds a second form beside — a pointer, not a rewrite;
 //   - the setup skill, whose step 9 is the other place a value is stored, and
 //     whose sentence about a covered name has to hold for a workflow secret
-//     too.
+//     too;
+//   - SECURITY.md's project-scope section, which is the only page a reader who
+//     never opens a terminal meets the fence on, and which owes the new
+//     block's two readings besides: the shared copy's reach is its entry, and
+//     a wildcard in that entry means every repository it matches now and later
+//     (D1273).
 //
 // The reach itself is elsewhere and is not re-argued here: the store-time note
-// and the `set` help say it at the command (W3, secrets_test.go's own pins),
-// SECURITY.md's project-scope section says it for the reader who never opens a
-// terminal, and the folder states it in full. The sentences wrap in the files,
-// so the assertions are made against the whitespace-normalized text.
+// and the `set` help say it at the command (W3, secrets_test.go's own pins,
+// which hold the wildcard clause too), SECURITY.md's project-scope section
+// says it for the reader who never opens a terminal, and the folder states it
+// in full — so what this test pins of SECURITY.md is the sentences that page
+// owes this design, not the reach it already stated. The sentences wrap in the
+// files, so the assertions are made against the whitespace-normalized text,
+// and the page the website serves is generated from SECURITY.md by
+// internal/clidoc, so a pin here is a pin on both.
 //
 // The pins are word for word, and the banned strings are the wording these
 // pages carried before W6: a sentence that leaves the block out is the claim
@@ -819,12 +828,36 @@ func TestDocsProjectWorkflowSecretsReachIsSaidWhereAPersonMeetsIt(t *testing.T) 
 		}, []string{
 			"which has no project-wide meaning (§3).",
 		}},
+		{"SECURITY.md", []string{
+			// The paragraph D1273 asks for, in the shape the Bitbucket token's
+			// warning already has in this file: the entry decides the reach,
+			// a wildcard reaches what it matches now and later, the value is
+			// what the repository's build and tests read, and a repository's
+			// own copy wins.
+			"A workflow secret's entry is where its reach is decided.",
+			"so the reach of a name like `db-password` is that entry and not the whole installation",
+			"With no entry, or with an entry that lists nothing, the name mounts nowhere and stays a repository copy.",
+			"A wildcard inside a segment (`myworkspace/*`) means every repository it matches **now and later**",
+			"**The value is whatever the repository's build and tests read**",
+			"A repository that stores its own copy keeps it, as every other name does.",
+			// And the two clauses that stopped being true, corrected in place.
+			"`workflows.<n>.secrets` **can** be shared this way, through the operator's own `workflow_secrets.<name>` entry",
+			"A **shared project job** never mounts one at all",
+			"A name that has no project-wide meaning (a workflow's own `secrets:` entry that no `workflow_secrets` entry in the operator's local config covers",
+		}, []string{
+			// The two sentences the feature made false. A security page is
+			// where this costs most: the reader acts on it without running
+			// anything, so the old wording may not return as a plausible
+			// paraphrase.
+			"`workflows.<n>.secrets` cannot be shared this way at all",
+			"A name that has no project-wide meaning (a workflow's own `secrets:` entry, or the default Claude account's `claude-oauth-token`) keeps the repository scope it had.",
+		}},
 		{"plugin/skills/setup/SKILL.md", []string{
 			// The skill says it in its own vocabulary — "covered" is what it
 			// already calls a name the project's copy answers for — because
 			// the skill carries a hard byte budget (plugin/skills_lint_test.go's
 			// 24576) and the sentence has to pay for itself; the block is named
-			// where the block is decided, in the two documents above.
+			// where the block is decided, in the documents above.
 			"a covered name is not asked for, nor is a covered workflow secret",
 		}, nil},
 	}
