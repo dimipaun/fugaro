@@ -25,6 +25,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
 // maxSecretBytes is Secret Manager's payload limit (64 KiB).
@@ -42,7 +43,7 @@ func newSecretsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "secrets",
 		Aliases: []string{"secret"},
-		Short:   "Store and list a repository's secrets in Secret Manager",
+		Short:   "Store, list and withdraw a repository's secrets in Secret Manager",
 		// Set so cobra doesn't answer an unknown subcommand by quoting it:
 		// `fugaro secrets <value>` must not echo the value.
 		Args: cobra.ArbitraryArgs,
@@ -50,15 +51,15 @@ func newSecretsCmd() *cobra.Command {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return userErr("unknown secrets subcommand; want set or ls (see fugaro secrets --help)")
+			return userErr("unknown secrets subcommand; want set, ls or rm (see fugaro secrets --help)")
 		},
 	}
 	// pflag quotes an unknown flag, and a value pasted in the wrong place
 	// could be one (`-sk-ant-…`); every secrets command gets a fixed message.
 	cmd.SetFlagErrorFunc(func(*cobra.Command, error) error {
-		return userErr("unknown or malformed flag; secrets commands take --repo, --project-wide, --json, --config, --project, --gcp-project and --region, and never the value")
+		return userErr("unknown or malformed flag; secrets commands take --repo, --project-wide, --json, --config, --project, --gcp-project, --region, --allow-data-to, --proxy, --yes and --dry-run, and never the value")
 	})
-	cmd.AddCommand(newSecretsSetCmd(), newSecretsLsCmd())
+	cmd.AddCommand(newSecretsSetCmd(), newSecretsLsCmd(), newSecretsRmCmd())
 	return cmd
 }
 
@@ -69,6 +70,24 @@ type secretsOptions struct {
 	// than per repository (design docs/design/project-secrets.md §4).
 	projectWide bool
 	asJSON      bool
+	// allowDataTo and proxy are the policy write (D1171): the two members of
+	// project_secrets.NAME the registry names this family the owner of. Naming
+	// either one turns the run into a policy write, which writes the entry and
+	// reads no value.
+	allowDataTo []string
+	proxy       bool
+	// yes answers the typed confirmation outside a coding agent's session
+	// (D1107), and dryRun is the policy write's own document.
+	yes    bool
+	dryRun bool
+}
+
+// policyWrite reports whether the run is the family's policy write (D1171)
+// rather than a value store. A flag that names a policy key is the whole
+// difference: a value is not a setting, so the two are never the same run, and
+// the flags that carry one are never read as the other.
+func (o *secretsOptions) policyWrite(cmd *cobra.Command) bool {
+	return len(o.allowDataTo) > 0 || cmd.Flags().Changed("proxy")
 }
 
 func (o *secretsOptions) addFlags(cmd *cobra.Command) {
@@ -149,9 +168,9 @@ var optionalRepoVerbs = map[string]map[string]bool{
 // a NoOptDefVal of "true", so none takes the token after it as a value, and a
 // scan that reads one as taking a value disagrees with cobra about which token
 // is the subcommand. The set is the command family's own — the flags
-// newSecretsCmd, newSecretsSetCmd and newSecretsLsCmd declare, plus the --help
-// cobra adds to each of them at Execute time — and it is exactly the set the
-// commands' FlagErrorFunc names (newSecretsCmd).
+// newSecretsCmd, newSecretsSetCmd, newSecretsLsCmd and newSecretsRmCmd declare,
+// plus the --help cobra adds to each of them at Execute time — and it is
+// exactly the set the commands' FlagErrorFunc names (newSecretsCmd).
 //
 // TestSecretsBoolFlagsMatchTheFlags keeps this list equal to what the commands
 // declare, so a bool flag added later cannot quietly reopen the hole the code
@@ -171,7 +190,7 @@ var optionalRepoVerbs = map[string]map[string]bool{
 // change to the command's surface, not to this scan, and is not made here.
 // What this map does is keep the scan's model of pflag true, which is the
 // invariant the doc above claims and the one a future flag addition breaks.
-var secretsBoolFlags = map[string]bool{"--json": true, "--project-wide": true, "--help": true}
+var secretsBoolFlags = map[string]bool{"--json": true, "--project-wide": true, "--proxy": true, "--yes": true, "--dry-run": true, "--help": true}
 
 // budgetBoolFlags is the same list for the budget commands whose --repo takes
 // an optional value (optionalRepoVerbs), and it exists for the same reason:
@@ -333,7 +352,31 @@ project copy with nothing else to do.
 With --repo (owner/name, or with no value for this checkout's origin) the
 value is stored as the repository's own copy instead. That copy overrides
 the project copy from then on: disabling its last enabled version is the
-only way back.`,
+only way back.
+
+The policy flags write the entry that decides who may mount the value,
+instead of reading one:
+
+  --allow-data-to OWNER/NAME   add a repository to
+                               project_secrets.NAME.allow_data_to, the list
+                               of repositories the value is stored for
+  --proxy[=true|false]         set project_secrets.NAME.proxy, the Bitbucket
+                               token's switch for the credentials service
+
+NAME must be a secret Fugaro stores project-wide (the same list as above,
+minus the ones no project entry may hold) and --repo cannot be combined with
+either flag: project_secrets.NAME is the project's own entry and no
+repository owns it. Adding a repository to the list, or turning proxy on, is
+a widening, so it takes the project's own name at a terminal — or --yes
+outside a coding agent's session. --dry-run says what the write would do and
+writes nothing, and --json prints that as the settings-write document.
+
+A value is not a setting: it has no row, it is never in a diff, and no dry
+run of this command prints one. secrets set with neither policy flag is the
+value write and reads the value from stdin; to store a value and change its
+policy, run the command twice. A coding agent's session is refused the
+policy flags outright, --yes included (spec §5), because a secret's policy is
+a value no plan shows.`,
 		Args: func(_ *cobra.Command, args []string) error {
 			switch {
 			case len(args) == 0:
@@ -348,6 +391,11 @@ only way back.`,
 		},
 	}
 	o.addFlags(cmd)
+	f := cmd.Flags()
+	f.StringSliceVar(&o.allowDataTo, "allow-data-to", nil, "add a repository (owner/name) to project_secrets.NAME.allow_data_to, the list of repositories the value is stored for; comma-separated or repeated")
+	f.BoolVar(&o.proxy, "proxy", false, "set project_secrets.NAME.proxy, the Bitbucket token's switch for the credentials service (--proxy=false turns it off)")
+	f.BoolVar(&o.yes, "yes", false, "confirm the policy write without a prompt (outside a coding agent's session)")
+	f.BoolVar(&o.dryRun, "dry-run", false, "print what the policy write would do and write nothing")
 	return cmd
 }
 
@@ -501,6 +549,22 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	if err := o.checkScope(cmd); err != nil {
 		return err
 	}
+	// The policy write is a different run, decided before the cloud is opened
+	// and before any value is read: it writes the config entry that says who
+	// may mount a value and reads none (D1171).
+	if o.policyWrite(cmd) {
+		return secretsSetPolicy(cmd, o, name)
+	}
+	if o.dryRun || o.yes {
+		// A value is not a setting (D1171): it has no registry row, no diff
+		// shows it and no document carries it, so there is nothing for either
+		// flag to answer here — and a dry run answered with an empty document
+		// would read as "the value is not stored" when the write below stores
+		// it. --json is not among them: the store's own result document is
+		// what it prints, and it has printed it since before the policy write
+		// existed.
+		return userErr("--dry-run and --yes are the policy write's flags: a value is not a setting, so storing one has no diff and no confirmation to answer (D1171); pass --allow-data-to or --proxy to write project_secrets.%s, or run this command without them to store a value", pluginwire.Printable(name))
+	}
 	ctx := cmd.Context()
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {
@@ -633,6 +697,298 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	}
 	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: r.label, gcp.LabelSecret: name}
 	return storeSecret(cmd, env, o, gcp.SecretID(r.slug, name), labels, name)
+}
+
+// secretsSetPolicy is the policy half of `secrets set` (D1171): the two
+// project_secrets.NAME members the registry names this family the owner of —
+// allow_data_to and proxy — written through the settings write path's one
+// helper, so the diff, the confirmation, the backup and the compare-and-swap
+// are the ones every other settings write pays (D1165). It reads no value: a
+// value is not a setting, and the hidden prompt on the value path is the only
+// way one is ever taken.
+//
+// One key per invocation, exactly as `settings set` writes one edit per
+// invocation: the two flags name two keys, and a run that wrote both would
+// show a diff whose halves the document's single key cannot describe.
+//
+// The coding agent's session refusal is made here, first, and the managed gate
+// never sees the step (spec §5: this whole family is refused in a session,
+// gate or not). applySettingsEdit's own fence would not be enough: it sits
+// behind its "no change" return, and a policy that already holds what the run
+// asks for is exactly that no-op — a session would then be told "no change"
+// where the family's answer is a refusal.
+func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
+	if err := settingsDryRunFlags(settingsWriteOptions{dryRun: o.dryRun, jsonOut: o.asJSON, yes: o.yes}); err != nil {
+		return err
+	}
+	proxy := cmd.Flags().Changed("proxy")
+	if len(o.allowDataTo) > 0 && proxy {
+		return userErr("--allow-data-to and --proxy are two different edits: name one, and repeat the command for the other")
+	}
+	// project_secrets holds the reserved names and nothing else
+	// (config.ValidateProjectSecrets), so a name that is not one of them has no
+	// entry for this command to write. Refused by name, with the list, before
+	// anything is read — and before the session fence, because a name this
+	// block cannot hold is a mistake the person fixes whether or not a session
+	// is what refused the rest.
+	//
+	// The other block is named for the same reason: workflow_secrets holds
+	// exactly the names this one cannot, so an operator who wrote one there
+	// would read this sentence as a typo rather than as "that block's entry is
+	// not this flag's to write". Wiring the flag to it is
+	// docs/project-workflow-secrets' W3, and until that lands the name is
+	// refused here, so the sentence has to be the one that says so.
+	if _, reserved := config.ReservedSecrets[name]; !reserved {
+		return userErr("project_secrets holds the secrets Fugaro stores project-wide, and %s is not one of %s: it has no project_secrets entry to write — a name this local config holds in workflow_secrets has an entry of that block instead, which this flag does not write yet",
+			pluginwire.Printable(name), strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "))
+	}
+	if cmd.Flags().Changed("repo") {
+		return userErr("--repo and the policy flags name different things: project_secrets.%s is the project's own entry, which no repository owns, and a repository's own copy has no policy entry — drop --repo",
+			pluginwire.Printable(name))
+	}
+	key := "project_secrets." + name + ".proxy"
+	if len(o.allowDataTo) > 0 {
+		key = "project_secrets." + name + ".allow_data_to"
+	}
+	command := secretsSetPolicyCommand(o, name, proxy)
+	if marker := agentMarker(os.Getenv); marker != "" {
+		return userErr("refusing to write %s in a coding agent's session (%s is set): it decides which repositories may mount the value and whether the credentials service forwards it, which no plan shows and no dry run brings back; run this yourself at your own terminal: %s; nothing was written",
+			pluginwire.Printable(key), marker, command)
+	}
+
+	sel, lc, err := settingsSelection()
+	if err != nil {
+		return err
+	}
+	old, err := settingsReadDocument(settingsTarget{kind: settingsDocLocal, path: sel.Path})
+	if err != nil {
+		return err
+	}
+	next := old
+	switch {
+	case len(o.allowDataTo) > 0:
+		if next, err = secretsPolicyAddRepos(old, name, o.allowDataTo); err != nil {
+			return userErr("%s: %v", pluginwire.Printable(key), err)
+		}
+	case o.proxy:
+		if next, err = yamledit.SetScalar(next, []string{"project_secrets", name, "proxy"}, "true"); err != nil {
+			return userErr("%s: %v", pluginwire.Printable(key), err)
+		}
+	default:
+		// --proxy=false turns the switch off by taking the key away rather than
+		// by writing `false`: the switch is on or it is not set, and a `false`
+		// left in the file is a second spelling of the same state that every
+		// later read would have to be trusted to read as off. DropEmptyParents,
+		// so an entry whose only member was the switch goes with it.
+		if next, err = yamledit.RemoveKeyWithOptions(next, []string{"project_secrets", name, "proxy"}, yamledit.RemoveOptions{DropEmptyParents: true}); err != nil {
+			return userErr("%s: %v", pluginwire.Printable(key), err)
+		}
+	}
+	after, err := localcfg.Parse(next)
+	if err != nil {
+		return userErr("the local config this would write does not read back: %v", err)
+	}
+	// The block's own rules, read on the bytes this would write and on the one
+	// entry this command touches: an entry names a repository as owner/name
+	// (with "*" inside a segment, never across "/"), and proxy is the Bitbucket
+	// token's switch and nothing else's (D493). The sentences are the loader's,
+	// so the file and this command cannot part company about what they accept —
+	// and the entry alone is validated, so a pre-existing problem in another
+	// entry is that entry's to report and not this command's to refuse for.
+	if problems := config.ValidateProjectSecrets(map[string]config.ProjectSecret{name: after.ProjectSecrets[name]}); len(problems) > 0 {
+		return userErr("%s", problems[0].Message)
+	}
+
+	typed, why := secretsPolicyTyped(o, name, proxy)
+	what := secretsPolicyWhat(o, name, after.ProjectSecrets[name], proxy)
+	if err := applySettingsEdit(cmd, lc, settingsEdit{
+		Path:     sel.Path,
+		Old:      old,
+		New:      next,
+		What:     what,
+		Typed:    typed,
+		TypedWhy: why,
+		Kind:     settingsDocLocal,
+		Command:  command,
+		Yes:      o.yes,
+		DryRun:   secretsPolicyDryRun(o, name, old, next, proxy),
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+// secretsPolicyAddRepos adds each repository to the entry's allow_data_to and
+// returns the bytes that would hold them. AddListItem is the edit and is tried
+// first: it is the one that keeps the file's comments and the shape the operator
+// gave the block.
+//
+// A flow-style list is the one shape it refuses, and it is the shape
+// docs/git-providers.md teaches the operator to write — project_secrets:
+// { bitbucket-token: { allow_data_to: [myworkspace/*] } }. No command of this
+// program wrote that block before this one, so a flow list in it is the
+// operator's own hand, and a refusal here would leave the flag unable to reach
+// the entry the documentation names. The entry is written again instead, in the
+// block style this program writes a list in; the diff and the confirmation show
+// that, so the reformatting is never silent.
+func secretsPolicyAddRepos(old []byte, name string, repos []string) ([]byte, error) {
+	lc, err := localcfg.Parse(old)
+	if err != nil {
+		return nil, fmt.Errorf("the local config does not read back: %w", err)
+	}
+	entry := lc.ProjectSecrets[name]
+	var add []string
+	for _, repo := range repos {
+		if !slices.Contains(entry.AllowDataTo, repo) {
+			add = append(add, repo)
+		}
+	}
+	if len(add) == 0 {
+		// The entry already names every repository the run asked for. There is
+		// nothing to add, and a rewrite here would reformat a list the run does
+		// not change — the refusal below would otherwise be reached for a value
+		// AddListItem never refuses for, because it answers a value that is
+		// already there before it looks at the list's shape.
+		return old, nil
+	}
+	next := old
+	for _, repo := range add {
+		out, err := yamledit.AddListItem(next, []string{"project_secrets", name, "allow_data_to"}, repo)
+		if err == nil {
+			next = out
+			continue
+		}
+		if yamledit.ReasonOf(err) != yamledit.ReasonFlowCollection {
+			return nil, err
+		}
+		return secretsPolicyRewriteEntry(old, name, entry, add)
+	}
+	return next, nil
+}
+
+// secretsPolicyRewriteEntry writes project_secrets.NAME again with add added to
+// its allow_data_to: the entry's own repositories first, in the order the file
+// had them, then the flag's, and proxy written back only when the entry carried
+// it. The entry is taken away and written whole because a member cannot be
+// spliced into a flow sequence — the one edit yamledit refuses — and the values
+// come from the parsed entry rather than from the flag, so a repository the
+// entry already named is not lost with the shape it was spelled in.
+func secretsPolicyRewriteEntry(old []byte, name string, entry config.ProjectSecret, add []string) ([]byte, error) {
+	next, err := yamledit.RemoveKeyWithOptions(old, []string{"project_secrets", name}, yamledit.RemoveOptions{DropEmptyParents: true})
+	if err != nil {
+		return nil, err
+	}
+	for _, repo := range append(slices.Clone(entry.AllowDataTo), add...) {
+		if next, err = yamledit.AddListItem(next, []string{"project_secrets", name, "allow_data_to"}, repo); err != nil {
+			return nil, err
+		}
+	}
+	if entry.Proxy {
+		if next, err = yamledit.SetScalar(next, []string{"project_secrets", name, "proxy"}, "true"); err != nil {
+			return nil, err
+		}
+	}
+	return next, nil
+}
+
+// secretsPolicyTyped classifies the policy write (D1165, D1171): naming one
+// more repository in allow_data_to is a widening — it is one more repository
+// the value is mounted in — and so is turning proxy on, which is the
+// credentials service being handed the token instead of the job. Neither has a
+// narrowing direction here: there is no --remove-data-to, and --proxy=false is
+// the narrowing one and is not typed.
+func secretsPolicyTyped(o secretsOptions, name string, proxy bool) (bool, string) {
+	key := "project_secrets." + pluginwire.Printable(name)
+	var parts []string
+	if len(o.allowDataTo) > 0 {
+		parts = append(parts, key+".allow_data_to is the list of repositories the value is stored for, and naming one more widens where it is mounted")
+	}
+	if proxy && o.proxy {
+		parts = append(parts, key+".proxy hands the token to the credentials service instead of the job")
+	}
+	if len(parts) == 0 {
+		return false, ""
+	}
+	return true, "this widens what the secret reaches: " + strings.Join(parts, ", and ") +
+		", so the project's own name is what confirms it, or --yes outside a coding agent's session"
+}
+
+// secretsPolicyWhat is the sentence the confirmation shows. The list is the one
+// the entry ends up with, read back from the config this would write, and not
+// the flag's values: an entry that already names a repository keeps it, and a
+// sentence built from the flag would print a shorter list than the file it asks
+// to write.
+func secretsPolicyWhat(o secretsOptions, name string, entry config.ProjectSecret, proxy bool) string {
+	key := "project_secrets." + pluginwire.Printable(name)
+	var parts []string
+	switch {
+	case len(o.allowDataTo) > 0:
+		parts = append(parts, fmt.Sprintf("add %s to %s.allow_data_to, so the repositories it names are [%s]",
+			pluginwire.Printable(strings.Join(o.allowDataTo, ", ")), key,
+			pluginwire.Printable(strings.Join(entry.AllowDataTo, ", "))))
+	case proxy:
+		parts = append(parts, "set "+key+".proxy, the credentials service's switch for this token")
+	default:
+		parts = append(parts, "remove "+key+".proxy, turning the credentials service's switch for this token off")
+	}
+	return "write the policy of " + pluginwire.Printable(name) + ": " + strings.Join(parts, "; ")
+}
+
+// secretsPolicyDryRun is the classification a --dry-run answers with: the
+// settings write path's own document for the one key this run writes, with no
+// entry member — the key is a list or a scalar and not an entry of a block, and
+// the value the run would store is not in the document because it is not in the
+// run at all.
+func secretsPolicyDryRun(o secretsOptions, name string, old, next []byte, proxy bool) *settingsDryRun {
+	if !o.dryRun {
+		return nil
+	}
+	key := "project_secrets." + name + ".proxy"
+	if len(o.allowDataTo) > 0 {
+		key = "project_secrets." + name + ".allow_data_to"
+	}
+	return &settingsDryRun{
+		key:      key,
+		layer:    settingsLayerLocal,
+		oldValue: secretsPolicyValue(old, name, proxy),
+		newValue: secretsPolicyValue(next, name, proxy),
+		jsonOut:  o.asJSON,
+	}
+}
+
+// secretsPolicyValue is one key's own value in a document, rendered the way
+// version 1 renders every value: a list as its members comma-separated, a
+// scalar as itself, and "" when the document holds none. proxy is read as "set
+// or not set" rather than as the two booleans, because the switch's off state
+// is the key's absence — the state --proxy=false writes — and a document that
+// spelled it "false" would describe a key the edit never leaves behind.
+func secretsPolicyValue(data []byte, name string, proxy bool) string {
+	lc, err := localcfg.Parse(data)
+	if err != nil {
+		return ""
+	}
+	entry := lc.ProjectSecrets[name]
+	if proxy {
+		if !entry.Proxy {
+			return ""
+		}
+		return "true"
+	}
+	return strings.Join(entry.AllowDataTo, ", ")
+}
+
+// secretsSetPolicyCommand is the command a refusal in a coding agent's session
+// prints for the person to run at their own terminal: this same write, spelled
+// whole, with the flag's values quoted so a name from the command line cannot
+// become a second token of the command the person pastes.
+func secretsSetPolicyCommand(o secretsOptions, name string, proxy bool) string {
+	parts := []string{selfCommand(), "secrets", "set", quoteWord(name)}
+	if len(o.allowDataTo) > 0 {
+		parts = append(parts, "--allow-data-to", quoteWord(strings.Join(o.allowDataTo, ",")))
+	} else if proxy {
+		parts = append(parts, "--proxy="+strconv.FormatBool(o.proxy))
+	}
+	return strings.Join(parts, " ")
 }
 
 // projectScopeName reports whether a no-flag `secrets set name` stores
