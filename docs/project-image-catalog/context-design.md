@@ -233,10 +233,9 @@ definition, the entry's record and the check's own state object, all through `t.
 through `DecideCatalog`'s `in.DefinitionSHA256 != rec.DefinitionSHA256`. Under this amendment it reads
 the same objects **plus one bounded provider read per entry with a context** — a ref resolve, or the
 named paths' identities — and never a checkout, never a blob tree, never a clone. **What that read
-costs is
-the owner's, and it is O2**: the project-level catalog check job would hold a repository credential
-where today it holds none, which is a grant and a Terraform change, and the alternative (the context
-rides `max-age` alone, with no repository read at all) is priced there.
+costs is the owner's, and it is O2**: the project-level catalog check job would hold a repository
+credential where today it holds none, which is a grant and a Terraform change, and the alternative
+(the context rides `max-age` alone, with no repository read at all) is priced there.
 
 ### A6. Bounds, and what a huge context costs
 
@@ -504,9 +503,9 @@ own pins did.
 - **Interface.** A ref → commit read on the provider (GitHub new; Bitbucket's `resolveFullHash`
   reused), `catalog.Fetch` reading the file **at the commit** and answering with it,
   `writeCatalogDockerfile` returning it, and `fugaro image build` recording **that** commit rather than
-  the operator's checkout HEAD. `.SEC.` — a credential path, and the record's meaning is what is being
+  the operator's checkout HEAD. **SEC** — a credential path, and the record's meaning is what is being
   defended.
-- **Files (9).** `internal/gitprov/gitprov.go` (the interface), `internal/gitprov/github/` (the commits
+- **Files (10).** `internal/gitprov/gitprov.go` (the interface), `internal/gitprov/github/` (the commits
   read), `internal/gitprov/bitbucket/` (the export), `internal/gitprov/fake/fake.go`,
   `internal/catalog/fetch.go`, `internal/catalog/fetch_test.go`, `internal/cli/catalog_copy.go`,
   `internal/cli/image_build_catalog.go`, and the two tests
@@ -530,7 +529,7 @@ own pins did.
 - **Interface.** A `catalog-context` step, inserted only when the entry names a context, between
   `credential` and `dockerfile`; the Dockerfile copy written into the tree at its own
   repository-relative path; `--file` added to the build step only for such an entry; the record's new
-  `context_sha256`; `_FUGARO_COMMIT` reaching the build as the resolved commit. `.SEC.` — it runs a
+  `context_sha256`; `_FUGARO_COMMIT` reaching the build as the resolved commit. **SEC** — it runs a
   clone with the repository's credential.
 - **Files (8).** `internal/backend/gcp/catalog.go`, `internal/backend/gcp/build.go` (the copy's
   destination path), `internal/backend/gcp/catalog_test.go` (the *no step clones* assertion becomes
@@ -562,7 +561,7 @@ own pins did.
   `catalog-definition` rule of §A5 — the context's identity from the narrower path list, or from the
   branch head's commit — with the check reading it **without cloning**. Its size depends on **O2**:
   under the recommendation it is a bounded provider read per entry with a context; under the
-  alternative the trigger covers the copy alone and the context rides `max-age`. `.SEC.` — under the
+  alternative the trigger covers the copy alone and the context rides `max-age`. **SEC** — under the
   recommendation the check reads a repository credential.
 - **Files (7).** `internal/imagecheck/check.go`, `internal/imagecheck/check_test.go`,
   `internal/imagecheck/catalog.go`, `internal/cli/image_check_catalog.go`,

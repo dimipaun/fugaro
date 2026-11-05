@@ -256,6 +256,7 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		// A design, and not an approval.
 		"**Status: design only. This is an amendment to [spec.md](spec.md), it is not approved, and no task in",
 		"**Nothing here is approved to build.**",
+		"marked **SEC** gets the owner's independent review in addition to the usual one.",
 		// The amended spec sentence, kept verbatim, and the amendment beside it.
 		"That is the issue's own requirement and it is what makes this amendment additive:",
 		"Build context: a catalog entry can set it explicitly. By default, a repo-referenced Dockerfile uses",
