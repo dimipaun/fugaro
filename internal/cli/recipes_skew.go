@@ -1393,6 +1393,34 @@ func checkCloneReviewLevelsImage(lc *localcfg.Config, spec *task.Spec, subject s
 	return checkCloneImageSince(lc, spec, reviewLevelsSince, subject, reviewLevelsKnows, reviewLevelsAlt, warn)
 }
 
+// reviewJobKnows names, for the gate's messages, what the job image's runner
+// has to know: the review-only variant of the job it is in, and the marker a
+// launch on it sets, which is the whole of what a review run branches on
+// (internal/runner's reviewJob).
+const reviewJobKnows = "the review-only job variant and the review job's own marker (FUGARO_REVIEW_JOB, mode: review)"
+
+// reviewJobAlt is the refusal's other way out, as reviewLevelsAlt's is: the
+// update deploys the variants beside the coding jobs and rebuilds this
+// repository's job images behind its own confirmation.
+const reviewJobAlt = "; or run fugaro update, which is the whole upgrade: it brings the installation to this release, deploys the review-only job beside each coding job and rebuilds this repository's job images behind its own confirmation"
+
+// checkReviewJobImage refuses a launch that carries mode: review (fugaro
+// review): the launch starts CSR7's review-only variant and marks the
+// execution, and an installation older than reviewJobSince has neither the
+// variant deployed beside its coding job nor a runner that reads the marker —
+// so a review it accepted would run the coder's own job, with the App key the
+// review container exists to be without. Judged from the deployed job's build
+// record, as every checkImageSince gate's is.
+func checkReviewJobImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
+	return checkImageSince(ctx, env, slug, spec, kind, reviewJobSince, "a review launch", reviewJobKnows, reviewJobAlt, warn)
+}
+
+// checkCloneReviewJobImage is checkReviewJobImage for a checkout: clone
+// workflow: see checkCloneImageSince.
+func checkCloneReviewJobImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer) error {
+	return checkCloneImageSince(lc, spec, reviewJobSince, "a review launch", reviewJobKnows, reviewJobAlt, warn)
+}
+
 // refuseClonesNotShipped refuses, before any cloud effect, deploying or
 // moving a checkout: clone workflow's job while cloneShipped is false (0.7.0
 // safety fix round 2): checkCloneImageSince's launch-time refusal alone

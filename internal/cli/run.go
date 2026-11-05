@@ -904,6 +904,22 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 				return launchResult{}, err
 			}
 		}
+		if spec.Mode == recipe.ModeReview {
+			// The review job's gate: a review launch starts the review-only
+			// variant, which an image older than reviewJobSince has neither
+			// deployed beside its coding job nor a runner that reads the
+			// launch's marker. Judged from the deployed job's build record as
+			// the gates above are, and on the mode alone — the field only
+			// `fugaro review` writes — so a review never reaches a job that
+			// would run it on the coder's container.
+			if clone {
+				if err := checkCloneReviewJobImage(env.lc, spec, warn); err != nil {
+					return launchResult{}, err
+				}
+			} else if err := checkReviewJobImage(ctx, env, slug, spec, kind, warn); err != nil {
+				return launchResult{}, err
+			}
+		}
 		// The author, last of the fields this launch decides: the key that
 		// opted the repository in is judged first and refuses an image that
 		// cannot read it, the field is dropped rather than refused where the
@@ -3332,6 +3348,17 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	if err != nil {
 		return res, err
 	}
+	// A review launch runs on the review-only variant of that job and carries
+	// the marker its runner branches on (review.go, CSR7): never on the
+	// shared job itself, which mounts the App key the review container exists
+	// to be without, and always marked, so the run records its verdict in the
+	// artifact instead of writing a comment on the pull request it read.
+	reviewJob := spec.Mode == recipe.ModeReview
+	if reviewJob {
+		if job, err = env.reviewJobFor(ctx, job); err != nil {
+			return res, err
+		}
+	}
 	hook(launchHooks.beforeClaim)
 	holder := claimHolder()
 	for round := 0; ; round++ {
@@ -3469,6 +3496,14 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		jobName = job.Name
 	}
 	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName)
+	if reviewJob {
+		// The marker is the whole fact (internal/runner's EnvReviewJob): the
+		// variant's own deployment carries the credentials service's address,
+		// and this is the one thing about the execution the launcher has to
+		// add — a task field is a repository's to write, and which job is
+		// running is the installation's own fact.
+		lspec.Env = append(slices.Clone(lspec.Env), runner.EnvReviewJob+"=1")
+	}
 	ref, err := env.be.Launch(lctx, lspec)
 	cancel()
 	// A backend error may quote the request it was given; the key is in that
