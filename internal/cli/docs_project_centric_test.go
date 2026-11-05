@@ -400,7 +400,7 @@ func TestChecklistHasCheck52(t *testing.T) {
 		// FUGARO_RUN, which only the launcher's override sets. Without the
 		// sentence, a reader takes the failed execution for the probe's answer.
 		"An execution these override calls start is expected to end as a *failed* run, and that is not the probe's answer",
-		"the base image's `CMD [\"fugaro\", \"exec\"]` (`images/base/Dockerfile:293`)",
+		"the base image's `CMD [\"fugaro\", \"exec\"]` (`images/base/Dockerfile:338`)",
 		"the failure of these executions' own tasks recorded as the expected outcome, not as the answer",
 	})
 

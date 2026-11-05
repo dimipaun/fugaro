@@ -1,8 +1,10 @@
 # Pending workflow changes
 
-**One file is pending: `console-windows.yml`** (the console's Windows
+**Two files are pending: `console-windows.yml`** (the console's Windows
 installer pack, 2026-10-20 — a release-time job, not a pull-request check; see
-`## console-windows.yml` below).
+`## console-windows.yml` below) **and `images.yml`** (the images workflow with
+the nightly's republish of an unchanged base skipped, 2026-11-05, issue #1745;
+see `## images.yml` — staged again below).
 **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the shared package's test job, `shared-tests.yml` (mobile plan Task P4.3), was copied into `.github/workflows/` by the owner on 2026-10-22 (its staged copy is removed; see `## shared-tests.yml` below); Dependabot's watch over `console/`'s npm dependencies, `dependabot-console.yml`, was copied over `.github/dependabot.yml` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## dependabot-console.yml` below); the mobile app's release workflow, `mobile-release.yml`, was copied into `.github/workflows/` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## mobile-release.yml` below); the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508); and `images.yml` was copied in and its staged copy removed in `6b57ba9`, staged again by C1.14 for the credentials service's image leg, and that copy was applied and removed on 2026-10-30 (see `## images.yml` below). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
 
 - **`shared-tests.yml`** — the whole CI job for `shared/`'s tests, mobile plan Task **P4.3**: a `main`-filtered push and pull request under `shared/**`, `contents: read`, `npm ci` and `npm test` on Node 22 and Node 26, and every `shared/*/mutation-proof.sh` in the package, every action pinned by full commit SHA. `shared/` is outside the Go module, so no job in `ci.yml` runs it. **Applied, not pending:** it was staged by a Fugaro run that cannot push a `.github/workflows/**` change, copied into `.github/workflows/shared-tests.yml` on 2026-10-22 and its staged copy removed; see `## shared-tests.yml` below, which also records what the job will report on `main`.
@@ -38,7 +40,12 @@ git rm docs/pending-workflows/website-preview.yml docs/pending-workflows/website
 git commit -m "..."
 ```
 
-**`images.yml`'s own copy-in steps, in order.** (1) Copy the file in with
+**`images.yml`'s copy-in steps for the C1.14 staging that applied them, in order**
+(kept as the record of that copy-in; the staging pending today is
+`## `images.yml` — staged again` below, which carries its own copy-in block and its own
+pair of sentences to rewrite. What follows describes the **credentials** copy-in: its
+(3) and (5) are about images and secrets this staging does not touch). (1) Copy the file
+in with
 
 ```sh
 cp docs/pending-workflows/images.yml .github/workflows/images.yml
@@ -2388,6 +2395,111 @@ has exactly two: `firebasehosting.admin` and `firebasehosting.viewer`); a
 permission error naming another API points at the two add-on roles
 `docs/website/preview-promote.md` lists. The copy-in is the owner's, and the
 first real run is what settles those.
+
+## `images.yml` — staged again: the nightly stops republishing an unchanged base
+
+**Status: staged and pending (2026-11-05, issue #1745).** The staged file is the
+running `.github/workflows/images.yml` **plus one step and one `if`**, so the copy-in
+diff is those two hunks and nothing else. The running file holds neither. A Fugaro run
+may not write `.github/workflows/**` — GitHub refuses the push — so the change is here
+for the owner to copy in; `## `images.yml`` below is the record of the *previous*
+staging (the credentials service's image leg, plan task C1.14), which is applied, and
+this one leaves every job, pin and secret of it alone.
+
+**What it is for.** The nightly (the `images.yml` `schedule`, which builds the latest
+release tag's tree, not `main`) pushes what it builds under that release's own tags:
+`:$VERSION-$arch`, `:$VERSION`, and `:$MAJOR` when the release was a major. Two builds
+of the same tree used to differ by the clock — the byproducts of an install, the Node
+compile cache, a timestamped export — so every quiet night moved `:$VERSION` onto a
+rebuild whose only difference was when it ran, and with it the tags `fugaro update` and
+every installation resolve. The first half of #1745 made that build byte-for-byte
+reproducible for identical inputs (the base `Dockerfile`, `images/base/byproducts.sh`
+and `images/build-base.sh`'s `SOURCE_DATE_EPOCH` plus `rewrite-timestamp=true`);
+this is the second half, the republish itself.
+
+**What the step decides, and in what order.** A new step in `publish-base`,
+`Is the base already published?` (id `unchanged`), runs **before** the step that
+pushes, `if: github.event_name != 'push'`. For each of `amd64` and `arm64` it asks the
+cheap question first: `docker buildx imagetools inspect --raw $repo:$VERSION-$arch`
+against `docker image inspect --format '{{.Id}}' fugaro-base:ci` (the config digest of
+what this run just built) — one registry read, **no pull** when they agree. When they
+disagree it pulls the published image and compares what the image *is*, read with
+`docker create` and `docker cp` so the other architecture is readable on this runner
+without starting a container: `/etc/fugaro/base.json` (the pins the build says it used),
+`/usr/local/bin/fugaro` (the tree's own binary — `Version` and `Commit` are linked into
+it, so another tree cannot answer "same") and the sorted `Package:`/`Version:` pairs of
+dpkg's status. **Both** architectures agreeing is a skip; a tag that is not there, a
+different pins file, a different binary, or one architecture changed and the other not
+all publish both.
+
+**A skip leaves every tag where it is**, because nothing is pushed: the index step
+(`id: index`) is gated `if: github.event_name == 'push' || steps.unchanged.outputs.unchanged != 'true'`
+and writes `unchanged=true` to the run summary. `verify-public` still runs afterwards
+and pulls back the tags the release names, so the check is unaffected and its pull-back
+is what proves they still resolve. **A tag push never skips** — the decision step's own
+`if` is `github.event_name != 'push'` — because the `sign` and `-pinned` steps after the
+push need the digest the index step reports, and a re-run of a release must publish,
+sign and re-pin whatever the registry says rather than conclude it has nothing to do.
+Nothing else moves: the digest is still read only from `imagetools create
+--metadata-file`, `sign`/`verify`/`pinned` still run only on a push, and `version`'s
+version picking, `verify-public`'s pull-back loop, the runners, the artifacts and the
+credentials job are untouched.
+
+**The two sentences this copy-in rewrites**, because both name the files this
+directory holds and both are held to the directory — the first by the Go test family's
+`pendingWorkflows` (through `TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere`), the
+second by `website/test/readme.mjs`, which reads the whole flattened page. Staging this
+file is what made them say "two"; with the staged copy gone, the directory holds
+`console-windows.yml` alone again.
+
+This directory's opening line, which stops at the end of its last sentence (the
+"**Two other files stay staged here by design**" sentence after it does not move):
+
+```
+**One file is pending: `console-windows.yml`** (the console's Windows
+installer pack, 2026-10-20 — a release-time job, not a pull-request check; see
+`## console-windows.yml` below).
+```
+
+And the last paragraph of `website/README.md`, whose first sentence goes back to what it
+said before this file was staged — and whose "**Neither** is this site's" goes back to
+its "**It is not** this site's":
+
+```
+`docs/pending-workflows/` now holds one pending workflow,
+`docs/pending-workflows/console-windows.yml` — the console's Windows
+installer pack, which runs at release time only rather than on a pull request, and is copied in
+only after the packer and the unit suite can pass on a Windows runner.
+```
+
+**To copy it in**, from the repository root, in one commit:
+
+```sh
+cp docs/pending-workflows/images.yml .github/workflows/images.yml
+git rm docs/pending-workflows/images.yml
+git add -A
+git commit -m "images: a nightly leaves an unchanged base where it is (issue #1745)"
+```
+
+The `git rm` is load-bearing, as it is for every other file here: while the staged copy
+exists, `images/base_workflow_test.go`'s `readWorkflow` reads *it*, so leaving it in
+place would freeze the signing chain's checks on its bytes and hide a later edit — or a
+deletion — of the file that runs. Nothing else goes in that commit; in particular
+`docs/release.md`'s `## What a tag does` is unchanged by this staging (the images, the
+smoke tests and the `-pinned` tag are all the same), and the only other edits the
+copy-in needs are the two sentences above.
+
+**What is pinned, and what is not.** `images/base_publish_skip_test.go` holds this half
+of the change in two ways: it reads the workflow (the decision step must exist, run
+before the push it gates, run on everything but a tag push, hand its answer on through
+`$GITHUB_OUTPUT`, read all three files with `docker create`, and never push; the index
+step must read that answer and never be skippable on a push) and it runs the step's own
+shell against a docker CLI stub over the six states the nightly can be in — the published
+tags already naming this build, another clock with the same pins and packages, another
+tree's base, one architecture changed, one arch agreeing by digest while the other agrees
+by content, and nothing published under the tag yet. **Not verified:** the step has never
+run against a real registry or against a real arm64 image, so what is checked offline is
+the decision on stubbed answers, not the three docker commands themselves.
 
 ## `images.yml`
 
