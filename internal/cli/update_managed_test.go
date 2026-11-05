@@ -1118,6 +1118,69 @@ func TestUpdateManagedPolicyStageRefusesTheTypedLoosening(t *testing.T) {
 	}
 }
 
+// TestUpdateManagedPolicyStageRefusesTheAccountChoiceKeys: the account-choice
+// members are the second thing a publish can widen that is not a ceiling, and
+// the gate refuses them by the same rule. Setting one names the credential a
+// mixed run's review goes out on (docs/design/mixed-credentials.md §11), which
+// is the project's decision and not a coding agent's session's, so the step
+// takes the Typed class (D846) and D1026 admits no plan gate's answer for it:
+// the node keeps what it had, nothing is written, and nothing is recorded.
+//
+// This is B7's second half. Carrying the keys into the node without classifying
+// them would hand an agent's session the one publish nobody was asked about:
+// the drift closes on `fugaro update`, and the run that closes it is the
+// operator's own at a terminal.
+func TestUpdateManagedPolicyStageRefusesTheAccountChoiceKeys(t *testing.T) {
+	r, db := updateBudgetRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	t.Setenv("CLAUDECODE", "1")
+	isolateGateCredentials(t)
+	// This machine's file names the account for the project and for the review
+	// stage; the node published below carries neither member. The ceiling is the
+	// one thing the node DOES state differently, and it states a HIGHER one, so
+	// the publish narrows it: what refuses this step is the account and nothing
+	// else, which is why the node's ceiling is asserted to be unchanged rather
+	// than read as the reason.
+	r.appendConfig(t, accountChoiceConfigYAML)
+	r.save(t)
+	updating(t, r)
+	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
+	db.Set(projectpolicy.PathShared(), staleBudgetNode())
+
+	got, err := updateRun(t, r, "update", "--yes")
+	if err == nil {
+		t.Fatalf("a managed project's agent session set the accounts the review credential goes out on:\n%s", got)
+	}
+	head := "[needs you]  " + initflow.Policy
+	if !strings.Contains(got, head) {
+		t.Fatalf("the run did not reach the policy stage, so nothing here was judged:\n%s", got)
+	}
+	line := got[strings.Index(got, head):]
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	if !strings.Contains(line, managedmode.NotConverged) {
+		t.Errorf("the policy step is the user's in a sentence that is not the gate's: %s", line)
+	}
+	if !strings.Contains(line, "the step's confirmation class is Typed, which no plan gate admits (D1026)") {
+		t.Errorf("the refusal does not name the class rule that refused the node: %s", line)
+	}
+	account, stages := accountMembersOn(t, db)
+	if account != "" || len(stages) != 0 {
+		t.Errorf("the refused step wrote the account members anyway: %q / %v", account, stages)
+	}
+	if got := ceilingOn(t, db); got != 9 {
+		t.Errorf("the published ceiling is %v, want the 9 it had: the refused step wrote the local config's 5", got)
+	}
+	for _, rec := range audits(t, r) {
+		for _, rule := range rec.Rules {
+			if strings.Contains(rule, "not behind the published node") {
+				t.Errorf("a step the gate never judged left a record: %+v", rec)
+			}
+		}
+	}
+}
+
 // TestUpdateManagedRefusesTheFirstPolicyPublish: the first node of a managed
 // project is the owner's to write, whichever door the session came through —
 // a first publish has no published list for its allow-list to be unchanged or
