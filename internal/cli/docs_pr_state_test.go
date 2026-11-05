@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -224,6 +225,100 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 // fcCensusRE is the backlog index's own census, which the design quotes and
 // leaves alone: a count of items in each state, whatever the numbers are.
 var fcCensusRE = regexp.MustCompile(`[0-9]+ items: [0-9]+ open, [0-9]+ closed, [0-9]+ dropped\.`)
+
+// fcStatusWriterRE is one statement that assigns a terminal status to a
+// record: the shape §1 of the design counts. The character class around the
+// assignment is what keeps a comparison out of the census -- `rec.Status ==
+// runstore.StatusRunning` and `rec.Status != runstore.StatusSucceeded` are
+// both reads, and the first draft of the design's list was wrong precisely
+// because it was made by eye rather than by this.
+var fcStatusWriterRE = regexp.MustCompile(`\brec\.Status[^=!]*= runstore\.Status`)
+
+// TestDocsFailureClassCensusMatchesTheRunner: the design says how many
+// statements write a run's terminal status, in how many functions and files,
+// and those three numbers are the census of the tree rather than a memory of
+// it.
+//
+// The document's counts were wrong when it was written -- it said fifteen
+// places and listed eighteen functions, while fourteen statements and a
+// fourteen-helper list followed two paragraphs later -- and a design whose
+// entire argument is "these fifteen writers become one" is worth nothing if
+// the number is a recollection. Counting here is what makes the claim checkable
+// in both directions: the runner gaining a writer makes the design and this pin
+// fail together, which is the moment somebody has to decide whether the new
+// statement goes through recordEnd.
+func TestDocsFailureClassCensusMatchesTheRunner(t *testing.T) {
+	paths, err := filepath.Glob("../../internal/runner/*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	statements := 0
+	files := map[string]bool{}
+	functions := map[string]bool{}
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(string(data), "\n")
+		for i, line := range lines {
+			if !fcStatusWriterRE.MatchString(line) {
+				continue
+			}
+			statements++
+			files[filepath.Base(path)] = true
+			if fn := fcEnclosingFunc(lines[:i+1]); fn != "" {
+				functions[fn] = true
+			}
+		}
+	}
+	if statements == 0 {
+		t.Fatalf("no statement of internal/runner assigns a runstore.Status to a record: the census the design rests on found nothing, so this check passes vacuously")
+	}
+	want := fmt.Sprintf("written in %d statements, in %d functions across %d files", statements, len(functions), len(files))
+	doc := flattenDoc(readDoc(t, fcDoc))
+	if !strings.Contains(doc, want) {
+		t.Errorf("%s no longer says %q: the design's first paragraph is a census of the runner's terminal-status writers, and %d of them in %d functions across %d files (%s) is what the tree holds",
+			fcDoc, want, statements, len(functions), len(files), strings.Join(fcNames(files), ", "))
+	}
+}
+
+// fcNames is a set's members, sorted, for a failure message a reader can act on.
+func fcNames(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for name := range set {
+		out = append(out, name)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// fcEnclosingFunc is the name of the function the lines end inside: the last
+// top-level declaration above them, "" when there is none. It is how the
+// census counts functions rather than statements -- a count of statements alone
+// would not notice a writer that moved into a helper.
+func fcEnclosingFunc(upto []string) string {
+	for i := len(upto) - 1; i >= 0; i-- {
+		if !strings.HasPrefix(upto[i], "func ") {
+			continue
+		}
+		rest := strings.TrimPrefix(upto[i], "func ")
+		if strings.HasPrefix(rest, "(") {
+			if cut := strings.Index(rest, ")"); cut >= 0 {
+				rest = rest[cut+1:]
+			}
+		}
+		rest = strings.TrimSpace(rest)
+		if cut := strings.Index(rest, "("); cut >= 0 {
+			rest = rest[:cut]
+		}
+		return strings.TrimSpace(rest)
+	}
+	return ""
+}
 
 // TestDocsFailureClassDesignCitationsResolve: every file and line the design
 // cites exists, and the shortened names it uses resolve to exactly one file --
