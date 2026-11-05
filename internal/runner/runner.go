@@ -3374,6 +3374,12 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.fail("stage " + name + ": " + err.Error())
 		return agent.Result{}, false, err
 	}
+	r.stageN[name]++
+	n := r.stageN[name]
+	started := r.d.Now()
+	r.rec.Stage = name
+	r.save(ctx)
+	log := r.d.Log.With("stage", name)
 	// Refresh before the stage's environment is built, so the agent is handed
 	// the new token (the environment is a copy of the run's own), and before
 	// the redactors below are built, so they know it. Bounded on its own: a
@@ -3392,12 +3398,6 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.fail("stage " + name + ": " + envErr.Error())
 		return agent.Result{}, false, envErr
 	}
-	r.stageN[name]++
-	n := r.stageN[name]
-	started := r.d.Now()
-	r.rec.Stage = name
-	r.save(ctx)
-	log := r.d.Log.With("stage", name)
 	log.Info("stage started", "n", n)
 
 	var transcript bytes.Buffer
