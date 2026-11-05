@@ -160,32 +160,55 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	// node carries and the file does not is a stage the publish takes off the
 	// account, and comparing the file's own stages alone would leave the
 	// runner serving it there.
-	add("default_claude_account", lc.DefaultClaudeAccount, p.DefaultClaudeAccount, false)
-	for _, stage := range accountStageNames(lc, p) {
-		var mine string
-		if c, ok := lc.ClaudeAccountStages[stage]; ok {
-			mine = c.ClaudeAccount
-		}
-		add("claude_account_stages."+stage, mine, p.ClaudeAccountStages[stage], false)
+	fileAccounts, nodeAccounts := configAccountValues(lc), policyAccountValues(p)
+	for _, member := range accountChoiceNames(fileAccounts, nodeAccounts) {
+		add(member, fileAccounts[member], nodeAccounts[member], false)
 	}
 	return out
 }
 
-// accountStageNames is the stages either document names an account for, in the
-// order a diff reads: this file's own entries, and the entries the node
-// carries. A stage only the node names is a member this publish would drop,
-// which is a difference like any other (policyConfigDrift).
-func accountStageNames(lc *localcfg.Config, p *projectpolicy.Policy) []string {
-	names := make(map[string]bool, len(lc.ClaudeAccountStages)+len(p.ClaudeAccountStages))
+// stageAccountMember is the member a stage's account is published under: the
+// node spells the stage accounts as one member keyed by stage, so this is the
+// key inside it that a diff and a widening sentence name.
+func stageAccountMember(stage string) string { return "claude_account_stages." + stage }
+
+// configAccountValues is the account-choice members this file states, keyed the
+// way the published node spells them, with the keys it states nothing for left
+// out. The two are the keys `settings set` writes (internal/settings, the
+// claude_account entries), and the key names are what the diff and the widening
+// sentence show an operator.
+func configAccountValues(lc *localcfg.Config) map[string]string {
+	out := map[string]string{}
+	if lc.DefaultClaudeAccount != "" {
+		out["default_claude_account"] = lc.DefaultClaudeAccount
+	}
 	for stage, choice := range lc.ClaudeAccountStages {
 		if choice.ClaudeAccount != "" {
-			names[stage] = true
+			out[stageAccountMember(stage)] = choice.ClaudeAccount
 		}
 	}
-	for stage := range p.ClaudeAccountStages {
-		names[stage] = true
+	return out
+}
+
+// accountChoiceNames is the account-choice members either side names, in the
+// order both diffs read: the project's default, then the stages by name.
+func accountChoiceNames(sides ...map[string]string) []string {
+	names := map[string]bool{}
+	for _, side := range sides {
+		for name := range side {
+			names[name] = true
+		}
 	}
-	return slices.Sorted(maps.Keys(names))
+	var out []string
+	if names["default_claude_account"] {
+		out = append(out, "default_claude_account")
+	}
+	for _, name := range slices.Sorted(maps.Keys(names)) {
+		if name != "default_claude_account" {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // jsonText is a value as the two documents spell it, with the empty forms
@@ -348,23 +371,27 @@ func policyLoosening(old, new *projectpolicy.Policy) []policyCeiling {
 func policyAccountWidening(old, new *projectpolicy.Policy) []policyCeiling {
 	was, now := policyAccountValues(old), policyAccountValues(new)
 	var out []policyCeiling
-	for _, member := range slices.Sorted(maps.Keys(now)) {
-		before := was[member]
-		if before == now[member] {
+	for _, member := range accountChoiceNames(was, now) {
+		after := now[member]
+		// A member the node states nothing for is the account this publish
+		// REMOVES, which is the tightening direction and is skipped; a member
+		// the two name alike is no change at all.
+		if after == "" || after == was[member] {
 			continue
 		}
+		before := was[member]
 		if before == "" {
 			before = "(not set)"
 		}
-		out = append(out, policyCeiling{Member: member, Was: before, Now: now[member]})
+		out = append(out, policyCeiling{Member: member, Was: before, Now: after})
 	}
 	return out
 }
 
 // policyAccountValues is a node's account-choice members, keyed the way the
 // node's own document spells them, with the members it states nothing for left
-// out: the two are the keys the drift above compares, and the key names are
-// what the widening sentence shows the operator.
+// out. It is the node side of configAccountValues, and the two are one
+// comparison: what this file states and what the publish would carry.
 func policyAccountValues(p *projectpolicy.Policy) map[string]string {
 	out := map[string]string{}
 	if p == nil {
@@ -375,7 +402,7 @@ func policyAccountValues(p *projectpolicy.Policy) map[string]string {
 	}
 	for stage, account := range p.ClaudeAccountStages {
 		if account != "" {
-			out["claude_account_stages."+stage] = account
+			out[stageAccountMember(stage)] = account
 		}
 	}
 	return out

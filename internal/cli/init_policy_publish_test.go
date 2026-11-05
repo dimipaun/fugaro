@@ -142,6 +142,28 @@ func nodeCeiling(t *testing.T, f *projectFixture) float64 {
 	return ceilingOn(t, f.db)
 }
 
+// accountMembersOn is the published node's account-choice members as the
+// database stores the document: the project's default, and the stage accounts by
+// stage. A member the node carries nothing for is left out, which is what a
+// refusal that wrote nothing reads as.
+func accountMembersOn(t *testing.T, db *gcpfake.RTDB) (string, map[string]string) {
+	t.Helper()
+	n, ok := db.Value(projectpolicy.PathShared()).(map[string]any)
+	if !ok {
+		t.Fatalf("the node at %s is %T (%v)", projectpolicy.PathShared(), db.Value(projectpolicy.PathShared()), db.Value(projectpolicy.PathShared()))
+	}
+	account, _ := n["default_claude_account"].(string)
+	stages := map[string]string{}
+	if raw, ok := n["claude_account_stages"].(map[string]any); ok {
+		for stage, v := range raw {
+			if name, ok := v.(string); ok {
+				stages[stage] = name
+			}
+		}
+	}
+	return account, stages
+}
+
 // ceilingOn is nodeCeiling for a database held without a fixture — the upgrade
 // door's tests hold the fake itself. The database hands numbers back as
 // json.Number when the write came over HTTP and as float64 when the fake was
@@ -1136,6 +1158,151 @@ func typedRig(t *testing.T, f *projectFixture) *migrationRig {
 	return h
 }
 
+// accountChoiceConfigYAML is the account-choice keys as this machine's own file
+// writes them: one account, named for the project and for the review stage
+// (docs/design/mixed-credentials.md §11, rungs 2 and 4). The account is defined
+// here because a key that names an account this file does not define is refused
+// at load, and no profile names it because the keys are what the runner reads
+// it off and not a profile's list.
+const accountChoiceConfigYAML = "claude_accounts:\n  team-b:\n    allow_data_to: [acme/app]\n" +
+	"default_claude_account: team-b\n" +
+	"stages:\n  review:\n    claude_account: team-b\n"
+
+// accountChoiceFixture is the installation B7 is about: the published node is
+// what this machine's config stated BEFORE the keys were set, built by the
+// publisher's own builder from that config, so the account members are the only
+// difference between the two documents — and the file now carries both keys. A
+// node current in every other member is what makes the stage's own comparison
+// the only thing that can see the gap: without it, a budget ceiling would carry
+// the publish and the test would pass whatever the account members did.
+func accountChoiceFixture(t *testing.T) *projectFixture {
+	t.Helper()
+	f := newProjectFixture(t, "")
+	lc, err := localcfg.Load(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _, _, err := policyNodeForPublish(t.Context(), lc, nil, nil, false, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var node map[string]any
+	if err := json.Unmarshal(body, &node); err != nil {
+		t.Fatal(err)
+	}
+	f.db.Set(projectpolicy.PathShared(), node)
+	rewriteProjectConfig(t, f, accountChoiceConfigYAML)
+	return f
+}
+
+// TestUpdateConvergesANodeThatLacksTheAccountChoiceKeys is B7's own test and
+// the owner's rule of 2026-10-30 (HARD RULE, CLAUDE.md) at this state: the node
+// at the shared path carries no account member, this machine's file sets both
+// keys, and one `fugaro update` has to converge it — the runner reads those
+// keys off the node and nothing else (resolveMixedStages, mixedDefaultAccount),
+// and a second command is the operator step the rule forbids.
+//
+// Red before the drift comparison: the stage found nothing to do with a node
+// that is current in every other member, so the keys stayed local — a launch
+// that admits the mix and a job that mounts the token beside a runner that
+// never sees the account and serves the review stage on the gateway.
+//
+// The confirmation is the class of the widening it is, so the run is at the
+// operator's own terminal with the project's name typed, and the second half of
+// the test is the convergence itself: the next run reads the node, finds the
+// keys and has nothing left to do.
+func TestUpdateConvergesANodeThatLacksTheAccountChoiceKeys(t *testing.T) {
+	f := accountChoiceFixture(t)
+	h := typedRig(t, f)
+	if err := h.check(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the project's name typed at a terminal did not confirm the publish: %v\n%s", err, out)
+	}
+	p := publishedPolicy(t, f)
+	if p.DefaultClaudeAccount != "team-b" || p.ClaudeAccountStages["review"] != "team-b" {
+		t.Errorf("the published node states default_claude_account %q and review %q, want the config's team-b: the runner reads the mix off nothing else",
+			p.DefaultClaudeAccount, p.ClaudeAccountStages["review"])
+	}
+
+	// The convergence: a run of the same command afterwards reads a node that
+	// carries what the file states and has nothing to do.
+	next := newMigrationRig(t, f, &initOptions{})
+	st, err := next.s.Check(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Done {
+		t.Errorf("the run after the publish says %s %q, want the stage done: the installation is not converged", st.State, st.Detail)
+	}
+}
+
+// TestUpdateTakesTheStageOffAnAccountTheFileNoLongerNames is the other
+// direction of the same comparison, and it is carried because the publisher
+// copies these members from the file rather than keeping the node's: a node that
+// names an account this machine's file is silent about is a node no run of the
+// project states, and the publish that follows is what takes the stage off it.
+// The removal is the tightening direction, so --yes confirms it as it confirms
+// any other publish that narrows.
+func TestUpdateTakesTheStageOffAnAccountTheFileNoLongerNames(t *testing.T) {
+	f := accountChoiceFixture(t)
+	h := typedRig(t, f)
+	if err := h.check(); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := h.apply(t, false); err != nil {
+		t.Fatalf("the publish was refused: %v\n%s", err, out)
+	}
+	// This machine's file is rewritten without the keys, the way another
+	// machine's file that never had them reads: the node is the source the
+	// config no longer states, and the publish that follows takes the stage off
+	// the account rather than leaving the node and the file disagreeing.
+	rewriteProjectConfig(t, f, "")
+	back := newMigrationRig(t, f, &initOptions{})
+	if err := back.check(); err != nil {
+		t.Fatal(err)
+	}
+	// The removal direction asks for no typed name — it takes a credential
+	// away — so --yes carries it, and the node it writes names no account.
+	if out, err := back.apply(t, true); err != nil {
+		t.Fatalf("--yes did not confirm a publish that drops the account members: %v\n%s", err, out)
+	}
+	p := publishedPolicy(t, f)
+	if p.DefaultClaudeAccount != "" || len(p.ClaudeAccountStages) != 0 {
+		t.Errorf("the published node still names %q / %v and the file names none", p.DefaultClaudeAccount, p.ClaudeAccountStages)
+	}
+}
+
+// TestUpdatePublishAccountKeysRefuseYesAlone: setting an account for the
+// project is a widening of who holds the review credential, so the publish
+// takes the stage's Typed class (D846) and --yes alone does not stand in for
+// the name — the sentence names the member and the account it would set.
+func TestUpdatePublishAccountKeysRefuseYesAlone(t *testing.T) {
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+
+	f := accountChoiceFixture(t)
+	h := newMigrationRig(t, f, &initOptions{})
+	if err := h.check(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := h.apply(t, true)
+	if err == nil {
+		t.Fatalf("--yes alone published the accounts the project's review credential goes out on:\n%s", out)
+	}
+	for _, want := range []string{"default_claude_account", "claude_account_stages.review", "(not set)", "team-b", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if p := publishedPolicy(t, f); p.DefaultClaudeAccount != "" || len(p.ClaudeAccountStages) != 0 {
+		t.Errorf("the refused publish wrote the keys anyway: %q / %v", p.DefaultClaudeAccount, p.ClaudeAccountStages)
+	}
+}
+
 // TestPolicyLooseningCoversEveryCeiling is the comparison itself, member by
 // member. Each kind of ceiling is one member and each way of loosening one is a
 // case, so a member dropped from the list and a direction the comparison stops
@@ -1442,6 +1609,140 @@ func TestPolicyConfigDriftSeesTheDerivedAccounts(t *testing.T) {
 			}
 			if !slices.Equal(got, tc.want) {
 				t.Errorf("policyConfigDrift = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPolicyConfigDriftSeesTheAccountChoiceKeys is the comparison itself, both
+// keys and both directions. The file is the only store of these members and the
+// publish is what carries them (§11): a config that sets one while the node
+// carries none is the gap `fugaro update` has to close, and a node that names
+// one the file does not is the same difference from the other side — the
+// publisher copies these keys and keeps none of them, so the publish takes the
+// stage off the account.
+//
+// The members are asserted by name, so a comparison that fires on the wrong
+// member (or on the whole block) fails here rather than in a scenario that only
+// ever sets the keys the local config states.
+func TestPolicyConfigDriftSeesTheAccountChoiceKeys(t *testing.T) {
+	config := func(mut func(*localcfg.Config)) *localcfg.Config {
+		lc := &localcfg.Config{Budget: &localcfg.Budget{Mode: "enforce", PerRunUSD: 5}}
+		if mut != nil {
+			mut(lc)
+		}
+		return lc
+	}
+	node := func(defaultAccount string, stages map[string]string) *projectpolicy.Policy {
+		return &projectpolicy.Policy{
+			Version:              projectpolicy.Version,
+			Budget:               projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5},
+			DefaultClaudeAccount: defaultAccount,
+			ClaudeAccountStages:  stages,
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		lc   *localcfg.Config
+		node *projectpolicy.Policy
+		want []string
+	}{
+		{
+			name: "the file names a default the node does not carry",
+			lc:   config(func(lc *localcfg.Config) { lc.DefaultClaudeAccount = "team-b" }),
+			node: node("", nil),
+			want: []string{"default_claude_account"},
+		},
+		{
+			name: "the file names a stage account the node does not carry",
+			lc:   config(func(lc *localcfg.Config) { lc.ClaudeAccountStages = accountStages("review", "team-b") }),
+			node: node("", nil),
+			want: []string{"claude_account_stages.review"},
+		},
+		{
+			name: "the node names an account this file's own replaces",
+			lc:   config(func(lc *localcfg.Config) { lc.DefaultClaudeAccount = "team-b" }),
+			node: node("team-a", map[string]string{"adversarial": "team-a"}),
+			want: []string{"default_claude_account", "claude_account_stages.adversarial"},
+		},
+		{
+			name: "both, as this file states them",
+			lc: config(func(lc *localcfg.Config) {
+				lc.DefaultClaudeAccount = "team-b"
+				lc.ClaudeAccountStages = accountStages("review", "team-b")
+			}),
+			node: node("team-b", map[string]string{"review": "team-b"}),
+			want: nil,
+		},
+		{
+			name: "a node that names one this file is silent about",
+			lc:   config(nil),
+			node: node("team-b", map[string]string{"review": "team-b"}),
+			want: []string{"default_claude_account", "claude_account_stages.review"},
+		},
+		{
+			name: "neither side names one",
+			lc:   config(nil),
+			node: node("", nil),
+			want: nil,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			for _, d := range policyConfigDrift(tc.lc, tc.node) {
+				got = append(got, d.Member)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("policyConfigDrift = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// accountStages is a local config's stages block with one account named, the way
+// the file spells it (`stages.<stage>.claude_account`, localcfg.StageChoice).
+func accountStages(stage, account string) map[string]localcfg.StageChoice {
+	return map[string]localcfg.StageChoice{stage: {ClaudeAccount: account}}
+}
+
+// TestPolicyAccountWideningCoversTheAccountKeys is the classification, member
+// by member: naming an account where the node named none or named another is
+// the widening the typed name guards — the credential a mixed run's review goes
+// out on, chosen for the project — and the removal is the case that is NOT one,
+// because a node that stops naming an account takes the credential away.
+func TestPolicyAccountWideningCoversTheAccountKeys(t *testing.T) {
+	node := func(defaultAccount string, stages map[string]string) *projectpolicy.Policy {
+		return &projectpolicy.Policy{DefaultClaudeAccount: defaultAccount, ClaudeAccountStages: stages}
+	}
+	for _, tc := range []struct {
+		name     string
+		old, new *projectpolicy.Policy
+		want     []string
+	}{
+		{"the default set where the node named none", node("", nil), node("team-b", nil),
+			[]string{"default_claude_account (not set) -> team-b"}},
+		{"the default set where the node named another", node("team-a", nil), node("team-b", nil),
+			[]string{"default_claude_account team-a -> team-b"}},
+		{"the default unchanged", node("team-b", nil), node("team-b", nil), nil},
+		{"the default removed, which tightens", node("team-b", nil), node("", nil), nil},
+		{"a stage account set", node("", nil), node("", map[string]string{"review": "team-b"}),
+			[]string{"claude_account_stages.review (not set) -> team-b"}},
+		{"a stage account removed, which tightens", node("", map[string]string{"review": "team-b"}), node("", nil), nil},
+		{"both at once, in the order the diff reads", node("", nil), node("team-b", map[string]string{"adversarial": "team-c", "review": "team-b"}),
+			[]string{
+				"default_claude_account (not set) -> team-b",
+				"claude_account_stages.adversarial (not set) -> team-c",
+				"claude_account_stages.review (not set) -> team-b",
+			}},
+		{"the node unchanged", node("team-b", map[string]string{"review": "team-b"}), node("team-b", map[string]string{"review": "team-b"}), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			for _, c := range policyAccountWidening(tc.old, tc.new) {
+				got = append(got, c.Member+" "+c.Was+" -> "+c.Now)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("the publish widens %v, want %v", got, tc.want)
 			}
 		})
 	}
