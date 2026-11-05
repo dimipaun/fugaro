@@ -2136,7 +2136,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			what := fmt.Sprintf("removes project Viewers' read access to gs://%s, which holds the Terraform state (%s)", spec.StateBucket, strings.Join(grants, ", "))
 			if r.o.planOnly {
 				r.warn("--plan-only changes no IAM; without it, " + r.o.doorProgram() + " " + what)
-			} else if r.gateUnderway() {
+			} else if r.gateLeavesTheIAMCall() {
 				r.warn(r.gateNamesAnIAMCall("gs://" + spec.StateBucket))
 			} else {
 				if err := r.confirmOrdinary(what, "nothing was applied", ""); err != nil {
@@ -2286,7 +2286,7 @@ func (r *initRun) runsBucketViewers(ctx context.Context, c *infra.Clients, spec 
 	case r.o.planOnly:
 		r.warn(fmt.Sprintf("--plan-only changes no IAM; without it, "+r.o.doorProgram()+" asks to remove project Viewers' read access to gs://%s (%s)", spec.RunsBucket, strings.Join(grants, ", ")))
 		return nil
-	case r.gateUnderway():
+	case r.gateLeavesTheIAMCall():
 		// This removal is a Storage IAM call of its own and not a Terraform
 		// plan, so it is the one cloud write of these stages the gate has no
 		// document to judge: it is left to the owner, whose rerun makes it,

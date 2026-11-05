@@ -731,9 +731,10 @@ var inlineAgentSites = []inlineAgentSite{
 // propertyAgentSites are the agent-marker sites the other ManagedXxx tests
 // drive, with the test that does.
 var propertyAgentSites = map[string]string{
-	"init.go ask":            "TestManagedNonManagedProjectNeverSkipsAConfirmation (the YesOrTyped class)",
-	"init.go conditions":     "TestManagedConfirmRuleMatchesTheTable, and the Typed class of the property through askTyped",
-	"init_stages.go options": "TestManagedConfirmRuleMatchesTheTable (options().Agent) and TestManagedPluginStageThroughTheLoopRefusesUnderEachMarker (the stage loop's agent gate)",
+	"init.go ask":                "TestManagedNonManagedProjectNeverSkipsAConfirmation (the YesOrTyped class)",
+	"init.go conditions":         "TestManagedConfirmRuleMatchesTheTable, and the Typed class of the property through askTyped",
+	"init_stages.go options":     "TestManagedConfirmRuleMatchesTheTable (options().Agent) and TestManagedPluginStageThroughTheLoopRefusesUnderEachMarker (the stage loop's agent gate)",
+	"init_plugin_stage.go Apply": "TestUpdateManagedPluginWiringAsksNothing (the managed gate's own hand on the wiring's y/N, in the owner's terminal and in a coding agent's session)",
 	// The policy stage refuses a marker itself rather than leaning on the
 	// loop's gate: it is SelfConfirming, so the loop would call it.
 	"init_policy_migrate.go Apply": "TestUpdatePolicyMigrationRefusedInAgentSession",

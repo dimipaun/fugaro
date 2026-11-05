@@ -202,6 +202,17 @@ func (s *pluginStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		fmt.Fprintf(r.w, "note: %s\n", ch.Note)
 	}
 	switch {
+	case r.gateUnderway() && agentMarker(os.Getenv) == "":
+		// A managed project asks nothing here (the ruling of 2026-11-01): the
+		// diff above is the whole of what the owner reads, and the write is
+		// made. The marker is asked for beside the gate because the two
+		// answers are about different things — the gate is a fact about the
+		// project, and this branch is a fact about the session. A coding
+		// agent's session confirms nothing, which is what the default arm
+		// below still says, and the loop does not even reach this Apply in
+		// one: a stage that is neither SelfConfirming nor LocalUnderAgent is
+		// left whole for the user (initflow's agentStage).
+		fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
 	case env.Yes:
 		fmt.Fprintln(r.w, "  confirmed by --yes")
 	case env.Interactive:

@@ -74,6 +74,13 @@ func (r *initRun) ctx() context.Context {
 // --json, a pipe, --plan-only or a coding agent) who typed the project's
 // name, in a project Fugaro owns. A name that is not the project's is a
 // needs-you for this step and every one after it.
+//
+// In a managed project the confirmation is the gate's read of the two marks
+// and nothing is typed (the ruling of 2026-11-01): the review screen is still
+// printed — the owner's own account of what is about to happen, which is what
+// the screen is for — and the ordinary steps go through, exactly as they do in
+// a coding agent's session the gate admitted. The screen is printed ONCE, as
+// the typed name was asked once.
 func (r *initRun) runCovers() (bool, error) {
 	rv := r.review
 	if rv == nil || r.o.planOnly || agentMarker(os.Getenv) != "" || !initflow.CanConfirmRun(r.conditions()) {
@@ -88,6 +95,11 @@ func (r *initRun) runCovers() (bool, error) {
 		return false, r.declinedRun()
 	}
 	ctx := r.ctx()
+	if r.gateUnderway() {
+		rv.state = reviewTaken
+		rv.screen(ctx, "")
+		return true, nil
+	}
 	why, owned := rv.owner(ctx)
 	if !owned {
 		rv.state = reviewNotOwned
@@ -150,7 +162,11 @@ func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
 		}
 		if covered {
 			fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
-			fmt.Fprintln(r.w, "  covered by the run confirmation (the project's name typed at the review)")
+			if r.gateUnderway() {
+				fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
+			} else {
+				fmt.Fprintln(r.w, "  covered by the run confirmation (the project's name typed at the review)")
+			}
 			return true, nil
 		}
 	} else if r.review != nil && r.review.state == reviewTaken {
@@ -323,12 +339,25 @@ func (e *initEngine) previewDetail(name string) string {
 // reviewScreen prints the one review for what is left of the run: a line for
 // each ordinary stage with something to do, the IAM changes it knows of, and
 // what still asks separately.
+//
+// In a managed project the same screen is printed and its header says the
+// other true thing (why is "" there): the steps are this project's, the gate
+// judges their documents, and nothing is typed. The list at the end is the
+// list of what the gate does NOT stand in for, which is shorter there than
+// here — a step whose document the gate reads is not an ask, and neither is a
+// step this project's owner asked not to be prompted for.
 func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	r, o := e.r, e.r.o
 	w := r.w
 	todo := e.todo()
-	fmt.Fprintf(w, "\nReview: project %s (GCP %s) is Fugaro's own (%s), so its ordinary steps share ONE confirmation.\n",
-		pluginwire.Printable(r.projectName), pluginwire.Printable(r.gcpProject), why)
+	managed := r.gateUnderway()
+	if managed {
+		fmt.Fprintf(w, "\nReview: project %s (GCP %s) is a managed project, so its steps take no confirmation: the deterministic gate judges each document before it writes.\n",
+			pluginwire.Printable(r.projectName), pluginwire.Printable(r.gcpProject))
+	} else {
+		fmt.Fprintf(w, "\nReview: project %s (GCP %s) is Fugaro's own (%s), so its ordinary steps share ONE confirmation.\n",
+			pluginwire.Printable(r.projectName), pluginwire.Printable(r.gcpProject), why)
+	}
 	fmt.Fprintln(w, "Will do, each step printing its own exact plan first:")
 	if todo[initflow.Installation] {
 		fmt.Fprintln(w, "  installation:   Terraform apply of the installation root (planned when applied)")
@@ -401,7 +430,11 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 		fmt.Fprintf(w, "  %-15s %s (from --billing-account; the only account a budget may name)\n", "billing account:", pluginwire.Printable(o.billingAccount))
 	}
 	fmt.Fprintln(w, "Every Terraform plan is shown as it runs. It is covered only if it consists of creates and in-place updates of the installation's own resource kinds, its attributes are the modules' (images in this project's registry, jobs of this project called by Fugaro's accounts, logs to this project, private buckets, this project's names), and it grants only the modules' roles to the members above or to Fugaro's own service accounts. Anything else (a destroy or replace, a binding or policy, a key, another project, an unlisted member) stops that step, which asks its own typed confirmation.")
-	fmt.Fprintln(w, "Still asks separately, never covered by this confirmation:")
+	if managed {
+		fmt.Fprintln(w, "What the gate does not stand in for, and still asks separately (the gate judges a document, and these are not documents):")
+	} else {
+		fmt.Fprintln(w, "Still asks separately, never covered by this confirmation:")
+	}
 	var sep []string
 	if o.firebase != "" {
 		sep = append(sep, "the Firestore database's creation (its location is permanent)")
@@ -420,14 +453,25 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	if e.previewState(initflow.Secrets) == initflow.Todo {
 		sep = append(sep, "the secrets (hidden prompts)")
 	}
-	if e.previewState(initflow.Plugin) == initflow.Todo {
-		sep = append(sep, "the plugin wiring (its own y/N)")
-	}
-	if e.previewState(initflow.Checkout) == initflow.Todo {
-		sep = append(sep, "the checkout's own steps, run by fugaro update as they are here: the plugin pin and the plugin wiring ask nothing of their own (the pin prints its diff, and is reviewed with git diff after), while the image refresh asks at each step of its own that changes something — the base image it pins by digest, the daily image check job's config, and the billable build of the checkout's job images, one confirmation per build — the project's name typed, or --yes")
-	}
-	if e.previewState(initflow.Policy) == initflow.Todo {
-		sep = append(sep, "migrating the published policy node in place (type the project's name)")
+	if !managed {
+		if e.previewState(initflow.Plugin) == initflow.Todo {
+			sep = append(sep, "the plugin wiring (its own y/N)")
+		}
+		if e.previewState(initflow.Checkout) == initflow.Todo {
+			sep = append(sep, "the checkout's own steps, run by fugaro update as they are here: the plugin pin and the plugin wiring ask nothing of their own (the pin prints its diff, and is reviewed with git diff after), while the image refresh asks at each step of its own that changes something — the base image it pins by digest, the daily image check job's config, and the billable build of the checkout's job images, one confirmation per build — the project's name typed, or --yes")
+		}
+		if e.previewState(initflow.Policy) == initflow.Todo {
+			sep = append(sep, "migrating the published policy node in place (type the project's name)")
+		}
+	} else {
+		// The plugin wiring is not in this list: its y/N is one of the
+		// prompts a managed project does not ask (init_plugin_stage.go).
+		if e.previewState(initflow.Checkout) == initflow.Todo {
+			sep = append(sep, "the checkout's image refresh, of which the gate judges one thing: the base image it pins by digest and the daily image check job's config ask as they always have, and each billable build of the checkout's job images goes through the gate's own per-build verdict and its bound (D1013) instead of a typed name")
+		}
+		if e.previewState(initflow.Policy) == initflow.Todo {
+			sep = append(sep, "migrating the published policy node in place when the migration loosens a ceiling, which takes the project's name: a Typed step is money or permanence, and no plan gate admits one (D1026)")
+		}
 	}
 	if len(sep) == 0 {
 		sep = append(sep, "nothing else is waiting in this run")
@@ -450,7 +494,11 @@ func (e *initEngine) planOnlyReview(ctx context.Context, stages []initflow.Stage
 		return
 	}
 	e.reviewScreen(ctx, why)
-	fmt.Fprintf(e.r.w, "A run without --plan-only asks once at a terminal: Type %s to apply all of the above. --plan-only never takes --yes or it.\n", e.r.projectName)
+	// The closing line is written to be true of both kinds of project, and it
+	// is why --plan-only reads no mark (gateRun: a run that cannot act on the
+	// answer pays for none): a managed project asks nothing at all, and this
+	// is the screen that explains the run either way.
+	fmt.Fprintf(e.r.w, "A run without --plan-only asks once at a terminal: Type %s to apply all of the above — and in a managed project it asks nothing at all, because the deterministic gate judges each document as it writes. --plan-only never takes --yes or it.\n", e.r.projectName)
 }
 
 // alertEmail is the alert email in effect and where it comes from.

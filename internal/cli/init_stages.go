@@ -240,6 +240,12 @@ func (e *initEngine) converge(ctx context.Context) error {
 	stages := initStages(e)
 	e.r.review = &runReview{cover: e.cover, firebase: e.firebaseVerified, owner: e.owner, screen: e.reviewScreen}
 	e.gateEarly(ctx)
+	// The managed project's read, once for the whole run: it is what the run's
+	// one confirmation and the steps the gate does not judge ask about
+	// (update_managed.go's gateRun), and it is made before the first stage so
+	// that a run whose gated stages all have nothing to do still has the
+	// answer.
+	e.gateRun(ctx)
 	res, err := initflow.Run(ctx, stages, e.options())
 	if err == nil && res != nil && e.r.o.planOnly && res.Failed == nil {
 		e.planOnlyReview(ctx, res.Stages)

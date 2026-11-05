@@ -367,18 +367,18 @@ func TestUpdateReadsTheGateBeforeAnyWrite(t *testing.T) {
 	})
 }
 
-// A person's own run pays for the gate in nothing at all: the gate is
-// consulted only in a coding agent's session (M6's bind), so an owner's
-// terminal on an unmanaged project keeps every behaviour it had — --yes covers
-// what it always covered — and no record is written about a decision this
-// design never made.
+// A person's own run on a project that is NOT managed keeps every behaviour it
+// had: --yes covers what it always covered, nothing asks a new question, and no
+// record is written about a decision this design never made.
 //
-// The count of reads is where "nothing at all" is measured. One call names the
-// marker object in a person's run, and it is the installation's own managed-fact
-// read, which every run has always made while planning (init_managed.go); the
-// gate's own read would be a second. A change that makes an owner's run read
-// the mark twice — or that makes the gate read it in the session it must not be
-// read in — fails here.
+// The count of reads is where "keeps every behaviour" is measured. Two calls
+// name the marker object in a person's run, and the second is the one this
+// design adds: the gate reads the marks per command (D1015) in the owner's
+// session too, because whether to show a prompt at all is the question those
+// marks answer (the ruling of 2026-11-01). It is a read and nothing else — no
+// verdict is reached for this run, nothing is applied on it, and the count is
+// the whole of what it costs. A change that makes an owner's run read the mark
+// a third time, or that makes this read reach a write, fails here.
 func TestUpdateManagedLeavesAnOwnersRunAlone(t *testing.T) {
 	const additive = "module.installation.google_service_account.scheduler"
 	r := updateRig(t)
@@ -393,8 +393,8 @@ func TestUpdateManagedLeavesAnOwnersRunAlone(t *testing.T) {
 	if n := len(r.ran(t, "apply")); n == 0 {
 		t.Errorf("--yes stopped covering the installation step:\n%s", got)
 	}
-	if n := markReads(r); n != 1 {
-		t.Errorf("an owner's run read the managed marker %d time(s), want the one read the installation has always made: the gate costs an owner's session a read it never had", n)
+	if n := markReads(r); n != 2 {
+		t.Errorf("an owner's run read the managed marker %d time(s), want two: the installation's own fact read, and the one the gate makes to know whether to ask at all", n)
 	}
 	if strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
 		t.Errorf("a person's run printed the coding agent's own sentence:\n%s", got)
