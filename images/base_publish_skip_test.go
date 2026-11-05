@@ -19,7 +19,55 @@ import (
 // two halves: the workflow text says when the step runs and what it gates
 // (publishSkipProblems, and the mutations that prove those checks are live),
 // and the shell the step runs is executed here against a docker CLI stub, so
-// the decision itself is a test rather than a promise in a comment.
+// the decision itself is a test rather than a promise in a comment. A third
+// half is the reader's: the issue asked what the check's "the base moved" rule
+// reads once the tags stop moving, and whether an installation still pins
+// `-pinned`, and the answers live in docs/base-image.md, where
+// TestBaseImageDocAnswersTheBaseMovedQuestion keeps them.
+
+// TestBaseImageDocAnswersTheBaseMovedQuestion: the change is invisible from
+// outside the workflow unless the base-image doc says it, and a sentence there
+// that goes stale is worse than none — a reader who still believes every
+// nightly moves `:VERSION` pins for the wrong reason, and one who believes a
+// quiet night cannot move it stops verifying. The section has to name what the
+// comparison reads, that the tags stay put, and that the pin is still what a
+// job's base rests on; the staging is named too, because until the owner copies
+// the workflow in the described behaviour is not the behaviour that runs.
+func TestBaseImageDocAnswersTheBaseMovedQuestion(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "docs", "base-image.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(b)
+	const heading = "## The published tags, and what the nightly does"
+	start := strings.Index(doc, heading)
+	if start < 0 {
+		t.Fatalf("docs/base-image.md has no %q section: the base-moved question (issue #1745) is answered there or nowhere the reader looks", heading)
+	}
+	section := doc[start:]
+	if end := strings.Index(section[len(heading):], "\n## "); end >= 0 {
+		section = section[:len(heading)+end]
+	}
+	for _, want := range []string{
+		// What the decision reads, so the doc and publishSkipProblems name the
+		// same comparison rather than two descriptions of "the same base".
+		"config digest",
+		"the tree's own `fugaro` binary",
+		"the installed package list",
+		// The two answers: the tags stay where they are, and the pin is the
+		// signature over a digest rather than a tag that cannot move.
+		"leaves the tags where they are",
+		"still pin `-pinned`",
+		"signature",
+		// What the check's rule reads, and that the change is staged.
+		"the digest that reference resolves to",
+		"docs/pending-workflows/images.yml",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("docs/base-image.md's %q section lacks %q: the base-moved question has to be answered where a reader looks, not only in the workflow", heading, want)
+		}
+	}
+}
 
 // TestPublishBaseSkipsAnUnchangedNightly: the decision step is exactly the
 // thing that must not run on a tag push, before the push it decides, and wired
