@@ -534,7 +534,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 				}
 			}
 			var findings string
-			if findings, err = reviewFindings(ctx, env, repo, o.reviewRun); err != nil {
+			if findings, err = reviewFindings(ctx, env, repo, o.reviewRun, o.pr[0]); err != nil {
 				return err
 			}
 			text = findings + text

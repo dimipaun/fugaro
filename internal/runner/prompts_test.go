@@ -1,9 +1,11 @@
 package runner_test
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/runner"
 )
@@ -59,11 +61,49 @@ func TestFindingsAreBoundedAndQuoted(t *testing.T) {
 	if again := runner.FixFindings(run, issues); again != got {
 		t.Errorf("two renders of the same findings differ:\n%s\n---\n%s", got, again)
 	}
-	if strings.Contains(got, long) {
+	// long ends in a space, and the render trims the field's trailing
+	// whitespace, so asking whether the whole of it is in the brief would
+	// answer no whatever the clip did; the trimmed text is the one the clip
+	// is actually about.
+	if strings.Contains(got, strings.TrimSpace(long)) {
 		t.Errorf("an over-long summary reached the brief whole (%d runes):\n%s", len([]rune(long)), got)
 	}
 	if !strings.Contains(got, "the summary runs on and on the summary runs on and on") {
 		t.Errorf("the clipped summary kept nothing of its beginning:\n%s", got)
+	}
+	// The bound is what makes the block a prompt rather than a file its reader
+	// can page through: "    summary: " is 13 runes, the field is clipped to
+	// 600 including the "…" that marks the cut, so the line cannot pass 613.
+	var summary string
+	for _, line := range strings.Split(got, "\n") {
+		if strings.HasPrefix(line, "    summary: ") {
+			summary = line
+			break
+		}
+	}
+	if summary == "" {
+		t.Fatalf("the block carries no summary line:\n%s", got)
+	}
+	if n := utf8.RuneCountInString(summary); n > 613 {
+		t.Errorf("the summary line is %d runes, past the 613 the clip allows: %q", n, summary)
+	}
+	if !strings.HasSuffix(summary, "…") {
+		t.Errorf("a clipped summary does not say it was cut: %q", summary)
+	}
+
+	// The count is bounded as well, and the brief says so rather than stopping
+	// silently at the cap: a reader who was handed twenty of twenty-one
+	// findings must not take them for the whole review.
+	many := make([]runner.ReviewIssue, 21)
+	for i := range many {
+		many[i] = runner.ReviewIssue{Severity: "minor", Class: "cosmetic", File: "internal/a/d.go", Summary: fmt.Sprintf("finding %d", i)}
+	}
+	capped := runner.FixFindings(run, many)
+	if !strings.Contains(capped, "1 more finding(s)") {
+		t.Errorf("a brief that left a finding out does not say how many:\n%s", capped)
+	}
+	if strings.Contains(capped, "finding 20") {
+		t.Errorf("the brief carried the twenty-first finding:\n%s", capped)
 	}
 	if !strings.Contains(got, shell) {
 		t.Errorf("a finding that reads like a command did not reach the brief as data:\n%s", got)

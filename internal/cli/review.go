@@ -442,7 +442,17 @@ func reviewArtifactUnreadable(run string, err error) error {
 // that names another repository is refused — the artifact is read from the
 // path the reference names, and a brief carrying a review of somewhere else
 // would be quoting the wrong code.
-func reviewFindings(ctx context.Context, env *cloudEnv, repo, reviewRun string) (string, error) {
+//
+// The path the reference names is not evidence of what the artifact inside it
+// says, so the artifact's own claims are checked against this launch before any
+// of its text is used: the review run, the repository and the pull request must
+// all be the ones this launch is for. A review of another pull request would
+// otherwise reach the brief under a sentence that calls it "this pull request",
+// and the brief would name a run nobody read. What a mismatch prints is the
+// three values that disagree — never a field of the artifact's own prose — and
+// the section that is rendered names the reference this launcher actually read
+// rather than the artifact's claim about itself.
+func reviewFindings(ctx context.Context, env *cloudEnv, repo, reviewRun string, pr int) (string, error) {
 	slug, id := "", reviewRun
 	if strings.Contains(reviewRun, "/") {
 		var err error
@@ -473,7 +483,15 @@ func reviewFindings(ctx context.Context, env *cloudEnv, repo, reviewRun string) 
 	if err != nil {
 		return "", userErr("%s has no readable review artifact: %s. A fix round carries a review's findings into its brief, so a verdict this launcher cannot read refuses the launch rather than starting a run that fixes nothing. See fugaro review show %s", oneLineCLI(ref), safetext.Field(err.Error()), oneLineCLI(ref))
 	}
-	return runner.FixFindings(art.ReviewRun, art.Issues), nil
+	switch {
+	case art.ReviewRun != id:
+		return "", userErr("--review-run %s holds the artifact of review run %s: a brief carries the findings of the review it names", oneLineCLI(ref), oneLineCLI(art.ReviewRun))
+	case art.Repository != slug:
+		return "", userErr("--review-run %s holds the artifact of a review of %s: a brief carries the findings of its own repository", oneLineCLI(ref), oneLineCLI(art.Repository))
+	case art.PR != pr:
+		return "", userErr("--review-run %s holds the artifact of a review of pull request #%d, and this fix round is for #%d: a brief carries the findings of the review it names", oneLineCLI(ref), art.PR, pr)
+	}
+	return runner.FixFindings(ref, art.Issues), nil
 }
 
 // writeObject writes one object's bytes and a closing newline, so two objects

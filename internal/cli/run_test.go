@@ -2014,21 +2014,55 @@ func TestFindingsFromAnUnreadableArtifactRefuseTheLaunch(t *testing.T) {
 	wantFindingsRefused(t, f, broken, "has no readable review artifact")
 }
 
-// wantFindingsRefused launches a fix round carrying review run id's findings
-// and wants a refusal that names it and carries want, with no execution
-// started: a refusal is a launch that did not happen, not one whose job failed.
-func wantFindingsRefused(t *testing.T, f *cloudFixture, id, want string) {
+// TestFindingsFromAnArtifactOfSomethingElseRefuseTheLaunch: the path a
+// reference names is not evidence of what the artifact inside it claims, and
+// the brief's own sentence calls the findings "this pull request"'s. So each of
+// the artifact's three claims about what it is — the review run, the
+// repository, the pull request — is checked against this launch, and a
+// disagreement refuses rather than carrying one pull request's findings into
+// another's fix round. The refusal names the value that differs.
+func TestFindingsFromAnArtifactOfSomethingElseRefuseTheLaunch(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+
+	// A review of another pull request of the same repository.
+	otherPR := wallRunIDAt(0, "122000", "a0ed")
+	art := fixFirstArtifact(otherPR)
+	art.PR = 8
+	putReviewArtifact(t, f, otherPR, art)
+	wantFindingsRefused(t, f, otherPR, "#8")
+
+	// A review of another repository, stored where this one's would be.
+	otherRepo := wallRunIDAt(0, "122100", "a1ed")
+	art = fixFirstArtifact(otherRepo)
+	art.Repository = "other/repo"
+	putReviewArtifact(t, f, otherRepo, art)
+	wantFindingsRefused(t, f, otherRepo, "other/repo")
+
+	// An artifact that names a review run other than the one read.
+	otherRun := wallRunIDAt(0, "122200", "a2ed")
+	art = fixFirstArtifact(otherRun)
+	art.ReviewRun = wallRunIDAt(0, "122300", "a3ed")
+	putReviewArtifact(t, f, otherRun, art)
+	wantFindingsRefused(t, f, otherRun, art.ReviewRun)
+}
+
+// wantFindingsRefused launches a fix round carrying the findings of the review
+// ref (a run id, or <repo-slug>/<run-id>) and wants a refusal that names ref and
+// carries want, with no execution started: a refusal is a launch that did not
+// happen, not one whose job failed.
+func wantFindingsRefused(t *testing.T, f *cloudFixture, ref, want string) {
 	t.Helper()
 	before := len(f.run.Executions())
-	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--review-run", id)
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--review-run", ref)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), want) {
-		t.Fatalf("--review-run %s: err = %v, want exit 1 with %q", id, err, want)
+		t.Fatalf("--review-run %s: err = %v, want exit 1 with %q", ref, err, want)
 	}
-	if !strings.Contains(err.Error(), id) {
-		t.Errorf("the refusal does not name the review run %s: %v", id, err)
+	if !strings.Contains(err.Error(), ref) {
+		t.Errorf("the refusal does not name the review run %s: %v", ref, err)
 	}
 	if after := len(f.run.Executions()); after != before {
-		t.Fatalf("--review-run %s refused and still started %d executions", id, after-before)
+		t.Fatalf("--review-run %s refused and still started %d executions", ref, after-before)
 	}
 }
 
@@ -2045,4 +2079,10 @@ func TestReviewRunFlagNeedsAPullRequest(t *testing.T) {
 
 	wantRefused(t, f, "needs --pr", "run", "--repo", "acme/app", "--review-run", reviewID, "do a thing")
 	wantRefused(t, f, "reviews a pull request", "run", "--repo", "acme/app", "--pr", "7", "--recipe", "review-only", "--review-run", reviewID)
+
+	// A reference to another repository's review is refused too: the artifact
+	// would be read from the path the reference names, and the brief would
+	// carry findings about code this fix round is not for.
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	wantFindingsRefused(t, f, mustSlug("github", "other/app")+"/"+reviewID, "is a review of")
 }
