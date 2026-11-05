@@ -910,8 +910,10 @@ func TestRepoEngineBuildsOnlyThePerRepositoryWorkflow(t *testing.T) {
 		"agent: { auth: oauth }\n" +
 		"workflows:\n" +
 		"  app: { image_name: team, commands: { build: sh build.sh, test: sh test.sh } }\n" +
-		"  api: { dockerfile: api.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n"
-	t.Chdir(repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", yaml))
+		"  api: { dockerfile: .fugaro/api.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", yaml)
+	testutil.WriteFiles(t, dir, map[string]string{".fugaro/api.Dockerfile": "ARG FUGARO_BASE\nFROM ${FUGARO_BASE}\nRUN git clone \"$REPO_URL\" /work/repo\n"})
+	t.Chdir(dir)
 	seedRepoSecrets(t, r, "bitbucket-token", "claude-oauth-token")
 	e := rigEngine(t, r, &initOptions{})
 	fb := useFakeBuilder(t)
