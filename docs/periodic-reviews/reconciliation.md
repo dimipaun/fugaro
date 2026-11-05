@@ -107,7 +107,7 @@ rules (D326), the redacted draft and the issue form (D327), and the maintainer's
 new number (F21, F23).
 
 **F13: Exists. The register's half of the live check.** Check 136 — a report run's pull request — has
-its row (`docs/gcp-live-checklist.md:764`) and its section (`:10621`), pinned as a pair by
+its row (`docs/gcp-live-checklist.md:785`) and its section (`:10643`), pinned as a pair by
 `internal/cli/docs_task_governance_checks_test.go:75`. The row and the section both say it is
 **NOT RUN** and is the owner's, and no agent runs any step of it. *Consequence:* this design takes
 **no check number** (README, "Numbers this work holds"); what it wants from the owner is that check,
@@ -326,9 +326,20 @@ project-level scheduled job, and committing one anywhere is a separate opt-in ru
 project's designated repository or folder.
 
 **Two of the amendments are not the recommendation, and the original answers stay beside them.**
-D321's row and D960 recommended the repository's own docs tree; D322/G2 recommended that no report
-name another repository. The rulings replace both, and the rows in §3 that carry the old answers are
-marked at the row.
+D321's row and D960 recommended the repository's own docs tree; D322's own row — and G2's hard line
+with it — kept a committed report to one repository. The rulings replace both, and the rows in §3
+that carry the old answers are marked at the row. **E2's amendment is the smaller of the two**: D322
+already read "by default … with an explicit flag", so what actually moves is G2's absolute rule
+(E2 below).
+
+**And the rulings were read against the code again on 2026-11-05, after the plan's own review.** Four
+things the ruling's sentences left implicit are decided, and each is written where the task meets it:
+the job's listing is a **prefix-limited grant on `runs/`, proven by an owner-run check before its
+Terraform lands** (E4); **`reports/` has one writer, the job, and launchers read it** — no launcher
+write grant, and no job account but the reports job (E4, E5); enabling a job is **a setting `fugaro
+update` writes** for both the reports job and the 0.18.0 catalog check (E4); and the `reports/`
+lifecycle rule is the bucket's **fifth**, not its fourth (E3). One question they leave open is
+**Open items**: E8's bucket default has no writer a launcher may use (E8 below).
 
 **This run does not rewrite [spec.md](spec.md).** The README's file table reads spec.md below this
 file ("Where it disagrees with `spec.md`, it wins"), and spec §3, §5 and §6 keep the 2026-11-04 text
@@ -359,17 +370,24 @@ message inside a repository that job does not own — the exact cost D964 refuse
 (F5), and the rulings do not name it; whether it is rerouted through the bucket is an **Open item**,
 not decided by this section.
 
-### E2. D322 and G2 are a default to relax, not a prohibition (amends D322/G2; **not the recommendation**)
+### E2. D322 is restated and G2's absolute rule is relaxed (amends G2; **not the recommendation**)
 
-**The original answers.** D322 (F12): one repository per report. G2 (`docs/task-governance/`,
+**The original answers.** D322 (F12): one repository per report **by default**, with an explicit way
+to commit a project-wide report into a repository the person names — which is what the aggregate is.
+G2 (`docs/task-governance/`,
 implementation-plan.md): "**One repository per report.** The digest reads only the repository it is
 pointed at. On a per-repository job the grant also enforces it (Check 135); on a project job … the
 runner's own slug check is the only guard."
 
-**The ruling.** The rule that a committed report names no other repository is **a default for the
-user to relax, not a prohibition**: committing the aggregate, which names every repository, into a
-repository the user chose is the user's decision, and whether that repository is public or private is
-theirs to weigh.
+**The ruling, and what it actually moves.** It **mostly restates D322**: a committed report names no
+other repository **by default**, and the person may commit the project-wide report into a repository
+they named — D322's own row already reads that way ("That repository's runs only, **by default** … a
+project-wide report … is printed, or committed only with an explicit flag into a repository the
+person names", `docs/task-governance/reconciliation.md:298`). What it **amends is G2's absolute
+rule**, the shipped digest's own hard line ("**One repository per report.** The digest reads only the
+repository it is pointed at", `docs/task-governance/implementation-plan.md`): the aggregate names
+every repository, and it may be committed into a repository the user chose. Whether that repository
+is public or private is theirs to weigh.
 
 *Why:* the aggregate is the one document that answers what the project spent; the owner who picks the
 target is the person who can weigh what naming the other repositories costs there.
@@ -385,9 +403,9 @@ than that rule and the record is still untrusted input, which E4's grants keep a
 yearly report rolls the monthly reports up instead of reading records.
 
 **The ruling.** The `reports/` prefix gets its own bucket lifecycle rule, **18 months**. **Run
-records keep 90 days (F24) and that is not touched** — `runs/` keeps the rule it has, and this is a
-fourth rule beside the three the bucket carries (`deploy/terraform/gcp/modules/installation/bucket.tf`
-holds the `runs/`, `cache/` and token rules).
+records keep 90 days (F24) and that is not touched** — `runs/` keeps the rule it has, and this is the
+**fifth** rule beside the four the bucket carries today (`deploy/terraform/gcp/modules/installation/
+bucket.tf`: `runs/`'s age, `cache/`'s custom-time and age rules, and the sealed token's).
 
 *Why:* a yearly report rolls the twelve stored monthly reports up, so the reports must outlive the
 90-day records by more than a year — and a report is a few kilobytes, so the storage is not what
@@ -405,6 +423,34 @@ project's repositories, writes each repository's report and then the project agg
 the repositories' summary blocks and the budget database's figures, as `fugaro runs summary` already
 reads them — into the bucket. **A report key is the period**; a rerun overwrites with the same
 content or skips.
+
+**What the owner settled about that account on 2026-11-05, after the review of the plan.** Three
+things the ruling's own sentence left to the code, and each is now decided:
+
+- **The listing half, and the check that proves it.** Reading the run records is not one grant: a
+  condition on `resource.name` **grants no listing** (`docs/design/bucket-iam.md` §2.3, live check 7's
+  403 on listing `runs/`; `docs/task-governance/reconciliation.md` already flags the same doubt), so
+  the account needs `objectViewer` on `runs/` **through the prefix-limited listing mechanism**
+  (`storage.googleapis.com/objectListPrefix`, unverified — bucket-iam §4, V7). The owner ruled that
+  **an owner-run live check proves it before the job's Terraform lands**: a service account with that
+  grant lists `runs/<slug>/` and cannot list `tokens/` or `cache/`. **If it fails, the plan stops and
+  asks** — the bucket-wide viewer a listing otherwise needs is not planned as a fallback, because it
+  would read `tokens/` and `cache/` too.
+- **`reports/` has one writer, the job, and launchers read it.** The job holds
+  `roles/storage.objectUser` on `reports/`; a person holds **read only** — which their existing
+  unconditioned bucket-wide `objectViewer` already gives, so nothing new is granted to a person and
+  **no launcher write grant on `reports/` is added** — the launcher's write condition
+  (`gcp.LauncherBucketCondition`) covers `runs/` and `tokens/` as it is (`docs/design/bucket-iam.md`
+  §4, H5), and `reports/` does not join it (a second writer is what this ruling refuses).
+  **No other job account gets `reports/` either**: job accounts reach `runs/`, `cache/` and `locks/`,
+  so the opt-in commit run (E5) reads the stored reports **under the starting person's launcher
+  account**, not the run's.
+- **Enabling it is a setting `fugaro update` writes, not a `gcloud` command.** The project layer gains
+  `jobs.reports.paused` (and `jobs.catalog_check.paused`), each defaulting to `true`;
+  `gcloud scheduler jobs resume` is undone by the next update, because the module always applies
+  `paused`. **The 0.18.0 catalog check has the same gap from the other side** — its `paused` is a
+  Terraform variable with no field in `CatalogCheckSpec` — and the task that adds the reports job's
+  field adds the catalog check's with it, with the HARD RULE's convergence test.
 
 *Why:* a scheduler per orchestrator would write the same report many times, and each copy would need
 a credential; one job holds one narrow account and one schedule.
@@ -429,6 +475,11 @@ the stored reports into the designated project repository or folder (per-reposit
 per-repository subfolders, the aggregate beside them) and opens a pull request. **Nothing else needs
 a git credential**, and no code repository gets a report committed unless it is itself the designated
 project repo.
+
+**Whose credentials read the source (settled 2026-11-05).** Not the run's: a job account reaches
+`runs/`, `cache/` and `locks/` only, and E4's answer gives `reports/` to **no** job account. The read
+is the **starting person's launcher account**, whose bucket-wide `objectViewer` covers the prefix, and
+how the bytes reach the run is the designated-repo design item's to settle (E6).
 
 *Why:* the job's account holds no git credential (E4) and a commit is a reviewed change to a
 repository; the run that makes it is the one path that already has the credential, the identity and
@@ -486,6 +537,15 @@ and the closed-period refusal, `--stdout`, `--json` and `--submit-draft`, the by
 between writers (F2), and the pattern reading — which E7 moves for every writer at once. Whether
 `--due` follows the reports into the bucket is **Open items**.
 
+**And the write this ruling leaves without a writer (Open items).** The owner's answer of
+2026-11-05 makes the job the **only** writer of `reports/` and gives launchers **read only**, so the
+default this ruling sets — the command writing a report into the bucket — cannot be done with the
+caller's own launcher credentials: they hold `runs/` and `tokens/` for writes and nothing else
+(`gcp.LauncherBucketCondition`, bucket-iam §4). The plan carries the readings under **Open items**;
+what does not change either way is `--dir`, which writes into the caller's own checkout, and the
+stored **read** the owner also ruled in — a person reading a stored report back with the same
+command.
+
 *Why:* the product's default place is the bucket (E1); a checkout is still a legitimate place for a
 person who wants the files, which is why `--dir` survives rather than being replaced.
 
@@ -498,9 +558,10 @@ person who wants the files, which is why `--dir` survives rather than being repl
   D967 (no threshold key), D968 (the fifth rule, its source excepted by E7), D969 (what a report
   carries), D970, D971 (the learning's two ends) and the whole of the learning channel.**
 - **They leave Check 136 where it is** (F13): a report run's own pull request is still the owner's
-  registered check. The one live check the rulings add — the owner enabling the reports job and
-  reading its first stored report — is **named and not numbered**; the folder holds no check block,
-  so the task that writes it takes the number free at its merge, under the register's own rule for a
-  work that reserved none (`docs/run-limit-carry-over/README.md:55` and
-  `docs/project-image-catalog/README.md:99` are the same shape). The register is still not touched by
-  this design.
+  registered check. The **two** live checks the rulings add — the owner proving the prefix-limited
+  listing grant (`objectListPrefix`) lists `runs/<slug>/` and nothing else, and the owner enabling the
+  reports job by the setting and reading its first stored report — are **named and not numbered**;
+  the folder holds no check block, so the task that writes each takes the number free at its merge,
+  under the register's own rule for a work that reserved none
+  (`docs/run-limit-carry-over/README.md:55` and `docs/project-image-catalog/README.md:99` are the same
+  shape). The register is still not touched by this design.

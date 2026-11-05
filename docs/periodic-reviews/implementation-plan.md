@@ -19,11 +19,18 @@ one schedule the rulings add is Fugaro's own project job, paused (E4). Each answ
   acts on a flagged row with `fugaro diagnose RUN`, and the draft's reader is a public issue)* — no
   task: §4 of the spec states what already holds.
 - **The 2026-11-05 rulings, and what each one moves here:** E1 (the reports move to the bucket) —
-  **R7, R8, R10**; E2 (D322/G2 is a default, not a prohibition) — R8, R9; E3 (18 months on
-  `reports/`) — R7; E4 (one project-level writer) — R7; E5 (committing is opt-in and separate) —
-  **R9**; E6 (the designated repo or folder is a separate design item) — R9 depends on it, **Open
-  items**; E7 (the rules read the stored reports) — R4 and R7; E8 (`fugaro runs digest` generates to
-  the bucket) — **R10**.
+  **R7, R11, R8, R10**; E2 (D322/G2 is a default, not a prohibition) — R8, R9; E3 (18 months on
+  `reports/`) — R7; E4 (one project-level writer) — R7 and R11; E5 (committing is opt-in and
+  separate) — **R9**; E6 (the designated repo or folder is a separate design item) — R9 depends on
+  it, **Open items**; E7 (the rules read the stored reports) — R4 and R11; E8 (`fugaro runs digest`
+  generates to the bucket) — **R10**.
+- **What the owner decided on 2026-11-05 after this round's review**, and where each answer is
+  written: the job's listing is a narrow grant on `runs/`, verified first by an owner-run live check
+  (R7, "The listing check"); `reports/` has **one writer, the job**, and launchers read it (R7,
+  "IAM, exactly"; R9's and R10's SEC lines); enabling either job is **a setting `fugaro update`
+  writes**, not a `gcloud` command (R7, "The setting", and the release slot). One question the
+  answers leave is **Open items**: how `fugaro runs digest` writes to the bucket at all, now that
+  the job is the only writer of `reports/`.
 
 The other nine decisions of 2026-11-04 were not singled out and the recommendation stands for each.
 What the 2026-11-04 refresh *does* change is in [reconciliation.md](reconciliation.md) §4: a class for
@@ -35,8 +42,16 @@ ends at the gates below.
 
 - **The loop itself is shipped** (F1–F13). No task here rewrites the report's content, the recipe, the
   runner's step, the layout, the flags, the draft or the issue form. Two tasks do change where a
-  report is written: **R7 adds the writer the rulings ask for** beside the shipped one, and **R10
+  report is written: **R11 adds the writer the rulings ask for** beside the shipped one, and **R10
   changes `fugaro runs digest`'s default target** (E8) without touching what it writes.
+- **R7 and R11 are the two halves of what was one task**, split after the review of this plan: R7 is
+  the job's Terraform and infra (the job, its account, its Scheduler job, its grants, the guard's
+  principal kind for the account, the `reports/` lifecycle rule, the setting that enables it and the
+  `fugaro update` that plans them), and R11 is its code (the command, its loop over the repositories
+  and the stored reader). They are split because the two halves are gated differently — R7 is
+  Terraform a `fugaro update` plans and an owner-run check has to settle first, R11 is code a
+  hermetic test covers — and because one task listing 16 files broke this plan's own cap of 12.
+  **R7 can be built at once**; R11 waits for it, and for R4.
 - **`plugin/**` is owned, and it is being renamed** by the `docs/plugin-user-scope` design (PR
   #1488, which moves the skills to user scope and rewrites the setup skill's session-start
   behaviour). **R3's rule list and R6's §7 sentence touch it, so both are sequenced after
@@ -49,43 +64,44 @@ ends at the gates below.
   provenance needs and changes nothing there.
 - **`internal/runner/runner.go`, `internal/cli/root.go`, `internal/cli/api.go` and everything under
   `ee/`** are owned or off-limits: no task touches them. R1 adds a flag to an existing subcommand, so
-  it needs no registration in `root.go`; R7 and R8 register `runs reports` beside its siblings in
+  it needs no registration in `root.go`; R11 registers `runs reports` beside its siblings in
   `internal/cli/runs.go`, which no other work stream holds.
 - **`deploy/terraform/gcp/modules/installation/`** is edited by R7 alone (the reports job, its
-  account, its schedule and the `reports/` lifecycle rule). No other task in this plan touches
-  Terraform, so the module has one writer.
+  account, its schedule, its alert and the `reports/` lifecycle rule). No other task in this plan
+  touches Terraform, so the module has one writer.
 - **`docs/gcp-live-checklist.md` is not touched by any task**: the register is another work stream's
-  file, the design takes no check number (README, "Numbers this work holds"), and R7's live check is
-  **named**, not numbered — the task that writes it takes the number free at its merge
+  file, the design takes no check number (README, "Numbers this work holds"), and R7's two live
+  checks are **named**, not numbered — the task that writes each takes the number free at its merge
   ([reconciliation.md](reconciliation.md) §5, "What the rulings take").
 
 | Level | Tasks | Needs |
 | --- | --- | --- |
-| 0 | R0 | nothing |
+| 0 | R0, R7 | R0: nothing. R7: **the listing check's result** (its own owner-run live check, before its Terraform lands) — and nothing in this plan |
 | 1 | R1 | R0 |
 | 2 | R2, R4 | R1 |
-| 3 | R3, R7 | R3: R4 (the skill's rule list names the rules R4 adds) and #1488 landed; R7: R0 and R4 (the rules' source, E7) |
-| 4 | R8 | R7 (the job's own loop) |
-| 5 | R6, R9 | R6: R1–R4 and R7, and #1488; R9: R7 **and the designated-repo design item (E6, Open items)** |
-| 6 | R10 | R7 (the bucket writer), R8 (the writer it writes through), R1 and R2 (`internal/cli/runs_digest.go`) and R6 (`docs/recipes.md`) |
+| 3 | R3, R11 | R3: R4 (the skill's rule list names the rules R4 adds) and #1488 landed; R11: R7 (the job's spec and its own assignment) and R4 (the rules' source, E7) |
+| 4 | R6, R8, R9 | R6: R1–R4 and R7, and #1488; R8: R11 (the job's own loop); R9: R11 (what it stored) **and the designated-repo design item (E6, Open items)** |
+| 5 | R10 | R8 (the writer it writes through), R1 and R2 (`internal/cli/runs_digest.go`) and R6 (`docs/recipes.md`) |
 | — | R5 | the owner, at their terminal; no agent step |
 
-**No level holds two writers of one file.** The rows that moved are why: R4 (level 2) adds the
-fifth rule to `internal/digest/patterns.go`, and R7 (level 3) changes where the summaries it reads
-come from — the same file, one level apart. Three files have three writers each, and each is ordered
-the same way: `internal/digest/store.go` (R7 the reader, R8 the aggregate's writer, R10 the command's
-own write path), `internal/cli/runs_digest.go` (R1, R2, R10) and `docs/recipes.md` (R1, R6, R10).
-**R10 is therefore alone at level 6, not beside R8 at level 4**: its three files are held by tasks at
-levels 1, 2, 3, 4 and 5, and level 5 — the one that clears R8 — already holds R6, the second writer
-of `docs/recipes.md`, so a level 5 R10 would trade one collision for another. The shared-files table
+**No level holds two writers of one file.** Three files have three writers each, and each is ordered
+the same way: `internal/digest/store.go` (R11 the reader, R8 the aggregate's writer, R10 the command's
+own write path — levels 3, 4 and 5), `internal/cli/runs_digest.go` (R1, R2, R10 — levels 1, 2 and 5)
+and `docs/recipes.md` (R1, R6, R10 — levels 1, 4 and 5). **R10 is therefore alone at level 5**, and
+not at level 4 beside R8: level 4 is where R6 sits, the second writer of `docs/recipes.md`, so a
+level-4 R10 would trade one collision for another. The split of the old R7 is the other half of the
+check: `internal/digest/patterns.go` is R4's and R11's, one level apart, and the Terraform module,
+`internal/infra/tf/cover.go` and the installation's Go spec are R7's alone. The shared-files table
 below is the check.
 
-**The critical path is R0 → R1 → R4 → R7 → R8 → R10**, and it is the rulings that lengthened it:
-before 2026-11-05 the longest chain was three levels (R0 → R1 → R6). **R7 is what everything new waits
-on** — R8 writes the aggregate in its own loop, R9 commits what it stored, R10 makes the bucket the
-shipped command's default target through that writer — so a schedule enabled before R7 lands has
-nothing to run, which is the other reason the whole of R7 has
-to be in the release that ships the plan.
+**The critical path is R0 → R1 → R4 → R11 → R8 → R10**, and it is the rulings that lengthened it:
+before 2026-11-05 the longest chain was three levels (R0 → R1 → R6). **R11 is what everything new
+waits on** — R8 writes the aggregate in its own loop, R9 commits what it stored, R10 makes the bucket
+the shipped command's default target through that writer — so a schedule enabled before R11 lands has
+nothing to run, which is the other reason the whole of R11 has to be in the release that ships the
+plan. **R7 is off the path entirely**: it waits on the listing check and on nothing else, so the
+Terraform half can land first, and R6 — which needs R7 and R3 but not R11 — leaves the path at level
+4 rather than holding it to level 5.
 
 ## Gates (every task)
 
@@ -103,15 +119,17 @@ the convergence test is a Terraform-tagged one.
 | --- | --- | --- |
 | `internal/digest/due.go` (new) | R0, R1 | R0 writes it; R1 reads it |
 | `internal/runner/digest.go` | R0 | the constants and the function move out of it |
-| `internal/cli/runs_digest.go` | R1, R2, R10 | R1 adds `--due`; R2 calls the same reading for doctor; R10 changes the default target (E8) — levels 1, 2 and 6 |
-| `internal/digest/patterns.go` | R4, R7 | R4 adds the fifth rule; R7 changes where the summaries it reads come from (E7) |
-| `internal/digest/store.go` (new) | R7, R8, R10 | R7 writes the bucket-backed reader; R8 adds the aggregate's writer; R10 is the command's default path into it — levels 3, 4 and 6, one writer per level |
-| `internal/cli/runs_reports.go` (new) | R7, R8 | R7 writes the job's loop over the repositories; R8 writes the aggregate after it |
-| `internal/cli/runs.go` | R7 | the one line that registers `runs reports` beside `runs digest` |
-| `internal/infra/tfvars.go`, `internal/infra/testdata/installation-*.tfvars.json` | R7 | the new `reports` node and the fixtures that carry every installation shape |
-| `deploy/terraform/gcp/modules/installation/bucket.tf`, `variables.tf`, `roots/installation/` | R7 | the `reports/` lifecycle rule and the job's variable |
-| `plugin/skills/working/reference/periodic-reviews.md` | R3, R6 | R3 adds the due signal, the schedule and the rule list; R6 adds §7's sentences |
-| `docs/recipes.md` | R1, R6, R10 | the `--due` pointer, the checklist line, and the sentence E8 changes (R10) — levels 1, 5 and 6 |
+| `internal/cli/runs_digest.go` | R1, R2, R10 | R1 adds `--due`; R2 calls the same reading for doctor; R10 changes the default target (E8) — levels 1, 2 and 5 |
+| `internal/digest/patterns.go` | R4, R11 | R4 adds the fifth rule; R11 changes where the summaries it reads come from (E7) — levels 2 and 3 |
+| `internal/digest/patterns_test.go` | R4, R11 | R4's rule cases; R11's `TestPatternsReadTheStoredReports` |
+| `internal/digest/store.go` (new) | R11, R8, R10 | R11 writes the bucket-backed reader; R8 adds the aggregate's writer; R10 is the command's default path into it — levels 3, 4 and 5, one writer per level |
+| `internal/cli/runs_reports.go` (new) | R11, R8 | R11 writes the job's loop over the repositories; R8 writes the aggregate after it — levels 3 and 4 |
+| `internal/cli/runs.go` | R11 | the one line that registers `runs reports` beside `runs digest` |
+| `internal/infra/tfvars.go`, `internal/infra/testdata/installation-*.tfvars.json` | R7 | the new `reports` node, the `paused` members, and the fixtures that carry every installation shape |
+| `internal/infra/tf/cover.go` | R7 | the reports account's own principal kind, and the grants it must refuse |
+| `deploy/terraform/gcp/modules/installation/bucket.tf`, `variables.tf`, `catalogcheck.tf`, `roots/installation/` | R7 | the `reports/` lifecycle rule, the setting's pass-through and the job's variable |
+| `plugin/skills/working/reference/periodic-reviews.md` | R3, R6 | R3 adds the due signal, the schedule and the rule list; R6 adds §7's sentences — levels 3 and 4 |
+| `docs/recipes.md` | R1, R6, R10 | the `--due` pointer, the checklist line, and the sentence E8 changes (R10) — levels 1, 4 and 5 |
 | `docs/periodic-reviews/README.md` | R6 | the status line, once a task lands |
 
 ## R0. The due computation moves into `internal/digest`
@@ -242,14 +260,14 @@ it read — a signal to look, never a verdict.
 - **Hermetic:** summaries written in the test, no folder, no cloud.
 - **SEC:** none.
 - **The 2026-11-05 rulings move this task's source (E7) and not its rule.** The rule itself is
-  written here; **R7 is where the summaries it reads come from change** — the stored reports in the
-  bucket, and the committed ones if they are there — which is why R7 sits a level above and edits the
-  same file, once.
+  written here; **R11 is where the summaries it reads come from change** — the stored reports in the
+  bucket, and the committed ones if they are there — which is why R11 sits a level above and edits
+  the same file, once.
 
 ## R5. Fugaro's own reports (D961). **The owner's, at their terminal**
 
 No agent step and no test: this is the one thing the design asks the owner to do, and it is the
-registered Check 136, which is **NOT RUN** (`docs/gcp-live-checklist.md:764`, its section `:10621`).
+registered Check 136, which is **NOT RUN** (`docs/gcp-live-checklist.md:785`, its section `:10643`).
 Run once against a release carrying the finalize guard, on a sandbox repository first
 (`fugaro run --recipe run-digest "periodic run review"`), then against this repository under D323's
 rules. **Amended after the owner's ruling of 2026-11-05 (§5, E1/E5):** the reports this produces land
@@ -260,10 +278,10 @@ as the **opt-in commit run** (R9) — which needs this repository to be the proj
 the figures' source, which D324 claims and which is not yet true (F14).
 
 The design takes **no check number**: check numbers live in the register
-(`docs/gcp-live-checklist.md`), which this work does not own, and every behaviour R0–R4, R8, R9 and
-R10 adds is a local read or a local write that a hermetic test covers. **R7 is the one task whose
-behaviour cannot be covered hermetically**, so it names a live check (R7, "The live check, named") and
-that check takes the number free at the merge of the task that writes it.
+(`docs/gcp-live-checklist.md`), which this work does not own, and every behaviour R0–R4, R8, R9, R10
+and R11 adds is a local read or a local write that a hermetic test covers. **R7 is the one task whose
+behaviour cannot be covered hermetically**, so it names two live checks (R7, "The listing check" and
+"The job's own live check") and each takes the number free at the merge of the task that writes it.
 
 ## R6. The learnings' two ends, documented (D970, D971)
 
@@ -281,60 +299,157 @@ release notes name it.
 - **Tests:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'Docs|Backlog' -count=1 -timeout 40m` — the
   backlog folder's own pins must still hold, and `CONTRIBUTING.md` is read by the Docs tests.
 
-## R7. The reports job: one project-level writer into the bucket (E1, E3, E4, E7)
+## R7. The reports job's Terraform and infra: one project-level writer into the bucket (E1, E3, E4)
 
-The rulings' centrepiece, and the first task in this plan that touches the cloud. One job in the
-project, on the 0.18.0 catalog check job's pattern
-(`deploy/terraform/gcp/modules/installation/catalogcheck.tf`, `internal/infra/catalogcheck.go`): its
-own narrowly granted account, **shipped paused**, planned by `fugaro update`. Nothing about it is a
-model call and nothing about it is a commit.
+The rulings' centrepiece, and the half of it this plan builds at once. One job in the project, on the
+0.18.0 catalog check job's pattern (`deploy/terraform/gcp/modules/installation/catalogcheck.tf`,
+`internal/infra/catalogcheck.go`): its own narrowly granted account, **shipped paused behind a
+setting**, planned by `fugaro update`. Nothing about it is a model call and nothing about it is a
+commit; the code that gives it its work is R11.
 
 - **What it is.** The job is `fugarorpt-reports` and **its name must start with `fugarorpt-`**, for
   the reason `fugarochk-` exists: `fugaro runs ls` and every listing count the `fugaro-` ones as
   workflow jobs, and the alert policies match the prefix (`internal/infra/catalogcheck.go:44`,
-  `alert.tf:55`). The account is `fugaro-reports`, the Scheduler job `fugaro-reports` in the
-  installation's region, and **`paused` defaults to `true`** exactly as the catalog job's does
-  (`deploy/terraform/gcp/roots/installation/variables.tf:173`, `paused = optional(bool, true)`, with
-  the module writing it straight through at `modules/installation/catalogcheck.tf:195`).
-- **Its command:** `fugaro runs reports --job`, registered beside its sibling in
+  `alert.tf:55`). The account is `fugaro-reports`, the Scheduler job `fugaro-reports` **in the
+  installation's own scheduler region** — `scheduler_region`, the one the catalog check's Scheduler
+  job carries (`modules/installation/catalogcheck.tf:191`), not the installation's `region` — and its
+  schedule ships paused.
+- **The setting (E4).** Enabling a job is **a setting `fugaro update` writes**, not a `gcloud`
+  command: the project layer gains a `jobs:` block, **`jobs.reports.paused`** and
+  **`jobs.catalog_check.paused`**, each defaulting to `true` (paused). `internal/infra` renders them
+  into the root's `reports` node and into the catalog check's own variable, and the modules apply
+  `paused` from them. **Two reasons this is the task for it:** a `gcloud scheduler jobs resume` is
+  reverted by the next `fugaro update`, because the module always applies `paused` — and the 0.18.0
+  catalog check has the same gap today from the other side, `paused` being a Terraform variable with
+  **no field in `CatalogCheckSpec`** (`internal/infra/catalogcheck.go`) for a run to set it from, so
+  its own operator note offers no command that sticks. R7 adds that field and wires it, for both
+  jobs. Registry rows `layer.jobs.reports.paused` and `layer.jobs.catalog_check.paused` are part of
+  the change (`internal/settings`' own rule: a `config.ProjectLayer` field without a row fails
+  `TestRegistryCoversEveryConfigField`), and the registry's pinned counts move with them —
+  `docs/config-management/README.md:47`, `docs/config-management/reconciliation.md:22` and
+  `internal/cli/docs_config_management_test.go:99` (`cfmRegistryRows`), which the task updates in the
+  same change.
+- **Its command, and what it writes:** R11's. R7's job carries the assignment in its environment
+  (`FUGARO_REPORTS_JOB_SPEC`) and the grants below; nothing about the report's content is R7's.
+- **IAM, exactly (E4), and what the owner decided about it.** The account holds
+  **`roles/storage.objectViewer` on `runs/`**, so it can list `runs/<slug>/` and read the records it
+  summarises, and **`roles/storage.objectUser` on `reports/`**, so it can read a stored report back,
+  write it, overwrite it and delete it under the `reports/` lifecycle. A condition on
+  `resource.name` **grants no listing** (`docs/design/bucket-iam.md` §2.3; live check 7 recorded a 403
+  on listing `runs/` for a job account), so the listing half needs the prefix-limited mechanism
+  `storage.googleapis.com/objectListPrefix` — **unverified in this repo** (bucket-iam §4, V7) — and
+  **the owner ruled it is verified before R7's Terraform lands, by an owner-run check, not assumed**
+  (below). **No git credential, no model credential, no secret**: the account holds no project role,
+  the job mounts no secret, and its env carries the platform variables and `FUGARO_REPORTS_JOB_SPEC`
+  and nothing else. **The launcher side is a read, not a second writer:** a launcher's unconditioned
+  bucket-wide `objectViewer` already covers the new prefix, so a person can read a stored report and
+  **nothing new is granted to a person** — the launcher's own write condition
+  (`gcp.LauncherBucketCondition`, `docs/design/bucket-iam.md` §4, H5) covers `runs/` and `tokens/`
+  and stays as it is: `reports/` is **not** added to it, because the job is the one writer (ruling 3).
+  Operators keep the `objectAdmin` they hold bucket-wide. The
+  guard's own kind comes with it: `internal/infra/tf/cover.go` gives each project account a principal
+  kind of its own (`toCatalogCheck`, `CatalogCheckAccountID`,
+  `TestCatalogCheckAccountIsItsOwnPrincipalKind`), and the reports account gets `toReports` beside it,
+  so no `toAccounts` row can be extended to it and every other role of it is refused and asks the
+  owner.
+- **The retention rule (E3).** `bucket_lifecycle` gains **`reports_days = 548`** (18 months, in whole
+  days as its members are — `internal/infra/tfvars.go:757`) and `bucket.tf` **its fifth
+  `lifecycle_rule`** (the bucket carries four today: `runs/`'s age, `cache/`'s two, and the sealed
+  token's), matching `reports/`; `runs/` keeps its 90 (`F24`, untouched).
+- **`fugaro update` plans it (HARD RULE).** `internal/infra/reportsjob.go` (the spec type, the env
+  document and its version) and the `reports` node in `internal/infra/tfvars.go`; the module's
+  `reports.tf` and its `variables.tf` entry; the pass-through in `roots/installation/`. An
+  installation at the release before this one **converges in one `fugaro update`** — the plan creates
+  the job, its account, the Scheduler job and the bucket's fifth rule, and asks for the typed project
+  name where it plans the reports grants, as the catalog check's own update does.
+- **Files (12):** `internal/infra/reportsjob.go` (new: the spec type, the env document and its
+  version, and the setting's two render paths), `internal/infra/reportsjob_test.go` (new: the names
+  below that are not the guard's, and the convergence test),
+  `internal/infra/tf/cover.go` (the `toReports` kind and `ReportsAccountID`),
+  `internal/infra/tf/cover_grants_test.go` (`TestReportsAccountIsItsOwnPrincipalKind`),
+  `internal/infra/catalogcheck.go` (the `paused` field the catalog check never had),
+  `internal/infra/tfvars.go` (the `reports` node, the two `paused` members, and the fixtures under
+  `internal/infra/testdata/` its test compares),
+  `deploy/terraform/gcp/modules/installation/reports.tf` (new: the job, its Scheduler job, its
+  grants and its alert), `deploy/terraform/gcp/modules/installation/variables.tf`,
+  `deploy/terraform/gcp/modules/installation/bucket.tf` (the fifth rule),
+  `deploy/terraform/gcp/modules/installation/catalogcheck.tf` (the setting's pass-through to the
+  catalog check's own job — the alert for both jobs lives in `reports.tf` beside them, so `alert.tf`
+  is not opened), `deploy/terraform/gcp/roots/installation/variables.tf` and `main.tf`.
+- **Red step:** `TestUpdatePlansTheReportsJobPaused` fails while the setting is not wired (the job's
+  `paused` is missing from the rendered tfvars, and the module's default keeps it paused with no way
+  to say otherwise), `TestCatalogCheckSpecCarriesThePausedSetting` fails while the catalog check's
+  spec still has no field for it, and the convergence test fails while the plan would replace the
+  installation's state rather than add to it.
+- **Tests:** `TestReportsAccountIsItsOwnPrincipalKind` (`internal/infra/tf`),
+  `TestUpdatePlansTheReportsJobPaused`, `TestCatalogCheckSpecCarriesThePausedSetting`,
+  `TestBucketLifecycleCarriesReportsAtEighteenMonths`,
+  `TestReportsJobAccountHoldsNoSecretAndNoProjectRole`,
+  `TestReportsJobNameIsNotAWorkflowJob`, `TestReportsSchedulerJobIsInTheSchedulerRegion`, and the
+  HARD RULE's own convergence test —
+  **`TestInstallationAtThePreviousVersionConvergesToTheReportsJob`**: an installation at the previous
+  version, with the tfvars and the stored state that release wrote, converges in one `fugaro update`,
+  with the job created **paused** — and **still paused after a second update until
+  `jobs.reports.paused` says otherwise** — and no second command, no deletion and no manual repair.
+  It is a `-tags terraform` test, the way `internal/infra/installation_terraform_test.go` runs the
+  real plan; the convergence claim's own shape is
+  `TestInstallationAtThePreviousVersionConvergesToTheMix` (`internal/infra/retire_test.go:1939`),
+  which plans through Go and is **not** Terraform-tagged.
+- **Hermetic:** the Go tests run against the module's own fixtures; the Terraform-tagged test runs the
+  real plan.
+- **Reviewer:** opus + mandatory independent review (an IAM grant, a bucket lifecycle rule and a
+  credential-less job: the three things this plan lets near a project's cloud, and the account is
+  narrower than any other job's).
+- **The listing check, named and not numbered, and R7 depends on it.** The owner ruled this round
+  that `objectListPrefix` is verified **first**: the check is the owner's, **no agent performs any
+  step of it**, and it settles R7's first Terraform plan. The owner, at their terminal, on the
+  sandbox installation, signs in as the project and grants a throwaway service account
+  `roles/storage.objectViewer` on the runs bucket **with the prefix condition**
+  (`storage.googleapis.com/objectListPrefix` for `runs/`), then, as that account, runs
+  `gcloud storage ls --recursive gs://<bucket>/runs/<slug>/` (it must list) and
+  `gcloud storage ls gs://<bucket>/tokens/` and `gcloud storage ls gs://<bucket>/cache/` (both must
+  be refused), and removes the throwaway account afterwards. **If the listing half fails, the plan
+  stops and asks the owner** — the bucket-wide viewer a listing needs when the condition cannot carry
+  one is **not** planned as a fallback here, because it would also read `tokens/` and `cache/`.
+- **The job's own live check, named and not numbered.** It is the owner's too, and it takes the
+  number free at the merge of the task that writes it (§5's closing note, "What the rulings take, and
+  what they leave", the register's rule for a work that reserved none —
+  `docs/run-limit-carry-over/README.md:55`): on the sandbox installation, the owner runs
+  `fugaro update` (it plans the reports job paused), turns it on **by the setting**
+  (`jobs.reports.paused: false`, then `fugaro update` again), waits for one firing and reads, with
+  `gcloud storage ls gs://<bucket>/reports/**`, one stored report per repository for the closed
+  period plus the aggregate, byte-identical to what `fugaro runs digest` writes for the same period;
+  a second `fugaro update` with the setting untouched leaves the schedule running, which is what the
+  `gcloud` line this plan used to carry could not do. Nothing about the job is enabled by default and
+  **nothing here is run by an agent**.
+
+## R11. The job's command and the stored reader (E1, E7)
+
+R7's code half: the subcommand the job runs, the loop that writes the reports, and the reader every
+writer's summaries come from. Hermetic throughout — it touches no cloud API the fake does not model.
+
+- **Its command.** `fugaro runs reports --job`, registered beside its sibling in
   `internal/cli/runs.go:232` (not `root.go`, which another work stream holds). It reads its whole
   assignment from **`FUGARO_REPORTS_JOB_SPEC`** — a versioned JSON document on the
-  `FUGARO_CATALOG_CHECK_SPEC` shape (`internal/infra/catalogcheck.go:23`): the project, the bucket,
-  the repository slugs and the periods to close — and **refuses to start without it**. The release's
-  own `*Since` constant (`internal/cli/recipes_skew.go:303` is `digestSince`'s) gains the release that
-  ships it, so a skill or a recipe that names `runs reports` cannot reach a CLI without it.
+  `FUGARO_CATALOG_CHECK_SPEC` shape (`internal/infra/catalogcheck.go:23`), which R7 declares: the
+  project, the bucket, the repository slugs and the periods to close — and **refuses to start without
+  it**. The release's own `*Since` constant (`internal/cli/recipes_skew.go:303` is `digestSince`'s)
+  gains the release that ships it, so a skill or a recipe that names `runs reports` cannot reach a
+  CLI without it.
 - **What it writes.** For each closed period it loops over the project's repositories and writes
   `reports/<slug>/<YYYY>/<key>.md`, then the aggregate (R8) at `reports/<YYYY>/<key>.md`. **A report
   key is the period**; the bytes are `internal/digest`'s own writer, so F2's byte-identical rule holds
   across writers. **A rerun compares before it writes**: present and equal means skip, different means
   overwrite, which is what makes a re-fired schedule harmless.
-- **IAM, exactly (E4).** Read on the run records (`runs/` of the project's bucket, under the same
-  condition the project job's own read carries) and **write on `reports/` only** — object create and
-  delete under a condition naming that prefix, and no bucket-level role. **No git credential, no
-  model credential, no secret**: the account holds no project role, the job mounts no secret, and its
-  env carries the platform variables and `FUGARO_REPORTS_JOB_SPEC` and nothing else. Whatever the
-  aggregate needs beyond that is Open items, not a grant invented here.
-- **The retention rule (E3).** `bucket_lifecycle` gains **`reports_days = 548`** (18 months, in whole
-  days as its members are — `internal/infra/tfvars.go:757`) and `bucket.tf` a fourth
-  `lifecycle_rule` matching `reports/`; `runs/` keeps its 90 (`F24`, untouched).
-- **`fugaro update` plans it (HARD RULE).** `internal/infra/reportsjob.go` (the spec type, the env
-  document and its version) and the `reports` node in `internal/infra/tfvars.go`; the module's
-  `reports.tf` and its `variables.tf` entry; the pass-through in `roots/installation/`. An
-  installation at the release before this one **converges in one `fugaro update`** — the plan creates
-  the job, its account, the Scheduler job and the bucket's fourth rule, and asks for the typed project
-  name where it plans the reports grants, as the catalog check's own update does.
-- **Files (12, the Terraform and fixture rows grouped):** `internal/cli/runs_reports.go` (new),
-  `internal/cli/runs_reports_test.go` (new),
-  `internal/cli/runs.go` (the registration line) + `internal/cli/recipes_skew.go` (the release's own
-  `*Since` constant, beside `digestSince`), `internal/digest/store.go` (new: the summaries
-  read from the stored reports, E7), `internal/digest/store_test.go` (new),
-  `internal/digest/patterns.go` (the caller changes source, once), `internal/infra/reportsjob.go`
-  (new), `internal/infra/reportsjob_test.go` (new), `internal/infra/tfvars.go` (the node, the
-  lifecycle member, and the fixtures under `internal/infra/testdata/` its test compares),
-  `deploy/terraform/gcp/modules/installation/reports.tf` (new),
-  `deploy/terraform/gcp/modules/installation/variables.tf` + `bucket.tf` + `alert.tf` (the variable,
-  the lifecycle rule and the alert prefix), `deploy/terraform/gcp/roots/installation/variables.tf` +
-  `main.tf`.
+- **The stored reader (E7).** `internal/digest/store.go` is the bucket-backed read of the stored
+  reports, and `patterns.go`'s caller reads them through it instead of the committed folder: the
+  fifth rule and the four shipped ones then see the bucket's series, and the committed ones too where
+  they exist. The aggregate keeps no rules in the first slice (R8).
+- **Files (8):** `internal/cli/runs_reports.go` (new), `internal/cli/runs_reports_test.go` (new),
+  `internal/digest/store.go` (new), `internal/digest/store_test.go` (new),
+  `internal/digest/patterns.go` (the caller changes source, once), `internal/digest/patterns_test.go`
+  (`TestPatternsReadTheStoredReports`), `internal/cli/runs.go` (the registration line),
+  `internal/cli/recipes_skew.go` (the release's own `*Since` constant, beside `digestSince`).
 - **Red step:** `TestRunsReportsWritesEachRepositorysReportIntoTheBucket` fails while the subcommand
   does not exist (`unknown command "reports"`), and `TestRunsReportsRefusesToStartWithoutItsSpec`
   fails against an implementation that falls back to the checkout's own config — the job has no
@@ -342,28 +457,14 @@ model call and nothing about it is a commit.
 - **Tests:** `TestRunsReportsWritesEachRepositorysReportIntoTheBucket`,
   `TestRunsReportsRefusesToStartWithoutItsSpec`, `TestRunsReportsSkipsAnIdenticalStoredReport`,
   `TestRunsReportsOverwritesAReportWhosePeriodChanged`,
-  `TestRunsReportsWritesTheYearFromTheStoredMonths`, `TestPatternsReadTheStoredReports`,
-  `TestUpdatePlansTheReportsJobPaused`, `TestBucketLifecycleCarriesReportsAtEighteenMonths`,
-  `TestReportsJobAccountHoldsNoSecretAndNoProjectRole`,
-  `TestReportsJobNameIsNotAWorkflowJob`, and the HARD RULE's own convergence test —
-  **`TestInstallationAtThePreviousVersionConvergesToTheReportsJob`** (`-tags terraform`, the shape of
-  `internal/infra/retire_test.go:1939`): an installation at the previous version, with the tfvars and
-  the stored state that release wrote, converges in one `fugaro update`, with the job created paused
-  and no second command, no deletion and no manual repair.
-- **Hermetic:** a `gcpfake` bucket and a fake clock for the command; the Terraform-tagged tests run
-  the real plan against the module's own fixtures.
-- **Reviewer:** opus + mandatory independent review (an IAM grant, a bucket lifecycle rule and a
-  credential-less job: the three things this plan lets near a project's cloud, and the account is
-  narrower than any other job's).
-- **The live check, named and not numbered.** It is the owner's, no agent runs any step of it, and it
-  takes the number free at the merge of the task that writes it (§5's closing note, "What the rulings
-  take, and what they leave", the register's rule for a work that reserved none —
-  `docs/run-limit-carry-over/README.md:55`): on the sandbox
-  installation, the owner runs `fugaro update` (it plans the reports job paused), enables the
-  schedule — `gcloud scheduler jobs resume fugaro-reports --location <region>` — waits for one firing
-  and reads, with `gcloud storage ls gs://<bucket>/reports/**`, one stored report per repository for
-  the closed period plus the aggregate, byte-identical to what `fugaro runs digest` writes for the
-  same period. Nothing about the job is enabled by default and **nothing here is run by an agent**.
+  `TestRunsReportsWritesTheYearFromTheStoredMonths`, `TestPatternsReadTheStoredReports`.
+- **Hermetic:** a `gcpfake` bucket and a fake clock; no real plan, no network.
+- **SEC:** the command writes with the job account's own credentials and nothing else: no git
+  credential, no model credential, no secret, and the account's `reports/` write is the only write it
+  holds. It runs in the container, where the checkout is the run's and no person's terminal is in
+  reach.
+- **Reviewer:** opus + mandatory independent review (the command that becomes the writer of a new
+  prefix in the project's bucket).
 
 ## R8. The project aggregate (E1, E2, E4)
 
@@ -381,8 +482,8 @@ project's period, across every repository — which is the one place E2 relaxes 
 - **No person, ever.** The aggregate names repositories, periods, recipes, stages and figures — the
   closed vocabulary of §4 — and carries no address, no task text and no log line (G1, D323). **What
   E2 relaxes is one thing only: it names every repository.**
-- **Files (3):** `internal/cli/runs_reports.go` (the aggregate step, after the loop),
-  `internal/cli/runs_reports_test.go`, `internal/digest/store.go` (the aggregate's own shape).
+- **Files (3):** `internal/cli/runs_reports.go` (R11's file: the aggregate step, after the loop),
+  `internal/cli/runs_reports_test.go`, `internal/digest/store.go` (R11's: the aggregate's own shape).
 - **Red step:** `TestRunsReportsWritesTheProjectAggregateBesideTheRepositoryReports` fails while the
   job writes the repository reports and stops.
 - **Tests:** `TestRunsReportsWritesTheProjectAggregateBesideTheRepositoryReports`,
@@ -399,16 +500,22 @@ into the project's designated repository or folder and opens a pull request. Not
 credential, and **no code repository gets a report committed unless it is itself the designated
 project repo**.
 
-- **What the rulings fix about it:** the source (`reports/` in the project's bucket, read with the
-  run's own credentials, not the job's), the target (the project's designated repository or folder —
-  **E6, Open items**: no key is invented here), the shape (per-repository reports under per-repository
-  subfolders, the aggregate beside them, the index regenerated over the folder the layout names), and
-  the outcome (one pull request, the run's existing identity, no report run and no `digest` step of
-  its own).
+- **What the rulings fix about it:** the source (`reports/` in the project's bucket), the target (the
+  project's designated repository or folder — **E6, Open items**: no key is invented here), the shape
+  (per-repository reports under per-repository subfolders, the aggregate beside them, the index
+  regenerated over the folder the layout names), and the outcome (one pull request, the run's existing
+  identity, no report run and no `digest` step of its own).
+- **Whose credentials read the source, which the owner settled this round:** **the starting person's
+  launcher account, not the run's job account.** A job account reaches `runs/`, `cache/` and `locks/`
+  only (`docs/design/bucket-iam.md` §3), and the owner ruled that **no other job account gets
+  `reports/`** — the reports job is its one writer. A launcher's unconditioned bucket-wide
+  `objectViewer` does reach it, so the read is the person's, on the launch path, and how the bytes
+  reach the run is part of what the designated-repo design item settles (the recipe's own first step,
+  or the launcher handing them in). Nothing here needs a git credential beyond the run's own.
 - **What is not written until the designated-repo design item lands:** the recipe's name,
-  `fugaro.yaml` keys if any, and the file list. **The task is blocked on that design item, and this
-  plan does not guess its shape** — which is why R7 is the only task behind it, and nothing at all
-  waits on it.
+  `fugaro.yaml` keys if any, the read's own shape and the file list. **The task is blocked on that
+  design item, and this plan does not guess its shape** — which is why R11 is the only task behind it,
+  and nothing at all waits on it.
 - **Files (to be completed by that design item):** a recipe under `internal/recipe/catalog/` and its
   runner step — itself a `docs/periodic-reviews` decision the design item's files settle.
 - **Reviewer:** opus + mandatory independent review (the only path in this design that writes into a
@@ -420,32 +527,46 @@ The command keeps its report and changes its default target: **the bucket**, wit
 writing locally for a person who wants the files in a checkout.
 
 - **What changes:** the default when `--dir` is absent (the stored report's path under `reports/`,
-  through R7's writer), the command's `Short`, its `Long`, the header comment that states the
-  "repository's own docs tree" default (`internal/cli/runs_digest.go:21`), and
+  through R11's writer), the command's `Short`, its `Long`, the header comment that states the
+  "repository's own docs tree" default (`internal/cli/runs_digest.go:26`), and
   `docs/recipes.md`'s sentence about where a report lands. **What does not:** the layout, the four
   periods and the closed-period refusal, `--stdout`, `--json`, `--submit-draft`, the byte-identical
   rule between writers (F2), and **`fugaro runs digest` still commits nothing** (D964, E5).
+- **The read the owner ruled in this round:** a person reads a **stored** report back with this same
+  command, under their own launcher credentials — which hold the bucket-wide `objectViewer` and **no
+  write on `reports/` at all**, because the job is its one writer. The flag is this task's to name
+  (the shape is `--stored <period>`, printing what `--stdout` prints); `--dir` keeps its meaning and
+  gains nothing.
 - **Files (4):** `internal/cli/runs_digest.go`, `internal/cli/runs_digest_test.go` (the default
-  target), `docs/recipes.md`, and `internal/digest/store.go` (the write path beside R7's reader — the
-  file R8 has just finished its own side of, which is what puts this task a level above it).
+  target and the stored read), `docs/recipes.md`, and `internal/digest/store.go` (the write path
+  beside R11's reader — the file R8 has just finished its own side of, which is what puts this task a
+  level above it; **Open items decides whether it is a write path at all**).
 - **Why it is last:** it touches three files earlier tasks hold — `internal/cli/runs_digest.go` (R1,
-  R2), `docs/recipes.md` (R1, R6) and `internal/digest/store.go` (R7, R8) — so it sits alone at
-  **level 6**, above every one of them, and the shipped command's default changes once, at the end.
+  R2), `docs/recipes.md` (R1, R6) and `internal/digest/store.go` (R11, R8) — so it sits alone at
+  **level 5**, above every one of them, and the shipped command's default changes once, at the end.
 - **Red step:** `TestRunsDigestWritesToTheBucketByDefault` fails while the command still writes into
   the checkout without `--dir`, and `TestRunsDigestStillWritesLocallyWithDir` fails if `--dir` is
   quietly dropped — the person's path is a feature, not a fallback.
-- **Tests:** `TestRunsDigestWritesToTheBucketByDefault`,
+- **Tests:** `TestRunsDigestWritesToTheBucketByDefault`, `TestRunsDigestReadsAStoredReport`,
   `TestRunsDigestStillWritesLocallyWithDir`, `TestRunsDigestNeverCommits` (the existing refusal,
   re-pinned), `TestRunsDigestJSONNamesTheStoredPath`.
-- **SEC:** none of its own: it writes with the caller's own credentials to the project's bucket, the
-  same read and write `runs ls` and `runs digest` already do.
+- **SEC, corrected this round.** The earlier line said this command's bucket access was "the same read
+  and write `runs ls` and `runs digest` already do" — **it is not, in either direction.** `runs
+  digest` writes only into the checkout today, and a launcher's write grant is `runs/` and `tokens/`
+  (`gcp.LauncherBucketCondition`, `docs/design/bucket-iam.md` §4, H5): a launcher writing `reports/`
+  gets a 403, and **granting it would make every developer a second writer of `reports/`, which is
+  exactly what ruling 3 refuses**. So the stored **read** is the launcher's (and needs nothing new —
+  their viewer already covers the prefix), and the **write** into `reports/` is **Open items**: the
+  first slice's `--dir` write, which is a write into the caller's own checkout, is unaffected either
+  way.
 - **Reviewer:** opus + mandatory independent review (it changes where a shipped command writes by
   default).
 
 ## Open items
 
-Four questions the rulings raise and **this plan does not decide**, each one written where the task
-that meets it says so:
+Five questions the rulings raise and **this plan does not decide** — four from the rulings of
+2026-11-05 and one the answers to this round's review open — each one written where the task that
+meets it says so:
 
 1. **The project's designated repository or folder (E6, ruling 5).** The place a project may name for
    project-level material — the cross-repo backlog filing design already speaks of it
@@ -464,17 +585,27 @@ that meets it says so:
 4. **The `run-digest` recipe (E1).** The shipped recipe writes the reports into the repository it was
    launched in (F5). The rulings do not name it; rerouting it through the bucket, or leaving it as a
    repository owner's own explicit choice, is a decision this plan does not take.
+5. **How `fugaro runs digest` writes to the bucket at all (E8, and this round's answer about
+   `reports/`).** E8 makes the bucket the command's default target; the owner's answer this round
+   makes **the job the only writer of `reports/`** and gives launchers **read only**, so the command
+   cannot write there with the caller's own credentials — a launcher write would be a second writer,
+   which ruling 3 refuses. The readings: the command's default stays the checkout and the bucket is
+   a **read** (which is a wording change in E8, and R10's stored read is useful either way), or a
+   launcher write grant on `reports/` returns (a second writer, against ruling 3), or the write is
+   handed to the job (a mechanism this plan does not design, and one that would need a way to ask
+   the job for one period). **Not decided here**; R10's `--dir` path and its stored read are
+   unaffected, and the task is written so the answer is a default and one grant row.
 
 ## Release slot
 
 **CLI 0.19.0.** 0.15.0, 0.16.0 and 0.17.0 have all shipped since this design was written,
 `docs/config-management`'s own plan is 0.18.0, and the rulings of 2026-11-05 make this a cloud
 change, so **0.19.0 is still the first release this work can ride**
-([reconciliation.md](reconciliation.md) §4, M8) — and it now has to carry the whole of R7, because a
-schedule without the job that reads it is worse than no schedule. The release notes' `### Highlights`
-carry the two sentences the rulings are: **the reports are written into your project's runs bucket,
-and committing them anywhere is your choice** (`fugaro runs reports --job` behind a paused schedule,
-and `fugaro runs digest` writing to the bucket by default).
+([reconciliation.md](reconciliation.md) §4, M8) — and it now has to carry the whole of R7 and R11,
+because a schedule without the job that reads it is worse than no schedule. The release notes'
+`### Highlights` carry the two sentences the rulings are: **the reports are written into your
+project's runs bucket, and committing them anywhere is your choice** (`fugaro runs reports --job`
+behind a paused schedule, and `fugaro runs digest` writing to the bucket by default).
 
 **The release's `### For operators` entry, and it is the HARD RULE's whole upgrade** — two numbered
 lines, and the second is a "when you want it", not a step:
@@ -482,17 +613,21 @@ lines, and the second is a "when you want it", not a step:
 1. "Upgrade the CLI and run `fugaro update` in each checkout: it brings the installation (Terraform,
    the reports job, its account, its paused schedule and the `reports/` lifecycle rule) and the
    checkout to this release. It asks for the typed project name where it plans the reports grants."
-2. "**The reports job is created paused.** Enable its schedule when you want the periodic reports
-   written: `gcloud scheduler jobs resume fugaro-reports --location <region>`. Nothing else is needed,
-   and nothing is committed anywhere until you run the opt-in commit (R9)."
+2. "**Both jobs are created paused, and `update` is what turns them on.** Set
+   `jobs.reports.paused: false` (and `jobs.catalog_check.paused: false` for the catalog check) in the
+   project layer and run `fugaro update` again; the schedule then runs until the setting says
+   otherwise. Nothing else is needed, and nothing is committed anywhere until you run the opt-in
+   commit (R9)."
 
 **One command, and no second step.** The reports job is `fugaro update`'s plan — an installation at
 the previous version converges in that one run
 (`TestInstallationAtThePreviousVersionConvergesToTheReportsJob`, R7), with the job created, the
-account granted and the schedule stopped. Resuming a schedule the owner chose to have is not an
-upgrade step: it is the same shape the 0.18.0 catalog check job's own operator line has ("the catalog
-check job is created paused. Enable its schedule when you want nightly rebuilds"), and `fugaro
-doctor`'s update reading is what tells the owner the update is due. The plugin pin — `fugaro upgrade`'s
+account granted and the schedule stopped. Turning a schedule on is not an upgrade step, and it is a
+**setting**, not a `gcloud` command: `gcloud scheduler jobs resume` is
+undone by the next `fugaro update`, and the 0.18.0 catalog check job's own operator line has the same
+gap from the other side (its `paused` is a Terraform variable with no field in `CatalogCheckSpec` for
+a run to set) — **R7 closes both**, and `fugaro doctor`'s update reading is what tells the owner the
+update is due. The plugin pin — `fugaro upgrade`'s
 `pin` step — is what puts the matching plugin and skills into a checkout
 (`internal/cli/upgrade.go:80`, `:86`). That is exactly why **R1, R3 and R10 ship in one release**: a
 skill that names `--due`, or a skill that says where a report lands, must not reach a CLI whose
