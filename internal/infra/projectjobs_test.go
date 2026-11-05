@@ -478,8 +478,8 @@ const projectWorkflowSecretProfileLC = projectWorkflowSecretBlockLC + `profiles:
 // A profile is shared by every repository admitted to it, so a project
 // workflow secret — whose whole gate is one entry's allow_data_to, a
 // per-repository list — may not be mounted on a shared job (D1266). The
-// refusal is the deployer's own and it is already in the tree: no line of
-// W5's task writes it.
+// refusal is the deployer's own and already in the tree: this task writes no
+// line of it.
 //
 // The test pins the exact path the name takes today, and both halves of it:
 // projectSecretContainers derives a container from the entry (W2), so
@@ -535,9 +535,9 @@ func TestProfileStillAcceptsAProviderKey(t *testing.T) {
 }
 
 // TestProfileStillAcceptsAReservedName is the same guard for the other kind
-// projectSecretEnv maps: a platform-reserved name stays mountable on a shared
-// job, so the fence refuses a workflow secret without narrowing to the names
-// of one block.
+// projectSecretEnv maps: a platform-reserved name is still mounted on a
+// shared job, so the fence refuses a workflow secret without costing the
+// names the tree already reserves.
 func TestProfileStillAcceptsAReservedName(t *testing.T) {
 	jobs := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectProfilesLCBlock)
 	j, ok := jobs[gcp.ProjectJobName("standard", "github", "")]
