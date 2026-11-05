@@ -24,14 +24,23 @@
 // of rules internal/credsvc applies to the identities this repository already
 // trusts.
 //
-// It is a second implementation of those rules and not a shared call: credsvc
-// is another service's package, with its own configuration surface and its own
-// caller classes, and its verification is a method on an Authenticator that
-// admits a run's budget identity or an installation's operators rather than a
-// person at an OAuth authorize endpoint. The right fix, if a reviewer judges one
-// necessary, is to extract the verifier and let both call it; that is a change
-// to a package this task does not own, so it is a finding for the owner rather
-// than a refactor here.
+// It is a second implementation of those rules and not a shared call, and the
+// plan asks the review to hold it to that question: the answer has to be that
+// credsvc is a different service's package with a different configuration
+// surface. It is, and concretely: there is no entry point there whose rules are
+// this endpoint's. Its two verifiers are the run identity's — which demands the
+// run uid shape r~<slug>~<run> and the run's own fs/fr/fp/fx claims and a live
+// coordinator record — and the person's (VerifyPersonCaller), which admits the
+// credentials service's own audience and matches the address against ITS
+// personAccounts list. This front door reads the project's launcher and operator
+// lists instead (D933, and M7 reads them), and its audience is the bare project
+// id; reusing either verifier means teaching that service a second caller class.
+// The helpers underneath (decodeSegment, verifySignature, foldEmail, cacheLife,
+// the key source) are unexported, so sharing them means a core package and a
+// change to credsvc — a security-sensitive package with its own review rule.
+// M6's note rules on what to do with exactly that: if the review disagrees, "the
+// right fix is to extract the verifier, and that is a finding for the owner
+// rather than a refactor in this task". It is reported on the pull request.
 package mcpauth
 
 import (
@@ -194,6 +203,15 @@ func (v *Verifier) VerifyIDToken(ctx context.Context, raw string) (Identity, err
 	// the rules honour (auth.uid) and user_id is the copy Firebase writes beside
 	// it, so a token naming a person in one and nothing or somebody else in the
 	// other is refused rather than read as either.
+	//
+	// There is deliberately no shape check on the uid, and the rule that looks
+	// like the one to borrow is the reason: r~<slug>~<run> is the RUN identity's
+	// (credsvc's splitRunUID, applied in verifyRun), and what signs in at GET
+	// /oauth/authorize is a person, whose uid is whatever the project's own
+	// Identity Platform minted. credsvc's own person path agrees — VerifyPersonCaller
+	// reads the folded address against the installation's people and never looks
+	// at the uid's shape — and a shape check here would refuse every person the
+	// launcher and operator lists (D933) are able to admit.
 	sub, uid := claimString(claims, "sub"), claimString(claims, "user_id")
 	if sub == "" || uid == "" {
 		return Identity{}, fmt.Errorf("%w: the identity carries no uid (sub and user_id are both required)", ErrUnverifiedIDToken)
@@ -335,13 +353,22 @@ func claimString(m map[string]any, k string) string {
 	return s
 }
 
+// claimInt reads a numeric claim as the exact integer the signer wrote, and
+// reports false for anything else — including a fractional or out-of-range
+// value, which a conversion to int64 would silently narrow into a window nobody
+// wrote: exp 1e19 through int64 lands in the past, and 1000.5 becomes 1000.
+//
+// A float64 case is deliberately absent although credsvc's claimInt keeps one.
+// Every decoder in this package sets UseNumber, so a JSON number arrives as a
+// json.Number and that case cannot be reached — but a branch that cannot be
+// reached and TRUNCATES is a trap for whoever next edits a decoder, not a
+// behaviour anything relies on. callers treat false as "the token carries no
+// readable window", which for exp is a refusal.
 func claimInt(m map[string]any, k string) (int64, bool) {
-	switch v := m[k].(type) {
-	case json.Number:
-		n, err := v.Int64()
-		return n, err == nil
-	case float64:
-		return int64(v), true
+	n, ok := m[k].(json.Number)
+	if !ok {
+		return 0, false
 	}
-	return 0, false
+	i, err := n.Int64()
+	return i, err == nil
 }

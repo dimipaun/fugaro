@@ -18,6 +18,14 @@ package mcpauth
 // otherwise refuse every person until the cache ran out, which is up to a day.
 // That extra fetch is rate-limited, so a caller naming random kids cannot make
 // this front door read Google's endpoint in a loop.
+//
+// Holding the lock across the fetch is the stampede guard and not a queue
+// anybody is stuck in: the fetch carries the caller's request context and the
+// client carries its own timeout, so the hold ends with one round-trip at the
+// worst, and a caller arriving during it waits the same round-trip it would
+// have waited alone — without the lock it would have started a second one. A
+// fetch that fails installs nothing, so the next caller reads the set again
+// with its own context rather than inheriting a cancellation that was not its.
 
 import (
 	"context"

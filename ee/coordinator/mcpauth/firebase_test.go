@@ -288,9 +288,39 @@ func TestTheIdentityChecksAreRefusals(t *testing.T) {
 	}
 }
 
+// TestAWindowClaimIsReadExactlyOrNotAtAll: the window is read as the exact
+// integers the signer wrote, and a claim this code cannot read exactly is a
+// token whose window it does not know — refused, not narrowed. An exp of 1e19
+// through int64 lands in the past and 1000.5 becomes 1000, either of which is a
+// window nobody wrote.
+//
+// Every decoder in this package sets UseNumber, so a token's numbers already
+// arrive as json.Number and the truncation the review found was unreachable;
+// this is the pin that keeps a later decoder change from making it reachable.
+func TestAWindowClaimIsReadExactlyOrNotAtAll(t *testing.T) {
+	v := verifierOver(t, staticKeys{testKid: &testKey().PublicKey})
+
+	for name, exp := range map[string]any{
+		"a fractional expiry":  float64(testNow.Unix()) + 0.5,
+		"an expiry past int64": 1e19,
+	} {
+		claims := idTokenClaims(testProject)
+		claims["exp"] = exp
+		if _, err := v.VerifyIDToken(context.Background(), signJWT(t, testKey(), testKid, "RS256", claims)); !errors.Is(err, ErrUnverifiedIDToken) {
+			t.Errorf("%s: refused with %v, which is not a refusal of the identity", name, err)
+		}
+	}
+}
+
 // TestTheAdmittedIdentityIsTheTokensOwn: what a caller gets back is the uid and
 // the folded address, so the list lookup that follows (D933) compares what the
 // token actually asserted.
+//
+// The uid here is a person's (person-1) and not the run identity's
+// r~<slug>~<run>, and that is the pin: what signs in at the authorize endpoint is
+// a person, whose uid is whatever the project's Identity Platform minted, so a
+// verifier that borrowed the run path's uid shape would refuse every person this
+// test admits.
 func TestTheAdmittedIdentityIsTheTokensOwn(t *testing.T) {
 	v := verifierOver(t, staticKeys{testKid: &testKey().PublicKey})
 	claims := idTokenClaims(testProject)
