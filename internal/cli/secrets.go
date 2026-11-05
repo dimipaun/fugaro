@@ -319,13 +319,20 @@ Scope: with neither flag, a NAME that has a project-wide meaning is stored
 once for the whole Fugaro project, in the project's own Secret Manager --
 the API key, the GitHub App key, a model provider's own key (any provider,
 allow_data_to or not), a reserved secret your local config's project_secrets
-block allow-lists, or a named Claude account's token whose account
-allow-lists at least one repository. --project-wide is accepted as a
-synonym of that default, so existing scripts keep working. Inside a shared
-job there is no IAM boundary between repositories: the profile is the
-boundary, and the value reaches every enrolled repository. A workflow's own
-secret has no project-wide meaning and is stored in the repository's own
-container as before.
+block allow-lists, a named Claude account's token whose account
+allow-lists at least one repository, or a secret a workflow declares that
+your local config's workflow_secrets block lists at least one repository
+for. --project-wide is accepted as a synonym of that default, so existing
+scripts keep working. Inside a shared job there is no IAM boundary between
+repositories: the profile is the boundary. What the project copy reaches is
+the name's own entry, and the store says which: a reserved name with no
+project_secrets entry, and a model provider's key with no allow_data_to (or
+an explicit ["*"]), reach every enrolled repository, while an entry that
+names repositories -- project_secrets', workflow_secrets' or a named
+account's -- reaches exactly those. A workflow's own secret is stored once
+for the project only through such an entry: with no workflow_secrets entry
+it stays in the repository's own container as before, and an entry present
+with an empty allow_data_to is refused, since it would mount nowhere.
 
 bitbucket-token has no project-wide default: a Bitbucket credential is
 normally a repository access token, issued for one repository and usable for
@@ -358,18 +365,22 @@ The policy flags write the entry that decides who may mount the value,
 instead of reading one:
 
   --allow-data-to OWNER/NAME   add a repository to
-                               project_secrets.NAME.allow_data_to, the list
-                               of repositories the value is stored for
+                               project_secrets.NAME.allow_data_to -- or to
+                               workflow_secrets.NAME.allow_data_to for a
+                               name your local config holds there -- the
+                               list of repositories the value is stored for
   --proxy[=true|false]         set project_secrets.NAME.proxy, the Bitbucket
                                token's switch for the credentials service
 
-NAME must be a secret Fugaro stores project-wide (the same list as above,
-minus the ones no project entry may hold) and --repo cannot be combined with
-either flag: project_secrets.NAME is the project's own entry and no
-repository owns it. Adding a repository to the list, or turning proxy on, is
-a widening, so it takes the project's own name at a terminal — or --yes
-outside a coding agent's session. --dry-run says what the write would do and
-writes nothing, and --json prints that as the settings-write document.
+NAME must be one of the reserved names above, or a name your local config
+already holds in workflow_secrets (that block can hold no reserved name),
+and --repo cannot be combined with either flag: the entry is the project's
+own and no repository owns it. --proxy is refused for a workflow secret,
+because no workflow_secrets entry holds the switch. Adding a repository to
+the list, or turning proxy on, is a widening, so it takes the project's own
+name at a terminal — or --yes outside a coding agent's session. --dry-run
+says what the write would do and writes nothing, and --json prints that as
+the settings-write document.
 
 A value is not a setting: it has no row, it is never in a diff, and no dry
 run of this command prints one. secrets set with neither policy flag is the
@@ -392,7 +403,7 @@ a value no plan shows.`,
 	}
 	o.addFlags(cmd)
 	f := cmd.Flags()
-	f.StringSliceVar(&o.allowDataTo, "allow-data-to", nil, "add a repository (owner/name) to project_secrets.NAME.allow_data_to, the list of repositories the value is stored for; comma-separated or repeated")
+	f.StringSliceVar(&o.allowDataTo, "allow-data-to", nil, "add a repository (owner/name) to NAME's allow_data_to — project_secrets.NAME.allow_data_to, or workflow_secrets.NAME.allow_data_to for a workflow secret — the list of repositories the value is stored for; comma-separated or repeated")
 	f.BoolVar(&o.proxy, "proxy", false, "set project_secrets.NAME.proxy, the Bitbucket token's switch for the credentials service (--proxy=false turns it off)")
 	f.BoolVar(&o.yes, "yes", false, "confirm the policy write without a prompt (outside a coding agent's session)")
 	f.BoolVar(&o.dryRun, "dry-run", false, "print what the policy write would do and write nothing")
@@ -699,24 +710,37 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	return storeSecret(cmd, env, o, gcp.SecretID(r.slug, name), labels, name)
 }
 
-// secretsSetPolicy is the policy half of `secrets set` (D1171): the two
-// project_secrets.NAME members the registry names this family the owner of —
-// allow_data_to and proxy — written through the settings write path's one
-// helper, so the diff, the confirmation, the backup and the compare-and-swap
-// are the ones every other settings write pays (D1165). It reads no value: a
-// value is not a setting, and the hidden prompt on the value path is the only
-// way one is ever taken.
+// The two blocks a policy entry can live in (D1260): project_secrets holds
+// the reserved names, workflow_secrets the repositories' own application
+// secrets, and the block a name is in is the block this family writes.
+const (
+	secretsBlockProject  = "project_secrets"
+	secretsBlockWorkflow = "workflow_secrets"
+)
+
+// secretsSetPolicy is the policy half of `secrets set` (D1171): the
+// allow_data_to member of NAME's entry — and, for the reserved names,
+// project_secrets.NAME.proxy, which the new block refuses (D1275) — written
+// through the settings write path's one helper, so the diff, the confirmation,
+// the backup and the compare-and-swap are the ones every other settings write
+// pays (D1165). It reads no value: a value is not a setting, and the hidden
+// prompt on the value path is the only way one is ever taken.
 //
 // One key per invocation, exactly as `settings set` writes one edit per
 // invocation: the two flags name two keys, and a run that wrote both would
 // show a diff whose halves the document's single key cannot describe.
 //
-// The coding agent's session refusal is made here, first, and the managed gate
-// never sees the step (spec §5: this whole family is refused in a session,
-// gate or not). applySettingsEdit's own fence would not be enough: it sits
-// behind its "no change" return, and a policy that already holds what the run
-// asks for is exactly that no-op — a session would then be told "no change"
-// where the family's answer is a refusal.
+// The coding agent's session refusal is made here, and the managed gate never
+// sees the step (spec §5: this whole family is refused in a session, gate or
+// not). applySettingsEdit's own fence would not be enough: it sits behind its
+// "no change" return, and a policy that already holds what the run asks for is
+// exactly that no-op — a session would then be told "no change" where the
+// family's answer is a refusal.
+//
+// The local config is read before that fence, because the block the name's
+// entry lives in (secretsPolicyBlock) is what every sentence here names, the
+// refusal in a session included; the read takes no value and the fence still
+// stands before every write.
 func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 	if err := settingsDryRunFlags(settingsWriteOptions{dryRun: o.dryRun, jsonOut: o.asJSON, yes: o.yes}); err != nil {
 		return err
@@ -725,30 +749,31 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 	if len(o.allowDataTo) > 0 && proxy {
 		return userErr("--allow-data-to and --proxy are two different edits: name one, and repeat the command for the other")
 	}
-	// project_secrets holds the reserved names and nothing else
-	// (config.ValidateProjectSecrets), so a name that is not one of them has no
-	// entry for this command to write. Refused by name, with the list, before
-	// anything is read — and before the session fence, because a name this
-	// block cannot hold is a mistake the person fixes whether or not a session
-	// is what refused the rest.
-	//
-	// The other block is named for the same reason: workflow_secrets holds
-	// exactly the names this one cannot, so an operator who wrote one there
-	// would read this sentence as a typo rather than as "that block's entry is
-	// not this flag's to write". Wiring the flag to it is
-	// docs/project-workflow-secrets' W3, and until that lands the name is
-	// refused here, so the sentence has to be the one that says so.
-	if _, reserved := config.ReservedSecrets[name]; !reserved {
-		return userErr("project_secrets holds the secrets Fugaro stores project-wide, and %s is not one of %s: it has no project_secrets entry to write — a name this local config holds in workflow_secrets has an entry of that block instead, which this flag does not write yet",
-			pluginwire.Printable(name), strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "))
+	sel, lc, err := settingsSelection()
+	if err != nil {
+		return err
+	}
+	block, err := secretsPolicyBlock(lc, name)
+	if err != nil {
+		return err
 	}
 	if cmd.Flags().Changed("repo") {
-		return userErr("--repo and the policy flags name different things: project_secrets.%s is the project's own entry, which no repository owns, and a repository's own copy has no policy entry — drop --repo",
-			pluginwire.Printable(name))
+		return userErr("--repo and the policy flags name different things: %s.%s is the project's own entry, which no repository owns, and a repository's own copy has no policy entry — drop --repo",
+			block, pluginwire.Printable(name))
 	}
-	key := "project_secrets." + name + ".proxy"
+	if proxy && block == secretsBlockWorkflow {
+		// D1275: proxy is the Bitbucket token's switch and is read from
+		// project_secrets.bitbucket-token alone, so an entry in the new block
+		// has no member for it. A flag that wrote one would be a setting nothing
+		// reads, and the operator who wrote it would believe their installation
+		// is proxied — refused before the entry is read, for either spelling of
+		// the switch.
+		return userErr("%s is the Bitbucket token's switch, and %s.%s holds no such member (D493, D1275): the credentials service forwards that token alone and reads its switch from %s.%s, so there is nothing here for --proxy to write — the member this flag writes in that block is allow_data_to",
+			pluginwire.Printable("proxy"), block, pluginwire.Printable(name), secretsBlockProject, config.BitbucketSecret)
+	}
+	key := block + "." + name + ".proxy"
 	if len(o.allowDataTo) > 0 {
-		key = "project_secrets." + name + ".allow_data_to"
+		key = block + "." + name + ".allow_data_to"
 	}
 	command := secretsSetPolicyCommand(o, name, proxy)
 	if marker := agentMarker(os.Getenv); marker != "" {
@@ -756,10 +781,6 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 			pluginwire.Printable(key), marker, command)
 	}
 
-	sel, lc, err := settingsSelection()
-	if err != nil {
-		return err
-	}
 	old, err := settingsReadDocument(settingsTarget{kind: settingsDocLocal, path: sel.Path})
 	if err != nil {
 		return err
@@ -767,11 +788,11 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 	next := old
 	switch {
 	case len(o.allowDataTo) > 0:
-		if next, err = secretsPolicyAddRepos(old, name, o.allowDataTo); err != nil {
+		if next, err = secretsPolicyAddRepos(old, block, name, o.allowDataTo); err != nil {
 			return userErr("%s: %v", pluginwire.Printable(key), err)
 		}
 	case o.proxy:
-		if next, err = yamledit.SetScalar(next, []string{"project_secrets", name, "proxy"}, "true"); err != nil {
+		if next, err = yamledit.SetScalar(next, []string{block, name, "proxy"}, "true"); err != nil {
 			return userErr("%s: %v", pluginwire.Printable(key), err)
 		}
 	default:
@@ -780,7 +801,7 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 		// left in the file is a second spelling of the same state that every
 		// later read would have to be trusted to read as off. DropEmptyParents,
 		// so an entry whose only member was the switch goes with it.
-		if next, err = yamledit.RemoveKeyWithOptions(next, []string{"project_secrets", name, "proxy"}, yamledit.RemoveOptions{DropEmptyParents: true}); err != nil {
+		if next, err = yamledit.RemoveKeyWithOptions(next, []string{block, name, "proxy"}, yamledit.RemoveOptions{DropEmptyParents: true}); err != nil {
 			return userErr("%s: %v", pluginwire.Printable(key), err)
 		}
 	}
@@ -795,12 +816,12 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 	// so the file and this command cannot part company about what they accept —
 	// and the entry alone is validated, so a pre-existing problem in another
 	// entry is that entry's to report and not this command's to refuse for.
-	if problems := config.ValidateProjectSecrets(map[string]config.ProjectSecret{name: after.ProjectSecrets[name]}); len(problems) > 0 {
+	if problems := secretsPolicyProblems(block, name, after); len(problems) > 0 {
 		return userErr("%s", problems[0].Message)
 	}
 
-	typed, why := secretsPolicyTyped(o, name, proxy)
-	what := secretsPolicyWhat(o, name, after.ProjectSecrets[name], proxy)
+	typed, why := secretsPolicyTyped(o, block, name, proxy)
+	what := secretsPolicyWhat(o, block, name, secretsPolicyEntryOf(after, block, name), proxy)
 	if err := applySettingsEdit(cmd, lc, settingsEdit{
 		Path:     sel.Path,
 		Old:      old,
@@ -811,7 +832,7 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 		Kind:     settingsDocLocal,
 		Command:  command,
 		Yes:      o.yes,
-		DryRun:   secretsPolicyDryRun(o, name, old, next, proxy),
+		DryRun:   secretsPolicyDryRun(o, block, name, old, next, proxy),
 	}); err != nil {
 		return err
 	}
@@ -831,12 +852,12 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 // the entry the documentation names. The entry is written again instead, in the
 // block style this program writes a list in; the diff and the confirmation show
 // that, so the reformatting is never silent.
-func secretsPolicyAddRepos(old []byte, name string, repos []string) ([]byte, error) {
+func secretsPolicyAddRepos(old []byte, block, name string, repos []string) ([]byte, error) {
 	lc, err := localcfg.Parse(old)
 	if err != nil {
 		return nil, fmt.Errorf("the local config does not read back: %w", err)
 	}
-	entry := lc.ProjectSecrets[name]
+	entry := secretsPolicyEntryOf(lc, block, name)
 	var add []string
 	for _, repo := range repos {
 		if !slices.Contains(entry.AllowDataTo, repo) {
@@ -853,7 +874,7 @@ func secretsPolicyAddRepos(old []byte, name string, repos []string) ([]byte, err
 	}
 	next := old
 	for _, repo := range add {
-		out, err := yamledit.AddListItem(next, []string{"project_secrets", name, "allow_data_to"}, repo)
+		out, err := yamledit.AddListItem(next, []string{block, name, "allow_data_to"}, repo)
 		if err == nil {
 			next = out
 			continue
@@ -861,7 +882,7 @@ func secretsPolicyAddRepos(old []byte, name string, repos []string) ([]byte, err
 		if yamledit.ReasonOf(err) != yamledit.ReasonFlowCollection {
 			return nil, err
 		}
-		return secretsPolicyRewriteEntry(old, name, entry, add)
+		return secretsPolicyRewriteEntry(old, block, name, entry, add)
 	}
 	return next, nil
 }
@@ -873,22 +894,66 @@ func secretsPolicyAddRepos(old []byte, name string, repos []string) ([]byte, err
 // spliced into a flow sequence — the one edit yamledit refuses — and the values
 // come from the parsed entry rather than from the flag, so a repository the
 // entry already named is not lost with the shape it was spelled in.
-func secretsPolicyRewriteEntry(old []byte, name string, entry config.ProjectSecret, add []string) ([]byte, error) {
-	next, err := yamledit.RemoveKeyWithOptions(old, []string{"project_secrets", name}, yamledit.RemoveOptions{DropEmptyParents: true})
+func secretsPolicyRewriteEntry(old []byte, block, name string, entry config.ProjectSecret, add []string) ([]byte, error) {
+	next, err := yamledit.RemoveKeyWithOptions(old, []string{block, name}, yamledit.RemoveOptions{DropEmptyParents: true})
 	if err != nil {
 		return nil, err
 	}
 	for _, repo := range append(slices.Clone(entry.AllowDataTo), add...) {
-		if next, err = yamledit.AddListItem(next, []string{"project_secrets", name, "allow_data_to"}, repo); err != nil {
+		if next, err = yamledit.AddListItem(next, []string{block, name, "allow_data_to"}, repo); err != nil {
 			return nil, err
 		}
 	}
 	if entry.Proxy {
-		if next, err = yamledit.SetScalar(next, []string{"project_secrets", name, "proxy"}, "true"); err != nil {
+		if next, err = yamledit.SetScalar(next, []string{block, name, "proxy"}, "true"); err != nil {
 			return nil, err
 		}
 	}
 	return next, nil
+}
+
+// secretsPolicyEntry is the entry of the block the run writes: workflow_secrets
+// holds the names project_secrets cannot, so which map is read follows from the
+// block and a name never has both.
+func secretsPolicyEntryOf(lc *localcfg.Config, block, name string) config.ProjectSecret {
+	if block == secretsBlockWorkflow {
+		return lc.WorkflowSecrets[name]
+	}
+	return lc.ProjectSecrets[name]
+}
+
+// secretsPolicyProblems validates the one entry this command touches, with that
+// block's own rules: config.ValidateProjectSecrets for the reserved names, and
+// config.ValidateWorkflowSecrets for the new one — whose key rule is the one
+// that keeps a reserved, provider or account name out of it, and whose refusal
+// of proxy is D1275.
+func secretsPolicyProblems(block, name string, lc *localcfg.Config) []config.Problem {
+	one := map[string]config.ProjectSecret{name: secretsPolicyEntryOf(lc, block, name)}
+	if block == secretsBlockWorkflow {
+		return config.ValidateWorkflowSecrets(one)
+	}
+	return config.ValidateProjectSecrets(one)
+}
+
+// secretsPolicyBlock is the block this run's name has an entry in (D1260): the
+// reserved names' project_secrets, or workflow_secrets for a name this local
+// config holds there. Every sentence the run prints names the block it found,
+// so an operator of either one reads the key the run actually writes.
+//
+// A name in neither is refused with the key rule's sentence, pointing at both
+// blocks: workflow_secrets holds exactly the names project_secrets cannot, so a
+// person who wrote a workflow secret there has to read which block does have an
+// entry for it.
+func secretsPolicyBlock(lc *localcfg.Config, name string) (string, error) {
+	if _, held := lc.WorkflowSecrets[name]; held {
+		return secretsBlockWorkflow, nil
+	}
+	if _, reserved := config.ReservedSecrets[name]; reserved {
+		return secretsBlockProject, nil
+	}
+	return "", userErr("%s holds the secrets Fugaro stores project-wide, and %s is not one of %s: it has no %s entry to write, and this local config holds no %s entry for it either — that block is where a repository's own application secret has its entry",
+		secretsBlockProject, pluginwire.Printable(name), strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "),
+		secretsBlockProject, secretsBlockWorkflow)
 }
 
 // secretsPolicyTyped classifies the policy write (D1165, D1171): naming one
@@ -897,8 +962,8 @@ func secretsPolicyRewriteEntry(old []byte, name string, entry config.ProjectSecr
 // credentials service being handed the token instead of the job. Neither has a
 // narrowing direction here: there is no --remove-data-to, and --proxy=false is
 // the narrowing one and is not typed.
-func secretsPolicyTyped(o secretsOptions, name string, proxy bool) (bool, string) {
-	key := "project_secrets." + pluginwire.Printable(name)
+func secretsPolicyTyped(o secretsOptions, block, name string, proxy bool) (bool, string) {
+	key := block + "." + pluginwire.Printable(name)
 	var parts []string
 	if len(o.allowDataTo) > 0 {
 		parts = append(parts, key+".allow_data_to is the list of repositories the value is stored for, and naming one more widens where it is mounted")
@@ -918,8 +983,8 @@ func secretsPolicyTyped(o secretsOptions, name string, proxy bool) (bool, string
 // the flag's values: an entry that already names a repository keeps it, and a
 // sentence built from the flag would print a shorter list than the file it asks
 // to write.
-func secretsPolicyWhat(o secretsOptions, name string, entry config.ProjectSecret, proxy bool) string {
-	key := "project_secrets." + pluginwire.Printable(name)
+func secretsPolicyWhat(o secretsOptions, block, name string, entry config.ProjectSecret, proxy bool) string {
+	key := block + "." + pluginwire.Printable(name)
 	var parts []string
 	switch {
 	case len(o.allowDataTo) > 0:
@@ -939,19 +1004,19 @@ func secretsPolicyWhat(o secretsOptions, name string, entry config.ProjectSecret
 // entry member — the key is a list or a scalar and not an entry of a block, and
 // the value the run would store is not in the document because it is not in the
 // run at all.
-func secretsPolicyDryRun(o secretsOptions, name string, old, next []byte, proxy bool) *settingsDryRun {
+func secretsPolicyDryRun(o secretsOptions, block, name string, old, next []byte, proxy bool) *settingsDryRun {
 	if !o.dryRun {
 		return nil
 	}
-	key := "project_secrets." + name + ".proxy"
+	key := block + "." + name + ".proxy"
 	if len(o.allowDataTo) > 0 {
-		key = "project_secrets." + name + ".allow_data_to"
+		key = block + "." + name + ".allow_data_to"
 	}
 	return &settingsDryRun{
 		key:      key,
 		layer:    settingsLayerLocal,
-		oldValue: secretsPolicyValue(old, name, proxy),
-		newValue: secretsPolicyValue(next, name, proxy),
+		oldValue: secretsPolicyValue(old, block, name, proxy),
+		newValue: secretsPolicyValue(next, block, name, proxy),
 		jsonOut:  o.asJSON,
 	}
 }
@@ -962,12 +1027,12 @@ func secretsPolicyDryRun(o secretsOptions, name string, old, next []byte, proxy 
 // or not set" rather than as the two booleans, because the switch's off state
 // is the key's absence — the state --proxy=false writes — and a document that
 // spelled it "false" would describe a key the edit never leaves behind.
-func secretsPolicyValue(data []byte, name string, proxy bool) string {
+func secretsPolicyValue(data []byte, block, name string, proxy bool) string {
 	lc, err := localcfg.Parse(data)
 	if err != nil {
 		return ""
 	}
-	entry := lc.ProjectSecrets[name]
+	entry := secretsPolicyEntryOf(lc, block, name)
 	if proxy {
 		if !entry.Proxy {
 			return ""
@@ -1002,7 +1067,11 @@ func secretsSetPolicyCommand(o secretsOptions, name string, proxy bool) string {
 //     key and the GitHub App key -- bitbucket-token is not one of them, and
 //     keeps the repository scope it has whenever it is not allow-listed;
 //   - a model provider's own key (accepted project-wide with no list, §3a);
-//   - a named Claude account's token whose account lists a repository.
+//   - a named Claude account's token whose account lists a repository;
+//   - a workflow secret whose workflow_secrets entry lists a repository
+//     (D1265): the entry is the whole gate, so with no entry -- or one that
+//     is present and empty -- there is no project copy this command could
+//     mean, and the repository scope stands.
 //
 // repo is the checkout's repository, "" when the command runs outside one. It
 // is the argument that matters (code review, low): "project_secrets lists
@@ -1018,13 +1087,17 @@ func secretsSetPolicyCommand(o secretsOptions, name string, proxy bool) string {
 //
 // The bare claude-oauth-token is none of these: it is the default account's
 // own, and it keeps the refusal and the repository scope it has on main. A
-// workflow's own secret is none of these either, and keeps repository scope.
+// workflow secret is the last of them only through an entry that lists a
+// repository; with no entry it keeps the repository scope it has on main.
 func projectScopeName(lc *localcfg.Config, name, repo string) bool {
 	if repo != "" {
 		_, ok := infra.ProjectSecretCandidate(lc, name, repo)
 		return ok
 	}
 	if ps, ok := lc.ProjectSecrets[name]; ok && len(ps.AllowDataTo) > 0 {
+		return true
+	}
+	if ps, ok := lc.WorkflowSecrets[name]; ok && len(ps.AllowDataTo) > 0 {
 		return true
 	}
 	if config.ProjectScopeByDefault(name) {
@@ -1103,21 +1176,36 @@ func projectSecretRefusal(name, path string) error {
 //     the owner wrote still decides when there is one -- a list that is
 //     present and empty keeps meaning "nobody". The bare claude-oauth-token is
 //     not swept in and still needs an entry with a non-empty allow_data_to;
-//  2. a model provider's own key is accepted unconditionally -- no condition
+//  2. an entry of workflow_secrets whose allow_data_to names at least one
+//     repository (D1265): this block's entry is the whole gate, so a name
+//     with no entry, or with one that is present and empty, has no
+//     project-wide meaning here at all -- there is no sweep to fall back on
+//     (D1262), unlike point 1;
+//  3. a model provider's own key is accepted unconditionally -- no condition
 //     on allow_data_to at all (§3a: an absent list is a valid, intentional
 //     "available to every repository" state for a provider, not a reason to
-//     refuse storage, unlike points 1 and 3);
-//  3. a named Claude account's derived secret needs its own non-empty
+//     refuse storage, unlike points 1 and 2);
+//  4. a named Claude account's derived secret needs its own non-empty
 //     allow_data_to (the bare claude-oauth-token is point 1's, via
 //     ClaudeAccountBySecret's implicit default);
-//  4. anything else -- a workflow's own secret -- has no project-wide
-//     meaning and is refused (§3).
+//  5. anything else -- a name no block holds -- has no project-wide meaning
+//     and is refused (§3).
 func projectWideAccepted(lc *localcfg.Config, name string) bool {
 	if _, reserved := config.ReservedSecrets[name]; reserved {
 		ps, listed := lc.ProjectSecrets[name]
 		// The owner's own entry is the explicit opt-in #343 had, and the answer
 		// a D2 default must not overrule; with no entry, D2's sweep decides.
 		return (listed && len(ps.AllowDataTo) > 0) || (!listed && config.ProjectScopeByDefault(name))
+	}
+	// The new block, with point 1's shape and none of its second half (D1265,
+	// D1262): an entry present with a non-empty allow_data_to is accepted, and
+	// there is no sweep to fall back on -- an absent entry is refused like a
+	// present and empty one, because that block's entry is the whole gate.
+	// Asked before the provider and account branches, which cannot answer for a
+	// name this block holds: the loader refuses a provider's or an account's
+	// name as a key here (ValidateWorkflowSecrets, localcfg's own two checks).
+	if ps, listed := lc.WorkflowSecrets[name]; listed {
+		return len(ps.AllowDataTo) > 0
 	}
 	if _, ok := config.ProviderBySecret(lc.Providers, name); ok {
 		return true // accepted unconditionally (§3a)
@@ -1137,6 +1225,13 @@ func projectWideRefusal(lc *localcfg.Config, name string) error {
 	if _, reserved := config.ReservedSecrets[name]; reserved {
 		return projectSecretRefusal(name, "project_secrets."+pluginwire.Printable(name))
 	}
+	// Read in the same position as projectWideAccepted's, so the two answer
+	// for the same block: a name this one lists and refuses can only be the
+	// present-and-empty entry, and projectSecretRefusal's sentence names that
+	// block's field rather than the other's.
+	if _, listed := lc.WorkflowSecrets[name]; listed {
+		return projectSecretRefusal(name, "workflow_secrets."+pluginwire.Printable(name))
+	}
 	if account, ok := config.ClaudeAccountBySecret(lc.ClaudeAccounts, name); ok && account != config.DefaultClaudeAccount {
 		return projectSecretRefusal(name, "claude_accounts."+pluginwire.Printable(account)+".allow_data_to")
 	}
@@ -1154,20 +1249,26 @@ func projectWideRefusal(lc *localcfg.Config, name string) error {
 
 // projectWideHint words the other intent the note in secretsSet offers: the
 // flag, when `secrets set name --project-wide` would be accepted for it, or
-// the edit that makes it accepted when it would not. Only a name whose
-// project_secrets entry is present and empty gets the second form -- the one
-// state where the name has a project-wide shape (ProjectScopeByDefault), the
-// note therefore fires for a checkout the entry does not list, and the flag
-// would still refuse (projectWideAccepted). Offering it there would send the
-// person to a command that fails; naming the field is what gets them where
-// they meant to go, and the reading is the same "present and empty means
-// nobody" projectSecretRefusal states.
+// the edit that makes it accepted when it would not. Only a name whose entry
+// is present and empty gets the second form -- the one state where the name
+// has a project-wide shape (ProjectScopeByDefault for a reserved name, the
+// entry itself for a workflow one), the note therefore fires for a checkout
+// the entry does not list, and the flag would still refuse
+// (projectWideAccepted). Offering it there would send the person to a command
+// that fails; naming the field is what gets them where they meant to go, and
+// the reading is the same "present and empty means nobody" projectSecretRefusal
+// states. The field named is the one the entry lives in, since a hint that
+// pointed at the other block would name a key this name can never have.
 func projectWideHint(lc *localcfg.Config, name string) string {
 	if projectWideAccepted(lc, name) {
 		return "`fugaro secrets set <name> --project-wide` stores it for the project instead"
 	}
+	field := "project_secrets." + pluginwire.Printable(name) + ".allow_data_to"
+	if _, listed := lc.WorkflowSecrets[name]; listed {
+		field = "workflow_secrets." + pluginwire.Printable(name) + ".allow_data_to"
+	}
 	return fmt.Sprintf("storing it for the project instead needs %s to list the repositories it is meant for: while it is present and empty nobody may mount the project copy, so `fugaro secrets set <name> --project-wide` is refused until it names at least one repository",
-		"project_secrets."+pluginwire.Printable(name)+".allow_data_to")
+		field)
 }
 
 // secretsSetProjectWide stores name's value once for the whole Fugaro
@@ -1211,9 +1312,25 @@ func secretsSetProjectWide(cmd *cobra.Command, env *cloudEnv, o secretsOptions, 
 	// to decide whether storing the shared copy is safe. The profile is named
 	// as the boundary, since inside a shared job no IAM boundary separates
 	// repositories. On stderr, so --json's stdout stays the document alone.
-	fmt.Fprintf(cmd.ErrOrStderr(),
-		"note: %s is stored project-wide for %s, where %s. Inside a shared job there is no IAM boundary between repositories: the profile is the boundary. A workflow's own secret (workflows.<n>.secrets) cannot be shared this way and stays a repository copy.\n",
+	//
+	// The sentence about a workflow's own secret is D1273's: it used to say that
+	// such a secret cannot be shared this way at all, which was true before the
+	// new block and is not true of a name a workflow_secrets entry holds. The
+	// reach itself stays projectReach's answer, which reads the new block
+	// (projectSecretAllowed), so the note and the entry cannot disagree about
+	// who mounts the copy -- the workflow sentence says where the reach comes
+	// from and is otherwise the entry's own.
+	//
+	// It is said for a workflow secret alone: the name reaches this path with a
+	// workflow_secrets entry exactly when it is one, and a reserved name or a
+	// provider's key has no such entry and nothing to read in the sentence
+	// (code review, nit).
+	note := fmt.Sprintf("note: %s is stored project-wide for %s, where %s. Inside a shared job there is no IAM boundary between repositories: the profile is the boundary.",
 		pluginwire.Printable(name), pluginwire.Printable(env.lc.Name), projectReach(env.lc, name))
+	if _, workflow := env.lc.WorkflowSecrets[name]; workflow {
+		note += " A workflow's own secret (workflows.<n>.secrets) is shared this way only through its workflow_secrets entry, and that entry's allow_data_to is what decides which repositories mount the copy: with no entry, or with an entry that lists nothing, the name stays a repository copy instead."
+	}
+	fmt.Fprintln(cmd.ErrOrStderr(), note)
 	return nil
 }
 
@@ -1491,14 +1608,24 @@ func markMissingRequired(entries []secretEntry, required []string) []secretEntry
 
 // projectSecretAllowed are the repositories the local config allows to use
 // logical project-wide (--project-wide's ALLOWED column), from the same
-// three sources ProjectSecretCandidate reads but with the list as given.
-// The one list that does not read as itself is a provider's: with no
-// allow_data_to the key is available to every repository (design §3a), and
-// an empty column would say the opposite of what the runner does, so it
-// answers "any repository" in words; the explicit ["*"] marker is left as
-// written, since it already says so. project_secrets and claude_accounts
-// keep "absent or empty means nobody".
+// sources ProjectSecretCandidate reads but with the list as given. The one
+// list that does not read as itself is a provider's: with no allow_data_to the
+// key is available to every repository (design §3a), and an empty column would
+// say the opposite of what the runner does, so it answers "any repository" in
+// words; the explicit ["*"] marker is left as written, since it already says
+// so. project_secrets, workflow_secrets and claude_accounts keep "absent or
+// empty means nobody", which is what makes each an honest answer: every caller
+// reads this as the reach of a copy that is stored, and a list that names
+// nobody is a copy nobody mounts.
 func projectSecretAllowed(lc *localcfg.Config, logical string) []string {
+	// workflow_secrets first, as the block that holds a name none of the
+	// others can: the loader refuses a reserved, provider or account name as a
+	// key here, so the order costs no other name its answer, and a workflow
+	// secret read through the wrong block would report the reach of a copy
+	// nobody stores.
+	if ps, ok := lc.WorkflowSecrets[logical]; ok {
+		return slices.Clone(ps.AllowDataTo)
+	}
 	if ps, ok := lc.ProjectSecrets[logical]; ok {
 		return slices.Clone(ps.AllowDataTo)
 	}
