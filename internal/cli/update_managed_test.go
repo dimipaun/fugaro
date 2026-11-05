@@ -524,7 +524,7 @@ func TestUpdateManagedPluginWiringAsksNothing(t *testing.T) {
 			withTerminal(t, true)
 			e, out := stageEngine(t, "", &initOptions{})
 			if tc.managed {
-				e.r.gate = &initGate{read: true, managed: true}
+				e.r.gate = &initGate{managed: true}
 			}
 			s := newPluginStage(e)
 			_, err := s.Apply(t.Context(), initflow.Env{Interactive: true})
@@ -573,7 +573,7 @@ func TestUpdateManagedNeverAdmitsTheSecretsStage(t *testing.T) {
 	// The gate open and the project managed: the state a run is in when it
 	// reaches this stage, so what the stage does here is the stage's own doing
 	// and not the gate's absence.
-	r.e.r.gate = &initGate{read: true, managed: true}
+	r.e.r.gate = &initGate{managed: true}
 	r.e.r.o.door = updateDoor.name
 
 	res, err := r.run(t)
@@ -988,7 +988,7 @@ func TestUpdateManagedRefusesTheFirstPolicyPublish(t *testing.T) {
 func TestUpdateManagedPolicyStageRefusesAnEmptyNode(t *testing.T) {
 	r := updateManagedRig(t)
 	run := &initRun{o: &initOptions{door: updateDoor.name}, w: io.Discard, cmd: NewRootCmd()}
-	run.gate = &initGate{read: true, managed: true}
+	run.gate = &initGate{managed: true}
 	s := &policyMigrateStage{e: &initEngine{r: run}}
 	admitted, err := s.gateStep(context.Background(), &policyMigration{moved: []byte{}})
 	if !admitted {

@@ -696,11 +696,76 @@ func TestSettingsSetManagedOwnerTerminalAsksNoConfirmation(t *testing.T) {
 			if strings.Contains(out, "? [y/N]") {
 				t.Errorf("a managed project's own terminal was asked anyway:\n%s", out)
 			}
-			if !strings.Contains(out, initflow.GateOrdinary()) {
+			// The owner's own terminal reads the sentence that says where the
+			// verdict was taken, not GateOrdinary's — this step's diff IS the
+			// document the gate judged and the record above names its digest,
+			// which is not a step no rule read anything about.
+			if !strings.Contains(out, initflow.GateProceeded()) {
 				t.Errorf("the run does not say what decided the step:\n%s", out)
+			}
+			if strings.Contains(out, initflow.GateOrdinary()) {
+				t.Errorf("the step says no rule read anything, and the gate read this edit's document:\n%s", out)
 			}
 			if len(recs) != 1 || recs[0].Verdict != managedmode.AuditAdmitted {
 				t.Errorf("the day holds %+v, want the one admission of this write", recs)
+			}
+		})
+	}
+}
+
+// And the sentence a step prints where its confirmation would have been is the
+// session's own: the same admitted edit in a coding agent's session reads
+// AgentProceeded, which names the marker the step proceeds under, and never the
+// line addressed to the person at the terminal — GateProceeded's, which says a
+// verdict was read where this reader has no terminal, or GateOrdinary's, which
+// says a step was announced and no rule read anything.
+//
+// The control is the same session and a project the marks do not prove is
+// managed: the refusal this command has always given, and nothing written.
+//
+// The mutation caught: one sentence printed for every session (the arm reading
+// GateOrdinary or GateProceeded with no look at conds.Agent), which hands a
+// coding agent's session the owner's own line.
+func TestSettingsSetManagedAgentSessionReadsTheAgentsOwnSentence(t *testing.T) {
+	for _, tc := range []struct {
+		what    string
+		marks   settingsManagedMarks
+		managed bool
+	}{
+		{"the project is managed", settingsMarksManaged, true},
+		{"the project is unproven", settingsMarksUnlabelled, false},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			r := newSettingsManagedRig(t, tc.marks)
+			r.managedRunsBucket(t)
+			path := settingsManagedLayerFile(t, minimalAnchored)
+			before := readFileString(t, path)
+			agentSession(t)
+
+			out, _, err := executeStdin(t, "", "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project")
+			after := readFileString(t, path)
+			if !tc.managed {
+				if err == nil || !strings.Contains(err.Error(), "refusing to write") || !strings.Contains(err.Error(), "nothing was written") {
+					t.Fatalf("a project the marks do not prove is managed was not refused: %v\n%s", err, out)
+				}
+				if after != before {
+					t.Error("the refusal wrote the file anyway")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a managed project's coding agent session was refused: %v\n%s", err, out)
+			}
+			if !strings.Contains(after, "review_rounds: 6") {
+				t.Errorf("the write did not land:\n%s", after)
+			}
+			if !strings.Contains(out, initflow.AgentProceeded("CLAUDECODE")) {
+				t.Errorf("the session does not read the sentence for its own case:\n%s", out)
+			}
+			for _, owner := range []string{initflow.GateProceeded(), initflow.GateOrdinary()} {
+				if strings.Contains(out, owner) {
+					t.Errorf("a coding agent's session reads the line meant for the owner at a terminal:\n%s", out)
+				}
 			}
 		})
 	}

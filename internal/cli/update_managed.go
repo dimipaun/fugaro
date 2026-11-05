@@ -105,17 +105,16 @@ var gatedStages = map[string]bool{
 // readManagedGate per command followed by an admit per judged document, and
 // because the marks of a project that is being revoked mid-run are re-read
 // there (D1024) — where the write is, which is the interval that matters. A
-// gate nobody read is the zero value: not managed, which is every step's
-// confirmation kept exactly as it is today.
+// run that never read has a nil gate (gateUnderway, managedStage): not
+// managed, which is every step's confirmation kept exactly as it is today.
 type initGate struct {
 	g managedGate
-	// read is whether this run asked at all. It is what keeps a project that
-	// is not managed — and a mark that could not be read — from being asked
-	// about once per stage: the answer cannot change within a run's own read
-	// of it, and the re-read before a write is the helper's, not this field's.
-	read bool
 	// managed is what the read answered: both marks there, which is the only
-	// answer that lets a stage through to the loop.
+	// answer that lets a stage through to the loop. A read that answered "not
+	// managed" is this value false, and the two are the same answer to every
+	// caller — which is why nothing here counts the reads: the answer cannot
+	// change within a run's own read of it, and a re-read before a write is the
+	// helper's, not this struct's.
 	managed bool
 }
 
@@ -221,7 +220,10 @@ func (r *initRun) shapesTheInstallation() bool {
 // this program cannot prove the project is managed, and an unproven project
 // keeps every confirmation it has.
 func readUpdateGate(e *initEngine, r *initRun) *initGate {
-	g := &initGate{read: true}
+	// A gate that was returned at all is a gate that was read: the callers ask
+	// r.gate == nil for "this run never read", so every path out of here hands
+	// back the struct, with managed left false where the marks said nothing.
+	g := &initGate{}
 	ctx := r.ctx()
 	// The clients alone, and not setup's whole readiness: this read is made
 	// BEFORE the run has decided to do anything, and a run whose project turns
@@ -294,8 +296,20 @@ func (r *initRun) gateLeavesTheIAMCall() bool {
 // GateProceeded, which are two sentences because they are addressed to two
 // readers).
 func (r *initRun) gateProceeded() string {
-	if m := agentMarker(os.Getenv); m != "" {
-		return initflow.AgentProceeded(m)
+	return gateSentence(agentMarker(os.Getenv))
+}
+
+// gateSentence is the same choice for a caller that holds the marker rather
+// than the run: the settings write's reader is a surface of its own (it is
+// handed initflow.Conditions, not an initRun), and a second copy of the rule
+// here would be the copy that drifts. An empty marker is the owner's own
+// terminal, which reads GateProceeded — the sentence that says a verdict was
+// taken, not GateOrdinary's, which says a step was announced and no rule read
+// anything. A step that reaches a sentence at all has a verdict behind it: the
+// gate's answer is what the caller passed.
+func gateSentence(marker string) string {
+	if marker != "" {
+		return initflow.AgentProceeded(marker)
 	}
 	return initflow.GateProceeded()
 }

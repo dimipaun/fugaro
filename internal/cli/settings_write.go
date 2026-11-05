@@ -144,8 +144,15 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	// project that is not managed, a mark that did not answer and an edit the
 	// gate refused all arrive here as the zero value every fence reads exactly
 	// as it did before the gate existed.
+	//
+	// Which sentence that is read as is the session's own, and nothing else in
+	// this path is: a coding agent's session reads AgentProceeded, which names
+	// the marker this step proceeds under, and the owner's terminal reads
+	// GateProceeded, which says where the verdict was recorded. gateSentence is
+	// the one place that choice is made (update_managed.go), so this surface
+	// cannot be the one that prints the owner's line to a session.
 	if !e.Yes && initflow.GateConfirms(e.editClass(), conds, e.Managed) {
-		fmt.Fprintf(out, "  %s\n", initflow.GateOrdinary())
+		fmt.Fprintf(out, "  %s\n", gateSentence(conds.Agent))
 	} else if e.Typed {
 		// The widening is named before the prompt and not only in the
 		// refusal a session with no terminal gets: the confirmation a person
