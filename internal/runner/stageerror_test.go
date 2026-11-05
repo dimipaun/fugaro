@@ -111,7 +111,14 @@ func TestStageErrorReasonQuotesTheAgentsText(t *testing.T) {
 // account's token must not reach the record, the report or the draft pull
 // request through it.
 //
+// A separator inside the token is the half the single pass misses: OneLine
+// deletes escape sequences, so the two halves the redactor saw separately
+// come back together in the line the reason carries. The rows below build
+// that line here rather than writing a token into source.
+//
 // Mutation (drop the r.redact call): the token is published in the reason.
+// Mutation (drop the second, outer r.redact, keeping the inner one): the ESC,
+// CSI and OSC rows publish the token.
 // Mutation (drop safetext.OneLine): the newline inside the text reaches the
 // record.
 // Mutation (drop logtail.Clip): the whole text is published.
@@ -136,5 +143,37 @@ func TestStageErrorTextIsRedactedOneLineAndClipped(t *testing.T) {
 	}
 	if strings.Contains(rec.Reason, long) {
 		t.Fatalf("the reason publishes the whole text: %q", rec.Reason)
+	}
+
+	// mark is whether the row's separator is one OneLine deletes, so the
+	// halves join and the redaction mark is expected; the newline is the
+	// separator that does not join — OneLine writes a "?" where it was.
+	for _, tc := range []struct {
+		name string
+		sep  string
+		mark bool
+	}{
+		{"an ESC sequence", "\x1b(B", true},
+		{"a CSI sequence", "\x1b[0m", true},
+		{"an OSC sequence", "\x1b]0;title\x07", true},
+		{"a newline", "\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			half := len(oauthToken) / 2
+			split := "API Error: 500 upstream echoed " + oauthToken[:half] + tc.sep + oauthToken[half:]
+			rec, err := oauthHarness(t).run(t, implement("feature"), failingReview("success", split))
+			if err != nil || rec.Status != runstore.StatusFailed {
+				t.Fatalf("rec = %+v, err = %v", rec, err)
+			}
+			if strings.Contains(rec.Reason, oauthToken) {
+				t.Fatalf("the reason publishes the account's token: %q", rec.Reason)
+			}
+			if strings.ContainsAny(rec.Reason, "\n\r") {
+				t.Fatalf("the reason is not one line: %q", rec.Reason)
+			}
+			if got := strings.Contains(rec.Reason, "[REDACTED]"); got != tc.mark {
+				t.Fatalf("the reason holds a redaction mark = %v, want %v: %q", got, tc.mark, rec.Reason)
+			}
+		})
 	}
 }

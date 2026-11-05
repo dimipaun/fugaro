@@ -3623,7 +3623,7 @@ func (r *run) stageErrorReason(stage string, res agent.Result) string {
 			"the account's allowance is shared with the owner's own Claude Code use and resets on its own schedule"
 	}
 	reason := "stage " + stage + ": " + what
-	if text := stageErrorText(r.redact(res.Text)); text != "" {
+	if text := r.stageErrorText(res.Text); text != "" {
 		reason += ": " + text
 	}
 	return reason
@@ -3631,10 +3631,15 @@ func (r *run) stageErrorReason(stage string, res agent.Result) string {
 
 // stageErrorText is a result event's text as a reason may carry it: the
 // agent's own words, so redacted first, then put on one line (a reason is a
-// sentence), then clipped to one log line's length. The stage's transcript
-// holds the whole of it either way.
-func stageErrorText(text string) string {
-	return logtail.Clip(safetext.OneLine(text), logtail.DefaultLineBytes)
+// sentence), then redacted again and clipped to one log line's length. Neither
+// redaction is redundant: the first sees a multi-line secret's own lines where
+// they are, before OneLine folds the text into one line, and the second
+// catches a secret an upstream split with an escape sequence -- OneLine
+// deletes the sequence, so the halves the first pass saw separately come back
+// together inside the line the reason would carry. The stage's transcript
+// holds the whole text either way.
+func (r *run) stageErrorText(text string) string {
+	return logtail.Clip(r.redact(safetext.OneLine(r.redact(text))), logtail.DefaultLineBytes)
 }
 
 // oauthLimitPhrases are what Claude Code and Anthropic print when an OAuth
