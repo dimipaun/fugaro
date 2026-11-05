@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
@@ -49,15 +51,19 @@ import (
 //     the gate adds is that the whole of what the step would write was judged
 //     and by which rules, which is what the record holds.
 //
-// Why the read happens only in a coding agent's session (D1015). A person at
-// their own terminal skips no confirmation, so there is nothing for the gate to
-// answer there and no mark is read at all: a project whose marks are stale,
-// unreadable or on another machine cannot slow down or stop the person's own
-// command, and no record of their own decisions is written (D1025). Everywhere
-// else a read that does not answer fails closed: readManagedGate's own error,
-// a client that cannot be built and a budget database that cannot be opened all
-// leave the zero Managed behind, which is this command's refusal exactly as it
-// was before this row landed.
+// Where the read happens, and why it is exactly where this command would ask
+// (D1015, and the owner's ruling of 2026-11-01). In a coding agent's session the
+// gate stands in for the refusal SD9 makes; in a person's own terminal it stands
+// in for the y/N the declaration is confirmed with, so it is read there too —
+// and only there: a run with --yes answers the declaration itself and a run with
+// no terminal is refused before anything is opened, so neither has a question
+// for the gate to answer. A run that asks nothing reads nothing, which is what
+// keeps a project whose marks are stale, unreadable or on another machine from
+// slowing down or stopping a command that was never going to ask. Everywhere
+// else a read that does not answer fails closed: readManagedGate's own error, a
+// client that cannot be built and a budget database that cannot be opened all
+// leave the zero Managed behind, which is this command's own behaviour exactly
+// as it was before this row landed.
 
 // accountsAddGate is the whole of this command's call of the gate: read, judge,
 // admit. It answers the value the step's confirmation is decided under (the
@@ -70,9 +76,9 @@ import (
 // rules above were read from and the same bytes the caller applies: the digest
 // the record carries is taken from here (D1022), so the document judged and the
 // document applied are one artifact and not two that happened to agree.
-func accountsAddGate(ctx context.Context, lc *localcfg.Config, o accountsAddOptions, name, profile string, beyond []string, doc []byte) (initflow.Managed, managedGate, error) {
+func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, o accountsAddOptions, name, profile string, beyond []string, doc []byte) (initflow.Managed, managedGate, error) {
 	marker := agentMarker(os.Getenv)
-	if marker == "" {
+	if !settingsGateAsks(marker, settingsAsk(cmd, o.yes), settingsDocLocal, false) {
 		return initflow.Managed{}, managedGate{}, nil
 	}
 	clients, err := newInitClients(ctx, lc)

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/spf13/cobra"
 	crm "google.golang.org/api/cloudresourcemanager/v1"
 	storage "google.golang.org/api/storage/v1"
 
@@ -90,14 +91,18 @@ type refreshManaged struct {
 // session that read a different error here would learn which part of the
 // installation to break next.
 //
-// Why nothing is read for a session that is not a coding agent's. A person at
-// their own terminal has a confirmation for every step this command takes,
-// which the gate could only ever take away; they gain nothing from the marks
-// and must not pay for them, so a transient storage or Resource Manager
-// failure cannot stop a run that has no reason to make either call (M6's
-// review of 2026-11-03).
-func openRefreshManaged(ctx context.Context, o refreshOptions, iopts *initOptions) *refreshManaged {
-	if agentMarker(os.Getenv) == "" {
+// Why nothing is read for a run that asks nothing anyway. The gate's second
+// job — the one the owner's ruling of 2026-11-01 gives it — is to answer the
+// per-build question in a managed project's own terminal, so a person's run
+// reads the marks exactly where it would otherwise be asked: a real terminal,
+// without --yes. A run with --yes or without a terminal has no question for
+// the gate to answer (--yes answers every build itself, and a pipe is refused
+// before any step runs), so it pays for no read and keeps today's behaviour
+// exactly, which is what keeps a transient storage or Resource Manager failure
+// out of a run that has no reason to make either call (M6's review of
+// 2026-11-03).
+func openRefreshManaged(ctx context.Context, cmd *cobra.Command, o refreshOptions, iopts *initOptions) *refreshManaged {
+	if agentMarker(os.Getenv) == "" && (o.yes || !stdinIsTerminal(cmd.InOrStdin())) {
 		return nil
 	}
 	lc, path, old, err := loadRepoConfig(ctx, iopts, o.checkoutDir())

@@ -9,10 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/infra"
 	managed "github.com/dimipaun/fugaro/internal/infra/managed"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 )
@@ -27,7 +31,7 @@ import (
 // creation fact records is what bounds one invocation, the count and the kill
 // switch are re-read before EACH build rather than once per command (D1013), a
 // mark that cannot be read is not a permission (the fail-closed direction of
-// every read in internal/infra/managed), an owner's own run pays nothing for
+// every read in internal/infra/managed), a run that asks nothing pays nothing for
 // any of it, and every admission leaves a record of the document that was
 // judged (D1014, D1022) while a build that did not run leaves none.
 //
@@ -111,13 +115,19 @@ func newManagedRefreshRig(t *testing.T, marker []byte) *managedRefresh {
 	return r
 }
 
+// gateCmd is the command the gate's door is opened for, in a test: where the
+// read is made is decided from this command's own stdin (openRefreshManaged),
+// and stdinIsTerminal is what says whether it is a terminal (fakeTerminal for
+// a person's own run, the package's own answer everywhere else).
+func gateCmd() *cobra.Command { return NewRootCmd() }
+
 // door is the gate's own read for this rig, as runImageRefresh makes it: the
 // real openRefreshManaged, over the rig's config, checkout and fakes. It fails
 // the test when the door stayed shut, because every test that calls it means
 // the installation to be managed.
 func (r *managedRefresh) door(t *testing.T) *refreshManaged {
 	t.Helper()
-	m := openRefreshManaged(t.Context(), refreshOptions{}, &initOptions{cloud: cloudOptions{stderr: func() io.Writer { return io.Discard }}})
+	m := openRefreshManaged(t.Context(), gateCmd(), refreshOptions{}, &initOptions{cloud: cloudOptions{stderr: func() io.Writer { return io.Discard }}})
 	if m == nil {
 		t.Fatal("both marks are in place and the gate's own door stayed shut")
 	}
@@ -308,7 +318,7 @@ func TestImageRefreshManagedUnknownMarkerVersionRefuses(t *testing.T) {
 	r := newManagedRefreshRig(t, managedRefreshUnknownVersionMarker())
 	fb := useFakeBuilder(t)
 	bothStale(t)
-	if m := openRefreshManaged(t.Context(), refreshOptions{}, &initOptions{cloud: cloudOptions{stderr: func() io.Writer { return io.Discard }}}); m != nil {
+	if m := openRefreshManaged(t.Context(), gateCmd(), refreshOptions{}, &initOptions{cloud: cloudOptions{stderr: func() io.Writer { return io.Discard }}}); m != nil {
 		t.Fatal("a creation fact this program does not write opened the gate")
 	}
 	ran := fakeSteps(t, "", nil)
@@ -413,24 +423,30 @@ func TestImageRefreshManagedReadsTheKillSwitchBeforeEachBuild(t *testing.T) {
 	}
 }
 
-// An owner's own run is not the gate's business (M6's review of 2026-11-03, 2):
-// the marks are not read at all, so a transient storage or Resource Manager
-// failure cannot stop a run that has no reason to make either call — and the
-// refusal an agent's session reads is not a read this one pays for.
-func TestImageRefreshManagedOwnerSessionReadsNothing(t *testing.T) {
+// A run the gate has nothing to answer pays nothing for it (M6's review of
+// 2026-11-03, 2): --yes answers every build itself, and a run with no terminal
+// is refused before any step runs, so neither has a question the marks could
+// answer — and neither pays for the read, which is what keeps a transient
+// storage or Resource Manager failure out of a run that has no reason to make
+// either call.
+func TestImageRefreshManagedNoQuestionReadsNothing(t *testing.T) {
 	useVersion(t, "0.5.1")
 	r := newManagedRefreshRig(t, managedRefreshMarker(1))
 	noAgentSession(t)
-	// A read that would fail the gate: an owner's run must not make it.
+	noTerminal(t)
+	// A read that would fail the gate: a run that asks nothing must not make it.
 	r.gcs.FailObjectGetsAfter(initRunsBucket, managed.MarkerObject, 0)
-	if m := openRefreshManaged(t.Context(), refreshOptions{}, &initOptions{}); m != nil {
-		t.Fatal("an owner's own run took the coding agent's path")
+	if m := openRefreshManaged(t.Context(), gateCmd(), refreshOptions{yes: true}, &initOptions{}); m != nil {
+		t.Fatal("a run with --yes took the gate's path, and --yes answers every build itself")
+	}
+	if m := openRefreshManaged(t.Context(), gateCmd(), refreshOptions{}, &initOptions{}); m != nil {
+		t.Fatal("a run with no terminal took the gate's path, and it is refused before any step runs")
 	}
 	if n := len(r.gcs.Requests()); n != 0 {
-		t.Errorf("an owner's own run made %d storage requests, and the marks are the gate's business alone", n)
+		t.Errorf("a run that asks nothing made %d storage requests", n)
 	}
 	if n := len(r.crm.Requests()); n != 0 {
-		t.Errorf("an owner's own run made %d Resource Manager requests, and the marks are the gate's business alone", n)
+		t.Errorf("a run that asks nothing made %d Resource Manager requests", n)
 	}
 	// And the command keeps today's behaviour exactly: the unreadable mark does
 	// not stop it, and it goes on to the refusal it has always had for a
@@ -439,7 +455,7 @@ func TestImageRefreshManagedOwnerSessionReadsNothing(t *testing.T) {
 	t.Chdir(t.TempDir())
 	_, _, err := executeStdin(t, "", "image", "refresh", "--yes")
 	if err == nil || !strings.Contains(err.Error(), "is not in one") {
-		t.Fatalf("an owner's run was stopped by something other than the checkout it is in: %v", err)
+		t.Fatalf("a run with --yes was stopped by something other than the checkout it is in: %v", err)
 	}
 	if len(*ran) != 0 {
 		t.Errorf("steps ran for a directory that is not a checkout: %q", *ran)
@@ -490,6 +506,78 @@ func TestImageRefreshReadsTheGateBeforeAnyWrite(t *testing.T) {
 				if got := r.audits(t); len(got) != 0 {
 					t.Errorf("the day holds %d records for a step that never ran", len(got))
 				}
+			}
+		})
+	}
+}
+
+// The owner's own terminal in a managed project asks nothing for a billable
+// build either (the ruling of 2026-11-01: the whole point of a managed project
+// is that the gate manages it on the owner's behalf, without the prompts). The
+// marks are read because this is exactly the run the per-build question would
+// have stopped at, the gate judges THIS build, and the typed project name is
+// replaced by the verdict: the cost line is printed with it, and the admission
+// the owner finds later in their own bucket is written by refreshBuilds once
+// the build is out.
+//
+// The first case is that; the second is the control, and it is the whole of
+// what "the gate is the confirmation" means — an unproven project keeps
+// today's behaviour exactly, so the same build is the typed question this
+// command has always asked, which a terminal with nothing to type leaves
+// unanswered.
+func TestImageRefreshManagedOwnerTerminalAsksNoBuildQuestion(t *testing.T) {
+	useVersion(t, "0.5.1")
+	for _, tc := range []struct {
+		what    string
+		marker  []byte
+		managed bool
+	}{
+		{"the project is managed, so the verdict is the confirmation", managedRefreshMarker(1), true},
+		{"the project is unproven, so the build is asked for as it always was", managedRefreshUnknownVersionMarker(), false},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			r := newManagedRefreshRig(t, tc.marker)
+			noAgentSession(t)
+			// The door is the real one, made the way runImageRefresh makes it:
+			// a person's own run, at a terminal, in the directory the rig is a
+			// checkout of.
+			out := atTerminal(t, r.e, "")
+			m := openRefreshManaged(t.Context(), r.e.r.cmd, refreshOptions{}, &initOptions{})
+			if (m != nil) != tc.managed {
+				t.Fatalf("the gate's door answered %v, want managed=%v", m != nil, tc.managed)
+			}
+			if !tc.managed {
+				// The control: the same build, the same terminal, and the
+				// question this command has always asked. Nothing is typed, so
+				// nothing is confirmed and no build is submitted.
+				ok, reachable, err := r.e.r.askBuild("submits a Cloud Build", initflow.Managed{})
+				if err != nil || ok || !reachable {
+					t.Fatalf("a project that is not managed was answered without the typed name (ok=%v reachable=%v): %v", ok, reachable, err)
+				}
+				if !strings.Contains(out.String(), "Type "+initProjectName+" to confirm") {
+					t.Errorf("the terminal was not asked for the project's name:\n%s", out)
+				}
+				return
+			}
+			p := r.plan(m)
+			host, err := infra.RegistryHost(r.tg.lc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			g, err := m.admitBuild(t.Context(), p, r.tg, "app", host)
+			if err != nil {
+				t.Fatalf("the gate refused a build it should have admitted: %v", err)
+			}
+			banner := cloudBuildBanner(r.tg.spec.Name, "app", r.tg.lc.Build.MachineType, r.tg.spec.BuildServiceAccountEmail, r.tg.spec.RegistryPath)
+			ok, reachable, err := r.e.r.askBuild(banner, g)
+			if err != nil || !ok || !reachable {
+				t.Fatalf("a managed project's own terminal was refused a build (ok=%v reachable=%v): %v\n%s", ok, reachable, err, out)
+			}
+			if got := out.String(); !strings.Contains(got, banner) || !strings.Contains(got, initflow.GateProceeded()) {
+				t.Errorf("what the owner read is not the cost line and the verdict:\n%s", got)
+			}
+			if strings.Contains(out.String(), "Type "+initProjectName+" to confirm") {
+				t.Errorf("a managed project's own terminal was asked for the project's name anyway:\n%s", out)
 			}
 		})
 	}

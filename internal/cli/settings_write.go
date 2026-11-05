@@ -118,7 +118,8 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	// class the gate does not cover, an edit whose class is Typed — keeps the
 	// refusal exactly as it was, and a caller that passes nothing changes
 	// nothing.
-	if marker := agentMarker(os.Getenv); marker != "" && (!e.insideRepo() || e.Typed) && !initflow.CanConfirmManaged(e.editClass(), initflow.Conditions{Agent: marker}, e.Managed) {
+	conds := settingsEditConditions(cmd, e)
+	if marker := conds.Agent; marker != "" && (!e.insideRepo() || e.Typed) && !initflow.CanConfirmManaged(e.editClass(), conds, e.Managed) {
 		fmt.Fprintf(out, "%s\n%s", e.Path, diff)
 		return userErr("refusing to write %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
 			e.Path, marker, e.What, e.Command)
@@ -134,7 +135,18 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	}
 
 	fmt.Fprintf(out, "%s\n%s", e.Path, diff)
-	if e.Typed {
+	// The owner's own terminal in a managed project asks nothing (the ruling of
+	// 2026-11-01): the gate read this edit's document, admitted it, and its
+	// verdict IS the confirmation — the diff above is the whole of what the
+	// owner reads. The class is still the class: initflow.GateConfirms is false
+	// for a Typed edit whatever a plan looked like (D1026, and settingsEdit's
+	// own editClass), so the widening directions keep the typed name, and a
+	// project that is not managed, a mark that did not answer and an edit the
+	// gate refused all arrive here as the zero value every fence reads exactly
+	// as it did before the gate existed.
+	if !e.Yes && initflow.GateConfirms(e.editClass(), conds, e.Managed) {
+		fmt.Fprintf(out, "  %s\n", initflow.GateOrdinary())
+	} else if e.Typed {
 		// The widening is named before the prompt and not only in the
 		// refusal a session with no terminal gets: the confirmation a person
 		// reads is one block, and the sentence saying what makes this edit
@@ -210,6 +222,14 @@ func readSettingsCurrent(e settingsEdit) ([]byte, error) {
 		return os.ReadFile(e.Path)
 	}
 	return config.ReadRegular(e.Path, config.LayerMaxBytes)
+}
+
+// settingsEditConditions is who is there for one edit, in initflow's own terms:
+// the command's own stdin, the edit's own --yes and the marker of the session
+// it runs in. It is read once per edit, so the fence above and the gate below
+// are decided under one struct rather than two readings that could disagree.
+func settingsEditConditions(cmd *cobra.Command, e settingsEdit) initflow.Conditions {
+	return initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), Yes: e.Yes, Agent: agentMarker(os.Getenv)}
 }
 
 // confirmSettingsWrite is the ordinary y/N confirmation: --yes answers it, a

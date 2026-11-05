@@ -52,8 +52,9 @@ type refreshOptions struct {
 	// returns, never from the hook alone.
 	onPlan func(*refreshPlan)
 	// managed is the gate this run is under: the value openRefreshManaged
-	// returned, set by runImageRefresh and nil for every run that is not a
-	// coding agent's session in a managed project. It travels with the options
+	// returned, set by runImageRefresh and nil for every run the gate has
+	// nothing to answer — one that is neither a coding agent's session nor a
+	// person's own run at a terminal that would be asked. It travels with the options
 	// rather than as another parameter because it is not a flag and because it
 	// is the same value at every step of the run: the plan carries it to step 4
 	// (refreshPlan.managed), and preflight uses the installation the gate
@@ -404,8 +405,8 @@ func newImageRefreshCmd() *cobra.Command {
 // refuseRefreshHere is decision D2, as reversed in part by the owner's
 // 2026-10-08 decision and in part by the managed gate (M4, D1011): it still
 // runs before anything else (git, the credentials, the network — the gate's
-// own read is the one exception, and it is made only in the session refused
-// here). A coding agent's session applies nothing, --yes included, UNLESS the
+// own read is the one exception, and where it is made is openRefreshManaged's
+// business). A coding agent's session applies nothing, --yes included, UNLESS the
 // project is managed and the gate admitted every step it reaches: g is that
 // gate, and it is nil for every other session, so the sentence below is
 // exactly the one this command has always printed — a project that is not
@@ -498,7 +499,7 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	// yes carries --yes to r.confirm/r.ask (steps 2 and 3) and to
 	// refreshBuilds (step 4, which keeps its own rule: see askBuild).
 	iopts := &initOptions{cloud: o.cloud, imageSource: o.imageSource, expectDigests: o.expectDigests, yes: o.yes}
-	o.managed = openRefreshManaged(ctx, o, iopts)
+	o.managed = openRefreshManaged(ctx, cmd, o, iopts)
 	if err := refuseRefreshHere(cmd, o.yes, o.managed); err != nil {
 		return err
 	}

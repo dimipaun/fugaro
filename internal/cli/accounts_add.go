@@ -158,7 +158,7 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// here — before the login is screened and before the diff is shown — so a
 	// refusal leaves the file exactly as it was. Everywhere else it answers the
 	// zero Managed, which is every fence below unchanged.
-	m, gate, err := accountsAddGate(cmd.Context(), lc, o, name, profile, beyond, next)
+	m, gate, err := accountsAddGate(cmd.Context(), cmd, lc, o, name, profile, beyond, next)
 	if err != nil {
 		return err
 	}
