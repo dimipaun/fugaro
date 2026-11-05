@@ -299,23 +299,14 @@ func ProjectReviewJobs(lc *localcfg.Config, bucket string, vertex bool) (map[str
 	return out, nil
 }
 
-// ReviewVariantAccount is one entry of config.ProjectJobAccounts' axis as the
-// review variant's names spell it: the policy's own spelling of the account,
-// which writes the default account as config.DefaultClaudeAccount where the
-// axis writes it as the empty string.
-//
-// It is exported because the variant's names are computed in two places — the
-// deployer here and the launcher (internal/cli's project job lookup) — and a
-// second spelling of the mapping would be a launcher that resolves a job
-// nobody deployed, or a service that admits an account that does not exist.
-// The service makes the same mapping for its own table
-// (credsvc.ReviewJobAccountsFor), over the same axis.
-func ReviewVariantAccount(account string) string {
-	if account == "" {
-		return config.DefaultClaudeAccount
-	}
-	return account
-}
+// ReviewVariantAccount is config.ReviewVariantAccount, the mapping the
+// deployer here, the launcher (internal/cli's project job lookup) and the
+// runner that places a review run in its variant all derive the variant's names
+// over. It is kept as a name here because the deployer reads it in the
+// vocabulary of the jobs it builds, and it is the same function, never a second
+// spelling: a second one would name a job nobody deployed or a service account
+// nobody created.
+func ReviewVariantAccount(account string) string { return config.ReviewVariantAccount(account) }
 
 // reviewVariant is one coding job's review-only twin. j is the coding job the
 // deployer built for that (profile, provider, account), so the variant inherits

@@ -11,7 +11,9 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -159,15 +161,21 @@ func TestJobIdentityMatchesAComputedProjectJobName(t *testing.T) {
 // CLOUD_RUN_JOB against holds one entry per (profile, provider, account) the
 // policy defines, computed by config.ProjectJobAccounts — the same function
 // internal/infra deployed the jobs with and internal/cli picks the job to
-// launch with. A profile serving accounts therefore contributes its
-// no-account job and one per account; a profile serving none contributes the
-// one job it always had; and the default account contributes no entry of its
-// own, because it rides the no-account job (D5).
+// launch with — and, beside each of them, the review-only variant of it
+// (CSR8), whose account segment is the policy's spelling of that account with
+// config.ReviewVariantSuffix on it. A profile serving accounts therefore
+// contributes its no-account job and one per account, each with its variant; a
+// profile serving none contributes the one job it always had and that job's
+// variant; and the default account contributes no coding entry of its own,
+// because it rides the no-account job (D5) — while its variant is a job of its
+// own, named for the account the policy speaks.
 //
 // Mutation (run, restore): compute one candidate per profile with an empty
 // account (the pre-task code), which leaves every account job's name
 // uncomputed: a run in one halts with cannotPlaceJob, blaming a stale module
-// version for a job the deployer built.
+// version for a job the deployer built. Mutation (run, restored): drop the
+// review variant from the list. TestReviewJobVariantIsPlaced fails, and every
+// review job is one the runner cannot place.
 func TestRunnerCandidatesIncludeAccountJobs(t *testing.T) {
 	p := policyOf(map[string]config.JobProfile{
 		"plain":    profileOf("github"),
@@ -175,11 +183,16 @@ func TestRunnerCandidatesIncludeAccountJobs(t *testing.T) {
 		"other":    profileOf("bitbucket", "acme-work"),
 	})
 	want := []jobTriple{
-		{Profile: "other", Provider: "bitbucket", Account: ""},
-		{Profile: "other", Provider: "bitbucket", Account: "acme-work"},
-		{Profile: "plain", Provider: "github", Account: ""},
-		{Profile: "standard", Provider: "github", Account: ""},
-		{Profile: "standard", Provider: "github", Account: "acme-personal"},
+		{Profile: "other", Provider: "bitbucket", Account: "", Class: classCoding},
+		{Profile: "other", Provider: "bitbucket", Account: "default-review", Class: classReview},
+		{Profile: "other", Provider: "bitbucket", Account: "acme-work", Class: classCoding},
+		{Profile: "other", Provider: "bitbucket", Account: "acme-work-review", Class: classReview},
+		{Profile: "plain", Provider: "github", Account: "", Class: classCoding},
+		{Profile: "plain", Provider: "github", Account: "default-review", Class: classReview},
+		{Profile: "standard", Provider: "github", Account: "", Class: classCoding},
+		{Profile: "standard", Provider: "github", Account: "default-review", Class: classReview},
+		{Profile: "standard", Provider: "github", Account: "acme-personal", Class: classCoding},
+		{Profile: "standard", Provider: "github", Account: "acme-personal-review", Class: classReview},
 	}
 	if got := projectJobCandidates(p); !slices.Equal(got, want) {
 		t.Fatalf("projectJobCandidates = %+v, want %+v", got, want)
@@ -859,5 +872,293 @@ func TestRunnerLeavesAPerRepositoryJobToTheOldRules(t *testing.T) {
 	}
 	if err := r.checkProjectJobAccount(context.Background(), "oauth"); err != nil {
 		t.Fatalf("checkProjectJobAccount = %v, want a per-repository job to be left alone", err)
+	}
+}
+
+// TestReviewJobVariantIsPlaced (CSR8): a review-marked run sitting in the
+// review-only variant of a project job — the name the launcher chose, which is
+// credsvc.ReviewJobName's, the deployer's own spelling of the variant — is
+// placed, and adopts the triple the variant's name was computed from, the
+// account segment included. The identity is the one internal/cli resolved when
+// it launched the review (projectJobReviewFor), so the launcher, the deployer
+// and the runner name one job rather than three.
+//
+// Red step: the variant's name is not a candidate the published policy
+// computes, so jobIdentity halts with cannotPlaceJob (projectjob.go) — a
+// container of the review variant cannot say which job it is in, and a review
+// launched once the constant is flipped halts at admission.
+//
+// Mutation (run, restored): drop the review candidate from
+// projectJobCandidates. Both cases fail with the same refusal. Mutation (run,
+// restored): drop the empty-account-to-default mapping
+// (config.ReviewVariantAccount). The default-account case fails, because
+// "default-review" is the name the deployer derives and the one no coding
+// triple spells.
+func TestReviewJobVariantIsPlaced(t *testing.T) {
+	slug := identitySlug(t, "github", "acme/app")
+	for _, tc := range []struct {
+		name     string
+		profiles map[string]config.JobProfile
+		account  string // the axis account the variant is of
+	}{
+		{"a named account's variant", map[string]config.JobProfile{"standard": profileOf("github", "acme-personal")}, "acme-personal"},
+		{"the default account's variant", map[string]config.JobProfile{"standard": profileOf("github", config.DefaultClaudeAccount)}, config.DefaultClaudeAccount},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := policyOf(tc.profiles)
+			// The deployer's own spelling: internal/infra derives the
+			// variant's account first (config.ReviewVariantAccount) and names
+			// the job with credsvc.ReviewJobName, which is what the launcher
+			// launches and what the run has to match.
+			job := credsvc.ReviewJobName("standard", "github", config.ReviewVariantAccount(tc.account))
+			r := identityRun(t, job, slug, nil, p, true)
+			r.review = true
+			r.spec.Mode = recipe.ModeReview
+			profile, provider, account, err := r.jobIdentity(context.Background())
+			if err != nil {
+				t.Fatalf("jobIdentity(%s) = %v: the review variant's name must be one the published policy computes", job, err)
+			}
+			want := config.ReviewVariantAccount(tc.account) + config.ReviewVariantSuffix
+			if profile != "standard" || provider != "github" || account != want {
+				t.Fatalf("jobIdentity(%s) = %q/%q/%q, want standard/github/%q: the variant's own account segment is the account its name was computed from",
+					job, profile, provider, account, want)
+			}
+			if _, project := r.projectJob(); !project || r.job.Account != account {
+				t.Fatalf("the run adopted %+v: the matched candidate is the run's identity", r.job)
+			}
+		})
+	}
+}
+
+// reviewVariantRun is accountRun for a run the launcher marked as a review: the
+// platform reports an execution of the review variant's name (the deployer's
+// own spelling, credsvc.ReviewJobName), the policy is the caller's, and the run
+// carries the marker its class is decided by (spec.Mode == recipe.ModeReview,
+// the same field the launcher sends a run to the variant on) and is a review
+// for everything else (r.review).
+func reviewVariantRun(t *testing.T, profile string, p *projectpolicy.Policy, account string, spec *task.Spec) *run {
+	t.Helper()
+	slug := identitySlug(t, "github", "acme/app")
+	spec.Mode = recipe.ModeReview
+	r := identityRun(t, credsvc.ReviewJobName(profile, "github", account), slug, spec, p, true)
+	r.review = true
+	if _, _, _, err := r.jobIdentity(context.Background()); err != nil {
+		t.Fatalf("jobIdentity of the review variant of %q = %v: the fixture's job name must be one the policy defines", account, err)
+	}
+	return r
+}
+
+// TestCodingRunIsNotHandedTheReviewCandidate (CSR8): the two directions of the
+// candidate set for a run that is not a review. A coding run in the coding job
+// of its account matches that candidate — the shared job is the identity it
+// always had — and the review variant's name is not a name a coding run is
+// admitted to: it is a name the policy computes, but the candidate it is
+// belongs to a class this run is not, so the run halts rather than adopting the
+// identity of a container that holds no token and is not for it.
+//
+// Mutation (run, restored): list the variant for every account and match it
+// without asking the run's class — the second case is admitted, and a container
+// a launcher never put a coding run in reports itself as the review job.
+func TestCodingRunIsNotHandedTheReviewCandidate(t *testing.T) {
+	p := servingPolicy([]string{"acme-personal"}, map[string][]string{
+		"acme-personal": {"github/acme/app"},
+	})
+	slug := identitySlug(t, "github", "acme/app")
+	coding := gcp.ProjectJobName("standard", "github", "acme-personal")
+	r := identityRun(t, coding, slug, nil, p, true)
+	profile, provider, account, err := r.jobIdentity(context.Background())
+	if err != nil || profile != "standard" || provider != "github" || account != "acme-personal" {
+		t.Fatalf("jobIdentity(%s) = %q/%q/%q, %v; want the coding candidate of the account", coding, profile, provider, account, err)
+	}
+
+	variant := credsvc.ReviewJobName("standard", "github", "acme-personal")
+	r = identityRun(t, variant, slug, nil, p, true)
+	if _, _, _, err := r.jobIdentity(context.Background()); err == nil {
+		t.Fatalf("a coding run was admitted to the review variant (%s)", variant)
+	} else {
+		for _, want := range []string{variant, "review-only variant", "is not a review", "The run stops"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal %q lacks %q", err, want)
+			}
+		}
+		if strings.Contains(err.Error(), config.ReviewVariantSuffix+"\"") {
+			t.Errorf("the refusal reads the class out of the name's suffix: %q", err)
+		}
+	}
+	if _, project := r.projectJob(); project {
+		t.Fatal("a coding run adopted the review variant's identity")
+	}
+}
+
+// TestReviewClassIsDecidedByTheMarkerAndTheJob (CSR8): the other direction of
+// the same check, and the pair of TestReviewVariantIsNotTheCodingJob, which is
+// the end-to-end test of a run with no review marker in the variant's job. A
+// run the launcher marked as a review is refused when it is in the shared
+// coding job — the class is the launcher's marker and the job, not anything
+// about the job's name — because the shared job's container holds the App key
+// and (for a profile serving the default account) a Claude token, and the
+// review container exists to be without both.
+//
+// The refusal names the job the run should have been launched onto, because
+// that is the operator's next move, and the two cases are the two spellings of
+// the variant's account segment: a named account's variant carries the name
+// (acme-personal-review) and the no-account job's carries the policy's own
+// spelling of the default account (default-review, config.ReviewVariantAccount
+// over the axis's empty string). A message that printed the suffix alone would
+// send the operator looking for a job named "-review".
+//
+// Mutation (run, restored): admit a review run wherever its name matches. This
+// run is admitted to the shared job.
+func TestReviewClassIsDecidedByTheMarkerAndTheJob(t *testing.T) {
+	slug := identitySlug(t, "github", "acme/app")
+	for _, tc := range []struct {
+		name    string
+		serves  []string
+		account string
+	}{
+		{"a named account's coding job", []string{"acme-personal"}, "acme-personal"},
+		{"the no-account coding job of a profile serving the default account", []string{config.DefaultClaudeAccount}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := policyOf(map[string]config.JobProfile{"standard": profileOf("github", tc.serves...)})
+			coding := gcp.ProjectJobName("standard", "github", tc.account)
+			variant := gcp.ProjectJobName("standard", "github",
+				config.ReviewVariantAccount(tc.account)+config.ReviewVariantSuffix)
+			r := identityRun(t, coding, slug, nil, p, true)
+			r.review = true
+			r.spec.Mode = recipe.ModeReview
+			if _, _, _, err := r.jobIdentity(context.Background()); err == nil {
+				t.Fatalf("a review run was admitted to the shared coding job (%s)", coding)
+			} else {
+				for _, want := range []string{coding, variant, "is a review", "review-only variant", "The run stops"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal %q lacks %q", err, want)
+					}
+				}
+			}
+			if _, project := r.projectJob(); project {
+				t.Fatal("a review run adopted the shared job's identity")
+			}
+		})
+	}
+}
+
+// TestReviewRunAdmitsAJobWithNoToken (CSR8): the review arm of the credential
+// check. An OAuth review run in the review variant is admitted although the job
+// it is in holds no Claude token at all — config.ProjectJobTokenAccount knows
+// the profile's coding jobs only, so the coding arm would refuse it with "this
+// job holds no Claude token". A review job's credential is its class's: the
+// credentials service mints the read-only installation token and serves the
+// reviewer's model calls to the caller it verified (D893 (c), O1), keyed on the
+// account the deployment gave the variant, so the run's own selection is not
+// what decides it.
+//
+// Mutation (run, restored): let the token axis answer for the variant (drop the
+// review arm). This test fails with the "holds no Claude token" refusal, and no
+// review run can ever start.
+func TestReviewRunAdmitsAJobWithNoToken(t *testing.T) {
+	p := servingPolicy([]string{"acme-personal"}, map[string][]string{
+		"acme-personal": {"github/acme/app"},
+	})
+	spec := &task.Spec{Version: 1, RunID: "20261105-101010-abcd", Repo: "acme/app", Ref: "main",
+		Workflow: identityWorkflow, OAuthToken: "acme-personal", Task: "review the pull request"}
+	r := reviewVariantRun(t, "standard", p, "acme-personal", spec)
+	if err := r.checkProjectJobAccount(context.Background(), "oauth"); err != nil {
+		t.Fatalf("an OAuth review run on the review variant was refused: %v", err)
+	}
+	// The class's own job: the same check on a run with no marker is refused,
+	// which is what keeps this arm from being a hole in the coding arm. The
+	// marker is the task's mode (runClass), so that is what the fixture clears.
+	r.review, r.spec.Mode = false, ""
+	if err := r.checkProjectJobAccount(context.Background(), "oauth"); err == nil {
+		t.Fatal("a run with no review marker was admitted to the review variant's credential check")
+	}
+}
+
+// TestReviewRecipeRunOnTheSharedJobIsAdmitted (CSR8, follow-up): the class is
+// the job the LAUNCHER puts a run in, and a mode: review recipe launched
+// without the variant's marker is not on the variant. `fugaro run --pr N
+// --recipe review-only` builds its task with reviewSpec, which sets ReviewPRs
+// and leaves Mode empty (internal/cli/run.go), and finishLaunch sends a run to
+// the review-only variant on `spec.Mode == recipe.ModeReview` alone — so that
+// command runs on the shared coding job today, and its run IS a review for
+// everything else (r.review, reviewmode.go: the verdict instead of a comment on
+// the pull request it read). Reading the class from ReviewPRs instead of the
+// marker refuses a command that works, which is what this case is for.
+//
+// The second half is the other direction: the same run (ReviewPRs, no Mode) in
+// the variant's job is refused, because a job whose container holds no App key
+// and no Claude token is not one the launcher puts that run in.
+//
+// Mutation (run, restored): return classReview for any run with pull requests
+// in its task (r.review). The first half fails with "is not a review", and
+// every `fugaro run --pr N --recipe review-only` on a project's shared job
+// halts.
+func TestReviewRecipeRunOnTheSharedJobIsAdmitted(t *testing.T) {
+	p := servingPolicy([]string{"acme-personal"}, map[string][]string{
+		"acme-personal": {"github/acme/app"},
+	})
+	slug := identitySlug(t, "github", "acme/app")
+	// The task reviewSpec builds: Mode is empty (only `fugaro review` writes
+	// recipe.ModeReview), and bootstrap sets r.review from these pull requests.
+	spec := &task.Spec{Version: 1, RunID: "20261105-101010-abcd", Repo: "acme/app", Ref: "main",
+		Workflow: identityWorkflow, Task: "Review pull request 12", ReviewPRs: []int{12}}
+
+	coding := gcp.ProjectJobName("standard", "github", "acme-personal")
+	r := identityRun(t, coding, slug, spec, p, true)
+	r.review = true
+	profile, provider, account, err := r.jobIdentity(context.Background())
+	if err != nil {
+		t.Fatalf("a mode: review recipe run on the shared coding job (%s) was refused, and that is the job the launcher puts it in: %v", coding, err)
+	}
+	if profile != "standard" || provider != "github" || account != "acme-personal" {
+		t.Fatalf("jobIdentity(%s) = %q/%q/%q, want the coding candidate of the account", coding, profile, provider, account)
+	}
+
+	variant := credsvc.ReviewJobName("standard", "github", "acme-personal")
+	r = identityRun(t, variant, slug, spec, p, true)
+	r.review = true
+	if _, _, _, err := r.jobIdentity(context.Background()); err == nil {
+		t.Fatalf("a mode: review recipe run was admitted to the review variant (%s), which the launcher never puts it in", variant)
+	} else {
+		for _, want := range []string{variant, "review-only variant", "is not a review", "The run stops"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal %q lacks %q", err, want)
+			}
+		}
+	}
+}
+
+// TestProjectJobOfPolicySeesTheVariant (CSR8): the shared candidate set is what
+// the runner places with and what internal/cli's watch reads a run's job triple
+// from, so the variant's name must answer for the variant's account and the
+// coding job's name must still answer with the coding axis. The variant's
+// account is the one its name was computed from (team-a-review for team-a) and
+// the default account is spelled as the policy speaks it, so a reader is never
+// given the axis's empty string for a job whose name carries a name.
+//
+// Mutation (run, restored): answer with the coding account for a variant's
+// name (strip the suffix). The first case fails, and the row a console renders
+// for a review run names an account the variant does not carry.
+func TestProjectJobOfPolicySeesTheVariant(t *testing.T) {
+	p := policyOf(map[string]config.JobProfile{
+		"standard": profileOf("github", "team-a", config.DefaultClaudeAccount),
+	})
+	for _, tc := range []struct {
+		name    string
+		job     string
+		account string
+	}{
+		{"a named account's variant", credsvc.ReviewJobName("standard", "github", "team-a"), "team-a" + config.ReviewVariantSuffix},
+		{"the default account's variant", credsvc.ReviewJobName("standard", "github", config.DefaultClaudeAccount), config.DefaultClaudeAccount + config.ReviewVariantSuffix},
+		{"a named account's coding job", gcp.ProjectJobName("standard", "github", "team-a"), "team-a"},
+		{"the no-account coding job", gcp.ProjectJobName("standard", "github", ""), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			profile, provider, account, ok := ProjectJobOfPolicy(p, tc.job)
+			if !ok || profile != "standard" || provider != "github" || account != tc.account {
+				t.Fatalf("ProjectJobOfPolicy(%s) = %q/%q/%q, %v; want standard/github/%q", tc.job, profile, provider, account, ok, tc.account)
+			}
+		})
 	}
 }
