@@ -4,12 +4,13 @@
 security review (verdict "fix first") are applied in this revision** (round 2: the launch claim is per run id and is the fence, an approval covered one attempt only (**superseded below by the owner's 2026-11-04 retry ruling**: one approval covers the first attempt and at most one automatic retry), the Routine allowlist, the lease versus the state compare-and-swap; the round-1 corrections follow): the corrections are in reconciliation section 3 (the rules do not bind a person's
 write; person-only is a mitigation; the launch claim is per run id, so it is the fence), in G2, G4, G5, G11, O0-O12 below, and in D1241-D1243.
 
-**The owner answered D1241-D1243 and Q2-Q4 on 2026-11-04, and this revision follows every answer through.** Three of them change what the plan
+**The owner answered D1241-D1243 and Q1-Q4 on 2026-11-04, and this revision follows every answer through.** Three of them change what the plan
 builds, and each is stated where it lands rather than only here: **the retry rule** (not the recommendation: one approval covers the first attempt
 and at most one automatic retry of the same approved spec — G4, O0, O6), **Q2** (not the recommendation: `fugaro update` offers to install the
 daemon — O9, and the tension it leaves with the managed no-prompt rule is **T6** in reconciliation section 6, which the plan does not resolve), and
 **D1243** (the session-start print reads a local cache the daemon writes: O8 gains the cache writer and O10 moves to level 4). D1241 lifts O2's gate,
-D1242 gates nothing, Q3 names the notification channel, and Q4 gates slice 2 on a measured 14-day run of slice 1.
+D1242 gates nothing, **Q1** rules that the rollback is manual with the old scripts kept 14 days and no command built for it (O11, Check 302), Q3 names
+the notification channel, and Q4 gates slice 2 on a measured 14-day run of slice 1.
 
 ## 1. Opening and status
 

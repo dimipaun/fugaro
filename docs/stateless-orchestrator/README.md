@@ -1,6 +1,6 @@
 # The stateless orchestrator
 
-**Status: plan only; nothing is implemented; no task approved. Every decision D1220-D1243 and every question the plan raised (Q2-Q4) is answered, and the one thing the owner is still asked to rule is T6** — the offer Q2 puts in `fugaro update`, against the standing no-prompt rule for a managed project (reconciliation section 6).
+**Status: plan only; nothing is implemented; no task approved. Every decision D1220-D1243 and every question the plan raised (Q1-Q4) is answered, and the one thing the owner is still asked to rule is T6** — the offer Q2 puts in `fugaro update`, against the standing no-prompt rule for a managed project (reconciliation section 6).
 
 **Spec owner: the owner (Dimi Paun). Date: 2026-11-04.** Checked against `origin/main` at `5998d67c7`.
 
@@ -8,7 +8,7 @@
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec verbatim: the stateless orchestrator loop and its daemon addendum. Not edited |
 | [reconciliation.md](reconciliation.md) | The spec against the code (F1-F23), the hard questions, the decisions **D1220-D1243** with the owner's answers of 2026-11-04, the UNVERIFIED list (U1-U9) and the open tensions (T1-T6) |
-| [implementation-plan.md](implementation-plan.md) | Tasks O0-O19 in three slices, the parallel levels, the shared-files table, the owner-run Checks 300-305 and the owner questions Q2-Q4 |
+| [implementation-plan.md](implementation-plan.md) | Tasks O0-O19 in three slices, the parallel levels, the shared-files table, the owner-run Checks 300-305 and the owner questions Q1-Q4 |
 
 ## The owner's answers
 
