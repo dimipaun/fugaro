@@ -714,7 +714,7 @@ and no level holds two writers of one file — the three tasks that write
 | L5 | FC8 |
 
 **Critical path:** FC1 → FC2 → FC3 → FC5 → FC6 → FC8. FC4 and FC7 hang off it. **The long pole is
-FC2**: fifteen statements become one call in a package whose suite costs ~25 minutes, which is why
+FC2**: the 36 statements across eight files become one call, in a package whose suite costs ~25 minutes, which is why
 FC2's own test is a guard over the tree and not a fixture per site.
 
 ### 10.2 Shared files (no level holds two writers of a file)
