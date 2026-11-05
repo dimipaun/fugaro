@@ -186,6 +186,9 @@ func (r *run) updateCost() {
 // model_by under the model the stage ran on for the same reason the gateway's
 // spend does: the split is of the run's whole model figure, and a figure left
 // out of it comes back as the "unattributed" residual (modelByUSD).
+//
+// With no gateway the ledger's two figures are always zero, so overwriting
+// from them would erase every earlier stage's dollars: that run adds instead.
 func (r *run) recordAccountStageCost(stage string, claudeUSD float64) {
 	m := r.usdMicros(claudeUSD)
 	r.mu.Lock()
@@ -193,7 +196,11 @@ func (r *run) recordAccountStageCost(stage string, claudeUSD float64) {
 	if r.modelBy != nil {
 		r.modelBy[r.stageModel(stage)] += m
 	}
-	r.rec.CostUSD = (r.gwUsed + r.gwNotional + r.direct).USD()
+	if r.gw == nil {
+		r.rec.CostUSD += m.USD()
+	} else {
+		r.rec.CostUSD = (r.gwUsed + r.gwNotional + r.direct).USD()
+	}
 	r.mu.Unlock()
 }
 

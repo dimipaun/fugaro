@@ -356,3 +356,19 @@ func TestReportNotionalStaysForOauthRuns(t *testing.T) {
 		t.Fatalf("an oauth run's stage left its notional counters at %v, want %d each (day %d): the subscription paid the whole run", got, want, today)
 	}
 }
+
+// TestAccountStageCostKeepsEarlierDollarsWithNoGateway pins the run with no
+// gateway (budget.mode off, a Claude coder, a stage account on the review): the
+// ledger's figures are zero there, so a figure written from them alone would
+// replace what the implement stage had already cost.
+func TestAccountStageCostKeepsEarlierDollarsWithNoGateway(t *testing.T) {
+	r := svcRun(t, "api-key", func(r *run) {
+		r.rec = &runstore.Record{Version: 1, RunID: svcRunID, Repo: "acme/app", Status: runstore.StatusRunning, CostUSD: 1}
+		r.gw = nil
+	})
+	r.mixedStages = map[string]string{"review": "team-a"}
+	r.recordAccountStageCost("review", 0.42)
+	if got := r.rec.CostUSD; got < 1.419 || got > 1.421 {
+		t.Fatalf("cost_usd = %v after a $1.00 stage and a $0.42 account stage, want 1.42", got)
+	}
+}
