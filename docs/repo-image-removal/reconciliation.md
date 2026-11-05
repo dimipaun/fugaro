@@ -331,15 +331,17 @@ its `Recommendation` and both costs, so the answer and the price of the other re
   in `internal/settings/registry.go` (§4).
 
 - **D1197 (the fixtures and the golden) — default-by-owner: not objected, 2026-11-04.** No answer came back on this one, so the design's recommendation stands as the default — on the reason the recommendation itself gives below, which is the reason a reader should re-check before building it.
-  Recommendation: the **50** files under `testdata/` carrying one of the three keys
-  (`grep -rlE '^[[:space:]]*(image|dockerfile|rebuild):' testdata/`) are the task's own list. The
+  Recommendation: the **39** files under `testdata/` carrying one of the three keys
+  (`grep -rlE '^[[:space:]]*(image|dockerfile|rebuild):' testdata/`) are the task's own list — 11
+  fewer than the 50 the audit counted, because R2 already swept the *valid* ones with the refusals they
+  carry, the two whole `rebuild` blocks moving into the invalid corpus with their subject. The
   **invalid** fixtures that assert an old refusal — `image-and-dockerfile.yaml`, the `legacy-image-*`
   pair, the `checkout-clone-*` set — are **replaced** by fixtures asserting the new refusal, and
   `internal/cli/testdata/init_retire.golden` is regenerated.
   Cost of the alternative: deleting the invalid fixtures leaves the new refusal as the one behaviour of
   the removal with no fixture, and the removal's message is the only thing a person will read.
-  Cost of the recommendation: 50 fixture files move in one commit, which is a large but purely
-  mechanical diff, and every one of them is a file some test names.
+  Cost of the recommendation: the 39 remaining fixture files move across four commits, which is a large
+  but purely mechanical diff, and every one of them is a file some test names.
 
 - **D1198 (skew) — default-by-owner: not objected, 2026-11-04.** No answer came back on this one, so the design's recommendation stands as the default — on the reason the recommendation itself gives below, which is the reason a reader should re-check before building it.
   Recommendation: **no new skew pair.** `imageCatalogSince`/`imageCatalogShipped`

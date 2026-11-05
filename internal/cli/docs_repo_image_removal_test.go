@@ -103,9 +103,12 @@ const (
 // every row and every member they held for one of these keys, which is what makes
 // a removed key unwritable rather than merely undecodable -- and the fixture
 // figure is R3's, since the invalid fixtures that become the new refusal's keep
-// their keys.
+// their keys. It is 39 and not the 50 the audit counted because R2 swept the
+// valid ones with the refusals they carry: eleven files lost the key, two of
+// them (the two whole rebuild blocks) into the invalid corpus, where a fixture
+// is a document the refusal is measured on.
 const (
-	rirFixtures      = 50
+	rirFixtures      = 39
 	rirScopeRows     = 0
 	rirRegistryRows  = 0
 	rirSchemaMembers = 0
@@ -171,12 +174,12 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 		// The ceiling, and the one subject that exceeds it: a reader checking
 		// the plan against the brief's twelve-file rule has to find the reason.
 		"**The ceiling of twelve files is per commit.**",
-		// The arithmetic, because a sweep written as "four commits" was wrong
-		// twice over: 50 files do not fit in four commits of twelve, and the
-		// biggest directory is 27 files, which is over the ceiling in one
-		// commit whatever the commit count is.
-		"**Files (51, in five commits of ≤12).**",
-		"**27 files, twice the ceiling on its own**",
+		// The arithmetic, because a sweep written as "three commits" was wrong
+		// twice over: the 39 files R2 did not sweep do not fit in three commits
+		// of twelve, and the biggest directory is 29 files, which is over the
+		// ceiling in one commit whatever the commit count is.
+		"**Files (40, in four commits of ≤12).**",
+		"**29 files, over the ceiling on its own**",
 		// Four commands go whole, and the plan says so in the words the spec's
 		// §1.2 table uses: a plan that keeps an arm of one of them is a plan
 		// whose own red step asserts a command the spec removes. The count is

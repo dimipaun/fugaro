@@ -27,9 +27,9 @@ converge, and that is a change to a task rather than a detail inside it.
 - **A new dependency.** `go.mod` is unchanged by every task.
 - **The ceiling of twelve files is per commit.** Every task lands as commits of at most twelve files,
   which is what review sees. One task — **R3**, the fixture sweep — is one subject whose files are the
-  **50** `testdata/` fixtures the removal invalidates (`reconciliation.md` D1197), so it lands as
-  **five** commits of at most twelve files and not as five tasks: splitting it would give five tasks one
-  red step and five chances to leave the tree half-migrated.
+  `testdata/` fixtures the removal invalidates (`reconciliation.md` D1197), so it lands as **four**
+  commits of at most twelve files and not as four tasks: splitting it would give four tasks one red step
+  and four chances to leave the tree half-migrated.
 
 ## 2. Order, and what forces it
 
@@ -277,20 +277,22 @@ readiness branches that decide between them.
 
 ## R3. The fixtures and the golden (D1197)
 
-- **Interface.** The **50** files under `testdata/` carrying one of the three keys
-  (`grep -rlE '^[[:space:]]*(image|dockerfile|rebuild):' testdata/`) move: the *valid* ones lose the
-  keys (and the workflows they describe become catalog workflows), the *invalid* ones that assert an old
-  refusal — `image-and-dockerfile.yaml`, the `legacy-image-*` pair, the `checkout-clone-*` set — become
-  fixtures asserting the **new** refusal, and `internal/cli/testdata/init_retire.golden` is regenerated.
+- **Interface.** The **39** files under `testdata/` still carrying one of the three keys
+  (`grep -rlE '^[[:space:]]*(image|dockerfile|rebuild):' testdata/`) move. The *valid* ones already
+  went, swept with R2 by review order: each lost the key, the image ones carry the catalog reference
+  the key became (`image_name:`), and the two whole `rebuild` blocks moved into the invalid corpus
+  rather than lose their subject. What is left is the *invalid* ones that assert an old refusal —
+  `image-and-dockerfile.yaml`, the `legacy-image-*` pair, the `checkout-clone-*` set — which become
+  fixtures asserting the **new** refusal, and `internal/cli/testdata/init_retire.golden`, which is
+  regenerated.
 - **Red step.** R2's refusal message is the red step; this task is what proves the **fixtures** agree
   with it: `go test ./internal/config/ -run 'TestLoad|TestValidate' -count=1` fails on every
   fixture R2 did not sweep, and the golden test fails until it is regenerated.
-- **Files (51, in five commits of ≤12).** ⌈51/12⌉ is **five** and the biggest directory is 27 files of
-  the 50, so the split is by *what a fixture asserts* and never one commit per directory: the 10
-  `testdata/config/valid/` fixtures in one commit, the 10 `testdata/project-layer/invalid/` ones in a
-  second, and `testdata/config/invalid/` — **27 files, twice the ceiling on its own** — across three
-  (12 + 12 + 3), the last of which carries `testdata/project-layer/valid/` (3) and the regenerated
-  `internal/cli/testdata/init_retire.golden`. **One subject, five commits** (§1).
+- **Files (40, in four commits of ≤12).** After R2's sweep the 39 files are two **invalid**
+  directories and the golden, so the split is by *what a fixture asserts* and never one commit per
+  directory: `testdata/config/invalid/` — **29 files, over the ceiling on its own** — across three
+  (12 + 12 + 5), and the 10 `testdata/project-layer/invalid/` ones in a fourth, which also carries the
+  regenerated `internal/cli/testdata/init_retire.golden`. **One subject, four commits** (§1).
 
 ## R4. The deploy path: the derived name, the check job, the Scheduler and the registry. **SEC**
 

@@ -294,9 +294,10 @@ No compatibility, in the shape the tree already uses for a removed key.
   `image_name`/`needs` keep their members (D1196). The two 0.7.0 tombstones are the control: a schema
   member and a registry row stand for each of them still, because what the config refuses and the
   document has to explain is a key the settings family may not write.
-- **The goldens and the fixtures**: the **50** files under `testdata/` that carry one of the three
-  keys — `grep -rlE '^[[:space:]]*(image|dockerfile|rebuild):' testdata/` — are the removal's own
-  list, in four directories (`testdata/config/{valid,invalid}`, `testdata/project-layer/{valid,invalid}`);
+- **The goldens and the fixtures**: the **39** files under `testdata/` that still carry one of the
+  three keys — `grep -rlE '^[[:space:]]*(image|dockerfile|rebuild):' testdata/` — are the removal's own
+  list, in the two **invalid** directories (`testdata/config/invalid`,
+  `testdata/project-layer/invalid`) once the *valid* ones have lost the key, as the sweep with R2 did;
   the *invalid* ones that assert an old refusal (`image-and-dockerfile.yaml`, the `legacy-image-*` pair,
   the `checkout-clone-*` set) are replaced by fixtures asserting the **new** refusal, and
   `internal/cli/testdata/init_retire.golden` is regenerated (D1197).

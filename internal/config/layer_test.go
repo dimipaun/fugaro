@@ -164,19 +164,23 @@ func TestProfileArtifactKeys(t *testing.T) {
 // TestCheckoutProfileCorpusOneReason reads each checkout-related
 // testdata/project-layer/invalid fixture from disk and pins that it fails
 // for exactly the one reason it exists to exercise: a schema corpus gap
-// (project-layer.schema.json's checkout enum, its clone-refuses-setup,
-// clone-refuses-skip_build_scripts and clone-refuses-tools rules, each
-// previously uncovered except apt) is only closed if the fixture is this
-// precise.
+// (project-layer.schema.json's checkout enum rule) is only closed if the
+// fixture is this precise.
+//
+// The four fixtures that put an image key beside checkout: clone fail on the
+// removal's sentence for that key rather than on the clone refusal: since
+// the removal the clone arm refuses only a catalog reference, and the key
+// itself is refused by name where the profile is walked, in the words the
+// decoder gives it.
 func TestCheckoutProfileCorpusOneReason(t *testing.T) {
 	a := LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
-	const cloneMsg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
+	const removedMsg = "was removed in 0.20.0: a job's image is a catalog entry now"
 	for file, want := range map[string]struct{ path, msg string }{
 		"checkout-bad-value-profile":         {"profiles.p.checkout", "must be baked or clone"},
-		"checkout-clone-apt-profile":         {"profiles.p.image.apt", cloneMsg},
-		"checkout-clone-setup-profile":       {"profiles.p.image.setup", cloneMsg},
-		"checkout-clone-skip-build-profile":  {"profiles.p.image.skip_build_scripts", cloneMsg},
-		"checkout-clone-tools-profile":       {"profiles.p.image.tools", cloneMsg},
+		"checkout-clone-apt-profile":         {"profiles.p.image.apt", removedMsg},
+		"checkout-clone-setup-profile":       {"profiles.p.image.setup", removedMsg},
+		"checkout-clone-skip-build-profile":  {"profiles.p.image.skip_build_scripts", removedMsg},
+		"checkout-clone-tools-profile":       {"profiles.p.image.tools", removedMsg},
 		"checkout-clone-legacy-base-profile": {"profiles.p.base", "was removed in 0.7.0"},
 	} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "project-layer", "invalid", file+".yaml"))
