@@ -3335,6 +3335,16 @@ func TestValidateNotesTheCredentialsServicePrecondition(t *testing.T) {
 			name: "both halves hold", accounts: true, local: service, admitted: true,
 		},
 		{
+			// The same row as "the admission is the missing half", behind a
+			// case whose own admission held. It is here because E7's second
+			// half is a package variable: a row that read the one before it
+			// instead of its own would find both halves holding and print
+			// nothing at all.
+			name: "the admission is the missing half, after one that held", accounts: true, local: service, admitted: false,
+			want:  []string{"does not admit the review job's own caller", "No fugaro update supplies this half"},
+			avoid: []string{"--provision-credentials"},
+		},
+		{
 			name: "no named account", local: service,
 		},
 	} {
