@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -912,6 +913,7 @@ func TestReviewJobVariantIsPlaced(t *testing.T) {
 			job := credsvc.ReviewJobName("standard", "github", config.ReviewVariantAccount(tc.account))
 			r := identityRun(t, job, slug, nil, p, true)
 			r.review = true
+			r.spec.Mode = recipe.ModeReview
 			profile, provider, account, err := r.jobIdentity(context.Background())
 			if err != nil {
 				t.Fatalf("jobIdentity(%s) = %v: the review variant's name must be one the published policy computes", job, err)
@@ -931,10 +933,13 @@ func TestReviewJobVariantIsPlaced(t *testing.T) {
 // reviewVariantRun is accountRun for a run the launcher marked as a review: the
 // platform reports an execution of the review variant's name (the deployer's
 // own spelling, credsvc.ReviewJobName), the policy is the caller's, and the run
-// carries the marker its class is decided by (spec.ReviewPRs, r.review).
+// carries the marker its class is decided by (spec.Mode == recipe.ModeReview,
+// the same field the launcher sends a run to the variant on) and is a review
+// for everything else (r.review).
 func reviewVariantRun(t *testing.T, profile string, p *projectpolicy.Policy, account string, spec *task.Spec) *run {
 	t.Helper()
 	slug := identitySlug(t, "github", "acme/app")
+	spec.Mode = recipe.ModeReview
 	r := identityRun(t, credsvc.ReviewJobName(profile, "github", account), slug, spec, p, true)
 	r.review = true
 	if _, _, _, err := r.jobIdentity(context.Background()); err != nil {
@@ -1021,6 +1026,7 @@ func TestReviewClassIsDecidedByTheMarkerAndTheJob(t *testing.T) {
 				config.ReviewVariantAccount(tc.account)+config.ReviewVariantSuffix)
 			r := identityRun(t, coding, slug, nil, p, true)
 			r.review = true
+			r.spec.Mode = recipe.ModeReview
 			if _, _, _, err := r.jobIdentity(context.Background()); err == nil {
 				t.Fatalf("a review run was admitted to the shared coding job (%s)", coding)
 			} else {
@@ -1061,10 +1067,65 @@ func TestReviewRunAdmitsAJobWithNoToken(t *testing.T) {
 		t.Fatalf("an OAuth review run on the review variant was refused: %v", err)
 	}
 	// The class's own job: the same check on a run with no marker is refused,
-	// which is what keeps this arm from being a hole in the coding arm.
-	r.review = false
+	// which is what keeps this arm from being a hole in the coding arm. The
+	// marker is the task's mode (runClass), so that is what the fixture clears.
+	r.review, r.spec.Mode = false, ""
 	if err := r.checkProjectJobAccount(context.Background(), "oauth"); err == nil {
 		t.Fatal("a run with no review marker was admitted to the review variant's credential check")
+	}
+}
+
+// TestReviewRecipeRunOnTheSharedJobIsAdmitted (CSR8, follow-up): the class is
+// the job the LAUNCHER puts a run in, and a mode: review recipe launched
+// without the variant's marker is not on the variant. `fugaro run --pr N
+// --recipe review-only` builds its task with reviewSpec, which sets ReviewPRs
+// and leaves Mode empty (internal/cli/run.go), and finishLaunch sends a run to
+// the review-only variant on `spec.Mode == recipe.ModeReview` alone — so that
+// command runs on the shared coding job today, and its run IS a review for
+// everything else (r.review, reviewmode.go: the verdict instead of a comment on
+// the pull request it read). Reading the class from ReviewPRs instead of the
+// marker refuses a command that works, which is what this case is for.
+//
+// The second half is the other direction: the same run (ReviewPRs, no Mode) in
+// the variant's job is refused, because a job whose container holds no App key
+// and no Claude token is not one the launcher puts that run in.
+//
+// Mutation (run, restored): return classReview for any run with pull requests
+// in its task (r.review). The first half fails with "is not a review", and
+// every `fugaro run --pr N --recipe review-only` on a project's shared job
+// halts.
+func TestReviewRecipeRunOnTheSharedJobIsAdmitted(t *testing.T) {
+	p := servingPolicy([]string{"acme-personal"}, map[string][]string{
+		"acme-personal": {"github/acme/app"},
+	})
+	slug := identitySlug(t, "github", "acme/app")
+	// The task reviewSpec builds: Mode is empty (only `fugaro review` writes
+	// recipe.ModeReview), and bootstrap sets r.review from these pull requests.
+	spec := &task.Spec{Version: 1, RunID: "20261105-101010-abcd", Repo: "acme/app", Ref: "main",
+		Workflow: identityWorkflow, Task: "Review pull request 12", ReviewPRs: []int{12}}
+
+	coding := gcp.ProjectJobName("standard", "github", "acme-personal")
+	r := identityRun(t, coding, slug, spec, p, true)
+	r.review = true
+	profile, provider, account, err := r.jobIdentity(context.Background())
+	if err != nil {
+		t.Fatalf("a mode: review recipe run on the shared coding job (%s) was refused, and that is the job the launcher puts it in: %v", coding, err)
+	}
+	if profile != "standard" || provider != "github" || account != "acme-personal" {
+		t.Fatalf("jobIdentity(%s) = %q/%q/%q, want the coding candidate of the account", coding, profile, provider, account)
+	}
+
+	variant := credsvc.ReviewJobName("standard", "github", "acme-personal")
+	r = identityRun(t, variant, slug, spec, p, true)
+	r.review = true
+	if _, _, _, err := r.jobIdentity(context.Background()); err == nil {
+		t.Fatalf("a mode: review recipe run was admitted to the review variant (%s), which the launcher never puts it in", variant)
+	} else {
+		for _, want := range []string{variant, "review-only variant", "is not a review", "The run stops"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal %q lacks %q", err, want)
+			}
+		}
 	}
 }
 
