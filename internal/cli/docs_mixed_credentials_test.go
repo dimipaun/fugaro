@@ -9,20 +9,24 @@ import (
 )
 
 // The B0 ruling of 2026-11-04 (release 0.19.0) reverses the "a run does not
-// mix credentials" rule for exactly one case, and these tests are what hold
-// the three documents that state it to the rule: the design note that records
-// it (docs/design/mixed-credentials.md, whose §11 is new), the credential
-// section and the refusal list of the user doc (docs/multi-model.md), and
-// SECURITY.md's residual risk. The ruling is docs-only; the tasks B1-B5 build
-// the behaviour, and until they do these documents say so.
+// mix credentials" rule for exactly one case, and the owner's ruling of
+// 2026-11-05 widens the rung that may name the account; these tests are what
+// hold the three documents that state both to the rule: the design note that
+// records it (docs/design/mixed-credentials.md, whose §11 is new), the
+// credential section and the refusal list of the user doc
+// (docs/multi-model.md), and SECURITY.md's residual risk. B1 (the config rule
+// and the launch) is built; the rest of the tasks B1-B5 are not, and until
+// they are these documents say so.
 //
 // The rule itself, in one sentence: a run whose own credential is a provider
 // key (`agent.auth: api-key`) may declare ONE stage-scoped Claude OAuth
 // account — a name of the owner's local `claude_accounts`, chosen by that
 // stage's own key, `stages.<stage>.claude_account` (accounts-add spec
-// §11.1-§11.2, rung 2; `default_claude_account` is the account an `oauth` run
-// gives every stage and never a way into this mix) — and use it for the senior
-// `review` (level 2) and the adversarial `adversarial` (level 3) stages only.
+// §11.1-§11.2, rung 2), or, since 2026-11-05, by the project's
+// `default_claude_account` where that stage's own model is an Anthropic one
+// (rung 4, which an `oauth` run also uses for every stage) — and use it for
+// the senior `review` (level 2) and the adversarial `adversarial` (level 3)
+// stages only.
 // The stage rule is an allow-list rather than a denylist, so every other stage
 // is refused: `implement`, `review_first` (level 1 is the cheap first line and
 // runs on the coder's model), `fix`, `plan`, and any stage a later recipe adds.
@@ -73,14 +77,19 @@ func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 		t.Errorf("%s §11 does not state the allow-list as %q: the account may serve exactly those two stages, and a rule that lists refusals instead lets the next stage a recipe adds read as permitted", path, permitted)
 	}
 	for _, want := range []string{
-		// The rule, the one credential it permits and the one key that chooses
-		// it — the stage's own. `default_claude_account` is named to refuse it:
-		// it is an oauth run's default for every stage, and reading it here
-		// would turn every api-key repository the account's allow_data_to
-		// already covers into a mix nobody declared.
+		// The rule, the one credential it permits and the two keys that may
+		// name it: the stage's own, and — the owner's ruling of 2026-11-05,
+		// which amends the 2026-11-04 reading this section recorded — the
+		// project's default where that stage's own model is an Anthropic one.
+		// The amendment has to be readable as an amendment: a reader who found
+		// only the old sentence would take the default for a way in that
+		// nothing bounds.
 		"one stage-scoped Claude OAuth account",
 		"`stages.<stage>.claude_account`",
-		"`default_claude_account` (rung 4) never opts an `api-key` run into this mix",
+		"opts such a run in too under the owner's ruling of 2026-11-05",
+		"amending the conservative reading this section recorded on 2026-11-04",
+		"then we get mixed runs",
+		"only where that stage's own model is an Anthropic one",
 		"`agent.auth` is `api-key`",
 		// The rule is an allow-list, so a stage the tree does not have yet is
 		// refused by the rule rather than by omission.
@@ -89,10 +98,17 @@ func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 		"`fix`",
 		"`plan`",
 		// What the run may not do: the coder's stages are the coder's
-		// credential, and a second provider's key is still never mixed in.
+		// credential, a second provider's key is still never mixed in, and the
+		// mix needs the gateway that holds the provider key (the clause B0's
+		// reviewer asked for: a provider-claimed pin under budget.mode:
+		// enforce, and nothing else).
 		"never `implement`",
 		"never `review_first`",
 		"never a second provider's key",
+		"never without the gateway",
+		"The mix applies only where the run can carry it",
+		"budget.mode: enforce",
+		"`config.CheckMixBudget`",
 		// The rule that stays: a provider pin under oauth, vertex or cascade
 		// is refused as it was (CheckProviderAuth), and an OAuth token still
 		// only ever reaches Anthropic's own endpoint.
@@ -180,11 +196,13 @@ func TestDocsMultiModelRecordsTheReviewAccountException(t *testing.T) {
 		"the runner's environment",
 		"allow-list",
 		"design/mixed-credentials.md",
-		// The one key that admits the mix, and the one that does not: the
-		// project default an oauth run uses for every stage is not a way in.
-		"chosen by the stage's own key and no other",
+		// The two keys that admit the mix, and the condition on the second: the
+		// project default an oauth run uses for every stage is a way in for the
+		// two mixed stages where their own model is an Anthropic one, and no
+		// further (the owner's ruling of 2026-11-05).
+		"by the project's `default_claude_account` where that stage's own model is an Anthropic one",
 		"stages.review.claude_account",
-		"never a way into this mix",
+		"the default is a way in for those two stages and for no others",
 		// The run's own anthropic-api-key mount is not a third credential of
 		// this kind: it is what an api-key job already carries for the gateway.
 		"anthropic-api-key",
@@ -222,8 +240,10 @@ func TestSecurityMdStatesTheMixedRunResidual(t *testing.T) {
 		"design/mixed-credentials.md",
 		// The ruling is a ruling, not behaviour: a security document that
 		// states an unbuilt mechanism in the present tense, inside a list of
-		// today's gaps, claims a boundary the tree does not have yet.
-		"not built yet (B1",
+		// today's gaps, claims a boundary the tree does not have yet. B1 (the
+		// config rule and the launch) is built, and what this bullet describes
+		// — the token's mount and the stage's own environment — is not.
+		"not built yet (B2",
 	} {
 		if !strings.Contains(limits, want) {
 			t.Errorf("%s's \"### Known limits\" never says %q: the residual the ruling accepts is a limit this document states, not behaviour it leaves a reader to infer", path, want)
