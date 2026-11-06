@@ -9,7 +9,7 @@ The owner's spec, "Fugaro: CLI Output Cleanup and Console Dependency Graph", is 
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec, **verbatim**, committed alone in its own first commit. |
-| [reconciliation.md](reconciliation.md) | Findings **F1-F30** (Wrong / Exists / Gap / Rule / Open), the headline table, decisions **D1350-D1362** with the owner's answers of 2026-11-06, the open tensions **T1-T6**, the smallest slices, the checks, UNVERIFIED. **Where it disagrees with `spec.md`, it wins.** |
+| [reconciliation.md](reconciliation.md) | Findings **F1-F30** (Wrong / Exists / Gap / Rule / Open), the headline table, decisions **D1350-D1362** with the owner's answers of 2026-11-06, the tensions **T1-T6** (T4, T5 open), the smallest slices, the checks, UNVERIFIED. **Where it disagrees with `spec.md`, it wins.** |
 | [implementation-plan-output.md](implementation-plan-output.md) | Part A: the reporter, the log sink, the flag, the converge family and the other commands. Tasks **CL1-CL12**, levels L0-L5, critical path, shared-files table. Nothing in it is approved. |
 | [implementation-plan-graph.md](implementation-plan-graph.md) | Part B: `fugaro graph`, the snapshot stream, the console's scope dropdown; the orchestrator slice and the endpoint written but deferred. Tasks **CG1-CG13**, levels L0-L5, critical path, shared-files table. Nothing in it is approved. |
 
@@ -30,4 +30,4 @@ None. The file is byte-identical to the text received (`cmp` against the Downloa
 
 ## Waiting on the owner
 
-The tensions **T1-T6** (reconciliation section 3a) are open. Each task still needs the owner's explicit go. The graph plan's orchestrator slice waits on `docs/stateless-orchestrator/` (nothing there is built), and its endpoint slice is conditional. When both plans run at once, `docs/design/v1.md` has two writers (CL11 and CG3): sequence them.
+Tensions **T4 and T5** (reconciliation section 3a) are still open and unruled; T1, T2, T3 and T6 were ruled on 2026-11-06, all the recommendation. Each task still needs the owner's explicit go. The graph plan's orchestrator slice waits on `docs/stateless-orchestrator/` (nothing there is built), and its endpoint slice is conditional. When both plans run at once, `docs/design/v1.md` has two writers (CL11 and CG3): sequence them.

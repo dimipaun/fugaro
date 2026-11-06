@@ -1,6 +1,6 @@
 # CLI output cleanup and the console dependency graph: reconciliation
 
-**Status: every decision D1350-D1362 is answered (the owner, 2026-11-06, all the recommendation except D1355). Plans: [implementation-plan-output.md](implementation-plan-output.md) and [implementation-plan-graph.md](implementation-plan-graph.md). Nothing is implemented; no task is approved.**
+**Status: plan only; nothing is implemented; no task approved. Every decision D1350-D1362 is answered (the owner, 2026-11-06, all the recommendation except D1355). Plans: [implementation-plan-output.md](implementation-plan-output.md) and [implementation-plan-graph.md](implementation-plan-graph.md). Nothing is implemented; no task is approved.**
 
 **Spec owner: Dimi Paun. Spec: [spec.md](spec.md), "Fugaro: CLI Output Cleanup and Console Dependency Graph", verbatim. Checked against `origin/main` at `57f7d871f` on 2026-11-06.** Where this file disagrees with `spec.md`, this file wins.
 
@@ -132,19 +132,31 @@ Only one thing joins them: console children are spawned with `--json`, which par
 | **D1361** | Command names: `fugaro graph`, and `fugaro orchestrators` (spec) or `fugaro orchestrator ls`? | **`fugaro graph` as the spec says, and `fugaro orchestrator ls --json` inside the planned singular group (F25).** Why: no second spelling of one noun, and the central-orchestrator plan already names `orchestrator add|rm|ls`. | The spec's plural top-level `fugaro orchestrators`: matches the spec text, but two commands for one noun and a rename later (pre-1.0 permits it but costs a docs and skills pass). | **2026-11-06: the recommendation.** Why: one spelling per noun, inside the group the central-orchestrator plan already names. |
 | **D1362** | Where does `fugaro graph` live: core or `ee/`? | **In `ee/`, registered through `RegisterCommand`, because its `all` scope is the coordinator (a paid command) and the console it serves is business-licensed; the daemon and its `orchestrator ls` stay in core.** Why: core cannot import `ee/`; the Coordinator tab is the same shape (F26). | In core with an `ee` seam for the coordinator scope: the plan and orchestrator scopes work in an MIT-only build, at the cost of a new seam that holds one optional source. | **2026-11-06: the recommendation.** Why: core cannot import `ee/`, and the Coordinator tab is the same shape. See T3. |
 
-## 3a. Open tensions (between answers; none resolved here, the owner rules)
+## 3a. Tensions between answers (T1, T2, T3, T6 ruled 2026-11-06; T4 and T5 still open)
 
 **T1. D1357 (the CLI reads the `orchestrator/` subtree) against D1362 and D1358: the reader does not exist.** The subtree and its single-writer state belong to `docs/stateless-orchestrator/` (tasks O0-O19, none built). D1357's read, D1358's node-and-cache read and D1361's `orchestrator ls` are one reader that must live in **core** (the daemon is core and may not import `ee/`), while `fugaro graph` is in `ee/` (D1362) and imports it. Choices: (a) the graph plan waits for the stateless plan's state reader (O0/O2) and its orchestrator scopes are a deferred slice (the plan's assumption); (b) this work builds a minimal read-only reader of the documented state schema first. (b) writes a second decoder of a shape someone else owns and risks drift; (a) leaves the orchestrator scopes empty until the daemon lands.
 
+**Ruling 2026-11-06 (the recommendation): RESOLVED. Wait for the stateless-orchestrator plan's reader.** The orchestrator scopes (CG4-CG6) stay deferred; the first graph slice is the coordinator scope only.
+
 **T2. D1357 needs a read of `orchestrator/` and the rules say who may; the stateless plan and the coordinator plan disagree on how.** The stateless design (D1241) has the person's own credential write the node and the **rules refuse every identity they evaluate**; the CLI's person credential is an OAuth bearer that bypasses rules, admitted by IAM `roles/firebasedatabase.viewer`, which is how `coordinator status --from-store` reads `coordinator/` today. So a CLI-only read **needs no rules grant**, and a rules grant is only for a signed-in client (mobile). Whether `roles/firebasedatabase.viewer` reads the whole database including `orchestrator/` is UNVERIFIED here (the docs say the viewer role admits the coordinator read). Choices: (a) read through IAM only, and pin by a rules test that no run or token identity can read or write `orchestrator/` (the plan's assumption: task G6 is a pin, not a grant); (b) add a rules read grant for launchers: needed only if a non-IAM reader appears, and widens who reads task titles and notes. The console stays clean either way: it never talks to RTDB, the CLI does (F9).
+
+**Ruling 2026-11-06 (the recommendation): RESOLVED. A rules pin, no new grant.** The read uses the person's credential as `coordinator status --from-store` does; CG6 stays a pin test, and whether `roles/firebasedatabase.viewer` covers `orchestrator/` stays UNVERIFIED and is verified inside CG6.
 
 **T3. D1362 (`fugaro graph` in `ee/`) against a CLI without the `ee` tag.** Since 0.13.0 every release binary is built with the `ee` tag, but a source build or an MIT-era CLI has no `graph`. The console then has a Graph scope list with no source: it must show the existing plan scope and a plain refusal sentence for the rest (the plan does this), and the "no checkout" card cannot be removed for such a CLI. Choice: accept (the plan does) or keep a core-level `graph` stub that answers "this build has no graph scope" (a new core command whose only job is a refusal).
 
+**Ruling 2026-11-06 (the recommendation): RESOLVED. A core stub.** A CLI without the `ee` tag keeps the console's plan scope and `fugaro graph` is a core stub whose refusal names the Subscription Edition build (the existing paid-stub sentence of D522, `newPaidStub`); the plan's task CG3s adds it.
+
 **T4. D1355 (`termenv`) against the Windows and `NO_COLOR` findings.** `termenv` v0.16.0 has `EnableVirtualTerminalProcessing` for Windows (verified in the module source), which closes F3's Windows gap for the legacy console when called; it is not yet called anywhere and Check 311 stays owner-run. But `termenv` also honours `CLICOLOR` and `CLICOLOR_FORCE`, which would colour a pipe when forced, against the spec's "off when not a terminal"; and `watch.UseNoColor` reads `NO_COLOR`, `TERM=dumb` and `--no-color` in its own way. Two colour rules in one binary is the failure. Choices: (a) the reporter decides on or off itself (terminal, `NO_COLOR`, `TERM=dumb`, `--no-color`, never for `--json`) and uses `termenv` only to render styles with the profile forced, ignoring `CLICOLOR_FORCE` (the plan's assumption); (b) honour `CLICOLOR_FORCE` as `termenv` does and amend the spec's sentence. The promotion also needs `go.mod` to move the line out of the indirect block and a look at the licence notices `LICENSES/` lists (MIT; UNVERIFIED whether a notice file is required).
+
+**Still OPEN (2026-11-06): not ruled.** The plan keeps its assumption T4(a) (the reporter decides colour itself; `termenv` only styles) and the owner is asked to rule.
 
 **T5. D1358 (no endpoint, cache file) against the spec's "local orchestrators queried directly, fresher, work offline".** The cache is written once per daemon tick, so a local scope is as fresh as a tick, and `graph --watch` for a local scope has nothing to subscribe to except the node (RTDB) or a file poll. The offline case works only with the cache. Choices: (a) the watch of a local scope streams the daemon's RTDB node and falls back to polling the cache file (the plan's assumption); (b) build the endpoint (the deferred slice G9). The freshness and offline claims of the spec are therefore weaker than written until G9.
 
+**Still OPEN (2026-11-06): not ruled.** The plan keeps its assumption T5(a) (stream the daemon's node, poll the cache file as fallback) and the owner is asked to rule.
+
 **T6. D1352 (only mutating and step commands log) against "full output always kept in a log".** A failed read command (for example `runs ls`) leaves no log, so the failure block cannot print a log path for it; it prints the error and its context only. Not a contradiction of the owner's answer, but the spec's "always print the path" holds only for logged commands. Choice: accept (the plan does), or log failed reads too (a log written only on failure, per command name).
+
+**Ruling 2026-11-06 (the recommendation): RESOLVED. Accepted.** Only step-based or mutating commands log and print the log path on failure; the docs say read commands print their error as today (CL11).
 
 
 ## 4. Smallest useful slices (proposal, for the plan)
@@ -165,7 +177,7 @@ Only one thing joins them: console children are spawned with `--json`, which par
 
 ## 6. Open items for the owner
 
-1. D1350-D1362 are answered (2026-11-06). **The tensions T1-T6 in section 3a are open for the owner.**
+1. D1350-D1362 are answered (2026-11-06). **T4 and T5 (section 3a) are still open for the owner; T1, T2, T3 and T6 were ruled on 2026-11-06.**
 2. **The spec's "reads documentation from the repo" is about one read, and it is the Graph's current source**, built under the 2026-10-22 rulings GD1-GD8 and merged as redesign steps 6a and 6b: removing it (rather than adding a scope) would withdraw releases, the critical path and plan tasks the owner approved. D1356 proposes keeping it.
 3. The block D1320-D1349 in `docs/stateless-orchestrator/` overlaps open #1772's D1310-D1329: not this work's to fix; reported.
 

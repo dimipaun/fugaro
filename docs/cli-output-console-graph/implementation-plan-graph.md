@@ -4,7 +4,7 @@
 
 **The owner's answers that shaped it (2026-11-06, all the recommendation):** D1356 keep the plan scope and add `fugaro graph --json` with a coordinator scope that needs no checkout, source-qualified task keys, dedupe only within one namespace, orchestrator scopes when built; D1357 the CLI reads the `orchestrator/` RTDB subtree directly plus the coordinator view; D1358 local orchestrators are found through the daemon's RTDB node and its local cache file, no PID registry and no HTTP endpoint in the first slice; D1359 the trust rules apply if the endpoint is built later; D1360 `graph --watch --json` prints whole snapshots with `stream_id`, a rising `seq` within one child, `source_state` and a periodic keep-alive; D1361 `fugaro graph` and `fugaro orchestrator ls`; D1362 `fugaro graph` lives in `ee/` through `RegisterCommand`, the daemon and `orchestrator ls` stay core.
 
-**Assumptions this plan takes where a tension is open (reconciliation section 3a):** T1(a) the orchestrator scopes wait for the stateless plan's state reader; T2(a) the CLI reads `orchestrator/` through IAM and a rules test pins that no run or token identity can; T3 a CLI without the `ee` tag shows the plan scope and a plain refusal for the rest; T5(a) a local scope streams the daemon's node and falls back to polling its cache file. **Reading of D1356:** the plan scope stays what it is today, the console's existing `plan.status` read; `fugaro graph` carries the coordinator scope now and the orchestrator and local scopes later. The coordinator view has **no dependency edges** (F17), so the coordinator scope draws nodes grouped by release; edges come with the orchestrator scopes' `depends_on`.
+**Rulings of 2026-11-06 (reconciliation section 3a, all the recommendation):** T1 the orchestrator scopes (CG4-CG6) wait for the stateless plan's reader, so the first graph slice is the coordinator scope only; T2 the CLI reads `orchestrator/` with the person's credential and CG6 is a pin test, no new grant (viewer-role coverage verified inside CG6); T3 a CLI without the `ee` tag keeps the plan scope and gets a core stub (CG3s). **Assumption still open (not ruled):** T4(a) the reporter decides colour itself (part A); T5(a) a local scope streams the daemon's node and falls back to polling its cache file. **Reading of D1356:** the plan scope stays what it is today, the console's existing `plan.status` read; `fugaro graph` carries the coordinator scope now and the orchestrator and local scopes later. The coordinator view has **no dependency edges** (F17), so the coordinator scope draws nodes grouped by release; edges come with the orchestrator scopes' `depends_on`.
 
 ## Conventions every task follows
 
@@ -28,7 +28,7 @@
 
 ## Slices
 
-- **B1 One-shot graph (ships useful alone):** CG1 document, CG2 coordinator source, CG3 `fugaro graph --json`, CG8 contract.
+- **B1 One-shot graph (ships useful alone):** CG3s core stub, CG1 document, CG2 coordinator source, CG3 `fugaro graph --json`, CG8 contract.
 - **B2 Console, one-shot:** CG9a, CG10.
 - **B3 Live:** CG7 snapshot stream, CG9b, CG11.
 - **B4 Orchestrator scopes (deferred: external dependency):** CG4, CG5, CG6.
@@ -59,13 +59,24 @@
 - **Red step:** `ee/graph.CoordinatorSource` is undefined.
 - **Commit:** `ee/graph: the coordinator's stored view as graph nodes`
 
+### CG3s. The core stub for `graph` (T3)
+
+**Decisions:** D1362. **Depends on:** none. **Reviewer:** standard (the sentence is D522's, unchanged).
+
+- **Files (max 3):** `internal/cli/extend.go` (add `graph` to `paidCommandNames`, so a build without the `ee` tag shows `newPaidStub`: "graph is part of Fugaro Subscription Edition; this build does not include it", non-zero), `internal/cli/extend_test.go` (or the existing stub test file, named at launch), `internal/cli/docs_website_cliref_test.go` (only if its pin on the paid names changes).
+- **Interfaces:** the stub parses no flags, so `fugaro graph --watch --json` reaches the message; the console treats that refusal as "this CLI has no graph" and keeps the plan scope (CG10).
+- **Tests:** `TestUntaggedBuildHasTheGraphStub`, `TestGraphStubRefusesWhateverTheFlags`, and the existing paid-command tests.
+- **Command:** `go test ./internal/cli/ -run 'Paid|Stub|Docs.*CliRef' -count=1`
+- **Red step:** an untagged build answers `unknown command "graph"`.
+- **Commit:** `cli: a core stub for fugaro graph in a build without the ee tag`
+
 ### CG3. `fugaro graph --json` (SEC)
 
-**Decisions:** D1356, D1361, D1362. **Findings:** F21, F25, F26. **Depends on:** CG1, CG2. **Reviewer: `opus + mandatory independent review`** (an argument that reaches a source choice; a new command in the console's allow-list path).
+**Decisions:** D1356, D1361, D1362. **Findings:** F21, F25, F26. **Depends on:** CG1, CG2 (CG3s is independent and ships the untagged build's stub). **Reviewer: `opus + mandatory independent review`** (an argument that reaches a source choice; a new command in the console's allow-list path).
 
-- **Files (max 7):** `ee/graph/cli/graph.go` (new), `ee/graph/cli/graph_test.go` (new), `ee/register/graph.go` (new), `ee/register/graph_test.go` (new), `internal/cli/extend.go` (add `graph` to `paidCommandNames`, so an untagged build has the stub), `ee/clidoc/` expectations if the generated reference changes (regenerated reference file named at launch), `docs/design/v1.md` command table row.
+- **Files (max 7):** `ee/graph/cli/graph.go` (new), `ee/graph/cli/graph_test.go` (new), `ee/register/graph.go` (new), `ee/register/graph_test.go` (new), `internal/cli/extend.go` `ee/clidoc/` expectations if the generated reference changes (regenerated reference file named at launch), `docs/design/v1.md` command table row.
 - **Interfaces:** `fugaro graph [--source all|coordinator|orchestrator:<id>|local:<id>] --json`, default `all`; the cloud flags `runs ls` takes; with no `--json` a short text table. `all` is the union of the scopes that exist; `orchestrator:` and `local:` are refused with "no orchestrator is installed in this build" until CG4/CG5 register readers (an honest refusal, not an empty graph). The command needs **no checkout** and reads RTDB through the person's own credential.
-- **Tests:** `TestGraphRefusesAnInvalidScopeBeforeAnyRead` (H1), `TestGraphAllIsTheCoordinatorToday`, `TestGraphJSONIsOneVersionedDocument`, `TestGraphNeedsNoCheckout`, `TestUntaggedBuildHasTheStub` (`internal/cli` stub refusal), `TestGraphRegisteredOnce`.
+- **Tests:** `TestGraphRefusesAnInvalidScopeBeforeAnyRead` (H1), `TestGraphAllIsTheCoordinatorToday`, `TestGraphJSONIsOneVersionedDocument`, `TestGraphNeedsNoCheckout`, `TestGraphRegisteredOnce`.
 - **Command:** `go test ./ee/graph/... ./ee/register/ -count=1 && go test -tags ee ./cmd/... -run Graph -count=1` (the tag command named at launch from the existing `ee_on.go` tests) and `go test ./internal/cli/ -run 'Docs|Paid' -count=1`.
 - **Red step:** `fugaro graph` is an unknown command.
 - **Mutations:** loosen the scope pattern: `TestGraphRefusesAnInvalidScopeBeforeAnyRead` fails; let a `--source` value reach a path or a flag: the same test fails.
@@ -182,11 +193,11 @@ None of CG1-CG11 needs a post-deploy step: `fugaro graph` reads what the existin
 
 ## Parallel execution
 
-**Edges:** CG2, CG8 depend on CG1; CG3 on CG1, CG2; CG7 on CG3; CG9a on CG3, CG8; CG10 on CG9a; CG9b on CG7, CG9a; CG11 on CG9b, CG10; CG4 on the stateless plan; CG5 on CG4, CG3, CG7; CG6 on the stateless plan.
+**Edges:** CG3s depends on nothing; CG2, CG8 depend on CG1; CG3 on CG1, CG2; CG7 on CG3; CG9a on CG3, CG8; CG10 on CG9a; CG9b on CG7, CG9a; CG11 on CG9b, CG10; CG4 on the stateless plan; CG5 on CG4, CG3, CG7; CG6 on the stateless plan.
 
 | Level | Tasks (concurrent) |
 | --- | --- |
-| L0 | CG1 |
+| L0 | CG1, CG3s |
 | L1 | CG2, CG8 |
 | L2 | CG3 |
 | L3 | CG7, CG9a |
@@ -194,7 +205,7 @@ None of CG1-CG11 needs a post-deploy step: `fugaro graph` reads what the existin
 | L5 | CG11 |
 | deferred | CG4, CG6 (after the stateless plan), then CG5; CG13 only if asked |
 
-**Critical path:** CG1 → CG2 → CG3 → CG7 → CG9b → CG11 (then CG12, owner-run). Sequential by nature: the document before its sources and the command; the command before the stream and the console read; `spawn.ts` and `ipc.ts` take one writer per level (CG9a, then CG9b); `graph.ts` one (CG10, then CG11).
+**Critical path** (CG3s is off it): CG1 → CG2 → CG3 → CG7 → CG9b → CG11 (then CG12, owner-run). Sequential by nature: the document before its sources and the command; the command before the stream and the console read; `spawn.ts` and `ipc.ts` take one writer per level (CG9a, then CG9b); `graph.ts` one (CG10, then CG11).
 
 **Shared files: no level holds two writers of one file.**
 
@@ -208,7 +219,8 @@ None of CG1-CG11 needs a post-deploy step: `fugaro graph` reads what the existin
 | `console/test/unit/spawn.test.ts` | CG9a (L3), CG9b (L4) |
 | `console/src/renderer/screens/graph.ts`, `renderer/graph/model.ts`, `test/unit/graph.test.ts` | CG10 (L4), CG11 (L5) |
 | `console/docs/json-contract.md` | CG8 (L1) only |
-| `internal/cli/extend.go`, `ee/register/graph.go` | CG3 (L2) only |
+| `internal/cli/extend.go`, `internal/cli/docs_website_cliref_test.go` | CG3s (L0) only |
+| `ee/register/graph.go` | CG3 (L2) only |
 | `console/src/source/cli.ts` | CG9a (L3), CG9b (L4) |
 
 The tasks in one level that edit `docs/design/desktop-console.md` or a Go docs test: none (CG7 and CG9a at L3 touch disjoint files; CG9a is the only writer of the table at L3).
