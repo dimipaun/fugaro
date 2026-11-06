@@ -35,10 +35,22 @@ const (
 	retireJobAddr  = `module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]`
 	retireSvcAddr  = `module.repo.module.workflow["app_bmb"].google_service_account.job`
 	retireKeptAddr = `module.repo.google_secret_manager_secret.this["claude-oauth-token-bmb"]`
+	// The variant's own grant on the secret its job mounted (modules/workflow/
+	// sa.tf:196): a derived address that holds nothing, which is what a
+	// managed project's own retirement reaches beyond a job and an account.
+	retireMemberAddr = `module.repo.module.workflow["app_bmb"].google_secret_manager_secret_iam_member.job["claude-oauth-token-bmb"]`
 	// The repository's registry: the configuration still produces it, so it
 	// is never a retirement, and its module declaration carries the second
 	// lifecycle.prevent_destroy (modules/repo/registry.tf:59).
 	retireRegistryAddr = `module.repo.google_artifact_registry_repository.images`
+	// retireBucketAddr is a repository bucket the configuration stopped
+	// producing: the data-holding case the ruling names, and the one address
+	// here whose stop is the allowlist's decision alone.
+	retireBucketAddr = `module.repo.google_storage_bucket.this["acme-sandbox-cache"]`
+	// retireForeignAddr is the installation root's own address in the
+	// repository's state, of a type the allowlist allows (an identity): what
+	// stops it is that it is not the repository's, not what it is.
+	retireForeignAddr = `module.installation.google_service_account.deployer`
 )
 
 // retireKeptSecretID is the container's Secret Manager ID as a real state's
@@ -57,6 +69,9 @@ func retireKeptSecretID(t *testing.T) string {
 
 // retireOpts are the rig's knobs.
 type retireOpts struct {
+	// loosen adds a create the cover does not admit (an owner binding for a
+	// stranger) to the retirement's plan.
+	loosen bool
 	// protection is what the state says the orphaned job's
 	// deletion_protection is: the one attribute the refusal gate reads.
 	protection bool
@@ -116,6 +131,19 @@ type retireOpts struct {
 	// it, so the run's third outcome ("the job delete is still running") is
 	// reached end to end rather than only in deleteOrphanedJob's own test.
 	deletePolls int
+	// member adds the gone variant's own grant on the secret its job mounted
+	// to the state and to the plan: a derived address beside the job and the
+	// account, which is the set a managed project's own update retires.
+	member bool
+	// bucket adds a repository bucket the configuration no longer produces to
+	// the state and to the plan: a data-holding address, which is what stops a
+	// managed project's own retirement (it is a type the allowlist retained,
+	// not one it left undecided).
+	bucket bool
+	// foreign adds an address of another root -- the installation's -- that
+	// the repository's configuration never produced, of a type the allowlist
+	// allows: the stop it makes is the module bound's and not the type's.
+	foreign bool
 }
 
 // retireRig is an onboarded repository ready to plan, with the retirement's
@@ -154,11 +182,25 @@ func newRetireRig(t *testing.T, o retireOpts) *retireRig {
 	}
 	plan := []planChange{
 		retireChange(retireSvcAddr, "google_service_account", "delete"),
-		retireChange(`module.repo.module.workflow["app"].google_cloud_run_v2_job.this[0]`, "google_cloud_run_v2_job", "update"),
+		retireJobUpdate(),
 		retireChange(retireRegistryAddr, "google_artifact_registry_repository", "create"),
+	}
+	if o.member {
+		plan = append(plan, retireChange(retireMemberAddr, "google_secret_manager_secret_iam_member", "delete"))
 	}
 	if o.outside != "" {
 		plan = append(plan, retireChange(o.outside, "google_storage_bucket_iam_member", "delete"))
+	}
+	if o.loosen {
+		c := retireChange(`module.repo.google_project_iam_member.probe`, "google_project_iam_member", "create")
+		c["change"].(map[string]any)["after"] = map[string]any{"role": "roles/owner", "member": "user:probe@example.invalid"}
+		plan = append(plan, c)
+	}
+	if o.bucket {
+		plan = append(plan, retireChange(retireBucketAddr, "google_storage_bucket", "delete"))
+	}
+	if o.foreign {
+		plan = append(plan, retireChange(retireForeignAddr, "google_service_account", "delete"))
 	}
 	b, err := json.Marshal(map[string]any{"format_version": "1.2", "resource_changes": plan})
 	if err != nil {
@@ -241,7 +283,20 @@ func retireStateDoc(t *testing.T, o retireOpts) string {
 		workflow = append(workflow, map[string]any{"address": retireJobAddr, "mode": "managed", "type": "google_cloud_run_v2_job", "name": "this",
 			"values": values})
 	}
+	if o.member && !o.stateEmpty {
+		workflow = append(workflow, map[string]any{"address": retireMemberAddr, "mode": "managed",
+			"type": "google_secret_manager_secret_iam_member", "name": "job",
+			"values": map[string]any{"secret_id": retireKeptSecretID(t), "role": "roles/secretmanager.secretAccessor"}})
+	}
 	root := []any{}
+	if o.bucket && !o.stateEmpty {
+		root = append(root, map[string]any{"address": retireBucketAddr, "mode": "managed", "type": "google_storage_bucket", "name": "this",
+			"values": map[string]any{"name": "acme-sandbox-cache"}})
+	}
+	if o.foreign && !o.stateEmpty {
+		root = append(root, map[string]any{"address": retireForeignAddr, "mode": "managed", "type": "google_service_account", "name": "deployer",
+			"values": map[string]any{"account_id": "fugaro-deployer"}})
+	}
 	if !o.keptAsNote {
 		root = append(root, map[string]any{"address": retireKeptAddr, "mode": "managed", "type": "google_secret_manager_secret", "name": "this",
 			"values": map[string]any{"secret_id": retireKeptSecretID(t)}})
@@ -2323,4 +2378,14 @@ func TestInitRepoRetireRunsTheFlowOnce(t *testing.T) {
 	if deletes := r.run.JobDeletes(); len(deletes) != 1 || deletes[0] != retireJobName {
 		t.Errorf("JobDeletes = %v, want exactly one delete of %s", deletes, retireJobName)
 	}
+}
+
+// retireJobUpdate is the plan's in-place update of the surviving job, with the
+// one container a job's plan always carries: the cover judges what a retirement
+// plan's other changes do, and a job with no container is one it refuses.
+func retireJobUpdate() planChange {
+	c := retireChange(`module.repo.module.workflow["app"].google_cloud_run_v2_job.this[0]`, "google_cloud_run_v2_job", "update")
+	c["change"].(map[string]any)["after"] = map[string]any{"template": []any{map[string]any{"template": []any{map[string]any{
+		"containers": []any{map[string]any{"image": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/app:1"}}}}}}}
+	return c
 }
