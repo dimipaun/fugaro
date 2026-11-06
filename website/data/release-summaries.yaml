@@ -23,6 +23,7 @@
 version: 1
 
 summaries:
+  v0.20.2: fugaro update no longer stops at the installation step on a project that has a catalog check.
   v0.20.1: The job images the 0.20 line needs are published; 0.20.0 shipped without them because the image build broke on a CI runner change.
   v0.20.0: The groundwork for an independent cloud review of every change is in place, with its own read-only job and a verifier the launcher checks verdicts against, and a workflow that runs a catalog image no longer builds one of its own.
   v0.19.0: A managed project no longer asks you to confirm anything, a run can code on a cheap provider model and review on your Claude subscription, a project's workflow secrets reach exactly the repositories you list, and a project secret can be removed in one step.
