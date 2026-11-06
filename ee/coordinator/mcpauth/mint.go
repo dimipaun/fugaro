@@ -130,7 +130,20 @@ func Rotate(ctx context.Context, s Store, presented string) (access, refresh str
 // a token that resolves to a family that has moved past it, which is a replay
 // and a revocation of a family nobody stole. Of the two, the one that makes a
 // client re-authorize is the one to have.
+//
+// Both halves of the token that is about to be written are therefore settled
+// *before* the family moves: the family's half by the store, on the read it
+// rotates on, and the expiry here, because it is the one field this call owns.
+// A validation failure after the swap would leave the family pointing at a
+// refresh hash whose record was never written and the token that was just
+// rotated away a replay — no token of the family usable and none of it
+// recoverable (TestARotationRefusesAFamilyThatCouldNotCarryAToken,
+// TestARotationRefusesAnInstantThatWouldIssueNoExpiry).
 func RotateAt(ctx context.Context, s Store, presented string, now time.Time) (access, refresh string, err error) {
+	expires := now.Add(AccessTokenTTL)
+	if expires.IsZero() {
+		return "", "", fmt.Errorf("mcpauth: a rotation at %s would issue an access token with no expiry: %w", now, ErrTokenIncomplete)
+	}
 	access, err = NewValue()
 	if err != nil {
 		return "", "", err
@@ -148,7 +161,7 @@ func RotateAt(ctx context.Context, s Store, presented string, now time.Time) (ac
 		Identity:  fam.Identity,
 		ClientID:  fam.ClientID,
 		Limits:    fam.Limits,
-		ExpiresAt: now.Add(AccessTokenTTL),
+		ExpiresAt: expires,
 	}
 	if err := token.Validate(); err != nil {
 		return "", "", err

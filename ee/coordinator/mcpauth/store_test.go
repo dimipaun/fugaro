@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 func TestLookupFindsByThePresentedToken(t *testing.T) {
@@ -289,6 +290,62 @@ func TestARevokeTheStoreRefusesIsNotARevoke(t *testing.T) {
 	}
 	if err := s.RevokeFamily(ctx, other.FamilyID); err != nil {
 		t.Errorf("RevokeFamily of a family already revoked = %v; want nil", err)
+	}
+}
+
+// TestARotationRefusesAFamilyThatCouldNotCarryAToken is the ordering of the
+// rotation's own two writes. The family is written first and the records of
+// the pair after it, so a family no token could be issued from has to be
+// refused before that write: a refusal arriving after it would leave the
+// family pointing at a refresh hash with no record behind it and the token
+// that was just rotated away a replay, and the client would hold a family it
+// could neither use nor get back.
+func TestARotationRefusesAFamilyThatCouldNotCarryAToken(t *testing.T) {
+	ctx := context.Background()
+	s := newFakeStore(t)
+
+	_, refresh, err := Mint(ctx, s, "user:person-1", testClient(), testLimits())
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	rec, err := s.LookupByHash(ctx, TokenHash(refresh))
+	if err != nil {
+		t.Fatalf("LookupByHash: %v", err)
+	}
+	fam, gen, err := s.GetFamily(ctx, rec.FamilyID)
+	if err != nil {
+		t.Fatalf("GetFamily: %v", err)
+	}
+
+	// A family whose limits admit no tool, as one written before a vocabulary
+	// changed, or by hand, would be. It is a record this build can read and
+	// cannot issue from, which is exactly the family the rotation must not
+	// write.
+	fam.Limits = Limits{MinRigor: rigor.POC, MaxRigor: rigor.Pro}
+	if err := s.PutFamily(ctx, fam, gen); err != nil {
+		t.Fatalf("PutFamily: %v", err)
+	}
+
+	if _, _, err := Rotate(ctx, s, refresh); !errors.Is(err, ErrNoScope) {
+		t.Errorf("Rotate of a family that could not carry a token = %v; want ErrNoScope", err)
+	}
+
+	// Nothing was orphaned: the family still holds the token the client has,
+	// so that token is still the current one and still rotates once the family
+	// can carry one again.
+	held, heldGen, err := s.GetFamily(ctx, rec.FamilyID)
+	if err != nil {
+		t.Fatalf("GetFamily: %v", err)
+	}
+	if held.RefreshHash != TokenHash(refresh) {
+		t.Error("the family moved to a refresh hash with no record behind it")
+	}
+	held.Limits = testLimits()
+	if err := s.PutFamily(ctx, held, heldGen); err != nil {
+		t.Fatalf("PutFamily: %v", err)
+	}
+	if _, _, err := Rotate(ctx, s, refresh); err != nil {
+		t.Errorf("Rotate of the same token once the family can carry one = %v; want it to rotate", err)
 	}
 }
 

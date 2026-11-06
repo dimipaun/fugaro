@@ -400,11 +400,13 @@ func (r records) LookupByHash(ctx context.Context, hash string) (TokenRecord, er
 // compare-and-swap instead of being mistaken for a theft, and one that landed
 // before it is the replay D930 says it is.
 //
-// The three outcomes are the three branches: the family rotated and comes
-// back; the token was already rotated away, so the family is revoked and
-// ErrRefreshReplay is returned; or the compare-and-swap lost a race with
-// another writer, so ErrConflict is returned and the family is left exactly as
-// the winner left it. A lost race is never a revocation.
+// The outcomes are one per branch below: the family rotated and comes back;
+// the token was already rotated away, so the family is revoked and
+// ErrRefreshReplay is returned; the compare-and-swap lost a race with another
+// writer, so ErrConflict is returned and the family is left exactly as the
+// winner left it; or the family is one no token could be issued from, which is
+// refused before the swap rather than after it. A lost race is never a
+// revocation, and a refusal never leaves the family half-written.
 func (r records) RotateRefresh(ctx context.Context, presentedHash, nextRefreshHash string) (Family, error) {
 	rec, err := r.lookupRecord(ctx, presentedHash)
 	if err != nil {
@@ -433,6 +435,23 @@ func (r records) RotateRefresh(ctx context.Context, presentedHash, nextRefreshHa
 		}
 		return Family{}, ErrRefreshReplay
 	}
+	// The family has to be one a token can be issued from *before* the swap
+	// below, because the swap is the family's own write and the records of the
+	// pair are written after it: a refusal that surfaced once the family had
+	// moved would leave it pointing at a refresh hash with no record behind it
+	// and the token that was just rotated away a replay, so the client could
+	// neither use its tokens nor get the family back
+	// (TestARotationRefusesAFamilyThatCouldNotCarryAToken). The check is the
+	// family's half of what Token.Validate asks — an identity, a client id and
+	// limits that admit a tool; the expiry is the caller's, set from its own
+	// instant, and is checked there before this call for the same reason.
+	if err := fam.Limits.Validate(); err != nil {
+		return Family{}, fmt.Errorf("mcpauth: family %q: %w", fam.ID, err)
+	}
+	if fam.Identity == "" || fam.ClientID == "" {
+		return Family{}, fmt.Errorf("mcpauth: family %q has no identity or no client id: %w", fam.ID, ErrTokenIncomplete)
+	}
+
 	next := fam
 	next.RefreshHash = nextRefreshHash
 	if err := r.PutFamily(ctx, next, gen); err != nil {

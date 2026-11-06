@@ -337,10 +337,48 @@ func TestARevokeThatFailsIsCarriedByTheReplay(t *testing.T) {
 	}
 }
 
+// TestARotationRefusesAnInstantThatWouldIssueNoExpiry is the other half of the
+// rotation's ordering: the expiry is the one field of the token the caller
+// owns, so it is settled before the family moves rather than after it. The
+// instant is reachable from a caller's own clock — M5 passes its own through
+// RotateAt — and the zero time is what Token.Validate refuses, so a check made
+// after the swap would orphan the family for a token that was never written.
+func TestARotationRefusesAnInstantThatWouldIssueNoExpiry(t *testing.T) {
+	ctx := context.Background()
+	s := newFakeStore(t)
+
+	_, refresh, err := Mint(ctx, s, "user:person-1", testClient(), testLimits())
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	rec, err := s.LookupByHash(ctx, TokenHash(refresh))
+	if err != nil {
+		t.Fatalf("LookupByHash: %v", err)
+	}
+
+	// The one instant whose access token carries no expiry: TTL before the
+	// zero time.
+	if _, _, err := RotateAt(ctx, s, refresh, time.Time{}.Add(-AccessTokenTTL)); !errors.Is(err, ErrTokenIncomplete) {
+		t.Errorf("RotateAt at an instant that leaves no expiry = %v; want ErrTokenIncomplete", err)
+	}
+
+	fam, _, err := s.GetFamily(ctx, rec.FamilyID)
+	if err != nil {
+		t.Fatalf("GetFamily: %v", err)
+	}
+	if fam.RefreshHash != TokenHash(refresh) {
+		t.Error("the family moved for a rotation that was refused")
+	}
+	if _, _, err := Rotate(ctx, s, refresh); err != nil {
+		t.Errorf("Rotate of the same token after the refusal = %v; want it to rotate", err)
+	}
+}
+
 // valuePrefixes is the value's prefixes a record must not contain. The floor
-// is above the length at which a base64url value could share a run of
-// characters with the hex of a hash by accident: below it the test would fail
-// on a coincidence rather than on a stored value.
+// is above the length at which the hex of one hash could share a run of
+// characters with another hash — or with a token value, which NewValue writes
+// as hex — by accident: below it the test would fail on a coincidence rather
+// than on a stored value.
 func valuePrefixes(value string) []string {
 	const floor = 12
 	out := make([]string, 0, len(value))
