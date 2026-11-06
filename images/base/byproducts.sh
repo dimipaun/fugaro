@@ -49,13 +49,23 @@ epoch=${SOURCE_DATE_EPOCH:-}
   exit 1
 }
 
+# A git-lfs whose postinst no longer writes the system filter (the 0.20.0 build
+# saw none) is given it here, so the section below is built from a real one.
+git config --system --get filter.lfs.clean >/dev/null 2>&1 || git lfs install --system --skip-repo
+
+lfs_clean=$(git config --system --get filter.lfs.clean || true)
+lfs_smudge=$(git config --system --get filter.lfs.smudge || true)
+lfs_process=$(git config --system --get filter.lfs.process || true)
+lfs_required=$(git config --system --get filter.lfs.required || true)
+for key in clean smudge process required; do
+  eval "value=\$lfs_$key"
+  [ -n "$value" ] || { echo "byproducts: /etc/gitconfig has no filter.lfs.$key" >&2; exit 1; }
+done
+# Read above, written below: the redirect truncates /etc/gitconfig before a
+# command inside the block could read it back.
 {
   printf '[filter "lfs"]\n'
-  for key in clean smudge process required; do
-    value=$(git config --system --get "filter.lfs.$key" || true)
-    [ -n "$value" ] || { echo "byproducts: /etc/gitconfig has no filter.lfs.$key" >&2; exit 1; }
-    printf '\t%s = %s\n' "$key" "$value"
-  done
+  printf '\tclean = %s\n\tsmudge = %s\n\tprocess = %s\n\trequired = %s\n' "$lfs_clean" "$lfs_smudge" "$lfs_process" "$lfs_required"
 } > /etc/gitconfig
 
 chage -d "$(date -u -d "@$epoch" +%Y-%m-%d)" fugaro

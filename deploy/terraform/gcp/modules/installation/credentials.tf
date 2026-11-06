@@ -466,18 +466,35 @@ resource "google_cloud_run_v2_service" "credentials" {
         value = jsonencode(var.credentials_service.job_accounts)
       }
       # The verifier list: the addresses that may ask the verify route whether
-      # a verdict's signature is this service's (C3.9g1, D1068). It is the one
-      # name this module renders CONDITIONALLY, and both halves of that matter:
-      # an installation that never names a verifier renders exactly the seven
-      # names above, so its plan is unchanged by this member, and an
-      # installation that does renders the eighth — while the process reads it
-      # as an optional value, so a service deployed without it starts with an
-      # EMPTY verifier list (a route that refuses every caller) rather than
-      # refusing to bind a port. That is the direction the design fixes: an
-      # empty list is a statement, and an installation that has not opted into
-      # a coordinator is not a broken deployment.
+      # a verdict's signature is this service's (C3.9g1, D1068).
+      #
+      # Three states, and the account this module creates is the DEFAULT — the
+      # case where the block names nothing:
+      #
+      #   - verifier_accounts absent (null): the address of the verifier
+      #     account THIS apply creates (verifier.tf). It is the shape the
+      #     coordinator's own entry has below (the module rendering an account
+      #     it creates, conditionally), and it is what makes the account
+      #     reachable by the apply that creates it rather than by a later run
+      #     nobody was told to make.
+      #   - the owner's list: rendered exactly as it is. The account is NOT
+      #     added to it — the account is a default and never an addition, so an
+      #     owner who writes their own verifier keeps the service admitting
+      #     that one alone, and a union would admit an identity the owner
+      #     cannot remove with `[]`.
+      #   - an explicit empty list: rendered as `[]`, which is the owner
+      #     switching the route off (a service that admits nobody). The
+      #     distinction from the absent case is the whole reason
+      #     internal/infra's verifier_accounts is three-state.
+      #
+      # The process reads the name as an optional value, so a service deployed
+      # with no verifier at all still starts with an empty list rather than
+      # refusing to bind a port. It is a JSON ARRAY in every state — the account
+      # alone in the default one included: internal/cli's credentialsServiceVerifiers
+      # decodes this value with json.Unmarshal and refuses anything that is not a
+      # list, so a bare address here would be a service that will not bind a port.
       dynamic "env" {
-        for_each = var.credentials_service.verifier_accounts == null ? [] : [jsonencode(var.credentials_service.verifier_accounts)]
+        for_each = var.credentials_service.verifier_accounts == null ? [jsonencode([google_service_account.fugaro_verifier[0].email])] : [jsonencode(var.credentials_service.verifier_accounts)]
         content {
           name  = "FUGARO_VERIFIER_ACCOUNTS"
           value = env.value

@@ -58,7 +58,11 @@ first=$1
 n=$#
 for tag in "$@"; do set -- "$@" --tag "$tag"; done
 shift "$n"
-DOCKER_BUILDKIT=1 docker build --progress plain \
+# The default docker driver cannot take rewrite-timestamp beside the image
+# store's unpack (BuildKit refuses the pair), so the build runs on a
+# docker-container builder, which exports a tarball for docker to load.
+docker buildx inspect fugaro-base >/dev/null 2>&1 || docker buildx create --name fugaro-base --driver docker-container >/dev/null
+docker buildx build --builder fugaro-base --progress plain \
   --platform "${PLATFORM:-linux/amd64}" \
   --build-arg "SOURCE_DATE_EPOCH=$epoch" \
   --build-arg "FUGARO_VERSION=${FUGARO_VERSION:-dev}" \
