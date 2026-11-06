@@ -1883,21 +1883,70 @@ func TestARefusedLaunchDeclaresNothing(t *testing.T) {
 	}
 }
 
-// putReviewArtifact writes a review run's verdict artifact, exactly where and
-// as the review job writes it (CSR3): under the run's own artifacts/ prefix.
-// A fix round's brief is built from this object and from nothing else, so the
-// tests below store it the way the job does rather than through a seam.
-func putReviewArtifact(t *testing.T, f *cloudFixture, id string, art runner.ReviewArtifact) {
-	t.Helper()
-	art.SchemaVersion = runner.ReviewArtifactVersion
+// storedReviewArtifact is an artifact as the review job's writer stores it: the
+// shape's own version and a UTC timestamp, which the fixtures below write into
+// the object rather than through a seam.
+func storedReviewArtifact(art runner.ReviewArtifact) runner.ReviewArtifact {
+	if art.SchemaVersion == 0 {
+		art.SchemaVersion = runner.ReviewArtifactVersion
+	}
 	if art.CreatedAt.IsZero() {
 		art.CreatedAt = time.Now().UTC().Truncate(time.Second)
 	}
-	data, err := json.Marshal(art)
+	return art
+}
+
+// putReviewObject writes a review run's verdict artifact where the review job
+// writes it (CSR3) — under the run's own artifacts/ prefix — and nothing
+// beside it. It is the low-level half of putReviewArtifact, for the tests that
+// need the object without the sidecar a fail-closed reader requires.
+func putReviewObject(t *testing.T, f *cloudFixture, id string, art runner.ReviewArtifact) []byte {
+	t.Helper()
+	data, err := json.Marshal(storedReviewArtifact(art))
 	if err != nil {
 		t.Fatal(err)
 	}
 	putBuildObject(t, f, "runs/"+appSlug+"/"+id+"/"+runstore.ArtifactPrefix+runner.ReviewArtifactName, data)
+	return data
+}
+
+// putReviewArtifact writes the whole of what a review run leaves behind, as a
+// fix round's launcher finds it: the verdict artifact, the sidecar the
+// credentials service signed over that object's exact bytes, and the review
+// run's own task — which carries the account the verify call names. It also
+// points the launcher's verifier at the stand-in service (setFixBriefVerifier),
+// because a reader that fails closed refuses an artifact nothing verifies.
+func putReviewArtifact(t *testing.T, f *cloudFixture, id string, art runner.ReviewArtifact) {
+	t.Helper()
+	data := putReviewObject(t, f, id, art)
+	putReviewTask(t, f, id, "acme-personal")
+	setFixBriefVerifier(t)
+	putReviewSignature(t, f, id, appSlug, id, data)
+}
+
+// putReviewTask stores the review run's own task.json, which is where the
+// account a verify call names comes from: an empty account is the unsuffixed
+// default and is written as no field at all, the way every other launch writes
+// it.
+func putReviewTask(t *testing.T, f *cloudFixture, id, account string) {
+	t.Helper()
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	spec := firstRunSpec(id)
+	spec.OAuthToken = account
+	if err := runstore.Open(b, appSlug, id).CreateTask(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// putReviewSignature writes the sidecar beside a review artifact, signed the
+// way the stand-in service signs: over the artifact's exact bytes, framed with
+// the repository and the review run.
+func putReviewSignature(t *testing.T, f *cloudFixture, id, repository, run string, data []byte) {
+	t.Helper()
+	putBuildObject(t, f, "runs/"+appSlug+"/"+id+"/"+runstore.ArtifactPrefix+runner.ReviewSignName,
+		[]byte(fixBriefSign(repository, run, data)+"\n"))
 }
 
 // fixFirstArtifact is a minimal artifact of the shape the review job writes: a
@@ -1938,6 +1987,7 @@ func TestFixBriefCarriesTheFindingsAndNamesTheReviewRun(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
 	reviewID := wallRunIDAt(0, "121500", "5eed")
+	setFixBriefHead(t)
 	putReviewArtifact(t, f, reviewID, fixFirstArtifact(reviewID))
 
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--review-run", reviewID, "--json", "also rename x"); err != nil {
@@ -1974,6 +2024,7 @@ func TestFixBriefIsTheSameWhenTheLaunchIsRepeated(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
 	reviewID := wallRunIDAt(0, "121900", "9eed")
+	setFixBriefHead(t)
 	putReviewArtifact(t, f, reviewID, fixFirstArtifact(reviewID))
 
 	args := []string{"run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--review-run", reviewID, "also rename x"}

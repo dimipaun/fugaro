@@ -8,11 +8,12 @@ alternative — and **all fifteen were answered on 2026-11-04**, **every one of 
 recommendation**, with the owner's own detail written into the design (D922's was restated the same
 day: the first answer opened the subtree and the restatement closes it). **A sixteenth answer arrived
 on 2026-11-05 (D935), from the independent review of PR #1715's M3**: the `mcpauth` records leave the
-project's shared Realtime Database for a store whose IAM names only the coordinator's own service
-account, because the database's own grants are project-level and no rule can keep a launcher out
-([reconciliation.md](reconciliation.md) §3 F32, §4 D935). **If the implementation
-happens,
-[implementation-plan.md](implementation-plan.md) §5 recommends 0.20.0 "Quokka" or later** — 0.15.0,
+project's shared Realtime Database for a store whose IAM names only the front door's own account
+`mcp_server`, because the database's own grants are project-level and no rule can keep a launcher out
+([reconciliation.md](reconciliation.md) §3 F32, §4 D935) — and **which store, the one thing D935
+carried over open, was answered by the owner the same day: the bucket the plan's §8 recommends**.
+**If the implementation happens, [implementation-plan.md](implementation-plan.md) §5 recommends
+0.20.0 "Quokka" or later** — 0.15.0,
 0.16.0 and 0.17.0 have all shipped since this design was written, and §5 says why the work is big and
 security-heavy enough to want a window of its own.
 
@@ -24,7 +25,8 @@ lists, D930's rotating tokens, D931's single launch path, D934's off-by-default 
 library **with its licence still UNCONFIRMED**, and D922's separate **`mcpauth`** subtree, closed to
 every client. **And answered one more on 2026-11-05 (D935)**, on the independent review of PR
 #1715's M3: those records do not live in the project's shared Realtime Database at all, but in a
-store whose IAM names only the coordinator's own service account.
+store whose IAM names only the front door's own account `mcp_server` — the bucket of the plan's §8,
+which is what the owner's answer of the same day picked out of the three candidates.
 
 **Reconciled against.** `origin/main` at `3d6ed04d`, read on 2026-11-01, and **re-read on 2026-11-04
 at `b41709ea`**, with the seventeen pull requests open at the first reading — most closely #1472
@@ -63,7 +65,7 @@ One document set, four files:
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec, copied **verbatim**, as §0 — and then the design written to the owner's answers of 2026-11-04: the front door and its transport (§2), the authorization server and its flow (§3), Firebase as the identity provider (§4), the six tools (§5), tokens, rigor windows and spend limits (§6), unattended agents (§7), **the threat model (§8)**, the coordinator's prohibitions (§9), and the console's graph write (§10) |
 | [reconciliation.md](reconciliation.md) | Each claim of §0 against the code at the base: **what exists** (F1–F15, F19), **what is missing** (F16–F18, F20–F22) and **what conflicts** (F23–F32), each with a path and a line; then the **fifteen decisions, D920–D934** (§4) with the owner's answers of 2026-11-04 under them **and the answer of 2026-11-05, D935** (the records leave the project's database), the number block and how it was read (§5), the owner checks that no hermetic test can stand in for (§6), and what `main` had overtaken (§7) |
-| [implementation-plan.md](implementation-plan.md) | What the owner was asked and answered (§1), the order and what forces it (§2), ten tasks **M1–M10** each with its files, its interface, its **red step**, its named tests and its SEC flag (§3) — M4 carrying its **For operators** block — the **shared-files table** (§4), **the release slot** (§5), the test rules (§6), what the plan does not own (§7) and **the store the records move to (§8, D935)**, with the three candidates compared and the Open item that picks between them |
+| [implementation-plan.md](implementation-plan.md) | What the owner was asked and answered (§1), the order and what forces it (§2), ten tasks **M1–M10** each with its files, its interface, its **red step**, its named tests and its SEC flag (§3) — M4 carrying its **For operators** block — the **shared-files table** (§4), **the release slot** (§5), the test rules (§6), what the plan does not own (§7) and **the store the records move to (§8, D935)**, with the three candidates compared and **the answer of 2026-11-05** that picked the bucket |
 | `README.md` | This file: the status, the reading of the number block, and what a reader should not take from here |
 
 **Two works this folder is wired to.** The **stateless-orchestrator spec** (open as **#1682**, not on
@@ -131,13 +133,16 @@ README, in its own diff, is where the block above D1189 is written.
   recorded as U1, so the design stays written to the **2026-07-28** revision because that is the one
   the owner named.
 - **Not a design with a second reader to argue about.** D922's answer closes the token records'
-  subtree to every client (`.read: false`, `.write: false`, the coordinator's own account the only
-  writer), so [spec.md](spec.md) §8's token-storage paragraph states a **refusal** rather than an
-  accepted exposure. **But the rules are not the whole of who reaches a node**, and D935 is where
+  subtree to every client (`.read: false`, `.write: false`, with the coordinator's database-admin
+  account the one IAM identity a rule cannot bind), so [spec.md](spec.md) §8's token-storage
+  paragraph states a **refusal** rather than an accepted exposure. **But the rules are not the whole
+  of who reaches a node**, and D935 is where
   that was found: the subtree sits in the project's shared database, whose `viewer` and `admin`
   grants are project-level and therefore cover every node in it, so the rules keep out every client
   and nobody else — a launcher, a budget admin and the history account all reach it, and the review
-  of PR #1715's M3 found it (F32). The records now live in a store whose IAM names one account.
+  of PR #1715's M3 found it (F32). The records now live in the store §8 answers for — the bucket
+  `fugaro-mcpauth-<gcp-project>`, whose IAM names one account, the front door's own `mcp_server` and
+  never the coordinator's (M2, M4).
   **Nothing in §8 changes**: the node still says `.read: false` and `.write: false` and still holds
   nothing, and the review reads that paragraph beside the rest of §8 anyway — the paragraph a review
   should check hardest is the one that says nothing can get in.

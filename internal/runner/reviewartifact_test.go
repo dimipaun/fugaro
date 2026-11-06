@@ -1202,3 +1202,114 @@ func TestReviewArtifactRefusesAnOversizeObject(t *testing.T) {
 		t.Errorf("the reader refused an object exactly at its cap: %v", err)
 	}
 }
+
+// verifyService is the credentials service's verify route (C3.9f) as a test
+// meets it: it records the call it was sent and answers one canned status and
+// body, so every answer the route can give is reachable without a service.
+type verifyService struct {
+	srv    *httptest.Server
+	status int
+	body   string
+	mu     sync.Mutex
+	calls  []credsvc.VerifyRequest
+	auth   []string
+}
+
+func newVerifyService(t *testing.T, status int, body string) *verifyService {
+	t.Helper()
+	v := &verifyService{status: status, body: body}
+	v.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		var req credsvc.VerifyRequest
+		if err := json.Unmarshal(data, &req); err != nil {
+			t.Errorf("the verify route was sent a body that is not a verify call: %s", data)
+		}
+		v.mu.Lock()
+		v.calls = append(v.calls, req)
+		v.auth = append(v.auth, r.Header.Get("Authorization"))
+		v.mu.Unlock()
+		w.WriteHeader(v.status)
+		_, _ = io.WriteString(w, v.body)
+	}))
+	t.Cleanup(v.srv.Close)
+	return v
+}
+
+func (v *verifyService) one(t *testing.T) (credsvc.VerifyRequest, string) {
+	t.Helper()
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if len(v.calls) != 1 {
+		t.Fatalf("the route was called %d times, want 1", len(v.calls))
+	}
+	return v.calls[0], v.auth[0]
+}
+
+// TestServiceVerifierReadsOnlyTheRefusalBits: the verify route's answer is one
+// bit, and the client reads that bit and nothing else. Everything the route
+// could not have written -- a field beside the bit, a second object, a body
+// that is not one, no bit at all, the sign route's answer -- is refused rather
+// than read generously, and a bit that is false is a refusal and never a
+// default. The call it makes is checked too: the five fields the frame and the
+// key selection need, and the verifier's own identity and no run identity.
+func TestServiceVerifierReadsOnlyTheRefusalBits(t *testing.T) {
+	ctx := context.Background()
+	id := func(context.Context) (string, error) { return "verifier-id-token", nil }
+	digest, sig := strings.Repeat("a", 64), strings.Repeat("b", 64)
+
+	ok := newVerifyService(t, http.StatusOK, `{"valid":true}`)
+	v := ServiceVerifier{URL: ok.srv.URL, IDToken: id, Account: "acme-personal", Run: svcRunID, Repository: svcSlug}
+	if err := v.Verify(ctx, digest, sig); err != nil {
+		t.Fatalf("the route's own accepted bit was refused: %v", err)
+	}
+	call, auth := ok.one(t)
+	if want := (credsvc.VerifyRequest{Account: "acme-personal", Digest: digest, Signature: sig, Run: svcRunID, Repository: svcSlug}); call != want {
+		t.Errorf("the verify call carries %+v, want %+v", call, want)
+	}
+	if auth != "Bearer verifier-id-token" {
+		t.Errorf("the verify call's identity is %q, want the verifier's own token", auth)
+	}
+
+	for _, answer := range []struct {
+		name, body string
+	}{
+		{"a field this route never writes", `{"valid":true,"key":"acme"}`},
+		{"a second object beside the answer", `{"valid":true} {"valid":false}`},
+		{"no bit at all", `{"ok":true}`},
+		{"the sign route's own answer", `{"alg":"HMAC-SHA-256","signature":"` + sig + `"}`},
+		{"a body that is not an object", `not a verify answer`},
+	} {
+		s := newVerifyService(t, http.StatusOK, answer.body)
+		vv := ServiceVerifier{URL: s.srv.URL, IDToken: id, Account: "acme-personal", Run: svcRunID, Repository: svcSlug}
+		if err := vv.Verify(ctx, digest, sig); err == nil {
+			t.Errorf("an answer that is %s verified", answer.name)
+		}
+	}
+
+	// A false bit is the route's answer about the artifact: the service
+	// recomputed the MAC and the two differ.
+	no := newVerifyService(t, http.StatusOK, `{"valid":false}`)
+	nv := ServiceVerifier{URL: no.srv.URL, IDToken: id, Account: "acme-personal", Run: svcRunID, Repository: svcSlug}
+	if err := nv.Verify(ctx, digest, sig); err == nil {
+		t.Error("the route's false bit verified")
+	}
+
+	// A refusal status names the service's code and never its message.
+	ref := newVerifyService(t, http.StatusUnauthorized, `{"error":"unverified_verifier","message":"the caller is not one this service admits"}`)
+	rv := ServiceVerifier{URL: ref.srv.URL, IDToken: id, Account: "acme-personal", Run: svcRunID, Repository: svcSlug}
+	err := rv.Verify(ctx, digest, sig)
+	if err == nil || !strings.Contains(err.Error(), "refused: unverified_verifier") {
+		t.Errorf("a refused verify call is not refused with the service's code: %v", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "the caller is not one this service admits") {
+		t.Errorf("the service's message reached the refusal: %v", err)
+	}
+
+	// And a service that cannot be reached is a refusal rather than a pass.
+	dead := newVerifyService(t, http.StatusOK, `{"valid":true}`)
+	dv := ServiceVerifier{URL: dead.srv.URL, IDToken: id, Account: "acme-personal", Run: svcRunID, Repository: svcSlug}
+	dead.srv.Close()
+	if err := dv.Verify(ctx, digest, sig); err == nil {
+		t.Error("an unreachable verify service passed the artifact")
+	}
+}
