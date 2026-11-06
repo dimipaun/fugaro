@@ -15,9 +15,10 @@ IAM names only the front door's own account (`mcp_server`), and §1's last subse
 answer, M2, M3, M4, M5 and M10 are written to it, and §8 is the three candidates for that store —
 **and the answer of the same day that picked the bucket**, which closes the Open item that section
 carried: **nothing waits on it any more, and no task names a store it is not written to.** **No task
-here is approved, and two things gate the whole plan:** the
-independent SECURITY review of [spec.md](spec.md) §8 (which the coordinator runs), and D921's
-**unconfirmed licence** ([reconciliation.md](reconciliation.md) §6, checks 1 and 7).
+here is approved, and one thing still gates the whole plan:** the
+independent SECURITY review of [spec.md](spec.md) §8 (which the coordinator runs). D921's licence
+was the second gate and it is settled rather than standing: **the owner confirmed it on 2026-11-06
+as Apache 2.0** ([reconciliation.md](reconciliation.md) §6, checks 1 and 7).
 
 ## 1. What the owner answered on 2026-11-04, and what each answer moves
 
