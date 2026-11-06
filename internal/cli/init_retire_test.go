@@ -69,6 +69,9 @@ func retireKeptSecretID(t *testing.T) string {
 
 // retireOpts are the rig's knobs.
 type retireOpts struct {
+	// loosen adds a create the cover does not admit (an owner binding for a
+	// stranger) to the retirement's plan.
+	loosen bool
 	// protection is what the state says the orphaned job's
 	// deletion_protection is: the one attribute the refusal gate reads.
 	protection bool
@@ -179,7 +182,7 @@ func newRetireRig(t *testing.T, o retireOpts) *retireRig {
 	}
 	plan := []planChange{
 		retireChange(retireSvcAddr, "google_service_account", "delete"),
-		retireChange(`module.repo.module.workflow["app"].google_cloud_run_v2_job.this[0]`, "google_cloud_run_v2_job", "update"),
+		retireJobUpdate(),
 		retireChange(retireRegistryAddr, "google_artifact_registry_repository", "create"),
 	}
 	if o.member {
@@ -187,6 +190,11 @@ func newRetireRig(t *testing.T, o retireOpts) *retireRig {
 	}
 	if o.outside != "" {
 		plan = append(plan, retireChange(o.outside, "google_storage_bucket_iam_member", "delete"))
+	}
+	if o.loosen {
+		c := retireChange(`module.repo.google_project_iam_member.probe`, "google_project_iam_member", "create")
+		c["change"].(map[string]any)["after"] = map[string]any{"role": "roles/owner", "member": "user:probe@example.invalid"}
+		plan = append(plan, c)
 	}
 	if o.bucket {
 		plan = append(plan, retireChange(retireBucketAddr, "google_storage_bucket", "delete"))
@@ -2370,4 +2378,14 @@ func TestInitRepoRetireRunsTheFlowOnce(t *testing.T) {
 	if deletes := r.run.JobDeletes(); len(deletes) != 1 || deletes[0] != retireJobName {
 		t.Errorf("JobDeletes = %v, want exactly one delete of %s", deletes, retireJobName)
 	}
+}
+
+// retireJobUpdate is the plan's in-place update of the surviving job, with the
+// one container a job's plan always carries: the cover judges what a retirement
+// plan's other changes do, and a job with no container is one it refuses.
+func retireJobUpdate() planChange {
+	c := retireChange(`module.repo.module.workflow["app"].google_cloud_run_v2_job.this[0]`, "google_cloud_run_v2_job", "update")
+	c["change"].(map[string]any)["after"] = map[string]any{"template": []any{map[string]any{"template": []any{map[string]any{
+		"containers": []any{map[string]any{"image": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/app:1"}}}}}}}
+	return c
 }

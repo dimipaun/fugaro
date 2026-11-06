@@ -399,3 +399,22 @@ func flatten(calls [][]string) []string {
 	}
 	return out
 }
+
+// TestUpdateManagedRetirementDoesNotCarryALooseningIn: the plan the automatic
+// retirement applies is judged by the cover an ordinary step is, less the
+// retirement's own deletes, so an owner binding riding in the same plan asks
+// the typed confirmation instead of going through under the retirement's name.
+func TestUpdateManagedRetirementDoesNotCarryALooseningIn(t *testing.T) {
+	r := newManagedRetireRig(t, retireOpts{protection: true, keptAsNote: true, member: true, loosen: true})
+	out, errOut, err := executeStdin(t, "", "update")
+	text := out + errOut
+	if !strings.Contains(text, "outside what the review announced") {
+		t.Fatalf("the uncovered create was not named (exit %d, err %v):\n%s", ExitCode(err), err, text)
+	}
+	if !strings.Contains(text, "Type aurora to confirm") {
+		t.Errorf("the typed confirmation was not asked for a plan carrying an uncovered create:\n%s", text)
+	}
+	if recs := retirementRecords(t, r); len(recs) != 0 {
+		t.Errorf("an uncovered plan was recorded as admitted: %+v", recs)
+	}
+}

@@ -29,10 +29,10 @@ removed 2 addresses from Terraform's state; nothing was destroyed
 Plan: 0 to import, 1 to create, 1 to update, 0 to forget, 1 to delete.
 
 ⚠ Review these first:
+  ⚠ update module.repo.module.workflow["app"].google_cloud_run_v2_job.this[0]: template
   ⚠ delete module.repo.module.workflow["app_bmb"].google_service_account.job
 
 Other changes:
-  update module.repo.module.workflow["app"].google_cloud_run_v2_job.this[0]
   create module.repo.google_artifact_registry_repository.images
 IAM: 0 bindings match the live ones (adopted), 3 new
 the plan above is the retirement's: 0 imports, 1 creates, 1 updates, 1 deletes, 0 replaces. Deleting:

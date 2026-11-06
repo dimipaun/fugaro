@@ -361,7 +361,7 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 	//    named before they happen. (A managed project's own retirement has no
 	//    confession to ask for at this point: what it consents to is a plan,
 	//    and no plan exists until step 2 has run.)
-	if err := r.retireConsent(ctx, t, rets, spec, "nothing was removed from Terraform's state and nothing was deleted", false); err != nil {
+	if err := r.retireConsent(ctx, t, rets, spec, "nothing was removed from Terraform's state and nothing was deleted", false, nil, nil); err != nil {
 		return err
 	}
 
@@ -412,7 +412,7 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 		// The confirmation's own banner says what remains, and here there is
 		// no apply left to do: the delete is all of it (I-C).
 		r.retireClean = true
-		if err := r.retireConsent(ctx, t, rets, spec, retireUndone("nothing was applied and no job was deleted", removed), true); err != nil {
+		if err := r.retireConsent(ctx, t, rets, spec, retireUndone("nothing was applied and no job was deleted", removed), true, nil, nil); err != nil {
 			return leftover(err)
 		}
 		r.retireApplied = true
@@ -433,7 +433,7 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 	}
 	fmt.Fprintf(r.w, "the plan above is the retirement's: %s. Deleting:\n", counts.String())
 	fmt.Fprint(r.w, deleteList(plan))
-	if err := r.retireConsent(ctx, t, rets, spec, retireUndone("the plan was not applied and no job was deleted", removed), true); err != nil {
+	if err := r.retireConsent(ctx, t, rets, spec, retireUndone("the plan was not applied and no job was deleted", removed), true, plan, im.Keys()); err != nil {
 		return leftover(err)
 	}
 	if err := t.Apply(ctx, infra.PlanFile); err != nil {
@@ -511,7 +511,7 @@ func (r *initRun) retireManaged(ctx context.Context, c *infra.Clients, t *tf.TF,
 // decision that this set may be retired by itself was taken in retireManaged,
 // before the state removal, and what is left here is the document the gate
 // judges and the record of it.
-func (r *initRun) retireConsent(ctx context.Context, t *tf.TF, rets []infra.Retirement, spec infra.RepoSpec, undone string, plan bool) error {
+func (r *initRun) retireConsent(ctx context.Context, t *tf.TF, rets []infra.Retirement, spec infra.RepoSpec, undone string, plan bool, pl *tf.Plan, imports []tf.ImportKey) error {
 	if !r.retireAuto {
 		return r.retireConfirm(rets, spec, undone)
 	}
@@ -519,7 +519,7 @@ func (r *initRun) retireConsent(ctx context.Context, t *tf.TF, rets []infra.Reti
 		fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
 		return nil
 	}
-	return r.retireAdmit(ctx, t, rets, spec, undone)
+	return r.retireAdmit(ctx, t, rets, spec, undone, pl, imports)
 }
 
 // retireAdmit is the gate's admission in place of the retirement's second
@@ -532,7 +532,17 @@ func (r *initRun) retireConsent(ctx context.Context, t *tf.TF, rets []infra.Reti
 // followed the state removal: the counts and the delete list the confirmation
 // would have shown were printed from those bytes, and the digest in the record
 // is of them.
-func (r *initRun) retireAdmit(ctx context.Context, t *tf.TF, rets []infra.Retirement, spec infra.RepoSpec, undone string) error {
+func (r *initRun) retireAdmit(ctx context.Context, t *tf.TF, rets []infra.Retirement, spec infra.RepoSpec, undone string, pl *tf.Plan, imports []tf.ImportKey) error {
+	// The retirement's own deletes are what this step admits by itself; every
+	// other change in the same plan is judged by the cover an ordinary step
+	// is, and one it does not admit asks the typed confirmation: a plan that
+	// happens to carry a retirement must not carry a loosening in with it.
+	if pl != nil {
+		if why := r.notCovered(withoutDeletes(pl, retireAllowDelete(pl, rets, nil)), imports); why != "" {
+			fmt.Fprintf(r.w, "  %s\n", why)
+			return r.retireConfirm(rets, spec, undone)
+		}
+	}
 	g := r.gate
 	if g == nil {
 		// Unreachable: retireManaged read the gate before it removed anything
@@ -1185,4 +1195,22 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+// withoutDeletes is the plan with the changes at addrs left out: the
+// retirement's own deletes, which the cover refuses by design (it admits no
+// delete) and which retireStop and the guard have already judged.
+func withoutDeletes(p *tf.Plan, addrs []string) *tf.Plan {
+	skip := make(map[string]bool, len(addrs))
+	for _, a := range addrs {
+		skip[a] = true
+	}
+	out := *p
+	out.ResourceChanges = nil
+	for _, rc := range p.ResourceChanges {
+		if !skip[rc.Address] {
+			out.ResourceChanges = append(out.ResourceChanges, rc)
+		}
+	}
+	return &out
 }
