@@ -20,7 +20,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -30,7 +29,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
-	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -295,6 +293,18 @@ func reviewPrintableToken(tok string) bool {
 	return true
 }
 
+// reviewGitHubAPIURL and reviewBitbucketAPIURL are the forge API roots a head
+// read goes to, and the one place they are named: the installation's service
+// mints a token for the repository, and a root taken from the launcher's
+// environment would send that token (and the head the replay check compares
+// against) to whatever host a shell variable names. The coordinator's person-class
+// read holds its root the same way (coordinatorGitHubAPIURL, D474). They are
+// variables only so a test can stand a server in for the forge.
+var (
+	reviewGitHubAPIURL    = github.DefaultBaseURL
+	reviewBitbucketAPIURL = bitbucket.DefaultBaseURL
+)
+
 // reviewReadProvider opens the provider a pull request's head is read through:
 // the forge's own adapter for one repository, keyless, with the installation's
 // credentials service as the source of every token it uses.
@@ -338,7 +348,7 @@ func reviewReadProvider(ctx context.Context, env *cloudEnv, kind, repo string) (
 		}
 		p, err := github.New(github.Options{
 			Owner: owner, Repo: name, AppID: appID, ServiceHeldKey: true,
-			BaseURL: os.Getenv(providers.EnvGitHubAPIURL),
+			BaseURL: reviewGitHubAPIURL,
 		})
 		if err != nil {
 			return nil, remote(err)
@@ -354,7 +364,7 @@ func reviewReadProvider(ctx context.Context, env *cloudEnv, kind, repo string) (
 		// UseServiceTokens: a Bitbucket provider takes its tokens as an
 		// argument to New (Options.TokenSource) and offers no install.
 		return bitbucket.New(bitbucket.Options{
-			Workspace: owner, Slug: name, BaseURL: os.Getenv(providers.EnvBitbucketAPIURL),
+			Workspace: owner, Slug: name, BaseURL: reviewBitbucketAPIURL,
 			TokenSource: (&bitbucket.ServiceReadTokens{URL: serviceURL, IDToken: identity}).Repo(repo),
 		})
 	default:

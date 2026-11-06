@@ -358,10 +358,11 @@ func startForgeStandIn(t *testing.T, head string) *forgeStandIn {
 		})
 	}))
 	t.Cleanup(srv.Close)
-	// The API root override this read already obeyed (providers.FromEnv read
-	// the same variable): the stand-in is what an enterprise root stands in
-	// for, and the value is not a credential.
-	t.Setenv(providers.EnvGitHubAPIURL, srv.URL)
+	// The root is the package's own variable and no environment variable: a
+	// stand-in for the forge replaces it for this test alone.
+	prev := reviewGitHubAPIURL
+	reviewGitHubAPIURL = srv.URL
+	t.Cleanup(func() { reviewGitHubAPIURL = prev })
 	s.url = srv.URL
 	return s
 }
@@ -651,5 +652,30 @@ func TestFixBriefReadsTheHeadThroughTheReadMint(t *testing.T) {
 				t.Errorf("the forge was read with %q, want the token the read mint answered", forge.auth[0])
 			}
 		})
+	}
+}
+
+// The forge API root a head read goes to is the package's own, never one the
+// launcher's environment names: a root taken from a shell variable would
+// receive the token the installation's service minted for the repository.
+func TestReviewHeadIgnoresTheEnvironmentsForgeRoot(t *testing.T) {
+	mint := startReadMintStandIn(t)
+	forge := startForgeStandIn(t, reviewHeadSHA)
+	other := startForgeStandIn(t, reviewHeadSHA)
+	// startForgeStandIn pointed the package's root at `other`; put it back at
+	// the first stand-in and name the second one in the environment.
+	reviewGitHubAPIURL = forge.url
+	t.Setenv(providers.EnvGitHubAPIURL, other.url)
+	setReviewReadIdentity(t)
+	env := reviewHeadEnv(t, mint.url)
+
+	if _, err := reviewHead(t.Context(), env, "acme/app", 7); err != nil {
+		t.Fatalf("reading a pull request's head: %v", err)
+	}
+	if other.calls() != 0 {
+		t.Fatalf("the host FUGARO_GITHUB_API_URL names received %d request(s): the minted token went where the environment said", other.calls())
+	}
+	if forge.calls() != 1 {
+		t.Fatalf("%d reads of the package's own root, want 1", forge.calls())
 	}
 }
