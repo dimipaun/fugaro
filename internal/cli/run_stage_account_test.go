@@ -390,6 +390,16 @@ func TestClaudeAccountForLandsAMixedRunOnTheMixsAccount(t *testing.T) {
 			t.Fatalf("account = %q, want %q", got, config.DefaultClaudeAccount)
 		}
 	})
+	// A --token that is not the mix's account is still refused under api-key:
+	// the mix is the one account such a run may hold, and naming another is not
+	// a way round it.
+	t.Run("a flag naming another account", func(t *testing.T) {
+		env, co := mixCase(t, stagesBlock("review", "acme-overflow"), claudeReviewer, mixEnforce)
+		_, err := claudeAccountFor(context.Background(), env, "acme/other", "acme-personal", "", "", co)
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "only applies to a workflow whose agent.auth is oauth") {
+			t.Fatalf("err = %v, want the refusal of a named account on an api-key run", err)
+		}
+	})
 	// The one-account rule is the launch's too, and it is asked of the
 	// launch's own resolution and not only of a stage's: a project default
 	// that disagrees with a stage key is a second credential, refused before
