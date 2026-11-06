@@ -409,6 +409,24 @@ constraint the code enforces and a design must keep; **Open** is a question only
   (§4.1). Whether the answer is review at copy time, a documented trust boundary, or nothing, is a
   product decision and not a code fact. **D1394**/**D1395** carry the commit half of it.
 
+### Gap, established after the first pass
+
+- **F33 (Gap). An engine-side change to the build template does not rebuild catalog entries.**
+  `internal/backend/gcp/build.go`'s `TemplateSalt` is "the hex SHA-256 of the embedded
+  cloudbuild.yaml and the fugaro version", and `internal/imagecheck/triggers.go` fires the workflow
+  check on it (`in.TemplateSalt != rec.TemplateSalt`). The catalog check has no such input:
+  `internal/imagecheck/check.go`'s `CatalogInputs` and `CatalogInputsFingerprint` carry
+  `DefinitionSHA256`, `BaseRef`, `BaseDigest` and `Lockfiles` and nothing else, `CatalogRecordState`
+  has no `template_salt` field, and `internal/cli/image_check_catalog.go`'s `evaluate` never reads
+  `TemplateSalt`. So changing `images/derived/cloudbuild.yaml` — which any task that adds a catalog
+  build step must do — rebuilds every **workflow** image and **no** catalog image. This is why
+  **F33 keeps the next free number instead of renumbering findings the decisions above already cite**:
+  it was established while writing [implementation-plan.md](implementation-plan.md) §CB3, it is a
+  **Gap** like F14–F22, and renumbering would break every `F` reference in §7's table. Whether a
+  catalog entry should salt on the template is **D1402**'s question — that row asks what fires when
+  the entry's *inputs* move, and a changed build template is one of them; this block stays
+  **D1390–D1409** and takes no number beyond it.
+
 ---
 
 ## 6. UNVERIFIED
@@ -461,7 +479,7 @@ alternative costs.
 | **D1399** | Is `.dockerignore` honoured, required or ignored? | **Honoured, and documented**: Docker honours the repository's own file, and forbidding it would make the same Dockerfile behave differently in CI and in Fugaro | Require one, or generate one | A required file is a new failure mode for every repository; a generated one silently overrides what the repository's author wrote |
 | **D1400** | Is the context's own identity recorded, and in which field? | **A new field beside `SourceCommit`** — the Dockerfile's commit and the context's hash, each named for what it is; F25 forbids retyping `SourceCommit` | Reuse `SourceCommit` for the context's commit | A reused name that means something else: the console, mobile and history draw a wrong figure with no error (the repository's own wire-format rule) |
 | **D1401** | How does the nightly check learn that the context moved? | **A stored hash beside the Dockerfile in `builds/catalog/`**, written by the operator at copy time, compared the way `DefinitionSHA256` is compared today — it needs no credential in the check job and no new grant | Give the check job a git credential and a checkout | An account whose whole design is that it has none (F13) gains a credential to a repository, and a new read path into every repository's branch — the largest security change in this reconciliation |
-| **D1402** | Does a context change fire `catalog-definition`, or a new trigger name? | **A new reason**, because `ReasonCatalogDefinition`'s own doc says it means "the definition a catalog image was built from is not the one in the runs bucket now" — the context is a second input, and a night when both moved must record both | Fold it into `catalog-definition` | Two different causes print the same reason, and an operator reading a night's decisions cannot tell a Dockerfile edit from a repository edit |
+| **D1402** | Does a context change fire `catalog-definition`, or a new trigger name — and should the catalog check also salt on the build template, the way the workflow check does (F33)? | **A new reason**, because `ReasonCatalogDefinition`'s own doc says it means "the definition a catalog image was built from is not the one in the runs bucket now" — the context is a second input, and a night when both moved must record both. **And yes to the salt**, in the same change: a task that adds a build step changes `TemplateSalt` and rebuilds no catalog entry at all (F33), which is the same class of blind spot | Fold the context into `catalog-definition`, and leave the template unsalted | Two different causes print the same reason, and an operator reading a night's decisions cannot tell a Dockerfile edit from a repository edit; and an engine-side change to how catalog images are built reaches none of them until something else moves |
 | **D1403** | Does `context` move the policy node's `Version`, and what does an older runner do with a node carrying it? | **A skew gate first**, the way `internal/infra/readiness.go`'s `imageCatalogShipped` gated `image_catalog` (F22): the release that writes a node carrying `context` flips it, and no node carries the key before that release ships | Write the key and rely on the strict decode to refuse it | An older runner refuses the whole node rather than the one key, which fails a project's runs rather than its catalog — the skew D1156 exists to avoid |
 | **D1404** | Does a context entry's build still read the copied Dockerfile from the bucket? | **Yes**: the copy stays the record of what was built and the thing `catalogPinStep` verifies; the checkout supplies the context only | Read the Dockerfile from the checkout instead | The sha256 the record pins stops being the sha256 of the bytes the build used, and `catalogPinStep`'s verification loses its object |
 | **D1405** | May `context` point at a repository the project has no credential for? | **No.** `internal/cli/image_build_catalog.go`'s `catalogBuildEntries` already refuses to build an entry whose Dockerfile is in another repository ("its build runs as that repository's build account"); the same rule covers the context | Allow it | A build with no credential for the context's repository, failing at build time instead of at validation, with the credential for the *entry's* repository in hand |
