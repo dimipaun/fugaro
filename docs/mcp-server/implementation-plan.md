@@ -400,7 +400,7 @@ Terraform file rather than any interface any other task builds against.
     **M4 therefore owns the member list and not only the binding it writes**: the store's bucket must
     end with **no legacy or convenience binding and no second member** — uniform bucket-level access
     does not remove them and neither does writing an additive member — so this task **strips them, on
-    the pattern `fugaro init` already uses on the state bucket (`internal/infra/statebucket.go:140`,
+    the pattern `fugaro setup` already uses on the state bucket (`internal/infra/statebucket.go:140`,
     `RemoveProjectViewers`), or refuses to ship the bucket until they are gone**, and whichever it
     does is a plan-level assertion, not prose. What D935 buys is that the store names nobody **else** —
     no launcher, no operator, no budget admin and not the history account — which is exactly what the

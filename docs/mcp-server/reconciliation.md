@@ -225,14 +225,14 @@ hardened or not"**, and `docs/design/bucket-iam.md:47` gives the second half —
 `roles/storage.legacyBucketOwner` and `projectViewer:` as `roles/storage.legacyBucketReader` plus
 `roles/storage.legacyObjectReader` (`internal/gcpfake/gcs.go` models them, `ConvenienceBindings`),
 so **a basic project Viewer reads the bucket until somebody strips those bindings** — which is
-exactly what `fugaro init` does to the state bucket (`internal/infra/statebucket.go:140`,
+exactly what `fugaro setup` does to the state bucket (`internal/infra/statebucket.go:140`,
 `RemoveProjectViewers`, from `CreateStateBucket`). **The floor is therefore: Owners and Editors and
 any project-level storage role, plus the Viewers' convenience grant until it is removed.** It is a
 floor under every candidate of §8 — a second database instance and Firestore are reached by the
 project-level grants instead — and what D935 buys is unchanged: the store names **nobody else**, and
 every member a bucket brings with it that Terraform did not put there is M4's to remove or refuse.
 **UNVERIFIED, and it is M4's to close with the owner's live check: whether GCS still attaches these
-bindings to a bucket created by Terraform rather than by the `fugaro init` API call above.** What is
+bindings to a bucket created by Terraform rather than by the `fugaro setup` call above.** What is
 verified is that the design assumes it does (`internal/gcpfake/gcs.go`, `docs/design/bucket-iam.md`)
 and that M4's check reads the created bucket's policy as a basic project Viewer rather than trusting
 the assumption.
