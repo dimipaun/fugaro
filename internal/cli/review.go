@@ -430,28 +430,31 @@ func reviewArtifactUnreadable(run string, err error) error {
 // — bounded, quoted, nonce-delimited, and naming the review run — for the
 // launcher to put in front of the follow-up's own instructions.
 //
-// It reads the review's own artifact, from exactly where fugaro review show
-// reads it, and refuses rather than returning anything a brief could carry
-// when that read or the decode fails: a fix round whose brief does not say
-// what it was launched to fix is worse than no run at all, so an unreadable
-// verdict never becomes a brief (spec §6). The refusal names the review run,
-// which is the one thing its reader has to look at.
-//
 // reviewRun is the reference the launcher passed: <repo-slug>/<run-id>, or a
 // bare run id, read from the repository this fix round is for. A reference
-// that names another repository is refused — the artifact is read from the
-// path the reference names, and a brief carrying a review of somewhere else
-// would be quoting the wrong code.
+// that names another repository is refused, and so is a reference whose path
+// and whose artifact disagree: the artifact is read from exactly where fugaro
+// review show reads it, and its own claims are checked against this launch
+// before any of its text is used, so a brief cannot quote a review of
+// somewhere else nor name a run nobody read. The section that is rendered
+// names the reference this launcher read, never the artifact's claim about
+// itself.
 //
-// The path the reference names is not evidence of what the artifact inside it
-// says, so the artifact's own claims are checked against this launch before any
-// of its text is used: the review run, the repository and the pull request must
-// all be the ones this launch is for. A review of another pull request would
-// otherwise reach the brief under a sentence that calls it "this pull request",
-// and the brief would name a run nobody read. What a mismatch prints is the
-// three values that disagree — never a field of the artifact's own prose — and
-// the section that is rendered names the reference this launcher actually read
-// rather than the artifact's claim about itself.
+// A verdict is a verdict only once its signature is checked (CSR10, D892(a)),
+// so this reader is a VERIFYING one: the sidecar beside the artifact is
+// verified by the installation's credentials service over the artifact's exact
+// stored bytes before the verdict is read at all, and it FAILS CLOSED (spec
+// §6): a read or a decode that fails, and every way the service's answer can
+// be other than yes, refuses the launch — never "nothing to check" — because a
+// brief whose findings nobody verified is worse than no run at all. Every
+// refusal names the review run and quotes no field of the review's own prose
+// (spec §7).
+//
+// The verdict is acted on only when it is the one that asks for a fix: a
+// `fix first` becomes the brief, while a `ship` or a `reject` refuses and
+// points at fugaro review show for the findings (Open item 2's answer,
+// 2026-11-05) — a brief built from a verdict that asked for no fix is a fix
+// round nobody asked for.
 func reviewFindings(ctx context.Context, env *cloudEnv, repo, reviewRun string, pr int) (string, error) {
 	slug, id := "", reviewRun
 	if strings.Contains(reviewRun, "/") {
@@ -472,7 +475,8 @@ func reviewFindings(ctx context.Context, env *cloudEnv, repo, reviewRun string, 
 		return "", userErr("--review-run %s is a review of %s, and this fix round is for %s: a brief carries the findings of its own repository", oneLineCLI(reviewRun), oneLineCLI(slug), oneLineCLI(own))
 	}
 	ref := slug + "/" + id
-	data, err := runstore.Open(env.bucket.Bucket, slug, id).ReadFile(ctx, runstore.ArtifactPrefix+runner.ReviewArtifactName)
+	store := runstore.Open(env.bucket.Bucket, slug, id)
+	data, err := store.ReadFile(ctx, runstore.ArtifactPrefix+runner.ReviewArtifactName)
 	if err != nil {
 		if errors.Is(err, runstore.ErrNotFound) {
 			return "", reviewArtifactUnreadable(ref, err)
@@ -491,8 +495,58 @@ func reviewFindings(ctx context.Context, env *cloudEnv, repo, reviewRun string, 
 	case art.PR != pr:
 		return "", userErr("--review-run %s holds the artifact of a review of pull request #%d, and this fix round is for #%d: a brief carries the findings of the review it names", oneLineCLI(ref), art.PR, pr)
 	}
+	// The sidecar, read from the same prefix the artifact was read from: the
+	// digest the service is asked about is the SHA-256 of the bytes above, so
+	// the signature and the object are the same read.
+	sig, err := store.ReadFile(ctx, runstore.ArtifactPrefix+runner.ReviewSignName)
+	if err != nil {
+		if errors.Is(err, runstore.ErrNotFound) {
+			return "", userErr("%s has no signature beside its review artifact (%s is absent), and an unverified verdict is not one to act on: a fix round is launched only on a review the installation's credentials service signed. See fugaro review show %s", oneLineCLI(ref), runner.ReviewSignName, oneLineCLI(ref))
+		}
+		return "", remote(err)
+	}
+	// The account the verify call names has ONE source: the account of the
+	// review job this launcher resolved, which the review run's own task
+	// carries (the axis's empty account is spelled as no field, so the mapping
+	// is the launch's own rule). The artifact has no account field by design —
+	// an artifact that could name the key that verifies it would choose its own
+	// verifier — and the run's record is deliberately not a source (its
+	// oauth_account is informational and written by the job itself).
+	reviewSpec, err := store.ReadTask(ctx)
+	if err != nil {
+		return "", userErr("%s's own task cannot be read (%s), and the account a verdict is verified under is the review run's own: without it there is no key to ask about, so the brief is refused rather than built on a guess. See fugaro diagnose %s", oneLineCLI(ref), safetext.FieldErr(err), oneLineCLI(ref))
+	}
+	// The head the call demands, from the forge rather than from the artifact:
+	// a validly signed verdict for an earlier head of the same pull request is
+	// a replay, and the artifact's own head_sha is the claim being checked.
+	head, err := reviewHead(ctx, env, repo, pr)
+	if err != nil {
+		return "", err
+	}
+	verifier, err := reviewVerifier(ctx, env, reviewAccount(reviewSpec), id, slug)
+	if err != nil {
+		return "", err
+	}
+	want := runner.ReviewExpectation{ReviewRun: id, Repository: slug, PR: pr, HeadSHA: head}
+	if _, err := runner.VerifyReviewArtifact(ctx, data, string(sig), want, verifier); err != nil {
+		return "", userErr("%s: %s. A fix round carries a review's verdict into its brief only when the installation's credentials service verifies the signature over the artifact's own bytes, so this launch is refused rather than started on a verdict nobody checked. See fugaro review show %s", oneLineCLI(ref), safetext.Field(err.Error()), oneLineCLI(ref))
+	}
+	// The signature said the artifact is the one this launch is for; the
+	// verdict says whether it asks for a fix at all. Only `fix first` does, and
+	// the other two words are refused rather than carried: the findings of a
+	// ship or a reject are one fugaro review show away, while a brief built
+	// from them is a fix round nobody asked for.
+	if art.Verdict != reviewFixFirst {
+		return "", userErr("--review-run %s holds a review whose verdict is %q, and only a review that asks for a fix becomes a fix round's brief: read its findings with fugaro review show %s", oneLineCLI(ref), safetext.Field(art.Verdict), oneLineCLI(ref))
+	}
 	return runner.FixFindings(ref, art.Issues), nil
 }
+
+// reviewFixFirst is the one verdict word that asks for a fix round: the
+// artifact's own closed set is ship, fix first and reject (runner's
+// reviewVerdicts, held by DecodeReviewArtifact), and the launcher acts on the
+// one of them that asks for the work this launch does.
+const reviewFixFirst = "fix first"
 
 // writeObject writes one object's bytes and a closing newline, so two objects
 // printed one after the other stay two: review.json is stored without a
