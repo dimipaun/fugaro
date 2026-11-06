@@ -139,7 +139,7 @@ type retireOpts struct {
 	bucket bool
 	// foreign adds an address of another root -- the installation's -- that
 	// the repository's configuration never produced, of a type the allowlist
-	// allows: the stop it makes is the module bound and the type's.
+	// allows: the stop it makes is the module bound's and not the type's.
 	foreign bool
 }
 
