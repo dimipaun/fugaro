@@ -294,6 +294,7 @@ func TestGateSentencesNameNoWayPast(t *testing.T) {
 	for _, s := range []struct{ name, sentence string }{
 		{"GateProceeded", GateProceeded()},
 		{"GateOrdinary", GateOrdinary()},
+		{"OwnerProceeded", OwnerProceeded()},
 	} {
 		for _, no := range []string{"--", "=", "unset ", "CLAUDECODE", "CLAUDE_CODE", "AI_AGENT", "FUGARO_", "export ", "Type "} {
 			if strings.Contains(s.sentence, no) {
@@ -310,8 +311,14 @@ func TestGateSentencesNameNoWayPast(t *testing.T) {
 	if GateProceeded() == GateOrdinary() {
 		t.Error("the two sentences are one: they answer about two different things — a document the gate judged, and a step the run announced")
 	}
+	if GateOrdinary() == OwnerProceeded() || GateProceeded() == OwnerProceeded() {
+		t.Error("the sentences are one: OwnerProceeded speaks for a step no rule judged, and claiming a verdict there is the direction this file refuses to take")
+	}
 	if !strings.Contains(GateProceeded(), "record") {
 		t.Errorf("GateProceeded does not say where the verdict can be read afterwards: %q", GateProceeded())
+	}
+	if strings.Contains(OwnerProceeded(), "verdict") || strings.Contains(OwnerProceeded(), "gate") {
+		t.Errorf("OwnerProceeded claims a verdict for a step no rule judged: %q", OwnerProceeded())
 	}
 }
 

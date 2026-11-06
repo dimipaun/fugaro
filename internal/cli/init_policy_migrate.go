@@ -417,7 +417,19 @@ func policyMigrationRefusal(err error) error {
 // managed project's policy write is never refused for the runs in flight, so
 // the count becomes a note and the write proceeds. The upgrade door has no gate
 // and passes false.
-func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer, admitted, managed bool) error {
+//
+// owner is the other half of that ruling, and it is the caller's own read of
+// who is there: a real terminal, no coding agent's marker, no --ask, and the
+// gate standing in for this run (gateStandsIn). It is a parameter for the same
+// reason admitted is — this function holds a command and not a run, and the
+// facts about the session are the run's — and it replaces exactly two of the
+// confirmations below: a loosening that the gate could not admit (its class is
+// Typed, D1026) and a bare re-seed. What the person reads instead is the note
+// of what changes (looseningChange, or the re-seed's three-way state) and
+// OwnerProceeded's sentence. The refusals that are not confirmations stay: a
+// coding agent's session is refused below whatever this is, and a run in flight
+// is refused whatever admitted the write.
+func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer, admitted, managed, owner bool) error {
 	// The in-flight refusal is about the NODE this run rewrites, and it is asked
 	// before the branch below: D854's re-seed carries a pending migration with it
 	// (confirmReseed writes the re-seeded file and then the migrated node), and a
@@ -436,7 +448,7 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		return err
 	}
 	if m.generations != nil {
-		return m.confirmReseed(ctx, cmd, yes, w, admitted)
+		return m.confirmReseed(ctx, cmd, yes, w, admitted, owner)
 	}
 	if !m.writesNode() {
 		// The one write of this run is the generation record in this machine's
@@ -467,7 +479,7 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		// in, and a session with no terminal or a coding agent's is refused), and
 		// a document this node's confirmation already covers needs no second
 		// question.
-		if err := confirmEmptyAllowList(cmd, m.lc, marker); err != nil {
+		if err := confirmEmptyAllowList(cmd, m.lc, marker, owner); err != nil {
 			return err
 		}
 	} else if !admitted {
@@ -479,17 +491,31 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		// script (or agent session) has just passed --yes and been refused.
 		if loosening := m.loosening(); len(loosening) > 0 {
 			why := m.looseningWhy(loosening)
-			// The sentence is said once. A session with no terminal is refused with
-			// it inside the error (confirmTypedStrict), and a door that reported
-			// that error next to the sentence it already printed said the same
-			// thing twice; the person at a terminal reads it here and only here,
-			// because the prompt below names the step and never the widening.
-			if stdinIsTerminal(cmd.InOrStdin()) {
-				fmt.Fprintf(w, "%s\n", why)
+			if owner {
+				// The owner's own terminal on a managed project reads what
+				// loosens and types nothing (the ruling of 2026-11-06). The note
+				// is looseningChange and not looseningWhy, whose tail is the
+				// typed name and the command to run at a terminal — the two
+				// things that are not happening here.
+				fmt.Fprintf(w, "%s\n  %s\n", m.looseningChange(loosening), initflow.OwnerProceeded())
+			} else {
+				// The sentence is said once. A session with no terminal is refused with
+				// it inside the error (confirmTypedStrict), and a door that reported
+				// that error next to the sentence it already printed said the same
+				// thing twice; the person at a terminal reads it here and only here,
+				// because the prompt below names the step and never the widening.
+				if stdinIsTerminal(cmd.InOrStdin()) {
+					fmt.Fprintf(w, "%s\n", why)
+				}
+				if err := confirmTypedStrict(cmd, m.lc, why, what); err != nil {
+					return err
+				}
 			}
-			if err := confirmTypedStrict(cmd, m.lc, why, what); err != nil {
-				return err
-			}
+		} else if owner {
+			// A node write the gate did not judge, and one no loosening is
+			// behind: the diff above is the whole note of what changes, and
+			// nothing is typed for it (the ruling of 2026-11-06).
+			fmt.Fprintf(w, "  %s\n", initflow.OwnerProceeded())
 		} else if err := confirmRemoval(cmd, m.lc, yes, what); err != nil {
 			return err
 		}
@@ -626,10 +652,21 @@ func (m *policyMigration) recordGeneration(ctx context.Context, cmd *cobra.Comma
 // afterwards. A bare re-seed never reaches here admitted: nothing is published,
 // so there is no document for a verdict to be about, and the gate keeps the
 // session's own refusal for it.
-func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command, yes bool, w io.Writer, admitted bool) error {
+//
+// owner is policyMigrationConfirm's: the owner's own terminal on a managed
+// project types nothing for the re-seed either (the ruling of 2026-11-06). What
+// the person reads instead is the three-way state printed above — which file is
+// which, and that the file being replaced is kept beside it — and
+// OwnerProceeded's sentence; the re-seed loses no data (the file it replaces is
+// backed up first) and takes no secret value, which is the whole of what the
+// ruling leaves asked. A re-seed that carries a migration with it is admitted
+// above and asks nothing there already.
+func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command, yes bool, w io.Writer, admitted, owner bool) error {
 	m.printGenerationState(w)
 	if !admitted {
-		if err := confirmRemoval(cmd, m.lc, yes, policyReseedWhat); err != nil {
+		if owner {
+			fmt.Fprintf(w, "  %s\n", initflow.OwnerProceeded())
+		} else if err := confirmRemoval(cmd, m.lc, yes, policyReseedWhat); err != nil {
 			return err
 		}
 	}
@@ -1041,7 +1078,11 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 		}
 	}
 	cmd := s.e.r.cmd
-	if err := policyMigrationConfirm(ctx, cmd, m, env.Yes, cmd.OutOrStdout(), admitted, s.e.r.gateUnderway()); err != nil {
+	// The two facts the tail cannot ask the command for: the marks, and who is
+	// at the terminal. Both are this run's own reads (gateUnderway, conditions),
+	// so the tail and the stages cannot disagree about either.
+	owner := s.e.r.gateStandsIn() && initflow.OwnerAtTerminal(s.e.r.conditions())
+	if err := policyMigrationConfirm(ctx, cmd, m, env.Yes, cmd.OutOrStdout(), admitted, s.e.r.gateUnderway(), owner); err != nil {
 		return initflow.Outcome{}, err
 	}
 	if admitted {

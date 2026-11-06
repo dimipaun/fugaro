@@ -204,6 +204,15 @@ func prepareAnchor(lc *localcfg.Config, root string) (*anchorEdit, error) {
 // planOnly prints what it would do and writes nothing. It reports whether
 // the file was written; an edit with nothing to change writes nothing and
 // prints nothing.
+//
+// A managed project's own terminal is asked nothing here either (the owner's
+// ruling of 2026-11-06): the diff above is the whole of what the owner reads,
+// the line to add is not needed because the write is made, and the sentence
+// says why. It is asked before --yes and before the y/N, so an owner who
+// passed the flag reads the managed sentence rather than a line about a flag
+// the project's marks already answered for. Nothing else moves: a project that
+// is not managed, a mark that did not answer and a coding agent's session keep
+// the three arms below exactly as they were.
 func (r *initRun) writeAnchor(a *anchorEdit, env initflow.Env, planOnly bool) (bool, error) {
 	if !a.changed {
 		return false, nil
@@ -214,6 +223,8 @@ func (r *initRun) writeAnchor(a *anchorEdit, env initflow.Env, planOnly bool) (b
 	case planOnly:
 		fmt.Fprintln(r.w, "  (plan only: fugaro.yaml is not written)")
 		return false, nil
+	case r.gateStandsIn() && initflow.OwnerAtTerminal(r.conditions()):
+		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
 	case env.Yes:
 		fmt.Fprintln(r.w, "  confirmed by --yes")
 	case env.Interactive:
