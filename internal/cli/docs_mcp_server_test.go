@@ -88,10 +88,12 @@ func TestDocsMCPServerIsWritten(t *testing.T) {
 	plan := flattenDoc(readDoc(t, mcpPlan))
 	for _, want := range []string{
 		// The two gates §3 of the plan states before the first task: the
-		// review the coordinator runs, and the licence nobody has confirmed.
+		// review the coordinator runs, and the licence, which the owner
+		// confirmed on 2026-11-06 and which the plan therefore carries as
+		// answered rather than as still standing.
 		"independent SECURITY review of [spec.md](spec.md) §8",
 		"**run by the coordinator**",
-		"D921's unconfirmed licence",
+		"The owner confirmed it on 2026-11-06 as Apache 2.0",
 		"the five whose marker says **mandatory** are M3, M4, M5, M7 and M9",
 	} {
 		if !strings.Contains(plan, want) {

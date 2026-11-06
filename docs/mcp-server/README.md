@@ -22,7 +22,7 @@ and PKCE and the project's own Firebase as the identity provider, so that MCP cl
 manage tasks without the CLI. The owner approved a design PR on 2026-10-31 and **answered the fifteen
 decisions on 2026-11-04** — D920's public endpoint, D923's paired-device sign-in and its `user:`-only
 lists, D930's rotating tokens, D931's single launch path, D934's off-by-default front door, D921's
-library **with its licence still UNCONFIRMED**, and D922's separate **`mcpauth`** subtree, closed to
+library **with its licence confirmed by the owner on 2026-11-06 (Apache 2.0)**, and D922's separate **`mcpauth`** subtree, closed to
 every client. **And answered one more on 2026-11-05 (D935)**, on the independent review of PR
 #1715's M3: those records do not live in the project's shared Realtime Database at all, but in a
 store whose IAM names only the front door's own account `mcp_server` — the bucket of the plan's §8,
@@ -123,10 +123,11 @@ README, in its own diff, is where the block above D1189 is written.
 - **Not a plan to start.** M4 creates a public endpoint and M9 adds a launch grant; **neither starts
   before the independent SECURITY review of [spec.md](spec.md) §8 has been read and its findings
   answered**, and **the coordinator runs that review**.
-- **Not a design anyone may build against yet.** D921's library was chosen with **its licence
-  UNCONFIRMED**: the owner or counsel confirms it before any build
-  ([reconciliation.md](reconciliation.md) §6, the first owner check), and a licence that turns out to
-  be unusable sends that decision back to its alternatives.
+- **Not a design anyone may build against yet.** The library's licence — the one thing this folder
+  could not check for itself — **is settled: Apache 2.0, confirmed by the owner on 2026-11-06**
+  ([reconciliation.md](reconciliation.md) §6, the first owner check), so the tasks may build on
+  `zitadel/oidc`. What still stands in front of them is the independent SECURITY review and the
+  owner's approval of each task.
 - **Not the last word on the MCP specification.** §0's open item — re-verify the current revision —
   is still an owner check ([reconciliation.md](reconciliation.md) §6): **this container cannot reach
   the public specification**, which is the limitation `docs/coordinator/reconciliation.md`:794

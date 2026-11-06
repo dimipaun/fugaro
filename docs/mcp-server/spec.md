@@ -146,8 +146,8 @@ coordinator is the subscription half of the product. This design adds **no** lic
 file and no licence text anywhere, because the folder it is written in is core documentation and the
 repository's own rule for a documentation folder says so. **The one licence this folder does turn
 on is a dependency's**: D921 was answered with `zitadel/oidc`'s licence **UNCONFIRMED**, so the owner
-or counsel must confirm it before any build, and that confirmation is the first owner check in
-[reconciliation.md](reconciliation.md) §6.
+or counsel had to confirm it before any build — that confirmation was the first owner check in
+[reconciliation.md](reconciliation.md) §6, **and the owner gave it on 2026-11-06: Apache 2.0**.
 
 ## 2. The front door: transport, endpoint, and who may reach it
 
@@ -202,12 +202,12 @@ coordinator's own URL — so a client's standard check works.
 **Library** (D921, answered 2026-11-04). The authorization server is built on **zitadel/oidc** — the
 first option the owner listed, and the owner's answer — with the coordinator supplying two things the
 library does not: the storage over the project's database, and Dynamic Client Registration, which the
-owner's spec already expects to be a few hundred hand-written lines. **The library's licence is
-UNCONFIRMED**, and the owner said so in the answer: Apache 2.0 is the library's own claim and this
-container cannot check it, so **the owner or counsel must confirm the licence before any build**, and
-that confirmation is the first owner check in [reconciliation.md](reconciliation.md) §6 — M5 does not
-start until it is settled, and a licence that turns out to be unusable sends D921 back to its
-alternatives rather than to a workaround. The alternatives and their costs stay in the
+owner's spec already expects to be a few hundred hand-written lines. **The library's licence was
+UNCONFIRMED when this decision was answered**, and the owner said so then: Apache 2.0 is the
+library's own claim and this container cannot check it, so **the owner or counsel had to confirm the
+licence before any build** — that confirmation was the first owner check in
+[reconciliation.md](reconciliation.md) §6 — and **the owner confirmed it on 2026-11-06: Apache
+2.0**, so M5 builds on the library and D921's alternatives are no longer live. The alternatives and their costs stay in the
 reconciliation; the short version is that ory/fosite brings the same missing piece and a heavier
 plugin API for a flow this small, and a standalone third-party server is a second resident service in
 a self-hosted product whose whole point is one service per project.
@@ -628,8 +628,8 @@ and ask for it.
 
 - **The override fence is unbuilt and its mechanism is undecided** (§8): how the runner reads non-allowlisted configuration from something `runWithOverrides` cannot set. It gates M9 and D931; the owner decides the mechanism before either is built.
 - The three open items of the owner's spec are answered or narrowed: the library is **zitadel/oidc**
-  (§3, D921, answered 2026-11-04 with **its licence UNCONFIRMED** — the owner or counsel confirms it
-  before any build, and that is the first owner check); the standalone-server option is not taken; and
+  (§3, D921, answered 2026-11-04 with **its licence UNCONFIRMED** and **confirmed by the owner on
+  2026-11-06 as Apache 2.0**, which is the first owner check answered); the standalone-server option is not taken; and
   re-verification against the live MCP specification and the project's Identity Platform features is
   an owner check before implementation ([reconciliation.md](reconciliation.md) §6). **The
   re-verification could not be done here**: the public specification is not reachable from this

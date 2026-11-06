@@ -24,7 +24,7 @@ independent SECURITY review of [spec.md](spec.md) §8 (which the coordinator run
 | D | The question | Answered 2026-11-04, and written to | If the owner later answers the other way |
 | --- | --- | --- | --- |
 | D920 | Public endpoint, or P8's IAM invoker | **Public**, bearer token is the gate — **the recommendation** | **M5, M6, M8, M9, M10 are void, and M4 and M7 shrink.** An IAM-invoked endpoint has no metadata documents, no registration and no token endpoint; what survives is M1–M3 and a tool registry reached by a Google identity. The plan is then a different, much smaller plan. |
-| D921 | The OAuth library | **`zitadel/oidc` — the recommendation, with the licence UNCONFIRMED**, so the owner or counsel confirms it before any build: **M5 does not start until that is settled** | **M5's shape changes** (the endpoints stay; who implements them does not), and `go.mod` gains a different dependency. |
+| D921 | The OAuth library | **`zitadel/oidc` — the recommendation, with the licence UNCONFIRMED when the answer was given and confirmed by the owner on 2026-11-06 as Apache 2.0**, so **M5 may start**: the confirmation is what the gate waited for | **M5's shape changes** (the endpoints stay; who implements them does not), and `go.mod` gains a different dependency. |
 | D922 | Where the token records live | **The separate `mcpauth` subtree, `.read: false` and `.write: false`, written by the coordinator's own account only** — the recommendation (**restated the same day**: the first answer made it readable by any signed-in person) | **M3 changes** by taking `coordinator/`'s `.read: "USER"` for the new node, and its red step inverts from the denial to the admission. |
 | D923 | How the person signs in | **The installation's own custom-token flow, with a PAIRED DEVICE approving and the coordinator never minting a token** — the recommendation, mechanism named; the ID token is consumed at `/oauth/authorize` only, and only exact `user:` list entries are read | **M6 changes** (the verifier moves to the authorize endpoint), **M7 gains the `user:`-only rule**, and a decision already taken once (`docs/mobile-auth` D221) is reopened. |
 | D924 | How the spend limit is enforced | **A variable of its own, tighter-of-two, counted across the whole token family** — the recommendation | **M9 loses its core change** and gains the launcher-side arithmetic instead, and **M2 gains the family counter** that makes rotation a lifetime mechanism rather than a budget one. |
@@ -90,7 +90,7 @@ them and is not any more**: the owner gave it on 2026-11-05, so M2 and M4 wait o
 tasks and the review below.
 
 **M1** ← nothing. **M2** ← M1. **M3** ← nothing: it is a rules file and
-its tests, and it can land first. **M4** ← the SECURITY review of [spec.md](spec.md) §8. **M5** ← M2, M4, D928, and D921's licence confirmed. **M6** ← M4, M5 (it wires a
+its tests, and it can land first. **M4** ← the SECURITY review of [spec.md](spec.md) §8. **M5** ← M2, M4, D928, and D921's licence, **confirmed by the owner on 2026-11-06**. **M6** ← M4, M5 (it wires a
 verifier into the server M5 mounts). **M7** ← M2, M5. **M8** ← M7. **M9** ← M4, M7, and the
 launch-override fence of [reconciliation.md](reconciliation.md) §6 (check 0), which is NOT BUILT.
 **M10** ← M5, M7.
@@ -145,10 +145,12 @@ is asked here for every task that changes who may reach what.
 starts until it has been read and its findings answered, and its scope is §8, every **SEC**-marked
 task below (the five whose marker says **mandatory** are M3, M4, M5, M7 and M9) and the two new
 privileges this design asks for (M9's launch grant, and M4's single binding on the store the
-`mcpauth` records moved to). **D921's unconfirmed licence** is the second
-([reconciliation.md](reconciliation.md) §6, the first owner check): it gates **M5** specifically,
-because M5 is the task that takes the dependency, and a licence that turns out to be unusable sends
-D921 back to its alternatives before any code exists rather than after.
+`mcpauth` records moved to). **D921's licence, the second gate, has been answered rather than left
+standing**: it was UNCONFIRMED when D921 was decided and it gated **M5** specifically, because M5 is
+the task that takes the dependency and a licence that turned out to be unusable would have sent D921
+back to its alternatives before any code existed rather than after. **The owner confirmed it on
+2026-11-06 as Apache 2.0** ([reconciliation.md](reconciliation.md) §6, the first owner check, now
+answered), so that gate is cleared and M5's last gate is the review.
 
 **A third gate stood in front of M2 and M4, and it has been answered rather than left standing.**
 D935 moved the records out of the project's database and left **which** separate store to the owner
@@ -523,9 +525,10 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
   `state` returns on the redirect unaltered).
 - **SEC:** **yes, mandatory** — this is the endpoint the threat model's redirect-URI, CSRF and open-
   registration paragraphs are about.
-- **Depends on:** M2, M4, D921, D928 — **and on D921's licence being confirmed**, by the owner or by
-  counsel, before the dependency is added ([reconciliation.md](reconciliation.md) §6, check 1). This
-  is the one task the licence gates directly.
+- **Depends on:** M2, M4, D921, D928 — and on D921's licence, which **the owner confirmed on
+  2026-11-06 as Apache 2.0** ([reconciliation.md](reconciliation.md) §6, check 1, now answered), so
+  the dependency may be added and this task may run. This was the one task the licence gated
+  directly, and its gate is the review.
 
 ### M6 — Firebase at the authorize endpoint
 
