@@ -6,8 +6,9 @@ package cli
 // spec.md (the design), reconciliation.md (every claim of the spec against the
 // code on `main`, and the owner's decisions) and implementation-plan.md (the
 // tasks CSR1-CSR7, with CSR4a and CSR4b where the old CSR4 split, and §6 --
-// the follow-up, CSR8-CSR12, written after those merged without making
-// `fugaro review` reachable). It adds no
+// the follow-up, CSR8-CSR16, written after those merged without making
+// `fugaro review` reachable, plus §6.7's api-key slice CSR17-CSR18, which the
+// owner cut from 0.20.0). It adds no
 // code, and the whole folder is a draft pull request
 // the owner has not approved, so nothing here pins a command or a flag.
 //
@@ -33,7 +34,8 @@ package cli
 //    here" about exactly the things the next round will want to decide, and
 //    because the three the owner answered on 2026-11-05 (the switch, the verdict
 //    policy, the release) are the sentences a later edit could turn back into
-//    recommendations.
+//    recommendations, and because the two answers of 2026-11-05/06 -- item 6's
+//    refusal and the api-key path cut from 0.20.0 -- are two more.
 //  * TestDocsCloudSeniorReviewDecisionsAreAnswered -- D880-D894 are written and
 //    answered, D895-D899 reserved and unused, and the four the later rounds
 //    raised (D891, D892, D893, D894) each carry the option the owner took, in
@@ -186,17 +188,20 @@ func TestDocsCloudSeniorReviewIsWritten(t *testing.T) {
 			t.Errorf("%s no longer says %q", csrPlan, want)
 		}
 	}
-	// Section 6 is the follow-up: five tasks for the things CSR1-CSR7 left
-	// between the plan and a review that runs. It is pinned for the same reason
-	// the rest is -- it is a claim about the tree (a command registered nowhere,
-	// a container that cannot place the job the launcher picks, a signature
-	// nothing checks, a verifier identity the service refuses to start with) and
-	// about who owns each -- and because its own rules are the ones a later round
+	// Section 6 is the follow-up: nine tasks (CSR8-CSR16) for the things
+	// CSR1-CSR7 left between the plan and a review that runs, and §6.7's
+	// api-key slice (CSR17-CSR18) outside the release. It is pinned for the same
+	// reason the rest is -- it is a claim about the tree (a command registered
+	// nowhere, a container that cannot place the job the launcher picks, a
+	// signature nothing checks, a verifier identity the service refuses to start
+	// with, a review class with no budget and no credential of its own) and about
+	// who owns each -- and because its own rules are the ones a later round
 	// shortens first: the environment switch the owner chose and the sentence that
 	// says what it does NOT do (it admits nothing), the level rule that keeps one
-	// file one writer's, and the three answers of 2026-11-05 beside the two items
-	// that are still open. The five headings are pinned because the section is
-	// read by task id.
+	// file one writer's, and the answers of 2026-11-05/06 beside the items that are
+	// still open. Every task heading is pinned because the section is read by task
+	// id, and so are the two cuts that came with those answers -- item 6's refusal
+	// and the api-key path named outside 0.20.0.
 	for _, want := range []string{
 		"## 6. Follow-up after CSR1–CSR7",
 		"**Seven gaps, each with the owner it has after this section.**",
@@ -243,9 +248,31 @@ func TestDocsCloudSeniorReviewIsWritten(t *testing.T) {
 		"**The verifier the launcher authenticates as is not a person**",
 		"**5. *(found while reviewing the first draft of §6)* Who may verify a verdict — and it cannot be the owner.**",
 		"**Nothing above is decided here except what the owner answered on 2026-11-05",
+		// The four tasks the owner's rulings of 2026-11-05/06 added to §6, and the
+		// two cuts that came with them: the section grew from five tasks to nine,
+		// and a heading or an answer a later edit dropped would leave a reader with
+		// a task list the document no longer carries.
+		"### CSR13. The review run's model path is its class, not `agent.auth` (SEC)",
+		"### CSR14. The installation creates the verifier service account, and one `fugaro update` names it (SEC)",
+		"### CSR15. The launcher impersonates the verifier account (SEC)",
+		"### CSR16. The launcher reads the head through the credentials service's read mint (SEC)",
+		"**CSR8–CSR16: nine tasks**",
+		// Item 6 is the item §6 was written without, and its answer is a REFUSAL
+		// rather than the item's own recommendation: an edit that turned it back
+		// into "the class forces the gateway on" would be the folder disagreeing
+		// with the owner about the one thing that held CSR13.
+		"**6. *(found while the class of item 4 was re-read after CSR8 merged)* What a review run does when the installation's budget is OFF. — ANSWERED 2026-11-05/06: THE REFUSAL",
+		"ANSWERED 2026-11-05/06: THE REFUSAL — a cloud review does NOT run with the budget off, and the sentence names the setting to turn on. Not the class forcing the gateway on.**",
+		// The cut of 2026-11-06: the api-key review is named, ordered, and outside
+		// the release. Folding it back into 0.20.0 would put a task in §6.3's
+		// levels that the owner explicitly took out of them.
+		"### 6.7 The api-key review: named, ordered, and NOT in 0.20.0 (CSR17, CSR18)",
+		"**CSR17. The service can hold and serve a provider key for a review caller (SEC). — NOT IN 0.20.0.**",
+		"**CSR18. The review run's model path reaches a provider's endpoint (SEC). — NOT IN 0.20.0.**",
+		"the api-key review, which are NOT in 0.20.0**",
 	} {
 		if !strings.Contains(plan, want) {
-			t.Errorf("%s no longer says %q: §6 is the follow-up that carries the five tasks CSR1–CSR7 left, and its own rules (the owner-run gate, the level rule, the switch that admits nothing, the answers the owner gave and the items it still does not decide) are what a later edit shortens first", csrPlan, want)
+			t.Errorf("%s no longer says %q: §6 is the follow-up that carries the tasks CSR1–CSR7 left, and its own rules (the owner-run gate, the level rule, the switch that admits nothing, the answers the owner gave and the items it still does not decide) are what a later edit shortens first", csrPlan, want)
 		}
 	}
 }

@@ -1830,9 +1830,12 @@ the service opt-in, and they stay correct the day it is not.
 the launcher impersonates) and **D1068** (what the verify route answers). **Findings:** none of the
 reconciliation's; this is **gap 6**'s third half on the launcher's side, and it is a task of its own
 because the task CSR10 became does **not** do it: PR #1764, now merged, leaves `reviewVerifierIdentity`
-(`internal/cli/reviewverify.go`) returning the refusal "the launcher has no verifier identity to call the
-credentials service's verify route as: which identity may verify a verdict is the owner's to settle (… Open
-item 5)", which is the fail-closed stub the answer now replaces. **Depends on:** **CSR10** (the file, the
+(`internal/cli/reviewverify.go:81`) returning the refusal "the launcher has no verifier identity to call
+the credentials service's verify route as: the installation root creates a dedicated verifier service
+account and names it in credentials_service.verifier_accounts, which this launcher impersonates once that
+account is real (docs/cloud-senior-review/implementation-plan.md CSR14/CSR15: neither exists yet). No fix
+round is launched on a verdict nobody verified" — **a sentence that names the verifier service account and
+CSR14/CSR15 and never Open item 5**, which is the fail-closed stub the answer now replaces. **Depends on:** **CSR10** (the file, the
 seam and the reader that calls it) and **CSR14** (the account it impersonates and the operators' grant on
 it). **Before CSR11**: the flip admits a launch whose fix round the launcher cannot start, because its
 verify call is admitted for nobody until this lands.
@@ -2066,8 +2069,9 @@ OUTSIDE ALL OF IT, and NOT in 0.20.0:  CSR17 (the service serves a provider key)
   other on the strength of this drawing**. `CSR11 → nothing`: it is last, and nothing here depends on the
   flip. **No edge reaches CSR17 or CSR18**, and neither of them is an edge's source.
 - **Levels.** **Level 1: CSR13, CSR14** — none depends on another, and no two of them holds one file
-  (§6.4); the four tasks that used to share this level are **merged and closed** (CSR8, CSR9, CSR10,
-  CSR12), and CSR13 is here rather than deeper because its only stated dependency was the class CSR8's
+  (§6.4); the three tasks that used to be drawn at this level are **merged and closed** (CSR8, CSR9,
+  CSR10), and so is the one the drawing before this one put a level below them (CSR12, merged as #1771),
+  and CSR13 is here rather than deeper because its only stated dependency was the class CSR8's
   merged code already keys on — **Open item 6**, the budget mode, was the last thing that held it and it
   is answered (the refusal, 2026-11-05/06). **Level 2: CSR15** — after CSR14, because the account is
   CSR14's. **Level 3: CSR16** — after CSR15, because the two hold one file. **Then CSR11** — after the
@@ -2086,30 +2090,31 @@ OUTSIDE ALL OF IT, and NOT in 0.20.0:  CSR17 (the service serves a provider key)
 
 The rule is §2's, applied to the **0.20.0** set of §6.3: a file is one writer's at a time, and **within a
 level no two tasks may hold one**. Every file below belongs to exactly one task in exactly one level — the
-four merged tasks are marked where they ran, and **§6.7's CSR17 and CSR18 are not in this table at all**,
-because no 0.20.0 level holds them and they are a later release's:
+four merged tasks are **in the `merged, where it ran` column and not under a level**, because their levels
+have already run and the three level columns beside it are what is left to build — and **§6.7's CSR17 and
+CSR18 are not in this table at all**, because no 0.20.0 level holds them and they are a later release's:
 
-| File | Level 1 (CSR13, CSR14) | Level 2 (CSR15) | Level 3 (CSR16) | then (CSR11) | Note |
-| --- | --- | --- | --- | --- | --- |
-| `internal/runner/projectjob.go`, `internal/runner/projectjob_test.go` | **CSR8 — merged (#1761)** | — | — | — | the candidate set, the class and the token axis — **level 1's first writer has already run, and CSR13 reads what it left** |
-| `internal/runner/project.go`, `internal/runner/project_test.go` | **CSR8 — merged (#1761)** | — | — | — | the admission path |
-| `internal/config/claude_accounts.go`, `internal/config/claude_accounts_test.go` | **CSR8 — merged (#1761)** | — | — | — | the axis mapping lands once, here (CSR7 and E1 have merged; this is the file after them) |
-| `internal/cli/root.go`, `internal/cli/root_test.go` | **CSR9 — merged (#1762)** | — | — | — | the registration |
-| `website/content/cli-reference.md` | **CSR9 — merged** | — | — | — | **generated** by `go run ./ee/clidoc` |
-| `plugin/skills/working/SKILL.md` (+ `routing/SKILL.md` if it names the flow) | **CSR9 — merged** | — | — | — | the sentence and the registration are one commit |
-| `internal/runner/reviewartifact.go`, `internal/runner/reviewartifact_test.go` | **CSR10 — merged (#1764)** | — | — | — | the verifier's implementation |
-| `internal/cli/run_test.go` | **CSR10 — merged (#1764)** | — | — | — | the `TestFixBrief*` fixtures gain the sidecar a fail-closed reader needs |
-| `internal/cli/review.go`, `internal/cli/review_test.go` | **CSR10 — merged (#1764)** | **CSR12 — merged (#1771)** | — | **CSR11** | the verifying reader, then the switch, then the flip that removes it — **three writers, one per level** |
-| `internal/cli/reviewverify.go` | **CSR10 — merged (#1764)** | **CSR15** | **CSR16** | — | the seam and the fail-closed stub (PR #1764), then the impersonation that fills it, then the head read that stops reading with the machine's own App credential — **three writers, one per level** |
-| `internal/cli/reviewverify_test.go` (new in CSR15) | — | **CSR15** | **CSR16** | — | the impersonation's own tests, then the head read's |
-| `internal/runner/gateway.go`, `internal/runner/gateway_test.go`, `internal/runner/routing.go`, `internal/runner/routing_internal_test.go`, `internal/runner/agentenv.go`, `internal/runner/agentenv_test.go` | **CSR13** | — | — | — | the class accessor and its five readers — **level 1, and disjoint from CSR8's merged files** |
-| `internal/runner/runner.go` | **CSR13** | — | — | — | **taken alone, for one call site**: §2's one-writer rule, and the task says so in its pull request |
-| `deploy/terraform/gcp/modules/installation/verifier.tf` (new), `…/iam.tf`, `…/credentials.tf`, `deploy/terraform/gcp/roots/installation/tests/verifier.tftest.hcl` (new) | CSR14 | — | — | — | the account, its two grants, the `FUGARO_VERIFIER_ACCOUNTS` entry and the address the installation is named by |
-| `deploy/terraform/terraform_test.go` | CSR14 | — | — | — | the two static guards, **deliberately** widened to a table of two sites |
-| `internal/infra/tf/cover.go`, `internal/infra/tf/cover_test.go` | CSR14 | — | — | — | the one confirmation's tables: without them `update` refuses its own plan |
-| `internal/infra/tfvars.go`, `internal/infra/credentialsvars_test.go` | CSR14 | — | — | — | the account's ID constant, beside `CredentialsAccountID` — the Go side computes the address from it **before** the apply — and the carry that writes the block's `verifier_accounts` member from the effective list, so an owner's written `[]` reaches the module as a clear rather than as an absent key the default fills |
-| `internal/cli/init.go`, `internal/cli/init_credentials_test.go` | CSR14 | — | — | — | the update names the account only when the **effective** list is nil (the config silent and the published node empty) |
-| `internal/infra/tf/testdata/golden/installation-credentials.plan.json` | CSR14 | — | — | — | **regenerated** by `scripts/gen-golden-plans.sh`; the five fixtures without the service must not move |
+| File | merged, where it ran | Level 1 (CSR13, CSR14) | Level 2 (CSR15) | Level 3 (CSR16) | then (CSR11) | Note |
+| --- | --- | --- | --- | --- | --- | --- |
+| `internal/runner/projectjob.go`, `internal/runner/projectjob_test.go` | **CSR8 — merged (#1761)**, its level 1 | — | — | — | — | the candidate set, the class and the token axis — **CSR13 reads what it left** |
+| `internal/runner/project.go`, `internal/runner/project_test.go` | **CSR8 — merged (#1761)**, its level 1 | — | — | — | — | the admission path |
+| `internal/config/claude_accounts.go`, `internal/config/claude_accounts_test.go` | **CSR8 — merged (#1761)**, its level 1 | — | — | — | — | the axis mapping lands once, here (CSR7 and E1 have merged; this is the file after them) |
+| `internal/cli/root.go`, `internal/cli/root_test.go` | **CSR9 — merged (#1762)**, its level 1 | — | — | — | — | the registration |
+| `website/content/cli-reference.md` | **CSR9 — merged**, its level 1 | — | — | — | — | **generated** by `go run ./ee/clidoc` |
+| `plugin/skills/working/SKILL.md` (+ `routing/SKILL.md` if it names the flow) | **CSR9 — merged**, its level 1 | — | — | — | — | the sentence and the registration are one commit |
+| `internal/runner/reviewartifact.go`, `internal/runner/reviewartifact_test.go` | **CSR10 — merged (#1764)**, its level 1 | — | — | — | — | the verifier's implementation |
+| `internal/cli/run_test.go` | **CSR10 — merged (#1764)**, its level 1 | — | — | — | — | the `TestFixBrief*` fixtures gain the sidecar a fail-closed reader needs |
+| `internal/cli/review.go`, `internal/cli/review_test.go` | **CSR10 — merged (#1764)**, its level 1, and **CSR12 — merged (#1771)**, its level 2 | — | — | — | **CSR11** | the verifying reader and the live-check switch have run; what is left is the flip that removes the switch — **three writers, one per level, and two of them already ran** |
+| `internal/cli/reviewverify.go` | **CSR10 — merged (#1764)**, its level 1 | — | **CSR15** | **CSR16** | — | the seam and the fail-closed stub (PR #1764), then the impersonation that fills it, then the head read that stops reading with the machine's own App credential — **three writers, one per level** |
+| `internal/cli/reviewverify_test.go` (new in CSR15) | — | — | **CSR15** | **CSR16** | — | the impersonation's own tests, then the head read's |
+| `internal/runner/gateway.go`, `internal/runner/gateway_test.go`, `internal/runner/routing.go`, `internal/runner/routing_internal_test.go`, `internal/runner/agentenv.go`, `internal/runner/agentenv_test.go` | — | **CSR13** | — | — | — | the class accessor and its five readers — **level 1, and disjoint from CSR8's merged files** |
+| `internal/runner/runner.go` | — | **CSR13** | — | — | — | **taken alone, for one call site**: §2's one-writer rule, and the task says so in its pull request |
+| `deploy/terraform/gcp/modules/installation/verifier.tf` (new), `…/iam.tf`, `…/credentials.tf`, `deploy/terraform/gcp/roots/installation/tests/verifier.tftest.hcl` (new) | — | CSR14 | — | — | — | the account, its two grants, the `FUGARO_VERIFIER_ACCOUNTS` entry and the address the installation is named by |
+| `deploy/terraform/terraform_test.go` | — | CSR14 | — | — | — | the two static guards, **deliberately** widened to a table of two sites |
+| `internal/infra/tf/cover.go`, `internal/infra/tf/cover_test.go` | — | CSR14 | — | — | — | the one confirmation's tables: without them `update` refuses its own plan |
+| `internal/infra/tfvars.go`, `internal/infra/credentialsvars_test.go` | — | CSR14 | — | — | — | the account's ID constant, beside `CredentialsAccountID` — the Go side computes the address from it **before** the apply — and the carry that writes the block's `verifier_accounts` member from the effective list, so an owner's written `[]` reaches the module as a clear rather than as an absent key the default fills |
+| `internal/cli/init.go`, `internal/cli/init_credentials_test.go` | — | CSR14 | — | — | — | the update names the account only when the **effective** list is nil (the config silent and the published node empty) |
+| `internal/infra/tf/testdata/golden/installation-credentials.plan.json` | — | CSR14 | — | — | — | **regenerated** by `scripts/gen-golden-plans.sh`; the five fixtures without the service must not move |
 
 **`internal/cli/review.go` is the one file three tasks wanted, and that is why their order was a rule rather
 than a preference:** the verifying reader (CSR10) wrote it in level 1, the live-check switch (CSR12)
@@ -2475,8 +2480,12 @@ fallback even where the policy's `fallback` would allow one (`reviewCandidates`,
 is the Claude account's name (`internal/credsvc/review.go:112`), the axis is built from `claude_accounts`
 (`internal/config/claude_accounts.go`) and its secrets are the `claude-oauth-token` family. The service's
 model credentials are exactly two kinds: the Claude OAuth tokens at **tier A** and the Anthropic API key at
-**tier B** (`config.AnthropicSecret`, `internal/credsvc/bundle.go:677`), and `internal/creds`' own tiers are
-those two (`internal/creds/select.go:17`) — so a tier-B credential is not a provider key either. **There is
+**tier B** (`config.AnthropicSecret`, `internal/credsvc/bundle.go:677`), and the two the cascade selects are
+those two (`internal/creds/select.go:17`, `:18`) — `internal/creds` defines a **third** tier, `TierC`
+(`internal/creds/select.go:26`), and it is **"reserved and never selected"**: it is the third-party route
+(an OpenRouter key) this release does not build, the constant exists so a later release's node reads as a
+tier rather than a name, and a caller offering one is refused rather than quietly served by something else
+— so neither a tier-B credential nor that reserved tier is a provider key the service holds today. **There is
 no provider key in the service's document at all**: `CredentialKey`'s closed set has no entry for one
 (`internal/credsvc/bundle.go:668`), and a provider key today lives in the local config's `providers` block
 (`config.ModelProvider`, `internal/config/providers.go:41`: a base URL, an auth shape of `bearer` or
