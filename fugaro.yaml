@@ -16,7 +16,7 @@ agent:
   # The coder runs on `deepseek/deepseek-v4.1-flash` through OpenRouter (docs/multi-model.md), on the
   # OpenRouter API key (api-key: the budget gateway prices every call; the owner's local config sets
   # the caps). The in-loop senior review is a different, stronger model than the coder — the
-  # `reviewer` model below, `claude-opus-5-5`, served by the `bmb` account — so a `standard` launch
+  # `reviewer` model below, `deepseek/deepseek-v4-pro`, through the same gateway — so a `standard` launch
   # here does not resolve to L1 = L2, which is what the review levels' guardrail (D721,
   # docs/review-levels-ab-jobmax/) refuses by exact model ID: this pair is why the refusal does not
   # fire here.
@@ -29,25 +29,27 @@ agent:
   # figure, recorded as notional) and which no gateway caps. Both keys are the machine's and not
   # this file's: they live in the local project config, and the account reaches a run only once
   # that config is published into the project's policy node (`fugaro project policy publish`).
-  # Naming an account is the owner's own step: the local project config names `bmb` (stages.review
-  # .claude_account) and `fugaro update` publishes it. The review stage runs on Opus, direct to
-  # Anthropic and on that account, and the first-line review stays on the DeepSeek reviewer through
-  # the gateway. Check 290 of docs/gcp-live-checklist.md is the smoke test that reads the mix back
-  # from a real run (owner-run, not yet run).
+  # Naming an account is the owner's own step, and the evidence for it is the mixed run's smoke
+  # test, Check 290 of docs/gcp-live-checklist.md (owner-run, not yet run); these models stay
+  # DeepSeek until then.
   auth: api-key
   max_budget_usd: 500  # Claude Code prices a non-Anthropic model at Sonnet-like rates, about 25 times what the gateway charges for DeepSeek, so this per-stage limit is set high on purpose; the gateway's per-run cap (budget set --repo) is the real hard stop
   # The senior review's brief is this repository's own (.fugaro/review.md). It is read
   # from the run's base and never from the pull request's own branch (docs/design/v1.md),
   # so a change cannot review itself. It is here because of the owner's ruling of
   # 2026-11-06 — recorded in docs/design/mixed-credentials.md §11, beside the two rulings
-  # it builds on — that a run whose in-job review passed gets no second review by a
-  # person: the reviewer is told to read the whole change and check the claims against the
+  # it builds on — that a run whose in-job review ran on Opus and passed gets no second
+  # review by a person (until the job mounts the account's token, a DeepSeek review still gets a local one): the reviewer is told to read the whole change and check the claims against the
   # code, to run the targeted tests by name, to mutation-check a security-sensitive change
   # in a scratch tree, and to report only what must change before this is merged.
   review: .fugaro/review.md
   models:
     coder: deepseek/deepseek-v4.1-flash
-    reviewer: claude-opus-5-5
+    reviewer: deepseek/deepseek-v4-pro
+  # deepseek-v4-pro answers at most 16384 tokens a call; the review stage asks for 32000 unless limited,
+  # and the gateway refuses that request.
+  max_output_tokens:
+    reviewer: 16384
 
 # Follow-ups (fugaro run --pr N) act on PR comments, which on a public repository anyone can
 # write: only the listed GitHub accounts (numeric IDs) are obeyed, and allow_public is the

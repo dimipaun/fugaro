@@ -417,9 +417,19 @@ func TestFugaroYAMLStatesTheShippedReviewSettings(t *testing.T) {
 	}
 	for _, key := range []string{"coder", "reviewer"} {
 		pinned := ""
-		for _, line := range strings.Split(doc, "\n") {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, key+": ") {
+		inModels := false
+		for _, raw := range strings.Split(doc, "\n") {
+			line := strings.TrimSpace(raw)
+			if line == "models:" {
+				inModels = true
+				continue
+			}
+			// The block ends at the first line indented less than its members:
+			// `max_output_tokens.reviewer` follows it and is not a model pin.
+			if inModels && line != "" && !strings.HasPrefix(raw, "    ") {
+				inModels = false
+			}
+			if inModels && strings.HasPrefix(line, key+": ") {
 				pinned = strings.TrimSpace(strings.TrimPrefix(line, key+": "))
 			}
 		}
