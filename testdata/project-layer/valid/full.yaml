@@ -22,7 +22,6 @@ defaults:
 profiles:
   java-service:
     description: Gradle service with Postgres
-    image: { apt: [graphviz], setup: ["./scripts/warm.sh"] }
     commands:
       build: ./gradlew assemble
       test: ./gradlew test
@@ -32,8 +31,6 @@ profiles:
       - { key: [gradle/libs.versions.toml], paths: [~/.gradle/caches] }
     resources: { cpu: 4, memory: 16Gi }
     timeouts: { total: 2h, stage: 50m, verify: 30m, finalize_reserve: 5m }
-    rebuild: { check: daily, max_age: 14d, lockfiles: true, base: true, paths: [build.gradle.kts] }
   node-web:
-    image: { tools: { node: "22" }, skip_build_scripts: true }
     commands: { build: npm run build, test: npm test }
 default_profile: java-service

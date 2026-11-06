@@ -580,7 +580,16 @@ var (
 var ownerCommands = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag", "fugaro creds set", "fugaro creds ls"}
 
 // userRunsAllowed is every command a user-runs block may hold.
-var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag", "fugaro creds set", "fugaro creds ls", "fugaro setup", "fugaro update", "fugaro update-skills", "fugaro upgrade"}
+//
+// `fugaro image add` and `fugaro image build` (the catalog form, not
+// --local) are the user's for the reason the catalog exists: an entry is the
+// owner's definition of what a project's jobs run, and the setup skill's
+// answer to a need no entry covers is to write the Dockerfile and hand the
+// owner the commands that record it (image add), build it (image build) and
+// publish it (update). The build is billable and refuses a coding agent's
+// session itself (internal/cli/catalog_provider.go, catalogKeyRead); the
+// recording writes the owner's project config.
+var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag", "fugaro creds set", "fugaro creds ls", "fugaro setup", "fugaro update", "fugaro update-skills", "fugaro upgrade", "fugaro image add", "fugaro image build"}
 
 // userLeadRE is the sentence before a user-runs block: it says the user (or
 // the owner) runs it.

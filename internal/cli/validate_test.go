@@ -125,33 +125,25 @@ func TestValidateRefusesLeftoverAllowForks(t *testing.T) {
 	}
 }
 
-// TestValidateSkipsNoLanguageRuntimeWarning covers CheckWarnings' three skip
-// conditions through the CLI: image.tools set, dockerfile: set, or a catalog
-// entry named — each silences the warning that a plain Fugaro-base workflow
-// gets. The last is issue 1661 item 1's report: a workflow whose runtime
-// comes from the catalog image has no per-repository image for the warning to
-// be about.
+// TestValidateSkipsNoLanguageRuntimeWarning covers CheckWarnings' skip
+// condition through the CLI: a catalog entry named silences the warning that
+// a plain Fugaro-base workflow gets. That is issue 1661 item 1's report: a
+// workflow whose runtime comes from the catalog image has no per-repository
+// image for the warning to be about. The two arms this test carried beside it
+// (image.tools set, dockerfile: set) are gone with the two keys: a file that
+// carries one is refused outright now, so an arm built on it would assert the
+// absence of a warning about a config the CLI never gets to.
 func TestValidateSkipsNoLanguageRuntimeWarning(t *testing.T) {
-	for name, body := range map[string]string{
-		"image.tools set": strings.Replace(cliBaseYAML, "{ commands:", "{ image: { tools: { node: \"24\" } }, commands:", 1),
-		"dockerfile set":  strings.Replace(cliBaseYAML, "{ commands:", "{ dockerfile: .fugaro/app.Dockerfile, commands:", 1),
-		"catalog entry":   strings.Replace(cliBaseYAML, "{ commands:", "{ image_name: minimal, commands:", 1),
-	} {
-		t.Run(name, func(t *testing.T) {
-			path := writeConfig(t, body)
-			if name == "dockerfile set" {
-				if err := os.MkdirAll(filepath.Join(filepath.Dir(path), ".fugaro"), 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Join(filepath.Dir(path), ".fugaro", "app.Dockerfile"), []byte("FROM x\n"), 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			_, errOut, _ := execute(t, "validate", path)
-			if strings.Contains(errOut, "installs no language runtime") {
-				t.Fatalf("%s: unexpected warning: %q", name, errOut)
-			}
-		})
+	path := writeConfig(t, strings.Replace(cliBaseYAML, "{ commands:", "{ image_name: minimal, commands:", 1))
+	out, errOut, err := execute(t, "validate", path)
+	if err != nil {
+		t.Fatalf("out=%q errOut=%q err=%v", out, errOut, err)
+	}
+	if !strings.Contains(out, "is valid") {
+		t.Fatalf("out = %q, want a valid file", out)
+	}
+	if strings.Contains(errOut, "installs no language runtime") {
+		t.Fatalf("unexpected warning: %q", errOut)
 	}
 }
 

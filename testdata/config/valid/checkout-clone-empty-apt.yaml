@@ -4,5 +4,4 @@ git: { provider: github }
 workflows:
   web:
     checkout: clone
-    image: { apt: [], setup: [], skip_build_scripts: false }
     commands: { build: npm run build, test: npm test }

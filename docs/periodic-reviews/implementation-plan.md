@@ -470,7 +470,7 @@ counts.
 - **Whether `fugaro settings set` may write it is not decided here** — the generic path writes the
   allowlist of `internal/cli/settings_set.go` and nothing else, so a new layer key is **refused by
   `settings set` until someone says otherwise**, and saying yes moves the allowlist's own count pin
-  (`docs/config-management/README.md:47`, "164 of the registry's 325 rows"). **Open items carries
+  (`docs/config-management/README.md:47`, "143 of the registry's 304 rows"). **Open items carries
   it**; what this task ships is the key, refused by the generic path, written by hand in the project
   layer.
 - **And what the managed gate makes of the value it writes is Open item 7**, not decided here: the
@@ -749,7 +749,7 @@ each one written where the task that meets it says so:
    generic path writes the allowlist of `internal/cli/settings_set.go` and nothing else, so the new
    layer key is **refused by `settings set`** as R13 ships it — which is the safe default, not a
    decision: saying yes adds `layer.jobs.reports.paused` (and its sibling) to the allowlist and moves
-   that list's own count pin (`docs/config-management/README.md:47`, "164 of the registry's 325
+   that list's own count pin (`docs/config-management/README.md:47`, "143 of the registry's 304
    rows"). **R13 ships the refused state**; the answer is one allowlist line and one count.
 7. **Whether the managed gate reads a Scheduler `paused` flip as a loosening (E4, and the review of
    round 4).** R13 makes enabling a job a setting `fugaro update` writes — and in a **managed** project

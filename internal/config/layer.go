@@ -245,17 +245,16 @@ type Profile struct {
 }
 
 // HasExecutable reports whether the profile sets a key that runs as shell
-// (ExecutableKeys). Image.SkipBuildScripts is deliberately not one of
-// these: true is the safe setting (it skips third-party install/build
-// scripts), so a profile whose only setting is skip_build_scripts: true
-// must not count as executable on its own; only a change to the value
-// (true -> false, or a true removed) is gated, through the direct
-// executableChanges key comparison in internal/cli/config_publish.go, not
-// through this method.
+// (ExecutableKeys). Its fields are the command keys and nothing else: the
+// image block's own executable keys — apt, setup, tools — are removed keys
+// now, refused with every other per-repository image key, so a profile
+// cannot carry one and there is no value here to gate on. The image
+// fields' exclusion from ExecutableKeys is what
+// TestEveryImageFieldIsClassified holds (internal/config/scope.go).
 func (p Profile) HasExecutable() bool {
 	return p.Commands.Build != "" || p.Commands.Test != "" || p.Commands.Lint != "" || p.Commands.Fix != "" ||
 		p.Commands.Render != "" || p.Commands.Probe != "" ||
-		p.Commands.RerunFailed != nil || len(p.Image.Apt) > 0 || len(p.Image.Setup) > 0 || len(p.Image.Tools) > 0
+		p.Commands.RerunFailed != nil
 }
 
 // LayerSum is the hex sha256 of a project layer's text.
@@ -549,7 +548,14 @@ func scopeProblems(prefix, repoPrefix string, m map[string]any, layer Scope) []P
 		case isBlock(key):
 			ps = append(ps, Problem{Path: path, Message: "is a block of fugaro.yaml keys, so it must be a mapping of them"})
 		default:
-			ps = append(ps, Problem{Path: path, Message: "is not a fugaro.yaml key the project layer knows"})
+			msg := "is not a fugaro.yaml key the project layer knows"
+			// A profile is a workflow, so the removal's tombstones are the
+			// refusal here too: the row is gone, and the generic sentence
+			// would leave the writer with no command to turn to.
+			if r := removedImageRefusal(key); r != "" {
+				msg = r
+			}
+			ps = append(ps, Problem{Path: path, Message: msg})
 		}
 	}
 	return ps

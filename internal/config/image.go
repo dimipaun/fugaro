@@ -8,13 +8,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 var (
-	aptPackageRE = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]+(=[A-Za-z0-9.+~:-]+)?$`)
 	// miseToolRE allows a mise tool name such as node, python, npm:firebase-tools
 	// or aqua:owner/repo. It also allows a key such as "a.b" or
 	// "a/../../etc": a mise tool name may contain "." and "/" legitimately
@@ -29,15 +26,15 @@ var (
 	// character below is rejected by construction, not by a separate
 	// denylist, which is what TestValidMiseTool pins against regression.
 	miseVersionRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+~:-]*$`)
-	// imageKeyFileRE is the shape an image.key_files entry must have. It
-	// refuses by construction every character that would be read as
-	// something other than itself further down: a glob character (the entry
-	// becomes a doublestar pattern of the rebuild key), a backslash (git
-	// reads it as an escape inside a pathspec, and Windows would read it as
-	// a separator), and a control character (the entry is written into the
-	// Dockerfile's checkout loop and into the refusal message). The rules it
-	// cannot state — relative, cleaned, no "..", no ".git" — are checked one
-	// at a time below, each with its own message.
+	// imageKeyFileRE is the shape a checkout path must have. It refuses by
+	// construction every character that would be read as something other
+	// than itself further down: a glob character (a path becomes a doublestar
+	// pattern where the checkout keys on it), a backslash (git reads it as an
+	// escape inside a pathspec, and Windows would read it as a separator), and
+	// a control character (a path is written into the image's checkout and
+	// into a refusal message). The rules it cannot state — relative, cleaned,
+	// no "..", no ".git" — are checked one at a time below, each with its own
+	// message.
 	imageKeyFileRE = regexp.MustCompile(`^[^\x00-\x1f\x7f\\*?\[\]{}]+$`)
 )
 
@@ -48,10 +45,10 @@ var (
 const (
 	maxMiseToolNameLen    = 128
 	maxMiseToolVersionLen = 64
-	// maxImageKeyFiles and maxImageKeyFilePath bound image.key_files: at
-	// most 32 entries of at most 200 characters, so neither the Dockerfile's
-	// checkout loop nor the rebuild key can be made large from a config.
-	maxImageKeyFiles    = 32
+	// maxImageKeyFilePath bounds one checkout path — an image.key_files entry
+	// before the removal, a catalog entry's own path and a patch path pnpm's
+	// manifest names now — so a list of them cannot be made large from a
+	// config.
 	maxImageKeyFilePath = 200
 )
 
@@ -72,90 +69,167 @@ func ValidMiseTool(name, version string) bool {
 	return validMiseToolName(name) && validMiseToolVersion(version)
 }
 
-// MiseTools is image.tools: a mise tool name to its version. Its
-// UnmarshalYAML requires every version to be a string scalar, so a trap such
-// as "python: 3.10" (an unquoted YAML float, which a human reads as the
-// version "3.10" but YAML resolves as a number) is refused instead of
-// silently stringified. schemas/fugaro.schema.json already requires a JSON
-// string here; this keeps the Go parser at least as strict, not looser.
+// MiseTools is image.tools: a mise tool name to its version. A removed key's
+// field (D1195), decoded as it always was so its value is there for the
+// refusal to read — no stricter than a plain map, because a value this parser
+// refused on its own would hide the removal sentence behind a message about
+// YAML quoting.
 type MiseTools map[string]string
 
-// UnmarshalYAML refuses a tools: entry whose value was not written as a
-// string scalar (quoted, or a plain scalar YAML does not resolve to a
-// number, bool or null, such as temurin-25). validateImage's regex and
-// length checks run afterwards on the resulting strings; this only rejects
-// the wrong YAML shape before that.
-func (t *MiseTools) UnmarshalYAML(value *yaml.Node) error {
-	if value.Kind != yaml.MappingNode {
-		return fmt.Errorf("line %d: image.tools must be a mapping of tool name to version", value.Line)
-	}
-	m := make(MiseTools, len(value.Content)/2)
-	for i := 0; i+1 < len(value.Content); i += 2 {
-		k, v := value.Content[i], value.Content[i+1]
-		if v.Tag != "!!str" {
-			return fmt.Errorf("line %d: image.tools.%s must be a quoted string version, such as \"%s\" (quote it)", v.Line, k.Value, v.Value)
-		}
-		m[k.Value] = v.Value
-	}
-	*t = m
-	return nil
-}
-
-// validateImage checks a workflow's image and dockerfile settings (design
-// §5.1). p is the workflow's problem path, such as "workflows.web". Each
-// setup step becomes one Dockerfile RUN line, so anything that would change
-// the Dockerfile's structure (a newline, a heredoc, a trailing backslash) is
-// refused rather than rendered.
+// validateImage checks a workflow's image settings, which after the
+// repository-image removal are the two 0.7.0 tombstones and the catalog
+// reference below: every other key of the block is a removed key, and
+// removedWorkflowProblems has refused the file before this runs — the
+// grammar and length checks those keys used to have went with the code that
+// honored them (the renderer, the Dockerfile and the rebuild key). p is the
+// workflow's problem path, such as "workflows.web".
 func validateImage(p string, w Workflow) []Problem {
 	var ps []Problem
 	add := func(path, format string, args ...any) {
 		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(format, args...)})
 	}
 	img := w.Image
-	if !img.IsZero() && w.Dockerfile != "" {
-		add(p+".dockerfile", "image and dockerfile are mutually exclusive; move the image settings into the Dockerfile")
-	}
 	if img.Node != "" {
-		add(p+".image.node", "was removed in 0.7.0: declare node in mise.toml ([tools] node = %q) or in image.tools (%s)", pluginwire.Printable(img.Node), MigrationDoc)
+		add(p+".image.node", "was removed in 0.7.0: declare node in mise.toml ([tools] node = %q) (%s)", pluginwire.Printable(img.Node), MigrationDoc)
 	}
 	if img.JDK != "" {
 		add(p+".image.jdk", "was removed in 0.7.0: declare Java in mise.toml ([tools] java = %q) (%s)", "temurin-"+pluginwire.Printable(img.JDK), MigrationDoc)
 	}
-	for _, name := range sortedKeys(img.Tools) {
-		tp := p + ".image.tools." + name
-		switch v := img.Tools[name]; {
-		case !validMiseToolName(name):
-			add(tp, "must be a mise tool name such as node, python or npm:firebase-tools")
-		case !validMiseToolVersion(v):
-			add(tp, "must be a version such as 24.19.0, 3.12 or temurin-25")
-		}
-	}
-	for i, pkg := range img.Apt {
-		if !aptPackageRE.MatchString(pkg) {
-			add(fmt.Sprintf("%s.image.apt[%d]", p, i), "must be a package name, optionally pinned as name=version")
-		}
-	}
-	validateKeyFiles(p, img.KeyFiles, add)
-	for i, step := range img.Setup {
-		sp := fmt.Sprintf("%s.image.setup[%d]", p, i)
-		trimmed := strings.TrimSpace(step)
-		switch {
-		case trimmed == "":
-			add(sp, "must not be empty")
-		case strings.ContainsAny(step, "\r\n"):
-			add(sp, "must be a single line; chain commands with && or call a script in the repository")
-		case strings.Contains(step, "<<"):
-			add(sp, "must not contain << (a Dockerfile heredoc); call a script in the repository instead")
-		case strings.HasSuffix(trimmed, `\`):
-			add(sp, "must not end with a backslash")
-		case strings.HasPrefix(trimmed, "-") || strings.HasPrefix(trimmed, "["):
-			add(sp, "must not start with - or [ (it would be read as a RUN flag or exec form, not a shell command)")
-		}
-	}
-	if d := w.Dockerfile; d != "" && (strings.HasPrefix(d, "/") || slices.Contains(strings.Split(d, "/"), "..")) {
-		add(p+".dockerfile", "must be a relative path inside the repository, such as .fugaro/%s.Dockerfile", strings.TrimPrefix(p, "workflows."))
-	}
 	ps = append(ps, validateCatalogRef(p, w)...)
+	return ps
+}
+
+// RemovedImageKeyDoc is where a person who meets a key the repository-image
+// removal took out of a workflow is sent: the catalog is what a repository
+// builds an image with now.
+const RemovedImageKeyDoc = "docs/project-image-catalog/README.md"
+
+// RemovedImageKeyMessage is removedImageRefusal's sentence for key, one of
+// RemovedImageKeys' paths ("" for any other, and for a key that is not one of
+// them). The update stage that rewrites a published project layer still holding
+// one says what it took out in the words the key is refused with, so a reader
+// who meets the migration and a writer who meets the refusal are sent to the
+// same command.
+func RemovedImageKeyMessage(key string) string { return removedImageRefusal(key) }
+
+// removedBuildKeyMessage and removedRebuildKeyMessage are the two sentences the
+// removal's refusals are made of. They are templates the caller fills with
+// RemovedImageKeyDoc, the shape legacyBaseMessage already has, so the guide a
+// person is sent to is named in one place.
+//
+// Both name `fugaro image add`, because that is the command that replaces the
+// key: a person who meets the refusal has to be told what to do next, and a
+// decoder's "field not found" tells them nothing (D1195).
+const (
+	removedBuildKeyMessage   = "was removed in 0.20.0: a job's image is a catalog entry now, and a repository adds one with `fugaro image add` and selects it with image_name (%s)"
+	removedRebuildKeyMessage = "was removed in 0.20.0: nothing rebuilds a repository's own image any more; `fugaro image add` records a catalog entry and `fugaro image build` builds it (%s)"
+)
+
+// removedImageKey is one key the repository-image removal took out of a
+// workflow, and how a workflow says that it wrote it.
+//
+// The write test is a value test and not a name test because the key has to
+// stay decodable for its refusal to be this sentence rather than the strict
+// decoder's "field not found in type config.Workflow" (D1195). It reads a
+// value that applyDefaults fills in — rebuild.max_age's Set bit, rebuild's two
+// pointers, rebuild.paths' nil — so removedImageKeyProblems MUST be called on a
+// config that has not been defaulted; every caller below is.
+type removedImageKey struct {
+	key    string
+	writes func(Workflow) bool
+}
+
+// removedImageKeys is the removal's own list, in the order a reader meets the
+// keys in fugaro.yaml. One list, because three surfaces have to agree about it:
+// the refusal below, RemovedImageKeys (which internal/settings' completeness
+// guard reads, so a removed key is not forced back into the registry as a
+// writable row), and this folder's own pin.
+var removedImageKeys = []removedImageKey{
+	{"image.apt", func(w Workflow) bool { return len(w.Image.Apt) > 0 }},
+	{"image.setup", func(w Workflow) bool { return len(w.Image.Setup) > 0 }},
+	{"image.skip_build_scripts", func(w Workflow) bool { return w.Image.SkipBuildScripts }},
+	{"image.tools", func(w Workflow) bool { return len(w.Image.Tools) > 0 }},
+	{"image.key_files", func(w Workflow) bool { return len(w.Image.KeyFiles) > 0 }},
+	{"dockerfile", func(w Workflow) bool { return w.Dockerfile != "" }},
+	{"rebuild.check", func(w Workflow) bool { return w.Rebuild.Check != "" }},
+	{"rebuild.max_age", func(w Workflow) bool { return w.Rebuild.MaxAge.Set }},
+	{"rebuild.lockfiles", func(w Workflow) bool { return w.Rebuild.Lockfiles != nil }},
+	{"rebuild.base", func(w Workflow) bool { return w.Rebuild.Base != nil }},
+	{"rebuild.paths", func(w Workflow) bool { return w.Rebuild.Paths != nil }},
+}
+
+// RemovedImageKeys is the removal's list as fugaro.yaml paths under
+// workflows.*: the keys no surface may offer as a setting. internal/settings
+// reads it to keep its registry — the table `fugaro settings set` and
+// `fugaro settings list` are built from — free of a key the config refuses,
+// while the struct fields the refusal needs stay in place (D1195, D1196).
+func RemovedImageKeys() []string {
+	out := make([]string, 0, len(removedImageKeys))
+	for _, k := range removedImageKeys {
+		out = append(out, "workflows.*."+k.key)
+	}
+	return out
+}
+
+// removedImageRefusal is the sentence refusing path, one of the removed keys
+// as a workflows.* path, or "" when path is not one of them. The project
+// layer's scope walk reads it (scope.go), so the two doors a workflow is
+// written through refuse a removed key in the same words.
+func removedImageRefusal(path string) string {
+	bare, ok := strings.CutPrefix(path, "workflows.*.")
+	if !ok {
+		return ""
+	}
+	for _, k := range removedImageKeys {
+		if k.key != bare {
+			continue
+		}
+		msg := removedBuildKeyMessage
+		if strings.HasPrefix(bare, "rebuild.") {
+			msg = removedRebuildKeyMessage
+		}
+		return fmt.Sprintf(msg, RemovedImageKeyDoc)
+	}
+	return ""
+}
+
+// removedImageBlock reports whether path, a workflows.* path, is a block whose
+// listed keys were all removed ("workflows.*.rebuild"). The scope table no
+// longer makes it a block (its rows are gone), so without this the project
+// layer would refuse the mapping as an unknown key instead of reaching its
+// leaves and refusing each one by name.
+func removedImageBlock(path string) bool {
+	for _, k := range removedImageKeys {
+		if strings.HasPrefix("workflows.*."+k.key, path+".") {
+			return true
+		}
+	}
+	return false
+}
+
+// removedImageKeyProblems reports every removed key p's workflow writes, each
+// under its own path, each with the sentence that names the command replacing
+// it. It is called before a config's defaults are filled in, for the reason
+// removedImageKey states: after applyDefaults every workflow writes every
+// rebuild key.
+func removedImageKeyProblems(p string, w Workflow) []Problem {
+	var ps []Problem
+	for _, k := range removedImageKeys {
+		if !k.writes(w) {
+			continue
+		}
+		ps = append(ps, Problem{Path: p + "." + k.key, Message: removedImageRefusal("workflows.*." + k.key)})
+	}
+	return ps
+}
+
+// removedWorkflowProblems is removedImageKeyProblems for every workflow of a
+// decoded fugaro.yaml, in the table's own order.
+func removedWorkflowProblems(c *Config) []Problem {
+	var ps []Problem
+	for _, name := range sortedKeys(c.Workflows) {
+		ps = append(ps, removedImageKeyProblems("workflows."+showKey(name), c.Workflows[name])...)
+	}
 	return ps
 }
 
@@ -167,12 +241,11 @@ func validateImage(p string, w Workflow) []Problem {
 // whether the name exists is the selection's question (PIC5), and what this
 // refuses is a file that states two definitions at once.
 //
-// D1155 (answered 2026-11-02) is the refusal below: a repository that sets
-// its own image: or dockerfile: AND a catalog reference is refused, and the
-// message names both keys — the override's and the reference's — the shape
-// "image and dockerfile are mutually exclusive" already takes. The two
-// together would leave the precedence, which is first match wins, stated
-// nowhere in the file two readers could disagree about.
+// D1155 (answered 2026-11-02) refused a file that set its own image: or
+// dockerfile: AND a catalog reference, naming both keys. Both of those keys
+// are removed keys now, each refused by its own sentence before this runs, so
+// there is no override left for the conflict to be between: the refusal went
+// with the keys, and what stays is the reference's own grammar.
 //
 // A repository that names both an entry and tags is not a conflict: the
 // precedence is stated (image_name: first, then needs:), so the pin wins and
@@ -185,22 +258,6 @@ func validateCatalogRef(p string, w Workflow) []Problem {
 	if w.ImageName == "" && len(w.Needs) == 0 {
 		return nil
 	}
-	override := ""
-	switch {
-	case !w.Image.IsZero():
-		override = "image"
-	case w.Dockerfile != "":
-		override = "dockerfile"
-	}
-	if override != "" {
-		if w.ImageName != "" {
-			add(p+".image_name", "%s and image_name are mutually exclusive; a repository uses its own image definition or a catalog entry, not both", override)
-		}
-		if len(w.Needs) > 0 {
-			add(p+".needs", "%s and needs are mutually exclusive; a repository uses its own image definition or a catalog entry, not both", override)
-		}
-		return ps
-	}
 	if !catalogNameRE.MatchString(w.ImageName) && w.ImageName != "" {
 		add(p+".image_name", "%s", catalogNameMessage)
 	}
@@ -208,62 +265,34 @@ func validateCatalogRef(p string, w Workflow) []Problem {
 	return ps
 }
 
-// keyFilePathRules are image.key_files' rules, in the order validateKeyFiles
-// reports them, so the first failure is the one a person reads, each with the
-// message that names it. ValidKeyFilePath asks the same list, so a path that
-// comes from somewhere else — a patch pnpm's manifest names, which the build
-// checks out and keys the image on exactly as a hand-written entry — is
-// judged by one statement of the rules and not a second copy of them.
-var keyFilePathRules = []struct {
-	ok  func(f string) bool
-	msg string
-}{
-	{func(f string) bool { return strings.TrimSpace(f) != "" }, "must not be empty"},
-	{utf8.ValidString, "must be text"},
-	{func(f string) bool { return utf8.RuneCountInString(f) <= maxImageKeyFilePath },
-		fmt.Sprintf("must be at most %d characters", maxImageKeyFilePath)},
-	{imageKeyFileRE.MatchString, "must be a repository path holding no glob (* ? [ ] { }), no backslash and no control character"},
-	{func(f string) bool { return !strings.HasPrefix(f, "/") }, "must be a relative path inside the repository, not an absolute one"},
-	{func(f string) bool { return !slices.Contains(strings.Split(f, "/"), "..") }, "must not hold a .. segment: the path is checked out inside the repository it belongs to"},
-	{func(f string) bool { return path.Clean(f) == f }, "must be a clean path: no trailing slash, no // and no . segment"},
-	{func(f string) bool { return f != "." }, "must name a file or a directory, not the repository root: the root would check the whole checkout out early"},
-	{func(f string) bool { return f != ".git" && !strings.HasPrefix(f, ".git/") }, "must not name anything inside .git, which is not part of the checkout"},
+// keyFilePathRules are the rules a path the build checks out early must obey,
+// each with the message that names it. ValidKeyFilePath is their one reader
+// now that image.key_files is a removed key: the catalog's own checkout list
+// and the patch files pnpm's manifest names are still checked out the same
+// way a hand-written entry was, so they are judged by one statement of the
+// rules and not a second copy of them.
+var keyFilePathRules = []func(f string) bool{
+	func(f string) bool { return strings.TrimSpace(f) != "" },
+	utf8.ValidString,
+	func(f string) bool { return utf8.RuneCountInString(f) <= maxImageKeyFilePath },
+	imageKeyFileRE.MatchString,
+	func(f string) bool { return !strings.HasPrefix(f, "/") },
+	func(f string) bool { return !slices.Contains(strings.Split(f, "/"), "..") },
+	func(f string) bool { return path.Clean(f) == f },
+	func(f string) bool { return f != "." },
+	func(f string) bool { return f != ".git" && !strings.HasPrefix(f, ".git/") },
 }
 
-// ValidKeyFilePath reports whether f is a path image.key_files accepts: one
-// clean repository-relative path, inside the repository, as the path it is.
+// ValidKeyFilePath reports whether f is a path the build may check out early:
+// one clean repository-relative path, inside the repository, as the path it
+// is, holding no glob, no backslash and no control character.
 func ValidKeyFilePath(f string) bool {
-	for _, r := range keyFilePathRules {
-		if !r.ok(f) {
+	for _, ok := range keyFilePathRules {
+		if !ok(f) {
 			return false
 		}
 	}
 	return true
-}
-
-// validateKeyFiles checks image.key_files: each entry names one path inside
-// the repository, as the path it is. Every message names the entry by its
-// index and never echoes its value: a value may hold a terminal escape
-// sequence, and a refusal that printed one would put it in a log.
-func validateKeyFiles(p string, files []string, add func(path, format string, args ...any)) {
-	if len(files) > maxImageKeyFiles {
-		add(p+".image.key_files", "must have at most %d entries", maxImageKeyFiles)
-	}
-	seen := make(map[string]int, len(files))
-	for i, f := range files {
-		kp := fmt.Sprintf("%s.image.key_files[%d]", p, i)
-		for _, r := range keyFilePathRules {
-			if !r.ok(f) {
-				add(kp, "%s", r.msg)
-				break
-			}
-		}
-		if j, dup := seen[f]; dup {
-			add(kp, "duplicates image.key_files[%d]", j)
-			continue
-		}
-		seen[f] = i
-	}
 }
 
 // SharedCheckoutSince records the release shared dependency-layer images
@@ -328,15 +357,11 @@ const SharedCheckoutRefusal = "no released fugaro builds or refreshes a shared d
 // the kinds that work today is more use to a repository than a job that
 // would fail at launch for want of an image nobody builds yet.
 //
-// image.setup is the design's own open question and this is where it is
-// taken: §2.2 and §4 have the shared layer installed by whichever
-// repository's image.setup first built the key, and accept that the others
-// inherit that step, while §12 has the image hold the dependency layer "and
-// only it". The stricter reading wins, because a setup command runs in the
-// repository's checkout and its output is therefore that repository's
-// content — the alternative lets a workflow declare shared and still bake
-// its own work into a shared image. The cost is named where it is paid: a
-// workflow moving to shared (§10) loses the step.
+// The kind's own reading of the design — that a shared image holds the
+// dependency layer "and only it" (§12), so a step that runs in the
+// repository's checkout cannot belong to it — cost a workflow moving to
+// shared its image.setup line (§2.2, §4, §10). That key is removed now, so
+// the reading holds by construction and the refusal that stated it is gone.
 func validateCheckout(p string, w Workflow) []Problem {
 	var ps []Problem
 	add := func(path, format string, args ...any) {
@@ -361,12 +386,10 @@ func validateCheckout(p string, w Workflow) []Problem {
 	// ignore one.
 	if w.Checkout == CheckoutShared {
 		const msg = "checkout: shared runs an image shared by every repository on the same dependency set, which holds no repository's own content; use checkout: baked to build a per-repository image"
-		if len(w.Image.Setup) > 0 {
-			add(p+".image.setup", "%s", msg)
-		}
-		if w.Dockerfile != "" {
-			add(p+".dockerfile", "%s", msg)
-		}
+		// The keys that used to bake this repository's own content into the
+		// shared image — image.setup, dockerfile — are removed keys, refused
+		// with their own sentences, so what is left to refuse here is the
+		// catalog reference below.
 		// A catalog reference is the same kind of key: the shared image is
 		// chosen from the resolved dependency set, not from the project's
 		// catalog, so a workflow that names an entry here would get an image
@@ -384,24 +407,10 @@ func validateCheckout(p string, w Workflow) []Problem {
 		return ps
 	}
 	const msg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
-	if len(w.Image.Apt) > 0 {
-		add(p+".image.apt", "%s", msg)
-	}
-	if len(w.Image.Setup) > 0 {
-		add(p+".image.setup", "%s", msg)
-	}
-	if len(w.Image.Tools) > 0 {
-		add(p+".image.tools", "%s", msg)
-	}
-	if w.Image.SkipBuildScripts {
-		add(p+".image.skip_build_scripts", "%s", msg)
-	}
-	if len(w.Image.KeyFiles) > 0 {
-		add(p+".image.key_files", "%s", msg)
-	}
-	if w.Dockerfile != "" {
-		add(p+".dockerfile", "%s", msg)
-	}
+	// The keys a build would honor — image.apt, image.setup, image.tools,
+	// image.skip_build_scripts, image.key_files, dockerfile — are removed
+	// keys, each refused with its own sentence, so a clone workflow cannot
+	// carry one any more and this arm has only the catalog reference left.
 	// A catalog reference is refused for the same reason: it replaces the
 	// per-workflow definition a build honors, and a clone workflow has no
 	// build (D1142).

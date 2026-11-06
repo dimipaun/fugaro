@@ -40,8 +40,7 @@ func TestResolveMinimalTakesTheDefaultProfile(t *testing.T) {
 		"workflows.default.profile":          SourceProject,
 		"workflows.default.timeouts.stage":   SourceDefault,
 		"workflows.default.resources.memory": SourceProfile("java-service"),
-		"workflows.default.image.apt":        SourceProfile("java-service"),
-		"workflows.default.rebuild.check":    SourceDefault,
+		"workflows.default.commands.reports": SourceProfile("java-service"),
 		"agent.first_line_rounds":            SourceDefault,
 	} {
 		if got := res.SourceOf(path); got != want {
@@ -100,12 +99,12 @@ func TestResolveTable(t *testing.T) {
 			name: "profile: picks another profile",
 			repo: minimalRepo + "profile: node-web\n",
 			get: map[string]func(*Config) string{
-				"workflows.default.image.tools.node": func(c *Config) string { return c.Workflows["default"].Image.Tools["node"] },
-				"workflows.default.profile":          func(c *Config) string { return c.Workflows["default"].Profile },
+				"workflows.default.resources.cpu": func(c *Config) string { return itoa(c.Workflows["default"].Resources.CPU) },
+				"workflows.default.profile":       func(c *Config) string { return c.Workflows["default"].Profile },
 			},
 			want: map[string]want{
-				"workflows.default.image.tools.node": {"20", SourceProfile("node-web")},
-				"workflows.default.profile":          {"node-web", SourceRepo},
+				"workflows.default.resources.cpu": {"2", SourceProfile("node-web")},
+				"workflows.default.profile":       {"node-web", SourceRepo},
 			},
 		},
 		{
@@ -136,18 +135,6 @@ func TestResolveTable(t *testing.T) {
 				"workflows.web.timeouts.total":   {"1h30m0s", SourceDefault},
 			},
 		},
-		{
-			name: "a repository Dockerfile replaces the profile's image settings",
-			repo: minimalRepo + "workflows:\n  api:\n    profile: java-service\n    dockerfile: .fugaro/api.Dockerfile\n",
-			get: map[string]func(*Config) string{
-				"workflows.api.image.apt":  func(c *Config) string { return strings.Join(c.Workflows["api"].Image.Apt, ",") },
-				"workflows.api.dockerfile": func(c *Config) string { return c.Workflows["api"].Dockerfile },
-			},
-			want: map[string]want{
-				"workflows.api.image.apt":  {"", SourceDefault},
-				"workflows.api.dockerfile": {".fugaro/api.Dockerfile", SourceRepo},
-			},
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, res, ps := Resolve([]byte(tc.repo), mustLayer(t, testLayer))
@@ -172,7 +159,6 @@ func TestResolveProblemsNameTheLayer(t *testing.T) {
 		{"an unknown profile", minimalRepo + "profile: nope\n", `profile: names profile "nope", which project acme's layer does not have (its profiles: bare, java-service, node-web)`},
 		{"profile: beside workflows:", minimalRepo + "profile: node-web\nworkflows:\n  web: { commands: { build: a, test: b } }\n", "applies only to a fugaro.yaml with no workflows:"},
 		{"a value the repository set says nothing more", minimalRepo + "workflows:\n  api:\n    profile: node-web\n    commands: { test: '' }\n", "workflows.api.commands.test: is required; "},
-		{"a value the profile set names the profile", minimalRepo + "workflows:\n  api:\n    profile: java-service\n    checkout: clone\n", "workflows.api.image.apt: checkout: clone runs the base image with no build; use checkout: baked to build an image (set by profile java-service)"},
 		{"a value neither set names the profile", minimalRepo + "workflows:\n  api:\n    profile: bare\n", "workflows.api.commands.build: is required (set neither by the repository nor by profile bare)"},
 		{"a value the profile set names the profile for a bidi workflow name", minimalRepo + "workflows:\n  \"a\\u202eb\":\n    profile: bare\n", "commands.build: is required (set neither by the repository nor by profile bare)"},
 		{"another project's layer", "version: 1\nproject: other\ngcp_project: acme-fugaro\n", `the project layer given is project "acme"'s`},
@@ -445,28 +431,16 @@ func TestResolveSourceOfListsAndAncestors(t *testing.T) {
 		t.Fatal(ps)
 	}
 	for path, want := range map[string]string{
-		"git.pr.labels[0]":              SourceProject,
-		"workflows.api.cache[0].key[0]": SourceRepo,
-		"workflows.api.image.apt[0]":    SourceProfile("java-service"),
-		"workflows.api.commands.test.x": SourceProfile("java-service"),
-		"workflows.api.cache":           SourceRepo,
-		"workflows.api.timeouts.stage":  SourceDefault,
+		"git.pr.labels[0]":                  SourceProject,
+		"workflows.api.cache[0].key[0]":     SourceRepo,
+		"workflows.api.commands.reports[0]": SourceProfile("java-service"),
+		"workflows.api.commands.test.x":     SourceProfile("java-service"),
+		"workflows.api.cache":               SourceRepo,
+		"workflows.api.timeouts.stage":      SourceDefault,
 	} {
 		if got := res.SourceOf(path); got != want {
 			t.Errorf("SourceOf(%s) = %q, want %q", path, got, want)
 		}
-	}
-}
-
-// TestResolveEmptyDockerfileKeepsTheProfileImage: dockerfile: "" names no
-// Dockerfile, so it does not drop the profile's image: block.
-func TestResolveEmptyDockerfileKeepsTheProfileImage(t *testing.T) {
-	c, res, ps := Resolve([]byte(minimalRepo+"workflows:\n  api:\n    profile: java-service\n    dockerfile: \"\"\n"), mustLayer(t, testLayer))
-	if len(ps) > 0 {
-		t.Fatal(ps)
-	}
-	if got := strings.Join(c.Workflows["api"].Image.Apt, ","); got != "graphviz" || res.SourceOf("workflows.api.image.apt") != SourceProfile("java-service") {
-		t.Fatalf("image.apt = %q from %s", got, res.SourceOf("workflows.api.image.apt"))
 	}
 }
 
@@ -551,21 +525,6 @@ func TestResolveProfileCheckoutSurvivesDefaulting(t *testing.T) {
 	}
 	if got := res.SourceOf("workflows.default.checkout"); got != SourceProfile("p") {
 		t.Fatalf("SourceOf(checkout) = %q, want %q", got, SourceProfile("p"))
-	}
-}
-
-// TestResolveCrossLayerCheckoutConflict pins that checkout: clone's refusal
-// of a build-only key sees the merged workflow, not each layer alone: a
-// profile's image.apt plus the repository's own checkout: clone must be
-// refused together, with the problem attributed to the profile that set the
-// conflicting key (annotate in resolve.go).
-func TestResolveCrossLayerCheckoutConflict(t *testing.T) {
-	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
-	l := mustLayer(t, head+"profiles:\n  p:\n    image: { apt: [jq] }\n    commands: { build: make, test: make test }\n")
-	_, _, ps := Resolve([]byte(minimalRepo+"git: { provider: github }\nworkflows:\n  web:\n    profile: p\n    checkout: clone\n"), l)
-	const path, msg = "workflows.web.image.apt", "checkout: clone runs the base image with no build; use checkout: baked to build an image"
-	if !hasProblem(ps, path, msg, 0) {
-		t.Fatalf("problems = %v, want one at %s: %s (a profile's image.apt and the repo's own checkout: clone must be checked together)", ps, path, msg)
 	}
 }
 

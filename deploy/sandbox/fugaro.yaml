@@ -12,11 +12,6 @@ agent: { auth: oauth, review_rounds: 1, max_budget_usd: 2 }
 workflows:
   web:
     commands: { build: "node --check test.js", test: "npm test" }
-    image:
-      # Proves Cloud Build passes workflow secrets (a file secret, --secret
-      # id=…,src=…, mounted as a file and exported in the RUN): the build
-      # fails if SANDBOX_PROBE is missing. The value is random, not a secret.
-      setup: ['test -n "$SANDBOX_PROBE"']
     secrets:
       - { name: sandbox-probe, env: SANDBOX_PROBE }
     resources: { cpu: 1, memory: 2Gi }

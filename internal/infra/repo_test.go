@@ -624,34 +624,6 @@ func TestNeedsBuildSkipsACatalogEntry(t *testing.T) {
 	}
 }
 
-// The mixed repository: one workflow the catalog gives its image to, one that
-// builds its own (its dockerfile: is the override the catalog never reaches,
-// D1155 item 1). Only the second is offered a first build.
-//
-// Mutation (run, restore): drop the catalog half of NeedsBuild's skip guard
-// and both workflows come back.
-func TestNeedsBuildForAMixedCatalogRepository(t *testing.T) {
-	ctx := context.Background()
-	f := newCloud(t)
-	in := budgetInputs(t, catalogBlock)
-	in.Cfg = parseCfg(t, []byte(strings.Replace(webappYAML, "  api:\n", "  api:\n    dockerfile: api.Dockerfile\n", 1)))
-	spec, err := Repo(in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ws := spec.Workflows["web"]; ws.CatalogEntry != "base" {
-		t.Fatalf("web runs entry %q: the fixture must route its job through the catalog", ws.CatalogEntry)
-	}
-	if ws := spec.Workflows["api"]; ws.CatalogEntry != "" {
-		t.Fatalf("api runs entry %q: its own dockerfile: must keep it off the catalog", ws.CatalogEntry)
-	}
-	f.gcs.AddBucket(spec.Installation.RunsBucket, testProjectNumber, managed)
-	got, err := NeedsBuild(ctx, f.c, spec, allVersions(spec))
-	if err != nil || !slices.Equal(got, []string{"api"}) {
-		t.Fatalf("got %q, %v, want only api: web's job runs the catalog entry", got, err)
-	}
-}
-
 // allVersions marks every secret the spec's workflows mount as having a
 // version, so the image record is the only thing a test of NeedsBuild leaves
 // it to judge a workflow by.

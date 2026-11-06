@@ -3,43 +3,39 @@
 
 # Services, the base and the image
 
-An image is the one Fugaro base plus the repository's checkout at `base_branch`, its installed runtimes and dependencies, and whatever `image:` adds (or a repository Dockerfile built `FROM` that base). A repository with `base:`, `image.node` or `image.jdk` is a 0.6 configuration: follow [docs/base-image-migration.md](https://github.com/dimipaun/fugaro/blob/main/docs/base-image-migration.md) to move it to `mise.toml`.
+A job runs one image, and that image is an entry of the project's **image catalog**: the handful of named images the project curates by hand and its owner publishes. The repository names the entry it wants (`image_name:`) or the tags it needs (`needs:`), and Fugaro picks the entry with the fewest tags that covers them all. A workflow no longer builds an image of its own: `image:` (with `image.apt`, `image.setup`, `image.tools`, `image.key_files`, `image.skip_build_scripts`), `dockerfile:` and `rebuild:` were removed in 0.20.0, and `fugaro validate` refuses each one by name, with the sentence that points at [docs/project-image-catalog/README.md](https://github.com/dimipaun/fugaro/blob/main/docs/project-image-catalog/README.md). A repository with `base:`, `image.node` or `image.jdk` is a 0.6 configuration: follow [docs/base-image-migration.md](https://github.com/dimipaun/fugaro/blob/main/docs/base-image-migration.md) to move it to `mise.toml`.
 
 ## The base and `mise.toml`
 
-There is one base. Its runtimes come from `mise.toml` at the repository root (`fugaro image build` runs `mise install` in the checkout); `image.tools` is the in-`fugaro.yaml` alternative, for when the user does not want a `mise.toml` file — never both. **Never** `apt-get install <language>` or a `curl | sh` installer for a runtime: that bypasses the version pin and the cache `mise install` gives you, and the rebuild trigger that watches `mise.toml`.
+There is one base, and every catalog entry is built `FROM` it. The repository's runtimes come from `mise.toml` at the repository root: the entry's image installs them from the checkout when it is built, and a `checkout: clone` workflow runs `mise install` at start-up instead. **Never** `apt-get install <language>` or a `curl | sh` installer for a runtime, in the `mise.toml` or in an entry's Dockerfile: that bypasses the version pin and the download cache `mise install` gives you.
 
 ## Services the tests need
 
 | Need | How it is provided |
 |---|---|
-| Postgres (PostGIS, pgvector), Redis, Firebase emulators | `image.apt: [postgresql-17, postgresql-17-postgis-3, postgresql-17-pgvector, redis-server]` (only those used), firebase-tools as `"npm:firebase-tools"` in `mise.toml` with `java` and `node`, `firebase setup:emulators:<name>` in `image.setup`, and `fugaro-services start` first in `commands.test`. `fugaro-services start` tries `postgres redis firebase` by default and fails on whichever of those you did not install: when you install fewer than all three, set `FUGARO_SERVICES` to exactly the ones you did (space separated), for example `FUGARO_SERVICES=postgres fugaro-services start` |
-| Other servers (MySQL, Mongo, Kafka, Elasticsearch, a browser) | `image.apt` or `image.setup`; a Dockerfile when a vendor installer is needed; started in the test command; counted against the job's memory (Cloud Run's `/tmp` is memory) |
+| Postgres (PostGIS, pgvector), Redis, Firebase emulators | The **entry's image** carries them: its Dockerfile installs `postgresql-17` (with `postgresql-17-postgis-3` and `postgresql-17-pgvector` when the tests use PostGIS or pgvector) and `redis-server`, and firebase-tools, `java` and `node` come from the mise config it installs. The workflow asks for them by tag, `needs:` with only the tags the tests use, and `commands.test` starts them first. `fugaro-services start` tries `postgres redis firebase` by default and fails on whichever of those the image does not carry: when fewer than all three are installed, set `FUGARO_SERVICES` to exactly the ones there are (space separated), for example `FUGARO_SERVICES=postgres fugaro-services start` |
+| Other servers (MySQL, Mongo, Kafka, Elasticsearch, a browser) | The entry's image installs them and carries a tag for the need; started in the test command; counted against the job's memory (Cloud Run's `/tmp` is memory) |
 | A Docker daemon, docker-compose, Testcontainers | **not available in a Cloud Run job.** Say so to the user and offer: the repository's own local-services mode (a switch that makes its tests start Postgres and Redis directly instead of through Docker; each repository names it differently), a test command that covers only the suites that don't need Docker (CI stays the gate for the rest), or the user running those tests elsewhere. Never work around it |
 
 How to find the need: `docker-compose*.yml`, `compose.yaml`, Testcontainers dependencies, `services:` in a CI file, `firebase.json`, `DATABASE_URL`-style test variables, `.env.test` files (read for names only), emulator configs.
-If the tests use those services, `commands.test` starts them first with `fugaro-services start`, then runs the repository's own task with its local-services switch. The repository must have such a mode; the example below is illustrative (`TEST_SERVICES=local` and the task names are one repository's convention, not Fugaro's). Warming the Gradle caches with a task that resolves test dependencies, in `image.setup`, is usual.
+If the tests use those services, `commands.test` starts them first with `fugaro-services start`, then runs the repository's own task with its local-services switch. The repository must have such a mode; the example below is illustrative (`TEST_SERVICES=local` and the task names are one repository's convention, not Fugaro's). Warming the Gradle caches with a task that resolves test dependencies is a line in the entry's Dockerfile now, not a key in `fugaro.yaml`.
 
-## The `image:` block (the default)
+## Naming the image
 
 | Evidence | Setting |
 |---|---|
-| a pinned Node version | `node` in `mise.toml` |
-| `apt-get install` in CI | `image.apt` |
-| `playwright install --with-deps`, or CI in a `mcr.microsoft.com/playwright` image | `image.setup`: install the browsers through the repository's own Playwright so the version matches the lockfile: `npx playwright install --with-deps chromium`, `pnpm exec playwright install --with-deps chromium`, `yarn playwright install --with-deps chromium`; in a Yarn workspace `yarn workspace <workspace> playwright install --with-deps chromium` |
-| CI installs with `--mode=skip-build` or `--ignore-scripts`, or notes that install scripts oversubscribe the container | `image.skip_build_scripts: true`; then `commands.build` must build what the tests need. Leave it off when dependencies need install scripts (native modules) |
-| code generation CI runs after install and before building | `image.setup`, one step each, only if the build can't run without it |
-| a Go module cache or warm build | `image.setup: ["go mod download && go build ./..."]` |
+| the catalog has an entry this workflow should run | `image_name:` with the entry's name: 1 to 40 of `a-z`, `0-9` and `-`, starting and ending with a letter or a digit |
+| the tests need what the base and the repository's `mise.toml` do not give them: a service, a browser, a system library | `needs:` with the tags, 1 to 32 of `a-z`, `0-9`, `.`, `_` and `-`, each starting with a letter or a digit: Fugaro picks the entry with the fewest tags that covers them all |
+| neither | the project's **default** entry runs |
+| the workflow is `checkout: clone` | neither: the job runs the installation's base image and clones the source at start-up |
 
-`setup` steps run after the dependency install, as the non-root `fugaro` user, in `/work/repo`; `sudo` works only during them (that is what `--with-deps` needs); downloads land in `fugaro`'s home so they are there at run time. Each step is one line: no newline, no `<<`, no trailing backslash, and it must not start with `-` or `[`. Chain with `&&` or call a script in the repository. `ENV` lines in a Dockerfile don't reach the agent, so put variables the commands need into the commands.
-
-`rebuild:` is almost always left out: Fugaro rebuilds when `image:`, a Dockerfile or the lockfiles change and at least every 14 days. Propose `rebuild.paths` only with evidence, such as an `image.setup` step that builds internal packages whose sources live under `packages/`. `rebuild.check: off` is for repositories rebuilt by hand; only when the user asks.
+`fugaro image ls --json` lists the project's catalog: each entry's name, its tags, whether it is the default, what it is built from and the digest its last build recorded. Read it before deciding, and say which entry covers what the repository needs. A workflow that names both an entry and tags runs the entry, and the tags are then checked against it: a mismatch is a warning at deploy time, not a refusal. `fugaro validate --json` judges the two keys' grammar, not whether an entry exists - the catalog is the project's - so a name no entry carries is refused when the job is deployed, with the sentence that names `fugaro image add`.
 
 ## Examples that validate
 
-The names are examples (`project: acme` stands for the name `fugaro config example` printed). Each example is the shape to write from your own evidence; don't copy one's commands. None sets `base:`: every workflow builds on the one Fugaro base.
+The names are examples (`project: acme` stands for the name `fugaro config example` printed). Each example is the shape to write from your own evidence; don't copy one's commands. None sets `base:`: every workflow runs on the one Fugaro base.
 
-A web workflow with a repository `mise.toml`, an apt package and Playwright:
+A web workflow whose project has an entry for it, with a repository `mise.toml`:
 
 ```toml mise.toml
 [tools]
@@ -52,9 +48,7 @@ project: acme
 git: { provider: github, base_branch: main }
 workflows:
   web:
-    image:
-      apt: [libvips-dev]
-      setup: ["npx playwright install --with-deps chromium"]
+    image_name: web-frontend
     commands:
       build: npm run build
       test: CI=true npm test
@@ -64,7 +58,7 @@ workflows:
     resources: { cpu: 4, memory: 8Gi }
 ```
 
-A Go workflow (`go` and `GOTOOLCHAIN` in `mise.toml`) whose verify command leaves out the slow and Docker-needing packages (CI is the merge gate):
+A Go workflow that names nothing, so the project's default entry runs (`go` and `GOTOOLCHAIN` in `mise.toml`), whose verify command leaves out the slow and Docker-needing packages (CI is the merge gate):
 
 ```toml mise.toml
 [tools]
@@ -80,15 +74,20 @@ project: acme
 git: { provider: github, base_branch: main }
 workflows:
   go:
-    image:
-      setup: ["go mod download && go build ./..."]
     commands:
       build: go build ./... && go vet ./...
       test: go test $(go list ./... | grep -v -e /integration)
     resources: { cpu: 4, memory: 8Gi }
 ```
 
-An illustrative server workflow whose tests use the local services (the task names and the `TEST_SERVICES=local` switch are placeholders for the repository's own):
+An illustrative server workflow whose tests use the local services (the task names and the `TEST_SERVICES=local` switch are placeholders for the repository's own), asking by tags for an image that carries a JDK and Postgres:
+
+```toml mise.toml
+[tools]
+java = "temurin-25"
+node = "24"
+"npm:firebase-tools" = "15.32.1"
+```
 
 ```yaml fugaro.yaml
 version: 1
@@ -96,10 +95,7 @@ project: acme
 git: { provider: bitbucket, base_branch: main }
 workflows:
   server:
-    image:
-      tools: { java: "temurin-25" }
-      apt: [postgresql-17]
-      setup: ["./gradlew --no-daemon testClasses"]
+    needs: [jvm, postgres]
     commands:
       build: ./gradlew --no-daemon testClasses
       test: FUGARO_SERVICES=postgres fugaro-services start && TEST_SERVICES=local ./gradlew --no-daemon integrationTest
@@ -107,31 +103,47 @@ workflows:
     resources: { cpu: 4, memory: 16Gi }
 ```
 
-A workflow that builds from a repository Dockerfile instead of `image:` (the two are exclusive):
+## When nothing in the catalog covers the need
 
-```yaml fugaro.yaml
-version: 1
-project: acme
-git: { provider: github, base_branch: main }
-workflows:
-  web:
-    dockerfile: .fugaro/web.Dockerfile
-    commands: { build: npm run build, test: npm test }
+The catalog is the **owner's**: `fugaro image add` writes an entry into this machine's project config and the owner's update publishes it, so a repository's pull request does not carry the catalog, and you never write one behind the user's back. When `fugaro image ls --json` shows no entry whose tags cover what the tests need, the entry is a new one, and its definition is a Dockerfile in this repository:
+
+1. Run `fugaro image render --workflow <name>` and save the output as `.fugaro/<entry>.Dockerfile` - the entry's own name, not the workflow's: several workflows may share one entry. Never start from a blank Dockerfile, and never write one at the repository root: that one is the application's.
+2. Edit it **minimally**: add your lines, change nothing else. System packages go in the `USER root` block above the clone; steps that need the checkout go after the `mise install` step, where the build's sudo rule still exists. Always the same shape: the render, plus your lines in those two places.
+3. Keep the contract: the final stage starts `FROM ${FUGARO_BASE}`; the checkout is cloned into `/work/repo`; `finalize-checkout` stays after every step that touches git config; the image ends as `USER fugaro` in `WORKDIR /work/repo`; no `ENTRYPOINT`; no `VOLUME` under `/work`; nothing writes credentials, setuid or setgid bits or sudo rules. Nothing checks it for you: an entry's Dockerfile is no longer a `fugaro.yaml` key, so `fugaro validate` does **not** enforce the `.fugaro/<entry>.Dockerfile` location and does not lint the file.
+4. The build context holds only the repository bundle: use files from `/work/repo` after the clone rather than `COPY`.
+5. Pin every download by version and checksum. Never pipe a download into a shell; no unpinned `latest`, no remote script. Show every line you added to the user (step 6 of the skill).
+
+The shape, with one package added to the render's root block:
+
+```dockerfile .fugaro/web-tools.Dockerfile
+ARG FUGARO_BASE
+FROM ${FUGARO_BASE}
+ARG BASE_BRANCH
+USER root
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libvips-dev \
+ && rm -r /var/lib/apt/lists/*
+USER fugaro
+RUN --mount=type=secret,id=git-credentials,uid=1000,required=false \
+    GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+      -c credential.helper='store --file=/run/secrets/git-credentials' \
+      clone --quiet --branch "$BASE_BRANCH" -- "$REPO_URL" /work/repo \
+ && mise install && npm ci
+RUN /usr/local/lib/fugaro/finalize-checkout /work/repo
 ```
 
-## The Dockerfile rule
+A real render is longer: it carries the workflow's secrets as mounts, the key-file layer and the checkout hardening. Start from it, not from this example, which is here for the shape of your lines.
 
-Use `image:` unless the evidence needs something it can't express: a toolchain `mise` can't install, a vendor installer, a multi-stage tool build, or build arguments the template doesn't have. The template carries what is security-critical and easy to get wrong (the git credential as a build secret no layer keeps, workflow secrets as mounts, the sudo rule and setuid bits removed, `finalize-checkout`). So:
+The Dockerfile has to be on the branch the entry reads (the default is the repository's base branch), so it goes in the pull request this skill opens. Then the owner records the entry and publishes it. The user runs these in their own terminal window, not through the agent: a catalog build reads a Secret Manager key and refuses a coding agent's session. The entry's name and tags are theirs to choose; say what you would name them and why.
 
-`fugaro validate` checks that a `dockerfile:` path is relative, inside the repository and exists, and lints the contract; it does **not** enforce the `.fugaro/<workflow>.Dockerfile` location (a root `Dockerfile` passes). That location is Fugaro's rule, which you keep.
+```bash user-runs
+fugaro image add web-tools --tags node --dockerfile acme/web:.fugaro/web-tools.Dockerfile
+fugaro image build web-tools
+fugaro update
+```
 
-1. Run `fugaro image render --workflow <name>` and save the output as `.fugaro/<workflow>.Dockerfile`. Never start from a blank Dockerfile. Never write one at the repository root: that is the application's.
-2. In `fugaro.yaml`, remove the workflow's `image:` block and set `dockerfile: .fugaro/<workflow>.Dockerfile`. They can't both be set.
-3. Edit the rendered file **minimally**: add your lines, change nothing else. System packages go in the `USER root` block above the clone; steps that need the checkout go after the `mise install` step, where the build's sudo rule still exists. Always the same shape: the render, plus your lines in those two places.
-4. Keep the contract that `fugaro validate` and the smoke test check: the final stage starts `FROM ${FUGARO_BASE}`; the checkout is cloned into `/work/repo`; `finalize-checkout` stays after every step that touches git config; the image ends as `USER fugaro` in `WORKDIR /work/repo`; no `ENTRYPOINT`; no `VOLUME` under `/work`; nothing writes credentials, setuid or setgid bits or sudo rules.
-5. The build context holds only the repository bundle: use files from `/work/repo` after the clone rather than `COPY`.
-6. Pin every download by version and checksum. Never pipe a download into a shell; no unpinned `latest`, no remote script. Show every line you added to the user (step 6 of the skill).
+`image_name: web-tools`, or the tag the entry carries in `needs:`, follows in `fugaro.yaml` once that entry exists. `--inline <file>` and `--image <ref>` are the entry's other two sources: a definition the project holds itself, and an image that already exists.
 
-On Apple silicon, iterate with `fugaro image build --local --platform linux/arm64`; the cloud build, which is `linux/amd64`, is the real test.
+On Apple silicon, iterate a local build with `--platform linux/arm64`; the cloud build, which is `linux/amd64`, is the real test.
 
 Without Docker locally, finish with `fugaro validate --json` and say that the first cloud build is the test.

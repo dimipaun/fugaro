@@ -3,5 +3,5 @@ project: aurora
 git: { provider: github }
 workflows:
   web:
-    dockerfile: .fugaro/web.Dockerfile
+    image_name: web
     commands: { build: npm run build, test: npm test }

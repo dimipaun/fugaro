@@ -36,7 +36,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
-	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 type lsOut struct {
@@ -580,20 +579,16 @@ func TestLsWarnsInOtherCases(t *testing.T) {
 		Reasons: []string{imagecheck.ReasonLastBuildIneffective}, BuildID: "b2", LastBuildStatus: "SUCCESS", LastBuildAt: &failedAt})
 	one(warnings(), "the image rebuild of "+isoDay(failedAt)+" ended (SUCCESS) without fixing the image")
 
-	// A stale check on a workflow that is not on the daily check is fine.
+	// A stale check on a workflow that is on the installed job's schedule
+	// warns.
 	stale := imagecheck.CheckState{CheckedAt: now.Add(-72 * time.Hour), Decision: imagecheck.Skip}
 	putCheckState(t, f, stale)
 	one(warnings(), "hasn't run since")
-	dir := t.TempDir()
-	testutil.IsolateGit(t)
-	testutil.Git(t, dir, "init", "--quiet", "-b", "main", dir)
-	testutil.Git(t, dir, "remote", "add", "origin", "https://github.com/acme/app.git")
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web:\n" +
-		"    commands: { build: make, test: make test }\n    rebuild: { check: \"off\" }\n"})
-	t.Chdir(dir)
-	if ws := warnings(); len(ws) != 0 {
-		t.Fatalf("check: off warned: %q", ws)
-	}
+	// The case that followed read a checkout whose workflow turned the check
+	// off (rebuild: { check: "off" }) and warned nothing. The
+	// repository-image removal refuses that key by name and takes the daily
+	// check it switched off with it (D1195, D1200), so the case went with
+	// them.
 }
 
 // An object of the runs bucket that can't be read is a warning of its own,

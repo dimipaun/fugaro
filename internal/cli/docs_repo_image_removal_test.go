@@ -99,13 +99,19 @@ const (
 // The audit's four figures, re-counted below rather than trusted: the testdata
 // fixtures that carry one of the removed keys (D1197), the scope table's rows
 // for those keys, the settings registry's rows and the settings schema's
-// members -- the four surfaces whose removal is what makes a removed key
-// unwritable rather than merely undecodable.
+// members. The three settable surfaces are 0 from R2 on -- the removal deleted
+// every row and every member they held for one of these keys, which is what makes
+// a removed key unwritable rather than merely undecodable -- and the fixture
+// figure is R3's, since the invalid fixtures that become the new refusal's keep
+// their keys. It is 39 and not the 50 the audit counted because R2 swept the
+// valid ones with the refusals they carry: eleven files lost the key, two of
+// them (the two whole rebuild blocks) into the invalid corpus, where a fixture
+// is a document the refusal is measured on.
 const (
-	rirFixtures      = 50
-	rirScopeRows     = 11
-	rirRegistryRows  = 21
-	rirSchemaMembers = 21
+	rirFixtures      = 39
+	rirScopeRows     = 0
+	rirRegistryRows  = 0
+	rirSchemaMembers = 0
 )
 
 // rirKeysRE is the removed keys, as a path under `workflows.*` or a scope
@@ -168,12 +174,12 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 		// The ceiling, and the one subject that exceeds it: a reader checking
 		// the plan against the brief's twelve-file rule has to find the reason.
 		"**The ceiling of twelve files is per commit.**",
-		// The arithmetic, because a sweep written as "four commits" was wrong
-		// twice over: 50 files do not fit in four commits of twelve, and the
-		// biggest directory is 27 files, which is over the ceiling in one
-		// commit whatever the commit count is.
-		"**Files (51, in five commits of ≤12).**",
-		"**27 files, twice the ceiling on its own**",
+		// The arithmetic, because a sweep written as "three commits" was wrong
+		// twice over: the 39 files R2 did not sweep do not fit in three commits
+		// of twelve, and the biggest directory is 29 files, which is over the
+		// ceiling in one commit whatever the commit count is.
+		"**Files (40, in four commits of ≤12).**",
+		"**29 files, over the ceiling on its own**",
 		// Four commands go whole, and the plan says so in the words the spec's
 		// §1.2 table uses: a plan that keeps an arm of one of them is a plan
 		// whose own red step asserts a command the spec removes. The count is
@@ -405,7 +411,11 @@ func TestDocsRepoImageRemovalRelativeCitationsResolve(t *testing.T) {
 // them -- a registry row without a scope row, a schema member without a registry
 // row -- changes what the removal has to delete without changing a sentence
 // anybody reads, so each count is taken from the tree and then asked of the
-// documents that state it.
+// documents that state it. The three settable surfaces read 0 from R2 on: the
+// rows and members it deleted are the ones this test is about, and a later task
+// that leaves one behind -- or a document that states a figure the tree does not
+// hold -- fails here. The fixture figure is the one the removal has not moved
+// yet, and R3 re-points it with the fixtures.
 func TestDocsRepoImageRemovalCountsTheRemovedSurfaces(t *testing.T) {
 	// The fixtures: every file under testdata/ carrying one of the three keys as
 	// a YAML key. The documents state this figure as D1197's own list.
@@ -479,27 +489,31 @@ func TestDocsRepoImageRemovalCountsTheRemovedSurfaces(t *testing.T) {
 		{"schemas/settings.schema.json holds %d members for them", schemaMembers, rirSchemaMembers},
 	} {
 		if got.n != got.want {
-			t.Errorf(strings.Replace(got.what, "%d", strconv.Itoa(got.n), 1)+" and the documents state %d: the surfaces the removal has to leave are the ones it has to delete from", got.want)
+			t.Errorf(strings.Replace(got.what, "%d", strconv.Itoa(got.n), 1)+" and the documents state %d: a row or a member the removal left is a key a settings command still offers, and a document that states a figure the tree does not hold is a figure a reader cannot re-run", got.want)
 		}
 	}
 
-	// Each document states the figures it is the one that argues from, so each
-	// is asked for its own wording.
+	// Each document states the figures it is the one that argues from, the
+	// pre-removal figure the removal was planned from beside the post-removal one
+	// this test counts, so each is asked for its own wording.
 	for path, wants := range map[string][]string{
 		rirReconciled: {
 			strconv.Itoa(rirFixtures) + "** files",
 			"the twenty-one rows",
-			"their twenty-one members",
+			"the twenty-one members that sat between the two 0.7.0",
+			"the registry and the settings schema carry none of them now",
 		},
 		rirSpec: {
 			strconv.Itoa(rirFixtures) + "** files",
 			"The eleven scope rows",
-			"the twenty-one at",
+			"the twenty-one that sat between the two 0.7.0",
+			"no scope row, no registry row and no settings-schema member stands for a removed key now",
 		},
 		rirPlan: {
 			strconv.Itoa(rirFixtures) + "** files",
 			"its twenty-one",
 			"the eleven rows",
+			"re-counted after the removal, which is 0 for each",
 		},
 	} {
 		doc := flattenDoc(readDoc(t, path))

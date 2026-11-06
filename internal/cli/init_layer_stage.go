@@ -77,11 +77,24 @@ type layerPlan struct {
 
 	exists bool
 	local  []byte
-	l      *config.ProjectLayer // the local file parsed, when it exists
+	// localRaw is the file's bytes as this machine's disk holds them, before
+	// the removal took anything out of them: what a rewrite of the file backs
+	// up, and what says the file is not already the layer this run writes.
+	localRaw []byte
+	l        *config.ProjectLayer // the local file parsed, when it exists
 
-	published []byte
-	pubExists bool
-	gen       int64
+	published    []byte
+	publishedRaw []byte
+	pubExists    bool
+	gen          int64
+
+	// localRemoval and objectRemoval are the repository-image removal applied
+	// to each side (nil: that side holds none of its keys, and is written as
+	// it is). objectLayer is the published object as the removal leaves it,
+	// which is what an in-place rewrite of the object writes.
+	localRemoval  *layerRemoval
+	objectRemoval *layerRemoval
+	objectLayer   *config.ProjectLayer
 
 	// recorded is the generation this machine's config records as the one its
 	// layer file was written from ("" when it records none).
@@ -94,6 +107,11 @@ type layerPlan struct {
 	seed bool
 	// publish: the local file is there and differs from the published object.
 	publish bool
+	// migrate: the two sides are the same layer once the removal is done with
+	// them, and the published object still holds the keys it takes out: this
+	// run rewrites the object in place (and the file with it) and records the
+	// generation it lands at.
+	migrate bool
 	// recordGen: the file and the object agree and the record is not the
 	// generation the file is written from.
 	recordGen bool
@@ -144,13 +162,29 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config) (*layerPlan, error) 
 	data, rerr := readLayerFile(path)
 	switch {
 	case rerr == nil:
-		p.exists, p.local = true, data
+		p.exists, p.local, p.localRaw = true, data, data
 	case errors.Is(rerr, os.ErrNotExist):
 	default:
 		return nil, userErr("reading the local layer file %s: %v", path, oneLineCLI(rerr.Error()))
 	}
 	if p.exists {
 		l, ps := projectLayerProblems(p.local, lc)
+		if len(ps) > 0 {
+			// A file the release before this one wrote, which this one refuses
+			// for the removal alone: the keys the repository-image removal
+			// refuses are taken out of it here, rather than left for the owner
+			// to find as a config that no longer resolves. What is left has to
+			// be a layer this Fugaro reads; when it is not, the removal is not
+			// the whole of what is wrong with the file and nothing is published
+			// from it.
+			if r := removedKeysOut(p.local, lc); r != nil {
+				if len(r.Problems) > 0 {
+					return nil, userErr("%s: %s", path, pluginwire.Printable(removedKeysFolded(r)))
+				}
+				p.local, p.localRemoval = r.Data, r
+				l, ps = r.Layer, nil
+			}
+		}
 		if len(ps) > 0 {
 			return nil, userErr("%s is invalid, so nothing of it can be published: %s", path, pluginwire.Printable(layerProblemsText(ps)))
 		}
@@ -170,7 +204,18 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config) (*layerPlan, error) 
 		p.skip = fmt.Sprintf("the project layer's bucket (%s) could not be read, so this run leaves the project layer and its local layer file as they are: %s", p.url, oneLineCLI(rerr.Error()))
 		return p, nil
 	case exists:
-		p.published, p.pubExists, p.gen = data, true, gen
+		p.published, p.publishedRaw, p.pubExists, p.gen = data, data, true, gen
+		if _, ps := projectLayerProblems(data, lc); len(ps) > 0 {
+			// The same removal, on the object every repository of the project
+			// resolves against: a release before this one published it with the
+			// removed keys, and every reader refuses it by name until they are
+			// gone. The object is only written from a document this Fugaro
+			// reads; when the removal leaves anything else wrong with it, the
+			// state it is in is not this stage's to guess at.
+			if r := removedKeysOut(data, lc); r != nil && len(r.Problems) == 0 {
+				p.published, p.objectRemoval, p.objectLayer = r.Data, r, r.Layer
+			}
+		}
 	}
 	recorded, rerr := strconv.ParseInt(p.recorded, 10, 64)
 	hasRecord := p.recorded != "" && rerr == nil
@@ -182,6 +227,13 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config) (*layerPlan, error) 
 	case !p.pubExists:
 		p.publish = true
 	case bytes.Equal(p.local, p.published):
+		if p.objectRemoval != nil {
+			// The removal is the whole of the difference between the two sides:
+			// the object is rewritten in place, and the file with it when it
+			// holds the same keys.
+			p.migrate = true
+			break
+		}
 		p.recordGen = !hasRecord || recorded != gen
 	default:
 		// Differing bytes are never the whole answer (D854): a record that is not
@@ -244,15 +296,35 @@ func (s *layerStage) Check(ctx context.Context) (initflow.Status, error) {
 	case p.skip != "":
 		return initflow.Status{State: initflow.Skipped, Detail: p.skip}, nil
 	case p.seed:
-		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("there is no local layer file at %s: this run seeds it from the published project layer (generation %d)", p.path, p.gen)}, nil
+		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("there is no local layer file at %s: this run seeds it from the published project layer (generation %d)%s", p.path, p.gen, p.removalClause())}, nil
 	case p.stale != nil:
-		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published project layer is not the generation this machine's layer file was written from (%s): this run re-seeds the file, after your confirmation", p.stale.text())}, nil
+		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published project layer is not the generation this machine's layer file was written from (%s): this run re-seeds the file%s, after your confirmation", p.stale.text(), p.removalClause())}, nil
+	case p.migrate:
+		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published project layer holds %s: this run rewrites it in place without them, after your confirmation", p.objectRemoval.text())}, nil
 	case p.publish:
-		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the local layer file %s is unpublished: this run publishes it, after your confirmation", p.path)}, nil
+		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the local layer file %s is unpublished: this run publishes it%s, after your confirmation", p.path, p.fileClause())}, nil
 	case p.recordGen:
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("this machine's config records %s as the generation its layer file was written from: this run records %d", generationText(p.recorded), p.gen)}, nil
 	}
 	return initflow.Status{State: initflow.Done, Detail: fmt.Sprintf("the local layer file %s is the published project layer (generation %d)", p.path, p.gen)}, nil
+}
+
+// removalClause is the half of a state's sentence for a run that also rewrites
+// the published project layer in place, and "" for one that leaves the object
+// as it is (a publish replaces it wholesale, so its removed keys go with it).
+func (p *layerPlan) removalClause() string {
+	if p.objectRemoval == nil || p.publish {
+		return ""
+	}
+	return ", and takes " + p.objectRemoval.text() + " out of it"
+}
+
+// fileClause is the same for the local layer file, when the removal rewrote it.
+func (p *layerPlan) fileClause() string {
+	if p.localRemoval == nil {
+		return ""
+	}
+	return ", taking the keys the repository-image removal refuses out of your local layer file too"
 }
 
 // Plan is what the run says it is about to do, and it prints the three-way
@@ -277,11 +349,13 @@ func (s *layerStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan,
 func (p *layerPlan) planDetail() string {
 	switch {
 	case p.seed:
-		return fmt.Sprintf("seed %s from the published project layer (generation %d), after your confirmation", p.path, p.gen)
+		return fmt.Sprintf("seed %s from the published project layer (generation %d)%s, after your confirmation", p.path, p.gen, p.removalClause())
 	case p.stale != nil:
-		return fmt.Sprintf("re-seed %s from the published project layer, after your confirmation", p.path)
+		return fmt.Sprintf("re-seed %s from the published project layer%s, after your confirmation", p.path, p.removalClause())
+	case p.migrate:
+		return fmt.Sprintf("rewrite the published project layer in place without %s, after your confirmation", p.objectRemoval.text())
 	case p.publish:
-		return fmt.Sprintf("publish the project layer from %s, after your confirmation", p.path)
+		return fmt.Sprintf("publish the project layer from %s%s, after your confirmation", p.path, p.fileClause())
 	case p.recordGen:
 		return fmt.Sprintf("record the published project layer's generation (%d) in %s", p.gen, p.configPath)
 	}
@@ -302,12 +376,26 @@ func (s *layerStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outc
 	switch {
 	case p.skip != "":
 		return initflow.Outcome{Detail: p.skip}, nil
+	}
+	// The removal's own write to the published object comes before every state
+	// below: the object is what each repository of the project resolves against,
+	// and the file these states read and write is the object's other half. A
+	// publish replaces the object wholesale, removed keys and all, so it is the
+	// one state that has nothing for this write to do.
+	if p.objectRemoval != nil && !p.publish {
+		if err := s.migrateObject(ctx, env, p); err != nil {
+			return initflow.Outcome{}, err
+		}
+	}
+	switch {
 	case p.seed:
 		return s.seed(env, p)
 	case p.stale != nil:
 		return s.reseed(env, p)
 	case p.publish:
 		return s.publish(ctx, env, p)
+	case p.migrate:
+		return s.migrateLocal(p)
 	case p.recordGen:
 		if err := layerGenerationRecord(s.e.r.cmd.OutOrStdout(), p.configPath, p.lc, p.gen); err != nil {
 			return initflow.Outcome{}, err
@@ -322,7 +410,7 @@ func (s *layerStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outc
 // writes only this machine's file: the object is left exactly as it is.
 func (s *layerStage) seed(env initflow.Env, p *layerPlan) (initflow.Outcome, error) {
 	cmd := s.e.r.cmd
-	if err := confirmRemoval(cmd, p.lc, env.Yes, layerSeedWhat); err != nil {
+	if err := confirmRemoval(cmd, p.lc, env.Yes, p.fileRewriteWhat(layerSeedWhat)); err != nil {
 		return initflow.Outcome{}, err
 	}
 	if err := os.MkdirAll(filepath.Dir(p.path), 0o700); err != nil {
@@ -350,7 +438,7 @@ func (s *layerStage) seed(env initflow.Env, p *layerPlan) (initflow.Outcome, err
 // gate still withholds afterwards, with the banner that names the keys.
 func (s *layerStage) publish(ctx context.Context, env initflow.Env, p *layerPlan) (initflow.Outcome, error) {
 	cmd := s.e.r.cmd
-	if err := confirmRemoval(cmd, p.lc, env.Yes, layerPublishWhat); err != nil {
+	if err := confirmRemoval(cmd, p.lc, env.Yes, p.fileRewriteWhat(layerPublishWhat)); err != nil {
 		return initflow.Outcome{}, err
 	}
 	b, err := openRecordBucket(ctx, p.url)
@@ -358,9 +446,8 @@ func (s *layerStage) publish(ctx context.Context, env initflow.Env, p *layerPlan
 		return initflow.Outcome{}, remote(fmt.Errorf("opening %s to publish the project layer: %w", p.url, err))
 	}
 	defer b.Close()
-	at := &layerAt{old: p.published, gen: p.gen, exists: p.pubExists}
 	rec := layerRecord{path: p.configPath, lc: p.lc}
-	gen, err := publishLayer(ctx, cmd.ErrOrStderr(), b, p.l, false, at, rec)
+	gen, err := publishLayer(ctx, cmd.ErrOrStderr(), b, p.l, false, p.objectAt(), rec)
 	if err != nil {
 		return initflow.Outcome{}, err
 	}
@@ -372,6 +459,16 @@ func (s *layerStage) publish(ctx context.Context, env initflow.Env, p *layerPlan
 		// because the record that appears in the owner's config afterwards is
 		// what their next edit is read against.
 		fmt.Fprintf(cmd.OutOrStdout(), "this machine's config records no generation for its layer file, so this run adopts the one it publishes (%d) as the generation the file is written from\n", gen)
+	}
+	// The file this publish was made from is the object's own layer now, so a
+	// file still holding the removed keys is rewritten from the bytes that were
+	// just written: leaving it would make every later run report it as a local
+	// edit and publish it again.
+	if p.localRemoval != nil {
+		printLayerRemoval(cmd.OutOrStdout(), "your local layer file "+p.path, p.localRemoval)
+		if err := rewriteLocal(cmd.OutOrStdout(), p, p.l.Raw); err != nil {
+			return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("published the project layer from %s (generation %d)", p.path, gen)}, err
+		}
 	}
 	// The fan-out needs the project's repositories and the bucket this run
 	// already holds: opening a backend it never calls would make the layer
@@ -390,7 +487,7 @@ func (s *layerStage) publish(ctx context.Context, env initflow.Env, p *layerPlan
 // decides which of the two files to keep, and neither is a figure they hold.
 func (p *layerPlan) printReseedState(w interface{ Write([]byte) (int, error) }) {
 	fmt.Fprintf(w, "the published project layer is not the generation this machine's layer file was written from, so publishing from here would replace the published object with a file this machine cannot account for: %s\n", p.stale.text())
-	fmt.Fprintf(w, "  this machine's layer file %s (sha256 %s)\n", p.path, config.LayerSum(p.local))
+	fmt.Fprintf(w, "  this machine's layer file %s (sha256 %s)\n", p.path, config.LayerSum(p.localRaw))
 	fmt.Fprintf(w, "  the published project layer (generation %d, sha256 %s)\n", p.gen, config.LayerSum(p.published))
 	fmt.Fprintf(w, "  re-seeding writes the published object's bytes into %s instead (the file is backed up first); publishing stays yours to do afterwards\n", p.path)
 }
@@ -403,10 +500,10 @@ func (s *layerStage) reseed(env initflow.Env, p *layerPlan) (initflow.Outcome, e
 	cmd := s.e.r.cmd
 	out := cmd.OutOrStdout()
 	p.printReseedState(out)
-	if err := confirmRemoval(cmd, p.lc, env.Yes, layerReseedWhat); err != nil {
+	if err := confirmRemoval(cmd, p.lc, env.Yes, p.fileRewriteWhat(layerReseedWhat)); err != nil {
 		return initflow.Outcome{}, err
 	}
-	backup, err := backupFile(p.path, p.local, time.Now())
+	backup, err := backupFile(p.path, p.localRaw, time.Now())
 	if err != nil {
 		return initflow.Outcome{}, userErr("backing up %s before re-seeding it: %v", p.path, err)
 	}
@@ -421,11 +518,12 @@ func (s *layerStage) reseed(env initflow.Env, p *layerPlan) (initflow.Outcome, e
 	return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("re-seeded %s from the published project layer (generation %d)", p.path, p.gen)}, nil
 }
 
-// Verify reads back what this run wrote: the object for a publish, the file for
-// a seed or a re-seed, and the record for a run whose only write was the record.
-// A write that claims bytes it did not land is a layer this Fugaro would keep
-// publishing on every run, and a record that did not land is the same file
-// reported as a local edit on every door that reads it.
+// Verify reads back what this run wrote: the object for a publish or a removal's
+// in-place rewrite of it, the file for a seed, a re-seed or a rewrite of a file
+// still holding the removed keys, and the record for a run whose only write was
+// the record. A write that claims bytes it did not land is a layer this Fugaro
+// would keep publishing on every run, and a record that did not land is the same
+// file reported as a local edit on every door that reads it.
 func (s *layerStage) Verify(ctx context.Context) error {
 	p, err := s.plan(ctx)
 	if err != nil || p == nil {
@@ -451,6 +549,8 @@ func (s *layerStage) Verify(ctx context.Context) error {
 			return fmt.Errorf("%s records generation %s for its layer file, and this run recorded %s", p.configPath, generationText(lc.LayerGeneration), want)
 		}
 		return nil
+	}
+	switch {
 	case p.seed, p.stale != nil:
 		data, err := os.ReadFile(p.path)
 		if err != nil {
@@ -459,7 +559,21 @@ func (s *layerStage) Verify(ctx context.Context) error {
 		if !bytes.Equal(data, p.published) {
 			return errors.New("the local layer file is not the published project layer it was written from")
 		}
-		return nil
+	case p.localRemoval != nil:
+		// The removal's own rewrite of the file, which is written from the
+		// object's layer whether the object was rewritten beside it or
+		// published from the file the removal emptied.
+		data, err := os.ReadFile(p.path)
+		if err != nil {
+			return fmt.Errorf("the local layer file was written but cannot be read back: %w", err)
+		}
+		if !bytes.Equal(data, p.fileBytes()) {
+			return errors.New("the local layer file is not the layer this run wrote it from")
+		}
+	}
+	// The object: the publish's own write, or the removal's in-place rewrite of
+	// it (a publish replaces the object whole, so the two never both apply).
+	switch {
 	case p.publish:
 		data, _, exists, err := layerPublishedRead(ctx, p.lc, p.url)
 		if err != nil {
@@ -471,6 +585,27 @@ func (s *layerStage) Verify(ctx context.Context) error {
 		if !bytes.Equal(data, p.local) {
 			return fmt.Errorf("the project layer was published but the object at %s is not the local layer file", config.LayerKey)
 		}
+	case p.objectRemoval != nil:
+		data, _, exists, err := layerPublishedRead(ctx, p.lc, p.url)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return errors.New("the published project layer is gone")
+		}
+		if !bytes.Equal(data, p.published) {
+			return fmt.Errorf("the project layer was rewritten but the object at %s is not the layer this run wrote", config.LayerKey)
+		}
 	}
 	return nil
+}
+
+// fileBytes is the layer the removal writes a local layer file from: the
+// object's own layer, which after a publish is the bytes that publish just
+// wrote.
+func (p *layerPlan) fileBytes() []byte {
+	if p.publish {
+		return p.l.Raw
+	}
+	return p.published
 }

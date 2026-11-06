@@ -124,11 +124,10 @@ workflows:
     timeouts: { total: 60m }
   api:
     commands: { build: ./gradlew assemble, test: ./gradlew test }
-    rebuild: { check: "off" }
 `
 
-// webappInputs is a GitHub repository on Vertex, with two workflows (one
-// without a daily check), launchers, and a price override.
+// webappInputs is a GitHub repository on Vertex, with two workflows,
+// launchers, and a price override.
 func webappInputs(t *testing.T) Inputs {
 	t.Helper()
 	lc := parseLC(t, `version: 1
@@ -445,8 +444,8 @@ func TestGitHubSpec(t *testing.T) {
 		t.Errorf("check secret_env = %v", rs.Check.SecretEnv)
 	}
 	var spec CheckJobSpec
-	if err := json.Unmarshal([]byte(rs.Check.Env[CheckSpecEnv]), &spec); err != nil || !slices.Equal(spec.Workflows, []string{"web"}) {
-		t.Errorf("check spec workflows = %v, %v (api has check: off)", spec.Workflows, err)
+	if err := json.Unmarshal([]byte(rs.Check.Env[CheckSpecEnv]), &spec); err != nil || !slices.Equal(spec.Workflows, []string{"api", "web"}) {
+		t.Errorf("check spec workflows = %v, %v", spec.Workflows, err)
 	}
 	// The price override reaches the jobs, in the form the runner reads.
 	p, ok, err := runner.PricesFromEnv(func(k string) string { return web.Env[k] })
@@ -493,11 +492,16 @@ func TestVertexSpec(t *testing.T) {
 	}
 }
 
-func TestNoCheckWhenAllOff(t *testing.T) {
-	in := webappInputs(t)
-	w := in.Cfg.Workflows["web"]
-	w.Rebuild.Check = "off"
-	in.Cfg.Workflows["web"] = w
+// TestNoCheckWhenEveryWorkflowRunsAnEntry: a repository whose every workflow
+// runs a catalog entry has no per-repository image of its own, so it gets no
+// check job, its tfvars carry a null one, and it needs no base image at all.
+//
+// It reached that shape by turning the check off (rebuild: { check: off })
+// until the repository-image removal refused the key by name (D1195); the
+// catalog entry that gives a workflow its job is what makes the same shape
+// now, and the assertions are the ones the old fixture made.
+func TestNoCheckWhenEveryWorkflowRunsAnEntry(t *testing.T) {
+	in := budgetInputs(t, catalogBlock)
 	rs, err := Repo(in)
 	if err != nil || rs.Check != nil {
 		t.Fatalf("check = %+v, %v", rs.Check, err)
@@ -677,14 +681,19 @@ func TestSpecCloneSetsRemoteEnv(t *testing.T) {
 // sharedYAML is cloneYAML with web on checkout: shared (design
 // forge-authorship-images/shared-images.md §6, route A): a job that runs a
 // shared dependency-layer image and clones the repository's own source at
-// launch. It declares the dependency-layer keys — the ones checkout: clone
-// refuses and this kind exists to accept.
+// launch.
 //
 // It is written as baked, which accepts the same keys: validation refuses
 // checkout: shared until 0.15.0 builds a shared image (config/image.go's
 // sharedCheckoutShipped), and sharedInputs moves the parsed workflow onto the
 // kind afterwards. What these tests pin is the job a shared workflow's spec
 // gets, not how its fugaro.yaml was validated.
+//
+// The dependency-layer keys it used to declare — image.apt, image.tools and
+// image.key_files, the ones checkout: clone refuses and this kind exists to
+// accept — are refused by name since the repository-image removal (D1195):
+// a shared dependency layer is a catalog entry now, not a block in a
+// workflow.
 const sharedYAML = `version: 1
 project: aurora
 git: { provider: github, base_branch: main }
@@ -692,7 +701,6 @@ agent: { auth: vertex }
 workflows:
   web:
     checkout: baked
-    image: { apt: [libvips-dev], tools: { node: "24.19.0" }, key_files: [patches] }
     commands: { build: npm run build, test: npm test }
   api:
     commands: { build: ./gradlew assemble, test: ./gradlew test }

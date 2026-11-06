@@ -3,9 +3,8 @@ project: aurora
 git: { provider: github }
 workflows:
   web:
-    image:
-      skip_build_scripts: true
+    image_name: web
     commands: { build: yarn build, test: yarn test }
   server:
-    image: { skip_build_scripts: false }
+    image_name: server
     commands: { build: ./gradlew assemble, test: ./gradlew test }

@@ -27,9 +27,9 @@ converge, and that is a change to a task rather than a detail inside it.
 - **A new dependency.** `go.mod` is unchanged by every task.
 - **The ceiling of twelve files is per commit.** Every task lands as commits of at most twelve files,
   which is what review sees. One task — **R3**, the fixture sweep — is one subject whose files are the
-  **50** `testdata/` fixtures the removal invalidates (`reconciliation.md` D1197), so it lands as
-  **five** commits of at most twelve files and not as five tasks: splitting it would give five tasks one
-  red step and five chances to leave the tree half-migrated.
+  `testdata/` fixtures the removal invalidates (`reconciliation.md` D1197), so it lands as **four**
+  commits of at most twelve files and not as four tasks: splitting it would give four tasks one red step
+  and four chances to leave the tree half-migrated.
 
 ## 2. Order, and what forces it
 
@@ -114,7 +114,7 @@ adds its edit only after that task has merged**, and never re-derives what the o
 | `deploy/terraform/gcp/modules/installation/` and `deploy/terraform/gcp/roots/installation/` | **D1148 (ii)** (#1683), R4 | #1683 adds the Scheduler, its target, the root's wiring and their `terraform test` fixtures and goldens; R4 touches the shared registry's grants only. **#1683 merges first**, and R4 regenerates the goldens #1683 just regenerated |
 | `internal/imagecheck/` (`internal/imagecheck/catalog.go:20`, the per-repository check) | **D1148's driver**, R6 | D1148's driver calls `CheckCatalog` over every buildable entry; R6 removes the per-repository triggers' readers (`rebuild.*`) and `checkedWorkflows` (`internal/cli/imagecheck.go:241`). **D1148 first** |
 | `internal/settings/registry.go` | **G0/G1**, R2 | The configuration-management plan's G0 and G1 add rows and widen the generic writer's allowlist; R2 removes the twenty-one rows of the removed keys (`internal/settings/registry.go:229`, `:454`, `:477`). **One row, one owner**: R2 touches only the removed keys' rows and never the writer |
-| `schemas/settings.schema.json` | **G2**, **G8**, **G9**, R2 | They add member rows for the writes they add; R2 removes the members of the keys it removes (`schemas/settings.schema.json:1130`, `:1181`). **R2 does not move the document's version** — the rule G2 states |
+| `schemas/settings.schema.json` | **G2**, **G8**, **G9**, R2 | They add member rows for the writes they add; R2 removes the members of the keys it removes (`schemas/settings.schema.json:832`, `:1100` are the two 0.7.0 tombstones they sat between). **R2 does not move the document's version** — the rule G2 states |
 | `internal/cli/image_refresh*.go` | **M-series** (`image_refresh_steps.go`, `image_refresh_rules.go`), R6 | The managed build's M-series changes what `image refresh` converges; R6 removes its derived-image arm. **The M-series lands first**, or R6 rewrites lines it is about to be handed back |
 | `internal/cli/init.go`, `internal/cli/update.go` | **M-series** (`update.go`, `init.go`), R7 | R7 changes `setup`'s first-build offer (`offerBuilds`, `internal/cli/init.go:3415`) and the retirement door is left alone (`:444`); the M-series adds the converge stages. **Different functions, one file, M-series first** |
 | `docs/rigor-modes/reconciliation.md` | the design's own commit, **R2** | The design's commit moves the **pins** row (93 → 94, with its amendment sentence). **R2 moves `Config scope rows` (93 → 82)**, which is the eleven rows of spec §1.1 leaving `internal/config/scope.go`, and `TestDocsRigorModesCensusStatesItsCommands` re-runs that row's own command — so the row and the removal land together or the removal fails a test no task names. The rows R2 does **not** move, checked rather than assumed: the two top-level-key rows (a **workflow** key is not a top-level property), the skew-constant row (no `Since` constant leaves with the removal) and the pins row (no pin is deleted, one is rewritten) |
@@ -235,8 +235,9 @@ readiness branches that decide between them.
   sentence is built from `MigrationDoc`. `internal/config/scope.go:108` loses the eleven rows of the
   removed keys (`:113`, `:131`, `:135`, `:179`, `:189`), `internal/settings/registry.go:229` its
   twenty-one (`:454`, `:477`), and the three schemas their members
-  (`schemas/fugaro.schema.json:358`, `:396`, `:511`; `schemas/project-layer.schema.json:265`, `:338`;
-  `schemas/settings.schema.json:1130`, `:1181`).
+  (`schemas/fugaro.schema.json:332` and `schemas/project-layer.schema.json:236` are the `image` members
+  the two 0.7.0 tombstones keep, and `schemas/settings.schema.json:832`, `:1100` the two rows theirs
+  sat between).
   `image_name`, `needs` and `image_catalog.*` keep every member they have, and no version moves.
   **The two tombstones stay**: `internal/config/scope.go:106` and `:107` are `image.node` and
   `image.jdk`, the 0.7.0 keys the removal keeps refusing, so they are **not** among the eleven and its
@@ -276,20 +277,22 @@ readiness branches that decide between them.
 
 ## R3. The fixtures and the golden (D1197)
 
-- **Interface.** The **50** files under `testdata/` carrying one of the three keys
-  (`grep -rlE '^[[:space:]]*(image|dockerfile|rebuild):' testdata/`) move: the *valid* ones lose the
-  keys (and the workflows they describe become catalog workflows), the *invalid* ones that assert an old
-  refusal — `image-and-dockerfile.yaml`, the `legacy-image-*` pair, the `checkout-clone-*` set — become
-  fixtures asserting the **new** refusal, and `internal/cli/testdata/init_retire.golden` is regenerated.
+- **Interface.** The **39** files under `testdata/` still carrying one of the three keys
+  (`grep -rlE '^[[:space:]]*(image|dockerfile|rebuild):' testdata/`) move. The *valid* ones already
+  went, swept with R2 by review order: each lost the key, the image ones carry the catalog reference
+  the key became (`image_name:`), and the two whole `rebuild` blocks moved into the invalid corpus
+  rather than lose their subject. What is left is the *invalid* ones that assert an old refusal —
+  `image-and-dockerfile.yaml`, the `legacy-image-*` pair, the `checkout-clone-*` set — which become
+  fixtures asserting the **new** refusal, and `internal/cli/testdata/init_retire.golden`, which is
+  regenerated.
 - **Red step.** R2's refusal message is the red step; this task is what proves the **fixtures** agree
   with it: `go test ./internal/config/ -run 'TestLoad|TestValidate' -count=1` fails on every
   fixture R2 did not sweep, and the golden test fails until it is regenerated.
-- **Files (51, in five commits of ≤12).** ⌈51/12⌉ is **five** and the biggest directory is 27 files of
-  the 50, so the split is by *what a fixture asserts* and never one commit per directory: the 10
-  `testdata/config/valid/` fixtures in one commit, the 10 `testdata/project-layer/invalid/` ones in a
-  second, and `testdata/config/invalid/` — **27 files, twice the ceiling on its own** — across three
-  (12 + 12 + 3), the last of which carries `testdata/project-layer/valid/` (3) and the regenerated
-  `internal/cli/testdata/init_retire.golden`. **One subject, five commits** (§1).
+- **Files (40, in four commits of ≤12).** After R2's sweep the 39 files are two **invalid**
+  directories and the golden, so the split is by *what a fixture asserts* and never one commit per
+  directory: `testdata/config/invalid/` — **29 files, over the ceiling on its own** — across three
+  (12 + 12 + 5), and the 10 `testdata/project-layer/invalid/` ones in a fourth, which also carries the
+  regenerated `internal/cli/testdata/init_retire.golden`. **One subject, four commits** (§1).
 
 ## R4. The deploy path: the derived name, the check job, the Scheduler and the registry. **SEC**
 

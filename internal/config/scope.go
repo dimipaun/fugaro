@@ -105,12 +105,6 @@ var Scopes = []ScopeRow{
 	{Key: "workflows.*.checkout", In: InProfile | InRepo},
 	{Key: "workflows.*.image.node", In: InProfile | InRepo, Why: whyRemoved},
 	{Key: "workflows.*.image.jdk", In: InRepo, Why: whyRemoved},
-	{Key: "workflows.*.image.apt", In: InProfile | InRepo},
-	{Key: "workflows.*.image.setup", In: InProfile | InRepo},
-	{Key: "workflows.*.image.skip_build_scripts", In: InProfile | InRepo},
-	{Key: "workflows.*.image.tools", In: InProfile | InRepo},
-	{Key: "workflows.*.image.key_files", In: InRepo, Why: whyFiles},
-	{Key: "workflows.*.dockerfile", In: InRepo, Why: whyFiles},
 	{Key: "workflows.*.commands.build", In: InProfile | InRepo},
 	{Key: "workflows.*.commands.test", In: InProfile | InRepo},
 	{Key: "workflows.*.commands.lint", In: InProfile | InRepo},
@@ -128,11 +122,6 @@ var Scopes = []ScopeRow{
 	{Key: "workflows.*.timeouts.verify", In: InProfile | InRepo},
 	{Key: "workflows.*.timeouts.render", In: InProfile | InRepo},
 	{Key: "workflows.*.timeouts.finalize_reserve", In: InProfile | InRepo},
-	{Key: "workflows.*.rebuild.check", In: InProfile | InRepo},
-	{Key: "workflows.*.rebuild.max_age", In: InProfile | InRepo},
-	{Key: "workflows.*.rebuild.lockfiles", In: InProfile | InRepo},
-	{Key: "workflows.*.rebuild.base", In: InProfile | InRepo},
-	{Key: "workflows.*.rebuild.paths", In: InProfile | InRepo},
 	{Key: "workflows.*.inputs.max_files", In: InProfile | InRepo},
 	{Key: "workflows.*.inputs.max_bytes", In: InProfile | InRepo},
 	{Key: "workflows.*.inputs.max_total_bytes", In: InProfile | InRepo},
@@ -148,36 +137,17 @@ var Scopes = []ScopeRow{
 }
 
 // ExecutableKeys are the profile keys whose values run as shell, or control
-// whether shell a profile already describes runs, in the job or in the
-// image build (decision L7): a publish that changes one needs
-// --executable-changes. image.skip_build_scripts going from true to false
-// (or being dropped) turns the dependency install/build scripts back on in
-// the image build; going from false to true is reported too (the owner's
-// ruling: a direction being safer is not a reason to leave it ungated).
-//
-// workflows.*.image.tools is here too because it is exactly as powerful as
-// image.setup: every mise backend with a URL or host form (cargo:, go:,
-// npm:, asdf:/vfox:, ubi:/github:/aqua:) passes ValidMiseTool's charset, and
-// a build installs it with the workflow's build secrets mounted, so a mise
-// "tool" can name an arbitrary git ref or release to fetch and run
-// (install scripts, build.rs, a plugin). That is within the threat model
-// for a repository's own reviewed fugaro.yaml, the same as image.setup; a
-// profile published from the bucket must gate it the same way.
+// whether shell a profile already describes runs, in the job (decision L7): a
+// publish that changes one needs --executable-changes.
 //
 // commands.render and commands.probe are here for the same reason
 // commands.build is: an artifact recipe's render and probe steps run the
 // workflow's own text as shell in the job (design artifact-runs.md §3), so
 // a profile that sets either must be gated like any other command.
-//
-// workflows.*.image.skip_build_scripts going from true to false (or being
-// dropped) turns the dependency install/build scripts back on in the image
-// build; going from false to true is reported too (the owner's ruling: a
-// direction being safer is not a reason to leave it ungated).
 var ExecutableKeys = []string{
 	"workflows.*.commands.build", "workflows.*.commands.test", "workflows.*.commands.lint", "workflows.*.commands.fix",
 	"workflows.*.commands.render", "workflows.*.commands.probe",
-	"workflows.*.commands.rerun_failed", "workflows.*.image.apt", "workflows.*.image.setup", "workflows.*.image.tools",
-	"workflows.*.image.skip_build_scripts",
+	"workflows.*.commands.rerun_failed",
 }
 
 // NonExecutableImageKeys are the Image struct's fields ExecutableKeys
@@ -189,11 +159,14 @@ var ExecutableKeys = []string{
 var NonExecutableImageKeys = map[string]string{
 	"workflows.*.image.node": "removed in 0.7.0, refused unconditionally by validateImage (" + MigrationDoc + "); never a command",
 	"workflows.*.image.jdk":  "removed in 0.7.0, refused unconditionally by validateImage (" + MigrationDoc + "); never reaches a Dockerfile",
-	// key_files holds repository paths, not shell: each one is written into
-	// the image's checkout loop as a single-quoted word, and validateImage
-	// refuses a value that is not a clean relative path, so a path can only
-	// name a file in the repository being built.
-	"workflows.*.image.key_files": "names repository paths checked out before the source layer, never run as shell",
+	// The five 0.20.0 tombstones are here rather than in ExecutableKeys: a
+	// removed key that stayed executable would keep gating a publish on a
+	// value no profile can carry any more.
+	"workflows.*.image.apt":                "removed in 0.20.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
+	"workflows.*.image.setup":              "removed in 0.20.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
+	"workflows.*.image.tools":              "removed in 0.20.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
+	"workflows.*.image.skip_build_scripts": "removed in 0.20.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
+	"workflows.*.image.key_files":          "removed in 0.20.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
 }
 
 // ScopeOf is the row of path, a fugaro.yaml path with a real workflow name
@@ -229,14 +202,15 @@ func scopeRow(key string) (ScopeRow, bool) {
 }
 
 // isBlock reports whether path ("agent", "workflows.*.image") is a block
-// that holds listed keys rather than a key itself.
+// that holds listed keys rather than a key itself, or held the removal's keys
+// until 0.20.0.
 func isBlock(path string) bool {
 	for _, r := range Scopes {
 		if strings.HasPrefix(r.Key, path+".") {
 			return true
 		}
 	}
-	return false
+	return removedImageBlock(path)
 }
 
 // String names the layers of s, as the docs table and the errors do.

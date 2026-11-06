@@ -829,26 +829,11 @@
         "layer.profiles.*.description": {
           "default": "unset = none"
         },
-        "layer.profiles.*.image.apt": {
-          "default": "unset = none"
-        },
         "layer.profiles.*.image.jdk": {
           "default": "unset = none; the key was removed in 0.7.0"
         },
-        "layer.profiles.*.image.key_files": {
-          "default": "unset = none"
-        },
         "layer.profiles.*.image.node": {
           "default": "unset = none; the key was removed in 0.7.0"
-        },
-        "layer.profiles.*.image.setup": {
-          "default": "unset = none"
-        },
-        "layer.profiles.*.image.skip_build_scripts": {
-          "default": "unset = false: the dependency install and build scripts run"
-        },
-        "layer.profiles.*.image.tools": {
-          "default": "unset = none"
         },
         "layer.profiles.*.inputs.max_bytes": {
           "default": "unset = the built-in cap"
@@ -858,21 +843,6 @@
         },
         "layer.profiles.*.inputs.max_total_bytes": {
           "default": "unset = the built-in cap"
-        },
-        "layer.profiles.*.rebuild.base": {
-          "default": "unset = the rebuild rule's own default"
-        },
-        "layer.profiles.*.rebuild.check": {
-          "default": "unset = the rebuild rule's own default"
-        },
-        "layer.profiles.*.rebuild.lockfiles": {
-          "default": "unset = the rebuild rule's own default"
-        },
-        "layer.profiles.*.rebuild.max_age": {
-          "default": "unset = the rebuild rule's own default"
-        },
-        "layer.profiles.*.rebuild.paths": {
-          "default": "unset = the rebuild rule's own default"
         },
         "layer.profiles.*.resources.cpu": {
           "default": "unset = 4"
@@ -1133,29 +1103,11 @@
         "workflows.*.commands.test": {
           "default": "unset = none"
         },
-        "workflows.*.dockerfile": {
-          "default": "unset = none"
-        },
-        "workflows.*.image.apt": {
-          "default": "unset = none"
-        },
         "workflows.*.image.jdk": {
           "default": "unset = none; the key was removed in 0.7.0"
         },
-        "workflows.*.image.key_files": {
-          "default": "unset = none"
-        },
         "workflows.*.image.node": {
           "default": "unset = none; the key was removed in 0.7.0"
-        },
-        "workflows.*.image.setup": {
-          "default": "unset = none"
-        },
-        "workflows.*.image.skip_build_scripts": {
-          "default": "unset = false: the dependency install and build scripts run"
-        },
-        "workflows.*.image.tools": {
-          "default": "unset = none"
         },
         "workflows.*.inputs.max_bytes": {
           "default": "unset = the built-in cap"
@@ -1171,21 +1123,6 @@
         },
         "workflows.*.profile": {
           "default": "unset = the project layer's default_profile"
-        },
-        "workflows.*.rebuild.base": {
-          "default": "unset = the rebuild rule's own default"
-        },
-        "workflows.*.rebuild.check": {
-          "default": "unset = the rebuild rule's own default"
-        },
-        "workflows.*.rebuild.lockfiles": {
-          "default": "unset = the rebuild rule's own default"
-        },
-        "workflows.*.rebuild.max_age": {
-          "default": "unset = the rebuild rule's own default"
-        },
-        "workflows.*.rebuild.paths": {
-          "default": "unset = the rebuild rule's own default"
         },
         "workflows.*.resources.cpu": {
           "$comment": "config.DefaultCPU",

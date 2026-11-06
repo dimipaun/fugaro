@@ -301,15 +301,6 @@
     "workflow": {
       "type": "object",
       "additionalProperties": false,
-      "not": {
-        "anyOf": [
-          { "required": ["image", "dockerfile"] },
-          { "required": ["image", "image_name"], "properties": { "image_name": { "minLength": 1 } } },
-          { "required": ["image", "needs"], "properties": { "needs": { "minItems": 1 } } },
-          { "required": ["dockerfile", "image_name"], "properties": { "image_name": { "minLength": 1 } } },
-          { "required": ["dockerfile", "needs"], "properties": { "needs": { "minItems": 1 } } }
-        ]
-      },
       "allOf": [
         {
           "if": { "not": { "required": ["profile"] } },
@@ -319,18 +310,8 @@
           "if": { "required": ["checkout"], "properties": { "checkout": { "const": "clone" } } },
           "then": {
             "properties": {
-              "dockerfile": { "const": "" },
               "image_name": { "const": "" },
-              "needs": { "maxItems": 0 },
-              "image": {
-                "properties": {
-                  "apt": { "maxItems": 0 },
-                  "setup": { "maxItems": 0 },
-                  "tools": { "maxProperties": 0 },
-                  "skip_build_scripts": { "const": false },
-                  "key_files": { "maxItems": 0 }
-                }
-              }
+              "needs": { "maxItems": 0 }
             }
           }
         },
@@ -338,14 +319,8 @@
           "if": { "required": ["checkout"], "properties": { "checkout": { "const": "shared" } } },
           "then": {
             "properties": {
-              "dockerfile": { "const": "" },
               "image_name": { "const": "" },
-              "needs": { "maxItems": 0 },
-              "image": {
-                "properties": {
-                  "setup": { "maxItems": 0 }
-                }
-              }
+              "needs": { "maxItems": 0 }
             }
           }
         }
@@ -354,60 +329,25 @@
         "profile": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The project layer's profile this workflow starts from; its own keys override the profile's field by field. Needs fugaro 0.6.0." },
         "job_profile": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The project policy's job profile this workflow runs on: the Cloud Run job's shape (provider, cpu, memory, task timeout, secret mounts, admission list) selected by name from the published policy. Absent: standard, which every policy that carries profiles must define. It is job_profile and not profile, which names the project layer's workflow template." },
         "base": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: delete it and declare runtimes in mise.toml (docs/base-image-migration.md)" },
-        "checkout": { "enum": ["baked", "clone", "shared"], "description": "baked (default): a derived image is built per repository and the job runs it. clone: the job runs the installation's base_images.base directly, with no per-repository build or daily check; image.apt, image.setup, image.tools, image.skip_build_scripts, image.key_files and dockerfile are refused, since they would need a build. clone shipped in fugaro 0.9.0: it needs the runner's own blobless-clone support, which ships at fugaro 0.7.5, and a published fugaro-base. A launch is still refused on a job image older than that release. shared: the job runs a shared dependency-layer image — one image per resolved dependency set, holding no repository's source — and the run clones the repository's own source at launch; image.apt, image.tools, image.key_files and image.skip_build_scripts are accepted (they are the layer that image holds), and image.setup and dockerfile are refused, since both would put this repository's own content into an image every repository on the same dependency set runs. It is not shipped yet: no released fugaro builds or refreshes a shared image yet, so validation refuses checkout: shared — declare baked or clone in the meantime." },
         "image": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "node": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: declare node in mise.toml ([tools] node = \"24\") or in image.tools (docs/base-image-migration.md)" },
-            "jdk": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: declare Java in mise.toml ([tools] java = \"temurin-25\") (docs/base-image-migration.md)" },
-            "skip_build_scripts": { "type": "boolean" },
-            "apt": {
-              "type": "array",
-              "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9+.-]+(=[A-Za-z0-9.+~:-]+)?$" }
-            },
-            "setup": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$",
-                "not": { "pattern": "<<|\\\\\\s*$|^[\\s\\v]*[-\\[]" }
-              }
-            },
-            "tools": {
-              "type": "object",
-              "propertyNames": { "pattern": "^[a-z0-9][a-z0-9._/:@-]*$", "maxLength": 128 },
-              "additionalProperties": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+~:-]*$", "maxLength": 64 }
-            },
-            "key_files": {
-              "type": "array",
-              "maxItems": 32,
-              "uniqueItems": true,
-              "description": "Repository-relative paths, each a file or a directory, that the dependency install reads and the lockfiles do not carry: a patch applied at install time, a vendored toolchain. The derived image checks them out before the source layer, and a change to one rebuilds the image exactly as a lockfile change does. Each entry is one path, as it is: no glob, no backslash, no control character, no leading /, no .. segment, no .git and not the repository root.",
-              "items": {
-                "type": "string",
-                "maxLength": 200,
-                "pattern": "^[^\\x00-\\x1f\\x7f\\\\*?\\[\\]{}]+$",
-                "not": { "pattern": "(^|/)\\.\\.?(/|$)|^/|//|/$|^\\s+$|(^|/)\\.git(/|$)" }
-              }
-            }
+            "node": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: declare node in mise.toml ([tools] node = \"24\") (docs/base-image-migration.md)" },
+            "jdk": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: declare Java in mise.toml ([tools] java = \"temurin-25\") (docs/base-image-migration.md)" }
           }
         },
-        "dockerfile": {
-          "type": "string",
-          "pattern": "^[^/]",
-          "not": { "pattern": "(^|/)\\.\\.(/|$)" }
-        },
+        "checkout": { "enum": ["baked", "clone", "shared"], "description": "baked (default): the job runs the project's catalog entry the workflow names with image_name, which `fugaro image build` builds. clone: the job runs the installation's base_images.base directly, with no build; a workflow under it names no image_name and no needs, since it would need a build. clone shipped in fugaro 0.9.0: it needs the runner's own blobless-clone support, which ships at fugaro 0.7.5, and a published fugaro-base. A launch is still refused on a job image older than that release. shared: the job runs a shared dependency-layer image — one image per resolved dependency set, holding no repository's source — and the run clones the repository's own source at launch, so a workflow under it names no image_name and no needs either. It is not shipped yet: no released fugaro builds or refreshes a shared image yet, so validation refuses checkout: shared — declare baked or clone in the meantime." },
         "image_name": {
           "type": "string",
           "pattern": "^([a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?)?$",
-          "description": "The project's image catalog entry this repository runs, named (docs/project-image-catalog, D1155). The repository pins that entry: the tag-cover selection does not run for it, and the entry's tags are checked only to warn if they do not cover what the job needs. It is image_name and not image, which is the repository's own build-customisation block. A repository that also sets image: or dockerfile: is refused, since it would state two definitions at once; a repository that also lists needs: pins this entry and has the tags checked against it. An empty image_name means none, here and in the decoder alike: the decoder cannot tell an absent key from an empty one, so both surfaces read an empty value as unset and neither refuses it beside an override. Needs fugaro 0.17.0: an older runner decodes fugaro.yaml strictly and refuses the key alone, so a repository may name one only once every job image has moved."
+          "description": "The project's image catalog entry this repository runs, named (docs/project-image-catalog, D1155). The repository pins that entry: the tag-cover selection does not run for it, and the entry's tags are checked only to warn if they do not cover what the job needs. It is image_name and not image, which the repository-image removal took out of a workflow in 0.20.0: a fugaro.yaml that still writes image:, dockerfile: or a rebuild key is refused by name and told to run `fugaro image add`. A repository that also lists needs: pins this entry and has the tags checked against it. An empty image_name means none, here and in the decoder alike: the decoder cannot tell an absent key from an empty one, so both surfaces read an empty value as unset and neither refuses it beside an override. Needs fugaro 0.17.0: an older runner decodes fugaro.yaml strictly and refuses the key alone, so a repository may name one only once every job image has moved."
         },
         "needs": {
           "type": "array",
           "maxItems": 32,
           "uniqueItems": true,
-          "description": "The tags a job of this workflow needs, for example [node, postgres] (docs/project-image-catalog, D1155). A tag is 1 to 64 of a-z, 0-9, '.', '_' and '-', starting with a letter or a digit, the same allowlist the catalog's tags: entries are held to: a tag is compared for equality by the tag-cover rule, so a denylist would let Node and node, or a tag carrying a zero-width or bidi character, name two tags a person reads as one. Fugaro picks the catalog entry with the fewest tags that covers every tag the job's repositories need, and a job no entry covers is refused before it starts. A repository sets this or its own image definition, never both, and an empty needs: means none here and in the decoder alike. Needs fugaro 0.17.0: an older runner decodes fugaro.yaml strictly and refuses the key alone.",
+          "description": "The tags a job of this workflow needs, for example [node, postgres] (docs/project-image-catalog, D1155). A tag is 1 to 64 of a-z, 0-9, '.', '_' and '-', starting with a letter or a digit, the same allowlist the catalog's tags: entries are held to: a tag is compared for equality by the tag-cover rule, so a denylist would let Node and node, or a tag carrying a zero-width or bidi character, name two tags a person reads as one. Fugaro picks the catalog entry with the fewest tags that covers every tag the job's repositories need, and a job no entry covers is refused before it starts. A repository that lists this beside image_name: pins that entry, and an empty needs: means none here and in the decoder alike. Needs fugaro 0.17.0: an older runner decodes fugaro.yaml strictly and refuses the key alone.",
           "items": {
             "type": "string",
             "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
@@ -506,30 +446,6 @@
             "max_files": { "type": "integer", "minimum": 0, "maximum": 64, "description": "How many files may be attached; absent or 0 means 16 (config.DefaultInputFiles)." },
             "max_bytes": { "type": "integer", "minimum": 0, "maximum": 1073741824, "description": "The most ONE attached file may hold; absent or 0 means 256 MiB (config.DefaultInputBytes)." },
             "max_total_bytes": { "type": "integer", "minimum": 0, "maximum": 4294967296, "description": "The most the WHOLE set may hold; absent or 0 means 1 GiB (config.DefaultInputTotalBytes). The runner stages these beside the render's originals, so the memory rule counts them (docs/design/artifact-runs.md §5.2)." }
-          }
-        },
-        "rebuild": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "check": { "enum": ["daily", "off"] },
-            "max_age": {
-              "anyOf": [
-                { "const": 0 },
-                { "type": "string", "minLength": 1, "pattern": "^(0|(0+d)?(0+h)?(0+m)?(0+s)?)$", "description": "0 in any form fugaro reads, such as \"0\", 0d or 0s: no age limit." },
-                { "type": "string", "minLength": 2, "pattern": "^([0-9]+d|([0-9]+d)?[0-9]+h)([0-9]+m)?([0-9]+s)?$", "description": "At least 1h and at most 90d, which fugaro checks: days or hours, then optional minutes and seconds, such as 14d or 1d12h." }
-              ]
-            },
-            "lockfiles": { "type": "boolean" },
-            "base": { "type": "boolean" },
-            "paths": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "pattern": "^[^/\\s]",
-                "not": { "pattern": "(^|/)\\.\\.(/|$)" }
-              }
-            }
           }
         }
       }

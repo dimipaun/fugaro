@@ -104,7 +104,12 @@ func TestDecideTriggers(t *testing.T) {
 		{"force", func(_ *testing.T, in *Inputs) { in.Force = true }, Rebuild, []string{ReasonForce}},
 		{"no record", func(_ *testing.T, in *Inputs) { in.Record = nil }, Rebuild, []string{ReasonNoRecord}},
 		{"image config", func(t *testing.T, in *Inputs) {
-			in.Config = parse(t, strings.Replace(webYAML, "commands:", "image: { apt: [jq] }, commands:", 1))
+			// image.apt goes on the parsed config: a fugaro.yaml carrying it
+			// is refused by name since the repository-image removal (D1195),
+			// and what DecideTriggers reads is the config.Workflow.
+			in.Config = mutateYAML(t, webYAML, imageOf("web", func(i *config.Image) {
+				i.Apt = []string{"jq"}
+			}))
 		}, Rebuild, []string{ReasonImageConfig}},
 		{"template salt", func(_ *testing.T, in *Inputs) { in.TemplateSalt = "new-salt" }, Rebuild, []string{ReasonImageConfig}},
 		{"lockfiles", func(_ *testing.T, in *Inputs) {

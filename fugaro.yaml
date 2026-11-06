@@ -50,9 +50,13 @@ followup:
 
 workflows:
   go:
-    image:
-      # Bake the module cache and a warm build cache into the derived image.
-      setup: ["go mod download && go build ./..."]
+    # No image: block, and no image_name: yet. The module cache and the warm build
+    # cache this workflow used to bake with image.setup are the catalog entry's own
+    # build now (R0 of docs/repo-image-removal/implementation-plan.md), and the entry
+    # has to be published and built in the project before the workflow can name it: the
+    # owner publishes it, and R0 lands the image_name: pin with it. Until then the
+    # project's default entry runs: this workflow asks for nothing, and an empty
+    # needed set picks the default outright (D1146, reconciliation.md §3).
     commands:
       # The verify step must finish in about 20 minutes. It is NOT the merge gate:
       # GitHub CI is (go test -race ./..., the docker-tests, rules and terraform jobs).

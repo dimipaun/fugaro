@@ -297,6 +297,15 @@ func TestFugaroSchemaCorpus(t *testing.T) {
 // "description" string at the end of it.
 func schemaDescriptionAt(t *testing.T, file string, path ...string) string {
 	t.Helper()
+	desc, _ := schemaObjectAt(t, file, path...)["description"].(string)
+	return desc
+}
+
+// schemaObjectAt returns the JSON object at path inside file, each key a
+// document key ($defs, a definition's name, "properties" or a member name),
+// and fails when the path stops at something that is not an object.
+func schemaObjectAt(t *testing.T, file string, path ...string) map[string]any {
+	t.Helper()
 	data, err := os.ReadFile(file)
 	if err != nil {
 		t.Fatal(err)
@@ -320,8 +329,7 @@ func schemaDescriptionAt(t *testing.T, file string, path ...string) string {
 	if !ok {
 		t.Fatalf("%s: %v: not an object", file, path)
 	}
-	desc, _ := m["description"].(string)
-	return desc
+	return m
 }
 
 // TestSchemaDescriptionsNameMigrationDoc pins that every removed-key
@@ -3927,181 +3935,101 @@ func TestSchemaCoversGitAuthor(t *testing.T) {
 	}
 }
 
-// TestSchemaCoversImageKeyFiles: fugaro.schema.json carries image.key_files,
-// with the bounds internal/config enforces, and the two agree — the schema is
-// what an editor reads, config.Parse is what a build refuses — over the corpus
-// below: the paths that escape the repository, the ones that are patterns
-// rather than paths, the ones that are not clean, and the caps.
-func TestSchemaCoversImageKeyFiles(t *testing.T) {
-	data, err := os.ReadFile("fugaro.schema.json")
-	if err != nil {
-		t.Fatal(err)
+// TestSchemaCoversCheckoutClone: checkout: clone is the kind that builds no
+// image at all, so the shape an editor completes for it is a workflow with no
+// image block — the schema's clone branch admits it, and config.Parse's clone
+// arm has no build to refuse.
+func TestSchemaCoversCheckoutClone(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	const base = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { checkout: clone, commands: { build: make, test: make } }\n"
+	if err := sch.Validate(yamlInstance(t, []byte(base))); err != nil {
+		t.Errorf("the schema rejects a clone workflow with no image block: %v", err)
 	}
-	var doc struct {
-		Properties map[string]json.RawMessage `json:"properties"`
-		Defs       map[string]json.RawMessage `json:"$defs"`
+	if _, ps := config.Parse([]byte(base)); len(ps) > 0 {
+		t.Errorf("config.Parse rejects a clone workflow with no image block: %v", ps)
 	}
-	if err := json.Unmarshal(data, &doc); err != nil {
-		t.Fatal(err)
-	}
-	var workflows struct {
-		AdditionalProperties json.RawMessage `json:"additionalProperties"`
-	}
-	if err := json.Unmarshal(doc.Properties["workflows"], &workflows); err != nil {
-		t.Fatal(err)
-	}
-	// The workflow schema is a $ref, so image: sits in $defs, not inline.
-	var ref struct {
-		Ref string `json:"$ref"`
-	}
-	if err := json.Unmarshal(workflows.AdditionalProperties, &ref); err != nil {
-		t.Fatal(err)
-	}
-	defName, ok := strings.CutPrefix(ref.Ref, "#/$defs/")
-	if !ok {
-		t.Fatalf("workflows.additionalProperties = %s, want a $ref into $defs", workflows.AdditionalProperties)
-	}
-	var def struct {
-		Properties map[string]json.RawMessage `json:"properties"`
-	}
-	if err := json.Unmarshal(doc.Defs[defName], &def); err != nil {
-		t.Fatal(err)
-	}
-	var image struct {
-		Properties map[string]struct {
-			Type        string `json:"type"`
-			MaxItems    int    `json:"maxItems"`
-			UniqueItems bool   `json:"uniqueItems"`
-			Items       struct {
-				Type      string `json:"type"`
-				MaxLength int    `json:"maxLength"`
-				Pattern   string `json:"pattern"`
-			} `json:"items"`
-		} `json:"properties"`
-	}
-	if err := json.Unmarshal(def.Properties["image"], &image); err != nil {
-		t.Fatal(err)
-	}
-	got, hasKey := image.Properties["key_files"]
-	if !hasKey {
-		t.Fatal("fugaro.schema.json has no image.key_files property: a repository that writes one gets a schema error (additionalProperties: false)")
-	}
-	if got.Type != "array" || got.Items.Type != "string" || got.MaxItems != 32 || !got.UniqueItems || got.Items.MaxLength != 200 || got.Items.Pattern == "" {
-		t.Errorf("image.key_files = %+v, want an array of at most 32 unique strings of at most 200 characters matching a pattern (maxImageKeyFiles, maxImageKeyFilePath)", got)
+}
+
+// TestSchemasCarryNoMemberForARemovedKey: the surfaces that decide whether a
+// key can be written have to agree on the removal's list, and
+// config.RemovedImageKeys is that list (internal/config/image.go). The settings
+// schema's members are counted by this folder's own pin; these are the two
+// schemas an editor reads, where a member left behind completes a key
+// config.Parse refuses — the editor's user ships a fugaro.yaml their own
+// validate rejects. The two 0.7.0 tombstones stay: image.node and image.jdk are
+// members whose description is the sentence a person reads. The pair at the end
+// pins one removed key against both surfaces at once, in the words that name
+// `fugaro image add`.
+func TestSchemasCarryNoMemberForARemovedKey(t *testing.T) {
+	for _, c := range []struct{ file, def string }{
+		{"fugaro.schema.json", "workflow"},
+		{"project-layer.schema.json", "profile"},
+	} {
+		t.Run(c.file, func(t *testing.T) {
+			members := schemaObjectAt(t, c.file, "$defs", c.def, "properties")
+			for _, gone := range []string{"dockerfile", "rebuild"} {
+				if _, ok := members[gone]; ok {
+					t.Errorf("%s's %s carries %s, a removed key: the schema would bless a fugaro.yaml config.Parse refuses", c.file, c.def, gone)
+				}
+			}
+			image, ok := members["image"].(map[string]any)
+			if !ok {
+				t.Fatalf("%s's %s has no image member", c.file, c.def)
+			}
+			props, ok := image["properties"].(map[string]any)
+			if !ok {
+				t.Fatalf("%s's %s.image has no properties", c.file, c.def)
+			}
+			for _, key := range config.RemovedImageKeys() {
+				leaf, ok := strings.CutPrefix(key, "workflows.*.image.")
+				if !ok {
+					continue
+				}
+				if _, has := props[leaf]; has {
+					t.Errorf("%s's %s.image carries %s, a removed key: config.Parse refuses it by name", c.file, c.def, leaf)
+				}
+			}
+			for _, stays := range []string{"node", "jdk"} {
+				if _, has := props[stays]; !has {
+					t.Errorf("%s's %s.image dropped %s: it is a 0.7.0 tombstone, and its member is what carries the sentence a person reads", c.file, c.def, stays)
+				}
+			}
+		})
 	}
 
 	sch := compile(t, "fugaro.schema.json")
-	const (
-		base = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: make, test: make } }\n"
-		head = "commands: { build: make, test: make }"
-	)
-	caps := func(n int) string {
-		out := make([]string, n)
-		for i := range out {
-			out[i] = strconv.Quote(strings.Replace("patches/00.patch", "00", string(rune('a'+i%26))+string(rune('a'+i/26)), 1))
-		}
-		return strings.Join(out, ", ")
+	body := strings.Replace(
+		"version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: make, test: make } }\n",
+		"  app: {", "  app: { image: { apt: [libvips-dev] },", 1)
+	if err := sch.Validate(yamlInstance(t, []byte(body))); err == nil {
+		t.Error("the schema accepts image.apt, which config.Parse refuses as a removed key")
 	}
-	for _, tc := range []struct {
-		name    string
-		entries string // the YAML flow sequence, or "" for no image block
-		ok      bool
-	}{
-		{"the key absent", "", true},
-		{"one directory", strconv.Quote("patches"), true},
-		{"a file and a directory", strconv.Quote(".yarn/patches/left-pad.patch") + ", " + strconv.Quote("vendor"), true},
-		{"a space", strconv.Quote("vendor/my tool"), true},
-		{"a non-ASCII path", strconv.Quote(strings.Repeat("é", 150)), true},
-		{"at the length cap", strconv.Quote(strings.Repeat("a", 200)), true},
-		{"at the cap", caps(32), true},
-		{"an absolute path", strconv.Quote("/etc/passwd"), false},
-		{"a parent segment", strconv.Quote("../outside"), false},
-		{"a parent segment in the middle", strconv.Quote("a/../../etc/passwd"), false},
-		{"a bare parent", strconv.Quote(".."), false},
-		{".git", strconv.Quote(".git/config"), false},
-		{"the repository root", strconv.Quote("."), false},
-		{"a trailing slash", strconv.Quote("patches/"), false},
-		{"a doubled slash", strconv.Quote("a//b"), false},
-		{"a dot segment", strconv.Quote("./patches"), false},
-		{"a star", strconv.Quote("*.patch"), false},
-		{"a doublestar", strconv.Quote("**/*.patch"), false},
-		{"a question mark", strconv.Quote("patch?"), false},
-		{"a character class", strconv.Quote("p[abc]"), false},
-		{"a brace group", strconv.Quote("p{a,b}"), false},
-		{"a backslash", strconv.Quote(`a\b`), false},
-		{"a control character", strconv.Quote("a\x1bb"), false},
-		{"empty", strconv.Quote(""), false},
-		{"a duplicate", strconv.Quote("patches") + ", " + strconv.Quote("patches"), false},
-		{"over the cap", caps(33), false},
-		{"over the length cap", strconv.Quote(strings.Repeat("a", 201)), false},
-	} {
-		body := base
-		if tc.entries != "" {
-			body = strings.Replace(base, head, "image: { key_files: ["+tc.entries+"] }, "+head, 1)
-		}
-		schemaErr := sch.Validate(yamlInstance(t, []byte(body)))
-		_, ps := config.Parse([]byte(body))
-		if tc.ok {
-			if schemaErr != nil {
-				t.Errorf("%s: schema rejects it: %v", tc.name, schemaErr)
-			}
-			if len(ps) > 0 {
-				t.Errorf("%s: config.Parse rejects it: %v", tc.name, ps)
-			}
-			continue
-		}
-		if schemaErr == nil {
-			t.Errorf("%s: schema accepts it", tc.name)
-		}
-		if len(ps) == 0 {
-			t.Errorf("%s: config.Parse accepts it", tc.name)
-		}
+	_, ps := config.Parse([]byte(body))
+	if len(ps) != 1 || ps[0].Path != "workflows.app.image.apt" {
+		t.Fatalf("config.Parse problems = %v, want one at workflows.app.image.apt", ps)
 	}
-
-	// checkout: clone builds no image at all, so a clone workflow refuses
-	// key_files, exactly as config.Parse does: the schema's clone branch
-	// cannot leave the key out, or an editor would bless a fugaro.yaml the
-	// run then refuses.
-	for _, entries := range []string{"", strconv.Quote("patches")} {
-		body := strings.Replace(base, "  app: {", "  app: { checkout: clone,", 1)
-		if entries != "" {
-			body = strings.Replace(body, head, "image: { key_files: ["+entries+"] }, "+head, 1)
-		}
-		schemaErr := sch.Validate(yamlInstance(t, []byte(body)))
-		_, ps := config.Parse([]byte(body))
-		switch {
-		case entries == "":
-			if schemaErr != nil {
-				t.Errorf("a clone workflow with no key files: schema rejects it: %v", schemaErr)
-			}
-			if len(ps) > 0 {
-				t.Errorf("a clone workflow with no key files: config.Parse rejects it: %v", ps)
-			}
-		default:
-			if schemaErr == nil {
-				t.Error("the schema accepts image.key_files under checkout: clone, which config.Parse refuses")
-			}
-			if len(ps) == 0 {
-				t.Error("config.Parse accepts image.key_files under checkout: clone")
-			}
+	for _, want := range []string{"was removed in 0.20.0", "fugaro image add", config.RemovedImageKeyDoc} {
+		if !strings.Contains(ps[0].Message, want) {
+			t.Errorf("the refusal %q does not name %q", ps[0].Message, want)
 		}
 	}
 }
 
 // TestSchemaCoversCheckoutShared: checkout: shared is a third kind
 // (design forge-authorship-images/shared-images.md §6, route A) whose job
-// runs a shared dependency-layer image and clones the source at launch, so
-// the schema accepts the dependency-layer keys and refuses the two that
-// would put this repository's own content into an image every repository on
-// the same dependency set runs. The schema and config.Parse agree on which
-// of those two is refused, and disagree on purpose about the kind itself:
-// the kind stays in the schema's enum — an editor's user still gets the
-// shape it will have — while validation refuses checkout: shared until a
-// release builds the image it would run (config/image.go's
-// sharedCheckoutShipped, whose rules internal/config/image_test.go pins
-// behind the flag; no release does yet). Nothing here reads a shared
-// workflow's key rules out of
-// config.Parse: those live in internal/config.
+// runs a shared dependency-layer image and clones the source at launch. The
+// schema and config.Parse disagree on purpose about the kind itself: the
+// kind stays in the schema's enum — an editor's user still gets the shape it
+// will have — while validation refuses checkout: shared until a release
+// builds the image it would run (config/image.go's sharedCheckoutShipped,
+// whose rules internal/config/image_test.go pins behind the flag; no release
+// does yet). The keys that used to put a repository's own content into that
+// image — image.apt, image.setup, image.tools, image.key_files,
+// image.skip_build_scripts, dockerfile — are removed keys now, so both
+// surfaces refuse them as such, and the removal's refusal is what a
+// repository with one of them meets before the kind is reached at all.
+// Nothing here reads a shared workflow's key rules out of config.Parse:
+// those live in internal/config.
 func TestSchemaCoversCheckoutShared(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	const base = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { checkout: shared, commands: { build: make, test: make } }\n"
@@ -4131,22 +4059,21 @@ func TestSchemaCoversCheckoutShared(t *testing.T) {
 		t.Errorf("fugaro.schema.json's checkout enum = %v, want the Go constants %v", got, want)
 	}
 
-	// The dependency layer's keys: the schema accepts them under checkout:
-	// shared, and config.Parse refuses the kind where the repository typed
-	// it, with the sentence a repository reads — which names no release.
-	body := strings.Replace(base, "commands:", `image: { apt: [libvips-dev], tools: { node: "24.19.0" }, key_files: [patches], skip_build_scripts: true }, commands:`, 1)
-	if err := sch.Validate(yamlInstance(t, []byte(body))); err != nil {
-		t.Errorf("the schema rejects checkout: shared with the dependency-layer keys: %v", err)
+	// The kind and nothing else: the schema accepts the shape it will have,
+	// and config.Parse refuses it where the repository typed it, with the
+	// sentence a repository reads — which names no release.
+	if err := sch.Validate(yamlInstance(t, []byte(base))); err != nil {
+		t.Errorf("the schema rejects a bare checkout: shared workflow: %v", err)
 	}
-	if _, ps := config.Parse([]byte(body)); len(ps) != 1 || ps[0].Path != "workflows.app.checkout" || ps[0].Message != config.SharedCheckoutRefusal {
+	if _, ps := config.Parse([]byte(base)); len(ps) != 1 || ps[0].Path != "workflows.app.checkout" || ps[0].Message != config.SharedCheckoutRefusal {
 		t.Errorf("config.Parse problems = %v, want exactly one refusal at workflows.app.checkout: the shared-checkout refusal", ps)
 	}
 
-	// The per-repository keys: the schema refuses both — a schema that
-	// blessed a setup: validation refuses would send an editor's user away
-	// with a fugaro.yaml that fails at validate — and config.Parse refuses
-	// the kind before it reaches either key, so both halves still say this
-	// declaration is not one to ship.
+	// The keys a build honored under the kind are removed keys: the schema
+	// refuses each of them (additionalProperties: false) — a schema that
+	// blessed one would send an editor's user away with a fugaro.yaml that
+	// fails at validate — and config.Parse refuses each by name, one problem
+	// per key, before it reaches the kind at all.
 	for _, tc := range []struct{ name, extra, path string }{
 		{"image.setup", `image: { setup: ["make deps"] }, `, "workflows.app.image.setup"},
 		{"dockerfile", "dockerfile: .fugaro/app.Dockerfile, ", "workflows.app.dockerfile"},
@@ -4158,10 +4085,23 @@ func TestSchemaCoversCheckoutShared(t *testing.T) {
 			if schemaErr == nil {
 				t.Errorf("the schema accepts %s under checkout: shared", tc.path)
 			}
-			if len(ps) != 1 || ps[0].Path != "workflows.app.checkout" || ps[0].Message != config.SharedCheckoutRefusal {
-				t.Errorf("config.Parse problems = %v, want exactly one refusal at workflows.app.checkout: the shared-checkout refusal", ps)
+			if len(ps) != 1 || ps[0].Path != tc.path || !strings.Contains(ps[0].Message, "was removed in 0.20.0") {
+				t.Errorf("config.Parse problems = %v, want the removal's refusal at %s", ps, tc.path)
 			}
 		})
+	}
+	body := strings.Replace(base, "commands:", `image: { apt: [libvips-dev], tools: { node: "24.19.0" }, key_files: [patches], skip_build_scripts: true }, commands:`, 1)
+	if err := sch.Validate(yamlInstance(t, []byte(body))); err == nil {
+		t.Error("the schema accepts the removed image keys under checkout: shared")
+	}
+	_, ps := config.Parse([]byte(body))
+	if len(ps) != 4 {
+		t.Errorf("config.Parse problems = %v, want the four removed keys refused", ps)
+	}
+	for _, p := range ps {
+		if !strings.Contains(p.Message, "was removed in 0.20.0") {
+			t.Errorf("problem %v is not the removal's refusal", p)
+		}
 	}
 }
 
@@ -4186,7 +4126,9 @@ func TestSchemaDescribesCheckoutSharedAsNotYetShipped(t *testing.T) {
 // validator accepted it, and no corpus file caught the disagreement the
 // test above pins for fugaro.schema.json. As there, validation refuses the
 // kind itself until a release builds a shared image, so what
-// config.ParseProjectLayer is asked for here is that refusal.
+// config.ParseProjectLayer is asked for here is that refusal, and the keys a
+// profile once used to bake its own content into that image are removed keys
+// the two surfaces refuse by name before the kind is reached.
 func TestProjectLayerSchemaCoversCheckoutShared(t *testing.T) {
 	sch := compile(t, "project-layer.schema.json")
 	data, err := os.ReadFile("project-layer.schema.json")
@@ -4215,30 +4157,43 @@ func TestProjectLayerSchemaCoversCheckoutShared(t *testing.T) {
 	a := config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
 	const base = "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  p:\n    checkout: shared\n    commands: { build: make, test: make }\n"
 
-	// The dependency layer's keys a profile may carry: the schema accepts
-	// them, the same shape
-	// testdata/project-layer/valid/checkout-shared-profile.yaml carries
-	// through the corpus (which internal/config runs with the flag open).
-	withKeys := strings.Replace(base, "    commands:", "    image: { apt: [libvips-dev], tools: { node: \"24.19.0\" }, skip_build_scripts: true }\n    commands:", 1)
-	if err := sch.Validate(yamlInstance(t, []byte(withKeys))); err != nil {
-		t.Errorf("the schema rejects a checkout: shared profile with the dependency-layer keys: %v", err)
+	// The kind and nothing else: the schema accepts the shape it will have,
+	// and config.ParseProjectLayer refuses it in the profile that typed it.
+	if err := sch.Validate(yamlInstance(t, []byte(base))); err != nil {
+		t.Errorf("the schema rejects a bare checkout: shared profile: %v", err)
 	}
-	if _, ps := config.ParseProjectLayer([]byte(withKeys), a); len(ps) != 1 || ps[0].Path != "profiles.p.checkout" || ps[0].Message != config.SharedCheckoutRefusal {
+	if _, ps := config.ParseProjectLayer([]byte(base), a); len(ps) != 1 || ps[0].Path != "profiles.p.checkout" || ps[0].Message != config.SharedCheckoutRefusal {
 		t.Errorf("config.ParseProjectLayer problems = %v, want exactly one refusal at profiles.p.checkout: the shared-checkout refusal", ps)
 	}
 
-	// image.setup is the one per-repository key a profile can carry
-	// (dockerfile and image.key_files are repo-only): refused by the schema,
-	// and by config.ParseProjectLayer through the refusal of the kind — the
-	// mirror of fugaro.schema.json's rule.
+	// The keys a profile's image carried — image.apt, image.setup, image.tools,
+	// image.skip_build_scripts (dockerfile and image.key_files were repo-only) —
+	// are removed keys: refused by the schema, and by config.ParseProjectLayer
+	// one problem per key, by name, before the kind is reached. The fixture
+	// testdata/project-layer/valid/checkout-shared-profile.yaml carries the same
+	// keys and moves with them (R3).
+	withKeys := strings.Replace(base, "    commands:", "    image: { apt: [libvips-dev], tools: { node: \"24.19.0\" }, skip_build_scripts: true }\n    commands:", 1)
+	if err := sch.Validate(yamlInstance(t, []byte(withKeys))); err == nil {
+		t.Error("the schema accepts the removed image keys under a profile's checkout: shared")
+	}
+	if _, ps := config.ParseProjectLayer([]byte(withKeys), a); len(ps) != 3 {
+		t.Errorf("config.ParseProjectLayer problems = %v, want the three removed keys refused", ps)
+	} else {
+		for _, p := range ps {
+			if !strings.Contains(p.Message, "was removed in 0.20.0") {
+				t.Errorf("problem %v is not the removal's refusal", p)
+			}
+		}
+	}
+
 	withSetup := strings.Replace(base, "    commands:", "    image: { setup: [\"./scripts/warm.sh\"] }\n    commands:", 1)
 	schemaErr := sch.Validate(yamlInstance(t, []byte(withSetup)))
 	_, ps := config.ParseProjectLayer([]byte(withSetup), a)
 	if schemaErr == nil {
 		t.Error("the schema accepts image.setup under a profile's checkout: shared")
 	}
-	if len(ps) != 1 || ps[0].Path != "profiles.p.checkout" || ps[0].Message != config.SharedCheckoutRefusal {
-		t.Errorf("config.ParseProjectLayer problems = %v, want exactly one refusal at profiles.p.checkout: the shared-checkout refusal", ps)
+	if len(ps) != 1 || ps[0].Path != "profiles.p.image.setup" || !strings.Contains(ps[0].Message, "was removed in 0.20.0") {
+		t.Errorf("config.ParseProjectLayer problems = %v, want the removal's refusal at profiles.p.image.setup", ps)
 	}
 }
 

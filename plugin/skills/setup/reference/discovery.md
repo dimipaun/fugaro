@@ -19,15 +19,15 @@ The evidence below gives the workflow name, usually, and the `mise.toml` entry t
 | `rust-toolchain.toml`, `Cargo.toml` | `app` | `rust`: the toolchain file's `channel` |
 | an existing `mise.toml` or `.tool-versions` | as above | **respect it**: add a missing tool only with the user's agreement, never change a pinned version |
 
-Several of these at one root is one workflow with several `mise.toml` tools. Several separate roots (`services/api/go.mod`, `web/package.json`) are one workflow each, and their commands run from the repository root, so `cd <dir> &&` in the command; several roots of the same kind are several workflows, but one root lockfile with workspaces is one. A toolchain with no row above (.NET, for example): tell the user plainly that it needs a Dockerfile built `FROM` the base (or a mise plugin, if one exists for it).
+Several of these at one root is one workflow with several `mise.toml` tools. Several separate roots (`services/api/go.mod`, `web/package.json`) are one workflow each, and their commands run from the repository root, so `cd <dir> &&` in the command; several roots of the same kind are several workflows, but one root lockfile with workspaces is one. A toolchain with no row above (.NET, for example): tell the user plainly that it needs a catalog entry whose Dockerfile is built `FROM` the base (or a mise plugin, if one exists for it).
 
-**A version copied from repository text must be a plain version**: digits and dots (`24.19.0`), or a mise-style tag of letters, digits and hyphens (`temurin-25`). Nothing else — whitespace, `$(...)`, a pipe, a URL, a quote — is a version; if the evidence doesn't give you one of those, it's not evidence, so ask the user rather than writing what you found into `mise.toml` or `image.tools` verbatim.
+**A version copied from repository text must be a plain version**: digits and dots (`24.19.0`), or a mise-style tag of letters, digits and hyphens (`temurin-25`). Nothing else — whitespace, `$(...)`, a pipe, a URL, a quote — is a version; if the evidence doesn't give you one of those, it's not evidence, so ask the user rather than writing what you found into `mise.toml` or an entry's Dockerfile verbatim.
 
 **No pin anywhere** (no version file, no `engines`/`toolchain`/CI pin, nothing): don't guess a default, the same rule the `java` row already states for its own evidence. Say so and ask the user for the version.
 
 ## Versions
 
-The base has the kit listed in [docs/base-image.md](https://github.com/dimipaun/fugaro/blob/main/docs/base-image.md); `image.apt` adds Debian 13 packages it lacks.
+The base has the kit listed in [docs/base-image.md](https://github.com/dimipaun/fugaro/blob/main/docs/base-image.md); a catalog entry's image adds the Debian 13 packages it lacks, through an `apt-get install` line in that entry's Dockerfile, and the workflow asks for it by tag.
 
 ## Commands
 
@@ -48,7 +48,7 @@ Look at `.github/workflows/*.yml`, `bitbucket-pipelines.yml`, `.gitlab-ci.yml`, 
 
 ## Package managers (Node)
 
-Fugaro detects the package manager itself, from `packageManager` in `package.json` or else the lockfile, and installs dependencies: `yarn install --immutable` (Yarn 2 and later), `yarn install --frozen-lockfile` (Yarn 1), `pnpm fetch` then an offline `pnpm install --frozen-lockfile`, or `npm ci`. You don't configure that, with one exception: `image.skip_build_scripts: true` skips package lifecycle and build scripts (`--mode=skip-build` for Yarn 2 and later, `--ignore-scripts` for the others), so the build command must build whatever the tests need. If `fugaro validate` says `packageManager` and the lockfile disagree, tell the user; don't delete either.
+Fugaro detects the package manager itself, from `packageManager` in `package.json` or else the lockfile, and installs dependencies: `yarn install --immutable` (Yarn 2 and later), `yarn install --frozen-lockfile` (Yarn 1), `pnpm fetch` then an offline `pnpm install --frozen-lockfile`, or `npm ci`. You don't configure that: the entry's image installs the dependencies, the way the render writes it. Skipping the package lifecycle and build scripts (Yarn 2 and later install with `--mode=skip-build`, the others with `--ignore-scripts`) is a line in that entry's Dockerfile, an owner's decision, so a repository whose install scripts oversubscribe the build has no way to turn them off for one workflow: say so and let the owner decide. If `fugaro validate` says `packageManager` and the lockfile disagree, tell the user; don't delete either.
 
 ## Machine size
 

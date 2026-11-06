@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -16,16 +17,26 @@ func TestLegacyBaseRefusedWithTheMigrationDoc(t *testing.T) {
 	}
 }
 
+// TestLegacyImageNodeAndJDKRefused pins both 0.7.0 sentences whole, token by
+// token and in order, rather than by the value they echo: what one of them
+// stops naming matters as much as what it names, and the 0.20.0 removal took
+// the image.tools alternative out of it, because a decoder that sends a person
+// to a key it refuses in the next breath is worse than one that names only the
+// path left. That reader meets the removal's own sentence either way -- it
+// names `fugaro image add` -- so what this pins is that mise.toml is the one
+// alternative an image.node or image.jdk refusal still offers.
 func TestLegacyImageNodeAndJDKRefused(t *testing.T) {
-	y := strings.Replace(baseYAML, "    commands:", "    image: { node: \"24.19.0\" }\n    commands:", 1)
-	_, problems := Parse([]byte(y))
-	if len(problems) != 1 || !strings.Contains(problems[0].Message, `node = "24.19.0"`) || !strings.Contains(problems[0].Message, MigrationDoc) {
-		t.Errorf("image.node: %v", problems)
-	}
-	y = strings.Replace(baseYAML, "    commands:", "    image: { jdk: \"21\" }\n    commands:", 1)
-	_, problems = Parse([]byte(y))
-	if len(problems) != 1 || !strings.Contains(problems[0].Message, `java = "temurin-21"`) {
-		t.Errorf("image.jdk: %v", problems)
+	for _, tc := range []struct{ image, path, want string }{
+		{`image: { node: "24.19.0" }`, "workflows.app.image.node",
+			fmt.Sprintf("was removed in 0.7.0: declare node in mise.toml ([tools] node = %q) (%s)", "24.19.0", MigrationDoc)},
+		{`image: { jdk: "21" }`, "workflows.app.image.jdk",
+			fmt.Sprintf("was removed in 0.7.0: declare Java in mise.toml ([tools] java = %q) (%s)", "temurin-21", MigrationDoc)},
+	} {
+		y := strings.Replace(baseYAML, "    commands:", "    "+tc.image+"\n    commands:", 1)
+		_, problems := Parse([]byte(y))
+		if len(problems) != 1 || problems[0].Path != tc.path || problems[0].Message != tc.want {
+			t.Errorf("%s: problems = %v, want exactly one at %s: %s", tc.image, problems, tc.path, tc.want)
+		}
 	}
 }
 

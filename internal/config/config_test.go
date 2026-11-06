@@ -252,23 +252,17 @@ func TestSelectWorkflow(t *testing.T) {
 
 func TestCheckMissingFiles(t *testing.T) {
 	root := t.TempDir()
-	cfg, problems := Parse([]byte(minimalYAML + "    dockerfile: .fugaro/server.Dockerfile\n"))
+	cfg, problems := Parse([]byte(minimalYAML))
 	if len(problems) > 0 {
 		t.Fatal(problems)
 	}
 	ps := Check(cfg, root)
-	for _, path := range []string{"workflows.server.commands.build", "workflows.server.commands.test", "workflows.server.dockerfile"} {
+	for _, path := range []string{"workflows.server.commands.build", "workflows.server.commands.test"} {
 		if !hasProblem(ps, path, "does not exist", 0) {
 			t.Errorf("missing problem for %s in %v", path, ps)
 		}
 	}
 	if err := os.WriteFile(filepath.Join(root, "gradlew"), []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, ".fugaro"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".fugaro", "server.Dockerfile"), []byte(validRepoDockerfile), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if ps := Check(cfg, root); len(ps) != 0 {
@@ -291,21 +285,42 @@ func TestRebuildDefaults(t *testing.T) {
 	}
 }
 
-func TestRebuildExplicitValues(t *testing.T) {
-	data, err := os.ReadFile("../../testdata/config/valid/rebuild-full.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg, ps := Parse(data)
-	if len(ps) > 0 {
-		t.Fatal(ps)
-	}
-	web, srv := cfg.Workflows["web"].Rebuild, cfg.Workflows["server"].Rebuild
-	if web.MaxAge.Duration != 30*24*time.Hour || *web.Base != false || !*web.Lockfiles || len(web.Paths) != 2 {
-		t.Errorf("web rebuild = %+v", web)
-	}
-	if srv.Check != "off" || srv.MaxAge.Duration != 0 {
-		t.Errorf("an explicit max_age of 0 must stay 0: %+v", srv)
+// TestRebuildKeysAreRefused: the two whole rebuild blocks that used to be
+// valid configs (testdata/config/invalid/rebuild-full.yaml and
+// rebuild-age-zero-forms.yaml, moved there from the valid corpus with their
+// subject) are refused key by key, each at its own path, in the order the
+// removal's table reads them (D1195). Nothing rebuilds a repository's own
+// image any more, so a value is never decoded: two workflows spell max_age
+// as "0" and as 0s, and both are refused alike.
+func TestRebuildKeysAreRefused(t *testing.T) {
+	for file, want := range map[string][]string{
+		"rebuild-full": {
+			"workflows.server.rebuild.check",
+			"workflows.server.rebuild.max_age",
+			"workflows.web.rebuild.check",
+			"workflows.web.rebuild.max_age",
+			"workflows.web.rebuild.lockfiles",
+			"workflows.web.rebuild.base",
+			"workflows.web.rebuild.paths",
+		},
+		"rebuild-age-zero-forms": {
+			"workflows.api.rebuild.max_age",
+			"workflows.web.rebuild.max_age",
+		},
+	} {
+		data, err := os.ReadFile("../../testdata/config/invalid/" + file + ".yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, ps := Parse(data)
+		if cfg != nil || len(ps) != len(want) {
+			t.Fatalf("%s: parsed to %v with %v, want %d problems", file, cfg, ps, len(want))
+		}
+		for i, path := range want {
+			if ps[i].Path != path || !strings.Contains(ps[i].Message, "was removed in 0.20.0") {
+				t.Errorf("%s: problem %d = %+v, want %s: was removed in 0.20.0", file, i, ps[i], path)
+			}
+		}
 	}
 }
 
@@ -313,7 +328,7 @@ func TestRebuildValidation(t *testing.T) {
 	for file, path := range map[string]string{
 		"rebuild-bad-check": "workflows.web.rebuild.check",
 		"rebuild-bad-age":   "workflows.web.rebuild.max_age",
-		"rebuild-bad-glob":  "workflows.web.rebuild.paths[0]",
+		"rebuild-bad-glob":  "workflows.web.rebuild.paths",
 		"rebuild-short-age": "workflows.web.rebuild.max_age",
 	} {
 		data, err := os.ReadFile("../../testdata/config/invalid/" + file + ".yaml")
@@ -328,24 +343,6 @@ func TestRebuildValidation(t *testing.T) {
 	data, _ := os.ReadFile("../../testdata/config/invalid/rebuild-unknown-field.yaml")
 	if cfg, ps := Parse(data); cfg != nil || !hasProblem(ps, "", "field smoke not found", 0) {
 		t.Errorf("unknown field: got %v", ps)
-	}
-}
-
-func TestRebuildPathAndAgeRules(t *testing.T) {
-	for _, tc := range []struct {
-		block string
-		ok    bool
-	}{
-		{"{ max_age: 1h }", true}, {"{ max_age: 90d }", true}, {"{ max_age: 91d }", false}, {"{ max_age: -1h }", false},
-		{"{ max_age: 0 }", true}, {"{ max_age: 1d12h }", true}, {"{ max_age: soon }", false},
-		{"{ max_age: 0d }", true}, {"{ max_age: 2d-5h }", false}, {"{ max_age: 2d+5h }", false}, {"{ max_age: 1d-0s }", false},
-		{`{ paths: ["a/**/b"] }`, true}, {`{ paths: ["/abs"] }`, false}, {`{ paths: [""] }`, false},
-		{`{ paths: ["a/../b"] }`, false}, {`{ paths: ["[a"] }`, false}, {`{ paths: [".."] }`, false},
-	} {
-		_, ps := Parse([]byte(minimalYAML + "    rebuild: " + tc.block + "\n"))
-		if (len(ps) == 0) != tc.ok {
-			t.Errorf("%s: ok=%v, problems %v", tc.block, tc.ok, ps)
-		}
 	}
 }
 
@@ -368,15 +365,15 @@ func TestDurationDays(t *testing.T) {
 	}
 }
 
-// Days are accepted wherever a duration is, as the schema's duration and
-// max_age patterns allow them; a signed remainder is refused.
+// Days are accepted wherever a duration is, as the schema's duration
+// pattern allows them; a signed remainder is refused.
 func TestDurationFixtures(t *testing.T) {
 	data, err := os.ReadFile("../../testdata/config/valid/timeouts-days.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg, ps := Parse(data)
-	if len(ps) != 0 || cfg.Workflows["web"].Timeouts.Total.Duration != 24*time.Hour || !cfg.Workflows["web"].Rebuild.MaxAge.Set {
+	if len(ps) != 0 || cfg.Workflows["web"].Timeouts.Total.Duration != 24*time.Hour {
 		t.Fatalf("timeouts-days: %v", ps)
 	}
 	data, err = os.ReadFile("../../testdata/config/invalid/rebuild-mixed-sign-age.yaml")
@@ -822,6 +819,16 @@ func TestAgentOf(t *testing.T) {
 			// agent.oauth_token is repository-scope, so it is here.
 			why:      "a file that needs a layer still says which account it names",
 			data:     "version: 1\nproject: example\ngcp_project: proj-1234\nagent: { auth: oauth, oauth_token: acme-personal }\nworkflows:\n  app: { profile: p, commands: { build: b } }\n",
+			wantAuth: "oauth", wantToken: "acme-personal", wantOK: true,
+		},
+		{
+			// A key the repository-image removal took out is refused by
+			// Resolve, on the decoded config, and not by the strict decode
+			// this reads: a file a reviewer has not migrated yet is still a
+			// file whose agent block was written, so a launch judges the
+			// account it names (config.go, AgentOf).
+			why:      "a file still carrying a removed key says which account it names",
+			data:     "version: 1\nproject: example\ngit: { provider: github }\nagent: { auth: oauth, oauth_token: acme-personal }\nworkflows:\n  app: { image: { apt: [jq] }, commands: { build: b } }\n",
 			wantAuth: "oauth", wantToken: "acme-personal", wantOK: true,
 		},
 		{

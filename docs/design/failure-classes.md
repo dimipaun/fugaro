@@ -783,7 +783,7 @@ commits.
   counts `internal/cli/docs_*_test.go` files and moving it is a decision of its own
   ([rigor-modes/reconciliation.md](../rigor-modes/reconciliation.md) §4's row, held by
   `TestDocsRigorModesReconciliationCountsTheConfigManagementPin`).
-- **It files no backlog item.** `docs/backlog/README.md` reads **2 items: 2 open, 0 closed, 0
+- **It files no backlog item.** `docs/backlog/README.md` reads **3 items: 2 open, 1 closed, 0
   dropped**, and this design leaves it exactly as it is: an open question here is an Open item (§9)
   until the owner rules, and a filed item is what the owner's ruling becomes
   ([backlog/FORMAT.md](../backlog/FORMAT.md)).

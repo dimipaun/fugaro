@@ -153,49 +153,6 @@ func TestDoctorLayerChecksDistrustsARewrittenOrigin(t *testing.T) {
 	}
 }
 
-// TestDoctorImageConfigNamesEachDifferingSource: when two different image
-// leaves come from two different sources (one from the profile, one
-// overridden directly in the repository), imageConfigChecks' message must
-// name both sources, never silently attribute the whole thing to just one
-// of them. (base: is always removed in 0.7.0 now, so it can never itself be
-// one of the differing sources; two image: leaves stand in.)
-//
-// Mutation (run, restore): revert imageConfigReason to the single `from :=
-// res.SourceOf(...base); if s := res.SourceOf(...image); s !=
-// SourceDefault { from = s }` form, and this test fails: the message says
-// only "its base comes from repo" (one image leaf's source silently
-// overwrote base's, and the other leaf's source, profile svc, is never
-// named at all).
-func TestDoctorImageConfigNamesEachDifferingSource(t *testing.T) {
-	f := newCloudFixture(t)
-	isolateCache(t)
-	layer := `version: 1
-project: aurora
-gcp_project: proj-1234
-defaults:
-  git: { provider: github }
-  agent: { auth: api-key }
-profiles:
-  svc:
-    image: { apt: [git] }
-    commands: { build: sh build.sh, test: sh test.sh }
-default_profile: svc
-`
-	publishedLayer(t, f, layer)
-	dir := layerCheckout(t, f, minimalAnchored+"git: { provider: github }\nworkflows:\n  default: { profile: svc, image: { setup: [\"echo hi\"] } }\n")
-	slug := mustSlug("github", "acme/other")
-	data, _ := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/other", Workflow: config.ImplicitWorkflow, ImageConfigHash: strings.Repeat("0", 64)})
-	writeBucketFile(t, f, imagecheck.RecordKey(slug, config.ImplicitWorkflow), string(data))
-	lc := fileEnv(t, f).lc
-	ctx := context.Background()
-	rf := resolvedLayerFixture(t, ctx, lc, dir)
-
-	c := layerCheck(doctorLayerChecks(ctx, lc, dir, rf), "image-config-"+config.ImplicitWorkflow)
-	if c == nil || !strings.Contains(c.Problem, "its base comes from default") || !strings.Contains(c.Problem, "its image settings from profile svc, repo") {
-		t.Fatalf("check %+v", c)
-	}
-}
-
 func TestDoctorFlagsAStaleImage(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
@@ -210,36 +167,6 @@ func TestDoctorFlagsAStaleImage(t *testing.T) {
 	c := layerCheck(doctorLayerChecks(ctx, lc, dir, rf), "image-config-"+config.ImplicitWorkflow)
 	if c == nil || c.Severity != "warning" || !strings.Contains(c.Problem, "other image settings") || !strings.Contains(c.Fix, "fugaro image build --workflow default") {
 		t.Fatalf("check %+v", c)
-	}
-}
-
-// TestDoctorImageConfigSkipsDockerfileWorkflows: a workflow with its own
-// Dockerfile is never named by imageConfigChecks: its hash covers the
-// Dockerfile blob, which needs a real git tree imageConfigChecks doesn't
-// have (it always calls imagecheck.ImageConfigHash with a nil Tree).
-//
-// Mutation (run, restore): change the guard from `if
-// cfg.Workflows[name].Dockerfile != "" { continue }` to `if false {
-// continue }`, and this test fails — not with a wrong check, but a panic:
-// ImageConfigHash calls tree.BlobID(w.Dockerfile) on the nil Tree, which is
-// exactly why the guard exists. A panic inside the test function is a
-// failure, so the mutation is still caught.
-func TestDoctorImageConfigSkipsDockerfileWorkflows(t *testing.T) {
-	f := newCloudFixture(t)
-	isolateCache(t)
-	publishedLayer(t, f, testProjectLayer)
-	dir := layerCheckout(t, f, minimalAnchored+"git: { provider: github }\nworkflows:\n  app: { dockerfile: .fugaro/app.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n")
-	testutil.WriteFiles(t, dir, map[string]string{".fugaro/app.Dockerfile": "ARG FUGARO_BASE\nFROM ${FUGARO_BASE}\nRUN git clone \"$REPO_URL\" /work/repo\n"})
-	slug := mustSlug("github", "acme/other")
-	data, _ := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/other", Workflow: "app", ImageConfigHash: strings.Repeat("0", 64)})
-	writeBucketFile(t, f, imagecheck.RecordKey(slug, "app"), string(data))
-	lc := fileEnv(t, f).lc
-	ctx := context.Background()
-	rf := resolvedLayerFixture(t, ctx, lc, dir)
-
-	cs := doctorLayerChecks(ctx, lc, dir, rf)
-	if c := layerCheck(cs, "image-config-app"); c != nil {
-		t.Fatalf("a Dockerfile workflow must never get an image-config check: %+v", c)
 	}
 }
 
@@ -329,21 +256,21 @@ func TestDoctorLayerUnknownWhenBucketUnreachable(t *testing.T) {
 	}
 }
 
-// TestImageConfigReasonSortsMultipleSources: imageConfigReason's "other
-// sources" list is sorted, so the message is deterministic even when more
-// than one other source applies.
+// TestImageConfigReasonNamesTheBasesSource: imageConfigReason names where a
+// workflow's base comes from, so a reader of the report knows which layer to
+// look in.
 //
-// Mutation (run, restore): reverse the sorted slice before joining it
-// (`s := slices.Sorted(...); slices.Reverse(s)`), and this test fails: the
-// message lists "repo, profile zzz" instead of "profile zzz, repo".
-func TestImageConfigReasonSortsMultipleSources(t *testing.T) {
+// It named every distinct source among imageLeafKeys — base, image.apt,
+// image.setup and image.skip_build_scripts — before the repository-image
+// removal refused the last three by name (D1195) and left the base's source
+// the whole answer. This is the sentence that is left, and the one
+// TestDoctorFlagsAStaleImage reads in the report's own text.
+func TestImageConfigReasonNamesTheBasesSource(t *testing.T) {
 	res := &config.Resolution{Sources: map[string]string{
-		"workflows.default.base":        config.SourceDefault,
-		"workflows.default.image.apt":   "repo",
-		"workflows.default.image.setup": config.SourceProfile("zzz"),
+		"workflows.default.base": config.SourceProfile("svc"),
 	}}
 	got := imageConfigReason(res, "default")
-	want := "its base comes from default and its image settings from profile zzz, repo"
+	want := "its base comes from profile svc"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}

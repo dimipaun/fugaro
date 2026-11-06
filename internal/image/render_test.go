@@ -462,7 +462,7 @@ func TestRenderDefaultWarmUpUnchanged(t *testing.T) {
 func TestDockerfileSkipBuildScripts(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFiles(t, root, map[string]string{"package.json": `{"packageManager":"yarn@4.16.0"}`, "yarn.lock": ""})
-	cfg := parseConfig(t, strings.Replace(renderYAML, "  web:\n", "  web:\n    image: { skip_build_scripts: true }\n", 1))
+	cfg := configWithImage(t, "web", config.Image{SkipBuildScripts: true})
 	data, _, err := Dockerfile(root, cfg, "web", "dev")
 	if err != nil {
 		t.Fatal(err)
@@ -505,6 +505,33 @@ func parseConfig(t *testing.T, yaml string) *config.Config {
 	return cfg
 }
 
+// configWithImage is renderYAML with the workflow's image settings set on the
+// parsed config instead of written in the fixture: a fugaro.yaml that carries
+// an image: block is refused by name since the repository-image removal
+// (D1195), and what these tests are about is what the renderer does with the
+// settings, which its own callers hand it on a config.Image.
+func configWithImage(t *testing.T, wf string, img config.Image) *config.Config {
+	t.Helper()
+	return configWithWorkflow(t, wf, func(w *config.Workflow) { w.Image = img })
+}
+
+// configWithDockerfile is configWithImage for the workflow's dockerfile: path,
+// which the removal refuses the same way.
+func configWithDockerfile(t *testing.T, wf, path string) *config.Config {
+	t.Helper()
+	return configWithWorkflow(t, wf, func(w *config.Workflow) { w.Dockerfile = path })
+}
+
+// configWithWorkflow parses renderYAML and hands one workflow to mutate.
+func configWithWorkflow(t *testing.T, wf string, mutate func(*config.Workflow)) *config.Config {
+	t.Helper()
+	cfg := parseConfig(t, renderYAML)
+	w := cfg.Workflows[wf]
+	mutate(&w)
+	cfg.Workflows[wf] = w
+	return cfg
+}
+
 const renderYAML = `version: 1
 project: aurora
 git: { provider: github }
@@ -531,7 +558,7 @@ func TestDockerfileUsesRepositoryFile(t *testing.T) {
 	root := t.TempDir()
 	const df = "ARG FUGARO_BASE\nFROM ${FUGARO_BASE}\nRUN git clone \"$REPO_URL\" /work/repo\n"
 	testutil.WriteFiles(t, root, map[string]string{".fugaro/web.Dockerfile": df})
-	cfg := parseConfig(t, strings.Replace(renderYAML, "  web:\n", "  web:\n    dockerfile: .fugaro/web.Dockerfile\n", 1))
+	cfg := configWithDockerfile(t, "web", ".fugaro/web.Dockerfile")
 	data, repoFile, err := Dockerfile(root, cfg, "web", "dev")
 	if err != nil || repoFile != ".fugaro/web.Dockerfile" || string(data) != df {
 		t.Fatalf("data %q, repoFile %q, err %v", data, repoFile, err)
@@ -891,12 +918,8 @@ func TestDockerfileOnTheBaseDetectsMiseAndNode(t *testing.T) {
 // a mise.toml too and so never exercises it alone).
 func TestDockerfileOnTheBaseInstallsMiseForImageToolsAlone(t *testing.T) {
 	root := t.TempDir()
-	cfg, problems := config.Parse([]byte("version: 1\nproject: acme\ngit: { provider: github }\n" +
-		"workflows:\n  app: { commands: { build: make, test: make test }, image: { tools: { node: \"24.19.0\" } } }\n"))
-	if len(problems) > 0 {
-		t.Fatal(problems)
-	}
-	got, repoFile, err := Dockerfile(root, cfg, "app", "dev")
+	cfg := configWithImage(t, "web", config.Image{Tools: config.MiseTools{"node": "24.19.0"}})
+	got, repoFile, err := Dockerfile(root, cfg, "web", "dev")
 	if err != nil || repoFile != "" {
 		t.Fatalf("%v %q", err, repoFile)
 	}
@@ -1058,7 +1081,7 @@ func TestWorkspaceManifests(t *testing.T) {
 // the repository, so it runs on the source layer, not on the key files.
 func TestRenderSetupStaysAfterSource(t *testing.T) {
 	root, _ := keyFileCheckout(t)
-	cfg := parseConfig(t, strings.Replace(renderYAML, "  web:\n", "  web:\n    image: { setup: [\"npm run prepare\"] }\n", 1))
+	cfg := configWithImage(t, "web", config.Image{Setup: []string{"npm run prepare"}})
 	got, _, err := Dockerfile(root, cfg, "web", "dev")
 	if err != nil {
 		t.Fatal(err)
@@ -1212,8 +1235,7 @@ func TestRenderCopiesConfiguredKeyFilesBeforeSource(t *testing.T) {
 		"vendor/tool":         "#!/bin/sh\n",
 		"src/app.js":          "console.log(1)\n",
 	})
-	cfg := parseConfig(t, strings.Replace(renderYAML, "    secrets:",
-		"    image: { key_files: [patches, vendor/tool] }\n    secrets:", 1))
+	cfg := configWithImage(t, "web", config.Image{KeyFiles: []string{"patches", "vendor/tool"}})
 	got, _, err := Dockerfile(root, cfg, "web", "dev")
 	if err != nil {
 		t.Fatal(err)
@@ -1318,8 +1340,7 @@ func TestKeyLayerDirectoryExpansionCapped(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root, cfg := keyFileCheckout(t)
 			if tc.dir == "patches" {
-				cfg = parseConfig(t, strings.Replace(renderYAML, "    secrets:",
-					"    image: { key_files: [patches] }\n    secrets:", 1))
+				cfg = configWithImage(t, "web", config.Image{KeyFiles: []string{"patches"}})
 			}
 			testutil.WriteFiles(t, root, patches(tc.n, tc.dir))
 			got, _, err := Dockerfile(root, cfg, "web", "dev")

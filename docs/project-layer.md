@@ -129,13 +129,13 @@ The merge rules (design §4):
 
 | Value | Rule |
 |---|---|
-| map (`git`, `git.pr`, `agent`, `agent.models`, a workflow, `image`, `commands`, `rerun_failed`, `resources`, `timeouts`, `rebuild`) | merged key by key, recursively |
+| map (`git`, `git.pr`, `agent`, `agent.models`, a workflow, `image`, `commands`, `rerun_failed`, `resources`, `timeouts`) | merged key by key, recursively |
 | scalar (string, number, bool, duration) | the narrower layer's value replaces the wider one when the key is present, even as `""`, `0` or `false` |
-| list (`git.pr.labels`, `image.apt`, `image.setup`, `commands.reports`, `cache`, `rebuild.paths`, and any repo-only list) | replaced whole, **never appended**. To add to a profile's list, repeat it; `fugaro config show` prints the list that results |
+| list (`git.pr.labels`, `commands.reports`, `cache`, and any repo-only list) | replaced whole, **never appended**. To add to a profile's list, repeat it; `fugaro config show` prints the list that results |
 | `null` or an empty value (`key:`) | "not set here": the wider layer's value stays. This is today's meaning of null |
 | `[]` | an empty list replaces the wider one, which clears it |
 
-Two exceptions: a workflow that sets `dockerfile:` drops its profile's `image:` block (a repository with bespoke needs writes its own Dockerfile, and `image` and `dockerfile` are mutually exclusive today); and top-level `profile:` applies only to a file with no `workflows:` — with `workflows:`, each workflow names its own profile.
+One exception: top-level `profile:` applies only to a file with no `workflows:` — with `workflows:`, each workflow names its own profile.
 
 ## 5. Where each key may be set
 
@@ -202,12 +202,6 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `workflows.*.checkout` | profile, repo |  |
 | `workflows.*.image.node` | profile, repo |  |
 | `workflows.*.image.jdk` | repo | it is refused on every base |
-| `workflows.*.image.apt` | profile, repo |  |
-| `workflows.*.image.setup` | profile, repo |  |
-| `workflows.*.image.skip_build_scripts` | profile, repo |  |
-| `workflows.*.image.tools` | profile, repo |  |
-| `workflows.*.image.key_files` | repo | it names a file in the repository |
-| `workflows.*.dockerfile` | repo | it names a file in the repository |
 | `workflows.*.commands.build` | profile, repo |  |
 | `workflows.*.commands.test` | profile, repo |  |
 | `workflows.*.commands.lint` | profile, repo |  |
@@ -225,11 +219,6 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `workflows.*.timeouts.verify` | profile, repo |  |
 | `workflows.*.timeouts.render` | profile, repo |  |
 | `workflows.*.timeouts.finalize_reserve` | profile, repo |  |
-| `workflows.*.rebuild.check` | profile, repo |  |
-| `workflows.*.rebuild.max_age` | profile, repo |  |
-| `workflows.*.rebuild.lockfiles` | profile, repo |  |
-| `workflows.*.rebuild.base` | profile, repo |  |
-| `workflows.*.rebuild.paths` | profile, repo |  |
 | `workflows.*.inputs.max_files` | profile, repo |  |
 | `workflows.*.inputs.max_bytes` | profile, repo |  |
 | `workflows.*.inputs.max_total_bytes` | profile, repo |  |
@@ -275,7 +264,6 @@ defaults:
 profiles:
   java-service:
     description: Gradle service with Postgres
-    image: { tools: { java: "temurin-17" } }
     commands:
       build: ./gradlew assemble
       test: ./gradlew test
@@ -285,7 +273,6 @@ profiles:
     resources: { cpu: 4, memory: 16Gi }
     timeouts: { total: 2h }
   node-web:
-    image: { tools: { node: "22" } }
     commands: { build: npm run build, test: npm test }
 default_profile: java-service
 # An explicit Claude model ID a route the installation config already
@@ -344,13 +331,9 @@ One exception: a **managed** project, whose gate exists so that the same session
 - `workflows.*.commands.render`
 - `workflows.*.commands.probe`
 - `workflows.*.commands.rerun_failed`
-- `workflows.*.image.apt`
-- `workflows.*.image.setup`
-- `workflows.*.image.tools`
-- `workflows.*.image.skip_build_scripts`
 <!-- executable-keys:end -->
 
-— values that run as shell, or (`image.skip_build_scripts`) control whether shell a profile already describes runs, in the job or in the image build. `commands.render` and `commands.probe` are gated like `commands.build`: an artifact recipe's render and probe steps run the workflow's own text as shell in the job. `commands.reports` is not gated: it only lists paths to collect, and runs nothing. `inputs.*` is not gated either: the caps are numbers, and they bound what a launcher may attach, not anything a profile runs. `config publish` refuses a change to any of these keys, in either direction (`image.skip_build_scripts` going from `false` to `true` is reported too, not only the unsafe direction), unless `--executable-changes` is given, printing each one's before and after under an `EXECUTABLE CHANGES` banner first; changing `default_profile` itself is gated the same way, whenever either the old or the new default profile sets one of these keys.
+— values that run as shell in the job. `commands.render` and `commands.probe` are gated like `commands.build`: an artifact recipe's render and probe steps run the workflow's own text as shell in the job. `commands.reports` is not gated: it only lists paths to collect, and runs nothing. `inputs.*` is not gated either: the caps are numbers, and they bound what a launcher may attach, not anything a profile runs. `config publish` refuses a change to any of these keys, in either direction, unless `--executable-changes` is given, printing each one's before and after under an `EXECUTABLE CHANGES` banner first; changing `default_profile` itself is gated the same way, whenever either the old or the new default profile sets one of these keys.
 
 **The write.** It is made under a generation precondition, so a concurrent publisher is refused rather than overwritten, and a diff against the previous object is shown first. The exact bytes are then copied to `builds/<slug>/project-layer.yaml` for each repository the installation config lists. `fugaro doctor` reports a repository whose copy differs from the published object.
 
@@ -359,8 +342,8 @@ One exception: a **managed** project, whose gate exists so that the same session
 **The threat model (design §11):**
 
 - **Who can write.** Operators, since the 0.7.0 bucket IAM hardening. An installation whose operator has not yet run `fugaro setup` to apply the 0.7.0 grants still has every launcher holding `roles/storage.objectAdmin` too (see the lead note above).
-- **What a hostile or careless layer could do.** Replace build or test commands for every repository that takes a profile: this already takes effect, through the embedded layer every launch carries, with no human reviewing the change first. Since Task 14 and Task 15 shipped, add `image.apt`, `image.setup` or `image.tools` (as dangerous as `image.setup`: it names tools installed into the image) or turn off `image.skip_build_scripts`, which then runs in Cloud Build, including on the nightly rebuild, with no human launching anything. `commands.lint` and `commands.fix` are executable keys too, like `commands.build` and `commands.test`, and so are `commands.render` and `commands.probe` since 0.8.0. Also: raise `resources` or `timeouts`; change `agent.model`, `recipe` or `auth`; point `base` at another shipped kind; loosen the guardrails for every repository of the project (`governance`, §5) — a larger stage budget or stage timeout, a higher review ratio or fan-out cap — up to the per-run cap, which is the one thing it cannot move; or hide any of this, since a plain bucket write leaves no review trail. And, since the claim shipped, add one explicit Claude model ID to a route the installation config already defines (`claude_models`, §6), which sends that route's model to the provider the owner set up under the owner's own terms — nothing more: the layer cannot create a route, change a route's `base_url`, `auth`, `secret` or `allow_data_to`, name a provider the operator did not define, claim a class of Claude models, or set a price.
-- **What already bounds it.** The project layer cannot hold policy keys, `secrets`, `followup.*`, `base_branch`, `reviewers`, `dockerfile` or `instructions` (§5); the policy ceiling (dollars, tokens, allowed models) still comes from the owner and only tightens, and the governance the layer may loosen is bounded by that same ceiling: the per-run cap is what it may not move, and every stage budget is a fraction under it (G6); base images stay `config.Bases`; and every run records the layer's sha256 and generation, which `fugaro runs ls`, `diagnose` and `doctor` show. A `claude_models` claim (§6) is bounded by the route it names: the traffic still goes to a provider the owner defined, under that provider's `allow_data_to` (so a repository the owner did not list for it never gets that route in its job at all — the claim is dropped for that repository's run, and a pin on the claimed ID is refused as a model no provider serves, never sent), the claim is one explicit ID rather than a class, the run needs `agent.auth: api-key` and `budget.mode: enforce` like any other provider model, and the price is the owner's `model_prices`', never the layer's and never the built-in catalog's.
+- **What a hostile or careless layer could do.** Replace build or test commands for every repository that takes a profile: this already takes effect, through the embedded layer every launch carries, with no human reviewing the change first. `commands.lint` and `commands.fix` are executable keys too, like `commands.build` and `commands.test`, and so are `commands.render` and `commands.probe` since 0.8.0. Also: raise `resources` or `timeouts`; change `agent.model`, `recipe` or `auth`; point `base` at another shipped kind; loosen the guardrails for every repository of the project (`governance`, §5) — a larger stage budget or stage timeout, a higher review ratio or fan-out cap — up to the per-run cap, which is the one thing it cannot move; or hide any of this, since a plain bucket write leaves no review trail. And, since the claim shipped, add one explicit Claude model ID to a route the installation config already defines (`claude_models`, §6), which sends that route's model to the provider the owner set up under the owner's own terms — nothing more: the layer cannot create a route, change a route's `base_url`, `auth`, `secret` or `allow_data_to`, name a provider the operator did not define, claim a class of Claude models, or set a price.
+- **What already bounds it.** The project layer cannot hold policy keys, `secrets`, `followup.*`, `base_branch`, `reviewers` or `instructions` (§5); the policy ceiling (dollars, tokens, allowed models) still comes from the owner and only tightens, and the governance the layer may loosen is bounded by that same ceiling: the per-run cap is what it may not move, and every stage budget is a fraction under it (G6); base images stay `config.Bases`; and every run records the layer's sha256 and generation, which `fugaro runs ls`, `diagnose` and `doctor` show. A `claude_models` claim (§6) is bounded by the route it names: the traffic still goes to a provider the owner defined, under that provider's `allow_data_to` (so a repository the owner did not list for it never gets that route in its job at all — the claim is dropped for that repository's run, and a pin on the claimed ID is refused as a model no provider serves, never sent), the claim is one explicit ID rather than a class, the run needs `agent.auth: api-key` and `budget.mode: enforce` like any other provider model, and the price is the owner's `model_prices`', never the layer's and never the built-in catalog's.
 - **The fix, shipped in 0.7.0.** [design/bucket-iam.md](design/bucket-iam.md) narrows the bucket grant so only operators (and, for its own copy, a repository's own build account) can write `fugaro/` and `builds/<slug>/`. Each installation's operator applies it by running `fugaro setup`; until they do, the bucket stays writable by every launcher (see the lead note above).
 
 **The readiness gate fires on what the planning config can see.** A project job is held back at
@@ -383,7 +366,7 @@ The order:
 
 What an older CLI does, in a repository with a project layer: a minimal or profile-using file is refused as invalid, so there is no silent misrun; a full file runs with today's behaviour, without the project defaults.
 
-Step 5 is safe once Task 14 and Task 15 have shipped (§8): the project's `defaults:` and a profile's `commands.*`, `resources` and `timeouts` all take effect at once, through the layer every launch embeds, and a profile's `image.apt`, `image.setup` and `image.skip_build_scripts` reach every image a build produces — a human-triggered `image build`/`image refresh` and the unattended nightly rebuild alike.
+Step 5 is safe once Task 14 and Task 15 have shipped (§8): the project's `defaults:` and a profile's `commands.*`, `resources` and `timeouts` all take effect at once, through the layer every launch embeds.
 
 ## 10. Not yet
 

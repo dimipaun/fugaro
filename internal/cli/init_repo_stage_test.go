@@ -898,37 +898,6 @@ func TestRepoEngineAsksNoBuildForACatalogWorkflow(t *testing.T) {
 	}
 }
 
-// A repository with one workflow on a catalog entry and one that builds its
-// own image: only the second is offered a first build — the entry's job runs
-// a reference this repository's build never writes.
-//
-// Mutation (run, restore): drop `|| ws.CatalogEntry != ""` from NeedsBuild's
-// skip guard and both workflows are built.
-func TestRepoEngineBuildsOnlyThePerRepositoryWorkflow(t *testing.T) {
-	r := repoBuildRig(t, catalogTeam())
-	yaml := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket, base_branch: main }\n" +
-		"agent: { auth: oauth }\n" +
-		"workflows:\n" +
-		"  app: { image_name: team, commands: { build: sh build.sh, test: sh test.sh } }\n" +
-		"  api: { dockerfile: .fugaro/api.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n"
-	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", yaml)
-	testutil.WriteFiles(t, dir, map[string]string{".fugaro/api.Dockerfile": "ARG FUGARO_BASE\nFROM ${FUGARO_BASE}\nRUN git clone \"$REPO_URL\" /work/repo\n"})
-	t.Chdir(dir)
-	seedRepoSecrets(t, r, "bitbucket-token", "claude-oauth-token")
-	e := rigEngine(t, r, &initOptions{})
-	fb := useFakeBuilder(t)
-	out := atTerminal(t, e, strings.Repeat(initProjectName+"\n", 4))
-	if err := e.r.repoEngine(t.Context(), ".", "", true); err != nil {
-		t.Fatalf("%v\n%s", err, out.String())
-	}
-	if len(fb.specs) != 1 || fb.specs[0].Workflow != "api" {
-		t.Fatalf("specs = %+v, want only api's first build: app's job runs the catalog entry team", fb.specs)
-	}
-	if strings.Contains(out.String(), "submits a Cloud Build for acme/sandbox/app") {
-		t.Errorf("the run asked to confirm a build for the catalog workflow:\n%s", out.String())
-	}
-}
-
 // A first onboarding before /fugaro:setup's pull request is merged: the
 // checkout holds fugaro.yaml and the base branch does not. The build clones
 // the base branch and renders the file from it, so the run would spend a

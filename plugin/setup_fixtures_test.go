@@ -10,6 +10,7 @@ package plugin_test
 // or replaces in it.
 
 import (
+	"fmt"
 	"io/fs"
 	"maps"
 	"os"
@@ -31,8 +32,6 @@ type fixtureFacts struct {
 	// workflows: the expected workflow names (discovery.md, "Workflows and
 	// runtimes"). Every workflow builds on the one Fugaro base.
 	workflows []string
-	// dockerfiles lists the workflows built from a Dockerfile in expected/.
-	dockerfiles []string
 	// tools: the expected mise.toml [tools] table, tool name to version
 	// (discovery.md, "Workflows and runtimes").
 	tools map[string]string
@@ -43,23 +42,18 @@ type fixtureFacts struct {
 	// env: the expected mise.toml [env] table (discovery.md's go row:
 	// `[env] GOTOOLCHAIN = "local"`); nil for a fixture with no go workflow.
 	env map[string]string
-	// apt: the CI line whose packages become image.apt, and the packages.
-	aptEvidence string
-	apt         []string
 	// servicesEvidence is a file and the text in it that says the tests need
 	// Postgres; the services table then gives the start line.
 	servicesFile, servicesText, testPrefix string
 }
 
 var fixtures = []fixtureFacts{
-	{name: "node", workflows: []string{"web"}, tools: map[string]string{"node": "24.19.0"}, toolEvidence: map[string]string{"node": ".nvmrc"},
-		aptEvidence: ".github/workflows/ci.yml", apt: []string{"libvips-dev"}},
+	{name: "node", workflows: []string{"web"}, tools: map[string]string{"node": "24.19.0"}, toolEvidence: map[string]string{"node": ".nvmrc"}},
 	{name: "go", workflows: []string{"go"}, tools: map[string]string{"go": "1.25"}, toolEvidence: map[string]string{"go": "go.mod"},
 		env: map[string]string{"GOTOOLCHAIN": "local"}},
 	{name: "server", workflows: []string{"server"}, tools: map[string]string{"java": "temurin-25"},
-		apt:          []string{"postgresql-17"},
 		servicesFile: "bitbucket-pipelines.yml", servicesText: "postgres", testPrefix: "FUGARO_SERVICES=postgres fugaro-services start"},
-	{name: "monorepo", workflows: []string{"api", "web"}, dockerfiles: []string{"api"},
+	{name: "monorepo", workflows: []string{"api", "web"},
 		tools: map[string]string{"go": "1.25", "node": "24"}, toolEvidence: map[string]string{"go": "services/api/go.mod"},
 		env: map[string]string{"GOTOOLCHAIN": "local"}},
 	{name: "existing-fugaro-yaml", workflows: []string{"go"}, tools: map[string]string{"go": "1.25"}, toolEvidence: map[string]string{"go": "go.mod"},
@@ -137,25 +131,7 @@ func checkFixture(t *testing.T, name string) {
 		t.Errorf("config.Check: %v", problems)
 	}
 
-	// (b) the Dockerfile each workflow builds from passes the contract.
-	for wf := range c.Workflows {
-		df, repoFile, err := image.Dockerfile(checkout, c, wf, fixtureVersion)
-		if err != nil {
-			t.Errorf("workflow %s: %v", wf, err)
-			continue
-		}
-		if msgs := config.LintDockerfile(df); len(msgs) > 0 {
-			t.Errorf("workflow %s: Dockerfile breaks the contract: %v", wf, msgs)
-		}
-		if (repoFile != "") != slices.Contains(facts.dockerfiles, wf) {
-			t.Errorf("workflow %s: dockerfile %q, want a Dockerfile only for %v", wf, repoFile, facts.dockerfiles)
-		}
-		if repoFile != "" {
-			checkDerivedFromRender(t, wf, string(df), checkout)
-		}
-	}
-
-	// (c) the discovery facts.
+	// (b) the discovery facts.
 	got := slices.Sorted(maps.Keys(c.Workflows))
 	if !slices.Equal(got, sortedStrings(facts.workflows)) {
 		t.Errorf("workflows %v, want %v", got, facts.workflows)
@@ -186,17 +162,6 @@ func checkFixture(t *testing.T, name string) {
 			t.Errorf("workflow %s: base %q, image.node %q, image.tools %v: the skill writes mise.toml instead", wf, w.Base, w.Image.Node, w.Image.Tools)
 		}
 		checkNoRuntimeApt(t, "fixture "+name, wf, w)
-		if !slices.Equal(w.Image.Apt, facts.apt) {
-			t.Errorf("image.apt %v, want %v", w.Image.Apt, facts.apt)
-		}
-		if facts.aptEvidence != "" {
-			ci := fixtureFile(t, name, "repo/"+facts.aptEvidence)
-			for _, p := range facts.apt {
-				if !strings.Contains(ci, "apt-get install") || !strings.Contains(ci, p) {
-					t.Errorf("%s has no apt-get install of %s", facts.aptEvidence, p)
-				}
-			}
-		}
 		if facts.servicesFile != "" {
 			if !strings.Contains(fixtureFile(t, name, "repo/"+facts.servicesFile), facts.servicesText) {
 				t.Errorf("%s does not name %s", facts.servicesFile, facts.servicesText)
@@ -263,25 +228,182 @@ func joinShellContinuations(text string) []string {
 	return out
 }
 
-// addedLinesInstallARuntime reports a package name a block of added
-// Dockerfile lines apt-get installs that is a language runtime (see
-// runtimeAptPackageRE): the one place a hand-edited Dockerfile could smuggle
-// a `base:`-style runtime install past checkDerivedFromRender's USER
-// root/sha256sum-only check. Lines are joined across `\` continuations
-// first, so a package named on a continuation line is seen too.
-func addedLinesInstallARuntime(text string) (pkg string, found bool) {
-	for _, line := range joinShellContinuations(text) {
-		if !aptGetInstallRE.MatchString(line) {
+// aptPackages returns the package names one logical Dockerfile line installs
+// with apt: the words between the install verb and the first shell operator
+// that ends the install, with apt's own flags (-y, --no-install-recommends)
+// dropped.
+func aptPackages(line string) []string {
+	m := aptGetInstallRE.FindStringIndex(line)
+	if m == nil {
+		return nil
+	}
+	rest := line[m[1]:]
+	for _, sep := range []string{"&&", ";", "|"} {
+		if i := strings.Index(rest, sep); i >= 0 {
+			rest = rest[:i]
+		}
+	}
+	var out []string
+	for _, f := range strings.Fields(rest) {
+		if f = strings.Trim(f, "\\\"'`"); f == "" || strings.HasPrefix(f, "-") {
 			continue
 		}
-		for _, f := range strings.Fields(line) {
-			f = strings.Trim(f, "\"'`\\")
+		out = append(out, f)
+	}
+	return out
+}
+
+// addedLinesInstallARuntime reports a package name a block of added
+// Dockerfile lines apt-get installs that is a language runtime (see
+// runtimeAptPackageRE): the one place a hand-written Dockerfile — the file the
+// skill tells the agent to write now that no repository derives one — could
+// smuggle a `base:`-style runtime install in. Lines are joined across `\`
+// continuations first, so a package named on a continuation line is seen too.
+func addedLinesInstallARuntime(text string) (pkg string, found bool) {
+	for _, line := range joinShellContinuations(text) {
+		for _, f := range aptPackages(line) {
 			if runtimeAptPackageRE.MatchString(f) {
 				return f, true
 			}
 		}
 	}
 	return "", false
+}
+
+// shellPipeRE matches a download piped into a shell, the other way a
+// hand-written Dockerfile smuggles in a runtime the base never installed.
+var shellPipeRE = regexp.MustCompile(`\|\s*(sudo\s+)?(ba|z)?sh\b`)
+
+// dockerfileFences returns the body of every ```dockerfile fence in the text:
+// the Dockerfiles a skill file shows the agent to write.
+func dockerfileFences(text string) []string {
+	var out []string
+	var cur []string
+	open := false
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case !open && strings.HasPrefix(trimmed, "```dockerfile"):
+			open, cur = true, nil
+		case open && trimmed == "```":
+			open = false
+			out = append(out, strings.Join(cur, "\n"))
+		case open:
+			cur = append(cur, line)
+		}
+	}
+	return out
+}
+
+// entryDockerfiles returns every ```dockerfile fence the skill files show,
+// keyed by the file and the fence's index in it.
+func entryDockerfiles(t *testing.T) map[string][]string {
+	t.Helper()
+	out := map[string][]string{}
+	for name, text := range setupFiles(t) {
+		if fences := dockerfileFences(text); len(fences) > 0 {
+			out[name] = fences
+		}
+	}
+	return out
+}
+
+// baseAptPackages returns the Debian package names images/base/Dockerfile's
+// apt-get install line bakes into the base, read from the Dockerfile itself
+// so a change to it is what this test tracks, not a copy that can drift.
+func baseAptPackages(t *testing.T) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "images", "base", "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, line := range joinShellContinuations(string(data)) {
+		out = append(out, aptPackages(line)...)
+	}
+	if len(out) == 0 {
+		t.Fatal("images/base/Dockerfile has no apt-get install block this reads packages from")
+	}
+	return out
+}
+
+// TestEntryDockerfilesTheSkillShows: the Dockerfile a skill file shows the
+// agent to write — the entry's own, built FROM the base with the packages the
+// repository needs — carries no language runtime and pipes nothing into a
+// shell. This is where the guard that used to ride the removed dockerfile: key
+// lives now: no repository derives an image of its own, and the hand-written
+// entry Dockerfile is what the skill tells the agent to produce.
+func TestEntryDockerfilesTheSkillShows(t *testing.T) {
+	fences := entryDockerfiles(t)
+	if len(fences) == 0 {
+		t.Fatal("no skill file shows a Dockerfile: the skill tells the agent to write one, so one of its examples is the shape a reader copies")
+	}
+	for name, bodies := range fences {
+		for i, body := range bodies {
+			at := fmt.Sprintf("%s fence %d", name, i+1)
+			if !strings.Contains(body, "FROM ${FUGARO_BASE}") || !strings.Contains(body, "ARG FUGARO_BASE") {
+				t.Errorf("%s: the example does not start FROM ${FUGARO_BASE} with the argument declared, the contract every entry keeps", at)
+			}
+			if !strings.Contains(body, "USER root") || len(aptPackages(body)) == 0 {
+				t.Errorf("%s: the example installs no package in a root block, so it shows nothing of the shape a repository copies:\n%s", at, body)
+			}
+			if pkg, found := addedLinesInstallARuntime(body); found {
+				t.Errorf("%s: the example apt-get installs %s, a language runtime; mise.toml is the only way to install one:\n%s", at, pkg, body)
+			}
+			if shellPipeRE.MatchString(body) {
+				t.Errorf("%s: the example pipes a download into a shell:\n%s", at, body)
+			}
+		}
+	}
+}
+
+// TestEntryDockerfilePackagesAreNotOnTheBase: a package the skill shows the
+// agent adding is not one images/base/Dockerfile already bakes, where the line
+// would install nothing. This compares Debian package names against Debian
+// package names: tools.tsv's Name column is the command a presence check runs
+// (rg, fd, dig), which very often differs from the Debian package that
+// provides it (ripgrep, fd-find, bind9-dnsutils), so a comparison against
+// tools.tsv would miss most real redundant apt entries.
+func TestEntryDockerfilePackagesAreNotOnTheBase(t *testing.T) {
+	base := baseAptPackages(t)
+	for name, bodies := range entryDockerfiles(t) {
+		for i, body := range bodies {
+			for _, p := range aptPackages(body) {
+				if slices.Contains(base, p) {
+					t.Errorf("%s fence %d adds %s, which the base already carries", name, i+1, p)
+				}
+			}
+		}
+	}
+}
+
+// TestAddedLinesInstallARuntime: the guard itself, on the shapes a hand-edited
+// Dockerfile takes — a package on the install line, one on a `\` continuation
+// line (which is how the project's own Dockerfiles list packages), a benign
+// package, and a runtime named somewhere other than an apt install.
+func TestAddedLinesInstallARuntime(t *testing.T) {
+	for _, tc := range []struct {
+		what, text, want string
+	}{
+		{"on the install line", "RUN apt-get install -y --no-install-recommends nodejs", "nodejs"},
+		{"on a continuation line", "RUN apt-get install -y --no-install-recommends \\\n      libvips-dev \\\n      openjdk-17-jdk-headless", "openjdk-17-jdk-headless"},
+		{"a bare install", "RUN apt install python3-pip", "python3-pip"},
+		{"a system library", "RUN apt-get install -y --no-install-recommends libvips-dev", ""},
+		{"no apt at all", "RUN mise install && npm ci", ""},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			got, found := addedLinesInstallARuntime(tc.text)
+			if tc.want == "" {
+				if found {
+					t.Fatalf("addedLinesInstallARuntime(%q) = %q, want nothing", tc.text, got)
+				}
+				return
+			}
+			if !found || got != tc.want {
+				t.Fatalf("addedLinesInstallARuntime(%q) = %q, %v; want %q", tc.text, got, found, tc.want)
+			}
+		})
+	}
 }
 
 func equalMaps(a, b map[string]string) bool {
@@ -438,47 +560,6 @@ func TestDetectRuntimesCoversEveryDiscoveryRow(t *testing.T) {
 	}
 }
 
-// checkDerivedFromRender: a Dockerfile the skill saved from `fugaro image
-// render` keeps every line of the rendered one, in order, and adds only a
-// root block that downloads by checksum and pipes nothing into a shell.
-func checkDerivedFromRender(t *testing.T, wf, df, checkout string) {
-	t.Helper()
-	files, err := config.MiseConfigFiles(checkout)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rendered, err := image.Render(image.RenderInput{Workflow: wf, Base: config.BaseKind, Mise: len(files) > 0, Version: fixtureVersion})
-	if err != nil {
-		t.Fatal(err)
-	}
-	have := strings.Split(df, "\n")
-	i := 0
-	var added []string
-	for _, line := range have {
-		if i < len(strings.Split(string(rendered), "\n")) && line == strings.Split(string(rendered), "\n")[i] {
-			i++
-		} else {
-			added = append(added, line)
-		}
-	}
-	if i != len(strings.Split(string(rendered), "\n")) {
-		t.Errorf("workflow %s: the Dockerfile does not keep the rendered one's lines in order (matched %d)", wf, i)
-	}
-	text := strings.Join(added, "\n")
-	if strings.TrimSpace(text) == "" {
-		t.Errorf("workflow %s: the Dockerfile adds nothing to the rendered one; use image: instead", wf)
-	}
-	if !strings.Contains(text, "USER root") || !strings.Contains(text, "sha256sum -c") {
-		t.Errorf("workflow %s: the added lines are not a checksummed install in a root block:\n%s", wf, text)
-	}
-	if regexp.MustCompile(`\|\s*(sudo\s+)?(ba|z)?sh\b`).MatchString(text) {
-		t.Errorf("workflow %s: the added lines pipe into a shell:\n%s", wf, text)
-	}
-	if pkg, found := addedLinesInstallARuntime(text); found {
-		t.Errorf("workflow %s: the added lines apt-get install %s, a language runtime; mise.toml or image.tools is the only way to install one:\n%s", wf, pkg, text)
-	}
-}
-
 // TestRenderedDockerfilePassesContract: the Dockerfile `fugaro image render`
 // gives for each base kind, with the settings the fixtures use, passes the
 // static contract the skill tells the agent to keep.
@@ -504,12 +585,12 @@ func TestSetupFixtureTablesMatchTheSkill(t *testing.T) {
 	files := setupFiles(t)
 	discovery := files["skills/setup/reference/discovery.md"]
 	services := files["skills/setup/reference/services-and-images.md"]
-	for _, want := range []string{"`package.json` with a lockfile", "`gradlew`", "`go.mod`", "`.nvmrc`", "`mise.toml`", "`image.apt`", "`cd <dir> &&`"} {
+	for _, want := range []string{"`package.json` with a lockfile", "`gradlew`", "`go.mod`", "`.nvmrc`", "`mise.toml`", "`apt-get install`", "`cd <dir> &&`"} {
 		if !strings.Contains(discovery, want) {
 			t.Errorf("discovery.md lost %s, which the fixtures rely on", want)
 		}
 	}
-	for _, want := range []string{"fugaro-services start", "Postgres (PostGIS, pgvector), Redis, Firebase emulators", ".fugaro/<workflow>.Dockerfile"} {
+	for _, want := range []string{"fugaro-services start", "Postgres (PostGIS, pgvector), Redis, Firebase emulators", ".fugaro/<entry>.Dockerfile"} {
 		if !strings.Contains(services, want) {
 			t.Errorf("services-and-images.md lost %q, which the fixtures rely on", want)
 		}
@@ -517,53 +598,6 @@ func TestSetupFixtureTablesMatchTheSkill(t *testing.T) {
 	if _, err := os.Stat(filepath.Join("..", "images", "common", "fugaro-services")); err != nil {
 		t.Errorf("the base has no fugaro-services: %v", err)
 	}
-	// An apt package a fixture adds is not one images/base/Dockerfile's own
-	// apt-get install line already carries (the base bakes no database
-	// server, B11, but does carry a maximalist kit of its own). This
-	// compares Debian package names against Debian package names:
-	// tools.tsv's Name column is the command a presence check runs (rg, fd,
-	// dig), which very often differs from the Debian package that provides
-	// it (ripgrep, fd-find, bind9-dnsutils), so a comparison against
-	// tools.tsv would miss most real redundant apt entries.
-	baseApt := baseAptPackages(t)
-	for _, f := range fixtures {
-		for _, p := range f.apt {
-			if slices.Contains(baseApt, p) {
-				t.Errorf("fixture %s adds %s, which the base already carries", f.name, p)
-			}
-		}
-	}
-}
-
-// aptInstallBlockRE finds images/base/Dockerfile's one apt-get install line,
-// capturing the backslash-continued package list between
-// --no-install-recommends and the rm -rf that cleans up after it.
-var aptInstallBlockRE = regexp.MustCompile(`(?s)apt-get install -y --no-install-recommends \\(.*?)&&\s*rm -rf /var/lib/apt/lists`)
-
-// baseAptPackages returns the Debian package names images/base/Dockerfile's
-// apt-get install line bakes into the base, read from the Dockerfile itself
-// so a change to it is what this test tracks, not a copy that can drift.
-func baseAptPackages(t *testing.T) []string {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "images", "base", "Dockerfile"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := aptInstallBlockRE.FindSubmatch(data)
-	if m == nil {
-		t.Fatal("images/base/Dockerfile has no apt-get install -y --no-install-recommends ... && rm -rf /var/lib/apt/lists block")
-	}
-	var out []string
-	for _, f := range strings.Fields(string(m[1])) {
-		if f == `\` {
-			continue
-		}
-		out = append(out, f)
-	}
-	if len(out) == 0 {
-		t.Fatal("images/base/Dockerfile's apt-get install block has no packages")
-	}
-	return out
 }
 
 // hostileCase: what a fixture's repository tries to get executed, and where.

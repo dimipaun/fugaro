@@ -16,6 +16,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
+// newImagePromoteCmd is the command D1147 describes. R7 of the
+// repository-image removal (docs/repo-image-removal/implementation-plan.md)
+// deletes it: after R2 no fugaro.yaml can carry the image: block or
+// dockerfile: it reads, so the tests that made a fixture of them went with the
+// keys and this command has none of its own until it goes.
 func newImagePromoteCmd() *cobra.Command {
 	var o cloudOptions
 	cmd := &cobra.Command{

@@ -20,7 +20,6 @@ project: aurora
 git: { provider: github, base_branch: develop }
 workflows:
   web:
-    image: { tools: { node: "24.19.0" } }
     commands: { build: sh build.sh, test: sh test.sh, reports: ["junit.xml"] }
     secrets:
       - { name: npm-token, env: NPM_TOKEN }
@@ -28,7 +27,13 @@ workflows:
 `
 
 // localFixture is a clone, on branch main, of a repository on the Fugaro
-// base whose fugaro.yaml bakes base_branch develop.
+// base whose fugaro.yaml bakes base_branch develop, and the config the local
+// build runs that checkout with.
+//
+// The workflow's runtime is set on the parsed config rather than written in
+// the fixture: image.tools is refused in a fugaro.yaml by name since the
+// repository-image removal (D1195), and the renderer still takes the runtime
+// it installs on a config.Image, which is what its own callers pass.
 func localFixture(t *testing.T) (string, *config.Config) {
 	t.Helper()
 	testutil.IsolateGit(t)
@@ -41,7 +46,11 @@ func localFixture(t *testing.T) (string, *config.Config) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "app")
 	testutil.Git(t, parent, "clone", "--quiet", remote, root)
-	return root, parseConfig(t, localYAML)
+	cfg := parseConfig(t, localYAML)
+	w := cfg.Workflows["web"]
+	w.Image.Tools = map[string]string{"node": "24.19.0"}
+	cfg.Workflows["web"] = w
+	return root, cfg
 }
 
 // fakeDocker stands in for docker and inspects what BuildLocal hands it,
