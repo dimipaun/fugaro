@@ -777,9 +777,10 @@ when **CSR1–CSR5 and CSR7 were merged and CSR6 was in flight** (PR #1750), and
 **the merged tasks do not add up to a working review**: the command CSR2 built is registered nowhere, the
 constant E7's second half is still `false`, the container cannot place the job the launcher picks, and the
 launcher reads a review's artifact without the signature that makes it a verdict. **CSR8 has merged since**
-(PR #1761, the placement and the class), **and so have CSR10 (PR #1764, the launcher's verifying reader)
+(PR #1761, the placement and the class), **and so have CSR9 (PR #1762, the command registered), CSR10
+(PR #1764, the launcher's verifying reader)
 and CSR12 (PR #1771, the live-check switch)**, so the paragraph above is a snapshot of 2026-11-05 rather
-than the state of the tree today: gaps 3 and 4 below are **closed**, and where the rest of §6 said a task
+than the state of the tree today: gaps 2, 3 and 4 below are **closed**, and where the rest of §6 said a task
 waits on CSR8 it now says what it reads from the merged code (§6.3, §6.4). A task in §3 that
 merged is a task that was built and tested; it is not a task whose work is reachable from the surface a
 person types at.
@@ -791,7 +792,7 @@ while documenting the others is exactly the kind of thing a plan loses by not wr
 | # | the gap | where it is | the owner |
 | --- | --- | --- | --- |
 | 1 | a review launch is refused unconditionally: the constant E7's second half is `false` | `internal/cli/review.go:41` | **CSR11** (the flip) — and the refusal is the reason the flip has a gate at all |
-| 2 | `fugaro review` is built and **registered nowhere**, so no released CLI answers to it: `newReviewCmd` is not in the list `newCoreRoot` adds | `internal/cli/root.go:189`, `internal/cli/review.go:93` | **CSR9** |
+| 2 | `fugaro review` is built and **registered nowhere**, so no released CLI answers to it: `newReviewCmd` is not in the list `newCoreRoot` adds | `internal/cli/root.go:189`, `internal/cli/review.go:93` | **CSR9 — CLOSED: merged as PR #1762.** `newReviewCmd()` is in the list `newCoreRoot` adds (`internal/cli/root.go:198`), so the command answers and its launch refusal is a sentence a person reads rather than a name nobody can type; what CSR11 inherits from it is that refusal alone |
 | 3 | the runner cannot place the job the launcher picks: the review variant's name is never a candidate, so a review container halts at admission with the client's `cannotPlaceJob` | `internal/runner/projectjob.go:178`, `internal/runner/project.go:1114` | **CSR8 — CLOSED: merged as PR #1761.** The variant is a candidate and the class is keyed on the run's own mode, not on the job name; what CSR13 inherits from it is a **fact to read**, `r.runClass()` (`internal/runner/projectjob.go:82`) and `jobTriple.Class` (`:50`), and never a mark to wait for |
 | 4 | the launcher reads `review.json` and never reads `review.json.sig`; `runner.VerifyReviewArtifact` exists and **nothing calls it**, because no implementation of `runner.SignatureVerifier` is in the tree | `internal/cli/review.go:547`, `internal/runner/reviewartifact.go:675`, `:223` | **CSR10 — CLOSED: merged as PR #1764.** The launcher's reader is a verifying one and `ServiceVerifier` implements `runner.SignatureVerifier`; what CSR15 inherits from it is the seam and the fail-closed refusal in `internal/cli/reviewverify.go` |
 | 5 | the owner-run live checks have not been run, and **cannot** be while gap 1 holds: the C3.9 check's step 3 launches `fugaro review --pr N`, and Check 125's steps 6 and 7 confirm the fence on the variant | `docs/c39-review-identity/live-check.md`, [spec.md](spec.md) §8 | **the owner** — CSR11 is the task whose gate it is, and Open item 1's answer of 2026-11-05 is **CSR12**, the switch the check's step 3 is reached with |
@@ -847,7 +848,7 @@ still decides is whether a placed review run reaches its first call** (§1), and
   adopts its `(profile, provider, account)` and `admissionCheck` (`internal/runner/project.go:1114`) stops
   refusing it, and **the launcher, the deployer and the runner name one job rather than three**. The
   **mapping lands once**, in `internal/config` beside `ProjectJobTokenAccount`
-  (`internal/config/claude_accounts.go:156`) and `ReviewVariantSuffix` (`:215`), which is the file that
+  (`internal/config/claude_accounts.go:156`) and `ReviewVariantSuffix` (`:237`), which is the file that
   already owns the axis: the runner does not import `internal/infra` today and keeping the container out
   of the deployer's package is why it does not start to. `internal/infra`'s own function becomes that
   mapping's spelling. **`checkProjectJobAccount` (`internal/runner/projectjob.go:502`) gains the review
@@ -983,9 +984,13 @@ same way the job's metadata identity is — and the sentence that used to stand 
 owner's own identity has to be in that list") is wrong. **Open item 5 answered this on 2026-11-05:** the
 account is **CSR14's** (the installation's root creates it, the operators hold token-creator on it and one
 `fugaro update` names it) and the launcher's mint is **CSR15's**, so this task builds the seam and
-**leaves it failing closed** — `reviewVerifierIdentity` refuses with the item's own words until CSR15
-fills it, which is the state PR #1764 merged in and the reason a fix round is never launched on a verdict
-nobody verified. **CSR10 does not do the launcher half**: the account it would impersonate did not exist
+**leaves it failing closed** — `reviewVerifierIdentity` refuses until CSR15
+fills it, with the sentence PR #1764 merged in: "the launcher has no verifier identity to call the
+credentials service's verify route as: the installation root creates a dedicated verifier service account
+and names it in credentials_service.verifier_accounts, which this launcher impersonates once that account
+is real (docs/cloud-senior-review/implementation-plan.md CSR14/CSR15: neither exists yet). No fix round is
+launched on a verdict nobody verified" (`internal/cli/reviewverify.go:81`), which is the state PR #1764
+merged in. **CSR10 does not do the launcher half**: the account it would impersonate did not exist
 when this task was written, and one task that built an installation's identity and the launcher's use of
 it would be two trees and two reviews.
 **No `ee/` boundary applies:** the verifier is core
@@ -1563,10 +1568,12 @@ the service opt-in, and they stay correct the day it is not.
   `deploy/terraform/gcp/roots/installation/tests/verifier.tftest.hcl` (new),
   `deploy/terraform/terraform_test.go` (the two guards, deliberately widened),
   `internal/infra/tf/cover.go` + `internal/infra/tf/cover_test.go` (the one confirmation's tables,
-  deliberately widened), `internal/infra/tfvars.go` (the account's ID, beside `CredentialsAccountID`),
+  deliberately widened), `internal/infra/tfvars.go` + `internal/infra/credentialsvars_test.go` (the
+  account's ID, beside `CredentialsAccountID`, and the carry that spells the effective list into the
+  block, with the carry's own test beside it),
   `internal/cli/init.go` + `internal/cli/init_credentials_test.go` (the update names it, and the
   convergence test below), and `internal/infra/tf/testdata/golden/installation-credentials.plan.json`
-  (**regenerated** by `scripts/gen-golden-plans.sh`, never hand-edited). **11 files**, inside §3's twelve —
+  (**regenerated** by `scripts/gen-golden-plans.sh`, never hand-edited). **12 files**, inside §3's twelve —
   and the reason is the task's own subject: the account, the name the service is rendered with and the one
   command that puts it in the owner's published policy are **one change**, because an installation holding
   an account no update names is an operator step, and the HARD RULE does not allow one.
@@ -1636,12 +1643,14 @@ the service opt-in, and they stay correct the day it is not.
       **CSR15 mints as the one account the published list names and refuses a list of none or two**, so a
       union would put the service and the launcher on two different identities in every installation whose
       owner wrote their own list. **Why the module and not the Go side**, which is checked against the
-      tree rather than assumed: an ordinary `fugaro update` carries the whole `credentials_service` entry
-      forward verbatim (`CarriedCredentialsService`, `internal/infra/tfvars.go:612`, whose own comment is
-      that every ordinary run rewrites the tfvars from a spec that never sets the key), the stage that
+      tree rather than assumed: an ordinary `fugaro update` carries the `credentials_service` entry
+      forward as it is found (`CarriedCredentialsService`, `internal/infra/tfvars.go:612`, whose own
+      comment is that every ordinary run rewrites the tfvars from a spec that never sets the key) — **its
+      one `verifier_accounts` member aside, which the carry writes from the effective list, below** — the stage that
       recomputes the list is registered only under `--provision-credentials`
       (`internal/cli/init_stages.go:181`) and reads the node the **previous** update published
-      (`internal/cli/init_credentials.go:433`) — so between those runs the block is frozen, and the module
+      (`internal/cli/init_credentials.go:433`) — so between those runs the block is frozen **except for the
+      one member the effective list decides** (the carry's own half, below), and the module
       is the only writer the apply that creates the account has. **The carried-null block converges in one
       ordinary update because of exactly this**: null is the state the default is for, and the account is
       admitted by the apply that creates it rather than by a later run nobody was told to make.
@@ -1657,6 +1666,23 @@ the service opt-in, and they stay correct the day it is not.
       moves with it: the entry is **present as an empty array** rather than absent. **The outcome it pins
       is the same** — the service starts with an empty verifier list and admits nobody — and the spelling
       is what leaves null free for the default.
+    - **And the carried block is the other half, which the three-state field alone does not reach.** The
+      block is carried forward **verbatim**, present or absent (`CarriedCredentialsService`,
+      `internal/infra/tfvars.go:612`, whose comment is that the entry is taken as it is found), and the
+      stage that recomputes the list is registered only under `--provision-credentials` — so on an ordinary
+      update the module reads the block exactly as the last one held it, and `verifier_accounts` is a
+      **new** member no installation's block carries yet. Left there, the default above would admit the
+      installation's account on **every** opted-in installation whose local config says otherwise: an owner
+      who wrote `verifier_accounts: []` — the clear `VerifierAccountsEffective` honours
+      (`internal/localcfg/localcfg.go:1402`) and the publisher keeps — would have the route switched back
+      on at the service, and the published node and the service would disagree in the one direction
+      CSR15's reader sees: the reader refuses every fix round on an installation whose service admits the
+      account. So the **carry writes that one member from the effective list** — the owner's list as it is,
+      an explicit `[]` as `[]`, and the key absent **only when the effective list is nil**, which is the
+      one state the default is for — and every other member of the block stays taken as it is found. It is
+      the same value the local-config write and the publish read, so the tfvars, the published node and
+      the service's own environment cannot disagree; and it is the ordinary update that writes it, not a
+      step.
     - **the published policy is written by the same update, before the policy stage publishes, and only
       when the EFFECTIVE list is nil.** `fugaro update` writes the deterministic address into the local
       config's `verifier_accounts` when — and only when — `lc.VerifierAccountsEffective(node.VerifierAccounts) == nil`:
@@ -1686,8 +1712,12 @@ the service opt-in, and they stay correct the day it is not.
       see. So the owner's own list stays theirs, an explicit `verifier_accounts: []` stays their clear, and
       the installation's account is the default they get **without typing anything**.
   - **What the default does and does not mean, in one paragraph, because the owner's list is a policy.** The
-    account this module creates is the list's value **only while the block names nothing**: the owner's list
-    is rendered as it is, `[]` is rendered as `[]` (nobody), and the account is never added to either. So
+    account this module creates is the list's value **only while the block's member is absent**, and the
+    member is absent only while the **effective list is nil** — nothing written in the local config and
+    nothing named in the published node. The owner's list is rendered as it is, `[]` is rendered as `[]`
+    (nobody), and the account is never added to either: the carry above writes the effective list into the
+    block, so an owner's list or clear reaches the service as the same value the node carries, and the
+    default is left for the one state in which nothing anywhere names a verifier. So
     the list the owner writes is the list the service admits, and the identity the verify route exists for
     is one the owner **can** switch off — with the published node carrying the same list the keep rule
     produces, which in the default case is the same single address the module renders. **No person is ever
@@ -1742,7 +1772,14 @@ the service opt-in, and they stay correct the day it is not.
   **silent while the published node holds the owner's list** writes nothing, so `fugaro update` on a second
   operator's machine leaves that node byte for byte as it was — the direction this correction added,
   because a write gated on the local field alone replaces the owner's list from a machine that never
-  touched it). A golden that moves for an installation **without** the service fails
+  touched it), `TestOrdinaryUpdateCarriesTheOwnersClearIntoTheBlock` (**the carried-block direction of the
+  same rule, and the one the review of this task found**: an installation whose local config writes
+  `verifier_accounts: []` and whose carried block has **no** such member — the state every opted-in
+  installation is in, because the member is new — takes **one** ordinary `fugaro update` to a block whose
+  member is `[]` **and** a published node that is `[]`, so the service admits nobody and CSR15's reader
+  and the service agree; it fails on the tree as it stands, where the member stays absent and the module's
+  default admits the account the owner cleared), and a golden that moves for an installation **without**
+  the service fails
   the module's own test: the five `installation*.plan.json` fixtures CSR7 touched carry no service and must
   not move, and `installation-credentials.plan.json` is the one that does.
 - **Red step:** `TestVerifierTokenCreatorIsCoveredByOneUpdate` fails on the cover table as it stands: a
@@ -1770,7 +1807,10 @@ the service opt-in, and they stay correct the day it is not.
   union → the module's own list case fails (the variable holds the owner's list and the account) and CSR15's
   single-caller rule is broken at the service, which is the finding this correction answers; drop the key
   instead of writing `[]` for the owner's clear → the module's empty-list case fails, because the default
-  would be admitted on a route the owner had switched off; render **only** the block's list and not the
+  would be admitted on a route the owner had switched off; **carry the block verbatim and leave the member
+  absent** → `TestOrdinaryUpdateCarriesTheOwnersClearIntoTheBlock` fails, because the default is read on an
+  installation whose local config writes `[]` and whose node keeps `[]`, so the service admits a caller the
+  node does not name and CSR15's reader refuses every fix round; render **only** the block's list and not the
   account the module creates → the module's null case fails and the convergence test fails with it (the
   carried block stays empty and the account is admitted for nobody); create the account
   unconditionally → the five goldens without the service move, and the module's negative case fails.
@@ -1855,7 +1895,9 @@ verify call is admitted for nobody until this lands.
   brief's verify call carries the impersonated token and the refusal it gets back is the reader's, so the
   identity and the reader are one path and not two).
 - **Red step:** `TestReviewVerifierIdentityImpersonatesTheInstallationsVerifier` fails because the function
-  refuses today: `reviewVerifierIdentity` returns "" and an error naming Open item 5, so every fix-round
+  refuses today: `reviewVerifierIdentity` returns "" and the sentence above
+  (`internal/cli/reviewverify.go:81`), which names the verifier service account and CSR14/CSR15 and never
+  Open item 5, so every fix-round
   launch refuses with "the launcher has no verifier identity" — a fix round is never launched, whatever the
   installation publishes. **SEC flag:** yes — this is the launcher's one impersonation, and its risk is the
   pair CSR14's own review is asked for: that the identity is the installation's verifier and nothing else,
@@ -1979,7 +2021,7 @@ outside §6.4**, because they are a later release's and nothing in 0.20.0 waits 
 ```
 MERGED AND CLOSED (each a task that landed; none of them is a level's work any more)
   CSR8  (the runner places the variant)      **MERGED, #1761** — CSR13 reads the class it landed
-  CSR9  (the command is registered)          **MERGED**
+  CSR9  (the command is registered)          **MERGED, #1762** — CSR11 inherits its launch refusal
   CSR10 (the launcher verifies the verdict)  **MERGED, #1764** — CSR15 fills the seam it left
   CSR12 (the live-check switch)              **MERGED, #1771** — CSR11 deletes it in the flip's commit
 
@@ -2052,7 +2094,7 @@ because no 0.20.0 level holds them and they are a later release's:
 | `internal/runner/projectjob.go`, `internal/runner/projectjob_test.go` | **CSR8 — merged (#1761)** | — | — | — | the candidate set, the class and the token axis — **level 1's first writer has already run, and CSR13 reads what it left** |
 | `internal/runner/project.go`, `internal/runner/project_test.go` | **CSR8 — merged (#1761)** | — | — | — | the admission path |
 | `internal/config/claude_accounts.go`, `internal/config/claude_accounts_test.go` | **CSR8 — merged (#1761)** | — | — | — | the axis mapping lands once, here (CSR7 and E1 have merged; this is the file after them) |
-| `internal/cli/root.go`, `internal/cli/root_test.go` | **CSR9 — merged** | — | — | — | the registration |
+| `internal/cli/root.go`, `internal/cli/root_test.go` | **CSR9 — merged (#1762)** | — | — | — | the registration |
 | `website/content/cli-reference.md` | **CSR9 — merged** | — | — | — | **generated** by `go run ./ee/clidoc` |
 | `plugin/skills/working/SKILL.md` (+ `routing/SKILL.md` if it names the flow) | **CSR9 — merged** | — | — | — | the sentence and the registration are one commit |
 | `internal/runner/reviewartifact.go`, `internal/runner/reviewartifact_test.go` | **CSR10 — merged (#1764)** | — | — | — | the verifier's implementation |
@@ -2065,7 +2107,7 @@ because no 0.20.0 level holds them and they are a later release's:
 | `deploy/terraform/gcp/modules/installation/verifier.tf` (new), `…/iam.tf`, `…/credentials.tf`, `deploy/terraform/gcp/roots/installation/tests/verifier.tftest.hcl` (new) | CSR14 | — | — | — | the account, its two grants, the `FUGARO_VERIFIER_ACCOUNTS` entry and the address the installation is named by |
 | `deploy/terraform/terraform_test.go` | CSR14 | — | — | — | the two static guards, **deliberately** widened to a table of two sites |
 | `internal/infra/tf/cover.go`, `internal/infra/tf/cover_test.go` | CSR14 | — | — | — | the one confirmation's tables: without them `update` refuses its own plan |
-| `internal/infra/tfvars.go` | CSR14 | — | — | — | the account's ID constant, beside `CredentialsAccountID` — the Go side computes the address from it **before** the apply |
+| `internal/infra/tfvars.go`, `internal/infra/credentialsvars_test.go` | CSR14 | — | — | — | the account's ID constant, beside `CredentialsAccountID` — the Go side computes the address from it **before** the apply — and the carry that writes the block's `verifier_accounts` member from the effective list, so an owner's written `[]` reaches the module as a clear rather than as an absent key the default fills |
 | `internal/cli/init.go`, `internal/cli/init_credentials_test.go` | CSR14 | — | — | — | the update names the account only when the **effective** list is nil (the config silent and the published node empty) |
 | `internal/infra/tf/testdata/golden/installation-credentials.plan.json` | CSR14 | — | — | — | **regenerated** by `scripts/gen-golden-plans.sh`; the five fixtures without the service must not move |
 
@@ -2152,7 +2194,10 @@ could have touched — `internal/credsvc`'s class — is nobody's in 0.20.0.
   is a step is the owner's own list**: an installation whose local config **writes** `verifier_accounts`
   keeps it, `[]` included, and an owner who wants a verifier other than the installation's writes it
   themselves — that is the keep rule doing its job rather than a repair, and it is the same thing the
-  credentials-service block already does for a value nobody can type by hand. An installation that never
+  credentials-service block already does for a value nobody can type by hand. **The same update carries
+  that list into the block the module reads** (CSR14), the owner's clear included, so the service admits
+  exactly what the published node names, rather than the module's default stepping in
+  over it. An installation that never
   opts in converges to the new job set and behaves exactly as it does today: **no operator step, and
   nothing to uninstall.** **One sentence the entry carries for 0.20.0 and no later release does:** a
   **fix round** launched from a review's verdict — `fugaro run --review-run RUN` — **refuses until the
@@ -2313,7 +2358,8 @@ it is written for. Three readings stood here, and **the owner took the first**:
   the one command rather than typed by a person (§6.5). **The three parts the answer names, each with its
   task:** the account and its two grants (the operators' token-creator on it, and its own `run.invoker`
   on the credentials service) are **CSR14's**; the launcher's mint is **CSR15's**, because the task CSR10
-  became does not do it — PR #1764's `reviewVerifierIdentity` refuses with the item's own words; and the
+  became does not do it — PR #1764's `reviewVerifierIdentity` refuses with the sentence at
+  `internal/cli/reviewverify.go:81`, which names the verifier service account and CSR14/CSR15; and the
   owner's hand-run check is **CSR12's** step 8, which is the same identity minted the same way by hand.
   **No person is in that list**, which is the one thing this reading may not do.
 - **the coordinator's own identity, once the coordinator exists** ([spec.md](spec.md) §2's resident
