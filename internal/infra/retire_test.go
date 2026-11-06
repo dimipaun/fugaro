@@ -88,9 +88,15 @@ func originSpecCfg(t *testing.T, cfg string) RepoSpec {
 	return rs
 }
 
-// noCheckCfg is the origin's config with the daily check off, so
-// RepoSpec.Check is nil: the spec of a repository that checks nothing, and
-// so of one whose live check job really is an orphan (design row E).
+// noCheckCfg is the origin's config with its one workflow on checkout:
+// clone, which the daily check never covers, so RepoSpec.Check is nil: the
+// spec of a repository that checks nothing, and so of one whose live check
+// job really is an orphan (design row E).
+//
+// The fixture used to reach that spec by turning the check off
+// (rebuild: { check: off }); the repository-image removal refuses that key by
+// name (D1195), and clone is the shape that leaves a repository unchecked
+// through the configuration that is left.
 func noCheckCfg(agent string) string {
 	return `version: 1
 project: aurora
@@ -98,8 +104,8 @@ git: { provider: github, base_branch: main }
 ` + agent + `
 workflows:
   go:
+    checkout: clone
     commands: { build: npm run build, test: npm test }
-    rebuild: { check: off }
 `
 }
 
