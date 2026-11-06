@@ -490,7 +490,7 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 			sep = append(sep, "the checkout's image refresh, which asks nothing here either: the base image it pins by digest, the daily image check job's config and the checkout: clone workflow's job move are answered by the gate's own read of the marks (each still prints its diff), and each billable build of the checkout's job images goes through the gate's own per-build verdict and its bound (D1013) instead of a typed name")
 		}
 		if e.previewState(initflow.Policy) == initflow.Todo {
-			sep = append(sep, "migrating the published policy node in place when the migration loosens a ceiling, which takes the project's name: a Typed step is money or permanence, and no plan gate admits one (D1026)")
+			sep = append(sep, "migrating the published policy node in place when the migration loosens a ceiling: this terminal types nothing for it either (a ceiling is not data and not a secret value), and what the publish changes is printed above; a coding agent's session is refused it, because a Typed step is money or permanence and no plan gate admits one (D1026)")
 		}
 	}
 	if len(sep) == 0 {
