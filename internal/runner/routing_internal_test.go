@@ -15,6 +15,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -705,6 +706,9 @@ func reviewClassRun(t *testing.T, auth, mode string) *run {
 		Workflow: "app", Task: "Review the pull request", Mode: recipe.ModeReview}
 	r.job = jobTriple{Profile: "standard", Provider: "github",
 		Account: config.ReviewVariantAccount("acme-personal") + config.ReviewVariantSuffix, Class: classReview}
+	// The platform's own report of the execution, for the variant's job: what
+	// jobName reads, and never an environment a launcher can write.
+	r.d.Execution = identityExecution(gcp.ProjectJobName(r.job.Profile, r.job.Provider, r.job.Account))
 	r.spend = Spend{Mode: mode}
 	r.projPolicy = policyRead{done: true, found: true, policy: &projectpolicy.Policy{
 		Version: projectpolicy.Version,
@@ -918,6 +922,7 @@ func codingRun(t *testing.T, auth, mode string) *run {
 	r.spec = &task.Spec{Version: 1, RunID: "20261106-042141-abcd", Repo: "acme/app", Ref: "main",
 		Workflow: "app", Task: "Add a feature"}
 	r.job = jobTriple{Profile: "standard", Provider: "github", Account: "acme-personal"}
+	r.d.Execution = identityExecution(gcp.ProjectJobName(r.job.Profile, r.job.Provider, r.job.Account))
 	r.spend = Spend{Mode: mode}
 	r.projPolicy = policyRead{done: true, found: true, policy: &projectpolicy.Policy{Version: projectpolicy.Version}}
 	if auth == "vertex" {
@@ -1075,6 +1080,10 @@ func TestReviewJobModelPathIsKeyedOnTheRunClass(t *testing.T) {
 	// (CSR8) refuses it before any model path is chosen.
 	notReview := codingRun(t, "oauth", policy.ModeEnforce)
 	notReview.job = r.job
+	// It was placed in the variant's job: the platform's own report, the name
+	// a class keyed on the name would read. Its mode is still coding, which is
+	// the fact this accessor is keyed on and the door it never gets past.
+	notReview.d.Execution = r.d.Execution
 	notReview.d.Env = append(notReview.d.Env, EnvReviewJob+"=1")
 	if err := notReview.checkJobClass(notReview.job); err == nil {
 		t.Fatal("a coding-mode run was admitted to the review variant's job")
