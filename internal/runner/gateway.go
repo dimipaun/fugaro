@@ -125,6 +125,15 @@ const (
 // error.)
 var metadataClient = &http.Client{Timeout: 10 * time.Second}
 
+// modelAuth is the auth this run's model path takes: the run's own
+// configuration's, and (CSR13) the review class's when the run is one.
+func (r *run) modelAuth() string {
+	if r.cfg == nil {
+		return ""
+	}
+	return r.cfg.Agent.Auth
+}
+
 // gatewayOn reports whether the agent's calls go through the gateway. It is
 // GatewayOn — the same predicate for the readers that hold a mode and an auth
 // rather than a run — read off the run, and it is the only place that happens:

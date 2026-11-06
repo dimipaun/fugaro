@@ -2,16 +2,21 @@ package runner
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // routedRun builds the minimal run the routing switch needs: a coder pin, the
@@ -677,5 +682,92 @@ func TestCascadeRefusedWithoutAllowList(t *testing.T) {
 	other.cfg.Agent.Auth = "api-key"
 	if err := other.applyRouting(other.projPolicy.policy, true); err != nil {
 		t.Errorf("an api-key run of a project whose policy publishes no allow-list: %v", err)
+	}
+}
+
+// reviewClassRun is the minimal review class run (CSR13): a run the launcher
+// marked as a review (spec.Mode, the same field finishLaunch sends a run to the
+// variant on) and placed in the review-only variant of its profile's job — the
+// two facts the class is keyed on — carrying the auth and the budget mode the
+// case hands it, a job environment that names the installation's credentials
+// service, and a published policy that carries the model allow-list the service
+// holds every call it brings to.
+func reviewClassRun(t *testing.T, auth, mode string) *run {
+	t.Helper()
+	r := svcRun(t, auth, nil)
+	r.d.Env = append(r.d.Env, credentialsServiceURLEnv+"="+reviewClassServiceURL)
+	r.spec = &task.Spec{Version: 1, RunID: "20261106-042141-abcd", Repo: "acme/app", Ref: "main",
+		Workflow: "app", Task: "Review the pull request", Mode: recipe.ModeReview}
+	r.job = jobTriple{Profile: "standard", Provider: "github",
+		Account: config.ReviewVariantAccount("acme-personal") + config.ReviewVariantSuffix, Class: classReview}
+	r.spend = Spend{Mode: mode}
+	r.projPolicy = policyRead{done: true, found: true, policy: &projectpolicy.Policy{
+		Version: projectpolicy.Version,
+		Budget:  projectpolicy.Budget{Mode: policy.ModeEnforce, AllowedModels: []string{reviewClassModel}},
+	}}
+	return r
+}
+
+// reviewClassServiceURL is the installation's own credentials service as a
+// fixture spells it, and reviewClassToken is the gateway's per-run token: both
+// are placeholders, and neither is a credential (nothing here calls anything).
+const (
+	reviewClassServiceURL = "https://creds.example.invalid"
+	reviewClassToken      = "gw-run-token-placeholder"
+	reviewClassModel      = "claude-sonnet-5-5"
+)
+
+// TestReviewRunIsGatewayOnWhateverItsAuth (CSR13, O1/D143): a review class
+// run's model path is its class and not agent.auth. The review job's own
+// configuration is oauth — a token CSR7's variant deliberately mounts nowhere —
+// and the class makes the run's calls the credentials service's: the gateway is
+// on, its upstream is the service's KindService, and the environment the agent
+// is built with is the class's spelling, which carries the gateway's per-run
+// token and requires no secret of the job's.
+//
+// Red today: GatewayOn("oauth", enforce) is false, so a review class run starts
+// no gateway — stagePins returns nil, the managed settings carry no gateway
+// variable, and agent.BuildEnv's oauth arm demands a CLI token the variant does
+// not mount — and the reviewer's calls have no path to a model at all unless
+// the operator publishes the coding cascade's consent and the repository writes
+// agent.auth: cascade, the two things spec.md §2 says a review job does not
+// need.
+func TestReviewRunIsGatewayOnWhateverItsAuth(t *testing.T) {
+	for _, auth := range []string{"oauth", config.AuthCascade} {
+		t.Run(auth, func(t *testing.T) {
+			r := reviewClassRun(t, auth, policy.ModeEnforce)
+			if !r.gatewayOn() {
+				t.Fatalf("a review class run whose agent.auth is %s has no gateway: its reviewer's calls have no path to a model", auth)
+			}
+			r.sess = svcSession(t)
+			up, err := r.gatewayUpstream(context.Background())
+			if err != nil {
+				t.Fatalf("the upstream of a review class run with agent.auth %s: %v", auth, err)
+			}
+			if up.Kind != gateway.KindService || up.BaseURL != reviewClassServiceURL {
+				t.Errorf("upstream = %+v, want the credentials service's kind and URL: the class's calls are the service's", up)
+			}
+			// The environment the agent is built with is the class's spelling,
+			// and no secret of the job's is required to build it: the gateway
+			// holds the credential and presents its own per-run token.
+			env, _, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
+				Auth: r.modelAuth(), Gateway: &agent.Gateway{BaseURL: "http://127.0.0.1:1", Token: reviewClassToken},
+			})
+			if err != nil {
+				t.Fatalf("building the agent's environment for a review class run with agent.auth %s: %v", auth, err)
+			}
+			got := map[string]string{}
+			for _, kv := range env {
+				if k, v, ok := strings.Cut(kv, "="); ok {
+					got[k] = v
+				}
+			}
+			if got["ANTHROPIC_BASE_URL"] != "http://127.0.0.1:1" || got["ANTHROPIC_API_KEY"] != reviewClassToken {
+				t.Errorf("the agent's environment routes to %q with %q, want the gateway's URL and its per-run token", got["ANTHROPIC_BASE_URL"], got["ANTHROPIC_API_KEY"])
+			}
+			if v, ok := got["CLAUDE_CODE_OAUTH_TOKEN"]; ok {
+				t.Errorf("a review class run's agent carries CLAUDE_CODE_OAUTH_TOKEN (%q): the variant mounts no token of its own", v)
+			}
+		})
 	}
 }
