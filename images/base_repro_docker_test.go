@@ -3,6 +3,7 @@
 package images_test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -83,10 +84,34 @@ func TestBaseReproducibleFixtureBuild(t *testing.T) {
 	if exec.Command("docker", "buildx", "inspect", "fugaro-base").Run() != nil {
 		testutil.Docker(t, "buildx", "create", "--name", "fugaro-base", "--driver", "docker-container")
 	}
+	// A docker-container builder cannot see the docker store, so the base the
+	// fixture starts FROM is handed to it as an OCI layout saved from there.
+	layout := filepath.Join(dir, "layout")
+	if err := os.MkdirAll(layout, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(dir, "base.tar")
+	testutil.Docker(t, "save", "--output", archive, base)
+	if out, err := exec.Command("tar", "-xf", archive, "-C", layout).CombinedOutput(); err != nil {
+		t.Fatalf("tar: %v\n%s", err, out)
+	}
+	index, err := os.ReadFile(filepath.Join(layout, "index.json"))
+	if err != nil {
+		t.Skipf("docker save of the base is not an OCI layout on this docker: %v", err)
+	}
+	var idx struct {
+		Manifests []struct {
+			Digest string `json:"digest"`
+		} `json:"manifests"`
+	}
+	if err := json.Unmarshal(index, &idx); err != nil || len(idx.Manifests) == 0 {
+		t.Skipf("docker save of the base has no manifest in its index.json: %v", err)
+	}
 	var ids []string
 	for _, tag := range tags {
 		build := exec.Command("docker", "buildx", "build", "--builder", "fugaro-base", "--progress", "plain",
 			"--platform", testutil.DockerPlatform(t),
+			"--build-context", base+"=oci-layout://"+layout+"@"+idx.Manifests[0].Digest,
 			"--build-arg", "SOURCE_DATE_EPOCH="+reproFixtureEpoch,
 			"--output", "type=docker,rewrite-timestamp=true",
 			"--tag", tag, "--file", filepath.Join(dir, "Dockerfile"), dir)
