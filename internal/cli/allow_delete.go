@@ -195,7 +195,7 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, args []string) error {
 	ctx := cmd.Context()
 	// Before anything is read: the refusal is about who is running, and an
 	// agent's session gets no answer at all, not even the list.
-	if m := agentMarker(os.Getenv); m != "" {
+	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
 		return userErr("nothing was written: fugaro allow-delete records the project's own approval of cloud deletes with the operator's credentials, so it is run by a person: %s", initflow.AgentRefusal(m))
 	}
 	// And before the cloud is opened at all: GODEBUG=http2debug makes Go

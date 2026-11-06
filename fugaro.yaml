@@ -13,16 +13,36 @@ git:
     labels: []
 
 agent:
-  # The cloud loop is all DeepSeek through OpenRouter (docs/multi-model.md), on the OpenRouter API
-  # key (api-key: the budget gateway prices every call; the owner's local config sets the caps).
-  # The in-loop senior review is a different, stronger OpenRouter model than the coder
-  # (deepseek-v4-pro), so a `standard` launch here no longer resolves to L1 = L2: that is the pair
-  # the review levels' guardrail (D721, docs/review-levels-ab-jobmax/) will refuse by exact model
-  # ID once it ships, which nothing in the binary does today. The independent review stays OUTSIDE
-  # the cloud loop (local agents) until the per-stage OAuth reviewer setting exists, so there is no
-  # Claude model in the loop and no OAuth token on the job.
+  # The coder runs on `deepseek/deepseek-v4.1-flash` through OpenRouter (docs/multi-model.md), on the
+  # OpenRouter API key (api-key: the budget gateway prices every call; the owner's local config sets
+  # the caps). The in-loop senior review is a different, stronger model than the coder — the
+  # `reviewer` model below, `deepseek/deepseek-v4-pro`, through the same gateway — so a `standard` launch
+  # here does not resolve to L1 = L2, which is what the review levels' guardrail (D721,
+  # docs/review-levels-ab-jobmax/) refuses by exact model ID: this pair is why the refusal does not
+  # fire here.
+  # The independent review can now run INSIDE the cloud loop on a Claude account: the per-stage
+  # account setting exists (mixed credentials, the tasks B1-B6, docs/design/mixed-credentials.md
+  # §11), so an api-key run may name ONE stage-scoped account for its `review` and `adversarial`
+  # stages — `stages.<stage>.claude_account`, or the project's `default_claude_account` where that
+  # stage's own model is an Anthropic one — and those two stages go direct to Anthropic on an Opus
+  # model, which the gateway's ledger does not price at all (their dollars are the agent's own
+  # figure, recorded as notional) and which no gateway caps. Both keys are the machine's and not
+  # this file's: they live in the local project config, and the account reaches a run only once
+  # that config is published into the project's policy node (`fugaro project policy publish`).
+  # Naming an account is the owner's own step, and the evidence for it is the mixed run's smoke
+  # test, Check 290 of docs/gcp-live-checklist.md (owner-run, not yet run); these models stay
+  # DeepSeek until then.
   auth: api-key
   max_budget_usd: 500  # Claude Code prices a non-Anthropic model at Sonnet-like rates, about 25 times what the gateway charges for DeepSeek, so this per-stage limit is set high on purpose; the gateway's per-run cap (budget set --repo) is the real hard stop
+  # The senior review's brief is this repository's own (.fugaro/review.md). It is read
+  # from the run's base and never from the pull request's own branch (docs/design/v1.md),
+  # so a change cannot review itself. It is here because of the owner's ruling of
+  # 2026-11-06 — recorded in docs/design/mixed-credentials.md §11, beside the two rulings
+  # it builds on — that a run whose in-job review ran on Opus and passed gets no second
+  # review by a person (until the job mounts the account's token, a DeepSeek review still gets a local one): the reviewer is told to read the whole change and check the claims against the
+  # code, to run the targeted tests by name, to mutation-check a security-sensitive change
+  # in a scratch tree, and to report only what must change before this is merged.
+  review: .fugaro/review.md
   models:
     coder: deepseek/deepseek-v4.1-flash
     reviewer: deepseek/deepseek-v4-pro

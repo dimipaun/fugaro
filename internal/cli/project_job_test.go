@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -14,6 +15,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
+	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -1474,5 +1479,105 @@ func TestRunRepoWithoutItsCheckoutKeepsThePerRepositoryJob(t *testing.T) {
 				t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the per-repository job %s", len(calls), calls, perRepo)
 			}
 		})
+	}
+}
+
+// credentialsServiceFixtureURL is the address of the credentials service an
+// opted-in fixture's local config records: the one value a variant's
+// environment carries from its deployment, and never a secret.
+const credentialsServiceFixtureURL = "https://fugaro-credentials-abc-uc.a.run.app"
+
+// addRepoAppIDToFixture records the App's ID on the fixture's repository: a
+// shared project job is built with it — the runner refuses to start without it
+// — and the fixture's own repos block names none (it exists for launches, and
+// the App's ID is what deploys a job).
+func addRepoAppIDToFixture(t *testing.T, f *cloudFixture) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const old = "  acme/app: { provider: github, base_branch: main, workflows: [web] }"
+	if !strings.Contains(string(data), old) {
+		t.Fatalf("the fixture's local config no longer holds %q:\n%s", old, data)
+	}
+	withApp := "  acme/app: { provider: github, base_branch: main, workflows: [web], github_app_id: \"123456789\" }"
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), old, withApp, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestReviewJobVariantIsHandedNoToken: the review job a launch resolves is the
+// deployed variant (the launcher's entry agrees with the deployer's job set),
+// and the whole of what reaches its execution is the credentials service's
+// address — no App key, no Claude token, no signing key, no installation token.
+// The read-only installation token is not handed in at any point: the run
+// fetches it by name from the service, which is what the address is for
+// (D893 (c), the fetch path of internal/gitprov/github's ServiceTokens, which
+// the variable's presence opens).
+//
+// The launch itself adds nothing: a job named at launch is not told the
+// address (credentialsServiceLaunchEnv's rule for a shared job), so the value
+// has to come from the variant's own deployment, and the assertion below is
+// that it does.
+//
+// Mutation (run, restore): mount github-app-key or a Claude token on the
+// variant (internal/infra's reviewVariant), or hand the address in as a
+// per-launch environment entry with a minted installation token beside it —
+// this test fails on the variable it adds, and internal/infra's own tests fail
+// on the mount.
+func TestReviewJobVariantIsHandedNoToken(t *testing.T) {
+	f := newProjectJobServingFixture(t)
+	addRepoAppIDToFixture(t, f.cloudFixture)
+	f.appendConfig(t, "credentials_service: { url: "+credentialsServiceFixtureURL+" }\n")
+	lc, err := localcfg.Parse([]byte(readFileString(t, os.Getenv("FUGARO_CONFIG"))))
+	if err != nil {
+		t.Fatalf("the fixture's local config does not parse: %v", err)
+	}
+	deployed, err := infra.ProjectReviewJobs(lc, lc.RunsBucket, false)
+	if err != nil {
+		t.Fatalf("the installation's review variants: %v", err)
+	}
+	if len(deployed) == 0 {
+		t.Fatal("the fixture's installation deploys no review variant, so this pins nothing")
+	}
+	// The address is what an opted-in installation hands a launch: a
+	// repository's own job is told it, which is why the nil below is this
+	// rule and not a config with no service in it.
+	if env := credentialsServiceLaunchEnv(lc, ""); len(env) != 1 || env[0] != providers.EnvCredentialsServiceURL+"="+credentialsServiceFixtureURL {
+		t.Fatalf("a repository launch on this config is handed %v, want the service's address alone: the fixture is not an opted-in installation", env)
+	}
+	for _, account := range []string{"acme-personal", ""} {
+		job := projectJobReviewFor("standard", "github", account, projectJobTimeout+backend.TaskTimeoutSlack)
+		if want := credsvc.ReviewJobName("standard", "github", infra.ReviewVariantAccount(account)); job.Name != want {
+			t.Errorf("the review entry of the account %q resolves %s, want %s (credsvc.ReviewJobName over the policy's spelling of the account)", account, job.Name, want)
+			continue
+		}
+		if job.Profile != "standard" || job.Timeout != projectJobTimeout+backend.TaskTimeoutSlack {
+			t.Errorf("the review job %s = %+v, want the profile's own name and task timeout", job.Name, job)
+		}
+		v, ok := deployed[job.Name]
+		if !ok {
+			t.Errorf("the launcher resolves the review job %s, which the installation does not deploy (%v): a launcher cannot launch a job that does not exist", job.Name, slices.Sorted(maps.Keys(deployed)))
+			continue
+		}
+		if env := credentialsServiceLaunchEnv(lc, job.Name); env != nil {
+			t.Errorf("a launch on the review job %s hands the execution %v: the variant carries the service's address from its deployment, and a per-launch entry is a value an execution object records", job.Name, env)
+		}
+		if got := v.Env[providers.EnvCredentialsServiceURL]; got != credentialsServiceFixtureURL {
+			t.Errorf("the review job %s carries %s = %q, want %q: the address is the fetch path, and without it the run holds no installation token at all", job.Name, providers.EnvCredentialsServiceURL, got, credentialsServiceFixtureURL)
+		}
+		for secret, name := range config.ReservedSecrets {
+			if value, ok := v.Env[name]; ok {
+				t.Errorf("the review job %s carries %s = %q: that is the variable the %s secret is mounted as, and the variant mounts nothing", job.Name, name, oneLineCLI(value), secret)
+			}
+			if mounted, ok := v.SecretEnv[name]; ok {
+				t.Errorf("the review job %s mounts the %s secret as %s: the variant mounts no secret at all", job.Name, mounted, name)
+			}
+		}
+		if len(v.SecretEnv) != 0 {
+			t.Errorf("the review job %s mounts %v: the variant mounts no secret at all", job.Name, v.SecretEnv)
+		}
 	}
 }

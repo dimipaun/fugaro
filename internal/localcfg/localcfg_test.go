@@ -1975,3 +1975,46 @@ func TestImageCatalogNotInShared(t *testing.T) {
 		t.Error("Shared/MergeShared cleared the local catalog")
 	}
 }
+
+// TestClaudeAccountStageSegmentMustBeARunStage: A1 left the stage segment
+// unvalidated because no closed vocabulary of run stages existed yet
+// (docs/accounts-add/spec.md §11.1 — "a segment that is not a stage is refused
+// rather than silently never applying"). config.RunStages is that vocabulary,
+// and this pins that the loader now holds the segment to it: a segment naming
+// no stage a run spends a model call on is refused, and every stage that is one
+// is accepted, so the refusal cannot be widened into refusing real stages.
+//
+// The api-key half of §11 is deliberately NOT here: which stage may take an
+// account depends on the run's agent.auth, which this file does not carry. That
+// rule is config.CheckStageAccountMix, and it fires at the launch and in
+// `fugaro validate`.
+func TestClaudeAccountStageSegmentMustBeARunStage(t *testing.T) {
+	defined := "claude_accounts:\n  team-b:\n    allow_data_to: [acme/web]\n"
+	for _, stage := range config.RunStages {
+		t.Run("accepts "+stage, func(t *testing.T) {
+			c, err := Parse([]byte(sample + defined + "stages:\n  " + stage + ":\n    claude_account: team-b\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := c.ClaudeAccountStages[stage].ClaudeAccount; got != "team-b" {
+				t.Errorf("stages.%s.claude_account = %q, want team-b", stage, got)
+			}
+		})
+	}
+	// implement is a stage and a legal segment; the api-key ruling that refuses
+	// it is the launch's, not the loader's.
+	if _, err := Parse([]byte(sample + defined + "stages:\n  implement:\n    claude_account: team-b\n")); err != nil {
+		t.Errorf("stages.implement.claude_account refused at load: %v", err)
+	}
+	for _, segment := range []string{"bootstrap", "render", "finalize", "writeback", "provision", "Review", "review_first_extra"} {
+		t.Run("refuses "+segment, func(t *testing.T) {
+			_, err := Parse([]byte(sample + defined + "stages:\n  " + segment + ":\n    claude_account: team-b\n"))
+			if err == nil {
+				t.Fatal("accepted a segment that names no stage")
+			}
+			if !strings.Contains(err.Error(), "is not a stage of a run") || !strings.Contains(err.Error(), segment) {
+				t.Errorf("the refusal does not name the segment and the vocabulary: %v", err)
+			}
+		})
+	}
+}

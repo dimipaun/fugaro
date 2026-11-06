@@ -113,7 +113,13 @@ var ErrNotConverged = errors.New("the managed gate did not admit this step")
 // recipe for reaching past a control has no business in the text an agent reads
 // — and what it does not claim is that the step is safe: the sentence says this
 // program wrote nothing, and the rules that refused are named after it.
-const NotConverged = "a managed project admits an agent's session to the steps this gate judged and to no others, so nothing is written here: no person is being asked, and no flag, variable or mark reaches past the gate (D1012)"
+//
+// Who reads it is both sessions, which is why it does not say "a session": the
+// gate decides a person's own terminal too (the owner's ruling of 2026-11-01),
+// so the owner who runs a command the gate refuses reads this sentence rather
+// than a confirmation — "no person is being asked" is literally what happened
+// to them, and the rules that refused are named after it (D1023).
+const NotConverged = "a managed project applies the steps this gate judged and no others, so nothing is written here: no person is being asked, and no flag, variable or mark reaches past the gate (D1012)"
 
 // Refuse is the gate's whole behaviour: nil only when a verdict admitted the
 // document AND the step's class is one a plan gate judges. It is the FIRST

@@ -51,6 +51,14 @@ type settingsEdit struct {
 	// answer it: it names --yes where the caller says a flag stands in
 	// (D1107), and the refusal of a session with no terminal repeats it.
 	TypedWhy string
+	// Ask is the owner's --ask: the confirmations this write would have been
+	// given in a project that is not managed, asked here instead of being
+	// replaced by the gate's verdict (initflow.Conditions.Ask, and the rule of
+	// 2026-11-04 that makes it --yes's symmetric half). It never touches the
+	// gate above: the read, the judgement and the admission are made exactly
+	// where they were, and the flag answers only the question of what this
+	// write is confirmed BY.
+	Ask bool
 	// Kind is the document Path is: the local project config, the local project
 	// layer file, or a repository's fugaro.yaml. It is one fact and not two,
 	// because both things it decides must agree: the reader of the
@@ -118,7 +126,8 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	// class the gate does not cover, an edit whose class is Typed — keeps the
 	// refusal exactly as it was, and a caller that passes nothing changes
 	// nothing.
-	if marker := agentMarker(os.Getenv); marker != "" && (!e.insideRepo() || e.Typed) && !initflow.CanConfirmManaged(e.editClass(), initflow.Conditions{Agent: marker}, e.Managed) {
+	conds := settingsEditConditions(cmd, e)
+	if marker := conds.Agent; marker != "" && (!e.insideRepo() || e.Typed) && !initflow.CanConfirmManaged(e.editClass(), conds, e.Managed) {
 		fmt.Fprintf(out, "%s\n%s", e.Path, diff)
 		return userErr("refusing to write %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
 			e.Path, marker, e.What, e.Command)
@@ -134,7 +143,25 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	}
 
 	fmt.Fprintf(out, "%s\n%s", e.Path, diff)
-	if e.Typed {
+	// The owner's own terminal in a managed project asks nothing (the ruling of
+	// 2026-11-01): the gate read this edit's document, admitted it, and its
+	// verdict IS the confirmation — the diff above is the whole of what the
+	// owner reads. The class is still the class: initflow.GateConfirms is false
+	// for a Typed edit whatever a plan looked like (D1026, and settingsEdit's
+	// own editClass), so the widening directions keep the typed name, and a
+	// project that is not managed, a mark that did not answer and an edit the
+	// gate refused all arrive here as the zero value every fence reads exactly
+	// as it did before the gate existed.
+	//
+	// Which sentence that is read as is the session's own, and nothing else in
+	// this path is: a coding agent's session reads AgentProceeded, which names
+	// the marker this step proceeds under, and the owner's terminal reads
+	// GateProceeded, which says where the verdict was recorded. gateSentence is
+	// the one place that choice is made (update_managed.go), so this surface
+	// cannot be the one that prints the owner's line to a session.
+	if !e.Yes && initflow.GateConfirms(e.editClass(), conds, e.Managed) {
+		fmt.Fprintf(out, "  %s\n", gateSentence(conds.Agent))
+	} else if e.Typed {
 		// The widening is named before the prompt and not only in the
 		// refusal a session with no terminal gets: the confirmation a person
 		// reads is one block, and the sentence saying what makes this edit
@@ -212,6 +239,14 @@ func readSettingsCurrent(e settingsEdit) ([]byte, error) {
 	return config.ReadRegular(e.Path, config.LayerMaxBytes)
 }
 
+// settingsEditConditions is who is there for one edit, in initflow's own terms:
+// the command's own stdin, the edit's own --yes and the marker of the session
+// it runs in. It is read once per edit, so the fence above and the gate below
+// are decided under one struct rather than two readings that could disagree.
+func settingsEditConditions(cmd *cobra.Command, e settingsEdit) initflow.Conditions {
+	return initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), Yes: e.Yes, Agent: agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())), Ask: e.Ask}
+}
+
 // confirmSettingsWrite is the ordinary y/N confirmation: --yes answers it, a
 // terminal asks, and anything else refuses rather than guessing. It is
 // confirmTyped's shape without the typed name, because most settings writes are
@@ -234,5 +269,6 @@ func confirmSettingsWrite(cmd *cobra.Command, lc *localcfg.Config, path string, 
 	if ans := strings.ToLower(strings.TrimSpace(line)); ans != "y" && ans != "yes" {
 		return userErr("not confirmed; nothing was written")
 	}
+	noteIDETerminalCmd(cmd, out)
 	return nil
 }

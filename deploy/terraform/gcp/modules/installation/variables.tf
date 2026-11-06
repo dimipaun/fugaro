@@ -398,6 +398,36 @@ variable "coordinator" {
   }
 }
 
+variable "mcp_server" {
+  description = "The coordinator's front door: its own service account, its public Cloud Run service, the one endpoint a standard MCP client reaches without a Google identity (D920), and the resource the coordinator's OAuth endpoints answer on (D931's tools, M5's authorization server). OFF by default (null) — the whole switch D934 asks for: an installation that has not asked for a front door plans exactly what it planned before, one that opted into the coordinator for its read-only view included, and a public write endpoint (spawn_task spends money) is never a side effect of an upgrade. account_id is the front door's own service account, which is deliberately not the coordinator's: the sweep's account holds the App key and the whole database, and an identity holding either behind a public endpoint is what spec.md §8's 'there is no credential to reach' forbids. service is the Cloud Run service's own name; image is the coordinator's image, which the module reads out of var.coordinator (one CLI binary serves the sweep and the front door). The account's one grant is the runs bucket's read (D932); what a front door may read in the coordinator's own store is D935, which the owner has not answered, so no binding on one is planned here. No environment variable and no secret is declared here: the process reads Cloud Run's own PORT, and M5's endpoints and M7's resource handler bring their configuration with them."
+  type = object({
+    account_id = string
+    service    = string
+    image      = string
+  })
+  default = null
+
+  validation {
+    condition = var.mcp_server == null ? true : (
+      can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.mcp_server.account_id)) &&
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.mcp_server.service)) &&
+      length(var.mcp_server.image) > 0
+    )
+    error_message = "mcp_server needs a service account ID, a Cloud Run service name (lower-case letters, digits and dashes) and the image it runs."
+  }
+
+  # The front door is the coordinator's own service, so it needs the
+  # coordinator: there is no state for it to answer about on an installation
+  # without one. Reading the other variable here is deliberate (Terraform 1.9's
+  # cross-variable validation): the alternative is an opt-in that plans nothing
+  # and says nothing, which is how an owner ends up believing a front door
+  # exists.
+  validation {
+    condition     = var.mcp_server == null || var.coordinator != null
+    error_message = "mcp_server needs var.coordinator: the front door is the coordinator's own service, and an installation that has not opted into the coordinator has no state for one to serve."
+  }
+}
+
 variable "project_secrets" {
   description = "Project-wide secret containers: logical name -> secret ID (gcp.ProjectSecretID), fugaro update creates/adopts each; values are never set by Terraform."
   type        = map(string)

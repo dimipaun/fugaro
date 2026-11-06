@@ -37,6 +37,14 @@ type refreshOptions struct {
 	// command): it confirms every step, with no terminal needed, but never
 	// in a coding agent's session.
 	yes bool
+	// ask is --ask (the owner's rule of 2026-11-04, and --yes's symmetric
+	// half): in a project whose marks say it is managed, where this command
+	// asks nothing — the owner's ruling of 2026-11-01 — the flag asks the
+	// confirmations it has always asked instead: the typed project's name at
+	// steps 2 and 3 and before every billable build. Unmanaged, it says so and
+	// changes nothing; a run that could not answer refuses rather than
+	// proceeding (managed_ask.go). It is refused beside --yes.
+	ask bool
 	// dir is the checkout to refresh ("" is the working directory).
 	dir string
 	// rerun, when set, is the whole line a stop names instead of again()
@@ -52,8 +60,9 @@ type refreshOptions struct {
 	// returns, never from the hook alone.
 	onPlan func(*refreshPlan)
 	// managed is the gate this run is under: the value openRefreshManaged
-	// returned, set by runImageRefresh and nil for every run that is not a
-	// coding agent's session in a managed project. It travels with the options
+	// returned, set by runImageRefresh and nil for every run the gate has
+	// nothing to answer — one that is neither a coding agent's session nor a
+	// person's own run at a terminal that would be asked. It travels with the options
 	// rather than as another parameter because it is not a flag and because it
 	// is the same value at every step of the run: the plan carries it to step 4
 	// (refreshPlan.managed), and preflight uses the installation the gate
@@ -396,6 +405,7 @@ func newImageRefreshCmd() *cobra.Command {
 	f.StringArrayVar(&o.workflows, "workflow", nil, "a workflow to refresh (repeatable; default: every workflow in fugaro.yaml)")
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release base images come from, as for the converge (default ghcr.io/dimipaun)")
 	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "cross-check the digest of a base image's release signature, KIND=sha256:<hex>, as for the converge (repeatable)")
+	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmations this run would otherwise skip (the project's name typed at each step, and before each billable build) instead of applying on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. Refused where nobody can answer them (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --yes")
 	f.BoolVar(&o.yes, "yes", false, "confirm every step without asking (the base copy, the check-job update and each billable build, with no cap on how many run), and without a terminal: for CI or a script. The plan is still printed first. Never confirmed in a coding agent's session (CLAUDECODE and the like): nothing is applied there, --yes included. Without --yes nothing changes: a real terminal and the typed confirmations are still required, as always")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
@@ -404,8 +414,8 @@ func newImageRefreshCmd() *cobra.Command {
 // refuseRefreshHere is decision D2, as reversed in part by the owner's
 // 2026-10-08 decision and in part by the managed gate (M4, D1011): it still
 // runs before anything else (git, the credentials, the network — the gate's
-// own read is the one exception, and it is made only in the session refused
-// here). A coding agent's session applies nothing, --yes included, UNLESS the
+// own read is the one exception, and where it is made is openRefreshManaged's
+// business). A coding agent's session applies nothing, --yes included, UNLESS the
 // project is managed and the gate admitted every step it reaches: g is that
 // gate, and it is nil for every other session, so the sentence below is
 // exactly the one this command has always printed — a project that is not
@@ -415,7 +425,7 @@ func newImageRefreshCmd() *cobra.Command {
 // with yes, no terminal is required (it may run from CI or a script). There is
 // still no --json or --plan-only.
 func refuseRefreshHere(cmd *cobra.Command, yes bool, g *refreshManaged) error {
-	if m := agentMarker(os.Getenv); m != "" {
+	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
 		if g != nil {
 			return nil
 		}
@@ -495,14 +505,33 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
 	}
+	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
+		return err
+	}
 	// yes carries --yes to r.confirm/r.ask (steps 2 and 3) and to
-	// refreshBuilds (step 4, which keeps its own rule: see askBuild).
-	iopts := &initOptions{cloud: o.cloud, imageSource: o.imageSource, expectDigests: o.expectDigests, yes: o.yes}
-	o.managed = openRefreshManaged(ctx, o, iopts)
+	// refreshBuilds (step 4, which keeps its own rule: see askBuild). The steps
+	// behind r.confirm/r.ask ask the gate beside it: in a managed project's own
+	// terminal the marks are read and the typed name is replaced
+	// (refreshManaged.asksNothing, and r.refresh below).
+	iopts := &initOptions{cloud: o.cloud, imageSource: o.imageSource, expectDigests: o.expectDigests, yes: o.yes, ask: o.ask}
+	o.managed = openRefreshManaged(ctx, cmd, o, iopts)
+	// --ask answers for the marks, and it answers before the command's own
+	// refusal: the flag's whole rule is that a managed project's confirmations
+	// asked for where nobody can answer them are a refusal and never a
+	// proceed, and that refusal has to be this flag's sentence rather than the
+	// one a run without it would have read (managed_ask.go). Nothing is
+	// applied by either.
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask, yes: o.yes}, o.managed != nil, askConditions(cmd, false, false)); err != nil {
+		return err
+	}
 	if err := refuseRefreshHere(cmd, o.yes, o.managed); err != nil {
 		return err
 	}
 	r := newInitRun(cmd, iopts)
+	// The steps that are not builds ask the run whether the gate has taken
+	// their confirmation (r.ask, refreshManaged.asksNothing): the read above is
+	// the whole of the permission there, and a nil one is every other session.
+	r.refresh = o.managed
 	if o.in != nil {
 		// The caller's reader, not a second one over the same stdin: see
 		// refreshOptions.in.

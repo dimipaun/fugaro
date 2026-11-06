@@ -198,7 +198,7 @@ func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) err
 	// project on somebody's billing account it is most true. There is no
 	// release gate after it any more: the budget gate is the new project's
 	// own, read after the creation (verifyCreated) and again by the apply.
-	if m := agentMarker(os.Getenv); m != "" {
+	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
 		return userErr("nothing was restored: %s", initflow.AgentRefusal(m))
 	}
 	return restoreSteps(cmd, o, newID, rootArg)
@@ -235,7 +235,7 @@ func restorePreflight(cmd *cobra.Command, o restoreOptions, newID, rootArg strin
 	// The coding agent's refusal again, at the head of the sequence itself:
 	// runRestore checks it before the gate, and a caller of this function
 	// that skipped runRestore must not skip it too.
-	if m := agentMarker(os.Getenv); m != "" {
+	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
 		return nil, nil, userErr("nothing was restored: %s", initflow.AgentRefusal(m))
 	}
 	if !stdinIsTerminal(cmd.InOrStdin()) {

@@ -9,6 +9,7 @@ import (
 	crm "google.golang.org/api/cloudresourcemanager/v1"
 	storage "google.golang.org/api/storage/v1"
 
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -390,10 +391,14 @@ func TestManagedFlagFailsWhenTheMarkerDoesNotReadBack(t *testing.T) {
 // rests on: an agent cannot flag a project managed by its own action. The
 // command writes the marker with the operator's credentials, and a coding
 // agent's session holds them — so nothing is written from one, under any of
-// the six markers, whatever the arguments (there are none but a project ID
-// and the budget pair, and both are given here).
+// the five markers an agent's own processes set, whatever the arguments (there
+// are none but a project ID and the budget pair, and both are given here).
+// The sixth, the IDE extension's own (agentenv.IDEMarker), is the one marker
+// whose meaning a terminal decides: a session that carries it alone AT a
+// terminal is the person's own and flags the project (TestManagedFlagAcceptsTheIDETerminal),
+// and the same marker with no terminal is refused like the rest here.
 func TestManagedFlagRefusesEveryCodingAgentMarker(t *testing.T) {
-	for _, marker := range agentMarkers {
+	for _, marker := range agentenv.AgentMarkers {
 		t.Run(marker, func(t *testing.T) {
 			r := managedFlagRig(t)
 			// A terminal, and the right ID ready to be typed: the refusal is
@@ -415,6 +420,27 @@ func TestManagedFlagRefusesEveryCodingAgentMarker(t *testing.T) {
 			}
 		})
 	}
+	// The sixth marker, the IDE extension's own, with no terminal: a coding
+	// agent's tool call has none, so the same marker alone is refused exactly
+	// as each of the five above is.
+	t.Run(agentenv.IDEMarker+" with no terminal", func(t *testing.T) {
+		r := managedFlagRig(t)
+		noTerminal(t)
+		t.Setenv(agentenv.IDEMarker, "1")
+		out, _, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
+		if err == nil {
+			t.Fatalf("the command ran with no terminal:\n%s", out)
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("exit %d, want %d (a user error: nothing was attempted)", ExitCode(err), ExitUserError)
+		}
+		if !strings.Contains(err.Error(), agentenv.IDEMarker) {
+			t.Errorf("the refusal does not name the marker %s: %v", agentenv.IDEMarker, err)
+		}
+		if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
+			t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.MarkerObject, got)
+		}
+	})
 	// The whole surface is the owner's, so the argument checks below never
 	// run either: an agent gets the same refusal for a project ID no
 	// installation has.
@@ -425,6 +451,39 @@ func TestManagedFlagRefusesEveryCodingAgentMarker(t *testing.T) {
 	}
 	if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
 		t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.MarkerObject, got)
+	}
+}
+
+// TestManagedFlagAcceptsTheIDETerminal is the accepted half of the marker
+// above: a person running this in the Claude Code IDE extension's own terminal
+// carries CLAUDE_CODE_SSE_PORT alone, and it is their terminal — so the typed
+// GCP project ID confirms the flag as it does with no marker set, and the run
+// says once which terminal it read the confirmation from. The person still
+// types the ID: the acceptance removes a false refusal and nothing else.
+func TestManagedFlagAcceptsTheIDETerminal(t *testing.T) {
+	r := managedFlagRig(t)
+	terminal(t, true)
+	t.Setenv(agentenv.IDEMarker, "1")
+	out, _, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if _, ok := managedFlagAt(t, r.gcs, initRunsBucket); !ok {
+		t.Fatalf("the marker of gs://%s is not there after the IDE terminal typed the ID:\n%s", initRunsBucket, out)
+	}
+	if n := strings.Count(out, ideNotice); n != 1 {
+		t.Errorf("the IDE-terminal line is printed %d times, want 1:\n%s", n, out)
+	}
+	// The ID typed is still what confirms it: the same session with the wrong
+	// line writes nothing.
+	r2 := managedFlagRig(t)
+	terminal(t, true)
+	t.Setenv(agentenv.IDEMarker, "1")
+	if out, _, err := executeStdin(t, "proj-9999\n", managedFlagArgs()...); err == nil {
+		t.Fatalf("a wrong line confirmed the flag from an IDE terminal:\n%s", out)
+	}
+	if _, ok := managedFlagAt(t, r2.gcs, initRunsBucket); ok {
+		t.Errorf("a refused run wrote gs://%s/%s", initRunsBucket, managed.MarkerObject)
 	}
 }
 

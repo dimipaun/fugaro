@@ -201,6 +201,48 @@ func AllowedClaudeAccounts(accounts map[string]ClaudeAccount, repo string) []str
 // move.
 const reservedAccountNameMessage = "this name is reserved: the platform holds another credential under it, so an account spoken by it would leave one name meaning two credentials — pick a different account name"
 
+// ReviewVariantAccount is one entry of ProjectJobAccounts' axis as the
+// review-only variant's names spell it: the policy's own spelling of the
+// account, which writes the default account as DefaultClaudeAccount where the
+// axis writes it as the empty string.
+//
+// The variant's job name and service account are derived over that spelling
+// (ReviewVariantSuffix is appended to it), so this is the one mapping from the
+// axis a profile states to the account segment the variant's names carry. It
+// is defined here beside the axis and the suffix because a second spelling
+// would name a job nobody deployed: the runner recomputes the variant's name
+// to place a review run in it (internal/runner's projectJobCandidates), the
+// deployer builds the job with the same mapping (internal/infra's
+// ReviewVariantAccount is this function) and the credentials service admits
+// its account over the same axis (internal/credsvc's ReviewJobAccountsFor),
+// so the three cannot disagree.
+func ReviewVariantAccount(account string) string {
+	if account == "" {
+		return DefaultClaudeAccount
+	}
+	return account
+}
+
+// ReviewVariantSuffix is the suffix a review-only job variant carries on the
+// account segment of its job name and service account (design
+// docs/cloud-senior-review, CSR7): the variant of the account "team-a" is
+// deployed as team-a-review, over the same (profile, provider, account) axis.
+//
+// It is defined here because the account NAME rule needs it: an account whose
+// own name ends in it derives the job name and the service account of another
+// account's variant, which is a configuration no installation may hold (see
+// reviewAccountNameMessage). credsvc.ReviewVariantSuffix is this constant —
+// the service spells the variant's names with it (credsvc.ReviewJobName), and
+// it names the same one value rather than a second copy of it.
+const ReviewVariantSuffix = "-review"
+
+// reviewAccountNameMessage is the ONE sentence both halves of the name rule
+// answer a name ending in ReviewVariantSuffix with, for the same reason
+// reservedAccountNameMessage is one: the definition and the reference must
+// refuse a name with the same words. It never echoes the name, and it names
+// both the reason and the fix.
+const reviewAccountNameMessage = `an account name may not end in "` + ReviewVariantSuffix + `": that is the suffix the review-only job variant of a project job carries on its account segment, so this name derives the same job name and the same service account as the review variant of the account it is named after — and the coding job of an account mounts the App key, which the review container must never be able to read. Pick a name that does not end in it`
+
 // reservedClaudeAccountName reports whether an account name is the bundle's own
 // reserved spelling: config.BitbucketSecret, and no other.
 //
@@ -249,6 +291,8 @@ func ValidateClaudeAccounts(accounts map[string]ClaudeAccount) []Problem {
 			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("account name must be at most %d characters", MaxClaudeAccountNameLen)})
 		case !ClaudeAccountNameRE.MatchString(name):
 			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("account name must match %s", ClaudeAccountNameRE)})
+		case strings.HasSuffix(name, ReviewVariantSuffix):
+			ps = append(ps, Problem{Path: at, Message: reviewAccountNameMessage})
 		}
 		for _, r := range accounts[name].AllowDataTo {
 			if !repoSlugRE.MatchString(r) || hasDotSegment(r) {
@@ -271,7 +315,12 @@ func ValidateClaudeAccounts(accounts map[string]ClaudeAccount) []Problem {
 // MaxClaudeAccountNameLen) and is not the bundle's one reserved spelling
 // (reservedClaudeAccountName, reservedAccountNameMessage: a name the bundle
 // refuses an account of is refused here exactly as it is refused as a key of
-// claude_accounts, so a policy cannot admit an account no bundle can hold).
+// claude_accounts, so a policy cannot admit an account no bundle can hold), and
+// it does not end in the review-only variant's suffix (ReviewVariantSuffix,
+// reviewAccountNameMessage: such an account would derive the variant's own job
+// name and service account, so it is refused wherever a name is written and not
+// only where one is defined — a policy that admitted it would deploy a coding
+// job onto a review job's account).
 // The message never echoes the name: a value that fails this check
 // reached it exactly because it is untrusted text, and the sentence is printed
 // to a terminal (the same treatment ValidateClaudeAccounts gives one).
@@ -287,6 +336,8 @@ func ValidClaudeAccountRef(name string) string {
 		return fmt.Sprintf("account name must be at most %d characters", MaxClaudeAccountNameLen)
 	case !ClaudeAccountNameRE.MatchString(name):
 		return fmt.Sprintf("account name must match %s, or be %q for the default account", ClaudeAccountNameRE, DefaultClaudeAccount)
+	case strings.HasSuffix(name, ReviewVariantSuffix):
+		return reviewAccountNameMessage
 	}
 	return ""
 }

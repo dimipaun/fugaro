@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
 	crm "google.golang.org/api/cloudresourcemanager/v1"
@@ -98,26 +99,48 @@ import (
 // `Typed` on its own (D1026's rule is asked there and is not restated here).
 // No Typed edit can therefore be admitted by any path.
 //
-// Why a repository-scoped ordinary write reads nothing at all. Today's fence
-// does not apply inside a repository (`--layer repo` writes a file an agent
-// could edit anyway, unless the edit is the typed one), so there is no refusal
-// for the gate to stand in for and no mark is read: the ordinary repository
-// edit keeps exactly the behaviour it has, pays for nothing, and cannot be
-// turned into a refusal by a transient Storage or Resource Manager failure
-// (M6's review of 2026-11-03, item 2). The aim is the fence's own condition,
-// asked once, in settingsGateApplies.
+// Why a repository-scoped ordinary write reads nothing in a coding agent's
+// session. Today's fence does not apply inside a repository (`--layer repo`
+// writes a file an agent could edit anyway, unless the edit is the typed one),
+// so there is no refusal for the gate to stand in for and no mark is read: the
+// ordinary repository edit keeps exactly the behaviour it has, pays for
+// nothing, and cannot be turned into a refusal by a transient Storage or
+// Resource Manager failure (M6's review of 2026-11-03, item 2).
+//
+// Why the OWNER's own terminal reads now, where it read nothing before. The
+// gate's second job is the owner's ruling of 2026-11-01 — a managed project
+// takes no confirmation prompt, which is the whole point of a managed project —
+// and at a terminal the thing it stands in for is this command's own y/N. So
+// the marks are read exactly where that question would be asked: a real
+// terminal, without --yes (settingsAsk). A run that asks nothing reads nothing:
+// --yes answers the edit itself, and a run with no terminal is refused before
+// the file is touched, so neither has a question for the gate to answer and
+// neither pays for the read. The aim is the question's own condition, asked
+// once, in settingsGateAsks.
 
 // settingsGateMarker is the coding agent's session this command was run in, ""
 // for a person at a terminal. It is read once per command, here, so the two
 // places that ask "is the gate this command's business" cannot disagree.
-func settingsGateMarker() string { return agentMarker(os.Getenv) }
+func settingsGateMarker(terminal bool) string { return agentMarker(os.Getenv, terminal) }
 
-// settingsGateApplies reports whether one edit is one today's coding-agent
-// refusal would stop: applySettingsEdit reads exactly this condition, and a
-// gate consulted anywhere else would be reading marks for a write that was
-// never refused (D1025).
-func settingsGateApplies(marker string, kind settingsDocKind, typed bool) bool {
-	return marker != "" && (kind != settingsDocRepo || typed)
+// settingsAsk is the caller's half of whether this command would ask: a real
+// terminal and no --yes. It is what the gate is read for in a session that is
+// not a coding agent's, and it is read from the command the caller is already
+// holding (its own stdin), so the two answers cannot disagree.
+func settingsAsk(cmd *cobra.Command, yes bool) bool {
+	return !yes && stdinIsTerminal(cmd.InOrStdin())
+}
+
+// settingsGateAsks reports whether one edit is one this command would ask a
+// confirmation for — the coding agent's refusal SD9 makes, or the y/N a person
+// at a terminal is asked. applySettingsEdit reads exactly this condition, and a
+// gate consulted anywhere else would be reading marks for a write nobody would
+// have been asked about (D1025).
+func settingsGateAsks(marker string, asks bool, kind settingsDocKind, typed bool) bool {
+	if marker != "" {
+		return kind != settingsDocRepo || typed
+	}
+	return asks
 }
 
 // settingsConfigIsTheProjects reports whether one settings write's selected
@@ -226,12 +249,13 @@ func settingsWriteGate(ctx context.Context, lc *localcfg.Config, marker, subcomm
 //
 // It is `accounts add`'s accountsAddGate in this command's own terms, and the
 // three answers are the same three for the same reasons. What differs is when
-// it is asked at all (settingsGateApplies, read once here), which document
-// it judges, and that it admits nothing unless `selPath` is the selected
-// project's own config file (settingsConfigIsTheProjects).
-func settingsManagedStep(ctx context.Context, lc *localcfg.Config, selPath string, target settingsTarget, key string, typed bool, why string, old, newData []byte, subcommand string) (initflow.Managed, managedGate, error) {
-	marker := settingsGateMarker()
-	if lc == nil || !settingsGateApplies(marker, target.kind, typed) {
+// it is asked at all (settingsGateAsks, read once here, over the caller's own
+// settingsAsk), which document it judges, and that it admits nothing unless
+// `selPath` is the selected project's own config file
+// (settingsConfigIsTheProjects).
+func settingsManagedStep(ctx context.Context, lc *localcfg.Config, selPath string, target settingsTarget, key string, typed bool, why string, old, newData []byte, subcommand string, asks bool) (initflow.Managed, managedGate, error) {
+	marker := settingsGateMarker(processTerminal())
+	if lc == nil || !settingsGateAsks(marker, asks, target.kind, typed) {
 		return initflow.Managed{}, managedGate{}, nil
 	}
 	if !settingsConfigIsTheProjects(selPath, lc.Name) {

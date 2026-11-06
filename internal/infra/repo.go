@@ -197,7 +197,13 @@ func SecretVersions(ctx context.Context, c *Clients, spec RepoSpec) (map[string]
 // whose image is still the bootstrap's), and every secret the workflow
 // mounts has a version (versions, from SecretVersions). A checkout: clone
 // workflow never needs one: it runs the installation's base image directly,
-// and there is no per-repository image to build or push.
+// and there is no per-repository image to build or push. Neither does a
+// workflow a catalog entry gives its image to (CatalogEntry): a prebuilt
+// entry's image is the operator's own reference, which no Fugaro build
+// writes, and a built one belongs to the catalog's own build in the
+// installation's shared registry — so a repository whose every workflow runs
+// an entry has no per-repository image at all, and no first build to confirm
+// (the same skip spec.go's daily check makes, on the same fact).
 //
 // An optional secret holds no build back (OptionalSecret): the spec in hand
 // is the pre-readiness one, whose job still mounts the Anthropic key, but
@@ -219,14 +225,19 @@ func NeedsBuild(ctx context.Context, c *Clients, spec RepoSpec, versions map[str
 	var out []string
 	for _, key := range slices.Sorted(maps.Keys(spec.Workflows)) {
 		ws := spec.Workflows[key]
-		// The skip is clone's alone: it runs the installation's base image
-		// and builds nothing. A checkout: shared workflow does have an image
-		// to build — a dependency-layer one, shared with every repository on
-		// the same key (design forge-authorship-images/shared-images.md §6)
-		// — so it is reported here like any other. Until C8b1's refresh
-		// builds that key, the image this reports is the per-repository
-		// derived one the job still carries (workflow() in spec.go).
-		if key != ws.Name || ws.Checkout == config.CheckoutClone {
+		// The skips are clone's and the catalog's: clone runs the
+		// installation's base image and builds nothing, and a catalog
+		// entry's image is not this repository's own tag either (spec.go's
+		// catalogJobImage routes such a job through the installation's
+		// shared registry), so the record looked for below is one no build
+		// of this repository would ever write. A checkout: shared workflow
+		// does have an image to build — a dependency-layer one, shared with
+		// every repository on the same key (design
+		// forge-authorship-images/shared-images.md §6) — so it is reported
+		// here like any other. Until C8b1's refresh builds that key, the
+		// image this reports is the per-repository derived one the job still
+		// carries (workflow() in spec.go).
+		if key != ws.Name || ws.Checkout == config.CheckoutClone || ws.CatalogEntry != "" {
 			continue
 		}
 		if slices.ContainsFunc(uniqueSecrets(ws), func(l string) bool { return !versions[l] && !OptionalSecret(l) }) {

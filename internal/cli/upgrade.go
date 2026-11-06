@@ -181,7 +181,7 @@ func runUpgrade(cmd *cobra.Command, o upgradeOptions, paths []string) error {
 	if len(paths) == 0 {
 		paths = []string{"."}
 	}
-	agent := agentMarker(os.Getenv)
+	agent := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
 	// U11: a development build has no release to pin, install or refresh to,
 	// so every step is skipped and the run exits 0; it never needs a terminal.
 	if releaseVersion() != "" && !o.check && !o.local && !o.yes && agent == "" && !stdinIsTerminal(cmd.InOrStdin()) {

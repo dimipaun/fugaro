@@ -1,11 +1,12 @@
 # The project workflow secret: implementation plan
 
-**Status: a design, and nothing is built.** Every task below is written to an **answered decision** in
-[reconciliation.md](reconciliation.md) §4: the owner answered **all eighteen on 2026-11-04, all as
+**Status: a design, and the build has landed.** Every task below is written to an **answered decision**
+in [reconciliation.md](reconciliation.md) §4: the owner answered **all eighteen on 2026-11-04, all as
 recommended** — **D1260** (`workflow_secrets`), **D1266** (refuse) and **D1267** (untouched) by name,
-and the other fifteen as recommended — so **the build may start, at 0.19.0 (D1277)**. **Where this
-plan and [reconciliation.md](reconciliation.md) disagree, the reconciliation wins**; where a task and
-the reconciliation disagree, the reconciliation wins.
+and the other fifteen as recommended — so **the build is the 0.19.0 theme (D1277)**: the tasks
+**W0–W6 are on `main`**, and W7 is the folder's own status lines. **Where this plan and
+[reconciliation.md](reconciliation.md) disagree, the reconciliation wins**; where a task and the
+reconciliation disagree, the reconciliation wins.
 
 Each task touches at most twelve files, names its tests, starts with a **red step**, and carries a
 **SEC** flag where it moves a security boundary — and six of the eight carry one, because the whole
@@ -357,9 +358,10 @@ person decides whether storing one value for sixty-five repositories is safe.
   entry), a new paragraph in the same section carrying D1273's sentence (the wildcard's reach, the
   repo-wins rule, and the fact that the value is what the repository's build and tests read),
   `docs/project-layer.md:244` (the parenthesis that says a name with a project-wide meaning cannot be
-  shared through a workflow's block), `docs/design/project-secrets.md` §3 step 4 (a pointer to this
-  folder, not a rewrite), and `plugin/skills/setup/SKILL.md:130` (a covered workflow secret is not
-  prompted for either).
+  shared through a workflow's block), `docs/design/project-secrets.md` §4 item 4 (a pointer to this
+  folder, not a rewrite — that document's §4 *Decision: storage*, the fourth point of "Who writes a
+  version"), and `plugin/skills/setup/SKILL.md:130` (a covered workflow secret is not prompted for
+  either).
 - **Red step.** Extend `internal/cli/docs_project_wide_git_test.go`'s discipline in a new
   `internal/cli/docs_project_workflow_secrets_test.go` — which W7 finishes — with the two sentences
   this task writes, so the docs cannot land without them. The test is **written here and completed in

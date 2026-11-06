@@ -47,7 +47,10 @@ import (
 //   - what a non-managed project's confirmation does under each combination of
 //     flags and terminal is a literal table (confirmTable);
 //   - which environment variables are a coding agent's is a literal list
-//     (expectedAgentMarkers), not agentMarkers;
+//     (expectedAgentMarkers), not agentMarkers, and what each environment
+//     state must report with and without a terminal is written beside it in
+//     that same table (agentEnvStates/agentFor): the classification is stated
+//     once in this file, and the flag and ask tables do not restate it;
 //   - every flag of `fugaro setup` has a written entry (initFlagCases).
 //
 // The decision is computed over the program's real paths: the managed read
@@ -83,18 +86,48 @@ var expectedAgentMarkers = []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLA
 // An empty value is not a coding agent's session (agentMarker reads getenv's
 // value, and an agent that can set a variable empty can unset it), and that
 // is pinned here so a change to it is a decision rather than a drift.
+//
+// The two expectations are the whole of the classification this package
+// states by hand, and they are stated HERE, once, per state: which environment
+// is a coding agent's with no real terminal on the run's input, and which it
+// is with one. The package's other two hand-written tables ask different
+// questions and neither restates this one — confirmTable asks what a project
+// nothing recorded does under a combination of flags (its answer under any
+// marker is "nothing", and which marker that is comes from here), and
+// askSessions asks whether there is anyone to ask, over initflow.Conditions
+// rather than over an environment.
 type agentEnvState struct {
 	name, key, value string
 	agent            string // the marker the run must report, "" for none: written by hand
+	// agentTerminal is the same with a real terminal on the run's input, and
+	// it differs for one state only: the Claude Code IDE extension sets
+	// CLAUDE_CODE_SSE_PORT in a person's own terminal too, so that marker
+	// alone, at a terminal, is a person's terminal and not a coding agent's
+	// session (the ruling of 2026-11-05).
+	agentTerminal string
 }
 
 func agentEnvStates() []agentEnvState {
 	out := []agentEnvState{{name: "no marker"}}
 	for _, k := range expectedAgentMarkers {
-		out = append(out, agentEnvState{name: k + "=1", key: k, value: "1", agent: k})
-		out = append(out, agentEnvState{name: k + "= (empty)", key: k, value: "", agent: ""})
+		s := agentEnvState{name: k + "=1", key: k, value: "1", agent: k, agentTerminal: k}
+		if k == "CLAUDE_CODE_SSE_PORT" {
+			s.agentTerminal = ""
+		}
+		out = append(out, s)
+		out = append(out, agentEnvState{name: k + "= (empty)", key: k, value: ""})
 	}
 	return out
+}
+
+// agentFor is the marker a run in this environment must report, given whether
+// its input is a real terminal. It returns the state's two written facts and
+// holds no rule of its own, so the classification is decided in one place.
+func (s agentEnvState) agentFor(terminal bool) string {
+	if terminal {
+		return s.agentTerminal
+	}
+	return s.agent
 }
 
 // clearAgentEnv unsets every marker the oracle names (restored at the end of
@@ -131,48 +164,90 @@ type confirmRow struct {
 	yes, planOnly, nonInteractive, json, terminal bool
 	condYes                                       bool
 	ordRight, ordWrong, typRight, typWrong        bool
+	// ask is --ask. It is written LAST rather than beside the flags it is a
+	// sibling of, so that every column the rows had before it keeps its place
+	// in the literal.
+	ask bool
 }
 
 // confirmTable is every combination of --yes, --plan-only, --non-interactive,
-// --json and a terminal (2^5 = 32 rows), each written out.
+// --json, a terminal and --ask (2^6 = 64 rows), each written out. --ask is a
+// dimension of this table and it moves no expected value in it: every row here
+// is a project that is NOT managed and has no marker, and the flag is a no-op
+// where the marks did not answer managed (managed_ask.go, and the owner's rule
+// of 2026-11-04 that makes it --yes's symmetric half). The rows where it does
+// move something are the managed ones, which are not this table's subject:
+// managed_ask_test.go is theirs.
 var confirmTable = []confirmRow{
-	//  yes    plan   nonInt json   term     condYes   ordR   ordW   typR   typW
-	{false, false, false, false, false /**/, false /**/, false, false, false, false},
-	{false, false, false, false, true /* */, false /**/, true, false, true, false},
-	{false, false, false, true, false /* */, false /**/, false, false, false, false},
-	{false, false, false, true, true /*  */, false /**/, true, false, false, false},
-	{false, false, true, false, false /* */, false /**/, false, false, false, false},
-	{false, false, true, false, true /*  */, false /**/, false, false, false, false},
-	{false, false, true, true, false /*  */, false /**/, false, false, false, false},
-	{false, false, true, true, true /*   */, false /**/, false, false, false, false},
-	{false, true, false, false, false /* */, false /**/, false, false, false, false},
-	{false, true, false, false, true /*  */, false /**/, true, false, true, false},
-	{false, true, false, true, false /*  */, false /**/, false, false, false, false},
-	{false, true, false, true, true /*   */, false /**/, true, false, false, false},
-	{false, true, true, false, false /*  */, false /**/, false, false, false, false},
-	{false, true, true, false, true /*   */, false /**/, false, false, false, false},
-	{false, true, true, true, false /*   */, false /**/, false, false, false, false},
-	{false, true, true, true, true /*    */, false /**/, false, false, false, false},
-	{true, false, false, false, false /* */, true /* */, true, true, false, false},
-	{true, false, false, false, true /*  */, true /* */, true, true, false, false},
-	{true, false, false, true, false /*  */, true /* */, true, true, false, false},
-	{true, false, false, true, true /*   */, true /* */, true, true, false, false},
-	{true, false, true, false, false /*  */, true /* */, true, true, false, false},
-	{true, false, true, false, true /*   */, true /* */, true, true, false, false},
-	{true, false, true, true, false /*   */, true /* */, true, true, false, false},
-	{true, false, true, true, true /*    */, true /* */, true, true, false, false},
-	{true, true, false, false, false /*  */, false /**/, false, false, false, false},
-	{true, true, false, false, true /*   */, false /**/, true, false, true, false},
-	{true, true, false, true, false /*   */, false /**/, false, false, false, false},
-	{true, true, false, true, true /*    */, false /**/, true, false, false, false},
-	{true, true, true, false, false /*   */, false /**/, false, false, false, false},
-	{true, true, true, false, true /*    */, false /**/, false, false, false, false},
-	{true, true, true, true, false /*    */, false /**/, false, false, false, false},
-	{true, true, true, true, true /*     */, false /**/, false, false, false, false},
+	//  yes    plan   nonInt json   term     condYes    ordR   ordW   typR   typW   ask
+	{false, false, false, false, false /**/, false /**/, false, false, false, false, false /*ask*/},
+	{false, false, false, false, true /* */, false /**/, true, false, true, false, false /*ask*/},
+	{false, false, false, true, false /* */, false /**/, false, false, false, false, false /*ask*/},
+	{false, false, false, true, true /*  */, false /**/, true, false, false, false, false /*ask*/},
+	{false, false, true, false, false /* */, false /**/, false, false, false, false, false /*ask*/},
+	{false, false, true, false, true /*  */, false /**/, false, false, false, false, false /*ask*/},
+	{false, false, true, true, false /*  */, false /**/, false, false, false, false, false /*ask*/},
+	{false, false, true, true, true /*   */, false /**/, false, false, false, false, false /*ask*/},
+	{false, true, false, false, false /* */, false /**/, false, false, false, false, false /*ask*/},
+	{false, true, false, false, true /*  */, false /**/, true, false, true, false, false /*ask*/},
+	{false, true, false, true, false /*  */, false /**/, false, false, false, false, false /*ask*/},
+	{false, true, false, true, true /*   */, false /**/, true, false, false, false, false /*ask*/},
+	{false, true, true, false, false /*  */, false /**/, false, false, false, false, false /*ask*/},
+	{false, true, true, false, true /*   */, false /**/, false, false, false, false, false /*ask*/},
+	{false, true, true, true, false /*   */, false /**/, false, false, false, false, false /*ask*/},
+	{false, true, true, true, true /*    */, false /**/, false, false, false, false, false /*ask*/},
+	{true, false, false, false, false /* */, true /* */, true, true, false, false, false /*ask*/},
+	{true, false, false, false, true /*  */, true /* */, true, true, false, false, false /*ask*/},
+	{true, false, false, true, false /*  */, true /* */, true, true, false, false, false /*ask*/},
+	{true, false, false, true, true /*   */, true /* */, true, true, false, false, false /*ask*/},
+	{true, false, true, false, false /*  */, true /* */, true, true, false, false, false /*ask*/},
+	{true, false, true, false, true /*   */, true /* */, true, true, false, false, false /*ask*/},
+	{true, false, true, true, false /*   */, true /* */, true, true, false, false, false /*ask*/},
+	{true, false, true, true, true /*    */, true /* */, true, true, false, false, false /*ask*/},
+	{true, true, false, false, false /*  */, false /**/, false, false, false, false, false /*ask*/},
+	{true, true, false, false, true /*   */, false /**/, true, false, true, false, false /*ask*/},
+	{true, true, false, true, false /*   */, false /**/, false, false, false, false, false /*ask*/},
+	{true, true, false, true, true /*    */, false /**/, true, false, false, false, false /*ask*/},
+	{true, true, true, false, false /*   */, false /**/, false, false, false, false, false /*ask*/},
+	{true, true, true, false, true /*    */, false /**/, false, false, false, false, false /*ask*/},
+	{true, true, true, true, false /*    */, false /**/, false, false, false, false, false /*ask*/},
+	{true, true, true, true, true /*     */, false /**/, false, false, false, false, false /*ask*/},
+	{false, false, false, false, false /**/, false /**/, false, false, false, false, true /*ask*/},
+	{false, false, false, false, true /* */, false /**/, true, false, true, false, true /*ask*/},
+	{false, false, false, true, false /* */, false /**/, false, false, false, false, true /*ask*/},
+	{false, false, false, true, true /*  */, false /**/, true, false, false, false, true /*ask*/},
+	{false, false, true, false, false /* */, false /**/, false, false, false, false, true /*ask*/},
+	{false, false, true, false, true /*  */, false /**/, false, false, false, false, true /*ask*/},
+	{false, false, true, true, false /*  */, false /**/, false, false, false, false, true /*ask*/},
+	{false, false, true, true, true /*   */, false /**/, false, false, false, false, true /*ask*/},
+	{false, true, false, false, false /* */, false /**/, false, false, false, false, true /*ask*/},
+	{false, true, false, false, true /*  */, false /**/, true, false, true, false, true /*ask*/},
+	{false, true, false, true, false /*  */, false /**/, false, false, false, false, true /*ask*/},
+	{false, true, false, true, true /*   */, false /**/, true, false, false, false, true /*ask*/},
+	{false, true, true, false, false /*  */, false /**/, false, false, false, false, true /*ask*/},
+	{false, true, true, false, true /*   */, false /**/, false, false, false, false, true /*ask*/},
+	{false, true, true, true, false /*   */, false /**/, false, false, false, false, true /*ask*/},
+	{false, true, true, true, true /*    */, false /**/, false, false, false, false, true /*ask*/},
+	{true, false, false, false, false /* */, true /* */, true, true, false, false, true /*ask*/},
+	{true, false, false, false, true /*  */, true /* */, true, true, false, false, true /*ask*/},
+	{true, false, false, true, false /*  */, true /* */, true, true, false, false, true /*ask*/},
+	{true, false, false, true, true /*   */, true /* */, true, true, false, false, true /*ask*/},
+	{true, false, true, false, false /*  */, true /* */, true, true, false, false, true /*ask*/},
+	{true, false, true, false, true /*   */, true /* */, true, true, false, false, true /*ask*/},
+	{true, false, true, true, false /*   */, true /* */, true, true, false, false, true /*ask*/},
+	{true, false, true, true, true /*    */, true /* */, true, true, false, false, true /*ask*/},
+	{true, true, false, false, false /*  */, false /**/, false, false, false, false, true /*ask*/},
+	{true, true, false, false, true /*   */, false /**/, true, false, true, false, true /*ask*/},
+	{true, true, false, true, false /*   */, false /**/, false, false, false, false, true /*ask*/},
+	{true, true, false, true, true /*    */, false /**/, true, false, false, false, true /*ask*/},
+	{true, true, true, false, false /*   */, false /**/, false, false, false, false, true /*ask*/},
+	{true, true, true, false, true /*    */, false /**/, false, false, false, false, true /*ask*/},
+	{true, true, true, true, false /*    */, false /**/, false, false, false, false, true /*ask*/},
+	{true, true, true, true, true /*     */, false /**/, false, false, false, false, true /*ask*/},
 }
 
 func (c confirmRow) String() string {
-	return fmt.Sprintf("--yes=%v --plan-only=%v --non-interactive=%v --json=%v terminal=%v", c.yes, c.planOnly, c.nonInteractive, c.json, c.terminal)
+	return fmt.Sprintf("--yes=%v --plan-only=%v --non-interactive=%v --json=%v terminal=%v --ask=%v", c.yes, c.planOnly, c.nonInteractive, c.json, c.terminal, c.ask)
 }
 
 // confirmClasses is every confirmation class the product runs over, by the
@@ -482,7 +557,7 @@ func confirmRig(t *testing.T, row confirmRow, typed string) (*initRun, *readSpy)
 	spy := &readSpy{Reader: strings.NewReader(typed + "\n")}
 	cmd := &cobra.Command{}
 	cmd.SetIn(spy)
-	o := &initOptions{yes: row.yes, planOnly: row.planOnly, nonInteractive: row.nonInteractive, asJSON: row.json}
+	o := &initOptions{yes: row.yes, planOnly: row.planOnly, nonInteractive: row.nonInteractive, asJSON: row.json, ask: row.ask}
 	return &initRun{cmd: cmd, o: o, w: io.Discard, in: bufio.NewReader(spy), projectName: initProjectName, gcpProject: initProject}, spy
 }
 
@@ -524,6 +599,7 @@ func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads 
 		env.apply(t)
 		for _, row := range confirmTable {
 			withTerminal(t, row.terminal)
+			marker := env.agentFor(row.terminal)
 			for _, rd := range reads {
 				if rd.managed {
 					continue // the managed direction is Task 3.1's
@@ -536,7 +612,7 @@ func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads 
 							typed = initProjectName
 						}
 						want := false
-						if env.agent == "" {
+						if marker == "" {
 							switch {
 							case class.class == initflow.YesOrTyped && right:
 								want = row.ordRight
@@ -554,13 +630,13 @@ func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads 
 						if got != want {
 							bad = append(bad, fmt.Sprintf("%s: proceeds=%v, want %v (err %v)", where, got, want, err))
 						}
-						if env.agent != "" {
+						if marker != "" {
 							if spy.read {
 								bad = append(bad, where+": stdin was read in a coding agent's session")
 							}
 							var ae *initflow.AgentError
-							if class.class == initflow.YesOrTyped && (!errors.As(err, &ae) || ae.Marker != env.agent) {
-								bad = append(bad, fmt.Sprintf("%s: ask's refusal is %v, want the agent refusal naming %s", where, err, env.agent))
+							if class.class == initflow.YesOrTyped && (!errors.As(err, &ae) || ae.Marker != marker) {
+								bad = append(bad, fmt.Sprintf("%s: ask's refusal is %v, want the agent refusal naming %s", where, err, marker))
 							}
 						}
 					}
@@ -574,11 +650,11 @@ func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads 
 // The property itself, over the whole product and the program's real paths.
 func TestManagedNonManagedProjectNeverSkipsAConfirmation(t *testing.T) {
 	reads := managedReads(t)
-	if len(confirmTable) != 1<<5 {
-		t.Fatalf("the table has %d rows, want 32", len(confirmTable))
+	if len(confirmTable) != 1<<6 {
+		t.Fatalf("the table has %d rows, want 64", len(confirmTable))
 	}
 	bad, n := managedViolations(t, managedMode, reads)
-	// 13 environment states x 32 rows x 14 non-managed reads x 2 classes x 2 answers.
+	// 13 environment states x 64 rows x 14 non-managed reads x 2 classes x 2 answers.
 	if want := len(agentEnvStates()) * len(confirmTable) * (len(reads) - 1) * len(confirmClasses) * 2; n != want || n == 0 {
 		t.Fatalf("the property ran %d combinations, want %d", n, want)
 	}
@@ -617,8 +693,9 @@ func TestManagedConfirmRuleMatchesTheTable(t *testing.T) {
 		env.apply(t)
 		for _, row := range confirmTable {
 			withTerminal(t, row.terminal)
+			marker := env.agentFor(row.terminal)
 			r, _ := confirmRig(t, row, "")
-			want := initflow.Conditions{Yes: row.condYes, NonInteractive: row.nonInteractive, JSON: row.json, Terminal: row.terminal, Agent: env.agent}
+			want := initflow.Conditions{Yes: row.condYes, NonInteractive: row.nonInteractive, JSON: row.json, Terminal: row.terminal, Agent: marker, Ask: row.ask}
 			if got := r.conditions(); got != want {
 				t.Errorf("%s, %s: initRun.conditions() = %+v, want %+v", row, env.name, got, want)
 			}
@@ -627,9 +704,9 @@ func TestManagedConfirmRuleMatchesTheTable(t *testing.T) {
 			// stage has none of its own), so init must feed it the marker.
 			e := &initEngine{r: r, lc: &localcfg.Config{}}
 			o := e.options()
-			if o.Agent != env.agent || o.Yes != row.yes || o.PlanOnly != row.planOnly || o.NonInteractive != row.nonInteractive || o.JSON != row.json || o.Terminal != row.terminal {
+			if o.Agent != marker || o.Yes != row.yes || o.PlanOnly != row.planOnly || o.NonInteractive != row.nonInteractive || o.JSON != row.json || o.Terminal != row.terminal {
 				t.Errorf("%s, %s: initEngine.options() has Agent=%q Yes=%v PlanOnly=%v NonInteractive=%v JSON=%v Terminal=%v, want Agent=%q and the row's flags",
-					row, env.name, o.Agent, o.Yes, o.PlanOnly, o.NonInteractive, o.JSON, o.Terminal, env.agent)
+					row, env.name, o.Agent, o.Yes, o.PlanOnly, o.NonInteractive, o.JSON, o.Terminal, marker)
 			}
 			if row.planOnly {
 				continue
@@ -639,7 +716,7 @@ func TestManagedConfirmRuleMatchesTheTable(t *testing.T) {
 				fn   func(initflow.ConfirmClass, initflow.Conditions) bool
 			}{{"initflow.CanConfirm", initflow.CanConfirm}, {"canConfirmTyped", canConfirmTyped}} {
 				ord, typ := row.ordRight, row.typRight
-				if env.agent != "" {
+				if marker != "" {
 					ord, typ = false, false
 				}
 				if got := rule.fn(initflow.YesOrTyped, want); got != ord {
@@ -649,7 +726,7 @@ func TestManagedConfirmRuleMatchesTheTable(t *testing.T) {
 					t.Errorf("%s(Typed) under %s, %s = %v, want %v", rule.name, row, env.name, got, typ)
 				}
 			}
-			typ := row.typRight && env.agent == ""
+			typ := row.typRight && marker == ""
 			if got := initflow.CanConfirmRun(want); got != typ {
 				t.Errorf("initflow.CanConfirmRun under %s, %s = %v, want %v", row, env.name, got, typ)
 			}
@@ -668,7 +745,7 @@ type inlineAgentSite struct {
 }
 
 // inlineAgentSites holds the agent-marker decisions of init that are run here
-// one by one. Every agentMarker(, agentEnv( and Agent: site in init's non-test
+// one by one. Every agentMarker( and Agent: site in init's non-test
 // files is listed either here, in propertyAgentSites (driven by the property
 // and the loop tests) or in outsideAgentSites with a reason:
 // TestManagedEveryAgentSiteInInitHasACase scans the source and fails on a site
@@ -731,9 +808,10 @@ var inlineAgentSites = []inlineAgentSite{
 // propertyAgentSites are the agent-marker sites the other ManagedXxx tests
 // drive, with the test that does.
 var propertyAgentSites = map[string]string{
-	"init.go ask":            "TestManagedNonManagedProjectNeverSkipsAConfirmation (the YesOrTyped class)",
-	"init.go conditions":     "TestManagedConfirmRuleMatchesTheTable, and the Typed class of the property through askTyped",
-	"init_stages.go options": "TestManagedConfirmRuleMatchesTheTable (options().Agent) and TestManagedPluginStageThroughTheLoopRefusesUnderEachMarker (the stage loop's agent gate)",
+	"init.go ask":                "TestManagedNonManagedProjectNeverSkipsAConfirmation (the YesOrTyped class)",
+	"init.go conditions":         "TestManagedConfirmRuleMatchesTheTable, and the Typed class of the property through askTyped",
+	"init_stages.go options":     "TestManagedConfirmRuleMatchesTheTable (options().Agent) and TestManagedPluginStageThroughTheLoopRefusesUnderEachMarker (the stage loop's agent gate)",
+	"init_plugin_stage.go Apply": "TestUpdateManagedPluginWiringAsksNothing (the managed gate's own hand on the wiring's y/N, in the owner's terminal and in a coding agent's session)",
 	// The policy stage refuses a marker itself rather than leaning on the
 	// loop's gate: it is SelfConfirming, so the loop would call it.
 	"init_policy_migrate.go Apply": "TestUpdatePolicyMigrationRefusedInAgentSession",
@@ -754,7 +832,6 @@ var propertyAgentSites = map[string]string{
 var outsideAgentSites = map[string]string{
 	"init.go runInit":                 "OUTSIDE: --publish-config's refusal before any write; not a confirmation (initFlagCases: publish-config)",
 	"init.go publishSharedConfig":     "OUTSIDE: the shared-config publish after the local config is written; not a confirmation, it skips with a note under a marker",
-	"initsecrets.go agentEnv":         "OUTSIDE: the definition of agentEnv itself (TestManagedAgentMarkersAreTheExpectedSix pins agentMarker)",
 	"initsecrets.go Check":            "OUTSIDE: the wording of the secrets stage's detail; whether it prompts is canPrompt (an inline site)",
 	"init_repo_gate.go convergeOptIn": "OUTSIDE: the wording of the repository gate's detail — it says whether --yes is named as a way in; whether the run may onboard at all is authState/onboardCovered (inline sites)",
 	// The marker only reaches the publisher's own empty-allow-list refusal
@@ -788,7 +865,8 @@ func TestManagedEveryInlineAgentDecisionRefusesUnderEachMarker(t *testing.T) {
 				r.cmd.SetOut(&out)
 				r.cmd.SetErr(&out)
 				e := &initEngine{r: r, lc: &localcfg.Config{}}
-				if got, want := site.allowed(t, r, e, env.agent), env.agent == ""; got != want {
+				marker := env.agentFor(true) // this test sits at a terminal
+				if got, want := site.allowed(t, r, e, marker), marker == ""; got != want {
 					t.Errorf("allowed=%v, want %v", got, want)
 				}
 			})
@@ -804,13 +882,26 @@ func TestManagedAgentMarkersAreTheExpectedSix(t *testing.T) {
 		t.Fatalf("agentMarkers is %v and the oracle is %v", agentMarkers, expectedAgentMarkers)
 	}
 	for _, k := range expectedAgentMarkers {
-		if got := agentMarker(func(s string) string {
+		one := func(s string) string {
 			if s == k {
 				return "1"
 			}
 			return ""
-		}); got != k {
-			t.Errorf("agentMarker with only %s set = %q", k, got)
+		}
+		// Every one of the six is a coding agent's session without a terminal.
+		if got := agentMarker(one, false); got != k {
+			t.Errorf("agentMarker with only %s set and no terminal = %q", k, got)
+		}
+		// With a terminal only the IDE extension's own marker is a person's own
+		// terminal rather than an agent's session (the ruling of 2026-11-05):
+		// the other five are set in the agent's own processes and are an agent's
+		// session whatever the terminal.
+		want := k
+		if k == "CLAUDE_CODE_SSE_PORT" {
+			want = ""
+		}
+		if got := agentMarker(one, true); got != want {
+			t.Errorf("agentMarker with only %s set and a terminal = %q, want %q", k, got, want)
 		}
 	}
 }
@@ -825,6 +916,7 @@ var initFlagCases = map[string]string{
 	"non-interactive": "dimension: never prompts, so nothing typed confirms",
 	"json":            "dimension: never takes a Typed confirmation",
 	"plan-only":       "dimension: folded into Yes=false by initRun.conditions; never takes --yes",
+	"ask":             "dimension: takes the gate out of the question (initflow.Conditions.Ask makes GateConfirms false), so every step falls back to the confirmation it would have had in a project that is not managed — the same decision the --ask half of every row already records. It never weakens the gate: the read and the admit are made before it is consulted. In a session that cannot answer it refuses (managed_ask.go), and `fugaro setup` refuses the flag by name: the gate is `fugaro update`'s",
 	// Flags whose steps confirm through the paths the property drives.
 	"create-project":        "its creation confirms through the Typed class (askTyped/canType, both covered)",
 	"managed":               "OUTSIDE the property: with --create-project it requires the budget amount (D64) and records it in the creation fact (Task 4.2); it adds a guard, so the creation still confirms through the Typed class (covered)",
@@ -873,7 +965,7 @@ func TestManagedEveryInitFlagHasACase(t *testing.T) {
 			t.Errorf("initFlagCases names --%s, which fugaro setup does not declare", name)
 		}
 	}
-	for _, d := range []string{"yes", "non-interactive", "json", "plan-only"} {
+	for _, d := range []string{"yes", "non-interactive", "json", "plan-only", "ask"} {
 		if !strings.HasPrefix(initFlagCases[d], "dimension:") {
 			t.Errorf("--%s is one of the table's dimensions", d)
 		}
@@ -920,7 +1012,7 @@ func TestManagedConditionEnumerationIsComplete(t *testing.T) {
 	for i := 0; i < typ.NumField(); i++ {
 		declared = append(declared, typ.Field(i).Name)
 	}
-	if want := []string{"Yes", "NonInteractive", "JSON", "Terminal", "Agent"}; !slices.Equal(declared, want) {
+	if want := []string{"Yes", "NonInteractive", "JSON", "Terminal", "Agent", "Ask"}; !slices.Equal(declared, want) {
 		t.Fatalf("initflow.Conditions is %v and the table covers %v (%s)", declared, want, conditionsString(initflow.Conditions{}))
 	}
 }
@@ -944,7 +1036,7 @@ func TestManagedConfirmClassEnumerationIsComplete(t *testing.T) {
 }
 
 // agentSitesInInit scans init's non-test source (init*.go) for every
-// agentMarker( and agentEnv( call and every Agent: field, and names each by
+// agentMarker( call and every Agent: field, and names each by
 // its file and enclosing function ("init.go ask"). A site outside any
 // function is named "file (package level)".
 func agentSitesInInit(t *testing.T) map[string]bool {
@@ -1058,12 +1150,13 @@ func TestManagedPluginStageThroughTheLoopRefusesUnderEachMarker(t *testing.T) {
 				}
 				got, _ := os.ReadFile(settings)
 				written := string(got) != settingsWithOthers
-				if env.agent != "" {
+				marker := env.agentFor(how.terminal)
+				if marker != "" {
 					if written || stateOf(res, initflow.Plugin) != initflow.NeedsYou || strings.Contains(out.String(), "confirmed by --yes") || strings.Contains(out.String(), "[y/N]") {
-						t.Fatalf("under %s the plugin stage was not refused: written=%v stages %+v\n%s", env.agent, written, res.Stages, out.String())
+						t.Fatalf("under %s the plugin stage was not refused: written=%v stages %+v\n%s", marker, written, res.Stages, out.String())
 					}
-					if d := res.Stages[0].Detail; !strings.Contains(d, initflow.AgentRefusal(env.agent)) {
-						t.Errorf("the refusal %q does not name %s", d, env.agent)
+					if d := res.Stages[0].Detail; !strings.Contains(d, initflow.AgentRefusal(marker)) {
+						t.Errorf("the refusal %q does not name %s", d, marker)
 					}
 					return
 				}

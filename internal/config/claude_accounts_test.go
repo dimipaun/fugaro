@@ -322,6 +322,46 @@ func TestProjectJobTokenAccount(t *testing.T) {
 	}
 }
 
+// TestProjectJobTokenAccountRefusesTheVariantName: the token axis never answers
+// for a name in the review-only variant's spelling (CSR8). The axis is the
+// coding jobs' — the account segment of a job that mounts a Claude token — and
+// a review job mounts none (O1, D893(c)): its credential is the run's class's,
+// from the credentials service. So team-a-review and default-review, the
+// account segments the variant's names carry, resolve to no account of any
+// profile, and the coding job's account is not reachable by asking for its
+// variant's spelling.
+//
+// The refusal is the axis's, not the profile's: a profile cannot list such a
+// name at all (ValidateClaudeAccounts, the suffix rule), so the case below is
+// the last door — the name arrives here and no account answers for it.
+//
+// Mutation (run, restore): strip ReviewVariantSuffix from an account before
+// looking it up in the profile's list (the variant's name would then answer
+// with the account it is named after, and the token that account holds would be
+// the one a review job is handed).
+func TestProjectJobTokenAccountRefusesTheVariantName(t *testing.T) {
+	both := JobProfile{ClaudeAccounts: []string{"acme-personal", DefaultClaudeAccount}}
+	for _, tc := range []struct {
+		why     string
+		account string
+	}{
+		{"a named account's variant is no account of the profile", "acme-personal" + ReviewVariantSuffix},
+		{"the default account's variant is no account either", DefaultClaudeAccount + ReviewVariantSuffix},
+		{"and the variant of an account the profile does not list is none", "acme-work" + ReviewVariantSuffix},
+	} {
+		if got, serves := ProjectJobTokenAccount(both, tc.account); serves || got != "" {
+			t.Errorf("%s: ProjectJobTokenAccount(%v, %q) = (%q, %v), want (\"\", false): a review job holds no Claude token, so no account answers for the variant's name",
+				tc.why, both.ClaudeAccounts, tc.account, got, serves)
+		}
+	}
+	// The axis still answers for the coding jobs' own names, so the refusal
+	// above is the suffix and not a profile listing nothing.
+	if got, serves := ProjectJobTokenAccount(both, "acme-personal"); !serves || got != "acme-personal" {
+		t.Errorf("ProjectJobTokenAccount(%v, %q) = (%q, %v), want (\"acme-personal\", true)",
+			both.ClaudeAccounts, "acme-personal", got, serves)
+	}
+}
+
 // TestValidateClaudeAccountsRefusesBitbucketToken: the account name
 // "bitbucket-token" is config.BitbucketSecret, the name of the credential a
 // job mounts for upstream git (ReservedSecrets) and the one name the
@@ -372,5 +412,75 @@ func TestValidClaudeAccountRefRefusesBitbucketToken(t *testing.T) {
 	def := ValidateClaudeAccounts(map[string]ClaudeAccount{BitbucketSecret: {}})
 	if len(def) != 1 || def[0].Message != msg {
 		t.Errorf("the definition and the reference disagree about %s: %+v vs %q", BitbucketSecret, def, msg)
+	}
+}
+
+// TestValidateClaudeAccountsRefusesTheReviewVariantSuffix: an account whose
+// own name ends in the review-only variant's suffix is a configuration no
+// installation may hold (CSR7, the owner's ruling of 2026-11-04). The variant's
+// job name and service account are derived over the (profile, provider,
+// account) axis with the suffix on the account segment, so an account named
+// acme-personal-review derives exactly the job name and service account of
+// acme-personal's variant — and the coding job of that name mounts the App key,
+// which the review container must never be able to read (O1). The refusal is
+// the definition half of the rule; the reference half is
+// TestValidClaudeAccountRefRefusesTheReviewVariantSuffix.
+//
+// The rule is about the SUFFIX and nothing else: a name that merely mentions
+// review is an ordinary account, and refusing it would take names the
+// deployment holds no property about.
+//
+// Red before the rule: ValidateClaudeAccounts accepted acme-personal-review,
+// and the clash surfaced only at `fugaro update`, when the deployer's own
+// cross-set check refused the variant (ProjectReviewJobs).
+func TestValidateClaudeAccountsRefusesTheReviewVariantSuffix(t *testing.T) {
+	for _, name := range []string{"acme-personal-review", "a-review"} {
+		ps := ValidateClaudeAccounts(map[string]ClaudeAccount{name: {AllowDataTo: []string{"acme/app"}}})
+		if len(ps) != 1 {
+			t.Fatalf("ValidateClaudeAccounts with an account named %q = %+v, want one refusal", name, ps)
+		}
+		if got, want := ps[0].Path, "claude_accounts."+name; got != want {
+			t.Errorf("Problem.Path = %q, want %q", got, want)
+		}
+		if !strings.Contains(ps[0].Message, ReviewVariantSuffix) {
+			t.Errorf("the refusal does not name the suffix that makes the name collide: %q", ps[0].Message)
+		}
+		if strings.Contains(ps[0].Message, name) {
+			t.Errorf("the refusal echoes the account name: %q", ps[0].Message)
+		}
+	}
+	// The suffix is only refused where it is the END of the name.
+	for _, name := range []string{"review-bot", "acme-reviewer", "acme-personal-reviews"} {
+		if ps := ValidateClaudeAccounts(map[string]ClaudeAccount{name: {AllowDataTo: []string{"acme/app"}}}); len(ps) > 0 {
+			t.Errorf("an account named %q was refused: %+v", name, ps)
+		}
+	}
+}
+
+// TestValidClaudeAccountRefRefusesTheReviewVariantSuffix: the reference half of
+// the same rule. A profile's claude_accounts entry naming such an account is
+// refused where it is written, in the same sentence the definition is refused
+// in (the two halves are one rule), so the published policy cannot admit an
+// account whose coding job a review variant would collide with.
+func TestValidClaudeAccountRefRefusesTheReviewVariantSuffix(t *testing.T) {
+	const name = "acme-personal-review"
+	msg := ValidClaudeAccountRef(name)
+	if msg == "" {
+		t.Fatalf("ValidClaudeAccountRef(%q) is valid, want a refusal", name)
+	}
+	if !strings.Contains(msg, ReviewVariantSuffix) || strings.Contains(msg, name) {
+		t.Errorf("the refusal must name the suffix and not the account: %q", msg)
+	}
+	profiles := map[string]JobProfile{"standard": {ClaudeAccounts: []string{name}}}
+	ps := ValidateProfileClaudeAccounts(profiles, map[string]ClaudeAccount{"acme-personal": {AllowDataTo: []string{"acme/app"}}}, nil)
+	if len(ps) != 1 {
+		t.Fatalf("a profile naming %q = %+v, want one refusal", name, ps)
+	}
+	if got, want := ps[0].Path, "profiles.standard.claude_accounts[0]"; got != want {
+		t.Errorf("Problem.Path = %q, want %q", got, want)
+	}
+	def := ValidateClaudeAccounts(map[string]ClaudeAccount{name: {}})
+	if len(def) != 1 || def[0].Message != msg {
+		t.Errorf("the definition and the reference disagree about %s: %+v vs %q", name, def, msg)
 	}
 }

@@ -239,6 +239,7 @@ func confirmTyped(cmd *cobra.Command, in *bufio.Reader, lc *localcfg.Config, yes
 	if strings.TrimSpace(line) != lc.Name {
 		return userErr("not confirmed (the project's name was not typed); nothing was changed")
 	}
+	noteIDETerminalCmd(cmd, out)
 	return nil
 }
 
@@ -263,6 +264,7 @@ func confirmTypedStrict(cmd *cobra.Command, lc *localcfg.Config, why, what strin
 	if strings.TrimSpace(line) != lc.Name {
 		return userErr("not confirmed (the project's name was not typed); nothing was changed")
 	}
+	noteIDETerminalCmd(cmd, out)
 	return nil
 }
 

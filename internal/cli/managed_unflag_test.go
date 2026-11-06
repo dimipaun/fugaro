@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 )
 
@@ -51,10 +52,15 @@ func managedUnflagSaysHalf(out, what string) string {
 // on: the mark is what turns the typed confirmation off, so the command that
 // REMOVES it is the owner's by construction — a session that could remove the
 // mark could remove it mid-command and keep applying ungated. Nothing is
-// removed from a coding agent's session, under any of the markers that name
-// one, whatever the arguments.
+// removed from a coding agent's session, under any of the five markers that
+// name one, whatever the arguments. The sixth, the IDE extension's own, is
+// decided by the terminal the way agentenv decides it: with no terminal the
+// same refusal (below), and at a terminal it is the owner's own, who types the
+// ID and removes the mark like any other person at a terminal (the accepted
+// half is TestManagedFlagAcceptsTheIDETerminal's, over the flag: shared
+// confirmTypedGCPProject, and the same classification reaches both).
 func TestManagedUnflagRefusesAnAgentSession(t *testing.T) {
-	for _, marker := range agentMarkers {
+	for _, marker := range agentenv.AgentMarkers {
 		t.Run(marker, func(t *testing.T) {
 			r := managedUnflagRig(t)
 			terminal(t, true)
@@ -75,6 +81,26 @@ func TestManagedUnflagRefusesAnAgentSession(t *testing.T) {
 			}
 		})
 	}
+	// The IDE marker alone with no terminal: an agent's tool call has none.
+	t.Run(agentenv.IDEMarker+" with no terminal", func(t *testing.T) {
+		r := managedUnflagRig(t)
+		noTerminal(t)
+		t.Setenv(agentenv.IDEMarker, "1")
+		out, _, err := executeStdin(t, initProject+"\n", managedUnflagArgs()...)
+		if err == nil {
+			t.Fatalf("the command ran with no terminal:\n%s", out)
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("exit %d, want %d (a user error: nothing was attempted)", ExitCode(err), ExitUserError)
+		}
+		if !strings.Contains(err.Error(), agentenv.IDEMarker) {
+			t.Errorf("the refusal does not name the marker %s: %v", agentenv.IDEMarker, err)
+		}
+		assertBothMarksStillThere(t, r, "a session with no terminal")
+		if len(r.crm.Requests()) != 0 {
+			t.Errorf("a refused session read the project: %v", r.crm.Requests())
+		}
+	})
 }
 
 // TestManagedUnflagRefusesARunProcess is the other half of the same boundary,

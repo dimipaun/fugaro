@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -1880,4 +1881,259 @@ func TestARefusedLaunchDeclaresNothing(t *testing.T) {
 	if _, err := runstore.Open(env.bucket.Bucket, appSlug, spec.RunID).ReadLaunch(context.Background()); err == nil {
 		t.Error("a refused launch left a launch record behind")
 	}
+}
+
+// storedReviewArtifact is an artifact as the review job's writer stores it: the
+// shape's own version and a UTC timestamp, which the fixtures below write into
+// the object rather than through a seam.
+func storedReviewArtifact(art runner.ReviewArtifact) runner.ReviewArtifact {
+	if art.SchemaVersion == 0 {
+		art.SchemaVersion = runner.ReviewArtifactVersion
+	}
+	if art.CreatedAt.IsZero() {
+		art.CreatedAt = time.Now().UTC().Truncate(time.Second)
+	}
+	return art
+}
+
+// putReviewObject writes a review run's verdict artifact where the review job
+// writes it (CSR3) — under the run's own artifacts/ prefix — and nothing
+// beside it. It is the low-level half of putReviewArtifact, for the tests that
+// need the object without the sidecar a fail-closed reader requires.
+func putReviewObject(t *testing.T, f *cloudFixture, id string, art runner.ReviewArtifact) []byte {
+	t.Helper()
+	data, err := json.Marshal(storedReviewArtifact(art))
+	if err != nil {
+		t.Fatal(err)
+	}
+	putBuildObject(t, f, "runs/"+appSlug+"/"+id+"/"+runstore.ArtifactPrefix+runner.ReviewArtifactName, data)
+	return data
+}
+
+// putReviewArtifact writes the whole of what a review run leaves behind, as a
+// fix round's launcher finds it: the verdict artifact, the sidecar the
+// credentials service signed over that object's exact bytes, and the review
+// run's own task — which carries the account the verify call names. It also
+// points the launcher's verifier at the stand-in service (setFixBriefVerifier),
+// because a reader that fails closed refuses an artifact nothing verifies.
+func putReviewArtifact(t *testing.T, f *cloudFixture, id string, art runner.ReviewArtifact) {
+	t.Helper()
+	data := putReviewObject(t, f, id, art)
+	putReviewTask(t, f, id, "acme-personal")
+	setFixBriefVerifier(t)
+	putReviewSignature(t, f, id, appSlug, id, data)
+}
+
+// putReviewTask stores the review run's own task.json, which is where the
+// account a verify call names comes from: an empty account is the unsuffixed
+// default and is written as no field at all, the way every other launch writes
+// it.
+func putReviewTask(t *testing.T, f *cloudFixture, id, account string) {
+	t.Helper()
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	spec := firstRunSpec(id)
+	spec.OAuthToken = account
+	if err := runstore.Open(b, appSlug, id).CreateTask(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// putReviewSignature writes the sidecar beside a review artifact, signed the
+// way the stand-in service signs: over the artifact's exact bytes, framed with
+// the repository and the review run.
+func putReviewSignature(t *testing.T, f *cloudFixture, id, repository, run string, data []byte) {
+	t.Helper()
+	putBuildObject(t, f, "runs/"+appSlug+"/"+id+"/"+runstore.ArtifactPrefix+runner.ReviewSignName,
+		[]byte(fixBriefSign(repository, run, data)+"\n"))
+}
+
+// fixFirstArtifact is a minimal artifact of the shape the review job writes: a
+// fix first verdict with one blocking issue, which is the input a fix round's
+// brief is built from.
+func fixFirstArtifact(id string) runner.ReviewArtifact {
+	return runner.ReviewArtifact{
+		ReviewRun:    id,
+		Repository:   appSlug,
+		PR:           7,
+		HeadSHA:      strings.Repeat("a", 40),
+		Base:         "main",
+		Reviewer:     runner.ReviewReviewer{Account: "acme-personal", Model: "claude-opus-5-5"},
+		Verdict:      "fix first",
+		Overview:     "one issue must be fixed before this merges",
+		Strengths:    []string{"the tests are clear"},
+		Security:     "nothing new is reachable",
+		Performance:  "no hot path is touched",
+		TestCoverage: "the new branch is covered",
+		Issues: []runner.ReviewIssue{{
+			Severity: "blocker",
+			Class:    "correctness",
+			File:     "internal/x/y.go",
+			Line:     42,
+			Summary:  "the lock is released before the write",
+			Fix:      "hold the lock across the write",
+			Evidence: "the hunk at internal/x/y.go:42",
+		}},
+	}
+}
+
+// TestFixBriefCarriesTheFindingsAndNamesTheReviewRun is CSR5's core, and F20's
+// gap closed: a fix round launched with --review-run carries the review run's
+// own issues in its brief — each one's severity, class, file:line, summary and
+// fix — and names the review run it answers, with no person copying anything
+// between the artifact and the run (D887, spec §6).
+func TestFixBriefCarriesTheFindingsAndNamesTheReviewRun(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	reviewID := wallRunIDAt(0, "121500", "5eed")
+	setFixBriefHead(t)
+	putReviewArtifact(t, f, reviewID, fixFirstArtifact(reviewID))
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--review-run", reviewID, "--json", "also rename x"); err != nil {
+		t.Fatalf("a fix round carrying the findings of %s: %v", reviewID, err)
+	}
+	spec := readSpec(t, f, fuID)
+	for _, want := range []string{
+		reviewID,                                // the review run is named
+		"also rename x",                         // the launcher's own TEXT survives
+		"the lock is released before the write", // the summary
+		"hold the lock across the write",        // the suggested fix
+		"internal/x/y.go:42",                    // the file and line
+		"blocker", "correctness",                // the severity and the class
+	} {
+		if !strings.Contains(spec.Task, want) {
+			t.Errorf("the fix round's brief does not carry %q:\n%s", want, spec.Task)
+		}
+	}
+	// The brief is the follow-up's instructions, which is what the runner hands
+	// the implementing session; nothing else of the review travels with the
+	// task, so the findings cannot reach a reader that never reads them.
+	if calls := f.run.RunRequests(); len(calls) != 1 {
+		t.Fatalf("the launch asked Cloud Run for %d executions, want 1", len(calls))
+	}
+}
+
+// TestFixBriefIsTheSameWhenTheLaunchIsRepeated: the findings are part of the
+// task this launch stores, and repeating --run-id is the one way a launcher
+// that is unsure whether its launch went through reports it instead of starting
+// another. So the brief has to be the same bytes on the repeat — the block's
+// own delimiter included — or the second call is refused as a different task
+// and the repeat a person relies on stops working.
+func TestFixBriefIsTheSameWhenTheLaunchIsRepeated(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	reviewID := wallRunIDAt(0, "121900", "9eed")
+	setFixBriefHead(t)
+	putReviewArtifact(t, f, reviewID, fixFirstArtifact(reviewID))
+
+	args := []string{"run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--review-run", reviewID, "also rename x"}
+	if _, _, err := execute(t, args...); err != nil {
+		t.Fatalf("a fix round carrying the findings of %s: %v", reviewID, err)
+	}
+	first := readSpec(t, f, fuID)
+	if _, _, err := execute(t, args...); err != nil {
+		t.Fatalf("repeating the launch of %s: %v", fuID, err)
+	}
+	if again := readSpec(t, f, fuID); again.Task != first.Task {
+		t.Errorf("the repeated launch did not find the brief it stored:\n%s\n---\n%s", first.Task, again.Task)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 1 {
+		t.Fatalf("the repeat asked Cloud Run for %d executions, want 1", len(calls))
+	}
+}
+
+// TestFindingsFromAnUnreadableArtifactRefuseTheLaunch is spec §6's posture at
+// the launcher: a missing or unreadable verdict is never carried into a brief.
+// A fix round whose findings nobody can read would be launched to fix
+// something unnamed, so the launch is refused before anything is written — and
+// the refusal names the review run, which is the only thing the operator has
+// to look at.
+func TestFindingsFromAnUnreadableArtifactRefuseTheLaunch(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+
+	// A review run that wrote no artifact: still going, or a run that is not a
+	// review at all.
+	missing := wallRunIDAt(0, "121600", "6eed")
+	wantFindingsRefused(t, f, missing, "has no review artifact")
+
+	// An artifact the reader refuses: a truncated or otherwise unreadable
+	// verdict is an infra fault, never a short review.
+	broken := wallRunIDAt(0, "121700", "7eed")
+	putBuildObject(t, f, "runs/"+appSlug+"/"+broken+"/"+runstore.ArtifactPrefix+runner.ReviewArtifactName, []byte(`{"schema_version":1,"review_run":"`+broken+`"`))
+	wantFindingsRefused(t, f, broken, "has no readable review artifact")
+}
+
+// TestFindingsFromAnArtifactOfSomethingElseRefuseTheLaunch: the path a
+// reference names is not evidence of what the artifact inside it claims, and
+// the brief's own sentence calls the findings "this pull request"'s. So each of
+// the artifact's three claims about what it is — the review run, the
+// repository, the pull request — is checked against this launch, and a
+// disagreement refuses rather than carrying one pull request's findings into
+// another's fix round. The refusal names the value that differs.
+func TestFindingsFromAnArtifactOfSomethingElseRefuseTheLaunch(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+
+	// A review of another pull request of the same repository.
+	otherPR := wallRunIDAt(0, "122000", "a0ed")
+	art := fixFirstArtifact(otherPR)
+	art.PR = 8
+	putReviewArtifact(t, f, otherPR, art)
+	wantFindingsRefused(t, f, otherPR, "#8")
+
+	// A review of another repository, stored where this one's would be.
+	otherRepo := wallRunIDAt(0, "122100", "a1ed")
+	art = fixFirstArtifact(otherRepo)
+	art.Repository = "other/repo"
+	putReviewArtifact(t, f, otherRepo, art)
+	wantFindingsRefused(t, f, otherRepo, "other/repo")
+
+	// An artifact that names a review run other than the one read.
+	otherRun := wallRunIDAt(0, "122200", "a2ed")
+	art = fixFirstArtifact(otherRun)
+	art.ReviewRun = wallRunIDAt(0, "122300", "a3ed")
+	putReviewArtifact(t, f, otherRun, art)
+	wantFindingsRefused(t, f, otherRun, art.ReviewRun)
+}
+
+// wantFindingsRefused launches a fix round carrying the findings of the review
+// ref (a run id, or <repo-slug>/<run-id>) and wants a refusal that names ref and
+// carries want, with no execution started: a refusal is a launch that did not
+// happen, not one whose job failed.
+func wantFindingsRefused(t *testing.T, f *cloudFixture, ref, want string) {
+	t.Helper()
+	before := len(f.run.Executions())
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--review-run", ref)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), want) {
+		t.Fatalf("--review-run %s: err = %v, want exit 1 with %q", ref, err, want)
+	}
+	if !strings.Contains(err.Error(), ref) {
+		t.Errorf("the refusal does not name the review run %s: %v", ref, err)
+	}
+	if after := len(f.run.Executions()); after != before {
+		t.Fatalf("--review-run %s refused and still started %d executions", ref, after-before)
+	}
+}
+
+// TestReviewRunFlagNeedsAPullRequest: --review-run carries a review's findings
+// into a FIX ROUND's brief, and a fix round is a follow-up, so the flag is
+// meaningless — and refused — everywhere else: without --pr there is no pull
+// request to fix, and with a mode: review recipe the launch is a review rather
+// than a fix. A launcher that accepted either would silently drop the flag and
+// start a run whose brief carries nothing.
+func TestReviewRunFlagNeedsAPullRequest(t *testing.T) {
+	f := newCloudFixture(t)
+	reviewID := wallRunIDAt(0, "121800", "8eed")
+	putReviewArtifact(t, f, reviewID, fixFirstArtifact(reviewID))
+
+	wantRefused(t, f, "needs --pr", "run", "--repo", "acme/app", "--review-run", reviewID, "do a thing")
+	wantRefused(t, f, "reviews a pull request", "run", "--repo", "acme/app", "--pr", "7", "--recipe", "review-only", "--review-run", reviewID)
+
+	// A reference to another repository's review is refused too: the artifact
+	// would be read from the path the reference names, and the brief would
+	// carry findings about code this fix round is not for.
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	wantFindingsRefused(t, f, mustSlug("github", "other/app")+"/"+reviewID, "is a review of")
 }
