@@ -57,7 +57,7 @@ git config --system --get filter.lfs.clean >/dev/null 2>&1 || git lfs install --
   printf '[filter "lfs"]\n'
   for key in clean smudge process required; do
     value=$(git config --system --get "filter.lfs.$key" || true)
-    [ -n "$value" ] || { echo "byproducts: /etc/gitconfig has no filter.lfs.$key" >&2; exit 1; }
+    [ -n "$value" ] || { echo "byproducts: /etc/gitconfig has no filter.lfs.$key" >&2; git --version >&2; git lfs version >&2; git config --show-origin -l >&2 || true; ls -la /etc/gitconfig /usr/etc 2>&1 >&2 || true; exit 1; }
     printf '\t%s = %s\n' "$key" "$value"
   done
 } > /etc/gitconfig
