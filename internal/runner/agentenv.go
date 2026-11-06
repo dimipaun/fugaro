@@ -314,7 +314,7 @@ func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 	}
 	vars := map[string]string{}
 	if gw != nil && account == "" {
-		gwVars, err := agent.GatewayVars(r.cfg.Agent.Auth, *gw, r.parentEnv())
+		gwVars, err := agent.GatewayVars(r.modelAuth(), *gw, r.parentEnv())
 		if err != nil {
 			return fmt.Errorf("writing Claude Code's managed settings: %w", err)
 		}

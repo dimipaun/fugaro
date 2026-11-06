@@ -51,16 +51,27 @@ import (
 // one, and then via: auto under a Vertex credential — and a resolution no run
 // takes.
 //
-// A `cascade` run is judged here for two more things, both of them facts about
-// the credentials service rather than about routing, and both refused in
-// bootstrap before anything is opened: the switch the operator publishes (O2)
-// and the model allow-list that service holds every call it carries to (the
-// owner's ruling of 2026-10-22, C1.11). A local run is answered first and
-// separately (D149).
+// A `cascade` run — and, through the same arm, a review class run, whose model
+// path is the service's and whose class is spelled cascade (modelAuth) — is
+// judged here for more things, all of them facts about the credentials service
+// rather than about routing, and all refused in bootstrap before anything is
+// opened: the class's own two refusals (a repository whose own auth is a
+// credential the variant does not mount, and a budget mode that leaves the
+// class no gateway), the switch the operator publishes (O2, which the class
+// does not need) and the model allow-list that service holds every call it
+// carries to (the owner's ruling of 2026-10-22, C1.11, which the class is held
+// to exactly as a cascade run is). A local run is answered first and separately
+// (D149).
 func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
-	auth := ""
+	auth, class := "", false
 	if r.cfg != nil {
-		auth = r.cfg.Agent.Auth
+		class = r.reviewClassRun()
+		auth = r.modelAuth()
+	}
+	if class {
+		if err := r.checkReviewClassModelPath(); err != nil {
+			return err
+		}
 	}
 	if auth == config.AuthCascade {
 		if r.d.Local {
@@ -73,19 +84,29 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 			// or unset never reaches it (agent.BuildEnv answers instead).
 			return cascadeLocalRefusal()
 		}
-		// O2 (the owner's ruling of 2026-10-17): a repository may ask for the
-		// cascade, and only the operator-written project policy enables it. A
-		// cascade workflow whose policy does not carry the switch is refused
-		// here, in bootstrap, before any model call and before a pin moves,
-		// naming exactly what to set —
-		// `fugaro validate` refuses the same file on the author's own machine
-		// (C1.1's cascadeProblems), and this is the run's own side of it.
-		var via string
-		if found && pp != nil && pp.Routing != nil && pp.Routing.Claude != nil {
-			via = pp.Routing.Claude.ViaValue()
-		}
-		if via != config.RouteCascade {
-			return fmt.Errorf("agent.auth is %s and this project's policy does not turn the cascade on: set routing.claude: {via: %s} in the project policy (%s) and publish it (fugaro project policy publish) — a repository asks for the cascade, and only the operator can set it there (O2)", config.AuthCascade, config.RouteCascade, projectpolicy.PathShared())
+		if !class {
+			// O2 (the owner's ruling of 2026-10-17): a repository may ask for
+			// the cascade, and only the operator-written project policy enables
+			// it. A cascade workflow whose policy does not carry the switch is
+			// refused here, in bootstrap, before any model call and before a pin
+			// moves, naming exactly what to set —
+			// `fugaro validate` refuses the same file on the author's own machine
+			// (C1.1's cascadeProblems), and this is the run's own side of it.
+			//
+			// A review class run skips this arm and only this one
+			// (spec.md §2): the switch is the operator's consent for a *coding*
+			// run's cascade, while a review job's credential is decided by its
+			// own class, so a review needs no `routing.claude: {via: cascade}`
+			// to be admitted. The allow-list arm below is not skipped with it:
+			// what the switch enables is a credential, and the allow-list is
+			// what the service holds every call it carries to.
+			var via string
+			if found && pp != nil && pp.Routing != nil && pp.Routing.Claude != nil {
+				via = pp.Routing.Claude.ViaValue()
+			}
+			if via != config.RouteCascade {
+				return fmt.Errorf("agent.auth is %s and this project's policy does not turn the cascade on: set routing.claude: {via: %s} in the project policy (%s) and publish it (fugaro project policy publish) — a repository asks for the cascade, and only the operator can set it there (O2)", config.AuthCascade, config.RouteCascade, projectpolicy.PathShared())
+			}
 		}
 		// The allow-list the credentials service holds this run's calls to (the
 		// owner's ruling of 2026-10-22): the service carries every call of a
@@ -99,10 +120,14 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 		// it before a job starts at all (cascadeLaunchRefusal), and this is the
 		// run's own side of it, for a job that started some other way.
 		//
-		// Reaching here means the switch is on, so the node was found: the arm
-		// above refuses every state without it, including the node that is not
-		// there.
-		if len(pp.Budget.AllowedModels) == 0 {
+		// Reaching here means the switch is on (a coding run) or the class does
+		// not need it (a review), so for a coding run the node was found: the
+		// arm above refuses every state without it, including the node that is
+		// not there.
+		if pp == nil || len(pp.Budget.AllowedModels) == 0 {
+			if class {
+				return fmt.Errorf("this run is a review and the credentials service carries every call it makes: the project's policy (%s) publishes no budget.allowed_models, and the service refuses a project that publishes none, so this review could make no call at all — add the allow-list to the project policy and publish it (fugaro project policy publish)", projectpolicy.PathShared())
+			}
 			return fmt.Errorf("agent.auth is %s and this project's policy (%s) publishes no budget.allowed_models: the credentials service, which carries every call of a cascade run, refuses a project that publishes none, so this run could make no call — add the allow-list to the project policy and publish it (fugaro project policy publish)", config.AuthCascade, projectpolicy.PathShared())
 		}
 	}
@@ -142,6 +167,53 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 			return fmt.Errorf("routing.claude names %s, and this run cannot resolve its route: the switch routes nothing rather than sending the call direct (D1b)", model)
 		}
 		p.set(sent)
+	}
+	return nil
+}
+
+// checkReviewClassModelPath is the review class's own admission, judged in
+// bootstrap beside the credentials service's other facts and before any
+// credential of the job's is built or any pin moves. A review class run's model
+// calls are the service's review class's (O1, D143), and the class is spelled
+// cascade (modelAuth) so that every arm the path needs already exists for it:
+// what the class cannot be served under is what this refuses.
+//
+// The two refusals, and both are fail-closed rather than a fallback to a
+// credential of the job's:
+//
+//   - a repository whose own agent.auth is a credential of its own. The class's
+//     one credential is the pairing account's tier-A one (reviewCandidates),
+//     which is a Claude OAuth account by construction (ReviewJobAccount), and
+//     0.20.0 ships the OAuth review alone: the api-key review — a provider key,
+//     OpenRouter or Anthropic — is a later release (§6.7). Both halves are
+//     refused: an api-key or vertex repository would need a key CSR7's variant
+//     deliberately does not mount, and a pairing naming anything but a Claude
+//     account is one pairReview never builds. So a repository's own api-key
+//     configuration can never produce an api-key review, and nothing reads as
+//     though it can.
+//
+//   - a budget mode that leaves the class no gateway. The class's calls are the
+//     service's, and the service is reached through the gateway — the only
+//     thing that holds a credential and attaches it per call — so a run whose
+//     mode is off reaches nothing at all. It refuses here rather than falling
+//     through to agent.BuildEnv's cascade arm, whose sentence ("agent.auth
+//     cascade needs ...", internal/agent/env.go) is written for a coding run
+//     and names a fix a review job cannot apply: the repository's file is the
+//     review job's own, and the setting that is wrong is the installation's.
+//     The class does not force the gateway on: a mode the installation set to
+//     off keeps its one meaning (Open item 6's answer of 2026-11-05/06).
+func (r *run) checkReviewClassModelPath() error {
+	switch r.cfg.Agent.Auth {
+	case "oauth", config.AuthCascade:
+	default:
+		return fmt.Errorf("this run is a review, and its repository's fugaro.yaml writes agent.auth: %s: the independent review's model calls are served by the credentials service's review class from the installation's Claude OAuth account, and the api-key review — a provider key, OpenRouter or Anthropic — is a later release (§6.7 of docs/cloud-senior-review/implementation-plan.md): 0.20.0 ships the OAuth review alone. A review carries no credential of its own, so no key of this repository's can serve it: agent.auth oauth (or cascade) is the OAuth path the class is served from", r.cfg.Agent.Auth)
+	}
+	if !r.gatewayOn() {
+		mode := r.spend.Mode
+		if mode == "" {
+			mode = policy.ModeOff
+		}
+		return fmt.Errorf("this run is a review, and this installation's budget mode is %s: the review class's model calls are carried by the gateway, which only budget.mode %s or %s starts, and a review does not run with the installation's budget off — set budget.mode to %s or %s in the project policy and publish it (fugaro project policy publish), and the review reaches the credentials service's review class. The class does not force the gateway on: a mode the installation set to %s keeps its one meaning", mode, policy.ModeObserve, policy.ModeEnforce, policy.ModeObserve, policy.ModeEnforce, policy.ModeOff)
 	}
 	return nil
 }

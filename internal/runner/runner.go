@@ -2292,7 +2292,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		}
 	}
 	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
-		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
+		Auth: r.modelAuth(), Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
 		Gateway: r.gateway(), Compression: r.compression,
 		// Docker stays false here, so the agent's environment has no
 		// DOCKER_HOST: nothing yet tells this runner that its workflow asked
