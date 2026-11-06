@@ -181,7 +181,7 @@ func TestBuildBasePinsTheDateAndTheExporter(t *testing.T) {
 		`--build-arg "SOURCE_DATE_EPOCH=$epoch"`,
 		`if [ -z "$epoch" ] || [ "$epoch" = 0 ]; then`,
 		`echo "build-base.sh: SOURCE_DATE_EPOCH is ${epoch:-empty} and this checkout has no commit date to take:`,
-		`--output "type=oci,name=$first,dest=$tarball,rewrite-timestamp=true"`,
+		`--output "type=docker,rewrite-timestamp=true"`,
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("build-base.sh lacks %q", want)
@@ -197,7 +197,7 @@ func TestBuildBasePinsTheDateAndTheExporter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"--build-arg", "SOURCE_DATE_EPOCH=", "type=oci", "rewrite-timestamp=true"} {
+	for _, want := range []string{"--build-arg", "SOURCE_DATE_EPOCH=", "type=docker,rewrite-timestamp=true"} {
 		if !strings.Contains(string(docker), want) {
 			t.Errorf("the fixture build in base_repro_docker_test.go lacks %q, so it does not build the way build-base.sh does", want)
 		}
