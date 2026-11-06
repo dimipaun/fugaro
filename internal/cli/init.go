@@ -2066,9 +2066,8 @@ func (r *initRun) managedScope(ctx context.Context, c *infra.Clients) (bool, err
 // verifiers is the effective verifier list this run's document must carry
 // (effectiveVerifiers), and it is a parameter rather than something read here
 // because two of the three callers have no client to read the published node
-// with: the rollback passes nil, which is the state the module's own verifier
-// account is the default in, and --print-vars passes the config's own answer.
-func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, verifiers []string) (map[string]string, error) {
+// with: the rollback passes nil with asFound, so the block is carried exactly as found, and --print-vars passes the config's own answer.
+func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, verifiers []string, asFound bool) (map[string]string, error) {
 	vars, err := infra.InstallationVars(spec)
 	if err != nil {
 		return nil, err
@@ -2109,8 +2108,17 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 		// before this release carries a block without it, and one ordinary
 		// `fugaro update` has to leave that block naming the verifier account
 		// the same apply creates — or `[]`, when the owner cleared the list.
+		// asFound is the rollback's: it reads no cloud and has no effective list,
+		// and a nil list here would delete the member, so the module's default
+		// account would replace the owner's list at the live service in a plan
+		// the rollback's own guard lets through.
 		for _, prev := range documents {
-			if vars, err = infra.CarriedCredentialsService(vars, prev, verifiers); err != nil {
+			if asFound {
+				vars, err = infra.CarriedCredentialsServiceAsFound(vars, prev)
+			} else {
+				vars, err = infra.CarriedCredentialsService(vars, prev, verifiers)
+			}
+			if err != nil {
 				return nil, userErr("reading the installation's tfvars: %v", err)
 			}
 		}
@@ -2211,7 +2219,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	if err != nil {
 		return outs, false, err
 	}
-	backend, err := prepare(wd, spec, im, verifiers)
+	backend, err := prepare(wd, spec, im, verifiers, false)
 	if err != nil {
 		return outs, false, err
 	}
@@ -2585,7 +2593,7 @@ func (r *initRun) readOutputs(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	if err != nil {
 		return infra.InstallationOutputs{}, err
 	}
-	backend, err := prepare(wd, spec, infra.Imports{}, verifiers)
+	backend, err := prepare(wd, spec, infra.Imports{}, verifiers, false)
 	if err != nil {
 		return infra.InstallationOutputs{}, err
 	}
@@ -3087,7 +3095,7 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 	// reaches this line belongs to a project neither record claims, and its
 	// document (the one prepare rewrites) carries no key for the carry in
 	// prepare to keep.
-	backend, err := prepare(wd, fs, infra.Imports{}, nil)
+	backend, err := prepare(wd, fs, infra.Imports{}, nil, true)
 	if err != nil {
 		return err
 	}
@@ -3109,7 +3117,7 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 		return remote(err)
 	}
 	fs.AdoptLegacyRegistry = outs.LegacyRegistry != ""
-	if _, err := prepare(wd, fs, infra.Imports{}, nil); err != nil {
+	if _, err := prepare(wd, fs, infra.Imports{}, nil, true); err != nil {
 		return err
 	}
 	changed, err := t.Plan(ctx, infra.PlanFile)
