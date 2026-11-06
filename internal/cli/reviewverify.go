@@ -13,12 +13,20 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
+	"golang.org/x/oauth2"
+
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // reviewVerifierSeam, when a test sets it, is what reviewVerifier returns
@@ -52,7 +60,7 @@ func reviewVerifier(ctx context.Context, env *cloudEnv, account, run, repository
 	}
 	return runner.ServiceVerifier{
 		URL:        url,
-		IDToken:    func(ctx context.Context) (string, error) { return reviewVerifierIdentity(ctx, url) },
+		IDToken:    func(ctx context.Context) (string, error) { return reviewVerifierIdentity(ctx, env, url) },
 		Account:    account,
 		Run:        run,
 		Repository: repository,
@@ -60,25 +68,127 @@ func reviewVerifier(ctx context.Context, env *cloudEnv, account, run, repository
 }
 
 // reviewVerifierIdentity mints the launcher's Google ID token for the verify
-// route's audience, which is the service's own URL (C1.14).
+// route's audience, which is the service's own URL (C1.14), as the
+// installation's dedicated verifier service account.
 //
-// WHICH identity the launcher impersonates was Open item 5 of
-// docs/cloud-senior-review/implementation-plan.md §6.6, and the owner settled
-// it on 2026-11-05: a dedicated verifier service account the installation root
-// creates and names in credentials_service.verifier_accounts, which this
-// launcher impersonates. That answer is also the one identity it may NOT be,
-// the launcher person's own address: every `user:` operator is already a
-// person account to the service, and NewAuthenticator refuses to start an
-// installation whose verifier list names one (internal/credsvc/auth.go), so
-// the caller is that service account — the launcher-side twin of the job's
-// metadata identity.
+// WHICH identity was Open item 5 of docs/cloud-senior-review/implementation-plan.md
+// §6.6, and the owner settled it on 2026-11-05: a dedicated verifier service
+// account the installation root creates (CSR14) and names in the published
+// verifier_accounts, which the launcher impersonates. It is the one identity
+// the launcher may NOT be itself: every `user:` operator is a person account to
+// the service, and NewAuthenticator refuses an installation whose verifier list
+// names one (internal/credsvc/auth.go), so the caller is the service account.
 //
-// Neither the account nor the published field it is named through exists yet:
-// both are CSR14/CSR15 of the same document, so the stub below stays as it is
-// — fail-closed, and not a temporary state to relax — until they do. The seam
-// above is what the tests reach the reader with meanwhile.
-func reviewVerifierIdentity(context.Context, string) (string, error) {
-	return "", fmt.Errorf("the launcher has no verifier identity to call the credentials service's verify route as: the installation root creates a dedicated verifier service account and names it in credentials_service.verifier_accounts, which this launcher impersonates once that account is real (docs/cloud-senior-review/implementation-plan.md CSR14/CSR15: neither exists yet). No fix round is launched on a verdict nobody verified")
+// The impersonation is the launcher person's own credential calling the IAM
+// Credentials API, which needs roles/iam.serviceAccountTokenCreator on the
+// verifier account, and CSR14 grants that to var.operators and to nobody else.
+// A launcher who is not an operator is refused by IAM, and that refusal is
+// worded here as what it is, so the person meets a sentence and not a 403.
+//
+// The deployer's own impersonation is deliberately not reused: it exists to
+// assume the deployer, who holds the installation's authority and not one
+// route's, and a launcher that reached the verify route as the deployer would
+// be one caller in two classes at the service. The token is minted for the
+// service's URL and no other audience, and its email must name the account the
+// call was made for.
+func reviewVerifierIdentity(ctx context.Context, env *cloudEnv, serviceURL string) (string, error) {
+	account, err := reviewVerifierAccount(ctx, env)
+	if err != nil {
+		return "", err
+	}
+	_, ts, err := managedCaller(ctx, env.lc)
+	if err != nil {
+		return "", userErr("the launcher cannot mint the verifier identity: %v", err)
+	}
+	body, err := json.Marshal(map[string]any{"audience": serviceURL, "includeEmail": true})
+	if err != nil {
+		return "", err
+	}
+	out, err := impersonateVerifier(ctx, ts, account, body)
+	if err != nil {
+		return "", err
+	}
+	var tok struct {
+		Token string `json:"token"`
+	}
+	if json.Unmarshal(out, &tok) != nil || tok.Token == "" {
+		return "", fmt.Errorf("assuming the verifier account %s: generateIdToken answered without a token", safetext.Field(account))
+	}
+	email, err := jwtEmail(tok.Token)
+	if err != nil {
+		return "", fmt.Errorf("assuming the verifier account %s: %w", safetext.Field(account), safetext.FieldErr(err))
+	}
+	if !strings.EqualFold(email, account) {
+		return "", fmt.Errorf("the token is for %s, not for the verifier account %s: a token for another identity is never used as a credential", safetext.Field(email), safetext.Field(account))
+	}
+	return tok.Token, nil
+}
+
+// reviewVerifierAccount is the one verifier account the installation's PUBLISHED
+// node names: the list the credentials service's own environment is rendered
+// from, and therefore the only list whose callers the service admits. The local
+// config is not asked: a config that names a verifier the node does not names a
+// caller the service refuses. None refuses, and so do two, because a launcher
+// that picked one of two would be choosing which identity verifies a verdict,
+// which is the owner's to say.
+func reviewVerifierAccount(ctx context.Context, env *cloudEnv) (string, error) {
+	p, found, err := env.policy.read(ctx, env.lc)
+	if err != nil {
+		return "", userErr("the installation's published policy could not be read, so the verifier account a fix round is verified as is unknown: %v", policyReadErr(err))
+	}
+	var accounts []string
+	if found && p != nil {
+		accounts = p.VerifierAccounts
+	}
+	switch len(accounts) {
+	case 0:
+		return "", userErr("this installation names no verifier (verifier_accounts is empty in its published policy), and a fix round is not launched on a verdict nobody verified: run fugaro update, which names the installation's verifier service account")
+	case 1:
+	default:
+		return "", userErr("this installation names %d verifier accounts, and the launcher's verify call is one caller: a launcher that chose one would be choosing which identity verifies a verdict, which is the owner's to say, so a fix round is not launched (trim verifier_accounts to the one verifier service account and run fugaro update)", len(accounts))
+	}
+	if !strings.HasSuffix(accounts[0], ".iam.gserviceaccount.com") || strings.ContainsAny(accounts[0], "/?#% \t\n") {
+		return "", userErr("the published verifier %s is not a service account address, so the launcher cannot impersonate it", safetext.Field(accounts[0]))
+	}
+	return accounts[0], nil
+}
+
+// impersonateVerifier is one IAM Credentials generateIdToken call for the
+// account with the launcher's own credential. It is the shape of the deployer's
+// call (deployerImpersonator.call) with the launcher's wording: the 403 a
+// launcher who is not an operator gets from IAM names the operators as the
+// holders and the operators list as the fix.
+func impersonateVerifier(ctx context.Context, ts oauth2.TokenSource, account string, body []byte) ([]byte, error) {
+	if ts == nil {
+		return nil, errors.New("assuming the verifier account: no credential to make the call with")
+	}
+	tok, err := ts.Token()
+	if err != nil {
+		return nil, fmt.Errorf("assuming the verifier account: fetching your own credential failed (%v): run gcloud auth application-default login", safetext.FieldErr(err))
+	}
+	u := strings.TrimRight(impersonationEndpoint, "/") + "/v1/projects/-/serviceAccounts/" + url.PathEscape(account) + ":generateIdToken"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(string(body)))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := impersonationHTTPClient().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("assuming the verifier account %s: %w", safetext.Field(account), safetext.FieldErr(err))
+	}
+	defer resp.Body.Close()
+	out, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("assuming the verifier account %s: %w", safetext.Field(account), safetext.FieldErr(err))
+	}
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
+		return nil, userErr("IAM refused your credential on the verifier account %s (%s): only the installation's operators may verify a review's verdict, because roles/iam.serviceAccountTokenCreator on that account is granted to the operators and to nobody else; ask the owner to add you to the operators list and run fugaro update", safetext.Field(account), safetext.Field(resp.Status))
+	}
+	if resp.StatusCode/100 != 2 {
+		return nil, fmt.Errorf("assuming the verifier account %s: %s: %s", safetext.Field(account), safetext.Field(resp.Status), safetext.Field(string(out)))
+	}
+	return out, nil
 }
 
 // reviewPRHeadSeam, when a test sets it, is what reviewHead answers instead of
