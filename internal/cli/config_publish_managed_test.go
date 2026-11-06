@@ -981,6 +981,8 @@ func TestConfigPublishManagedRefusesTheFirstLineReviewTurnedOff(t *testing.T) {
 		// default is `auto` (config's defaults): level 1 may run today, so
 		// turning it off takes review away.
 		{"off where the layer said nothing", minimalAnchored, firstLineReviewLayer("off")},
+		{"auto where the layer said on", firstLineReviewLayer("on"), firstLineReviewLayer("auto")},
+		{"nothing where the layer said on", firstLineReviewLayer("on"), minimalAnchored},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

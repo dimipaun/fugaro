@@ -563,11 +563,14 @@ var layerFirstLineReviewPath = []string{"defaults", "agent", "first_line_review"
 // is not a change and is admitted, which is what keeps an unchanged layer
 // publishable.
 //
-// Only the explicit `off` is judged for the first-line switch: `auto` leaves
-// the level to the run's models and the providers that serve them
-// (config.Agent.FirstLineOn), which the two documents in hand do not settle,
-// and a rule that guessed either way would move a level that may not have
-// moved. A layer that says off already, and one whose switch is set back to
+// The first-line switch is judged in two directions: `off` turns the level
+// off outright, and a layer that said `on` and now says `auto` (or says
+// nothing, which reads as auto) hands the level to the run's models, where
+// config.Agent.FirstLineOn is false for an Anthropic coder, so an explicit
+// `on` is a level a session may not give up. Where the layer did not say `on`,
+// `auto` leaves the level to the run's models, which the two documents in hand
+// do not settle, and a rule that guessed would move a level that may not have
+// moved: a layer that says off already, and one whose switch is set back to
 // `on` or `auto`, take nothing away and pass.
 func layerRoundsRules(prev, next *config.ProjectLayer, published []byte, marker string) []string {
 	if marker == "" || next == nil {
@@ -603,8 +606,8 @@ func layerRoundsRules(prev, next *config.ProjectLayer, published []byte, marker 
 	for _, l := range layerLevelOff(prev, next) {
 		add("turns the review level defaults.agent.levels."+l+" off (none: true), so a run of the project spends less review", "turns off")
 	}
-	if settingsValueIn(next.Raw, layerFirstLineReviewPath) == config.FirstLineOff &&
-		settingsValueIn(published, layerFirstLineReviewPath) != config.FirstLineOff {
+	was, now := settingsValueIn(published, layerFirstLineReviewPath), settingsValueIn(next.Raw, layerFirstLineReviewPath)
+	if (now == config.FirstLineOff && was != config.FirstLineOff) || (was == config.FirstLineOn && now != config.FirstLineOn) {
 		add("turns review level 1 off (defaults.agent.first_line_review: off), so a run of the project spends no first-line review", "turns off")
 	}
 	return rules
