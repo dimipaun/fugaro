@@ -52,8 +52,9 @@ The chain, end to end, because the whole design turns on where the image's `ENV`
 
 **F1. The allow-list is the whole mechanism, and it has no per-image arm.** `baseEnv` is a fixed
 list (`internal/agent/env.go:14-27`); `BuildEnv` copies it from `parent` and never looks at anything
-else the parent holds (`:92-98`). A name the image sets is in `parent` and is dropped with no log
-line, no warning and no reason. The issue's reproduction is exactly this.
+else the parent holds (`:79-90` — the parent map and the `baseEnv` copy loop). A name the image sets is
+in `parent` and is dropped with no log line, no warning and no reason. The issue's reproduction is
+exactly this.
 
 **F2. The rule is stated in two places, both of them one sentence, neither of them where an operator
 writing `ENV` lines would look.** `docs/base-image.md:45`: *"The agent's own environment is an
@@ -175,9 +176,10 @@ attaches it upstream, `internal/gateway/forward.go:1128-1136`).
 
 **F13. `doctor`'s one-screen rule is pinned, so the report cannot go on the default screen.** The
 default view is capped at **25 lines** (`internal/cli/doctor_render.go:23-26`) by
-`TestDoctorDefaultIsOneScreen` (`internal/cli/doctor_render_test.go:233-253`), the release note says
-so (`docs/releases/v0.14.1.md:4`), and the owner's rule of 2026-10-31 is in the renderer's own
-comment: an installation with nothing wrong prints one line and no pointer
+`TestDoctorDefaultIsOneScreen` (`internal/cli/doctor_render_test.go:233-253`), the note that shipped
+it says so (`docs/releases/v0.14.1.md:4`, re-read on 2026-11-06: *"`fugaro doctor` answers on one
+screen … the audits stay behind `--all` and `--security`"*), and the owner's rule of 2026-10-31 is in
+the renderer's own comment: an installation with nothing wrong prints one line and no pointer
 (`internal/cli/doctor_render.go:391-396`). `--all` is the view that already prints one line per check
 (`internal/cli/doctor.go:305`, `:1839-1861`), and `--json` carries the structure. A per-job list of
 dropped names is a **measurement**, not a finding (nothing is wrong: the image is fine, the rule is

@@ -130,7 +130,7 @@ F12, F16, F18. **Depends on:** IE1, **and open items O3 and O4 — the answers c
   minus the platform and launch names (`internal/backend/launchenv.go:32-56`), and minus every name in
   `FUGARO_SECRET_ENVS` this run did not declare (`r.secretList()`, `internal/runner/runner.go:927-932`;
   F8 — those reach the agent through the existing declared-secret path alone). **The write goes after
-  the allow-list and the `DOCKER_HOST` arm (`internal/agent/env.go:92-116`) and before the auth switch
+  the allow-list copy and the `DOCKER_HOST` arm (`internal/agent/env.go:85-116`) and before the auth switch
   (`:137`)**, which is what makes `maps.Copy(out, spec.Set)` (`:204`) and `GatewayVars` (`:205-216`,
   *"Last, so nothing declared or inherited can override the routing"*) the last word, as D1314 requires
   and O1 ruled. **Nothing is registered with the redactor by this task unless O3 answers otherwise**
@@ -320,11 +320,12 @@ work runs in).
    catalog-stamped. This is D1310's scope, and it is the half a code review cannot settle.
 
 **Number:** **Check 291** — the first number free above the register's highest **written** section
-(**290**, `docs/gcp-live-checklist.md:573`), and no open pull request claims 291 or above (read
-2026-11-06). **A claim, not a reservation**: the register's own rule is that whichever of two claims
-merges second renumbers itself, so the task that writes the section takes the number free **at that
-merge** and writes both the section and its summary-table row (the shape the Check 290 row has,
-`docs/gcp-live-checklist.md:791`). **The section is written by that task, not by this plan.**
+(**290**: the `## Check 290` section at `docs/gcp-live-checklist.md:11207`, and its summary-table row
+at `:791`), and no open pull request claims 291 or above (read 2026-11-06). **A claim, not a
+reservation**: the register's own rule is that whichever of two claims merges second renumbers itself,
+so the task that writes the section takes the number free **at that merge**, and writes both the
+section and its summary-table row, the shape Check 290's own row has. **The section is written by that
+task, not by this plan.**
 
 ## 7. Gates, and what a task may not start without
 
