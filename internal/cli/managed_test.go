@@ -825,6 +825,11 @@ var propertyAgentSites = map[string]string{
 	// The layer stage refuses a marker itself for the same reason: it is
 	// SelfConfirming, so the loop would call it.
 	"init_layer_stage.go Apply": "TestUpdateLayerStageAppliesNothingInAnAgentSessionEvenWithYes",
+	// The policy tail's marker read is the in-flight guard's: the owner's ruling
+	// of 2026-11-06 makes that guard a note in a managed project, and the note is
+	// the owner's own session's alone — a marker keeps the refusal. The same read
+	// is the argument confirmEmptyAllowList's first publish asks for.
+	"init_policy_migrate.go policyMigrationConfirm": "TestUpdatePolicyManagedMigrationUnderAMarkerKeepsTheRefusal (the marker keeps the in-flight refusal the managed case would turn into a note)",
 }
 
 // outsideAgentSites are the agent-marker sites the property does not cover,
@@ -834,14 +839,6 @@ var outsideAgentSites = map[string]string{
 	"init.go publishSharedConfig":     "OUTSIDE: the shared-config publish after the local config is written; not a confirmation, it skips with a note under a marker",
 	"initsecrets.go Check":            "OUTSIDE: the wording of the secrets stage's detail; whether it prompts is canPrompt (an inline site)",
 	"init_repo_gate.go convergeOptIn": "OUTSIDE: the wording of the repository gate's detail — it says whether --yes is named as a way in; whether the run may onboard at all is authState/onboardCovered (inline sites)",
-	// The marker only reaches the publisher's own empty-allow-list refusal
-	// (#1656): it is that function's decision, and a session holding it never
-	// reaches this line — the stage's Apply refuses the marker above every
-	// confirm (TestUpdatePolicyMigrationRefusedInAgentSession), and the managed
-	// gate refuses the first publish's strict class before it too
-	// (TestUpdateManagedRefusesTheFirstPolicyPublish). The argument is the
-	// refusal's second lock, so this entry names the line rather than a decision.
-	"init_policy_migrate.go policyMigrationConfirm": "OUTSIDE: the role is confirmEmptyAllowList's, reused by the stage's first publish; a marker session is refused above it and by the gate",
 }
 
 // Every inline decision refuses under each marker, and only under a marker:

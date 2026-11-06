@@ -69,6 +69,21 @@ func (h *migrationRig) apply(t *testing.T, yes bool) (string, error) {
 	return h.out.String(), err
 }
 
+// managedGate makes the rig's run one whose project reads as managed: the
+// answer initGate.underway gives, which is the reading the rest of init makes
+// for "is this project managed" and the one the in-flight guard takes (the
+// update door passes it; `fugaro upgrade` has no gate and passes false).
+func (h *migrationRig) managedGate() *migrationRig {
+	h.s.e.r.gate = &initGate{managed: true}
+	return h
+}
+
+// inFlight puts one run of the project in the registry runsInFlight counts.
+func (h *migrationRig) inFlight() *migrationRig {
+	h.f.db.Set("agents", map[string]any{"proj-1234": map[string]any{"run-1": map[string]any{"repo": "github/acme/app"}}})
+	return h
+}
+
 // nodeVersionOn is the version the node at the shared path carries, read as the
 // fake database stores it: the assertion every refusal in this file makes is
 // that the node did not move.
@@ -473,6 +488,95 @@ func TestUpdatePolicyMigrationTakesYesWhileARunIsInFlight(t *testing.T) {
 	}
 	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
 		t.Errorf("the node is version %d, want %d", got, projectpolicy.Version)
+	}
+}
+
+// TestUpdatePolicyManagedMigrationNotesRunsInFlightAndWrites: the owner's
+// ruling of 2026-11-06 — in a MANAGED project the in-flight guard never
+// refuses. With up to twenty cloud runs in flight the refusal fired nearly
+// every time and left the owner unable to apply a policy at all, so the count
+// becomes a note on the command's output and the write proceeds.
+//
+// The note replaces the refusal and nothing else. The diff and the stage's own
+// confirmation are still asked (the rig's gate is the managed answer alone,
+// whose inner gate admits nothing, so admitted is false here), the node is
+// written, and the generation the write landed is recorded in the file it was
+// built from exactly as a run with nothing in flight records it.
+func TestUpdatePolicyManagedMigrationNotesRunsInFlightAndWrites(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	h := newMigrationRig(t, f, &initOptions{}).managedGate().inFlight()
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("a managed project's migration was refused for the runs in flight: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "1 run(s) are in flight and a run whose model calls go through the credentials service reads the new policy on its next call") {
+		t.Errorf("the managed guard did not print its note:\n%s", out)
+	}
+	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
+		t.Errorf("the node is version %d, want %d: the note did not let the write through", got, projectpolicy.Version)
+	}
+	if !strings.Contains(out, "⚠ CONFIRM (project aurora)") {
+		t.Errorf("the note took the stage's own confirmation with it:\n%s", out)
+	}
+	if gen, want := recordedGeneration(t, f), nodeETag(t, f); gen != want {
+		t.Errorf("the generation the write landed is recorded as %q, want %q: the note changed the record", gen, want)
+	}
+}
+
+// TestUpdatePolicyManagedMigrationWithoutRunsPrintsNoNote: the note is about
+// the runs in flight, so a managed project with none gets the guard's old
+// silence — nothing is printed and the write proceeds as it always did.
+func TestUpdatePolicyManagedMigrationWithoutRunsPrintsNoNote(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	h := newMigrationRig(t, f, &initOptions{}).managedGate()
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("a managed migration with nothing in flight was refused: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "reads the new policy on its next call") {
+		t.Errorf("a note was printed with no run in flight:\n%s", out)
+	}
+	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
+		t.Errorf("the node is version %d, want %d", got, projectpolicy.Version)
+	}
+}
+
+// TestUpdatePolicyManagedMigrationUnderAMarkerKeepsTheRefusal: a coding agent's
+// session is not widened by the managed case — the owner's ruling of 2026-11-06
+// scopes the note to the owner's own session — so a marker keeps the refusal
+// byte for byte. The guard is reached only where the gate admitted the node (a
+// session the gate refuses never gets this far), so the tail is driven directly
+// with admitted true, which is the answer an admitted managed step carries.
+func TestUpdatePolicyManagedMigrationUnderAMarkerKeepsTheRefusal(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+	h := newMigrationRig(t, f, &initOptions{}).inFlight()
+	t.Setenv("CLAUDECODE", "1")
+	m, _, err := h.s.plan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, true, true)
+	if err == nil {
+		t.Fatalf("a coding agent's session wrote a managed project's policy with a run in flight:\n%s", h.out)
+	}
+	if !strings.Contains(err.Error(), "run(s) are in flight") {
+		t.Errorf("the refusal is not the in-flight one: %v", err)
+	}
+	if strings.Contains(h.out.String(), "reads the new policy on its next call") {
+		t.Errorf("the managed note was printed in a coding agent's session:\n%s", h.out)
+	}
+	if got := nodeVersionOn(t, f.db); got != 3 {
+		t.Errorf("the node moved to version %d under a marker", got)
 	}
 }
 

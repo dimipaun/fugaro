@@ -47,7 +47,9 @@ deleting it:
    it read, after the project's name is typed at a real terminal (or `--yes`
    where a confirmation is enough for the operator; a run that is still in
    flight stops the write unless `--yes` is passed, exactly as `publish
-   --delete` does with it). The one write `fugaro update`'s `--yes` never
+   --delete` does with it — except in a **managed** project, where the runs in
+   flight are printed as a note and the write proceeds, and in a coding agent's
+   session, which keeps the refusal). The one write `fugaro update`'s `--yes` never
    confirms is the one that leaves the node **looser** than the node it replaces
    — a ceiling raised or removed, a wider `budget.allowed_models` — because that
    is the node every run of the project is admitted by: the stage asks for the
