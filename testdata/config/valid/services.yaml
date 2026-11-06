@@ -4,7 +4,7 @@ git:
   provider: github
 workflows:
   server:
-    image_name: java-services
+    image_name: java-tools
     commands:
       build: ./gradlew assemble
       test: fugaro-services start && ./gradlew test
