@@ -223,7 +223,7 @@ func layerAdmittedRules(local bool, marker string) []string {
 		"the document lowers no rigor floor and removes no rigor rule",
 	}
 	if marker != "" {
-		rules = append(rules, "the document lowers no review round and turns no review level off (the floor keys D1027 holds a coding agent's session to)")
+		rules = append(rules, "the document lowers no review round and turns no review level off, level 1's own first-line switch and count included (the floor keys D1027 holds a coding agent's session to)")
 	}
 	if local {
 		rules = append(rules, "this machine's local layer file was written from the published layer's generation")
@@ -501,21 +501,40 @@ func layerRigorRules(prev, next *config.ProjectLayer) []string {
 	return rules
 }
 
-// layerRoundsKeys are the two round counts a coding agent's session may only
-// raise: the keys D1027's allowlist admits, as the document spells them (the
-// registry's own rows for them are these with a `layer.` prefix, and
-// settingsValueIn reads the document's spelling).
+// layerRoundsKeys are the round counts a coding agent's session may only
+// raise, as the document spells them (the registry's own rows for them are
+// these with a `layer.` prefix, and settingsValueIn reads the document's
+// spelling). The first two are D1027's allowlist itself; the third is the
+// first-line loop's count, which the settings door refuses outright — it is
+// not a key that allowlist admits — so it is here for its direction only: a
+// raise takes nothing away and this door judges directions, where a lowering or
+// a removal is the level-1 review a session would be deciding for the project.
+//
+// `row` is the mode's own row for the loop the key counts, the base
+// settingsFloorBaseRow falls back to where the layer sets no number of its own:
+// the two counts the senior review spends, and the level-1 count's own loop.
 var layerRoundsKeys = []struct {
 	key  string
 	path []string
+	row  int
 }{
-	{"defaults.agent.review_rounds", []string{"defaults", "agent", "review_rounds"}},
-	{"defaults.agent.adversarial_rounds", []string{"defaults", "agent", "adversarial_rounds"}},
+	{"defaults.agent.review_rounds", []string{"defaults", "agent", "review_rounds"}, rigor.DefaultRounds(rigor.Critical).Senior},
+	{"defaults.agent.adversarial_rounds", []string{"defaults", "agent", "adversarial_rounds"}, rigor.DefaultRounds(rigor.Critical).Senior},
+	{"defaults.agent.first_line_rounds", []string{"defaults", "agent", "first_line_rounds"}, rigor.DefaultRounds(rigor.Critical).Inner},
 }
+
+// layerFirstLineReviewPath is the second key that turns review level 1 off:
+// the levels block's `l1: { none: true }` is one spelling of a level that does
+// not run, and `first_line_review: off` (config.FirstLineOff) is the one the
+// first-line step itself reads.
+var layerFirstLineReviewPath = []string{"defaults", "agent", "first_line_review"}
 
 // layerRoundsRules names every direction this layer moves the review a run
 // spends, for a coding agent's session and no one else: a round count lowered
-// or removed, and a review level turned off (`defaults.agent.levels.*.none`).
+// or removed, a review level turned off (`defaults.agent.levels.*.none`), and
+// review level 1 turned off by the first-line step's own switch
+// (`defaults.agent.first_line_review: off`, whose key is not in the levels
+// block and is refused at the settings door all the same).
 //
 // Why this door needs the rule and not only the settings door. The two commands
 // write the same published layer — `fugaro settings set` writes one key of it,
@@ -536,12 +555,20 @@ var layerRoundsKeys = []struct {
 // because a rule that named a person's write among the ones it judged would be
 // a record of something that did not happen (D1014).
 //
-// The base is settingsFloorBase's, over the bytes of the layer this document
+// The base is settingsFloorBaseRow's, over the bytes of the layer this document
 // replaces (at.old, the object the rules already judge against): one function
 // decides what "the rounds a run spends today" is, so the two doors cannot
 // disagree about it — a layer that sets no number of its own is held to the
-// strictest mode's row at both. A key neither document sets is not a change and
-// is admitted, which is what keeps an unchanged layer publishable.
+// strictest mode's row for that key's loop at both. A key neither document sets
+// is not a change and is admitted, which is what keeps an unchanged layer
+// publishable.
+//
+// Only the explicit `off` is judged for the first-line switch: `auto` leaves
+// the level to the run's models and the providers that serve them
+// (config.Agent.FirstLineOn), which the two documents in hand do not settle,
+// and a rule that guessed either way would move a level that may not have
+// moved. A layer that says off already, and one whose switch is set back to
+// `on` or `auto`, take nothing away and pass.
 func layerRoundsRules(prev, next *config.ProjectLayer, published []byte, marker string) []string {
 	if marker == "" || next == nil {
 		return nil
@@ -569,12 +596,16 @@ func layerRoundsRules(prev, next *config.ProjectLayer, published []byte, marker 
 			// rule runs, so this is unreachable and no rule is claimed for it.
 			continue
 		}
-		if base, baseText := settingsFloorBase(published, k.path); value < base {
+		if base, baseText := settingsFloorBaseRow(published, k.path, k.row); value < base {
 			add("lowers "+k.key+" from "+baseText+" to "+safetext.Field(now), "lowers")
 		}
 	}
 	for _, l := range layerLevelOff(prev, next) {
 		add("turns the review level defaults.agent.levels."+l+" off (none: true), so a run of the project spends less review", "turns off")
+	}
+	if settingsValueIn(next.Raw, layerFirstLineReviewPath) == config.FirstLineOff &&
+		settingsValueIn(published, layerFirstLineReviewPath) != config.FirstLineOff {
+		add("turns review level 1 off (defaults.agent.first_line_review: off), so a run of the project spends no first-line review", "turns off")
 	}
 	return rules
 }

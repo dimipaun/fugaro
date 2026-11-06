@@ -826,8 +826,8 @@ func TestConfigPublishManagedRefusesEachWidening(t *testing.T) {
 	})
 }
 
-// roundsLayer is the layer a round-count case publishes: one of the two keys
-// D1027's allowlist admits, with the value the case names, and nothing else.
+// roundsLayer is the layer a round-count case publishes: one of the round keys
+// D1027's floors are about, with the value the case names, and nothing else.
 // An empty value publishes no round count at all, which is the removal case.
 func roundsLayer(key, value string) string {
 	if value == "" {
@@ -840,6 +840,16 @@ func roundsLayer(key, value string) string {
 // levels turned off with the one key that says so (`none: true`).
 func levelOffLayer(name string) string {
 	return minimalAnchored + "defaults:\n  agent:\n    levels:\n      " + name + ": { none: true }\n"
+}
+
+// firstLineReviewLayer is the layer a first-line-review case publishes:
+// `defaults.agent.first_line_review` with the value the case names, and nothing
+// else. An empty value publishes no value at all, which is the removal case.
+func firstLineReviewLayer(value string) string {
+	if value == "" {
+		return minimalAnchored
+	}
+	return minimalAnchored + "defaults:\n  agent: { first_line_review: " + value + " }\n"
 }
 
 // The floors D1027 holds a coding agent's session to are judged at this door
@@ -858,10 +868,17 @@ func TestConfigPublishManagedRefusesALoweredReviewRound(t *testing.T) {
 		{"a removed review_rounds", roundsLayer("review_rounds", "5"), roundsLayer("review_rounds", ""), "review_rounds"},
 		{"a lowered adversarial_rounds", roundsLayer("adversarial_rounds", "4"), roundsLayer("adversarial_rounds", "2"), "adversarial_rounds"},
 		{"a removed adversarial_rounds", roundsLayer("adversarial_rounds", "4"), roundsLayer("adversarial_rounds", ""), "adversarial_rounds"},
+		{"a lowered first_line_rounds", roundsLayer("first_line_rounds", "3"), roundsLayer("first_line_rounds", "1"), "first_line_rounds"},
+		{"a removed first_line_rounds", roundsLayer("first_line_rounds", "2"), roundsLayer("first_line_rounds", ""), "first_line_rounds"},
 		// The layer the write replaces sets no number of its own: the base is
 		// the strictest mode's row, which is settingsFloorBase's own residual
 		// (D1027), and a number below it is refused here as it is there.
 		{"a number below the strictest mode's row", minimalAnchored, roundsLayer("review_rounds", "2"), "review_rounds"},
+		// The level-1 count is the other loop of the same row: a mode's
+		// first-line rounds (rigor.Rounds.Inner) are not its senior ones, so
+		// the base this key is judged against is the first-line row and not
+		// the row the two counts above are held to.
+		{"a first-line count below the first-line row", minimalAnchored, roundsLayer("first_line_rounds", "2"), "first_line_rounds"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -946,6 +963,86 @@ func TestConfigPublishManagedRefusesAReviewLevelTurnedOff(t *testing.T) {
 	})
 }
 
+// Review level 1 is turned off by two keys, and the second one is not in the
+// levels block: `defaults.agent.first_line_review: off` is the first-line
+// step's own switch, and the settings door refuses it exactly as it refuses
+// `defaults.agent.levels.*.none`. Without this the whole-document door would
+// still let a session take level 1 away, one key over from the block it does
+// judge.
+func TestConfigPublishManagedRefusesTheFirstLineReviewTurnedOff(t *testing.T) {
+	cases := []struct {
+		name      string
+		published string
+		next      string
+	}{
+		{"off where the layer said auto", firstLineReviewLayer("auto"), firstLineReviewLayer("off")},
+		{"off where the layer said on", firstLineReviewLayer("on"), firstLineReviewLayer("off")},
+		// The layer the write replaces says nothing, and the reader's own
+		// default is `auto` (config's defaults): level 1 may run today, so
+		// turning it off takes review away.
+		{"off where the layer said nothing", minimalAnchored, firstLineReviewLayer("off")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newManagedPublishRig(t)
+			agentSession(t)
+			publishedLayer(t, r.cloudFixture, tc.published)
+			_, _, err := execute(t, "config", "publish", layerFile(t, tc.next))
+			if err == nil {
+				t.Fatalf("turning the first-line review off was published in a coding agent's session")
+			}
+			if !strings.Contains(err.Error(), "first_line_review") || !strings.Contains(err.Error(), "floor") {
+				t.Errorf("the refusal does not name the key and the rule that refused it: %v", err)
+			}
+			if got := bucketText(t, r.cloudFixture, config.LayerKey); got != tc.published {
+				t.Fatalf("the published layer moved: %q", got)
+			}
+			rec := r.audits(t)
+			if len(rec) != 1 || rec[0].Verdict != managedmode.AuditRefused {
+				t.Fatalf("the record is %v, want one refusal", rec)
+			}
+			if rules := strings.Join(rec[0].Rules, " "); !strings.Contains(rules, "first_line_review") {
+				t.Errorf("the record does not name the rule that refused: %q", rules)
+			}
+		})
+	}
+
+	// The other sides. A layer that already says off changes nothing, and
+	// every value that is not off lets level 1 run again — `on` outright, and
+	// `auto` (or no value at all, which reads as auto) where the run's models
+	// and providers decide — so the rule admits them, as it admits a level
+	// turned back on in the levels block.
+	t.Run("a layer that already says off", func(t *testing.T) {
+		r := newManagedPublishRig(t)
+		agentSession(t)
+		publishedLayer(t, r.cloudFixture, firstLineReviewLayer("off"))
+		out, errOut, err := execute(t, "config", "publish", layerFile(t, firstLineReviewLayer("off")))
+		if err != nil {
+			t.Fatalf("an unchanged layer was refused: %v\n%s", err, errOut)
+		}
+		if !strings.Contains(out, initflow.AgentProceeded("CLAUDECODE")) {
+			t.Errorf("the session does not read that the step proceeded: %q", out)
+		}
+	})
+	for _, tc := range []struct{ name, published, next string }{
+		{"turned back on", firstLineReviewLayer("off"), firstLineReviewLayer("on")},
+		{"turned back to auto", firstLineReviewLayer("off"), firstLineReviewLayer("auto")},
+		{"the value removed", firstLineReviewLayer("off"), minimalAnchored},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newManagedPublishRig(t)
+			agentSession(t)
+			publishedLayer(t, r.cloudFixture, tc.published)
+			if _, errOut, err := execute(t, "config", "publish", layerFile(t, tc.next)); err != nil {
+				t.Fatalf("a layer letting the first-line review run again was refused: %v\n%s", err, errOut)
+			}
+			if got := bucketText(t, r.cloudFixture, config.LayerKey); got != tc.next {
+				t.Fatalf("the bucket holds %q, want the published layer", got)
+			}
+		})
+	}
+}
+
 // The other direction of the same rule: raising a round count, and publishing
 // a layer that changes nothing about it, are both admitted — and the record of
 // an admission names the rule among the ones that were applied and passed.
@@ -959,6 +1056,8 @@ func TestConfigPublishManagedAdmitsARaisedReviewRound(t *testing.T) {
 		{"a raised adversarial_rounds", roundsLayer("adversarial_rounds", "2"), roundsLayer("adversarial_rounds", "6")},
 		{"an unchanged review_rounds", roundsLayer("review_rounds", "3"), roundsLayer("review_rounds", "3")},
 		{"a number the layer never set, at the strictest mode's row", minimalAnchored, roundsLayer("review_rounds", "5")},
+		{"a raised first_line_rounds", roundsLayer("first_line_rounds", "1"), roundsLayer("first_line_rounds", "2")},
+		{"a first-line count the layer never set, at its own row", minimalAnchored, roundsLayer("first_line_rounds", "3")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -993,23 +1092,38 @@ func TestConfigPublishManagedAdmitsARaisedReviewRound(t *testing.T) {
 // this half is observable through — and it is asked with the empty marker the
 // settings door reads for a person.
 func TestConfigPublishManagedAdmitsAPersonsLoweredReviewRound(t *testing.T) {
-	r := newManagedPublishRig(t)
-	noAgentSession(t)
-	publishedLayer(t, r.cloudFixture, roundsLayer("review_rounds", "5"))
-	env, err := openCloud(context.Background(), cloudOptions{stderr: discard})
-	if err != nil {
-		t.Fatalf("opening the fixture's cloud environment: %v", err)
+	cases := []struct {
+		name      string
+		published string
+		next      string
+	}{
+		{"a lowered review_rounds", roundsLayer("review_rounds", "5"), roundsLayer("review_rounds", "2")},
+		{"a removed adversarial_rounds", roundsLayer("adversarial_rounds", "4"), roundsLayer("adversarial_rounds", "")},
+		{"a lowered first_line_rounds", roundsLayer("first_line_rounds", "3"), roundsLayer("first_line_rounds", "1")},
+		{"a review level turned off", minimalAnchored, levelOffLayer("l2")},
+		{"the first-line review turned off", minimalAnchored, firstLineReviewLayer("off")},
 	}
-	defer env.Close()
-	conv, _ := configPublishConverge(context.Background(), env, []byte(roundsLayer("review_rounds", "2")), false, "")
-	if err := conv.Refuse(); err != nil {
-		t.Fatalf("a person's own publish of a lowered round count was refused by the floor rule: %v", err)
-	}
-	rules := strings.Join(conv.Rules(), " ")
-	if strings.Contains(rules, "review round") {
-		t.Errorf("the record claims the rounds rule ran for a person's write: %q", rules)
-	}
-	if !strings.Contains(rules, "widens no model claim") {
-		t.Errorf("the record does not name the rules that did run: %q", rules)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newManagedPublishRig(t)
+			noAgentSession(t)
+			publishedLayer(t, r.cloudFixture, tc.published)
+			env, err := openCloud(context.Background(), cloudOptions{stderr: discard})
+			if err != nil {
+				t.Fatalf("opening the fixture's cloud environment: %v", err)
+			}
+			defer env.Close()
+			conv, _ := configPublishConverge(context.Background(), env, []byte(tc.next), false, "")
+			if err := conv.Refuse(); err != nil {
+				t.Fatalf("a person's own publish of a weakened layer was refused by the floor rule: %v", err)
+			}
+			rules := strings.Join(conv.Rules(), " ")
+			if strings.Contains(rules, "review round") || strings.Contains(rules, "level") {
+				t.Errorf("the record claims the direction rule ran for a person's write: %q", rules)
+			}
+			if !strings.Contains(rules, "widens no model claim") {
+				t.Errorf("the record does not name the rules that did run: %q", rules)
+			}
+		})
 	}
 }
