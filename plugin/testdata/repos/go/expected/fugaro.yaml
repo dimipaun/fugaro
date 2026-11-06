@@ -3,8 +3,6 @@ project: acme
 git: { provider: github, base_branch: main }
 workflows:
   go:
-    image:
-      setup: ["go mod download && go build ./..."]
     commands:
       build: go build ./... && go vet ./...
       test: go test ./...
