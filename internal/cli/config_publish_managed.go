@@ -131,7 +131,16 @@ func configPublishGate(ctx context.Context, env *cloudEnv, marker string) *manag
 // whose subject is a different file, and would put a rule in the record that
 // never ran. Every other rule is decided against the published object and runs
 // either way.
-func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte, local bool) (managedmode.Converge, *layerAt) {
+//
+// marker is the session's own environment marker, exactly the value the gate's
+// own facts carry (managedGateFacts.AgentMarker, read once by the command), so
+// the rules that bind an agent's session and the record that names it cannot
+// disagree about which session this is. The direction rules — the rounds and
+// the review levels, the same ones `fugaro settings set` holds an agent's
+// session to (D1027, owner's ruling of 2026-11-06) — are decided under it and
+// are the only rules here that are: every other rule is about the document and
+// binds whoever publishes it.
+func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte, local bool, marker string) (managedmode.Converge, *layerAt) {
 	rules := layerDocumentRules(data)
 	l, ps := projectLayerProblems(data, env.lc)
 	if len(ps) > 0 {
@@ -182,6 +191,7 @@ func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte, loca
 	}
 	rules = append(rules, layerWideningRules(prev, l)...)
 	rules = append(rules, layerRigorRules(prev, l)...)
+	rules = append(rules, layerRoundsRules(prev, l, at.old, marker)...)
 	if local {
 		if r := layerStaleRule(env.lc, prev, gen); r != "" {
 			rules = append(rules, r)
@@ -190,7 +200,7 @@ func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte, loca
 	if len(rules) > 0 {
 		return managedmode.ConvergeRefused(data, initflow.YesOrTyped, rules), at
 	}
-	return managedmode.ConvergeAdmitted(data, initflow.YesOrTyped, layerAdmittedRules(local)), at
+	return managedmode.ConvergeAdmitted(data, initflow.YesOrTyped, layerAdmittedRules(local, marker)), at
 }
 
 // layerAdmittedRules is what a record of an admission says was applied and
@@ -200,8 +210,10 @@ func configPublishConverge(ctx context.Context, env *cloudEnv, data []byte, loca
 // which is also why D854's sentence is in the list only when D854 ran: a record
 // of a `config publish FILE` that claimed the local file's generation was
 // checked would name a rule about a file that was never the document under
-// judgement.
-func layerAdmittedRules(local bool) []string {
+// judgement. The rounds rule's sentence is written in only when a marker was
+// there for it to bind, by the same rule: a person's own publish is not held to
+// it, and a record that named it would claim a rule that never ran.
+func layerAdmittedRules(local bool, marker string) []string {
 	rules := []string{
 		"every key of the document is one the settings registry knows",
 		"the document names no reserved key",
@@ -209,6 +221,9 @@ func layerAdmittedRules(local bool) []string {
 		"no key that runs as shell changes, whatever the command line says",
 		"the document widens no model claim, no A/B route and no cap",
 		"the document lowers no rigor floor and removes no rigor rule",
+	}
+	if marker != "" {
+		rules = append(rules, "the document lowers no review round and turns no review level off, level 1's own first-line switch and count included (the floor keys D1027 holds a coding agent's session to)")
 	}
 	if local {
 		rules = append(rules, "this machine's local layer file was written from the published layer's generation")
@@ -435,8 +450,9 @@ func layerReservedRun(path []string) []string {
 // defaults.rigor.default lowered or dropped, and a defaults.rigor.areas rule
 // lowered or dropped, both compared by rigor.Mode.Rank().
 //
-// This is the one place the gate judges a change that admits LESS rather than
-// more, and it is here because a floor is what the run's own rigor resolution
+// This is one of the two directions the gate refuses for admitting LESS rather
+// than more — the review rounds a run spends are the other (layerRoundsRules,
+// below) — and it is here because a floor is what the run's own rigor resolution
 // starts from (D20c): removing one does not make the project's runs cheaper or
 // smaller, it makes them weaker, and a mode a run is held to is exactly what a
 // session has no business deciding about itself. Owner-ratified by D1026: a
@@ -483,6 +499,144 @@ func layerRigorRules(prev, next *config.ProjectLayer) []string {
 		add("removes the rigor rule " + safetext.Field(name) + ", which was " + string(was[name]))
 	}
 	return rules
+}
+
+// layerRoundsKeys are the round counts a coding agent's session may only
+// raise, as the document spells them (the registry's own rows for them are
+// these with a `layer.` prefix, and settingsValueIn reads the document's
+// spelling). The first two are D1027's allowlist itself; the third is the
+// first-line loop's count, which the settings door refuses outright — it is
+// not a key that allowlist admits — so it is here for its direction only: a
+// raise takes nothing away and this door judges directions, where a lowering or
+// a removal is the level-1 review a session would be deciding for the project.
+//
+// `row` is the mode's own row for the loop the key counts, the base
+// settingsFloorBaseRow falls back to where the layer sets no number of its own:
+// the two counts the senior review spends, and the level-1 count's own loop.
+var layerRoundsKeys = []struct {
+	key  string
+	path []string
+	row  int
+}{
+	{"defaults.agent.review_rounds", []string{"defaults", "agent", "review_rounds"}, rigor.DefaultRounds(rigor.Critical).Senior},
+	{"defaults.agent.adversarial_rounds", []string{"defaults", "agent", "adversarial_rounds"}, rigor.DefaultRounds(rigor.Critical).Senior},
+	{"defaults.agent.first_line_rounds", []string{"defaults", "agent", "first_line_rounds"}, rigor.DefaultRounds(rigor.Critical).Inner},
+}
+
+// layerFirstLineReviewPath is the second key that turns review level 1 off:
+// the levels block's `l1: { none: true }` is one spelling of a level that does
+// not run, and `first_line_review: off` (config.FirstLineOff) is the one the
+// first-line step itself reads.
+var layerFirstLineReviewPath = []string{"defaults", "agent", "first_line_review"}
+
+// layerRoundsRules names every direction this layer moves the review a run
+// spends, for a coding agent's session and no one else: a round count lowered
+// or removed, a review level turned off (`defaults.agent.levels.*.none`), and
+// review level 1 turned off by the first-line step's own switch
+// (`defaults.agent.first_line_review: off`, whose key is not in the levels
+// block and is refused at the settings door all the same).
+//
+// Why this door needs the rule and not only the settings door. The two commands
+// write the same published layer — `fugaro settings set` writes one key of it,
+// `fugaro config publish` writes the whole document — and D1027's allowlist and
+// direction rule are the owner's decision about what a session may move, not
+// about which command it names to move it. A session with the whole document in
+// hand can publish a lower `review_rounds`, or turn `levels.l2` off, around a
+// rule that only judges single-key writes; the rounds are the review a run
+// spends and a level that does not run spends none, so the direction is the same
+// one layerRigorRules refuses on the floor beside it (D20c, D1026).
+//
+// Why it binds a coding agent's session and not a person. The owner's ruling of
+// 2026-11-06: the allowlist and the floors are what a session may move on its
+// own, and a person at their own terminal decides the project's review for it
+// (#1793, #1795, settingsFloorRule's own reading). A person's publish does not
+// even reach this converge — the command reads no mark and builds no gate
+// without a marker (config_publish.go) — and the rule is written to say so,
+// because a rule that named a person's write among the ones it judged would be
+// a record of something that did not happen (D1014).
+//
+// The base is settingsFloorBaseRow's, over the bytes of the layer this document
+// replaces (at.old, the object the rules already judge against): one function
+// decides what "the rounds a run spends today" is, so the two doors cannot
+// disagree about it — a layer that sets no number of its own is held to the
+// strictest mode's row for that key's loop at both. A key neither document sets
+// is not a change and is admitted, which is what keeps an unchanged layer
+// publishable.
+//
+// The first-line switch is judged in two directions: `off` turns the level
+// off outright, and a layer that said `on` and now says `auto` (or says
+// nothing, which reads as auto) hands the level to the run's models, where
+// config.Agent.FirstLineOn is false for an Anthropic coder, so an explicit
+// `on` is a level a session may not give up. Where the layer did not say `on`,
+// `auto` leaves the level to the run's models, which the two documents in hand
+// do not settle, and a rule that guessed would move a level that may not have
+// moved: a layer that says off already, and one whose switch is set back to
+// `on` or `auto`, take nothing away and pass.
+func layerRoundsRules(prev, next *config.ProjectLayer, published []byte, marker string) []string {
+	if marker == "" || next == nil {
+		return nil
+	}
+	var rules []string
+	add := func(what, verb string) {
+		rules = append(rules, "the layer "+what+", which is a floor no coding agent's session "+verb+": the project's owner publishes it at their own terminal")
+	}
+	for _, k := range layerRoundsKeys {
+		wasText := settingsValueIn(published, k.path)
+		now := settingsValueIn(next.Raw, k.path)
+		if now == "" {
+			// The document leaves no number: taking one away is refused where
+			// the layer it replaces set one, and the zero that layer's own
+			// reader treats as unset is no number to take away
+			// (settingsFloorBase's own reading).
+			if was, ok := settingsRounds(wasText); ok && was > 0 {
+				add("removes "+k.key+", which was "+safetext.Field(wasText), "removes")
+			}
+			continue
+		}
+		value, ok := settingsRounds(now)
+		if !ok {
+			// Not a number: the layer parse refuses the document before this
+			// rule runs, so this is unreachable and no rule is claimed for it.
+			continue
+		}
+		if base, baseText := settingsFloorBaseRow(published, k.path, k.row); value < base {
+			add("lowers "+k.key+" from "+baseText+" to "+safetext.Field(now), "lowers")
+		}
+	}
+	for _, l := range layerLevelOff(prev, next) {
+		add("turns the review level defaults.agent.levels."+l+" off (none: true), so a run of the project spends less review", "turns off")
+	}
+	was, now := settingsValueIn(published, layerFirstLineReviewPath), settingsValueIn(next.Raw, layerFirstLineReviewPath)
+	if (now == config.FirstLineOff && was != config.FirstLineOff) || (was == config.FirstLineOn && now != config.FirstLineOn) {
+		add("turns review level 1 off (defaults.agent.first_line_review: off), so a run of the project spends no first-line review", "turns off")
+	}
+	return rules
+}
+
+// layerLevelOff is the name of every review level next turns off that the layer
+// it replaces had on: l1, l2 and l3, in that order. A level already off stays
+// off without a rule (nothing moved), and a level turned back on is a raise the
+// rule admits.
+func layerLevelOff(prev, next *config.ProjectLayer) []string {
+	var was config.ReviewLevels
+	if prev != nil {
+		was = prev.Defaults.Agent.Levels
+	}
+	now := next.Defaults.Agent.Levels
+	var out []string
+	for _, l := range []struct {
+		name     string
+		was, now *config.LevelSetting
+	}{
+		{"l1", was.L1, now.L1},
+		{"l2", was.L2, now.L2},
+		{"l3", was.L3, now.L3},
+	} {
+		if l.now != nil && l.now.Off && (l.was == nil || !l.was.Off) {
+			out = append(out, l.name)
+		}
+	}
+	return out
 }
 
 // layerWideningRules names every change that admits more than the layer it

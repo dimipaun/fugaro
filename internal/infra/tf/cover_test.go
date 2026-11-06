@@ -386,12 +386,13 @@ func TestAllowedTypesCoverTheModules(tt *testing.T) {
 	}
 	// The attribute values the checks expect are the modules' literals.
 	pins := map[string][]string{
-		"modules/installation/history.tf": {`"/usr/local/bin/fugaro"`, `["budget", "history", "--sweep"]`, `https://run.googleapis.com/v2/projects/${var.project}/locations/`, `service_account_email = google_service_account.scheduler.email`},
-		"modules/repo/check.tf":           {`command = ["fugaro"]`, `["image", "check", "--job"]`, `https://run.googleapis.com/v2/projects/${var.project}/locations/`},
-		"modules/installation/logging.tf": {`destination            = "logging.googleapis.com/${local.log_bucket_path}"`, `projects/${var.project}/`},
-		"modules/installation/bucket.tf":  {`uniform_bucket_level_access = true`, `public_access_prevention    = "enforced"`},
-		"modules/firebase/firebase.tf":    {`identitytoolkit.googleapis.com`, `securetoken.googleapis.com`},
-		"modules/installation/budget.tf":  {`billing_account = var.budget.billing_account`},
+		"modules/installation/history.tf":      {`"/usr/local/bin/fugaro"`, `["budget", "history", "--sweep"]`, `https://run.googleapis.com/v2/projects/${var.project}/locations/`, `service_account_email = google_service_account.scheduler.email`},
+		"modules/installation/catalogcheck.tf": {`command = ["fugaro"]`, `["image", "check", "--job", "--catalog"]`},
+		"modules/repo/check.tf":                {`command = ["fugaro"]`, `["image", "check", "--job"]`, `https://run.googleapis.com/v2/projects/${var.project}/locations/`},
+		"modules/installation/logging.tf":      {`destination            = "logging.googleapis.com/${local.log_bucket_path}"`, `projects/${var.project}/`},
+		"modules/installation/bucket.tf":       {`uniform_bucket_level_access = true`, `public_access_prevention    = "enforced"`},
+		"modules/firebase/firebase.tf":         {`identitytoolkit.googleapis.com`, `securetoken.googleapis.com`},
+		"modules/installation/budget.tf":       {`billing_account = var.budget.billing_account`},
 		// The credentials service's own literals, which its case in cover.go
 		// reads: the IAM setting it requires and the seven environment
 		// variables credentialsServiceEnv allows — the service's whole
@@ -527,6 +528,47 @@ func TestCoverCheckSpecEveryEntry(t *testing.T) {
 	cs["env"] = append(cs["env"].([]any), map[string]any{"name": "FUGARO_CHECK_SPEC", "value": `{"build_service_account":"fugaro-b-acme-webapp-5b8bba58@proj-1.iam.gserviceaccount.com","registry":"evil.example/x"}`})
 	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{j}}, nil); len(got) == 0 {
 		t.Fatal("a second, foreign FUGARO_CHECK_SPEC is covered")
+	}
+}
+
+// The catalog check job runs `fugaro image check --job --catalog` with its own
+// FUGARO_CATALOG_CHECK_SPEC: the plan the installation module writes is
+// covered, and a spec that points its builds at another registry or another
+// account is not.
+func TestCoverCatalogCheckJob(t *testing.T) {
+	const reg = "us-east5-docker.pkg.dev/proj-1/"
+	base := reg + "fugaro-base/x:1"
+	job := func(spec string, args ...string) ResourceChange {
+		a := make([]any, len(args))
+		for i, x := range args {
+			a[i] = x
+		}
+		env := []any{map[string]any{"name": "FUGARO_CATALOG_CHECK_SPEC", "value": spec}}
+		c := map[string]any{"image": base, "command": []any{"fugaro"}, "args": a, "env": env}
+		return rc("google_cloud_run_v2_job", map[string]any{"template": []any{map[string]any{"template": []any{map[string]any{"containers": []any{c}}}}}},
+			map[string]any{}, "create")
+	}
+	spec := func(baseRef, account string) string {
+		out, _ := json.Marshal(map[string]any{"version": 1, "base_images": map[string]string{"base": baseRef},
+			"repositories": []any{map[string]any{"build_service_account": account}}})
+		return string(out)
+	}
+	cmd := []string{"image", "check", "--job", "--catalog"}
+	for name, tc := range map[string]struct {
+		job     ResourceChange
+		covered bool
+	}{
+		"as the module writes it":       {job(spec(base, okBuild), cmd...), true},
+		"a foreign base image":          {job(spec("evil.example/base:1", okBuild), cmd...), false},
+		"a foreign build account":       {job(spec(base, "attacker@evil.iam.gserviceaccount.com"), cmd...), false},
+		"a spec that is not JSON":       {job("registry="+reg, cmd...), false},
+		"the command with another flag": {job(spec(base, okBuild), "image", "check", "--job", "--other"), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{tc.job}}, nil); (len(got) == 0) != tc.covered {
+				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
+			}
+		})
 	}
 }
 
@@ -2602,6 +2644,60 @@ func TestDeployerDesignDirectionalReferencesPointTheRightWay(t *testing.T) {
 		}
 		if dir != want {
 			t.Errorf("line %d of the design says \"%s\", and %s is defined at line %d: the reference points a reader the wrong way, into material that does not hold it", line(m[0]), doc[m[0]:m[1]], what, defLine)
+		}
+	}
+}
+
+// The verifier service account (CSR14, D1068) is the SECOND site of D75's
+// impersonation grant, and this is the test that makes one `fugaro update`
+// able to create it: the operators hold roles/iam.serviceAccountTokenCreator
+// on the account the installation's own apply creates, so the plan that
+// creates it grants that role on an account that is not the deployer's — which
+// is exactly what deployerTokenCreator refused while it was the only site.
+//
+// The account ID is a LITERAL here on purpose: it is the module's own
+// account_id (verifier.tf) and the Go side's spelling of it
+// (internal/infra.VerifierAccountID), and the whole point of the design is
+// that the address is computable from the configuration rather than read from
+// the apply.
+//
+// Both halves are asserted: the second site is covered, and the fence is
+// NARROWED to two accounts rather than opened. A token-creator grant on a
+// third account is still refused, and so is one whose account is not this
+// run's — the verifier account is the installation's own, in the installation
+// project, and a lookalike address or another project's account is not it.
+func TestVerifierTokenCreatorIsCoveredByOneUpdate(t *testing.T) {
+	const verifier = "fugaro-verifier@proj-1.iam.gserviceaccount.com"
+	// The module's own grant (iam.tf): the operators, and nobody else, may
+	// assume the verifier account — the impersonation the owner's own
+	// `gcloud auth print-identity-token --impersonate-service-account=…` and
+	// the launcher's own mint both stand on.
+	ch := grantOnAccount("google_service_account_iam_member", "user:me@example.com", DeployerTokenCreatorRole,
+		"projects/proj-1/serviceAccounts/"+verifier)
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) != 0 {
+		t.Errorf("the operators' %s grant on the verifier account is not covered by one update: %q — the update that creates the account would refuse its own plan and the account would never exist", DeployerTokenCreatorRole, got)
+	}
+
+	// The deployer's own site is unchanged by this widening.
+	ch = grantOnAccount("google_service_account_iam_member", "user:me@example.com", DeployerTokenCreatorRole,
+		"projects/proj-1/serviceAccounts/"+DeployerAccount("proj-1"))
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) != 0 {
+		t.Errorf("the operators' %s grant on the deployer account is not covered: %q", DeployerTokenCreatorRole, got)
+	}
+
+	for _, account := range []string{
+		// A third account of this project.
+		"projects/proj-1/serviceAccounts/fugaro-scheduler@proj-1.iam.gserviceaccount.com",
+		// The verifier account's name in another project: the account is the
+		// installation's own (the module creates it in var.project), and the
+		// role's project does not move it.
+		"projects/fp-2/serviceAccounts/" + verifier,
+		// A lookalike: a job account whose name starts with the verifier's.
+		"projects/proj-1/serviceAccounts/fugaro-verifier-0123abcd@proj-1.iam.gserviceaccount.com",
+	} {
+		ch := grantOnAccount("google_service_account_iam_member", "user:me@example.com", DeployerTokenCreatorRole, account)
+		if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+			t.Errorf("%s: the %s grant is covered: the impersonation is on the deployer account and the verifier account of this installation, and on nothing else", account, DeployerTokenCreatorRole)
 		}
 	}
 }

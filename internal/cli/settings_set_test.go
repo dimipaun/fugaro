@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -2596,5 +2597,30 @@ func TestSettingsSetTypesAWriteThatRemovesACap(t *testing.T) {
 				t.Errorf("the confirmed write did not land:\n%s", got)
 			}
 		})
+	}
+}
+
+// With several project configs on the machine, a command run inside a checkout
+// is aimed at the project that checkout's fugaro.yaml names (localcfg.Select's
+// step 3), for the write and the read alike: the refusal "several project
+// configs and nothing selects one" tells a person to run from such a checkout,
+// so these commands must read it.
+func TestSettingsSelectionReadsTheCheckoutsProject(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	writeProject(t, "aurora", "proj-1")
+	writeProject(t, "borealis", "proj-2")
+	t.Chdir(gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: borealis\n"))
+
+	sel, lc, err := settingsSelection()
+	if err != nil || lc == nil || lc.Name != "borealis" || sel.From != "checkout" {
+		t.Fatalf("settingsSelection in a checkout of borealis: %+v, %+v, %v", sel, lc, err)
+	}
+	r, err := readSettings(context.Background(), settingsOptions{}, time.Now())
+	if err != nil || r.local == nil || r.local.Name != "borealis" {
+		t.Fatalf("readSettings in a checkout of borealis: %+v, %v", r, err)
+	}
+	t.Chdir(t.TempDir())
+	if _, _, err := settingsSelection(); err == nil || !strings.Contains(err.Error(), "several project configs") {
+		t.Fatalf("outside a checkout nothing selects one of two project configs, got %v", err)
 	}
 }

@@ -981,6 +981,38 @@ func TestInitForgetUndoesExclusionThenStateRm(t *testing.T) {
 	}
 }
 
+// TestInitForgetCarriesTheVerifierListAsFound: the rollback reads no cloud and
+// has no effective verifier list, and a nil list would delete the carried
+// member, so the module's default account would replace the owner's clear at
+// the live service in a plan the rollback's own guard lets through. The block
+// is carried exactly as found.
+//
+// Mutation (run, restored): pass false for asFound at the rollback's two
+// prepare calls and the member is gone from the rewritten tfvars.
+func TestInitForgetCarriesTheVerifierListAsFound(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	r.setPlan(t, forgetPlan()...)
+	if err := os.MkdirAll(r.root(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	prev := `{"credentials_service":{"image":"us-docker.pkg.dev/proj-1234/fugaro/credentials:1","verifier_accounts":[]}}`
+	if err := os.WriteFile(filepath.Join(r.root(), infra.VarsFile), []byte(prev), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := executeStdin(t, "", "update", "--forget", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	svc, ok := r.tfvars(t)["credentials_service"].(map[string]any)
+	if !ok {
+		t.Fatalf("the rollback's tfvars lost the credentials_service block: %v", r.tfvars(t))
+	}
+	got, ok := svc["verifier_accounts"].([]any)
+	if !ok || len(got) != 0 {
+		t.Errorf("credentials_service.verifier_accounts = %v after the rollback, want [] exactly as found: an absent member is the module's default account", svc["verifier_accounts"])
+	}
+}
+
 // An installation that adopted the legacy registry keeps it declared in
 // the rollback's plan, which would otherwise delete it.
 func TestInitForgetKeepsAdoptedLegacyRegistry(t *testing.T) {
