@@ -23,6 +23,7 @@
 version: 1
 
 summaries:
+  v0.20.0: The groundwork for an independent cloud review of every change is in place, with its own read-only job and a verifier the launcher checks verdicts against, and a workflow that runs a catalog image no longer builds one of its own.
   v0.19.0: A managed project no longer asks you to confirm anything, a run can code on a cheap provider model and review on your Claude subscription, a project's workflow secrets reach exactly the repositories you list, and a project secret can be removed in one step.
   v0.18.0: A coding agent can now manage a Fugaro-created project for you behind a fixed safety gate, a project's catalog images are checked and rebuilt on a schedule, and building a catalog image works end to end from your own login.
   v0.17.0: A project can keep its own named images, built in the cloud and picked by the tags a run needs, so a repository no longer needs a hand-made image of its own. Settings edits classify what they change before writing, and Bitbucket repositories can be read through a read-scoped consumer.
