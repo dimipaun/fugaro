@@ -1782,6 +1782,19 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // second account: the run holds one Claude account, which rung 2 names when it
 // names one (mixedStageAccount refuses a project default that disagrees).
 //
+// A mixed run is the one case where the launch's *own* account is the mix's
+// (mixedRunAccount, below the walk): spec.OAuthToken is what names the job
+// variant, the account's job is the only one that mounts its token, and the
+// review stages read the token out of the runner's environment — so a launch
+// that resolved the unsuffixed default would start a run whose own review
+// stage is refused for a token nothing mounted (Check 290's failure). It is
+// the launch's account and never the run's *credential*: the coder's stages
+// stay on the provider key the gateway holds, and the runner builds each
+// stage's environment (B3). Nothing but the mix's account is admitted either:
+// a name the walk resolves to something else under api-key is
+// claudeAccountAllowed's refusal, and the flag and a follow-up's inherited
+// name are held to it the same way.
+//
 // Both halves are the run's, and neither is the working tree's. The account is
 // read at the ref the run checks out, out of this checkout's git objects
 // (agentAtRef/checkoutFugaroYAMLAtRef), because the committed fugaro.yaml is
@@ -1916,6 +1929,33 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 			name = co.Agent.OAuthToken
 		}
 	}
+	// A mixed run starts on the job that mounts its account's token, so the
+	// launch's own account is the mix's (mixedRunAccount): the run's review
+	// stages are served by that account and read its token out of the runner's
+	// environment, which only the account's own job variant mounts. The
+	// sentinel is not a name of the run's own — it is how spec.OAuthToken
+	// spells "no token", and claudeAccountAllowed admits it — so it leaves the
+	// mix's account standing; any other name is left to the walk below, which
+	// refuses it unless it is the mix's own. A *stage* asked for is not this
+	// resolution: it has its own chain above, and the mix serves the two stages
+	// of the allow-list and no other.
+	if stage == "" {
+		mix, err := mixedRunAccount(ctx, env, repo, auth, co)
+		if err != nil {
+			return "", err
+		}
+		if mix != "" && (name == "" || name == config.DefaultClaudeAccount) {
+			name = mix
+		}
+		if mix != "" && name == mix {
+			// The one name an api-key launch may carry: it is the account whose
+			// token this run's job mounts, so it is not the "named account with
+			// no secret to reach" claudeAccountAllowed refuses under api-key. A
+			// follow-up inherits it and a --token may repeat it, and both arrive
+			// here as the flag.
+			return name, nil
+		}
+	}
 	if name == "" && auth == "oauth" {
 		name = env.lc.DefaultClaudeAccount
 	}
@@ -1923,6 +1963,45 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 		name = config.DefaultClaudeAccount
 	}
 	return name, claudeAccountAllowed(env, repo, name, auth)
+}
+
+// mixedRunAccount is the account a mixed run's launch lands on: the one Claude
+// OAuth account this run's review stages are served by, and "" when the run is
+// no mix at all (docs/design/mixed-credentials.md §11).
+//
+// It is the launch's own account for a mixed run and not the stages' alone,
+// because the account is what picks the job: spec.OAuthToken names the job
+// variant (JobName(slug, WorkflowVariant(workflow, token)), internal/cli), the
+// job that mounts the account's token is that variant and no other, and the
+// runner's own environment is where the review stage reads the credential from
+// (agent.OAuthStageEnv). A mixed run that started on the base job would refuse
+// its own review stage for a token nothing mounted — Check 290's failure. The
+// account stays the stages': the coder's stages keep the provider key the
+// gateway holds, and the runner is what builds each stage's environment (B3).
+//
+// Rung 2 comes first and is served as written — a stage key is a declaration
+// about that stage, whatever its model — and rung 4 follows under the whole of
+// mixedStageAccount's rule, so the two rungs and the order are exactly the ones
+// claudeAccountFor's stage path reads. That is what keeps the launch's job and
+// the credential the review stage runs on the same account, and the job set
+// agrees: mixedStageAccounts (internal/infra) builds a variant for each stage
+// key and for rung 4's account, so the job this resolves always exists.
+func mixedRunAccount(ctx context.Context, env *cloudEnv, repo, auth string, co *config.Config) (string, error) {
+	if auth != "api-key" {
+		return "", nil
+	}
+	for _, stage := range config.MixedAccountStages {
+		if account := stageAccountOf(env.lc, auth, stage); account != "" {
+			return account, nil
+		}
+	}
+	for _, stage := range config.MixedAccountStages {
+		account, err := mixedStageAccount(ctx, env, repo, stage, auth, co)
+		if err != nil || account != "" {
+			return account, err
+		}
+	}
+	return "", nil
 }
 
 // stageAccountsOf is the local config's stage accounts as the rules read them:

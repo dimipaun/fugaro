@@ -112,21 +112,31 @@ func TestRunRefusesASecondStageAccount(t *testing.T) {
 	}
 }
 
-// TestRunAdmitsAStageAccountForTheReviewsOnly: the permitted mix. An api-key
-// run may name one account for review and adversarial, and the run's own
-// credential does not move: the launch still lands on the coder's own job
-// (OAuthToken stays empty), because the account is the stages' and not the
-// run's.
+// TestRunAdmitsAStageAccountForTheReviewsOnly: the permitted mix, and the job
+// it lands on. An api-key run may name one account for review and adversarial,
+// and the launch's own account — what spec.OAuthToken names, and so the job
+// variant the run starts on — is that account: the account's own job is the
+// only one that mounts its token, and the run's review stages read the token
+// out of the runner's environment (mixedRunAccount, claudeAccountFor). The
+// coder's own credential does not move with it: the coder's stages stay on the
+// provider key the gateway holds, and the runner is what builds each stage's
+// environment.
+//
+// Mutation (remove the `name = mix` line in claudeAccountFor's launch
+// resolution): OAuthToken is empty and this test fails — the run starts on the
+// base job, which mounts no token, and its review stage is refused for one
+// (Check 290's failure).
 func TestRunAdmitsAStageAccountForTheReviewsOnly(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, stageAccountConfig("review", "acme-overflow", "adversarial", "acme-overflow"))
 	recipeCheckout(t, f, "", nil)
 	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
 	if _, _, err := execute(t, "run", "--run-id", "20261105-100000-eeee", "A task"); err != nil {
 		t.Fatal(err)
 	}
-	if got := otherSpec(t, f, "20261105-100000-eeee").OAuthToken; got != "" {
-		t.Fatalf("OAuthToken = %q, want empty: a stage account is the stages' and never the run's own credential", got)
+	if got := otherSpec(t, f, "20261105-100000-eeee").OAuthToken; got != "acme-overflow" {
+		t.Fatalf("OAuthToken = %q, want acme-overflow: a mixed run starts on the job that mounts the account's token", got)
 	}
 }
 
@@ -326,20 +336,95 @@ func TestClaudeAccountForTheMixMatrix(t *testing.T) {
 	})
 }
 
-// TestClaudeAccountForLeavesTheRunsOwnCredentialAlone: the account a mixed
-// stage is served by is the stages' and never the run's. Under an api-key run
-// the run's own resolution (no stage asked for) stays the unsuffixed default,
-// whatever default_claude_account says — that key is rung 4 for a *stage*, not
-// a run's own credential, and such a run's coder stays on the provider key the
-// gateway holds.
-func TestClaudeAccountForLeavesTheRunsOwnCredentialAlone(t *testing.T) {
-	env, co := mixCase(t, "default_claude_account: acme-overflow\n", claudeReviewer, mixEnforce)
-	got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co)
-	if err != nil {
-		t.Fatal(err)
+// TestClaudeAccountForLandsAMixedRunOnTheMixsAccount is the launch's own
+// resolution — no stage asked for — over the rungs a mix is named by and the
+// conditions that admit it: the account a mixed run starts on is the account
+// its review stages are served by, because spec.OAuthToken is what names the
+// job variant and only the account's own job mounts its token
+// (mixedRunAccount). It is the launch's account and not the run's
+// *credential*: the coder's stages stay on the provider key the gateway holds
+// (the runner builds each stage's environment), so a run with no admitted mix
+// resolves the unsuffixed default exactly as it did.
+//
+// Mutation (remove the `name = mix` line in claudeAccountFor's launch
+// resolution): the two admitted rows fail, which is the bug — the launch
+// resolves the base job and the review stage it serves finds no token.
+func TestClaudeAccountForLandsAMixedRunOnTheMixsAccount(t *testing.T) {
+	cases := []struct{ name, keys, reviewer, want string }{
+		{"rung 2: the stage's own key", stagesBlock("review", "acme-overflow"), claudeReviewer, "acme-overflow"},
+		{"rung 4: the project default, an Anthropic reviewer", "default_claude_account: acme-overflow\n", claudeReviewer, "acme-overflow"},
+		// rung 4 is the default's own rung and carries its own condition: a
+		// provider reviewer is no mix and no error, and the key names nothing.
+		{"rung 4, a provider reviewer", "default_claude_account: acme-overflow\n", mixCoderModel, config.DefaultClaudeAccount},
+		{"the sentinel default names no account", "default_claude_account: " + config.DefaultClaudeAccount + "\n", claudeReviewer, config.DefaultClaudeAccount},
+		{"no mix at all", "", claudeReviewer, config.DefaultClaudeAccount},
 	}
-	if got != config.DefaultClaudeAccount {
-		t.Fatalf("account = %q, want %q: an api-key run's own credential is not a stage's", got, config.DefaultClaudeAccount)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, co := mixCase(t, tc.keys, tc.reviewer, mixEnforce)
+			got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("account = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	// A coder no provider route serves is no mix either: the account sits
+	// beside a provider key the gateway holds, and such a run's gateway holds
+	// none.
+	t.Run("a coder no provider route serves", func(t *testing.T) {
+		env, co := mixCaseWith(t, claudeAccountsConfig, "default_claude_account: acme-overflow\n", claudeReviewer, claudeReviewer, mixEnforce)
+		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != config.DefaultClaudeAccount {
+			t.Fatalf("account = %q, want %q", got, config.DefaultClaudeAccount)
+		}
+	})
+	// The one-account rule is the launch's too, and it is asked of the
+	// launch's own resolution and not only of a stage's: a project default
+	// that disagrees with a stage key is a second credential, refused before
+	// anything is started.
+	t.Run("a second, differing account", func(t *testing.T) {
+		env, co := mixCase(t, "default_claude_account: acme-overflow\n"+stagesBlock("review", "acme-personal"), claudeReviewer, mixEnforce)
+		_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co)
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "second credential") {
+			t.Fatalf("err = %v, want the one-account refusal", err)
+		}
+	})
+}
+
+// TestRunLandsAMixedRunOnTheMixsAccount is the same rule read off a launch:
+// the stored task's oauth_token is the mix's account, which is what picks the
+// job variant the run starts on. A run with no admitted mix keeps the base job
+// (no oauth_token at all).
+func TestRunLandsAMixedRunOnTheMixsAccount(t *testing.T) {
+	cases := []struct {
+		name, keys, reviewer, runID, want string
+	}{
+		{"the project default on an Anthropic review", "default_claude_account: acme-overflow\n", claudeReviewer, "20261105-100000-1111", "acme-overflow"},
+		{"no mix: a provider reviewer", "default_claude_account: acme-overflow\n", mixCoderModel, "20261105-100000-2222", ""},
+		{"no mix: no key at all", "", claudeReviewer, "20261105-100000-3333", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			f.appendConfig(t, claudeAccountsConfig+mixRouteConfig+mixEnforce+tc.keys)
+			recipeCheckout(t, f, "  models: { coder: "+mixCoderModel+", reviewer: "+tc.reviewer+", background: "+mixCoderModel+" }\n", nil)
+			writeBuildRecord(t, f, otherSlug, "svc", release065)
+			// The account's own job variant, which a mixed run has to start
+			// on: the base job is registered by recipeCheckout.
+			f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
+			if _, _, err := execute(t, "run", "--run-id", tc.runID, "A task"); err != nil {
+				t.Fatal(err)
+			}
+			if got := otherSpec(t, f, tc.runID).OAuthToken; got != tc.want {
+				t.Fatalf("OAuthToken = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
