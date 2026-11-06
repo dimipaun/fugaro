@@ -762,8 +762,8 @@ because **there is no step the owner can run for the second half** (CSR6). This 
 design whose last link is another work stream's: nothing here pretends the reviewer runs on the day the
 release ships.
 
-**§6's eight follow-up tasks do not move this slot, and they are what a release must carry to be worth
-cutting.** CSR8–CSR15 are what makes the command reachable (`fugaro review` was built and registered
+**§6's nine follow-up tasks do not move this slot, and they are what a release must carry to be worth
+cutting.** CSR8–CSR16 are what makes the command reachable (`fugaro review` was built and registered
 nowhere), the container placeable, the reviewer's calls reachable at all and the verdict verified; the
 release that deploys the variant is also
 the release `reviewJobSince` must name, and **Open item 3's answer of 2026-11-05 settles it as 0.20.0
@@ -798,7 +798,7 @@ while documenting the others is exactly the kind of thing a plan loses by not wr
 | 6 | the credentials service **ships dormant**: the opt-in, the App key and the verifier identity are the owner's own terminal (C3.9g1) | `internal/credsvc/auth.go:335` | **the owner** for the opt-in and the App key — no task here; it is the release's one conditional operator sentence (§6.5) — and **CSR14** for the verifier identity, which is a service account the installation creates rather than a value a person types (Open item 5, answered 2026-11-05) |
 | 7 | *(found while writing this section)* the review variant holds no model credential (O1) and the service has a review class for its calls, but **the runner has no model path that reaches it**: `GatewayOn` is false unless `agent.auth` is one of its three, the service is reached only from the cascade arm, and that arm is refused in bootstrap unless the **operator publishes the coding cascade switch** — the two things [spec.md](spec.md) §2 says a review job does not need | `internal/runner/routing.go:158`, `:60`, `internal/credsvc/cascade.go:105` | **CSR13** — Open item 4, answered 2026-11-05 with the fourth runner task |
 
-**CSR8–CSR15 follow §3's convention exactly**: decisions and findings named, an exact file list with its
+**CSR8–CSR16 follow §3's convention exactly**: decisions and findings named, an exact file list with its
 cap, interfaces, named tests, a **red step** quoted in the pull request, targeted hermetic tests
 (`GOFLAGS=-p=2`, `-count=1`), a mutation to hold each, the reviewer tier, and `OWNER-RUN` where a step is
 a person's. Each is sized for one run of the coding agent this repository is built to drive, and none of
@@ -816,10 +816,14 @@ it into the local config and publishes it) with
 **CSR15** (the launcher impersonates it), because the task CSR10 became — **merged as PR #1764** — leaves
 `reviewVerifierIdentity` refusing for want of that answer (`internal/cli/reviewverify.go`). **The answers
 are the owner's and this section decides nothing else**: what is left open is the *approval* of §6's
-tasks, which §6.6's last paragraph states in its own words — **and one item is not answered at all**:
-**§6.6's item 6**, the budget mode a review run runs under once the class forces the gateway on, found
-while CSR13 was re-read against CSR8's merged code. It is the owner's, it is BLOCKING for CSR13, and
-§6.6's closing paragraph says so.
+tasks, which §6.6's last paragraph states in its own words — **and the sixth item, found while CSR13 was
+re-read against CSR8's merged code, was answered by the owner on 2026-11-05/06**: **§6.6's item 6**, the
+budget mode a review run runs under, is answered with **the refusal** — a cloud review does not run with
+the installation's budget off, and the sentence the run gets names the setting to turn on — so CSR13
+carries it and its named test, and the item no longer blocks. **The owner also cut the api-key review
+from 0.20.0 on 2026-11-06** (OpenRouter and Anthropic): 0.20.0 ships the OAuth review alone, and the
+api-key path is a named, ordered slice **outside** 0.20.0 — **CSR17 and CSR18, §6.7** — which §6.3's
+levels, §6.4's table and §6.5's release notes do not carry.
 
 ### CSR8. The runner places the review variant's execution (SEC)
 
@@ -1042,7 +1046,19 @@ is untouched by anything here.
     the pull request's current head from the forge** with the provider's own
     `FetchPRHead(ctx, number)` (`internal/gitprov/gitprov.go:344`, implemented by github, bitbucket and
     the fake and called by **nothing in `internal/cli` today**), opened through the launcher's existing
-    provider seam (`OpenProvider`, `internal/cli/api.go:248`) — **a read this task adds**. The other
+    provider seam (`OpenProvider`, `internal/cli/api.go:248`) — **a read this task adds**. **The owner's
+    ruling of 2026-11-05/06 corrects where the provider's credential comes from, and it is the answer to
+    the recommendation this bullet wrote**: the launcher reads the head **through the credentials
+    service's read mint** — the person class operators already have (`github.ServiceReadTokens`,
+    `/v1/github/read-token`, `internal/gitprov/github/serviceread.go:58`, installed on the provider with
+    `UseServiceTokens`, `internal/gitprov/github/github.go:163`) — and **not** from `OpenProvider(os.Environ(), nil)`
+    (`internal/cli/reviewverify.go:117`), which is what the merged task does and which **cannot work when
+    the service URL is set**: the launcher's machine holds no GitHub App key (C2.2, D145), the App ID and
+    key are the *job's* (`FUGARO_GITHUB_APP_ID`, the App key in the credentials service's bundle), and
+    `github.ServiceReadTokens`' own comment says so — "the machine that reads holds no App key at all"
+    (`internal/gitprov/github/serviceread.go:93`). So the head read is a **task of its own**, `CSR16` below,
+    ordered after CSR15 because the two touch one file, and the release notes carry the sentence that
+    `--review-run` refuses until both exist (§6.5). The other
     reading — skip the head check — is refused here on purpose: it would admit **a replay**, a validly
     signed verdict for an **earlier head of the same pull request**, which §6 refuses and which §8 words
     as the window a concurrent writer leaves open — "a concurrent job on the same shared job, which can
@@ -1316,7 +1332,10 @@ the service admit nothing.**
 
 **Decisions:** **O1** (the reviewer's model calls route through the credentials service's review class, so
 the review container holds no OAuth token), **D143** (a run that reaches the service holds no credential of
-its own) and **D893 (c)** (the credential is the service's, by name). **Findings:** none of the
+its own), **D893 (c)** (the credential is the service's, by name), **Open item 6's answer of
+2026-11-05/06** (a review run does **not** run with the installation's budget off: the class refuses and
+the sentence names `budget.mode`) and **the owner's cut of 2026-11-06** (0.20.0 ships the OAuth review
+alone; the api-key review is §6.7's later release). **Findings:** none of the
 reconciliation's; this task answers **gap 7** of §6's own table, found while §6 was written, and it is the
 task **Open item 4** became. **Depends on:** nothing unmerged — **CSR8 has merged** (PR #1761), and the
 class this task reads is the one CSR8 landed: `r.runClass()` (`internal/runner/projectjob.go:82`, the
@@ -1394,6 +1413,28 @@ constant launches a run whose reviewer this task is what gives a model to reach.
     (`internal/credsvc/server.go:775`) — so a class that skipped that arm would admit a run the service then
     refuses on its first call. Both directions are tests below, because "the switch does not apply" and "no
     rule applies" are one word apart in the wrong direction.
+  - **The OAuth review is the only one 0.20.0 ships, and the class is where that is true.** The class's
+    credential is the pairing account's **tier-A** credential and nothing else (`reviewCandidates`,
+    `internal/credsvc/cascade.go:105`), and that account is a **Claude OAuth account** by construction:
+    `ReviewJobAccount.Account` is "the Claude account's name as the policy's accounts block spells it"
+    (`internal/credsvc/review.go:112`), and every name on that axis derives from `claude_accounts`
+    (`internal/config/claude_accounts.go`, the `claude-oauth-token` family). The bundle's only model
+    credential that is **not** an OAuth token is the Anthropic API key, at **tier B**
+    (`internal/credsvc/bundle.go:677`), which a review caller is never offered — and there is no
+    provider key in the bundle at all (`CredentialKey`'s closed set, `internal/credsvc/bundle.go:668`).
+    **So a review whose account/auth is not OAuth refuses rather than being served by something else**,
+    in the class's own bootstrap refusal, whose sentence names the path and the release it is in: "the
+    independent review's model calls are served by the credentials service's review class from the
+    installation's Claude OAuth account, and the api-key review — a provider key, OpenRouter or
+    Anthropic — is a later release (CSR17–CSR18 of §6.7): 0.20.0 ships the OAuth review alone". **Both
+    halves are refused**: a repository whose `agent.auth` is a credential of its own (`api-key`, or
+    `vertex`) would need a key the review variant deliberately does not mount (CSR7), and a pairing that
+    names anything but a Claude account is one `pairReview` never builds. `oauth` and `cascade` are the
+    OAuth path and are served. The owner cut that path from 0.20.0 on 2026-11-06, and **nothing in
+    this task, and nothing in 0.20.0, may read as though the api-key review works**: the class offers one
+    credential and no fallback (spec §10), and `agent.BuildEnv`'s cascade arm refuses a run with no
+    gateway rather than falling back to a credential of the job's (`internal/agent/env.go:169`), so the
+    refusal is fail-closed in both directions.
   - **What stays out, and why, so no reader takes the accessor for a general rewrite.** The class does not
     move the cost basis (`runstore.ModelBasis(r.cfg.Agent.Auth)`, `internal/runner/cost.go:104`): a review
     class call is served by the pairing account's **tier A** credential and by nothing else
@@ -1402,12 +1443,14 @@ constant launches a run whose reviewer this task is what gives a model to reach.
     guard already requires an `oauth` run that names no account and whose moving of a stage to another
     account is something a one-account class never asks for. Neither file is this task's; a later task that
     wants the class there reads the accessor.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/runner/ -run 'TestReviewRunIsGatewayOnWhateverItsAuth|TestReviewRunSkipsTheCodingCascadeSwitch|TestReviewRunIsStillHeldToTheAllowList|TestCodingRunKeepsItsOwnModelPath|TestReviewRunCarriesNoCredentialOfItsOwn|TestReviewRunUpstreamRefusesWithoutAService|TestReviewJobModelPathIsKeyedOnTheRunClass|TestReviewRunWithTheBudgetOffNeverReachesACredentialOfItsOwn' -count=1`.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/runner/ -run 'TestReviewRunIsGatewayOnWhateverItsAuth|TestReviewRunSkipsTheCodingCascadeSwitch|TestReviewRunIsStillHeldToTheAllowList|TestCodingRunKeepsItsOwnModelPath|TestReviewRunCarriesNoCredentialOfItsOwn|TestReviewRunUpstreamRefusesWithoutAService|TestReviewJobModelPathIsKeyedOnTheRunClass|TestReviewRunWithTheBudgetOffNeverReachesACredentialOfItsOwn|TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn' -count=1`.
 - **Tests:** `TestReviewRunIsGatewayOnWhateverItsAuth` (a review class run whose `agent.auth` is `oauth`,
   **with the budget on**: the gateway is on, the upstream is the service's `KindService`, and the env spec
   the agent is built with carries the class's spelling and requires no secret of the job's — **the red
-  step**; *whatever its auth* is about the repository's own `agent.auth` and not about the budget mode,
-  which has its own test below),
+  step**; *whatever its auth* ranges over the auths the class serves (`oauth` and `cascade`) and is about
+  the repository's own `agent.auth` and not about the budget mode,
+  which has its own test below — a repository whose auth is a credential of its own is **refused**, and
+  that is the api-key test below),
   `TestReviewRunSkipsTheCodingCascadeSwitch` (the same run with a project policy that publishes no
   `routing.claude` at all: bootstrap proceeds, while a run of the **coding** class with
   `agent.auth: cascade` in the same tree is still refused with O2's own sentence — the second direction of
@@ -1432,14 +1475,19 @@ constant launches a run whose reviewer this task is what gives a model to reach.
   marker buys no class), and a **coding-mode run in the shared job whose environment carries
   `FUGARO_REVIEW_JOB=1`** is not given the class: it keeps its own configuration's auth, and with
   `agent.auth: cascade` O2's arm then refuses it — the spoof this correction closes), and
-  `TestReviewRunWithTheBudgetOffNeverReachesACredentialOfItsOwn` (the class with the installation's budget
-  mode **off**: the gateway is off (`GatewayOn(cascade, "")` is false,
-  `internal/runner/routing.go:158`), so the run must end at a refusal that names the budget mode and the
-  fix — and **today it does not**: it reaches `agent.BuildEnv`'s cascade arm and dies with "auth: cascade
-  runs through the gateway, and this agent has none", a sentence naming a fix a review job has no way to
-  apply (`internal/agent/env.go:169`). What the test asserts is what **Open item 6** settles: the class
-  forces the gateway on in the mode the owner names, or the refusal names the mode. It cannot be written
-  before that item is answered, and it is why the item is BLOCKING).
+  `TestReviewRunWithTheBudgetOffNeverReachesACredentialOfItsOwn` (**Open item 6's answer of
+  2026-11-05/06**: the class with the installation's budget mode **off** refuses in bootstrap with a
+  sentence that names **`budget.mode`**, published as `observe` or `enforce`, as the fix — and the run
+  reaches no credential of the job's on the way out. The gateway is off (`GatewayOn(cascade, "")` is
+  false, `internal/runner/routing.go:158`) and the run **does not** fall through to `agent.BuildEnv`'s
+  cascade arm, whose sentence is written for a coding run and names a fix a review job cannot apply
+  (`internal/agent/env.go:169`). **The class does not force the gateway on**: a mode the installation set
+  to `off` keeps its one meaning, which is the reading the owner refused), and
+  `TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn` (a review run whose repository writes
+  `agent.auth: api-key`: the class **refuses in bootstrap**, the run's environment carries no
+  `ANTHROPIC_API_KEY` and no provider key, and the sentence names the api-key review and the release it
+  is in — so a repository's own api-key configuration cannot produce an api-key review, and nothing in
+  0.20.0 reads as though it can; see *the OAuth review is the only one 0.20.0 ships* above).
 - **Red step:** `TestReviewRunIsGatewayOnWhateverItsAuth` fails today for the reason gap 7 names:
   `GatewayOn("oauth", mode)` is false (`internal/runner/routing.go:158`), so a review class run's gateway
   is never started — with the budget **on**: this is the auth's doing and not the mode's, and the mode has
@@ -1453,10 +1501,11 @@ constant launches a run whose reviewer this task is what gives a model to reach.
   that reaches Anthropic on a credential nobody chose, or a run that dies on its first call with a
   sentence naming the wrong fix. **And the branch this step does not reach, which the review of this task
   is asked to hold in view:** with the class in place and the installation's budget mode **off**, the run
-  has a credential selected and no gateway to send it to, so it stops at `agent.BuildEnv`'s cascade refusal
-  (`internal/agent/env.go:169`) — a sentence about the cascade written for a coding run, which a review job
-  cannot act on. That state is **Open item 6**, it is BLOCKING, and it is the owner's: the class can force
-  the gateway on in a mode of the owner's choosing, or it can refuse naming the mode.
+  has a credential selected and no gateway to send it to, so **the class refuses there**, with the
+  sentence the budget-off test above asserts. That refusal is **Open item 6's answer of 2026-11-05/06**,
+  and it is why the test is named in this list: without it the run would stop at `agent.BuildEnv`'s
+  cascade refusal (`internal/agent/env.go:169`), a sentence about the cascade written for a coding run,
+  which a review job cannot act on.
 - **Mutation to hold it:** key the class on the **environment marker** instead of the run's mode →
   `TestReviewJobModelPathIsKeyedOnTheRunClass` fails, and the spoof in its third direction is admitted;
   key it on the job name's suffix instead → the same test fails the other way, which is why it says the
@@ -1465,9 +1514,12 @@ constant launches a run whose reviewer this task is what gives a model to reach.
   than an accessor → `TestCodingRunKeepsItsOwnModelPath` fails (and the record's basis and
   `internal/runner/budget_session.go:407`'s auth would move with it, which is why the accessor and not
   the field);
-  let the class answer with no service URL → `TestReviewRunUpstreamRefusesWithoutAService` fails; read the
-  class's auth through `GatewayOn` without the mode → `TestReviewRunWithTheBudgetOffNeverReachesACredentialOfItsOwn`
-  fails, because the run's gateway would be "on" in a mode the gateway is not built for.
+  let the class answer with no service URL → `TestReviewRunUpstreamRefusesWithoutAService` fails; force the
+  gateway on in the class's own path — the reading Open item 6 refused — →
+  `TestReviewRunWithTheBudgetOffNeverReachesACredentialOfItsOwn`
+  fails, because the run's gateway would be "on" in a mode the gateway is not built for and the refusal
+  that test asserts is never reached; let a repository's own `agent.auth: api-key` give the review run a
+  key → `TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn` fails.
 - **Reviewer tier:** **SEC — opus, with the independent review mandatory** (the repository's rule for a
   change on the model path, and this one is a second path through the most carefully-worded ladder in the
   tree).
@@ -1487,15 +1539,21 @@ the verifier identity — which §6's table had put on the owner and which is a 
 creates rather than a value a person types. **Depends on:** nothing in this plan: the module, the guards and
 the writers of the name are the installation's own, and **E7 is not this task's** — the account is created by
 the same apply that enables the service, so an installation whose `credentials_service` is null gains no
-resource, no grant and no golden that moves. **That state stops being one any installation is in once
-`docs/credentials-service/default-on.md` lands** (PR #1769, in flight: the owner's ruling of 2026-11-05 that
-`fugaro update` deploys the service for **every** installation). **What that ruling does not change is this
-task's guard**: `credentials_service_on` is `var.credentials_service != null`
-(`deploy/terraform/gcp/modules/installation/credentials.tf:25`), the variable the ruling makes non-null
-everywhere, and the expression is untouched — so `count` is right in both states, and what changes is only
-**who** is in the off state, from "an installation that never opted in" to "nobody". The same ruling's DON1
-**renders the name this task publishes** for every installation, which is why this task is its
-precondition and not the other way round.
+resource, no grant and no golden that moves. **That state stays populated through 0.20.0**: the owner cut
+`docs/credentials-service/default-on.md` (PR #1769 — the ruling of 2026-11-05 that `fugaro update` deploys
+the service for **every** installation) **from 0.20.0 on 2026-11-06**, so for this release the credentials
+service remains **opt-in**, and an installation that never opted in is exactly the state the "off" half of
+the guard is for. **What that ruling does not change is this task's guard**: `credentials_service_on` is
+`var.credentials_service != null`
+(`deploy/terraform/gcp/modules/installation/credentials.tf:25`), the variable a default-on release would
+make non-null everywhere, and the expression is untouched — so `count` is right in both states, and the
+only thing a default-on release changes is **who** is in the off state, from "an installation that never
+opted in" to "nobody". **This task's premise is today's state, and it is the one 0.20.0 ships**: the guard
+reads the block, so an installation that has opted in gets the account and the name in the same update, and
+one that has not gets neither — and if #1769 later lands, that release's DON1 **renders the name this task
+publishes** for every installation, which is why this task is its precondition and not the other way
+round. **Nothing here is a bet on #1769's timing**: the guard, the default and the writer are correct with
+the service opt-in, and they stay correct the day it is not.
 
 - **Files:** `deploy/terraform/gcp/modules/installation/verifier.tf` (new: the account),
   `deploy/terraform/gcp/modules/installation/iam.tf` (the two grants),
@@ -1813,114 +1871,232 @@ verify call is admitted for nobody until this lands.
   agent runs.
 - **Commit:** `review: the launcher's verify call as the installation's verifier account`.
 
+### CSR16. The launcher reads the head through the credentials service's read mint (SEC)
+
+**Decisions:** **the owner's ruling of 2026-11-05/06**, and it is the answer to the recommendation CSR10's
+own head bullet wrote: the pull request's current head is read **through the credentials service's read
+mint** — BB4's person class, **merged** (`internal/credsvc/githubread.go`) — and **not** from the
+launcher's own App ID and key. **Findings:** none of the reconciliation's; the finding is in the merged
+code: `reviewHead` (`internal/cli/reviewverify.go:97`) opens the provider with
+`OpenProvider(os.Environ(), nil)` (`:117`), which resolves the App ID and the App key out of the
+launcher's environment — and **a person's machine holds neither** (C2.2, D145: "the machine that reads
+holds no App key at all", `internal/gitprov/github/serviceread.go:93`). The read works today only where
+the launcher happens to hold a job's App credential, which is not the shape this design gives a person's
+machine, and it cannot work at all once the installation's `credentials_service` URL is what the read
+goes through. **Depends on:** **CSR10** (the file, the reader and `reviewHead` itself, merged as PR
+#1764) and **CSR15** — **the same file**, `internal/cli/reviewverify.go`, which this task is ordered
+after so that no level holds two writers of it (§6.4). **Before CSR11's release is worth anything to a
+fix round**: the flip admits a review launch whose verdict the launcher reads, and the reader refuses
+every brief until the head it demands can be read — which is why §6.5's operator sentence says
+`--review-run` refuses until this task and CSR15 both exist.
+
+- **Files:** `internal/cli/reviewverify.go` (CSR10's and CSR15's — this task rewrites `reviewHead` and
+  its seam and nothing else in the file), `internal/cli/reviewverify_test.go` (CSR15's new file — this
+  task adds the head read's tests to it). **2 files.**
+- **Interfaces:**
+  - **What changes.** `reviewHead` keeps its signature, its job and its refusals; only the credential it
+    reads with changes. Instead of `OpenProvider(os.Environ(), nil)`, it resolves the installation's
+    service URL from the local config's published block — the same source and the same refusal
+    `reviewVerifier` already reads (`internal/cli/reviewverify.go:47`, `:51`) — and opens the provider
+    with **a read-mint token source installed on it**: `github.ServiceReadTokens`
+    (`internal/gitprov/github/serviceread.go:105`, the GitHub half) or
+    `bitbucket.ServiceReadTokens` (`internal/gitprov/bitbucket/service.go:120`, the Bitbucket half),
+    installed with `Provider.UseServiceTokens` (`internal/gitprov/github/github.go:163`). The service
+    mints one read-only token per repository and the client checks the answer names the repository that
+    asked — GitHub's `Repo(repo, appID)` (`internal/gitprov/github/serviceread.go:168`, which also carries
+    the App the mint is signed as) and Bitbucket's `Repo(repo)` (`internal/gitprov/bitbucket/service.go:197`,
+    which has no App at all) — and that is the same shape the coordinator's person read already uses
+    (`ee/coordinator/cli/coordinator.go:1145`, `:1162`).
+  - **The three values the mint needs, and each has one source.** The **service URL** from the
+    installation's published `credentials_service` block (`localcfg.Config.CredentialsService`), never
+    an environment variable — F23's rule for a person's read, and the same value `reviewVerifier`
+    resolves. The **GitHub App ID** from the project's own configuration
+    (`localcfg.Repo.GitHubAppID`), which is not a secret and is what the service signs the mint as
+    (`internal/credsvc/githubread.go`: "the App ID is the caller's"). The **caller's own Google ID
+    token**, minted with `gcloud auth print-identity-token` — the person class's own audience,
+    `GcloudAudience` (`internal/credsvc/auth.go:258`), which is the only audience a **user** account can
+    mint for and which the service's person verifier admits (`VerifyPersonCaller`,
+    `internal/credsvc/server.go:335`, for the GitHub mint; `VerifyReadCaller`,
+    `internal/credsvc/auth.go:890`, for the Bitbucket one). **The mint is written here rather than
+    imported**: the tree's person mint is the coordinator's
+    (`ee/coordinator/cli/coordinator.go:1380`), and
+    `ee/coordinator/cli` imports `internal/cli` (`coordinator_intents.go:16`), so this package cannot
+    import it — the two either duplicate the small mint or share one lifted into `internal/`.
+  - **A Bitbucket repository takes the same path** with its own mint (`/v1/bitbucket/read-token`), and a
+    provider with no read mint at all refuses the brief rather than falling back to the environment's App
+    credential: the fallback is the bug this task removes.
+  - **What does not change.** The head is still read with `FetchPRHead(ctx, number)`
+    (`internal/gitprov/gitprov.go:344`) and still compared against the artifact's own `head_sha` by
+    `VerifyReviewArtifact`; the replay refusal, the "a head the forge cannot be asked for refuses the
+    brief" rule and `reviewPRHeadSeam` (the tests' seam, `:87`) all stay as CSR10 left them. **No new
+    grant is needed for this read**: the read mint's permissions are the coordinator's read-only set
+    (contents and pull requests read) and the caller is a person the installation already lists, so the
+    task adds no Terraform, no IAM and no operator step.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestReviewHead|TestFixBrief' -count=1`.
+- **Tests:** `TestReviewHeadReadsThroughTheReadMint` (a stand-in credentials service over `httptest`: the
+  call is `POST /v1/github/read-token`, it names the repository and the project's App ID, it carries the
+  caller's own ID token, and the token it answers with is the one the head read then sends to a stand-in
+  forge — **the red step**), `TestReviewHeadRefusesWithoutACredentialsService` (a project whose config
+  publishes no `credentials_service` block: the refusal, and **no call to the forge** — the same
+  fail-closed shape `reviewVerifier` has), `TestReviewHeadNeverFallsBackToTheEnvironment` (the
+  environment carries a job's App ID and key and the installation publishes no service: the read is
+  refused rather than served by them, which is the mutation this task exists for),
+  `TestReviewHeadRefusesATokenForAnotherRepository` (the service answers a token for a repository other
+  than the one asked for: refused, so a misconfigured or hostile answer cannot become a read of another
+  repository's head), `TestReviewHeadRefusesWhenTheMintIsDenied` (the service answers 403 or 401 — a
+  person the installation does not list, or a service the caller holds no `run.invoker` on: the refusal
+  names the read mint and the person's own identity, and never reads as a broken pull request), and
+  `TestFixBriefReadsTheHeadThroughTheReadMint` (**CSR10's own reader, one level down**: the brief's head
+  check uses the minted token end to end, so the credential and the reader are one path and not two).
+- **Red step:** `TestReviewHeadReadsThroughTheReadMint` fails on the tree as it stands:
+  `reviewHead` calls `OpenProvider(os.Environ(), nil)` (`internal/cli/reviewverify.go:117`), so with no
+  App ID and no App key in the environment the provider is opened with no credential and the head read
+  fails — and with the installation's service URL published the read has nothing to do with it at all.
+  **SEC flag:** yes — this is a **read of the forge made with a credential the credentials service
+  mints**, and its risk is the pair the read mint's own review is asked for: that the token is read-only
+  and one repository's (the service's own permission set and its repository check are what make that
+  true), and that the launcher's fallback path is gone rather than merely unused.
+- **Mutation to hold it:** keep `OpenProvider(os.Environ(), nil)` and add the mint beside it →
+  `TestReviewHeadNeverFallsBackToTheEnvironment` fails; take the service URL from an environment variable
+  instead of the published block → the same test's second direction fails, and a machine that exports a
+  URL reads differently from one that does not (F23); take the App ID from the environment rather than
+  the project's own config → `TestReviewHeadReadsThroughTheReadMint` fails, because the call names the
+  wrong App; accept the token the service answers without checking the repository it names →
+  `TestReviewHeadRefusesATokenForAnotherRepository` fails.
+- **Reviewer tier:** **SEC — opus, with the independent review mandatory.**
+- **OWNER-RUN:** none. The mint and the forge are stand-ins over `httptest` in every test; the owner's
+  own `gcloud auth print-identity-token` is the same mint by hand, and it is the live check's step 8,
+  which no agent runs.
+- **Commit:** `review: the launcher reads the head through the credentials service's read mint`.
+
 ### 6.3 The edges, the levels and the critical path
 
+**Re-drawn for the 0.20.0 set the owner cut on 2026-11-06**, and the cut is what the drawing shows:
+**CSR13, CSR14, CSR15, CSR16, then the owner's live checks and CSR11** — the OAuth review alone — with
+**CSR17 and CSR18 (§6.7, the api-key review) outside every level below, outside the critical path and
+outside §6.4**, because they are a later release's and nothing in 0.20.0 waits on them.
+
 ```
-LEVEL 1 (CSR8 has merged; CSR9, CSR10, CSR13 and CSR14 are parallel, disjoint files)
-  CSR8  (the runner places the variant) — **MERGED, #1761**, and CSR13 reads the class it landed
-  CSR13 (the review run's model path — and it waits on Open item 6, which is the owner's) ──┐
-  CSR9  (the command is registered) ───────────────────────────────────────────────────────┤
-  CSR10 (the launcher verifies)         ─▶ CSR12 (the live-check switch) ──────────────────┼─▶ CSR11 (the flip,
-  CSR14 (the verifier account exists)   ─▶ CSR15 (the launcher impersonates it) ───────────┘   and the switch's
-                                                                                               removal)
-                                                                                     ▲
-  [the live checks: C3.9's eleven steps, Check 125's 6 and 7] ──────────────────────┘
-   (a person's; no level holds it, and CSR14's account is E7's third half)
+MERGED AND CLOSED (each a task that landed; none of them is a level's work any more)
+  CSR8  (the runner places the variant)      **MERGED, #1761** — CSR13 reads the class it landed
+  CSR9  (the command is registered)          **MERGED**
+  CSR10 (the launcher verifies the verdict)  **MERGED, #1764** — CSR15 fills the seam it left
+  CSR12 (the live-check switch)              **MERGED, #1771** — CSR11 deletes it in the flip's commit
+
+LEVEL 1 (no dependency between them, disjoint files)
+  CSR13 (the review run's model path — the OAuth review, and the refusal when the budget is off)
+  CSR14 (the installation creates the verifier account, and one update names it)
+LEVEL 2
+  CSR15 (the launcher impersonates that account)          after CSR14 — and CSR10 has merged
+LEVEL 3
+  CSR16 (the launcher reads the head through the read mint) after CSR15 — the SAME file, so ordered
+
+then, and not a level:  [the live checks: C3.9's eleven steps, Check 125's 6 and 7]  (a person's)
+then:                   CSR11 (the flip, and the switch's removal)
+
+OUTSIDE ALL OF IT, and NOT in 0.20.0:  CSR17 (the service serves a provider key) -> CSR18 (the runner
+                                       reaches a provider's endpoint)   -- §6.7
 ```
 
-- **Edges.** `CSR8 → CSR11` (a flip without the placement is a launch into a halt). `CSR9 → CSR11` (the
-  check types the command). **`CSR10 → CSR11`** (the flip admits a launch that a fix round then reads:
-  [spec.md](spec.md) §8's window is a concurrent job on the same shared job writing under `runs/`, and
-  **the signature is what closes it**, so a flip ahead of the verifier is the ordering the design already
-  refuses). **`CSR8 → CSR13` is satisfied rather than pending, and that is a correction this section
-  needed**: the edge was drawn because the class was read from the marker CSR8 would write, and **CSR8 has
-  merged (PR #1761) with the class read from the run's own mode instead** — `r.runClass()`
-  (`internal/runner/projectjob.go:82`) and the class of the job the run was admitted to
-  (`jobTriple.Class`, `:50`), never the environment marker
-  (`internal/runner/reviewartifact.go:934`). So there is no mark to wait for and no class read from the job
-  name: **the edge is closed, and CSR13 is a level-1 task beside CSR9, CSR10 and CSR14** (its files were
-  already disjoint from CSR8's, §6.4). **`CSR13 → CSR11`** (a flipped constant launches a run whose
-  reviewer has no credential of its own: without the class's model path the launch this task admits
-  reaches no model at all, gap 7). **`CSR14 → CSR15`** (Open item 5's answer): the launcher impersonates
-  the account the installation creates, so the account exists first — and the two are separate tasks
-  because they touch disjoint trees (§6.4), one an installation's Terraform and the Go that covers it,
-  the other the launcher's reader. **`CSR14 → CSR11`** (the third half of E7 is a name the installation
-  publishes; the live check CSR11 waits on is admitted for nobody without it). **`CSR15 → CSR11`** (the
-  flip admits a launch whose verdict the launcher's own verify call cannot be admitted for until it
-  impersonates that account). **`CSR8 → CSR12`, `CSR9 → CSR12` and `CSR10 → CSR12` are not edges of the
-  code**: the switch's own change touches one file, and what needs the other three is the **check** it
-  exists for, which is the node the three feed. `CSR12 → CSR11` (the switch exists only for the check, and
-  the flip's commit is the one that removes it). `CSR9 ‖ CSR10 ‖ CSR13 ‖ CSR14` — **four parallel tasks and
-  not a chain**: the launcher's registry, the launcher's reader, the runner's class and the
-  installation's verifier account touch four disjoint sets of files (§6.4), and **none of the four may be
-  serialised behind another on the strength of this drawing**. `CSR11 → nothing`: it is last, and nothing
-  here depends on the flip.
-- **Levels.** **Level 1: CSR9, CSR10, CSR13, CSR14** — none depends on another, and no two of them holds
-  one file (§6.4); CSR8's row is **closed** (merged), and CSR13 is here rather than in level 2 because
-  its only stated dependency was the class CSR8's merged code already keys on. **CSR13 also waits on a
-  person**: **Open item 6**, the budget mode with the class in place, is the owner's and is BLOCKING for
-  that task — a decision and not a task, so no level holds it either. **Level 2: CSR12, CSR15** — two
-  writers of two disjoint sets: the switch, after CSR10, because both hold `internal/cli/review.go` and
-  level 1 has one writer of it (the verifying reader); and the launcher's impersonation, after CSR14,
-  because the account is CSR14's. **Level 3: CSR11** — after the six, and after the live
-  checks, which are a person's and which no level holds.
-- **Critical path.** `the longest of (CSR9, CSR10, CSR13, CSR14) → (CSR12, CSR15) → the owner's live
-  checks → CSR11`: **three tasks deep (CSR10 → CSR12 → CSR11, or CSR14 → CSR15 → CSR11) and one person's
-  afternoon**, with **seven of the eight tasks still to be built — CSR8 has merged**. The longest wait in
-  it is not code: it is the live check, which needs the credentials service enabled on a real installation
-  (E7's first half), the verifier account **CSR14 creates and names** published beside it (E7's third
-  half), and an owner at a terminal. That is the honest critical path of a design whose last link is
-  another work stream's, and it is why §5 says the release ships before the chain works.
+- **Edges.** `CSR8 → CSR11` and `CSR9 → CSR11` are **satisfied**: both have merged, so the flip's two
+  oldest dependencies are facts in the tree rather than tasks ahead of it. **`CSR10 → CSR11`** (the flip
+  admits a launch that a fix round then reads: [spec.md](spec.md) §8's window is a concurrent job on the
+  same shared job writing under `runs/`, and **the signature is what closes it**, so a flip ahead of the
+  verifier is the ordering the design already refuses) — and CSR10 has merged, so what CSR11 waits on
+  there is CSR15, which is the launcher's half of that reader. **`CSR13 → CSR11`** (a flipped constant
+  launches a run whose reviewer has no credential of its own: without the class's model path the launch
+  this task admits reaches no model at all, gap 7). **`CSR14 → CSR15`** (Open item 5's answer): the
+  launcher impersonates the account the installation creates, so the account exists first — and the two
+  are separate tasks because they touch disjoint trees (§6.4), one an installation's Terraform and the Go
+  that covers it, the other the launcher's reader. **`CSR15 → CSR16`** (the same file,
+  `internal/cli/reviewverify.go`: the impersonation fills one seam and the head read rewrites the other,
+  and §6.4's one-writer rule is why they are two levels and not one task). **`CSR14 → CSR11`** (the third
+  half of E7 is a name the installation publishes; the live check CSR11 waits on is admitted for nobody
+  without it). **`CSR15 → CSR11`** (the flip admits a launch whose verdict the launcher's own verify call
+  cannot be admitted for until it impersonates that account). **`CSR16 → CSR11`'s release, and not
+  `CSR16 → CSR11` the task**: the flip admits a **review launch**, which needs no head read; what needs
+  one is the **fix round** the launcher starts from a review's verdict (`--review-run`), which is the
+  path §6.5's operator sentence is about. **`CSR8 → CSR12`, `CSR9 → CSR12` and `CSR10 → CSR12` are not
+  edges of the code**: the switch's own change touches one file, and CSR12 has merged anyway.
+  `CSR12 → CSR11` (the switch exists only for the check, and the flip's commit is the one that removes
+  it). `CSR13 ‖ CSR14` — **two parallel tasks and not a chain**: the runner's class and the installation's
+  verifier account touch two disjoint sets of files (§6.4), and **neither may be serialised behind the
+  other on the strength of this drawing**. `CSR11 → nothing`: it is last, and nothing here depends on the
+  flip. **No edge reaches CSR17 or CSR18**, and neither of them is an edge's source.
+- **Levels.** **Level 1: CSR13, CSR14** — none depends on another, and no two of them holds one file
+  (§6.4); the four tasks that used to share this level are **merged and closed** (CSR8, CSR9, CSR10,
+  CSR12), and CSR13 is here rather than deeper because its only stated dependency was the class CSR8's
+  merged code already keys on — **Open item 6**, the budget mode, was the last thing that held it and it
+  is answered (the refusal, 2026-11-05/06). **Level 2: CSR15** — after CSR14, because the account is
+  CSR14's. **Level 3: CSR16** — after CSR15, because the two hold one file. **Then CSR11** — after the
+  four, and after the live checks, which are a person's and which no level holds.
+- **Critical path.** `the longest of (CSR13, CSR14) → CSR15 → the owner's live checks → CSR11`: **three
+  tasks deep and one person's afternoon**, with **five of §6's nine tasks still to be built and four
+  merged** (CSR8, CSR9, CSR10, CSR12). **CSR16 is a fourth task and it is deliberately not on that path**:
+  the flip does not need a head read — the fix round the reader exists for does, and the release notes say
+  so (§6.5) rather than a level holding it. The longest wait in the path is not code: it is the live check,
+  which needs the credentials service enabled on a real installation (E7's first half), the verifier
+  account **CSR14 creates and names** published beside it (E7's third half), and an owner at a terminal.
+  That is the honest critical path of a design whose last link is another work stream's, and it is why §5
+  says the release ships before the chain works.
 
 ### 6.4 Shared files, by level: no level holds two writers of one file
 
-The rule is §2's, applied to the eight tasks above: a file is one writer's at a time, and **within a level
-no two tasks may hold one**. Every file below belongs to exactly one task in exactly one level:
+The rule is §2's, applied to the **0.20.0** set of §6.3: a file is one writer's at a time, and **within a
+level no two tasks may hold one**. Every file below belongs to exactly one task in exactly one level — the
+four merged tasks are marked where they ran, and **§6.7's CSR17 and CSR18 are not in this table at all**,
+because no 0.20.0 level holds them and they are a later release's:
 
-| File | Level 1 | Level 2 | Level 3 | Note |
-| --- | --- | --- | --- | --- |
-| `internal/runner/projectjob.go`, `internal/runner/projectjob_test.go` | **CSR8 — merged (#1761)** | — | — | the candidate set, the class and the token axis — **level 1's first writer has already run, and CSR13 reads what it left** |
-| `internal/runner/project.go`, `internal/runner/project_test.go` | **CSR8 — merged (#1761)** | — | — | the admission path |
-| `internal/config/claude_accounts.go`, `internal/config/claude_accounts_test.go` | **CSR8 — merged (#1761)** | — | — | the axis mapping lands once, here (CSR7 and E1 have merged; this is the file after them) |
-| `internal/cli/root.go`, `internal/cli/root_test.go` | CSR9 | — | — | the registration |
-| `website/content/cli-reference.md` | CSR9 | — | — | **generated** by `go run ./ee/clidoc` |
-| `plugin/skills/working/SKILL.md` (+ `routing/SKILL.md` if it names the flow) | CSR9 | — | — | the sentence and the registration are one commit |
-| `internal/runner/reviewartifact.go`, `internal/runner/reviewartifact_test.go` | CSR10 | — | — | the verifier's implementation |
-| `internal/cli/run_test.go` | CSR10 | — | — | the `TestFixBrief*` fixtures gain the sidecar a fail-closed reader needs |
-| `internal/cli/review.go`, `internal/cli/review_test.go` | CSR10 | **CSR12** | **CSR11** | the verifying reader, then the switch, then the flip that removes it — **three levels, one writer each** |
-| `internal/cli/reviewverify.go` | CSR10 | **CSR15** | — | the seam and the fail-closed stub (PR #1764), then the impersonation that fills it |
-| `internal/cli/reviewverify_test.go` (new) | — | **CSR15** | — | the impersonation's own tests |
-| `internal/runner/gateway.go`, `internal/runner/gateway_test.go`, `internal/runner/routing.go`, `internal/runner/routing_internal_test.go`, `internal/runner/agentenv.go`, `internal/runner/agentenv_test.go` | **CSR13** | — | — | the class accessor and its five readers — **level 1, and disjoint from CSR8's merged files** |
-| `internal/runner/runner.go` | **CSR13** | — | — | **taken alone, for one call site**: §2's one-writer rule, and the task says so in its pull request |
-| `deploy/terraform/gcp/modules/installation/verifier.tf` (new), `…/iam.tf`, `…/credentials.tf`, `deploy/terraform/gcp/roots/installation/tests/verifier.tftest.hcl` (new) | CSR14 | — | — | the account, its two grants, the `FUGARO_VERIFIER_ACCOUNTS` entry and the address the installation is named by |
-| `deploy/terraform/terraform_test.go` | CSR14 | — | — | the two static guards, **deliberately** widened to a table of two sites |
-| `internal/infra/tf/cover.go`, `internal/infra/tf/cover_test.go` | CSR14 | — | — | the one confirmation's tables: without them `update` refuses its own plan |
-| `internal/infra/tfvars.go` | CSR14 | — | — | the account's ID constant, beside `CredentialsAccountID` — the Go side computes the address from it **before** the apply |
-| `internal/cli/init.go`, `internal/cli/init_credentials_test.go` | CSR14 | — | — | the update names the account only when the **effective** list is nil (the config silent and the published node empty) |
-| `internal/infra/tf/testdata/golden/installation-credentials.plan.json` | CSR14 | — | — | **regenerated** by `scripts/gen-golden-plans.sh`; the five fixtures without the service must not move |
+| File | Level 1 (CSR13, CSR14) | Level 2 (CSR15) | Level 3 (CSR16) | then (CSR11) | Note |
+| --- | --- | --- | --- | --- | --- |
+| `internal/runner/projectjob.go`, `internal/runner/projectjob_test.go` | **CSR8 — merged (#1761)** | — | — | — | the candidate set, the class and the token axis — **level 1's first writer has already run, and CSR13 reads what it left** |
+| `internal/runner/project.go`, `internal/runner/project_test.go` | **CSR8 — merged (#1761)** | — | — | — | the admission path |
+| `internal/config/claude_accounts.go`, `internal/config/claude_accounts_test.go` | **CSR8 — merged (#1761)** | — | — | — | the axis mapping lands once, here (CSR7 and E1 have merged; this is the file after them) |
+| `internal/cli/root.go`, `internal/cli/root_test.go` | **CSR9 — merged** | — | — | — | the registration |
+| `website/content/cli-reference.md` | **CSR9 — merged** | — | — | — | **generated** by `go run ./ee/clidoc` |
+| `plugin/skills/working/SKILL.md` (+ `routing/SKILL.md` if it names the flow) | **CSR9 — merged** | — | — | — | the sentence and the registration are one commit |
+| `internal/runner/reviewartifact.go`, `internal/runner/reviewartifact_test.go` | **CSR10 — merged (#1764)** | — | — | — | the verifier's implementation |
+| `internal/cli/run_test.go` | **CSR10 — merged (#1764)** | — | — | — | the `TestFixBrief*` fixtures gain the sidecar a fail-closed reader needs |
+| `internal/cli/review.go`, `internal/cli/review_test.go` | **CSR10 — merged (#1764)** | **CSR12 — merged (#1771)** | — | **CSR11** | the verifying reader, then the switch, then the flip that removes it — **three writers, one per level** |
+| `internal/cli/reviewverify.go` | **CSR10 — merged (#1764)** | **CSR15** | **CSR16** | — | the seam and the fail-closed stub (PR #1764), then the impersonation that fills it, then the head read that stops reading with the machine's own App credential — **three writers, one per level** |
+| `internal/cli/reviewverify_test.go` (new in CSR15) | — | **CSR15** | **CSR16** | — | the impersonation's own tests, then the head read's |
+| `internal/runner/gateway.go`, `internal/runner/gateway_test.go`, `internal/runner/routing.go`, `internal/runner/routing_internal_test.go`, `internal/runner/agentenv.go`, `internal/runner/agentenv_test.go` | **CSR13** | — | — | — | the class accessor and its five readers — **level 1, and disjoint from CSR8's merged files** |
+| `internal/runner/runner.go` | **CSR13** | — | — | — | **taken alone, for one call site**: §2's one-writer rule, and the task says so in its pull request |
+| `deploy/terraform/gcp/modules/installation/verifier.tf` (new), `…/iam.tf`, `…/credentials.tf`, `deploy/terraform/gcp/roots/installation/tests/verifier.tftest.hcl` (new) | CSR14 | — | — | — | the account, its two grants, the `FUGARO_VERIFIER_ACCOUNTS` entry and the address the installation is named by |
+| `deploy/terraform/terraform_test.go` | CSR14 | — | — | — | the two static guards, **deliberately** widened to a table of two sites |
+| `internal/infra/tf/cover.go`, `internal/infra/tf/cover_test.go` | CSR14 | — | — | — | the one confirmation's tables: without them `update` refuses its own plan |
+| `internal/infra/tfvars.go` | CSR14 | — | — | — | the account's ID constant, beside `CredentialsAccountID` — the Go side computes the address from it **before** the apply |
+| `internal/cli/init.go`, `internal/cli/init_credentials_test.go` | CSR14 | — | — | — | the update names the account only when the **effective** list is nil (the config silent and the published node empty) |
+| `internal/infra/tf/testdata/golden/installation-credentials.plan.json` | CSR14 | — | — | — | **regenerated** by `scripts/gen-golden-plans.sh`; the five fixtures without the service must not move |
 
-**`internal/cli/review.go` is the one file three tasks want, and that is why their order is a rule rather
-than a preference:** the verifying reader (CSR10) writes it in level 1, the live-check switch (CSR12)
-adds and reads one variable in level 2, and the flip (CSR11) sets the constant and **deletes the switch**
-in level 3. Serialising three writers of one file is what the levels buy, and it is also why CSR12 exists
+**`internal/cli/review.go` is the one file three tasks wanted, and that is why their order was a rule rather
+than a preference:** the verifying reader (CSR10) wrote it in level 1, the live-check switch (CSR12)
+added and read one variable in level 2, and the flip (CSR11) sets the constant and **deletes the switch**
+in the level after — **and two of the three have merged**, so what is left of the row is CSR11's own
+commit. Serialising three writers of one file is what the levels buy, and it is also why CSR12 existed
 as its own task rather than as a paragraph of CSR11: a switch that has to be removed by a later commit is
 a change with its own red step, its own tests and its own review, and the reviewer of the flip is the
 reader who has to see the removal in the same diff. **`internal/cli/reviewverify.go` is the same shape at
-two levels** (CSR10's seam, then CSR15's impersonation), and it is two tasks rather than one because the
-second was an Open item while the first was not: the seam could be built fail-closed, and the identity it
-needs is the owner's to settle — which is exactly what the stub's own refusal sentence says.
+three levels** (CSR10's seam, merged; CSR15's impersonation; CSR16's head read), and it is three tasks
+rather than one because the second was an Open item while the first was not — the seam could be built
+fail-closed, and the identity it needs is the owner's to settle, which is exactly what the stub's own
+refusal sentence says — and because the third is a **different credential of the same file's other
+function**: the verify call is minted by impersonation and the head read is minted by the read mint, and
+one writer per level is what keeps the two reviews apart.
 
 **Two files this section does not take, deliberately.** `internal/cli/recipes_skew.go` and
-`internal/cli/validate.go` remain **CSR6's** (§2), and no task here books them: CSR8–CSR15 add **no
+`internal/cli/validate.go` remain **CSR6's** (§2), and no task here books them: CSR8–CSR16 add **no
 `fugaro.yaml`, task, recipe or wire key**, so the `…Since` rule (E6) gives them nothing to gate. The one
 constant whose *value* this section's release moves — `reviewJobSince`
-(`internal/cli/recipes_skew.go:379`, today `"0.19.0"`) — is **not** moved by CSR8–CSR15: it is the release
+(`internal/cli/recipes_skew.go:379`, today `"0.19.0"`) — is **not** moved by CSR8–CSR16: it is the release
 slot's consequence, and **Open item 3's answer of 2026-11-05 is 0.20.0 "Quokka"**, so the release's own
-change moves it to `"0.20.0"` and takes that file alone under §2's rule.
+change moves it to `"0.20.0"` and takes that file alone under §2's rule. **§6.7's CSR17 and CSR18 are not
+in this table and not in these levels**: their own release books their files, and the only 0.20.0 file they
+could have touched — `internal/credsvc`'s class — is nobody's in 0.20.0.
 
 ### 6.5 The release, the HARD RULE and the operator step
 
-- **The HARD RULE holds, and these eight tasks do not add a step to it.** `fugaro update` is the whole
+- **The HARD RULE holds, and these nine tasks do not add a step to it.** `fugaro update` is the whole
   upgrade: the command's registration, the reference rows, the plugin's skill text, the runner's placement
   and the launcher's verifier all ride the **image refresh** `update` already asks about (CSR6's), and none
   of them is a second command, a deletion or a manual repair. The plugin pins move through
@@ -1935,25 +2111,33 @@ change moves it to `"0.20.0"` and takes that file alone under §2's rule.
   (`deploy/terraform/gcp/modules/installation/credentials.tf:25`), and while that expression is unchanged,
   **what it evaluates to is a premise another work stream is moving** — `docs/credentials-service/default-on.md`
   (PR #1769) answers that the service is deployed for **every** installation, so an installation that today
-  is in the "off" half of that condition converges into the "on" half. **Both states are correct as
+  is in the "off" half of that condition would converge into the "on" half. **Both states are correct as
   written**, because the guard reads the block and not a flag: an installation with no service gets no
-  verifier account and no admission to lose, and one that has it (today by opting in, after #1769 by
-  default) gets the account and the name in the same update. Two forward references follow from that and
-  are recorded here rather than discovered later: **#1769's own task renders the verifier name** for every
+  verifier account and no admission to lose, and one that has it gets the account and the name in the same
+  update. **And the "on" half is not 0.20.0's**: the owner **cut #1769 from 0.20.0 on 2026-11-06**, so for
+  this release the credentials service stays **opt-in**, the "off" half stays populated, and the owner
+  **opts in on their own installation** for the live check CSR11 gates the flip on. Default-on is a later
+  release's, and CSR14's premise is today's state — `count = credentials_service_on`, correct under either,
+  as its own bullets say. Two forward references follow from #1769 and are recorded here rather than
+  discovered later: **#1769's own task renders the verifier name** for every
   installation and names CSR14 as its precondition, and its §4.3 changes the premises of CSR10, CSR12 and
   CSR13 — the launcher's verifier, the live check's switch and the class's model path all assume a service
-  that is deployed and serving rather than one an operator chose.
-- **The release's `### For operators` entry is conditional today, and the condition is another work
-  stream's to retire.** The one sentence applies to the installations that **opt in to the credentials
+  that is deployed and serving rather than one an operator chose. **None of the three is a 0.20.0
+  premise**: in 0.20.0 the service is the operator's choice, the live check's step 3 runs with the switch
+  (CSR12, merged) on an installation the owner opted in, and the class's model path reaches a service the
+  installation published.
+- **The release's `### For operators` entry is conditional today, and 0.20.0 keeps it conditional.** The one
+  sentence applies to the installations that **opt in to the credentials
   service**: the cloud senior reviewer's read-only token and its model calls both come from that service
   (D893 (c), O1), so an installation without one has the command, the variant and the verifier and still
   cannot run a review — and says so in the refusal rather than in a step. **`docs/credentials-service/default-on.md`
-  (PR #1769) answers that the service is on for every installation**, which turns this paragraph's
-  condition into a fact about the release rather than about a choice: the entry stays correct in both
-  states — an installation that has opted in and one that receives the service by default both need the
-  same things named — but the *sentence* changes from "the installations that opt in" to "every
-  installation" in whichever release lands #1769, and the credentials service's own documentation moves
-  with it. For an installation that **does** have the service, the same entry names the three halves of E7
+  (PR #1769) would answer that the service is on for every installation, and the owner cut it from 0.20.0
+  on 2026-11-06**: so the entry stays conditional for this release, and the sentence changes from "the
+  installations that opt in" to "every installation" only in whichever later release lands #1769, with the
+  credentials service's own documentation moving with it. **The owner's own installation is one of the
+  installations that opts in**, which is what makes the live check's step 3 reachable at all: the check is
+  run by the owner, on their own installation, after they have enabled the service. For an installation
+  that **does** have the service, the same entry names the three halves of E7
   as they are: `fugaro update --provision-credentials`, `fugaro creds
   set github-app-key`, **and `credentials_service.verifier_accounts` naming the verifier service account
   (Open item 5's answer, 2026-11-05)** — and of those three, **the first two are commands the credentials
@@ -1970,7 +2154,13 @@ change moves it to `"0.20.0"` and takes that file alone under §2's rule.
   themselves — that is the keep rule doing its job rather than a repair, and it is the same thing the
   credentials-service block already does for a value nobody can type by hand. An installation that never
   opts in converges to the new job set and behaves exactly as it does today: **no operator step, and
-  nothing to uninstall.**
+  nothing to uninstall.** **One sentence the entry carries for 0.20.0 and no later release does:** a
+  **fix round** launched from a review's verdict — `fugaro run --review-run RUN` — **refuses until the
+  launcher can both impersonate the installation's verifier (CSR15) and read the pull request's head
+  through the credentials service's read mint (CSR16)**, because the reader refuses every brief it cannot
+  verify against the current head; the review launch itself, which is what CSR11 flips, needs neither. It
+  is a sentence and not a step: both halves ride the same `fugaro update` and the same image refresh, and
+  nothing in the release asks the owner to do anything about it.
 - **One tension to record rather than resolve, because the file is another folder's.**
   `docs/c39-review-identity/implementation-plan.md:713` says of the credentials-service work "**`fugaro
   update` owes nothing new** … no new grant" — written before Open item 5 was answered, and **no longer
@@ -2089,8 +2279,9 @@ the coding cascade's consent for it. Two readings stood here, and **the owner to
   request rather than about which credential serves its calls: the environment is the one input a launch
   writes, so a class keyed on it is a class a container can claim. CSR13 has no unmerged dependency, and
   **must precede CSR11** (a flipped constant launches a reviewer with no credential of its own).
-  **The budget mode is the one half of the class this item did not settle**, and it is raised as
-  **item 6** below rather than decided here.
+  **The budget mode was the one half of the class this item did not settle**, and it was raised as
+  **item 6** below rather than decided here — **and the owner answered it on 2026-11-05/06**: the class
+  refuses a review run whose merged mode is `off`, in a sentence that names `budget.mode`.
 
 **5. *(found while reviewing the first draft of §6)* Who may verify a verdict — and it cannot be the
 owner.** **ANSWERED 2026-11-05: reading 1, a DEDICATED VERIFIER SERVICE ACCOUNT the installation's root
@@ -2137,7 +2328,15 @@ it is written for. Three readings stood here, and **the owner took the first**:
   one caller in two classes is the refusal above, in the other direction.
 
 **6. *(found while the class of item 4 was re-read after CSR8 merged)* What a review run does when the
-installation's budget is OFF. — OPEN, and BLOCKING for CSR13. The owner's, and nothing here chooses it.**
+installation's budget is OFF. — ANSWERED 2026-11-05/06: THE REFUSAL — a cloud review does NOT run with
+the budget off, and the sentence names the setting to turn on. Not the class forcing the gateway on.**
+The owner ruled it on 2026-11-05/06, and the ruling is reading (b) below: a review class run whose
+merged mode is `off` stops in bootstrap with a sentence that names **`budget.mode`**, published as
+`observe` or `enforce`, as the thing to turn on — a fix an operator can perform, and one the review
+job's own file has nothing to do with. **The class does not force the gateway on** (reading (a), which
+the ruling refuses): the mode keeps one meaning for every class of run, and the ledger never runs on a
+run whose installation set no budget. **CSR13 carries the refusal and its named test**, and the item is
+**no longer blocking** for that task.
 CSR13's class is `cascade`, and `cascade` reaches a model **only** through the gateway: `GatewayOn`
 (`internal/runner/routing.go:158`) requires the budget mode to be `observe` or `enforce`, an unset mode is
 `off` (`internal/runner/spend.go:97`, `:98`), and a cascade run with no gateway is refused in bootstrap by
@@ -2149,7 +2348,7 @@ apply** — it has no `agent.auth` of its own to change and no token to fall bac
 the review class's two arms (O2's switch and the allow-list, both above) and neither of them is about the
 mode, so today nothing in the class's own path says what the mode must be.
 
-**How narrow this is, and why it is still blocking.** The mode a run has is the **merged policy's**, not
+**How narrow this is, and why the refusal is the right size for it.** The mode a run has is the **merged policy's**, not
 the job environment's alone (`internal/runner/policy.go:151`, where `""` becomes `off`): the published
 node replaces the ceiling key by key, so an installation that publishes `budget.mode: observe` (or
 `enforce`) turns the gateway on for a review run even when the job it was deployed with carries no mode at
@@ -2158,41 +2357,127 @@ all (`internal/infra/spec.go:1266` sets the deploy-time mode only when it is not
 therefore **an installation that has configured no budget anywhere** — no deploy-time mode and no node
 mode — which is a legal and quietly common state: nothing in the credentials-service work or in this
 section requires an owner to have a budget, and the service's own opt-in was never conditioned on one.
-**Two readings, and the owner takes one:**
+**Two readings stood here, and the owner took the second:**
 
-- **(a) the class forces the gateway on**, in the installation's own mode when it is on and in the
-  gateway's non-enforcing mode when it is off (`internal/runner/gateway.go:145` already starts the gateway
+- **(a) the class forces the gateway on — the reading the owner refused —**, in the installation's own
+  mode when it is on and in the gateway's non-enforcing mode when it is off (`internal/runner/gateway.go:145` already starts the gateway
   in `Observe` unless the mode is `enforce`). The review run reaches the service on every installation, and
   "off" keeps meaning what the owner set — no ceiling enforced. Cost: the mode gains a **second meaning**
   for one class of run — a run whose gateway is on while its installation's budget is off — and the ledger
   then runs on a run whose price table the tree deliberately does not build when the mode is off and no
   overrides exist (`internal/runner/spend.go:121`, `:129`, against `spend.go:154`'s rule that a budget-off
   run is priced by the same rules as one with it on).
-- **(b) the class refuses, naming the mode — and this is the recommendation.** A review class run whose
+- **(b) the class refuses, naming the mode — and this is the owner's answer of 2026-11-05/06.** A review class run whose
   merged mode is `off` stops in bootstrap with a sentence that names the fix: the review job's model calls
   are served by the credentials service, the run reaches it through the gateway, and the gateway is on only
   in `observe` or `enforce`, so the operator publishes `budget.mode` and publishes the policy. Cost: a
   review cannot run at all on an installation with no budget — including, today, the live check CSR11 gates
   the flip on, unless the owner's own installation has one — and the refusal is the *second* thing a review
-  launch can need an operator for. **Why it is still the recommendation:** one meaning for the mode, no new
-  gateway state, and the sentence the run dies with today is exactly the failure CLAUDE.md's HARD RULE
-  cares about in miniature — a refusal naming a fix nobody can perform.
+  launch can need an operator for. **Why the owner took it:** one meaning for the mode, no new
+  gateway state, and the sentence the run would otherwise die with is exactly the failure CLAUDE.md's HARD RULE
+  cares about in miniature — a refusal naming a fix nobody can perform — which is why the refusal CSR13
+  writes names the setting and not the cascade.
 
 **What is not in question either way:** the review class never falls back to a credential of its own (D143,
 O1) and the budget mode never decides *which* credential serves the call — that is the class's, and this
-item is about the path and not the credential. **The test that holds whichever answer the owner gives is
+item is about the path and not the credential. **The test that holds the answer is
 CSR13's `TestReviewRunWithTheBudgetOffNeverReachesACredentialOfItsOwn`**, which is why CSR13's test list
-names it and why CSR13 **cannot be finished before this item is answered** — its red step and its mutation
-are written, and this one assertion is not.
+names it: it asserts the refusal, the setting the sentence names, and that no credential of the job's is
+reached on the way out.
 
 **Nothing above is decided here except what the owner answered on 2026-11-05 — items 1, 2, 3, 4 and 5,
-each in its own words above — and nothing above is built.** With item 4 answered as `CSR13` and item 5 as
-`CSR14` and `CSR15`, **the five items §6 was written with are closed — and item 6 is not**: it was found
-afterwards, while the class of item 4 was re-read against the tree CSR8 had just merged into, and it stands
-**open and blocking**. The section's task list is
-**CSR8–CSR15: eight tasks**, each in this
+each in its own words above — and on 2026-11-05/06, when item 6 was answered and the api-key path was cut
+from 0.20.0 — and nothing above is built.** With item 4 answered as `CSR13` and item 5 as
+`CSR14` and `CSR15`, **all six items are closed**: the five §6 was written with, and item 6, found
+afterwards while the class of item 4 was re-read against the tree CSR8 had just merged into and answered
+on 2026-11-05/06 as the refusal above. The section's task list is
+**CSR8–CSR16: nine tasks**, each in this
 plan's sense:
-a red step, a file list, named tests and a person's gate where a person's gate is what the work needs.
+a red step, a file list, named tests and a person's gate where a person's gate is what the work needs —
+**and §6.7 names a tenth and an eleventh, `CSR17` and `CSR18`, the api-key review, which are NOT in
+0.20.0** and are therefore outside the levels, the critical path and the shared-files table below.
 **An answer is not an approval** (README.md): every task above still waits for the owner to approve it,
 and the tasks that were written because an item was answered are no more started than the ones that were
 already here.
+
+### 6.7 The api-key review: named, ordered, and NOT in 0.20.0 (CSR17, CSR18)
+
+**The owner's ruling of 2026-11-05 was that both credentials should be supported — the OAuth review and the
+api-key review, the key being an OpenRouter key or an Anthropic key — and the owner cut the api-key path
+from 0.20.0 on 2026-11-06.** So 0.20.0 ships the **OAuth review alone**: `CSR13` (the class's model path),
+`CSR14` (the verifier account), `CSR15` (the launcher's impersonation), `CSR16` (the head read), the
+owner's live checks and `CSR11` (the flip). The api-key review is a **later release** — the two tasks below,
+`CSR17` and `CSR18`, ordered `CSR17 → CSR18` — and **it is outside §6.3's levels, §6.3's critical path and
+§6.4's shared-files table**, which are about the 0.20.0 set and nothing else. Nothing in this subsection is
+a 0.20.0 file: no task above holds any of these files, and no file here is booked in §6.4.
+
+**What 0.20.0 does about it, so nothing implies the api-key review works.** 0.20.0 refuses it **at the one
+place that decides a review run's credential**, and nowhere else needs to: `CSR13`'s class offers the
+pairing account's tier-A credential and no other, refuses a review whose account/auth is not OAuth, and
+carries the sentence that names the path and the release it is in (*the OAuth review is the only one
+0.20.0 ships*, in its own bullets); `CSR11`'s flip admits the OAuth review alone; and
+`CSR13`'s `TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn` holds the direction a repository's own file could
+otherwise take: a review run whose repository writes `agent.auth: api-key` carries no provider key and is
+**refused** rather than served by the class. **No other 0.20.0 task names the path at all**: CSR14's
+account, CSR15's impersonation and CSR16's head read are the OAuth path's, and no 0.20.0 task books a file
+this subsection names.
+
+**What the tree can hold and mint today, verified rather than assumed — this is the slice's whole cost.**
+The review class's candidates are the pairing's **ONE** account at tier A and nothing else, with no
+fallback even where the policy's `fallback` would allow one (`reviewCandidates`,
+`internal/credsvc/cascade.go:105`), and that account is a **Claude OAuth account**: `ReviewJobAccount.Account`
+is the Claude account's name (`internal/credsvc/review.go:112`), the axis is built from `claude_accounts`
+(`internal/config/claude_accounts.go`) and its secrets are the `claude-oauth-token` family. The service's
+model credentials are exactly two kinds: the Claude OAuth tokens at **tier A** and the Anthropic API key at
+**tier B** (`config.AnthropicSecret`, `internal/credsvc/bundle.go:677`), and `internal/creds`' own tiers are
+those two (`internal/creds/select.go:17`) — so a tier-B credential is not a provider key either. **There is
+no provider key in the service's document at all**: `CredentialKey`'s closed set has no entry for one
+(`internal/credsvc/bundle.go:668`), and a provider key today lives in the local config's `providers` block
+(`config.ModelProvider`, `internal/config/providers.go:41`: a base URL, an auth shape of `bearer` or
+`x-api-key`, a logical secret name and a model list) and is mounted into a **run's job**, not held by the
+service. Nor is there an upstream for one: the model path forwards to Anthropic's own API and to nothing
+else (`upstreamKindAnthropic`, `internal/credsvc/forward.go:66`). So the api-key review is not a switch
+somebody forgot to flip — **the service has nowhere to hold the key, no pairing that can name one, no
+candidate list that may offer one and no upstream to send it to**, and the runner has no path that would
+carry a provider's auth shape or base URL. That is why it is a slice and not a paragraph of CSR13.
+
+**CSR17. The service can hold and serve a provider key for a review caller (SEC). — NOT IN 0.20.0.**
+**Depends on:** nothing in 0.20.0's levels, and it is **after** the OAuth review path only in the sense
+that it must not disturb it: `CSR13`'s class, `CSR15`'s identity and `CSR16`'s read are the OAuth path and
+stay as they are. **Files (sketched, 6–8):** `internal/credsvc/bundle.go` + `bundle_test.go` (a provider-key
+kind in the closed key set and in the schema), `schemas/creds-bundle.schema.json`,
+`internal/credsvc/review.go` + its tests (the pairing gains a second axis: the account a review job is
+served by may be a **provider** account rather than a Claude account), `internal/credsvc/cascade.go` + tests
+(`reviewCandidates` offers that one credential — still exactly one, still no fallback), and
+`internal/credsvc/forward.go` + tests (the upstream is the **provider's** base URL and auth shape rather
+than Anthropic's). **No Terraform**: the service holds one secret document (Global Constraint 12), so a new
+credential kind is a bundle key and never a resource or a grant. **The design point this task must settle
+first, and it is why it is not a small task:** the bundle holds **credentials** and the service reads
+nothing else, while a provider's base URL, auth shape and model list live in the project's configuration —
+so either the published policy node grows the routing facts the service needs, or the bundle grows a
+section that is not a credential, and both are a change to a contract another reader consumes (CLAUDE.md's
+rule: a field never changes meaning). **Red step (sketched):** a service whose bundle holds a provider key
+and whose review pairing names a provider account serves a review caller with **that** key — a test that
+cannot pass today because the pairing refuses the account and the candidate list has nothing to offer.
+**SEC flag:** yes — this is a model credential the service attaches to a caller's request. **Reviewer
+tier:** SEC — opus, with the independent review mandatory. **Commit:** `credsvc: the review class can serve
+a provider key`.
+
+**CSR18. The review run's model path reaches a provider's endpoint (SEC). — NOT IN 0.20.0.** **Depends
+on:** `CSR17` (the service side first: a runner path to a service that cannot serve it is a halt).
+**Files (sketched, 3–5):** `internal/runner/routing.go` + `routing_internal_test.go` (the class's upstream
+is the provider's, not the service's Anthropic forward), `internal/runner/agentenv.go` +
+`agentenv_test.go` (the gateway variables a provider's model list needs), `internal/gateway/gateway.go`
+(the upstream kind and the auth shape a provider call carries) and `internal/runner/runner.go`'s one call
+site if it moves. **Red step (sketched):** a review run served by a provider key reaches the provider's
+endpoint with the provider's auth shape, and `TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn` is **rewritten**
+rather than deleted — the refusal is 0.20.0's answer and this task is the one that makes it a path, so the
+test keeps its name and gains the second direction. **SEC flag:**
+yes — the second path through the routing ladder, which is why CSR13's review is asked for it again.
+**Reviewer tier:** SEC — opus, with the independent review mandatory. **Commit:** `runner: a review run
+served by a provider key`.
+
+**What this subsection does not do.** It does not move `reviewJobSince` (that is the release slot's, §6.4),
+it does not change 0.20.0's `### For operators` sentence (§6.5), and it does not add a level, an edge or a
+shared-files row: the two tasks above are a later release's, and their own release writes the sentence that
+names them.
