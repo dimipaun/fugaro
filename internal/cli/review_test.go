@@ -585,8 +585,6 @@ func TestTheAdmissionSwitchIsDocumentedWhereThePlanSays(t *testing.T) {
 }
 
 // fixBriefVerify is the credentials service's verify route (C3.9f) as the
-
-// fixBriefVerify is the credentials service's verify route (C3.9f) as the
 // launcher's own client meets it: one key made at run time, the frame the
 // service builds for itself (v1\n<repository>\n<run>\n<digest>, spelled here
 // because this stands in for the service's own code — the launcher's client
