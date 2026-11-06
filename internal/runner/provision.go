@@ -16,6 +16,31 @@ import (
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
+// ImageEntryEnv is the job environment variable internal/infra sets to the
+// name of the project image_catalog entry the job's image was deployed from,
+// on a job whose image the catalog chose and on no other (docs/image-env,
+// reconciliation F5/F6, D1371). It is the one fact that says where a run's
+// image came from: the deploy knows the entry, and the image itself cannot be
+// asked — a catalog entry built from a Dockerfile is indistinguishable from a
+// repository's own derived image, and a registry read at run time would need a
+// credential inside the job.
+//
+// It is absent, not empty, on every job whose image the catalog did not choose
+// (a repository-built image, checkout: clone's base image and its shared
+// sibling, the check jobs), and a run whose job carries no stamp passes none
+// of the image's own variables: the fail-closed direction, so a job deployed
+// before this constant existed behaves as it did until its next fugaro update
+// redeploys it.
+//
+// The value is an entry's own name and nothing else — config.ValidateCatalog
+// checks it, so the runner never parses it, and a name is what a report
+// prints. Being FUGARO_-prefixed, config.ReservedEnv refuses it, so it stays
+// out of the agent's own environment.
+//
+// Named here, in the runner, for the same reason CheckoutEnv is: the runner is
+// what reads it; internal/infra (spec.go) sets it from this constant.
+const ImageEntryEnv = "FUGARO_IMAGE_ENTRY"
+
 // CheckoutEnv is the job environment variable internal/infra sets to the
 // workflow's own config.Checkout value (clone or shared) on a workflow whose
 // image holds no repository's source, and to nothing on a baked one (design
