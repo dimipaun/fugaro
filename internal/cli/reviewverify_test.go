@@ -453,9 +453,16 @@ func TestReviewHeadReadsThroughTheReadMint(t *testing.T) {
 // credentials_service block has no read mint, and the head read refuses rather
 // than being served by a credential of this process's own -- which a person's
 // machine does not hold anyway.
+//
+// The environment carries a service the way a JOB's does (a job learns the URL
+// as FUGARO_CREDENTIALS_SERVICE_URL) and this read is a person's: the block is
+// the only source, so a machine that exports a URL reads the same as one that
+// does not (F23) and the exported one is never asked.
 func TestReviewHeadRefusesWithoutACredentialsService(t *testing.T) {
+	mint := startReadMintStandIn(t)
 	forge := startForgeStandIn(t, reviewHeadSHA)
 	setReviewReadIdentity(t)
+	t.Setenv(providers.EnvCredentialsServiceURL, mint.url)
 	env := reviewHeadEnv(t, "")
 
 	_, err := reviewHead(t.Context(), env, "acme/app", 7)
@@ -464,6 +471,9 @@ func TestReviewHeadRefusesWithoutACredentialsService(t *testing.T) {
 	}
 	if ExitCode(err) != ExitUserError {
 		t.Errorf("the refusal is %v, want a sentence rather than a failure of the cloud", err)
+	}
+	if mint.calls() != 0 {
+		t.Errorf("the read mint in the environment was called %d times for an installation that publishes no service", mint.calls())
 	}
 	if forge.calls() != 0 {
 		t.Errorf("the forge was read %d times for an installation with no read mint", forge.calls())
