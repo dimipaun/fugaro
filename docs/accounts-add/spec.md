@@ -629,7 +629,9 @@ allow-list said twice — where it comes from is the next paragraph.
 the flag, the committed `agent.oauth_token`, or the project's `default_claude_account` — leaves the walk
 nothing to choose: `accountWalkApplies` (`internal/runner/accountchoice.go`) is false whenever the task's
 `spec.OAuthToken` names an account, which is how rungs 1, 3 and 4 reach the job, and the walk is an
-`oauth` run's in any case (a mixed `api-key` run names the walk no account at all:
+`oauth` run's in any case (a mixed `api-key` run names it no account the walk could pick: the one
+Claude account such a run holds is the run's own `spec.OAuthToken`, which is the condition above, and
+an `api-key` run is outside the walk whatever it names:
 [mixed-credentials](../design/mixed-credentials.md) §11). So setting `default_claude_account` is also how
 a project turns the walk off for its runs: with that key set, no run of the project reaches rung 5.
 

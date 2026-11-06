@@ -5,9 +5,15 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The account-choice keys of the accounts design (docs/accounts-add/spec.md
@@ -112,21 +118,31 @@ func TestRunRefusesASecondStageAccount(t *testing.T) {
 	}
 }
 
-// TestRunAdmitsAStageAccountForTheReviewsOnly: the permitted mix. An api-key
-// run may name one account for review and adversarial, and the run's own
-// credential does not move: the launch still lands on the coder's own job
-// (OAuthToken stays empty), because the account is the stages' and not the
-// run's.
+// TestRunAdmitsAStageAccountForTheReviewsOnly: the permitted mix, and the job
+// it lands on. An api-key run may name one account for review and adversarial,
+// and the launch's own account — what spec.OAuthToken names, and so the job
+// variant the run starts on — is that account: the account's own job is the
+// only one that mounts its token, and the run's review stages read the token
+// out of the runner's environment (mixedRunAccount, claudeAccountFor). The
+// coder's own credential does not move with it: the coder's stages stay on the
+// provider key the gateway holds, and the runner is what builds each stage's
+// environment.
+//
+// Mutation (remove the `name = mix` line in claudeAccountFor's launch
+// resolution): OAuthToken is empty and this test fails — the run starts on the
+// base job, which mounts no token, and its review stage is refused for one
+// (Check 290's failure).
 func TestRunAdmitsAStageAccountForTheReviewsOnly(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, stageAccountConfig("review", "acme-overflow", "adversarial", "acme-overflow"))
 	recipeCheckout(t, f, "", nil)
 	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
 	if _, _, err := execute(t, "run", "--run-id", "20261105-100000-eeee", "A task"); err != nil {
 		t.Fatal(err)
 	}
-	if got := otherSpec(t, f, "20261105-100000-eeee").OAuthToken; got != "" {
-		t.Fatalf("OAuthToken = %q, want empty: a stage account is the stages' and never the run's own credential", got)
+	if got := otherSpec(t, f, "20261105-100000-eeee").OAuthToken; got != "acme-overflow" {
+		t.Fatalf("OAuthToken = %q, want acme-overflow: a mixed run starts on the job that mounts the account's token", got)
 	}
 }
 
@@ -326,20 +342,222 @@ func TestClaudeAccountForTheMixMatrix(t *testing.T) {
 	})
 }
 
-// TestClaudeAccountForLeavesTheRunsOwnCredentialAlone: the account a mixed
-// stage is served by is the stages' and never the run's. Under an api-key run
-// the run's own resolution (no stage asked for) stays the unsuffixed default,
-// whatever default_claude_account says — that key is rung 4 for a *stage*, not
-// a run's own credential, and such a run's coder stays on the provider key the
-// gateway holds.
-func TestClaudeAccountForLeavesTheRunsOwnCredentialAlone(t *testing.T) {
-	env, co := mixCase(t, "default_claude_account: acme-overflow\n", claudeReviewer, mixEnforce)
-	got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co)
+// TestClaudeAccountForLandsAMixedRunOnTheMixsAccount is the launch's own
+// resolution — no stage asked for — over the rungs a mix is named by and the
+// conditions that admit it: the account a mixed run starts on is the account
+// its review stages are served by, because spec.OAuthToken is what names the
+// job variant and only the account's own job mounts its token
+// (mixedRunAccount). It is the launch's account and not the run's
+// *credential*: the coder's stages stay on the provider key the gateway holds
+// (the runner builds each stage's environment), so a run with no admitted mix
+// resolves the unsuffixed default exactly as it did.
+//
+// Mutation (remove the `name = mix` line in claudeAccountFor's launch
+// resolution): the two admitted rows fail, which is the bug — the launch
+// resolves the base job and the review stage it serves finds no token.
+func TestClaudeAccountForLandsAMixedRunOnTheMixsAccount(t *testing.T) {
+	cases := []struct{ name, keys, reviewer, want string }{
+		{"rung 2: the stage's own key", stagesBlock("review", "acme-overflow"), claudeReviewer, "acme-overflow"},
+		{"rung 4: the project default, an Anthropic reviewer", "default_claude_account: acme-overflow\n", claudeReviewer, "acme-overflow"},
+		// rung 4 is the default's own rung and carries its own condition: a
+		// provider reviewer is no mix and no error, and the key names nothing.
+		{"rung 4, a provider reviewer", "default_claude_account: acme-overflow\n", mixCoderModel, config.DefaultClaudeAccount},
+		{"the sentinel default names no account", "default_claude_account: " + config.DefaultClaudeAccount + "\n", claudeReviewer, config.DefaultClaudeAccount},
+		{"no mix at all", "", claudeReviewer, config.DefaultClaudeAccount},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, co := mixCase(t, tc.keys, tc.reviewer, mixEnforce)
+			got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("account = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	// A coder no provider route serves is no mix either: the account sits
+	// beside a provider key the gateway holds, and such a run's gateway holds
+	// none.
+	t.Run("a coder no provider route serves", func(t *testing.T) {
+		env, co := mixCaseWith(t, claudeAccountsConfig, "default_claude_account: acme-overflow\n", claudeReviewer, claudeReviewer, mixEnforce)
+		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != config.DefaultClaudeAccount {
+			t.Fatalf("account = %q, want %q", got, config.DefaultClaudeAccount)
+		}
+	})
+	// A --token that is not the mix's account is still refused under api-key:
+	// the mix is the one account such a run may hold, and naming another is not
+	// a way round it.
+	t.Run("a flag naming another account", func(t *testing.T) {
+		env, co := mixCase(t, stagesBlock("review", "acme-overflow"), claudeReviewer, mixEnforce)
+		_, err := claudeAccountFor(context.Background(), env, "acme/other", "acme-personal", "", "", co)
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "only applies to a workflow whose agent.auth is oauth") {
+			t.Fatalf("err = %v, want the refusal of a named account on an api-key run", err)
+		}
+	})
+	// The one-account rule is the launch's too, and it is asked of the
+	// launch's own resolution and not only of a stage's: a project default
+	// that disagrees with a stage key is a second credential, refused before
+	// anything is started.
+	t.Run("a second, differing account", func(t *testing.T) {
+		env, co := mixCase(t, "default_claude_account: acme-overflow\n"+stagesBlock("review", "acme-personal"), claudeReviewer, mixEnforce)
+		_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co)
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "second credential") {
+			t.Fatalf("err = %v, want the one-account refusal", err)
+		}
+	})
+}
+
+// TestRunLandsAMixedRunOnTheMixsAccount is the same rule read off a launch:
+// the stored task's oauth_token is the mix's account, which is what picks the
+// job variant the run starts on. A run with no admitted mix keeps the base job
+// (no oauth_token at all).
+func TestRunLandsAMixedRunOnTheMixsAccount(t *testing.T) {
+	cases := []struct {
+		name, keys, reviewer, runID, want string
+	}{
+		{"the project default on an Anthropic review", "default_claude_account: acme-overflow\n", claudeReviewer, "20261105-100000-1111", "acme-overflow"},
+		{"no mix: a provider reviewer", "default_claude_account: acme-overflow\n", mixCoderModel, "20261105-100000-2222", ""},
+		{"no mix: no key at all", "", claudeReviewer, "20261105-100000-3333", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			f.appendConfig(t, claudeAccountsConfig+mixRouteConfig+mixEnforce+tc.keys)
+			recipeCheckout(t, f, "  models: { coder: "+mixCoderModel+", reviewer: "+tc.reviewer+", background: "+mixCoderModel+" }\n", nil)
+			writeBuildRecord(t, f, otherSlug, "svc", release065)
+			// The account's own job variant, which a mixed run has to start
+			// on: the base job is registered by recipeCheckout.
+			f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
+			if _, _, err := execute(t, "run", "--run-id", tc.runID, "A task"); err != nil {
+				t.Fatal(err)
+			}
+			if got := otherSpec(t, f, tc.runID).OAuthToken; got != tc.want {
+				t.Fatalf("OAuthToken = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunRetryLaunchesAMixedRunOnTheMixsAccount: --retry replays a stored task
+// as it stands, and a mixed run's task is the shape this launcher itself
+// writes — a named account under agent.auth: api-key. That is exactly the name
+// claudeAccountAllowed refuses outright, so a retry of a mixed run was refused
+// for the name the same binary had just written, with a sentence ("only
+// applies to a workflow whose agent.auth is oauth") that is false about it.
+// retrySpec asks the whole resolver instead (claudeAccountFor), the way the
+// repeated --run-id path does, and the stored token stays what the launch
+// carries: it starts on the account's own job variant, which is the only job
+// that mounts the token its review stages read.
+//
+// Mutation (retrySpec back to claudeAccountAllowed): the retry is refused and
+// no execution starts.
+func TestRunRetryLaunchesAMixedRunOnTheMixsAccount(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, defaultClaudeAccountConfig+mixRouteConfig+mixEnforce)
+	recipeCheckout(t, f, "  models: { coder: "+mixCoderModel+", reviewer: "+claudeReviewer+", background: "+mixCoderModel+" }\n", nil)
+	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	variant := gcp.WorkflowVariant("svc", "acme-overflow")
+	f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
+	// The task a mixed launch of this repository stores, never started —
+	// --retry's own case.
+	runID := wallRunIDAt(0, "100000", "a3c1")
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != config.DefaultClaudeAccount {
-		t.Fatalf("account = %q, want %q: an api-key run's own credential is not a stage's", got, config.DefaultClaudeAccount)
+	defer b.Close()
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/other", Ref: "develop", Workflow: "svc", Task: "x",
+		RequestedBy: "someone@example.com", OAuthToken: "acme-overflow"}
+	if err := runstore.Open(b, otherSlug, runID).CreateTask(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+	var got gcpfake.RunCall
+	f.run.OnRun = func(c gcpfake.RunCall) { got = c }
+	if _, _, err := execute(t, "run", "--retry", runID); err != nil {
+		t.Fatal(err)
+	}
+	if want := gcp.JobName(otherSlug, variant); got.Job != want {
+		t.Fatalf("launched job = %q, want %q", got.Job, want)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want 1", n)
+	}
+}
+
+// TestRunPRLandsAFollowUpOfAMixedRunOnTheMixsAccount: a follow-up of a mixed
+// run launches as what the account walk resolved and not as the name its
+// previous task happened to carry (newFollowUpSpec). The two differ exactly
+// where it matters: a previous task stored before the mix reached the launch —
+// or stored when this repository mixed nothing — names no account at all,
+// while the review stages of the run about to start are still served by the
+// config's, and a follow-up that launched on the plain job would leave them
+// refused for a token nothing mounted (Check 290's failure).
+//
+// Mutation (newFollowUpSpec's `spec.OAuthToken = resolved` back to
+// `= account`): the second row starts on the plain job.
+func TestRunPRLandsAFollowUpOfAMixedRunOnTheMixsAccount(t *testing.T) {
+	cases := []struct {
+		name        string
+		blankStored bool
+	}{
+		{"the previous task names the mix's account", false},
+		{"the previous task names no account", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			f.appendConfig(t, defaultClaudeAccountConfig+mixRouteConfig+mixEnforce)
+			recipeCheckout(t, f, "  models: { coder: "+mixCoderModel+", reviewer: "+claudeReviewer+", background: "+mixCoderModel+" }\n", nil)
+			writeBuildRecord(t, f, otherSlug, "svc", release065)
+			variant := gcp.WorkflowVariant("svc", "acme-overflow")
+			f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
+			root := wallRunIDAt(2, "090000", "d5e1")
+			if _, _, err := execute(t, "run", "--repo", "acme/other", "--run-id", root, "Add a feature"); err != nil {
+				t.Fatalf("root launch: %v", err)
+			}
+			ctx := context.Background()
+			b, err := blob.OpenBucket(ctx, f.bucket)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer b.Close()
+			s := runstore.Open(b, otherSlug, root)
+			if tc.blankStored {
+				stored := otherSpec(t, f, root)
+				stored.OAuthToken = ""
+				if err := s.WriteTask(ctx, stored); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// resolvePR needs a run on the PR's branch that has pushed: give
+			// the root run's record a pushed_head and the PR, as a real
+			// finalize would.
+			if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: root, Repo: "acme/other", Workflow: "svc",
+				Status: runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
+				Branch: "fugaro/" + root, PushedHead: "1111111111111111111111111111111111111111",
+				StartedAt: time.Now().Add(-time.Hour), PR: &runstore.PRRef{Number: 7, URL: "https://github.com/acme/other/pull/7"}}); err != nil {
+				t.Fatal(err)
+			}
+			fu := wallRunIDAt(0, "130000", "d5e2")
+			var got gcpfake.RunCall
+			f.run.OnRun = func(c gcpfake.RunCall) { got = c }
+			if _, _, err := execute(t, "run", "--repo", "acme/other", "--pr", "7", "--run-id", fu, "more work"); err != nil {
+				t.Fatalf("follow-up: %v", err)
+			}
+			if want := gcp.JobName(otherSlug, variant); got.Job != want {
+				t.Fatalf("follow-up job = %q, want %q", got.Job, want)
+			}
+			if got := otherSpec(t, f, fu).OAuthToken; got != "acme-overflow" {
+				t.Fatalf("follow-up OAuthToken = %q, want acme-overflow", got)
+			}
+		})
 	}
 }
 
