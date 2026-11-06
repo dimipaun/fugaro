@@ -513,7 +513,7 @@ func TestUpdatePolicyManagedMigrationNotesRunsInFlightAndWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a managed project's migration was refused for the runs in flight: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "1 run(s) are in flight and keep the policy they started with") {
+	if !strings.Contains(out, "1 run(s) are in flight and a run whose model calls go through the credentials service reads the new policy on its next call") {
 		t.Errorf("the managed guard did not print its note:\n%s", out)
 	}
 	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
@@ -541,7 +541,7 @@ func TestUpdatePolicyManagedMigrationWithoutRunsPrintsNoNote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a managed migration with nothing in flight was refused: %v\n%s", err, out)
 	}
-	if strings.Contains(out, "keep the policy they started with") {
+	if strings.Contains(out, "reads the new policy on its next call") {
 		t.Errorf("a note was printed with no run in flight:\n%s", out)
 	}
 	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
@@ -572,7 +572,7 @@ func TestUpdatePolicyManagedMigrationUnderAMarkerKeepsTheRefusal(t *testing.T) {
 	if !strings.Contains(err.Error(), "run(s) are in flight") {
 		t.Errorf("the refusal is not the in-flight one: %v", err)
 	}
-	if strings.Contains(h.out.String(), "keep the policy they started with") {
+	if strings.Contains(h.out.String(), "reads the new policy on its next call") {
 		t.Errorf("the managed note was printed in a coding agent's session:\n%s", h.out)
 	}
 	if got := nodeVersionOn(t, f.db); got != 3 {

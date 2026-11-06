@@ -525,7 +525,7 @@ func (m *policyMigration) refuseRunsInFlight(ctx context.Context, yes, note bool
 		return nil
 	}
 	if note {
-		fmt.Fprintf(w, "%d run(s) are in flight and keep the policy they started with\n", inflight)
+		fmt.Fprintf(w, "%d run(s) are in flight and a run whose model calls go through the credentials service reads the new policy on its next call\n", inflight)
 		return nil
 	}
 	if !yes {
@@ -1041,7 +1041,7 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 		}
 	}
 	cmd := s.e.r.cmd
-	if err := policyMigrationConfirm(ctx, cmd, m, env.Yes, cmd.OutOrStdout(), admitted, gate); err != nil {
+	if err := policyMigrationConfirm(ctx, cmd, m, env.Yes, cmd.OutOrStdout(), admitted, s.e.r.gateUnderway()); err != nil {
 		return initflow.Outcome{}, err
 	}
 	if admitted {
