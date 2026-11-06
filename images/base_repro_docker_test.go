@@ -82,15 +82,17 @@ func TestBaseReproducibleFixtureBuild(t *testing.T) {
 	})
 	var ids []string
 	for _, tag := range tags {
+		tarball := filepath.Join(dir, strings.ReplaceAll(tag, ":", "-")+".tar")
 		build := exec.Command("docker", "buildx", "build", "--progress", "plain",
 			"--platform", testutil.DockerPlatform(t),
 			"--build-arg", "SOURCE_DATE_EPOCH="+reproFixtureEpoch,
-			"--output", "type=docker,rewrite-timestamp=true,unpack=false",
+			"--output", "type=oci,name="+tag+",dest="+tarball+",rewrite-timestamp=true",
 			"--tag", tag, "--file", filepath.Join(dir, "Dockerfile"), dir)
 		build.Env = append(os.Environ(), "DOCKER_BUILDKIT=1")
 		if out, err := build.CombinedOutput(); err != nil {
 			t.Fatalf("docker buildx build: %v\n%s", err, testutil.Tail(string(out)))
 		}
+		testutil.Docker(t, "load", "--input", tarball)
 		ids = append(ids, testutil.Docker(t, "image", "inspect", "--format", "{{.Id}}", tag))
 	}
 	if ids[0] == ids[1] {

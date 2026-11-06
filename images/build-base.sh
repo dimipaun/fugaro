@@ -58,14 +58,17 @@ first=$1
 n=$#
 for tag in "$@"; do set -- "$@" --tag "$tag"; done
 shift "$n"
+tarball=$(mktemp)
+trap 'rm -f "$tarball"' EXIT
 DOCKER_BUILDKIT=1 docker build --progress plain \
   --platform "${PLATFORM:-linux/amd64}" \
   --build-arg "SOURCE_DATE_EPOCH=$epoch" \
   --build-arg "FUGARO_VERSION=${FUGARO_VERSION:-dev}" \
   --build-arg "FUGARO_COMMIT=${FUGARO_COMMIT:-$(git -C "$root" rev-parse HEAD 2>/dev/null || echo unknown)}" \
   --file "$root/images/$base/Dockerfile" \
-  --output "type=docker,rewrite-timestamp=true,unpack=false" \
+  --output "type=oci,name=$first,dest=$tarball,rewrite-timestamp=true" \
   "$@" "$root"
+docker load --input "$tarball"
 for tag in $tags; do
   [ "$tag" = "$first" ] || docker tag "$first" "$tag"
 done
