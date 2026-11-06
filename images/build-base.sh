@@ -64,7 +64,7 @@ DOCKER_BUILDKIT=1 docker build --progress plain \
   --build-arg "FUGARO_VERSION=${FUGARO_VERSION:-dev}" \
   --build-arg "FUGARO_COMMIT=${FUGARO_COMMIT:-$(git -C "$root" rev-parse HEAD 2>/dev/null || echo unknown)}" \
   --file "$root/images/$base/Dockerfile" \
-  --output "type=docker,rewrite-timestamp=true" \
+  --output "type=docker,rewrite-timestamp=true,unpack=false" \
   "$@" "$root"
 for tag in $tags; do
   [ "$tag" = "$first" ] || docker tag "$first" "$tag"
