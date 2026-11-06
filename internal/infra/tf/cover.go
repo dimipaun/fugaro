@@ -2294,7 +2294,7 @@ type checkSpec struct {
 // catalogCheckSpec is the part of the catalog check job's
 // FUGARO_CATALOG_CHECK_SPEC that points at registries and accounts: the base
 // images its builds start FROM and the account each repository's build runs
-// as. It decodes as the job does (infra.CatalogCheckJobSpec's tags).
+// as. It decodes as the job does (internal/cli's catalogCheckSpec reader; infra.CatalogCheckJobSpec is the writer, with the same tags).
 type catalogCheckSpec struct {
 	BaseImages   map[string]string `json:"base_images"`
 	Repositories []struct {
