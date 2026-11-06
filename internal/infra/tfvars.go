@@ -678,7 +678,7 @@ func CarriedCredentialsService(vars, prev []byte, verifiers []string) ([]byte, e
 
 // CarriedCredentialsServiceAsFound is CarriedCredentialsService with the block
 // taken exactly as it is found — verifier_accounts included — for the one
-// caller that has no effective list to write: `fugaro init --print-vars`
+// caller that has no effective list to write: `fugaro setup --print-vars`
 // (init.go), which prints the variables this machine's workdir holds and
 // deliberately reads no cloud, so it cannot know whether the published node
 // names a verifier. It must not pass nil to CarriedCredentialsService
