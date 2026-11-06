@@ -1,6 +1,6 @@
 # Implementation plan: concise CLI output (part A)
 
-**Status: plan only; nothing is implemented; no task is approved.** Each task below needs the owner's explicit go, by name; answering a decision approved none of them. This plan builds spec section 1 ([spec.md](spec.md)) as amended by [reconciliation.md](reconciliation.md); where they disagree the reconciliation wins. It shares no task and no file with [implementation-plan-graph.md](implementation-plan-graph.md) (D1350).
+**Status: plan only; nothing is implemented; no task is approved.** Each task below needs the owner's explicit go, by name; answering a decision approved none of them. This plan builds spec section 1 ([spec.md](spec.md)) as amended by [reconciliation.md](reconciliation.md); where they disagree the reconciliation wins. It shares **no task** with [implementation-plan-graph.md](implementation-plan-graph.md) (D1350); the few **files** both plans touch are sequenced by the cross-plan table in [README.md](README.md).
 
 **The owner's answers that shaped it (2026-11-06):** D1350 two streams, two plans; D1351 logs in the state directory; D1352 only mutating and step commands log, never `--json` or console polls, 14 days or 50 files per command name, mode 0600 in a 0700 directory, redacted, a write failure never fails the command; D1353 persistent root `--verbose` with `-v` on subcommands, a leading `fugaro -v` stays the version, `recipes --verbose` unchanged; D1354 a shared reporter package, staged (the converge family, then other step-printing commands, then a mechanical pass, listings excluded); **D1355 (not the recommendation) `termenv` becomes a direct dependency, approved by the owner**, so `CLAUDE.md`'s ask-first rule is satisfied. Tension T6 was ruled on 2026-11-06 (a failed read command leaves no log); **T4 is still open** and the plan keeps its assumption T4(a): the reporter decides colour on or off itself and uses `termenv` only to style.
 
@@ -26,12 +26,22 @@
 
 ## Slices
 
-- **A1 Foundation (inert):** CL1 reporter, CL2 one colour rule, CL3 log sink, CL4 flag plumbing, CL10 the `--json` pin. Nothing in the CLI changes its output.
+- **A1 Foundation (inert):** CL0 the folder's docs pin, CL1 reporter, CL2 one colour rule, CL3 log sink, CL4 flag plumbing. Nothing in the CLI changes its output.
 - **A2 The converge family (the owner's `update` paste):** CL5a, CL5b.
 - **A3 Other step-printing commands:** CL6, CL7a, CL7b, CL7c.
-- **A4 Closing:** CL9 census, CL11 docs, CL12 owner-run checks.
+- **A4 Closing:** CL10 the `--json` pin (after the migration it guards), CL9 census, CL11 docs, CL12 owner-run checks.
 
 ## Tasks
+
+### CL0. Pin this folder (the repo's convention for a docs package)
+
+**Depends on:** none. **Reviewer:** standard. Sibling packages (`docs/stateless-orchestrator`, `docs/workspaces`, `docs/mcp-server`, `docs/cloud-senior-review`) each have `internal/cli/docs_<name>_test.go`; this docs-only branch adds none because it may touch only `docs/`, so the pin is this first task.
+
+- **Files (1):** `internal/cli/docs_cli_output_console_graph_test.go` (new): every `D13xx` the reconciliation answers is in the owner's block, the status line of the README and both plans reads `plan only; nothing is implemented; no task approved`, and the cited paths exist.
+- **Tests:** `TestDocsCliOutputConsoleGraphDecisionsAreAnswered`, `TestDocsCliOutputConsoleGraphStatusLines`, `TestDocsCliOutputConsoleGraphCitedPathsExist`.
+- **Command:** `go test ./internal/cli/ -run DocsCliOutputConsoleGraph -count=1`
+- **Red step:** the file does not exist.
+- **Commit:** `internal/cli: pin the CLI output and console graph docs`
 
 ### CL1. The reporter package, and `termenv` as a direct dependency
 
@@ -53,7 +63,7 @@
 - **Interfaces:** consumes `report.NoColor`. **Behaviour unchanged** (the flag, `NO_COLOR` any value, `TERM=dumb`); a fix round adds none.
 - **Tests:** `TestUseASCIIAndNoColor` (existing) and `TestUseNoColorMatchesReport` (the two agree on every row of CL1's table).
 - **Command:** `go test ./internal/watch/ -run 'NoColor' -count=1`
-- **Red step:** `TestUseNoColorMatchesReport` fails to compile before CL1's export is consumed; after, delete the delegation and the equality test fails on `CLICOLOR_FORCE`.
+- **Red step:** none: a behaviour-preserving move (today's `UseNoColor` and CL1's `report.NoColor` already agree, and neither reads `CLICOLOR_FORCE`). The check is that the existing table and `TestUseNoColorMatchesReport` stay green; **mutation:** change the shared rule's `TERM=dumb` branch and both packages' tests turn red together.
 - **Commit:** `watch: take the no-colour rule from the reporter`
 
 ### CL3. The log sink and its retention (SEC)
@@ -61,20 +71,20 @@
 **Decisions:** D1351, D1352. **Findings:** F5, F6. **Depends on:** CL1. **Reviewer: `opus + mandatory independent review`** (a new file that receives secrets-adjacent output; modes, pruning that deletes files). Mutation check required.
 
 - **Files (max 5):** `internal/report/logsink.go` (new), `internal/report/logsink_test.go` (new), `internal/report/redact.go` (new: the `Redactor` hook), `internal/report/logsink_windows_test.go` (new, build-tagged: path shape only), `internal/localcfg/platformdirs.go` **read only, not edited** (consumed).
-- **Interfaces:** `report.OpenLog(cmdName string, getenv func(string) string, goos string, now func() time.Time, redact func(string) string) (Sink, error)`; directory `<localcfg.UserDir(getenv, goos, DirState)>/fugaro/logs` (`~/.local/state/fugaro/logs`; `%LOCALAPPDATA%\fugaro\logs` on Windows); file `<command>-<UTC timestamp>-<pid>.log` mode 0600 in a 0700 directory created with `MkdirAll` then `Chmod`; `<command>` is validated against `^[a-z][a-z0-9-]{0,40}$` (a command name never carries a path); retention after open: files of **this command name only**, older than 14 days or beyond the newest 50, regular files only, never a symlink, never outside the directory. Every write passes `redact`. `OpenLog` errors are returned and the caller treats them as "no log" (G5): the sink then reports `Path() == ""`.
-- **Tests:** `TestLogPathFollowsUserDir` (XDG set, unset, Windows), `TestLogFileModeAndDirMode` (0600 and 0700, and an existing 0755 directory is tightened), `TestRetention14Days`, `TestRetention50FilesPerCommand` (another command's files untouched), `TestRetentionIgnoresSymlinksAndForeignFiles`, `TestRedactsBeforeWrite`, `TestUnwritableStateDirNeverFailsTheCaller` (read-only directory returns an empty-path sink, no panic), `TestCommandNameIsValidated` (`../x`, empty and a long name are refused).
+- **Interfaces:** `report.OpenLog(cmdName string, getenv func(string) string, goos string, now func() time.Time, secrets func() []string) (Sink, error)`; directory `<localcfg.UserDir(getenv, goos, DirState)>/fugaro/logs` (`~/.local/state/fugaro/logs`; `%LOCALAPPDATA%\fugaro\logs` on Windows); file `<command>-<UTC timestamp>-<pid>.log`; **the directory is `Lstat`ed: not a symlink and owned by the effective uid, otherwise no log; it is created 0700 and an existing one is tightened only if it passes that check; the file is created `O_CREATE|O_EXCL|O_NOFOLLOW` with mode 0600** (an agent's session often points `XDG_*` at a temp directory, so the path is attacker-influenced and the name predictable); `<command>` is validated against `^[a-z][a-z0-9-]{0,40}$` (a command name never carries a path); retention after open: files whose name matches the **exact pattern** `<this command>-<14 digits UTC>-<pid>.log` (a prefix glob for `image` would delete `image-refresh-*`), older than 14 days or beyond the newest 50, regular files only, never a symlink, never outside the directory. **Redaction is by line:** the sink buffers until a newline (and at `Close`) and then replaces every value `secrets()` returns **at that moment** (the converge's live slots, so a value filled after the sink opened still applies); a secret split across two `Write` calls is therefore redacted. A caller with no redaction source passes `nil` and the sink holds stage lines only. `OpenLog` errors are returned and the caller treats them as "no log" (G5): the sink then reports `Path() == ""`.
+- **Tests:** `TestLogPathFollowsUserDir` (XDG set, unset, Windows), `TestLogFileModeAndDirMode` (0600 and 0700, and an existing 0755 directory is tightened), `TestRetention14Days`, `TestRetention50FilesPerCommand` (another command's files untouched), `TestRetentionIgnoresSymlinksAndForeignFiles`, `TestRedactsBeforeWrite`, `TestRedactsASecretSplitAcrossWrites`, `TestSinkUsesTheHeldSecretsFilledAfterOpen`, `TestLogDirSymlinkOrForeignOwnerMeansNoLog`, `TestLogFileIsCreatedExclusively` (a pre-existing file or symlink at the name is not followed), `TestRetentionMatchesTheExactNamePattern` (`image` does not prune `image-refresh-*`), `TestUnwritableStateDirNeverFailsTheCaller` (read-only directory returns an empty-path sink, no panic), `TestCommandNameIsValidated` (`../x`, empty and a long name are refused).
 - **Command:** `go test ./internal/report/ -run 'Log|Retention|Redact' -count=1`
-- **Red step:** `OpenLog` is undefined. **Mutations that must each turn a test red:** widen the file mode to 0644, prune across command names, follow a symlink, skip redaction.
+- **Red step:** `OpenLog` is undefined. **Mutations that must each turn a test red:** widen the file mode to 0644, prune across command names, follow a symlink, redact per write instead of per line, glob by prefix, skip redaction.
 - **Commit:** `report: a per-command log of every step run, pruned at 14 days or 50 files`
 
 ### CL4. Flag plumbing: the persistent `--verbose` / `-v`
 
 **Decisions:** D1353. **Findings:** F4, F29. **Depends on:** CL1. **Reviewer:** standard.
 
-- **Files (max 6):** `internal/cli/root.go`, `internal/cli/report_flags.go` (new: `reporterFor(cmd, name)` builds a `report.Reporter` from the persistent flag, the environment and the terminal helpers `stdinIsTerminal` and `writerIsTerminal`), `internal/cli/report_flags_test.go` (new), `internal/cli/recipes.go` (**only if** the test shows the local `--verbose` does not shadow the persistent one cleanly; otherwise untouched), `website/content/cli-reference.md` (regenerated: the persistent flag appears in every command's table), `internal/cli/docs_website_cliref_test.go` (only if its pin changes).
+- **Files (max 6):** `internal/cli/root.go`, `internal/cli/report_flags.go` (new: `reporterFor(cmd, name)` builds a `report.Reporter` from the persistent flag, the environment and the terminal helpers `stdinIsTerminal` and `writerIsTerminal`), `internal/cli/report_flags_test.go` (new), `internal/cli/recipes.go` (**`recipes`' local `--verbose` gets the shorthand `v` (`BoolVarP`), same meaning**: a local flag without a shorthand shadows the whole persistent flag, so `recipes -v` would be unknown and `TestEveryCommandAcceptsVerbose` would fail), `website/content/cli-reference.md` (regenerated: the persistent flag appears in every command's table), `internal/cli/docs_website_cliref_test.go` (only if its pin changes), `ee/clidoc/` expectations if the `ee` reference changes. **Note:** the persistent `-v` takes the shorthand cobra gives the root's version flag, so a leading `fugaro -v` still prints the version only because `NormalizeVersionArgs` rewrites it before cobra parses.
 - **Interfaces produced:** a persistent root flag `--verbose` with shorthand `-v` on every subcommand; `NormalizeVersionArgs` is unchanged so a leading `fugaro -v` is still `--version`; `reporterFor`. `recipes --verbose` keeps its local meaning (the local flag of the same name shadows the persistent one; a test says so).
-- **Tests:** `TestLeadingDashVIsStillTheVersion`, `TestVerboseShorthandOnASubcommand` (`fugaro update -v` parses), `TestRecipesVerboseKeepsItsMeaning`, `TestEveryCommandAcceptsVerbose` (walk the cobra tree), `TestDocsCliRef` (the generated reference is current).
-- **Command:** `go test ./internal/cli/ -run 'Verbose|NormalizeVersion|Recipes|Docs.*CliRef' -count=1`
+- **Tests:** `TestLeadingDashVIsStillTheVersion`, `TestVerboseShorthandOnASubcommand` (`fugaro update -v` parses), `TestRecipesVerboseKeepsItsMeaning`, `TestEveryCommandAcceptsVerbose` (walk the cobra tree), the existing `TestCliReferenceNamesEveryCommandAndFlag` and `TestCliReferenceInventsNothing` (`internal/cli`) and `TestCliReferenceIsCurrent` (`ee/clidoc`).
+- **Command:** `go test ./internal/cli/ -run 'Verbose|NormalizeVersion|Recipes|TestCliReferenceNamesEveryCommandAndFlag|TestCliReferenceInventsNothing' -count=1 && go test -tags ee ./ee/clidoc/ -run TestCliReferenceIsCurrent -count=1`
 - **Red step:** `fugaro update -v` is an unknown shorthand today: `TestVerboseShorthandOnASubcommand` fails.
 - **Commit:** `cli: a persistent --verbose (-v) and the reporter's constructor`
 
@@ -82,7 +92,7 @@
 
 **Decisions:** D1352, D1354. **Findings:** F1, F7. **Depends on:** CL1. **Reviewer: `opus + mandatory independent review`** (G1: the loop owns the confirmations and the `left for you` block).
 
-- **Files (max 3):** `internal/initflow/loop.go`, `internal/initflow/loop_test.go`, `internal/initflow/stage.go` **only if** `Options` needs one field (`Report *report.Reporter`).
+- **Files (max 2):** `internal/initflow/loop.go`, `internal/initflow/loop_test.go`; the `Options` struct (in `loop.go`) gains one field (`Report *report.Reporter`).
 - **Interfaces:** consumes CL1. `loop.view` and `loop.finish` print through a step per stage: marker, short phrase, tick (done or changed), cross (failed), a distinct marker for left for you, billing pending and waiting for billing (never a green tick), then one summary line ("Done in 4.2s, 6 steps"). The `--plan-only` plan view keeps its one-line-per-stage shape and the `[state] stage` words the tests and docs quote (the plan view is not a run). `stopped at <stage>; fix: <fix>` and `left for you (<stage>, <kind>): <text>` and the commands under it print unchanged in the default view. Verbose streams as today.
 - **Tests:** `TestLoopDefaultViewIsOneLinePerStage`, `TestLoopLeftForYouIsNotATick`, `TestLoopFailureShowsContextAndFix`, `TestLoopVerboseStreamsEverything`, `TestLoopPlanOnlyViewUnchanged` (golden of today's lines), `TestLoopNoReporterPrintsAsToday` (a nil reporter is today's output: keeps every untouched caller green).
 - **Command:** `go test ./internal/initflow/ -count=1`
@@ -94,9 +104,9 @@
 
 **Decisions:** D1352, D1354. **Findings:** F1, F2, F6, F7, F8. **Depends on:** CL3, CL4, CL5a. **Reviewer: `opus + mandatory independent review`** (G1, G11: confirmations, the managed gate's text and the agent refusal sit in these files).
 
-- **Files (max 8):** `internal/cli/init.go` (build the reporter, hand it to the loop options, route the stage's progress writer and the Terraform `TF.Out` through `Reporter.Stream()`; the direct prints that are prompts stay prompts), `internal/cli/update.go` (the command name `update` for the log), `internal/cli/init_report_test.go` (new), `internal/cli/init_output_test.go` (adjusted pins), `internal/cli/update_test.go` (adjusted pins), `internal/cli/doctor_render_test.go` (**untouched, must stay green**), the docs tests the change breaks (named at launch from the red run, each edited in the same commit), `plugin/skills/upgrade/reference/states.md` (only if a quoted sentence changes).
+- **Files (max 8):** `internal/cli/init.go` (build the reporter, hand it to the loop options, route the stage's progress writer and the Terraform `TF.Out` through `Reporter.Stream()`, **with the sink's redaction source the converge's own live `e.redact` slots plus `secretsHeld()` (`internal/cli/init_stages.go`)**, because today `TF.Out` is raw and only stage details and errors pass `initflow.Options.Redact`; the direct prints that are prompts stay prompts), `internal/cli/update.go` (the command name `update` for the log), `internal/cli/init_report_test.go` (new), `internal/cli/init_output_test.go` (adjusted pins), `internal/cli/update_test.go` (adjusted pins), `internal/cli/doctor_render_test.go` (**untouched, must stay green**), the docs tests the change breaks (named at launch from the red run, each edited in the same commit), `plugin/skills/upgrade/reference/states.md` (only if a quoted sentence changes).
 - **Interfaces:** consumes CL3's `OpenLog("update"|"setup", ...)`, CL4's `reporterFor`. `--json`, `--print-vars`, `--plan-only` and a coding agent's marker take the paths they take today. `fugaro update` default: one line per stage, the summary line, the log path on failure and on a stage left for you. `--verbose` streams everything.
-- **Tests:** `TestUpdateDefaultOutputIsShort` (the owner's pasted shape: a fake stage list prints at most stages plus a summary), `TestUpdateFailurePrintsContextAndLogPath`, `TestUpdateVerboseStreamsTerraform`, `TestUpdateLogHoldsTheFullTerraformOutput`, `TestUpdateJSONUnchanged`, `TestConfirmPromptsAreNeverSuppressed` (G1: a typed-project-name prompt text is on screen and no spinner is active while stdin is read), `TestUpdateUnderAgentMarkerPrintsTheSameSteps` (G11), `TestDoctorDefaultIsOneScreen` (G9, existing), the existing update convergence test that asserts `doctor` is clean (named at launch).
+- **Tests:** `TestUpdateDefaultOutputIsShort` (the owner's pasted shape: a fake stage list prints at most stages plus a summary), `TestUpdateFailurePrintsContextAndLogPath`, `TestUpdateVerboseStreamsTerraform`, `TestUpdateLogHoldsTheFullTerraformOutput`, `TestUpdateLogRedactsHeldSecretsInTheTerraformStream` (a held value in a Terraform line, split across two writes, is not in the file), `TestUpdateJSONUnchanged`, `TestConfirmPromptsAreNeverSuppressed` (G1: a typed-project-name prompt text is on screen and no spinner is active while stdin is read), `TestUpdateUnderAgentMarkerPrintsTheSameSteps` (G11), `TestDoctorDefaultIsOneScreen` (G9, existing), the existing update convergence test that asserts `doctor` is clean (named at launch).
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestUpdate|TestSetup|TestInit|TestConfirm|TestDoctorDefault|Docs' -count=1 -timeout 40m`
 - **Red step:** `TestUpdateDefaultOutputIsShort` fails: today's output is the whole Terraform stream.
 - **Mutations:** pipe the prompt through the sink only: `TestConfirmPromptsAreNeverSuppressed` fails; leave the spinner running during a read: same test fails.
@@ -109,6 +119,7 @@
 
 - **Files (max 7):** `internal/cli/image_refresh.go`, `internal/cli/image_refresh_managed.go`, `internal/cli/image_build_catalog.go`, `internal/cli/image.go`, `internal/cli/image_refresh_steps_test.go`, `internal/cli/image_refresh_managed_test.go`, the docs tests the change breaks.
 - **Interfaces:** the refresh's `step N (name)` and `steps finished:` text become reporter steps; the stop line `fugaro image refresh stopped at step %d` is kept as an error message (the plugin skill quotes it).
+- **Logging (D1352):** `image refresh` and `image build` call `report.OpenLog("image-refresh"|"image-build", ...)`; tests `TestImageRefreshWritesALog`, `TestImageBuildWritesALog`.
 - **Tests:** `TestImageRefreshDefaultIsOneLinePerStep`, `TestImageRefreshStoppedAtStepKeepsItsSentence`, `TestImageRefreshVerboseUnchanged`, plus the existing refresh tests.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestImageRefresh|TestImageBuild|Docs' -count=1 -timeout 40m`
 - **Red step:** the default view prints more than one line per step.
@@ -124,26 +135,26 @@
 | CL7b | project and config writers (`config_publish.go`, `allow_delete.go`, `managed*.go`, `restore*.go`, `budget.go` writers) | managed gate text unchanged |
 | CL7c | run and runs writers (`run.go` launch lines, `cancel`, `reaper`, `backlog` writers) | `run --json` untouched (G2) |
 
-Each task: **Tests:** one `Test<Command>DefaultIsShort` per migrated command (named at launch), plus the existing tests of those files, plus `TestNoStepCommandPrintsAnsiOffATerminal`. **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run '<the family>|Docs' -count=1 -timeout 40m`. **Red step:** the default-short test for the family fails before the move. **Commit:** `cli: <family> commands print through the reporter`. Pure listings (`runs ls`, `config list`, `models ls`, `doctor`, `settings`, `budget show`, `report`) are exempt (D1354) and listed in CL9.
+Each task: **Logging (D1352):** every mutating command it migrates calls `report.OpenLog(<command name>, ...)`, with one `Test<Command>WritesALog` each (pure readers are exempt and listed in CL9). **Tests:** one `Test<Command>DefaultIsShort` per migrated command (named at launch), plus the existing tests of those files, plus `TestNoStepCommandPrintsAnsiOffATerminal`. **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run '<the family>|Docs' -count=1 -timeout 40m`. **Red step:** the default-short test for the family fails before the move. **Commit:** `cli: <family> commands print through the reporter`. Pure listings (`runs ls`, `config list`, `models ls`, `doctor`, `settings`, `budget show`, `report`) are exempt (D1354) and listed in CL9.
 
 ### CL9. The census: which commands are on the reporter
 
 **Depends on:** CL6, CL7a, CL7b, CL7c. **Reviewer:** standard.
 
 - **Files (2):** `internal/cli/report_census_test.go` (new), `internal/cli/report_exempt.go` (new: the exempt listing set with a reason per command).
-- **Tests:** `TestEveryCommandIsOnTheReporterOrExempt` (walks the cobra tree; a command with a step-like `Fprint` that is on neither fails the build), `TestExemptCommandsAreListings` (each exempt command has a reason string and a `--json` or table output).
+- **Tests:** `TestEveryCommandIsOnTheReporterOrExempt` (walks the cobra tree; a command with a step-like `Fprint` that is on neither fails the build), `TestEveryMutatingCommandWritesALog` (every reporter command not in the exempt reader list opens a log through `report.OpenLog`), `TestExemptCommandsAreListings` (each exempt command has a reason string and a `--json` or table output).
 - **Command:** `go test ./internal/cli/ -run 'ReporterOrExempt|ExemptCommands' -count=1`
 - **Red step:** a new command with a print and no entry fails.
 - **Commit:** `cli: pin which commands print through the reporter`
 
-### CL10. `--json` is never affected (a pin, written early)
+### CL10. `--json` is never affected (a pin, written after the migration it guards)
 
-**Decisions:** D1352. **Findings:** F8. **Depends on:** CL1. **Reviewer:** standard.
+**Decisions:** D1352. **Findings:** F8. **Depends on:** CL5b (the mutation below can only fail once a command prints through the reporter). **Reviewer:** standard.
 
 - **Files (2):** `internal/cli/report_json_test.go` (new), `internal/cli/report_json_fixtures_test.go` (new).
 - **Tests:** `TestJSONStdoutIsADocumentUnderEveryTerminalEnvironment` (for every command in the tree that has `--json` and a hermetic fixture: a fake terminal, `FORCE_COLOR`, `CLICOLOR_FORCE=1`, `--verbose`; stdout parses as one JSON document and has no byte 0x1B), `TestJSONReadsWriteNoLog` (G7), `TestJSONFixtureCoverage` (a `--json` command with no fixture is listed with a reason).
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestJSON.*(Terminal|Log|Fixture)' -count=1 -timeout 40m`
-- **Red step:** none is red on today's tree (it is a regression pin); **mutation:** make the reporter print a spinner in JSON mode and the first test fails.
+- **Red step:** none is red on today's tree (it is a regression pin); **mutation, which fails only after CL5b:** make the reporter print a spinner in JSON mode and the first test fails.
 - **Commit:** `cli: pin that --json is never touched by human formatting`
 
 ### CL11. Docs and release notes
@@ -161,20 +172,20 @@ Each task: **Tests:** one `Test<Command>DefaultIsShort` per migrated command (na
 | --- | --- | --- | --- |
 | **310** | A real terminal on macOS: `fugaro update`, `fugaro setup --plan-only`, `NO_COLOR=1 fugaro update`, `fugaro update \| cat`, `fugaro update --json`, a forced failure (the context and the log path), the log file's mode and its retention after 51 runs | the owner | the five commands above, then `ls -l ~/.local/state/fugaro/logs` |
 | **311** | The same on Windows Terminal and the legacy console (virtual-terminal mode through `termenv`; the spinner and colour) | the owner | the same commands in each console |
-| **314** | Reserved, unused | | |
+| **314** | Part B's (see the graph plan); reserved here | | |
 
 The check sections are written into `docs/gcp-live-checklist.md` by the task that implements the first slice that needs them, as **NOT RUN**; this plan writes none.
 
 ## Parallel execution
 
-**Edges** (from the Depends-on lines): CL2, CL3, CL4, CL5a, CL10 depend on CL1; CL5b on CL3, CL4, CL5a; CL6, CL7a, CL7b, CL7c on CL5b; CL9 on CL6, CL7a-c; CL11 on CL5b, CL9. CL12 is the owner's, after CL5b (310) and the Windows build (311).
+**Edges** (from the Depends-on lines): CL2, CL3, CL4, CL5a depend on CL1; CL0 on nothing; CL5b on CL3, CL4, CL5a; CL6, CL7a, CL7b, CL7c, CL10 on CL5b; CL9 on CL6, CL7a-c; CL11 on CL5b, CL9. CL12 is the owner's, after CL5b (310) and the Windows build (311).
 
 | Level | Tasks (run concurrently) |
 | --- | --- |
-| L0 | CL1 |
-| L1 | CL2, CL3, CL4, CL5a, CL10 |
+| L0 | CL0, CL1 |
+| L1 | CL2, CL3, CL4, CL5a |
 | L2 | CL5b |
-| L3 | CL6, CL7a, CL7b, CL7c |
+| L3 | CL6, CL7a, CL7b, CL7c, CL10 |
 | L4 | CL9 |
 | L5 | CL11 (then CL12, owner-run) |
 
@@ -189,7 +200,8 @@ The check sections are written into `docs/gcp-live-checklist.md` by the task tha
 | `internal/report/logsink.go` and its tests | CL3 | L1 |
 | `internal/cli/root.go`, `report_flags.go`, `website/content/cli-reference.md` | CL4 | L1 |
 | `internal/initflow/loop.go` | CL5a | L1 |
-| `internal/cli/report_json_test.go` | CL10 | L1 |
+| `internal/cli/report_json_test.go` | CL10 | L3 |
+| `internal/cli/docs_cli_output_console_graph_test.go` | CL0 | L0 |
 | `internal/cli/init.go`, `update.go` | CL5b | L2 |
 | `internal/cli/image*.go` | CL6 | L3 |
 | the accounts, secrets, creds files | CL7a | L3 |
@@ -198,7 +210,7 @@ The check sections are written into `docs/gcp-live-checklist.md` by the task tha
 | `internal/cli/report_census_test.go`, `report_exempt.go` | CL9 | L4 |
 | `docs/design/v1.md` | CL11 | L5 |
 
-The L3 batches must keep **disjoint file sets**; a docs test that two batches both break is edited by the batch whose command family the pinned sentence names, and a second batch that would also edit it moves to the next level (a re-check at launch from the real red run). The generated `website/content/cli-reference.md` is written only by CL4: no L3 task changes help text.
+The L3 batches must keep **disjoint file sets**; a docs test that two batches both break is edited by the batch whose command family the pinned sentence names, and a second batch that would also edit it moves to the next level (a re-check at launch from the real red run). The generated `website/content/cli-reference.md` is written within this plan only by CL4: no L3 task changes help text. **Across plans** it is also written by the graph plan's CG3s and CG3, and `docs/design/v1.md` by CG3 before CL11: the order is the README's cross-plan table.
 
 ## What is not in this plan
 
