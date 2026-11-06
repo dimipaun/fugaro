@@ -597,6 +597,13 @@ type initRun struct {
 	retireApplied bool     // it applied: the jobs it removed from state still need deleting
 	retireRemoved []string // what the state removal took out: what a stop before the API delete owes (M-B)
 	retireClean   bool     // the resume's plan changed nothing: no apply is left, only the API delete
+	// retireAuto is the managed project's own retirement (init_retire.go,
+	// issue #1794): plain `fugaro update` retires the derived addresses the
+	// configuration stopped producing with no confirmation asked at all, and
+	// the flow's two typed confirmations are the gate's admission in their
+	// place. False -- every other case, including every unmanaged project and
+	// every coding agent's session -- is the flow as it has always run.
+	retireAuto bool
 }
 
 // initResult is what --json prints.
@@ -4119,6 +4126,20 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 				if err := r.retirePlan(ctx, c, t, wd, ready, rets, opts, im); err != nil {
 					return infra.RepoSpec{}, nil, err
 				}
+				return ready, missing, nil
+			}
+			// A managed project retires this set by itself (issue #1794): no
+			// prompt, no typed confirmation, no --retire, because the whole
+			// upgrade is the one command the user knows. It answers false for
+			// every set that is not all derived addresses of this repository,
+			// for an unmanaged project and for a session the gate cannot
+			// confirm -- and then the refusal below is what a plain run has
+			// always read.
+			auto, err := r.retireManaged(ctx, c, t, wd, ready, rets, opts, im)
+			if err != nil {
+				return infra.RepoSpec{}, nil, err
+			}
+			if auto {
 				return ready, missing, nil
 			}
 			// The gate, and it is the two cases the design names and no
