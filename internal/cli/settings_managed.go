@@ -527,16 +527,36 @@ func settingsRounds(raw string) (float64, bool) {
 	return n, err == nil
 }
 
-// settingsFloorBase is the number of rounds a run can spend today for the key
-// at keyPath: the layer's own value where it sets one, else the STRICTEST
-// mode's row. A layer value pins the count, but with none set every run takes
-// its rounds from the mode it resolves, and that mode is not this layer's to
-// know: `--rigor critical`, an area match, a reached rigor (D22) and a
-// repository's own `rigor.default` all resolve higher than the layer's mode,
-// and the checkouts are not part of this write. So the base is the highest
-// row, and a session that writes a lower number into a layer that sets none is
-// refused. The text beside it is what the refusal names.
+// settingsFloorBase is the number of rounds a run can spend today for the
+// senior-review key at keyPath: the layer's own value where it sets one, else
+// the strictest mode's senior row. See settingsFloorBaseRow for the rule and
+// why the fallback is the highest row.
 func settingsFloorBase(old []byte, keyPath []string) (float64, string) {
+	return settingsFloorBaseRow(old, keyPath, rigor.DefaultRounds(rigor.Critical).Senior)
+}
+
+// settingsFloorBaseRow is the number of rounds a run can spend today for the
+// key at keyPath: the layer's own value where it sets one, else the STRICTEST
+// mode's row for the loop that key counts. A layer value pins the count, but
+// with none set every run takes its rounds from the mode it resolves, and that
+// mode is not this layer's to know: `--rigor critical`, an area match, a
+// reached rigor (D22) and a repository's own `rigor.default` all resolve higher
+// than the layer's mode, and the checkouts are not part of this write. So the
+// base is the highest row, and a session that writes a lower number into a
+// layer that sets none is refused. The text beside it is what the refusal
+// names.
+//
+// The row is the caller's, because a mode's row counts two loops and they are
+// not the same number: the senior review runs rigor.Rounds.Senior times where
+// the first-line review runs .Inner (critical is 3 and 5). The settings door
+// reads the two keys its allowlist admits, both senior loops, and passes the
+// senior row; the publish door judges defaults.agent.first_line_rounds beside
+// them and passes that loop's own row, which a base taken from the wrong one
+// would judge against a number no run spends. One function decides the base for
+// both doors on purpose: "the layer's own value where it sets a positive
+// number, else the row" is one rule, and two copies of it would be two answers
+// to what a run spends today.
+func settingsFloorBaseRow(old []byte, keyPath []string, row int) (float64, string) {
 	if raw := settingsValueIn(old, keyPath); raw != "" {
 		// Zero is no number here: the layer's own reader treats a 0 round count
 		// as unset and lets the mode's row decide (config's validator fires only
@@ -546,8 +566,7 @@ func settingsFloorBase(old []byte, keyPath []string) (float64, string) {
 			return n, raw
 		}
 	}
-	n := rigor.DefaultRounds(rigor.Critical).Senior
-	return float64(n), fmt.Sprintf("%d (the strictest mode's row)", n)
+	return float64(row), fmt.Sprintf("%d (the strictest mode's row)", row)
 }
 
 // settingsReservedRefusal is the reserved run a written key hits, or "".
