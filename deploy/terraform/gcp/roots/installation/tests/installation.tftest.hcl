@@ -2598,8 +2598,11 @@ run "credentials_service_on" {
   # internal/infra/tf's credentialsServiceEnv allows, and it is held as an
   # exact map: an extra entry, a missing one, a name the process does not
   # read, or a value that is not the installation's own fails here. This run
-  # names a verifier, so it carries the ninth name; the run below, which names
-  # none, is where the other eight are held. Two of the nine are rendered only
+  # names a verifier, so the ninth name carries that list as it is; the run
+  # below, which names none, is where the entry carries the installation's own
+  # verifier account alone (CSR14 — the entry is rendered in every state of the
+  # list, and an absent member is the state the account is the default in).
+  # Two of the nine are rendered only
   # from what this file's own variables name: the verifier list (C3.9g1) and,
   # since BB4, the read mint's admitted people — the operators among the
   # installation's user: members, as the bare addresses a Google ID token's
@@ -2730,6 +2733,20 @@ run "credentials_service_first_apply_has_no_audience_yet" {
     }
   }
 
+  # The verifier entry's value is the account this apply creates, whose email
+  # is unknown during a plan; the override gives it one so the environment
+  # entry — and so the length of the set below — is readable here. It is the
+  # same mechanism the catalog check run uses for its account.
+  override_resource {
+    target          = google_service_account.fugaro_verifier[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-verifier@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-verifier@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-verifier@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
   assert {
     condition = tomap({
       for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.name => e.value
@@ -2741,8 +2758,15 @@ run "credentials_service_first_apply_has_no_audience_yet" {
     error_message = "the placeholder must not look like a Cloud Run URL: a run.app-shaped audience would be a guess at another service's name"
   }
   assert {
-    condition     = length(google_cloud_run_v2_service.credentials[0].template[0].containers[0].env) == 8
-    error_message = "the unset case sets the same eight names, the audience among them: a name the module drops is a service the process refuses by a different message"
+    condition     = length(google_cloud_run_v2_service.credentials[0].template[0].containers[0].env) == 9
+    error_message = "the unset case sets the same nine names, the audience and the verifier entry among them: a name the module drops is a service the process refuses by a different message, and the verifier entry is rendered in every state of the list (CSR14)"
+  }
+  assert {
+    condition = jsondecode(one([
+      for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.value
+      if e.name == "FUGARO_VERIFIER_ACCOUNTS"
+    ])) == ["fugaro-verifier@proj-1234.iam.gserviceaccount.com"]
+    error_message = "an installation whose block carries no verifier_accounts is the state the module's own verifier account is the default in, and it is the state every opted-in installation is in before the update that writes the list: the entry must carry that one address, alone (CSR14). The runs of the three states are roots/installation/tests/verifier.tftest.hcl"
   }
 }
 
