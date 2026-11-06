@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -148,7 +149,7 @@ func TestCarriedCredentialsServiceCarriesExactlyTheOneKey(t *testing.T) {
 	// credentials_service (InstallationVars of a spec, which never sets it).
 	fresh := []byte(`{"project": "proj-1234", "region": "us-east5", "project_secrets": {"log-bucket": "fugaro-log-bucket", "git-token": "fugaro-git-token"}}`)
 
-	got, err := CarriedCredentialsService(fresh, optedIn)
+	got, err := CarriedCredentialsService(fresh, optedIn, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +169,7 @@ func TestCarriedCredentialsServiceCarriesExactlyTheOneKey(t *testing.T) {
 	// An installation that never opted in carries nothing, and a workdir
 	// with no tfvars at all (nil: a first run) is the same case.
 	for name, prev := range map[string][]byte{"no key in the previous document": []byte(credsVarsDiscovered), "no previous document": nil} {
-		got, err := CarriedCredentialsService(fresh, prev)
+		got, err := CarriedCredentialsService(fresh, prev, nil)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -185,6 +186,104 @@ func TestCarriedCredentialsServiceCarriesExactlyTheOneKey(t *testing.T) {
 	}
 }
 
+// The carry writes the effective verifier list into the block it carries
+// (CSR14), and that is the half of it a rebuild from this side could not do:
+// an installation that opted in before this release carries a block with NO
+// verifier_accounts member, and the member is what tells the module which
+// identities the verify route admits. The three states are the field's own:
+// the owner's list is written as it is, `[]` is written as a present empty
+// array (the owner switching the route off, which the module would otherwise
+// read as its own default), and nil deletes the member, which is the state the
+// module's own verifier account is the default in.
+//
+// Mutation (verified, run and restored): carry the block verbatim and leave the
+// member as it is found: this test fails on the list and on the clear, and the
+// installation it describes admits the module's account on a route the owner
+// had switched off (TestOrdinaryUpdateCarriesTheOwnersClearIntoTheBlock is the
+// same mutation at the writer that runs it).
+func TestCarriedCredentialsServiceWritesTheEffectiveVerifierList(t *testing.T) {
+	svc := credsVarsSpec()
+	optedIn, err := SetCredentialsService([]byte(credsVarsDiscovered), svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh := []byte(`{"project": "proj-1234", "region": "us-east5"}`)
+	// The block as an installation that opted in before this release holds it.
+	blockOf := func(t *testing.T, vars []byte) map[string]any {
+		t.Helper()
+		var doc struct {
+			CredentialsService map[string]any `json:"credentials_service"`
+		}
+		if err := json.Unmarshal(vars, &doc); err != nil {
+			t.Fatalf("decoding %s: %v", vars, err)
+		}
+		return doc.CredentialsService
+	}
+	before := blockOf(t, optedIn)
+	if before == nil {
+		t.Fatalf("the fixture's opt-in wrote no block:\n%s", optedIn)
+	}
+	if _, ok := before["verifier_accounts"]; ok {
+		t.Fatalf("the fixture's block already carries verifier_accounts: this test would assert nothing about the member it is here for")
+	}
+
+	for _, tc := range []struct {
+		name string
+		list []string
+		// want is the member as it must read back: nil is the member absent,
+		// which is not the same value as an empty list.
+		want []string
+	}{
+		{"the owner's list is written as it is", []string{"person-1@example.com"}, []string{"person-1@example.com"}},
+		{"the owner's clear is written as a present empty array", []string{}, []string{}},
+		{"nothing anywhere names one, so the member is deleted", nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := CarriedCredentialsService(fresh, optedIn, tc.list)
+			if err != nil {
+				t.Fatal(err)
+			}
+			block := blockOf(t, got)
+			if block == nil {
+				t.Fatalf("the block was not carried:\n%s", got)
+			}
+			raw, ok := block["verifier_accounts"]
+			if (tc.want == nil) == ok {
+				t.Fatalf("verifier_accounts present = %v, want %v: an absent member is the module's own verifier account as the default, while an empty list is the owner admitting nobody", ok, tc.want != nil)
+			}
+			if !ok {
+				return
+			}
+			list, ok := raw.([]any)
+			if !ok {
+				t.Fatalf("verifier_accounts = %#v, want a JSON array: the module's caller refuses anything that is not a list", raw)
+			}
+			var have []string
+			for _, e := range list {
+				have = append(have, e.(string))
+			}
+			if len(have) != len(tc.want) {
+				t.Fatalf("verifier_accounts = %v, want %v", have, tc.want)
+			}
+			for i := range have {
+				if have[i] != tc.want[i] {
+					t.Fatalf("verifier_accounts = %v, want %v", have, tc.want)
+				}
+			}
+			// Everything else in the block is taken as it was found: a carry
+			// that rebuilt the object would drop the URL and the job table.
+			for k, v := range before {
+				if k == "verifier_accounts" {
+					continue
+				}
+				if !reflect.DeepEqual(block[k], v) {
+					t.Errorf("the carry changed %s: %v, want %v", k, block[k], v)
+				}
+			}
+		})
+	}
+}
+
 // A previous document this program cannot read is an error, not "nothing to
 // carry": the direction that fails closed is the one that refuses to write a
 // plan which drops the service.
@@ -194,7 +293,7 @@ func TestCarriedCredentialsServiceCarriesExactlyTheOneKey(t *testing.T) {
 func TestCarriedCredentialsServiceRefusesUnreadablePreviousVars(t *testing.T) {
 	fresh := []byte(`{"project": "proj-1234"}`)
 	for _, prev := range [][]byte{[]byte("not json"), []byte(""), []byte("[1,2]")} {
-		if _, err := CarriedCredentialsService(fresh, prev); err == nil {
+		if _, err := CarriedCredentialsService(fresh, prev, nil); err == nil {
 			t.Errorf("CarriedCredentialsService(fresh, %q) = nil error, want a refusal", prev)
 		}
 	}

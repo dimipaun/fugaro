@@ -719,9 +719,9 @@ func withDerivedMembers(raw []byte, lc *localcfg.Config) ([]byte, error) {
 	// stage can no longer read (C3.9g3, D1075). A config silent about the list
 	// states none — which is the node's own answer, and the node is what is
 	// being migrated — so only a written list is carried.
-	if !carries(verifierAccountsKey) && len(lc.VerifierAccounts) > 0 {
+	if !carries(verifierAccountsKey) && lc.VerifierAccounts != nil && len(*lc.VerifierAccounts) > 0 {
 		var err error
-		if node, err = patchPolicyJSON(node, verifierAccountsKey, lc.VerifierAccounts); err != nil {
+		if node, err = patchPolicyJSON(node, verifierAccountsKey, *lc.VerifierAccounts); err != nil {
 			return raw, userErr("carrying %s's %s verifier list into the policy: %v", lc.Name, verifierAccountsKey, err)
 		}
 	}

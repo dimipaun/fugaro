@@ -195,6 +195,9 @@ func initStages(e *initEngine) []initflow.Stage {
 	// (init_rules_stage.go, the owner's rule of 2026-10-30).
 	stages = append(stages, newRulesStage(e))
 	e.policy = newPolicyMigrateStage(e)
+	// The run's own local-config write drops the read this stage's plan is made
+	// from (initRun.writeConfig), so the stage is reachable from there too.
+	e.r.policyStage = e.policy
 	stages = append(stages, e.policy)
 	// The layer stage after the policy one: the project layer this run would
 	// publish is read under the node the policy stage just moved in place, so a

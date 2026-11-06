@@ -99,7 +99,7 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	// from a node that still carries a list, which is the removal an operator
 	// has to see.
 	if lc.VerifierAccounts != nil {
-		add("verifier_accounts", lc.VerifierAccounts, p.VerifierAccounts, false)
+		add("verifier_accounts", *lc.VerifierAccounts, p.VerifierAccounts, false)
 	}
 	// The same rule for the image catalog (D1140): a config silent about it
 	// keeps the node's, and a config that states one, an empty one included,

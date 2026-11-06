@@ -1084,7 +1084,7 @@
           "default": "unset = none"
         },
         "verifier_accounts": {
-          "default": "unset = none: nobody may ask the credentials service to verify a signature"
+          "default": "unset = nobody may ask the credentials service to verify a signature, except on an installation whose credentials service is deployed, where the installation's own verifier account may"
         },
         "version": {
           "default": "unset = the file is refused (version: 1 is required)"

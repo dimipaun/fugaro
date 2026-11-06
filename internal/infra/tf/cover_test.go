@@ -2605,3 +2605,57 @@ func TestDeployerDesignDirectionalReferencesPointTheRightWay(t *testing.T) {
 		}
 	}
 }
+
+// The verifier service account (CSR14, D1068) is the SECOND site of D75's
+// impersonation grant, and this is the test that makes one `fugaro update`
+// able to create it: the operators hold roles/iam.serviceAccountTokenCreator
+// on the account the installation's own apply creates, so the plan that
+// creates it grants that role on an account that is not the deployer's — which
+// is exactly what deployerTokenCreator refused while it was the only site.
+//
+// The account ID is a LITERAL here on purpose: it is the module's own
+// account_id (verifier.tf) and the Go side's spelling of it
+// (internal/infra.VerifierAccountID), and the whole point of the design is
+// that the address is computable from the configuration rather than read from
+// the apply.
+//
+// Both halves are asserted: the second site is covered, and the fence is
+// NARROWED to two accounts rather than opened. A token-creator grant on a
+// third account is still refused, and so is one whose account is not this
+// run's — the verifier account is the installation's own, in the installation
+// project, and a lookalike address or another project's account is not it.
+func TestVerifierTokenCreatorIsCoveredByOneUpdate(t *testing.T) {
+	const verifier = "fugaro-verifier@proj-1.iam.gserviceaccount.com"
+	// The module's own grant (iam.tf): the operators, and nobody else, may
+	// assume the verifier account — the impersonation the owner's own
+	// `gcloud auth print-identity-token --impersonate-service-account=…` and
+	// the launcher's own mint both stand on.
+	ch := grantOnAccount("google_service_account_iam_member", "user:me@example.com", DeployerTokenCreatorRole,
+		"projects/proj-1/serviceAccounts/"+verifier)
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) != 0 {
+		t.Errorf("the operators' %s grant on the verifier account is not covered by one update: %q — the update that creates the account would refuse its own plan and the account would never exist", DeployerTokenCreatorRole, got)
+	}
+
+	// The deployer's own site is unchanged by this widening.
+	ch = grantOnAccount("google_service_account_iam_member", "user:me@example.com", DeployerTokenCreatorRole,
+		"projects/proj-1/serviceAccounts/"+DeployerAccount("proj-1"))
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) != 0 {
+		t.Errorf("the operators' %s grant on the deployer account is not covered: %q", DeployerTokenCreatorRole, got)
+	}
+
+	for _, account := range []string{
+		// A third account of this project.
+		"projects/proj-1/serviceAccounts/fugaro-scheduler@proj-1.iam.gserviceaccount.com",
+		// The verifier account's name in another project: the account is the
+		// installation's own (the module creates it in var.project), and the
+		// role's project does not move it.
+		"projects/fp-2/serviceAccounts/" + verifier,
+		// A lookalike: a job account whose name starts with the verifier's.
+		"projects/proj-1/serviceAccounts/fugaro-verifier-0123abcd@proj-1.iam.gserviceaccount.com",
+	} {
+		ch := grantOnAccount("google_service_account_iam_member", "user:me@example.com", DeployerTokenCreatorRole, account)
+		if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+			t.Errorf("%s: the %s grant is covered: the impersonation is on the deployer account and the verifier account of this installation, and on nothing else", account, DeployerTokenCreatorRole)
+		}
+	}
+}
