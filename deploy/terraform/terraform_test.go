@@ -1553,6 +1553,12 @@ var (
 	// (M4): the account D920's public endpoint runs as, whose own grant list is
 	// one row long — the runs bucket's read (D932, modules/installation/
 	// coordinator.tf).
+	// google_service_account.fugaro_verifier[0] is the installation's verifier
+	// (CSR14, D1068): the one account the credentials service's verify route
+	// admits, and the only grant that names it is roles/run.invoker on that
+	// service (iam.tf). Its own reach is that row and the operators'
+	// token-creator grant on the account, which is what makes it a member
+	// expression worth admitting by name here rather than by shape.
 	//
 	// "allUsers" is deliberately NOT on this list, and the absence is the
 	// point: D920's public invoker binding is one resource in one file, and a
@@ -1566,7 +1572,7 @@ var (
 	// The narrowing is not what makes the plan covered either:
 	// internal/infra/tf's grant rules do NOT accept an allUsers member, so the
 	// update whose plan carries this grant asks its own typed confirmation.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server)\[0\]\.member|google_service_account\.catalog_check\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier)\[0\]\.member|google_service_account\.catalog_check\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
 
 	// A custom role of one of this run's projects, spelled as the literal path
 	// "projects/${var.<project>}/roles/<id>" rather than read from the role
@@ -1868,6 +1874,16 @@ func TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant(t *testing.T
 
 	var found []string
 	walk(t, func(path string, b []byte) {
+		// The tests beside the roots are not sites of the role: a tftest
+		// asserts what a plan HOLDS, and every one of them names the roles its
+		// runs read — installation.tftest.hcl names half a dozen, and
+		// verifier.tftest.hcl names this one, in the assertion that reads the
+		// verifier account's grant. What this walk counts is the
+		// configuration's grants, so the assertions are skipped by directory
+		// rather than by loosening the role itself.
+		if strings.Contains(path, "/tests/") {
+			return
+		}
 		code := stripComments(string(b))
 		for _, m := range quotedRoleRE.FindAllStringSubmatch(code, -1) {
 			if m[1] == role {
