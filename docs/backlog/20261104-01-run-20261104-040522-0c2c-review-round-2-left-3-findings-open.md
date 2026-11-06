@@ -3,7 +3,7 @@ id: 20261104-01
 title: Run 20261104-040522-0c2c: review round 2 left 3 findings open
 mode: startup
 area: project
-status: open
+status: closed
 filed-by: unknown
 filed-in: run:20261104-040522-0c2c
 date: 2026-11-04
@@ -31,3 +31,7 @@ The pull request that addresses them closes this item (D31).
 
 - run `20261104-040522-0c2c`
 - pull request #1694
+
+## Closed by
+
+#1694
