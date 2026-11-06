@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -565,7 +566,10 @@ func settingsDefaultLayer(row settings.Row) string {
 	return ""
 }
 
-// settingsSelection selects this machine's project, the way the read does.
+// settingsSelection selects this machine's project, the way the read does: the
+// checkout's fugaro.yaml names it (localcfg.Select's step 3) where nothing
+// before that does, so a machine with several project configs needs no
+// --project inside a checkout.
 func settingsSelection() (localcfg.Selection, *localcfg.Config, error) {
 	return settingsAimedSelection(settingsWriteOptions{})
 }
@@ -584,7 +588,7 @@ func settingsAimedSelection(o settingsWriteOptions) (localcfg.Selection, *localc
 		EnvConfig:  os.Getenv("FUGARO_CONFIG"),
 		Getenv:     os.Getenv,
 	}
-	sel, lc, err := localcfg.Select(in)
+	sel, lc, err := selectSettingsProject(context.Background(), in)
 	if err != nil {
 		return sel, nil, userErr("%w", err)
 	}
@@ -592,6 +596,27 @@ func settingsAimedSelection(o settingsWriteOptions) (localcfg.Selection, *localc
 		return sel, lc, userErr("no project is selected: set $FUGARO_PROJECT or $FUGARO_CONFIG, or run fugaro setup")
 	}
 	return sel, lc, nil
+}
+
+// selectSettingsProject is localcfg.Select, and, where several project configs
+// leave the choice open, Select again with the checkout the command runs in:
+// its fugaro.yaml names its project (step 3), which is what the refusal
+// "several project configs and nothing selects one" tells a person to do. The
+// checkout is not asked first, so a checkout of another project still resolves
+// to the machine's only project config as these commands always did.
+func selectSettingsProject(ctx context.Context, in localcfg.SelectInput) (localcfg.Selection, *localcfg.Config, error) {
+	sel, lc, err := localcfg.Select(in)
+	var se *localcfg.SelectError
+	if err == nil || !errors.As(err, &se) || len(se.Projects) < 2 {
+		return sel, lc, err
+	}
+	co, cerr := resolveCheckout(ctx, "")
+	if cerr != nil || co == nil {
+		return sel, lc, err
+	}
+	in.Checkout = co
+	in.Origin = func() (string, string) { return checkoutOriginAt("") }
+	return localcfg.Select(in)
 }
 
 // settingsResolveTarget turns a key and a layer into the file to edit.

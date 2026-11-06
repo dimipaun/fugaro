@@ -274,7 +274,7 @@ func settingsManagedStep(ctx context.Context, lc *localcfg.Config, selPath strin
 		// recorded.
 		return initflow.Managed{}, managedGate{}, nil
 	}
-	conv := settingsManagedVerdict(ctx, &gate, target, key, typed, why, old, newData)
+	conv := settingsManagedVerdict(ctx, &gate, marker, target, key, typed, why, old, newData)
 	m, err := gate.admit(ctx, initflow.YesOrTyped, conv)
 	if err == nil {
 		return m, gate, nil
@@ -303,7 +303,7 @@ func settingsManagedStep(ctx context.Context, lc *localcfg.Config, selPath strin
 // refuses to write unless it is still byte for byte what the caller read here,
 // so the document judged and the document applied are one artifact rather than
 // two that happened to agree at different moments (M6's review, item 3).
-func settingsManagedVerdict(ctx context.Context, g *managedGate, target settingsTarget, key string, typed bool, why string, old, newData []byte) managedmode.Converge {
+func settingsManagedVerdict(ctx context.Context, g *managedGate, marker string, target settingsTarget, key string, typed bool, why string, old, newData []byte) managedmode.Converge {
 	var applied, refused []string
 	judge := func(rule, refusal string) {
 		if refusal == "" {
@@ -314,7 +314,14 @@ func settingsManagedVerdict(ctx context.Context, g *managedGate, target settings
 	}
 	judge(settingsRegistryRule, "")
 	judge(settingsLayerRule, "")
-	judge(settingsAdmittedRule, settingsAdmittedRefusal(key))
+	if marker != "" {
+		// The allowlist limits what a coding agent's session writes on its own
+		// (D1027). A person at a real terminal (no marker: agentMarker) is the
+		// project's owner, whom the 2026-11-01 ruling says a managed project
+		// does not make hand-edit what a command can write; the rules below
+		// still apply to that person's write.
+		judge(settingsAdmittedRule, settingsAdmittedRefusal(key))
+	}
 	if target.kind == settingsDocLayer {
 		// The two rules below are the project layer's own: `layer.profiles.*`
 		// and the two floor keys are rows whose only store is that file. Judged
