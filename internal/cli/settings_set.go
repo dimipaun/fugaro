@@ -578,8 +578,9 @@ func settingsSelection() (localcfg.Selection, *localcfg.Config, error) {
 // selection themselves: --config and --project are localcfg.Select's steps 1 and
 // 2, so a write aimed at an installation lands in that installation's file
 // rather than in whichever one the machine's environment would have picked. The
-// families that call settingsSelection (models, accounts) take neither flag and
-// resolve exactly as before.
+// families that call settingsSelection (models, accounts, secrets) take neither
+// flag, and resolve as before except that, where several project configs leave
+// the choice open, they too read the checkout (selectSettingsProject).
 func settingsAimedSelection(o settingsWriteOptions) (localcfg.Selection, *localcfg.Config, error) {
 	in := localcfg.SelectInput{
 		Config:     o.config,

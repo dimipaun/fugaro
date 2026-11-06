@@ -72,8 +72,11 @@ import (
 //
 // What this gate admits is an ALLOWLIST and not a list of things to refuse
 // (settingsManagedKeys, the owner decision D1027). The rules below judge what
-// the allowlist names; every other key is refused by settingsAdmittedRefusal,
-// whether it is in the registry today or is added to it by a later release.
+// the allowlist names; in a coding agent's session every other key is refused
+// by settingsAdmittedRefusal, whether it is in the registry today or is added
+// to it by a later release. A person at a real terminal is not held to the
+// allowlist (the owner's ruling of 2026-11-06): the other rules still judge
+// that person's write.
 // The direction is the design's own (§4.1 rule 2, and D1021's "a caller that
 // reads nothing refuses"): a key nobody decided about is refused rather than
 // admitted by an omission, and the two keys on the list are the ones whose
@@ -365,7 +368,8 @@ const (
 	settingsLayerRule    = "the key may be set at the layer this write lands in (the registry's Layers, spec §4.2 step 2)"
 	// settingsAdmittedRule is the allowlist itself (D1027): the write's key is
 	// one the gate decided about, in settingsManagedKeys. It is asked of every
-	// write this gate judges, at every layer, because "this key is not one a
+	// write a coding agent's session makes through this gate, at every layer,
+	// because "this key is not one a
 	// coding agent's session writes" is the answer for a key nobody decided
 	// about however the command line spelled it.
 	settingsAdmittedRule = "the key is one the gate's allowlist admits for a coding agent's session (D1027)"
