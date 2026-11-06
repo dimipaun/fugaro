@@ -182,6 +182,9 @@ the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
   task-governance design's D320/D327 rows are corrected in that design's own reconciliation.)
 - [docs/dogfooding.md](../dogfooding.md): the recorded lesson this design exists for — *"the in-loop
   reviewer is a different, stronger model than the coder, but it is still not independent review"*.
+  The owner's ruling of 2026-11-06 ([docs/design/mixed-credentials.md §11](../design/mixed-credentials.md))
+  is why it matters more than it did: a run whose in-job review passed gets no second review by a
+  person, so the in-job reviewers are the whole of the review a change gets.
 - [docs/coordinator/](../coordinator/README.md): the service that would launch the review job and act
   on its verdict.
 - [docs/gcp-live-checklist.md](../gcp-live-checklist.md): the register the live check's row and

@@ -384,6 +384,15 @@ func TestDocsMixedCredentialsRecordsWhatShipped(t *testing.T) {
 // is the owner's and lives in the local project config, so this file names the
 // model that account serves and points at Check 290 as where the mix is read
 // back from a real run.
+//
+// The comment is read on its own (fugaroYAMLComment), not out of the whole
+// file: a file-wide pin satisfies itself from the `models:` block, which names
+// both models whatever the prose says, and that is how the comment came to
+// describe an OpenRouter reviewer the stage no longer ran on — #1763 moved the
+// pin to Opus and the sentence written to explain it kept passing. The pair the
+// comment has to be about is read out of the block rather than written here a
+// second time, so the owner moving the pin fails this test until the comment
+// moves with it.
 func TestFugaroYAMLStatesTheShippedReviewSettings(t *testing.T) {
 	const path = "fugaro.yaml"
 	doc := readDoc(t, path)
@@ -395,20 +404,47 @@ func TestFugaroYAMLStatesTheShippedReviewSettings(t *testing.T) {
 			t.Errorf("%s still says %q: the guard is shipped and the per-stage account setting exists, so the comment claims the tree is missing what it has", path, gone)
 		}
 	}
-	// The models are the owner's and this comment may not change them: the
-	// claim the comment makes about the pair is only true while it names them.
+	comment := fugaroYAMLComment(doc)
 	for _, want := range []string{
-		"coder: deepseek/deepseek-v4.1-flash",
-		"reviewer: claude-opus-5-5",
 		"D721",
 		"stages.<stage>.claude_account",
 		"docs/design/mixed-credentials.md",
 		"Check 290",
 	} {
-		if !strings.Contains(doc, want) {
-			t.Errorf("%s never says %q: the file's own comment is where the pair, the guard that judges it and the setting that would change it are stated", path, want)
+		if !strings.Contains(comment, want) {
+			t.Errorf("%s's comment never says %q: the file's own prose is where the pair, the guard that judges it, the setting that would change it and the check that reads the mix back are stated", path, want)
 		}
 	}
+	for _, key := range []string{"coder", "reviewer"} {
+		pinned := ""
+		for _, line := range strings.Split(doc, "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, key+": ") {
+				pinned = strings.TrimSpace(strings.TrimPrefix(line, key+": "))
+			}
+		}
+		if pinned == "" {
+			t.Fatalf("%s pins no %s model: this test reads the block to hold the comment to it", path, key)
+		}
+		if !strings.Contains(comment, pinned) {
+			t.Errorf("%s's comment never names %q, the %s model the file itself pins: a comment describing a model the file does not pin is the drift this test exists for", path, pinned, key)
+		}
+	}
+}
+
+// fugaroYAMLComment is fugaro.yaml's own prose with the YAML left out: each
+// comment line of the file, indentation, `#` and spacing trimmed, one per line.
+func fugaroYAMLComment(doc string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(doc, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "#") {
+			continue
+		}
+		b.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "#")))
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // TestDocsCheck290IsTheMixedRunsSmokeTest: the owner-run check that verifies
