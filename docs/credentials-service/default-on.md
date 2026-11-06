@@ -1,7 +1,17 @@
 # The credentials service deploys for every installation — the owner's ruling of 2026-11-05
 
-**Status (2026-11-06): the ruling is the owner's; the tasks below are PLAN ONLY and none of them is
-approved.** This file is a **dated amendment** to [implementation-plan.md](implementation-plan.md),
+**Status (2026-11-06): AMENDED AFTER REVIEW. The ruling is the owner's; the tasks below are PLAN ONLY,
+none of them is approved, and none of them is buildable until the owner answers the BLOCKING Open item
+(§5 item 1).** The independent review of this file found a fact in the tree that contradicts the
+premise the ruling was taken on: **the service's deploy and the jobs' switch to it are two different
+changes, and the second one, as the tree stands, breaks every installation's runs** (§1.4 — the mount
+drop is auth-blind and the GitHub provider opens keyless with no fallback). **The owner's intent is
+unchanged and this file does not weaken it: the service is deployed for every installation.** What
+changed is that the deploy is now separated from the switch, and the switch waits on a ruling.
+**No task below may be started before that ruling**, because every one of them either is the deploy
+(DON1), tests it (DON2), describes it (DON4, DON5), or depends on it (DON3, DON6, DON7).
+
+This file is a **dated amendment** to [implementation-plan.md](implementation-plan.md),
 [reconciliation.md](reconciliation.md) and [runbook.md](runbook.md). It amends exactly one thing those
 documents say — the service's **deployment posture** — and it rewrites none of them: where a sentence of
 theirs is reversed, §3's task DON4 names it and moves it, and this file leaves the sentence where it is.
@@ -22,6 +32,7 @@ that finds every place it is written and every test that pins it.
 | **Date and form** | 2026-11-05, the owner's answer to an `AskUserQuestion` — **the answer taken is not the recommendation the question carried** |
 | **Why, in the owner's words** | the reason for opt-in was **cost**, and a Cloud Run service that **scales to zero costs nothing idle**; so **remove the opt-in complexity** |
 | **Reverses** | the "ships dormant / optional" rulings and the `--provision-credentials` opt-in as the *only* way the service is deployed |
+| **Amended after review** | 2026-11-06 — the **deploy** stands for every installation; the **switch** (the repository roots reading the service back and the run handing the job its URL) is separated from it and waits on §5 item 1, because the drop it triggers is auth-blind (§1.4) |
 | **Does not touch** | Q6, D143, D145, D146, D147, Global Constraints 6 and 12, Checks 90–99, D130–D159, and every task in [implementation-plan.md](implementation-plan.md) |
 
 ---
@@ -35,6 +46,13 @@ typed extra confirmation of its own and no per-installation choice. The installa
 `credentials_service` variable stops being the thing an owner opts into and becomes part of the state
 `update` converges every installation on — which is the shape the **HARD RULE** in `CLAUDE.md` already
 requires of everything else `update` does: one command, no second step, no manual repair.
+
+**The ruling is about the deploy, and the review separated it from the switch.** What the owner ruled
+is that the service **exists** on every installation. Whether the jobs then **use** it — the repository
+roots reading it back, and a run handing its job `FUGARO_CREDENTIALS_SERVICE_URL` — is a second change
+with its own failure mode, and the tree ties the two together in a way the ruling did not assume.
+**§1.4 states the fact; §5 item 1 is the ruling it waits on.** Everything else in this file is written
+against the deploy.
 
 **Bitbucket-only installations are in scope, and they are the case worth naming**, because the service
 has been read as a GitHub-App-key holder: it is not. The App key is **one** credential the bundle may
@@ -73,10 +91,24 @@ Cloud Run **job** ("a rule reading a key no plan of the type has is a rule that 
 stated value"). So the ruling's cost claim rests, today, on a provider default that nothing in this tree
 pins and nothing in this tree checks. **DON3 is the task that pins it** (§3).
 
+**CORRECTED AFTER REVIEW — and the guard is not this service's, in either direction, and never will be.**
+The first draft of §3 DON3 promised that pinning the block would put this service under the managed
+project's cost guard. **It does not, and DON3 must not claim it does.** `internal/managed/plan.go:173`
+(`var costFindings = tf.ManagedCosts`, invoked at `:234`) is `tf.ManagedCosts`'s **only** caller in the
+tree, and it is the **managed** gate; `deploy/terraform/gcp/modules/installation/credentials.tf:3` states
+why this service is never in a plan that gate reads ("installation root — `fugaro managed apply` never
+deploys it (Global Constraint 7)"). So a test that the `managedCostMinInstances` entry fires on a plan
+stating a raised minimum would pass while `fugaro update` checked **nothing at all** about this service
+— a green test over a path no installation takes. **What guards this service is the static pin on
+`credentials.tf` and the golden-plan pin on the plan it produces** (§3 DON3's Tests), both of which are
+DON3's own. The entry itself needs no change: the template-level path at `managed_cost.go:195` is
+already the path the block lands on, and the entry's own behaviour is pinned by its own tests in
+`managed_cost_test.go`, which this task does not touch.
+
 ### 1.3 What actually costs something while idle — the six resources, and the rest
 
 The service's Terraform is **six resources**, all gated on the one local `credentials_service_on`
-(`deploy/terraform/gcp/modules/installation/credentials.tf:22`, counted by
+(`deploy/terraform/gcp/modules/installation/credentials.tf:25`, counted by
 `TestCredentialsServiceResourcesAreCounted`, `deploy/terraform/terraform_test.go:4347`):
 
 | # | Resource | `credentials.tf` line | Bills while idle? |
@@ -96,7 +128,7 @@ no version is a container that holds nothing to bill. The first version is writt
 replaced** — `internal/cli/creds.go:140`, `:202` and `disable` at `:392` — so the installation carries
 **exactly one active version**, not one per rotation. What that costs per month is Google's published
 Secret Manager list price for one active secret version; **that price is not a fact this tree holds, and
-§5's UNVERIFIED list carries it as UNVERIFIED.**
+§6's UNVERIFIED list carries it as UNVERIFIED.**
 
 **The Cloud Run service (row 6), precisely.** With request-based billing and a minimum instance count of
 zero the service is charged only while it is serving a request, plus the request and CPU/allocation
@@ -117,7 +149,7 @@ What the credentials image adds to that cache is bounded and known:
   distroless static layer of "a few MB". So the image is **~60 MB uncompressed**, and its compressed
   layers, which is what a registry bills, are smaller again.
 - **UNVERIFIED (not in this tree):** Artifact Registry's published storage price per GB per month and
-  its free allowance. §5 carries it.
+  its free allowance. §6 carries it.
 
 **Nothing else in the installation root becomes always-on because of this service.** The invoker grants
 (`deploy/terraform/gcp/modules/installation/iam.tf:163`, `:194`) are
@@ -127,6 +159,84 @@ owner's cost claim is:** *the service itself is free while idle once its minimum
 pinned at zero; what it adds to the bill is one active Secret Manager version once a bundle is written,
 and one cached container image; and today the first of those rests on an unpinned provider default that
 DON3 fixes.*
+
+### 1.4 The premise the ruling was taken on, and the code fact that contradicts it — AMENDED AFTER REVIEW
+
+**The premise, in the owner's own words:** the reason for opt-in was **cost**, a Cloud Run service that
+scales to zero costs nothing idle, **so remove the opt-in complexity**. That premise treats *deploying*
+the service as the cheap part and treats the jobs' *use* of it as free. **The second half is not free,
+and the tree says so in the four places below.** This subsection states the fact; §5 item 1 is the ruling it
+waits on. **It is the reason the status line above reads `amended after review`, and it does not change
+the owner's intent: the service still deploys for every installation.**
+
+**VERIFIED — the mount drop is auth-blind, and it is the whole of what deploying triggers.**
+`deploy/terraform/gcp/modules/workflow/sa.tf`:
+
+- `:89-90` names the model credentials as literals — `model_secret_env_names =
+  ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]` and `model_secret_env_prefix =
+  "FUGARO_PROVIDER_KEY_"`;
+- `:135-137` builds `is_service_held` over them (`env => contains(local.model_secret_env_names, env) ||
+  startswith(env, local.model_secret_env_prefix) || …`);
+- `:148-151` is the drop itself: `job_secret_names = toset([for env, logical in var.workflow.secret_env
+  : logical if var.credentials_service == null || !local.is_service_held[env]])`.
+
+**The gate is `var.credentials_service == null` and nothing else. It never reads `agent.auth`.** An
+`oauth` job and an `api-key` job lose their model credential's accessor exactly as a `cascade` job does.
+**`SECURITY.md` already states this as a limit of the release, in as many words:** "the mount drop is
+auth-blind (an `oauth` or `api-key` repository job of an opted-in installation declares no model
+credential), while only a `cascade` run's calls go through the service" (`SECURITY.md`, the credentials
+service section). So this is a **known, written-down** property of the tree, not a new finding — what is
+new is that the ruling makes it reach **every** installation rather than the ones that opted in.
+
+**VERIFIED — writing the installation root's block is what triggers it, so the deploy is not separable
+from the drop by itself.** `internal/infra/spec.go:1177-1178` — `if c.inst.CredentialsService != nil {
+dropModelMounts(&ws) }` — reads the **installation root's** tfvars, and `:1314` hands
+`repoCredentialsService(c.inst.CredentialsService)` (`:244-248`) to **every** repository root. So the
+moment DON1 writes the block, every repository root in that installation drops its model mounts on its
+next apply. There is no flag, no second command and no per-repository choice in between.
+
+**VERIFIED — the run's own half is worse than a drop: it is a removal with no fallback.**
+`internal/gitprov/providers/providers.go:93-99` — when `FUGARO_CREDENTIALS_SERVICE_URL` is set, the
+GitHub provider is opened with `ServiceHeldKey: true` and the function **returns before `appKey(vars)`
+is ever called**, so there is no path that falls back to the mounted App key. The comment says why
+("a run that reached for a key it was not given would be a credential the platform meant to withhold").
+`internal/cli/run.go:3647` (`credentialsServiceLaunchEnv`) is what sets it, from `lc.CredentialsService
+.URL`. **And the App key's own half is inert today**, which is the one mercy here: `config
+.ServiceHeldSecretNames` is empty (`internal/config/providers.go:542`, #907), so `sa.tf`'s
+`service_held_secret_names` names no key and the *App key's* accessor is not dropped — the mount drop
+that fires today is the **model credentials'**, and the keyless-provider half fires from the URL alone.
+
+**The consequence, stated plainly.** An installation that converges on DON1 as it was first written is
+an installation whose `oauth` workflow has lost `CLAUDE_CODE_OAUTH_TOKEN` (or `api-key`'s
+`ANTHROPIC_API_KEY`) while the bundle holds nothing that replaces it — because `creds set` is a person's
+step that has not run, and for an `oauth` job the service has no route that would serve it anyway. **Every
+run of every repository fails, on every installation, in the release that deploys the service.** That is
+the failure the review caught, and it is why the deploy and the switch are now two changes.
+
+**And the failure is not hypothetical: it is the limit opt-in already has, made universal.** The
+README's own status paragraph states the other half of it in as many words — "the other `agent.auth`
+modes are not wired: a repository job in one has no model credential of its own and nothing yet to
+replace it" — and `SECURITY.md` states the drop as a limit of the release rather than a defect. So an
+installation that opted in today and runs an `oauth` workflow is **already** in the state §1.4
+describes; opt-in is coherent today only for a `cascade` workflow, which is exactly why the opt-in was
+per-installation and deliberate. **The ruling's premise did not miss a bug; it missed that the limit is
+what becomes universal.** That is the whole of the amendment, and it is why the deploy and the switch
+are now separate: the deploy is cheap and the ruling's own reason holds for it, and the switch is the
+limit.
+
+**So the ruling is split, and only the first half is in DON1:**
+
+| | What it is | Where it is | State |
+|---|---|---|---|
+| **the deploy** | the installation root's `credentials_service` block: the service account, the bundle container and its grants, and the Cloud Run service (§1.3's six resources) | DON1 | **the owner's ruling; not buildable until §5 item 1 is answered, because the block itself triggers the drop above** |
+| **the switch** | the repository roots reading the block back (`repoCredentialsService` → `dropModelMounts`) and a run handing the job `FUGARO_CREDENTIALS_SERVICE_URL` (`credentialsServiceLaunchEnv`) | **no task** — §5 item 1 | **the owner's, with two readings and two costs** |
+
+**The two readings §5 item 1 carries, in one line each, so the shape is visible here:**
+**(a)** the service is deployed everywhere and the **switch stays off** until the bundle holds what that
+job's auth mode needs — the deploy lands, the read-back and the URL do not, and something must later
+turn them on. **(b)** the credential drop becomes **auth-aware** and `fugaro update` **migrates the
+existing secrets** into the bundle in the owner's own terminal — the switch lands with the deploy, and
+`update` gains a bundle writer. **Each reading's cost is in §5 item 1 and neither is decided here.**
 
 ---
 
@@ -194,7 +304,12 @@ Seven tasks, **DON1–DON7**, matching §1 and the owner's brief one for one. Th
 [../cloud-senior-review/implementation-plan.md](../cloud-senior-review/implementation-plan.md) §3's
 convention exactly: decisions and findings named, an exact file list with its cap, the interfaces
 produced, named tests, a red step, the mutation that holds it, a reviewer tier, whether it is OWNER-RUN,
-its dependencies and its commit message. **No task is approved.**
+its dependencies and its commit message. **No task is approved — and, after the review, none of the
+seven is buildable either, until the owner answers §5 item 1.** That item is the switch: §1.4 verifies
+that DON1's deploy, as the tree stands, makes every `oauth` and `api-key` job lose the model credential
+its run needs, so a task that landed before the answer would ship that failure. **DON3 is the one whose
+content the answer cannot change** (a `scaling` block on a resource gated on `credentials_service !=
+null` is right either way); it is still held, because its `Depends on` is DON1 and DON1 is not buildable.
 
 **The numbering is deliberately not `C4.x`.** `C0`–`C3` are [implementation-plan.md](implementation-plan.md)'s
 slices and `CSR1`–`CSR13` are the cloud senior review's; a third stream taking `C4` would collide with
@@ -207,6 +322,16 @@ this file's own prefix and collides with nothing.
 **Decisions:** the ruling of 2026-11-05 (this file). **Reverses:** D147's "off by default" half only —
 D146's placement and D145's invariant are untouched. **Verification:** `internal/cli`, `internal/infra`.
 
+**This task is the DEPLOY and nothing else — AMENDED AFTER REVIEW.** It writes the installation root's
+block, which is what makes the service exist. It does **not** decide whether the repository roots read
+the block back or whether a run hands its job `FUGARO_CREDENTIALS_SERVICE_URL`; §1.4 verifies that the
+block alone triggers `dropModelMounts`, so **the task may not land until §5 item 1 is answered**, and
+the answer decides whether DON1 also carries the gate that holds the read-back and the URL off (reading
+(a)) or whether the drop becomes auth-aware and `update` migrates the bundle (reading (b)). **Nothing in
+this task's file list is a bundle write under either reading**: `update` writing a credential is §5 item
+1's reading (b) alone, and if the owner takes it the task's file list, its tests and its SEC flag change
+with it.
+
 - **Files:** `internal/cli/init_stages.go` (the unconditional set path; today `pinCredentialsImage`
   returns early at "`doc == nil` — no `credentials_service` in the installation's tfvars: nothing opted
   in", and the stage's own gate is `:181`), `internal/cli/init.go` (the flag at `:109`/`:458` and its
@@ -215,7 +340,20 @@ D146's placement and D145's invariant are untouched. **Verification:** `internal
   `internal/infra/tfvars.go` (`CarriedCredentialsService` `:591-612`, `Credentials` `:355`,
   `CredentialsServiceURLOf` `:448`, `SetCredentialsServiceURL` `:467`),
   `internal/cli/init_credentials.go` (the `--provision-credentials` engine stage is **removed**;
-  `resolveCredentialsImage` is kept, because `pinCredentialsImage` pins through it),
+  `resolveCredentialsImage` is kept, because `pinCredentialsImage` pins through it — **and the two
+  functions the stage owns that outlive it move rather than die: `fillAudience`
+  (`internal/cli/init_credentials.go:522`, the second apply that reads the assigned URL back out of the
+  module's own outputs through `infra.CredentialsServiceURLOf` and writes it with
+  `infra.SetCredentialsServiceURL`) and `recordURL` (`:609`, called at `:258` and `:305`, which reads
+  the same outputs once more and records the URL in the project's local config through the coordinator's
+  `writeConfig`). **Both move into `internal/cli/init_stages.go`, beside `pinCredentialsImage`**, keeping
+  their bodies — the URL is still assigned by Cloud Run and still unknown until the apply, so the second
+  apply and the config record are both still needed — and losing the stage's own typed confirmation,
+  which is the thing that goes with the flag. **This is the destination the review asked for:** the
+  recorder does not disappear with the stage, and a task that removed the stage without naming where its
+  recorder goes would leave `update` deploying a service whose URL nothing ever records, which is
+  exactly the state §2.3's "deployed, serving, admitting nobody" table would then be unable to
+  distinguish from a service that is unreachable.)
   `deploy/terraform/gcp/roots/installation/variables.tf` (`:230`, the variable's own doc comment),
   `deploy/terraform/gcp/modules/installation/credentials.tf` (the `verifier_accounts` rendering and the
   file's header comment), `internal/cli/init_credentials_test.go`,
@@ -231,6 +369,13 @@ D146's placement and D145's invariant are untouched. **Verification:** `internal
   for the flag to *do* — `update` is the whole upgrade (the HARD RULE), so the flag cannot be the only
   route to anything. The removal is cheap to reverse if the owner prefers the alias, which is why it is
   stated here as a decision rather than left implicit.
+  **And what this task must NOT touch, because it is §5 item 1's and not the deploy's:**
+  `internal/infra/spec.go`'s `repoCredentialsService` (`:244-248`) and `dropModelMounts`
+  (`:1177-1178`), `deploy/terraform/gcp/modules/workflow/sa.tf`'s `is_service_held` (`:135-137`) and
+  `job_secret_names` (`:148-151`), and `internal/cli/run.go`'s `credentialsServiceLaunchEnv` (`:3647`).
+  Under reading (a) one of them gains a gate and the other three stay as they are; under reading (b)
+  the first two and the module's two expressions gain an auth-aware condition and the last one flips on
+  with the deploy. **A DON1 that touched them would be making §5 item 1's decision by accident.**
 - **Tests:** `TestUpdateSetsCredentialsServiceOnEveryInstallation` (a fresh installation's tfvars carry
   the block after one `update`), `TestUpdateKeepsAnOptedInInstallationsServiceUnchanged` (an
   installation that already opted in converges to the same block, byte for byte, with the URL it
@@ -265,8 +410,12 @@ D146's placement and D145's invariant are untouched. **Verification:** `internal
   HARD RULE falsifiable. Two directions, and the second is the one that is easy to forget:
   1. an installation whose recorded state is **0.19.0** — no `credentials_service` block, the
      pre-ruling shape — reaches the new state with **`fugaro update` alone**: no second command, no
-     `--provision-credentials`, no manual repair, and the service's block, image pin and URL all
-     present after that one run;
+     `--provision-credentials`, no manual repair, and the service's block and image pin both present
+     after that one run. **The URL is the one part of that sentence §5 item 1 decides**: under reading
+     (a) the block carries no URL and the launch sets no service URL until the bundle holds what the
+     job's auth mode needs, and under reading (b) both are present with the block. **The test asserts
+     whichever the answer makes true, and asserts the other state is *not* reached** — a convergence
+     that flipped the switch without the ruling is the failure this direction exists to catch;
   2. an installation that **already opted in** under an earlier release **does not change** beyond the
      image moving to this release — same account, same container, same grants, and above all the
      **same recorded URL**, because a rebuild that dropped and re-derived it would re-plan the service.
@@ -274,30 +423,58 @@ D146's placement and D145's invariant are untouched. **Verification:** `internal
 - **Tests:** `TestAnInstallationAt019ConvergesWithUpdateAlone` and
   `TestAnAlreadyOptedInInstallationDoesNotChange`, plus `TestConvergenceAsksNoSecondQuestion` (the run's
   prompts are the ones `update` already asks; the credentials stage's own typed confirmation is gone with
-  the stage).
+  the stage), plus **the one the review added, and it is the HARD RULE's own regression test**:
+  `TestAnOAuthInstallationStillLaunchesAfterUpdateAlone` — a 0.19.0 installation whose workflow is
+  `agent.auth: oauth` and whose job mounts the GitHub App key **still launches a run after `update`
+  alone**. It asserts the thing §1.4 says the first draft of DON1 would have broken: the job's
+  `job_secret_names` still carries its model credential's logical name, the App key is still readable by
+  the job's account, and `credentialsServiceLaunchEnv` hands the launch no `FUGARO_CREDENTIALS_SERVICE_URL`
+  unless the answer to §5 item 1 makes the switch part of the same convergence. **It is written against
+  the tree's own fixtures and reads the plan, not the prose** — the same shape
+  `TestServiceHeldSecretsMatchTheCredentialsService` and `dropModelMounts`' own tests use — because the
+  failure it catches is a Terraform expression and a Go predicate disagreeing, not a sentence.
 - **Red step:** `TestAnInstallationAt019ConvergesWithUpdateAlone` fails against today's tree — the
   fixture converges and the block is absent, because nothing writes it without the flag. It is written
   **before** DON1's change and is DON1's own red step seen from the outside, which is what makes the
   HARD RULE test rather than assert.
 - **Mutation to hold it:** make the update path require the flag → the first test fails; make the
-  already-opted-in path re-derive the block from the spec rather than carry it → the second fails.
+  already-opted-in path re-derive the block from the spec rather than carry it → the second fails;
+  **flip the switch in the same change as the deploy without §5 item 1's answer** → the `oauth` test
+  fails, which is the whole reason it exists. **Its red step is honestly different from the others':**
+  it does not fail on today's tree (a 0.19.0 installation has no block, so nothing drops) and it cannot.
+  It is a **guard**, not a proof — it fails against the change that would break the HARD RULE, and it is
+  named here as a guard so that a reviewer does not read a passing test as evidence the switch is safe.
 - **Reviewer tier:** **B** (a test-only task over a path DON1 owns; it is A only in the sense that what
   it proves is the HARD RULE).
 - **OWNER-RUN:** no.
 - **Depends on:** **DON1**.
 - **Commit:** `cli: an installation at 0.19.0 converges on the credentials service with update alone`.
 
-### DON3. The service scales to zero, and the cost guard can see it — SECURITY-SENSITIVE
+### DON3. The service scales to zero, and the pin is the guard — SECURITY-SENSITIVE
 
 **Decisions:** the ruling of 2026-11-05. **Findings:** §1.2 and §1.3 of this file. **Verification:**
 `deploy/terraform`, `internal/infra/tf`.
 
+**AMENDED AFTER REVIEW — this task promised a cost guard that never reads this service's plan, and it
+does not get one.** The first draft said DON3 would make the managed project's cost guard see the
+credentials service. It cannot: `internal/managed/plan.go:173` (`var costFindings = tf.ManagedCosts`,
+invoked at `:234`) is that guard's only caller, and `credentials.tf:3` says in as many words that the
+managed path never deploys this service (Global Constraint 7). So a test that `managedCostMinInstances`
+fires on a plan stating a raised minimum would be **green over a plan no installation produces**, while
+`fugaro update` checked nothing. **The guard is the pins, and the pins are this task's own**: the static
+pin on the module source and the golden-plan pin on the plan the module produces. Both fail the moment
+someone raises the minimum, and neither depends on a gate this service never passes through.
+`internal/infra/tf/managed_cost.go` and `managed_cost_test.go` are therefore **not this task's files**
+(§1.2's CORRECTED paragraph is why), and the two `managed_cost` tests the first draft named are
+**dropped**: a rule-level test would be a test of the entry, not of this service, and the entry's own
+behaviour is already pinned in `managed_cost_test.go` where it belongs.
+
 - **Files:** `deploy/terraform/gcp/modules/installation/credentials.tf` (the `scaling` block),
-  `internal/infra/tf/managed_cost.go` + `managed_cost_test.go` (the entry grows a rule it can actually
-  fire on, or a test that it fires), `internal/infra/tf/testdata/golden/installation-credentials.plan.json`
+  `internal/infra/tf/testdata/golden/installation-credentials.plan.json`
   (regenerated — the plan's JSON changes the moment a block is added), `deploy/terraform/terraform_test.go`
   (the static pin), `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl` (the
-  credentials image run at `:2439` gains the assertion). **5 files.** The golden plan is regenerated by
+  credentials image run at `:2439` gains the assertion). **4 files**, and **not**
+  `internal/infra/tf/managed_cost.go` or `managed_cost_test.go`. The golden plan is regenerated by
   `scripts/gen-golden-plans.sh`, never by hand.
 - **Interfaces:** `google_cloud_run_v2_service.credentials` states, in a `scaling` block on the
   **template**, `min_instance_count = 0` and a `max_instance_count`. The precedent is the MCP front
@@ -307,31 +484,38 @@ D146's placement and D145's invariant are untouched. **Verification:** `internal
   caller, or a retry storm, scales this service as far as Cloud Run allows. The plan proposes
   `max_instance_count = 4` (a small number an installation's own run concurrency cannot exceed, and one
   an operator raises deliberately), and the value is the task's to settle with its own reasoning.
-- **The guard, and it is the reason this task exists at all.** `managedCostList`'s
-  `managedCostMinInstances` entry already blocks a plan that states a minimum above the line — but, as
-  §1.2 verifies, it fires only on a **stated** value, so today it cannot see this service. This task
-  closes that hole **in the direction that lasts**: the block is pinned *and*
-  `managed_cost_test.go` gains the case that the entry fires on a plan whose Cloud Run **service** states
-  `min_instance_count = 1`, plus the case that it does **not** fire on the pinned zero. **A guard that is
-  only satisfied by a value nobody can change is not a guard; a guard that fires on a raised value is.**
-  Whether the entry needs a new rule (it does not appear to — the template-level path at
-  `managed_cost.go:195` is exactly the path this block lands on) is the task's to determine, and its
-  answer goes in the commit.
+- **The guard, and it is the reason this task exists at all.** The service states its minimum **in the
+  tree** and the tree checks it **twice**, at two levels, both of which this task writes: the **static
+  pin** (`TestCredentialsServicePinsMinInstanceZero`, reading `credentials.tf` and refusing a file that
+  states no `scaling` block or a non-zero minimum) and the **golden-plan pin**
+  (`TestCredentialsServicePlanStatesTheMinimum`, reading the **plan** rather than the source, so a
+  provider-level default or a module change cannot make the source look right while the plan is wrong).
+  **A guard that is only satisfied by a value nobody can change is not a guard**, so both pins are
+  written to fail on a *raised* value and on a *deleted* block, not merely to confirm the value today.
+  **What this task does not do, and the review is why:** it does not reach the managed project's cost
+  guard, and it does not add a rule to `managedCostList`. The entry's template-level path
+  (`managed_cost.go:195`) is already the path this block lands on, so **no rule change is needed** — and
+  even with the block stated, that entry would never be handed this service's plan (§1.2's CORRECTED
+  paragraph, Global Constraint 7). The task states that in its commit so the next reader does not
+  re-derive the promise the first draft made.
 - **Tests:** `TestCredentialsServicePinsMinInstanceZero` (the block is on the template, states `0`, and
-  states a maximum), `TestCredentialsServicePlanStatesTheMinimum` (the **golden plan**, not the source:
-  the plan's `after` carries `template[0].scaling[0].min_instance_count == 0` — this is the test that
-  would have caught the gap §1.2 describes), `TestManagedCostFiresOnARaisedServiceMinimum` and
-  `TestManagedCostDoesNotFireOnThePinnedCredentialsService`.
+  states a maximum) and `TestCredentialsServicePlanStatesTheMinimum` (the **golden plan**, not the
+  source: the plan's `after` carries `template[0].scaling[0].min_instance_count == 0` — this is the test
+  that would have caught the gap §1.2 describes). **No `managed_cost` test**, per the amendment above.
 - **Red step:** `TestCredentialsServicePlanStatesTheMinimum` fails on today's golden: the plan states no
-  `scaling` key at all. **SEC flag:** it is a cost guard, and the second test is the one that matters
-  most — the guard must still be able to fire.
-- **Mutation to hold it:** raise `min_instance_count` to `1` → the second test fails and the managed gate
-  refuses; delete the block → the second test fails again, because the plan states nothing; drop the
-  `max_instance_count` → the first fails.
+  `scaling` key at all. **SEC flag:** it is a cost claim made checkable, and the second test is the one
+  that matters most — it reads what the provider would actually apply.
+- **Mutation to hold it:** raise `min_instance_count` to `1` → the golden-plan test fails; delete the
+  block → it fails again, because the plan states nothing; drop the `max_instance_count` → the static
+  pin fails. **None of the three is caught by a managed gate**, which is the point of the amendment.
 - **Reviewer tier:** **A** (it is the check that keeps the owner's cost claim true).
 - **OWNER-RUN:** no.
-- **Depends on:** **DON1** — both hold `credentials.tf`, and DON1 has it in level 1.
-- **Commit:** `terraform: pin the credentials service at zero minimum instances, and make the cost guard see it`.
+- **Depends on:** **DON1** — both hold `credentials.tf`, and DON1 has it in level 1. **And it is the one
+  task whose *content* does not depend on §5 item 1's answer** — a `scaling` block on a resource gated on
+  `credentials_service != null` is correct under either reading — while its `Depends on` still does,
+  because DON1 is held. The owner may release it alone if they want the pin in hand first; this file does
+  not reorder the levels on its own.
+- **Commit:** `terraform: pin the credentials service at zero minimum instances`.
 
 ### DON4. Every "dormant" and "opt-in" pin, moved in lockstep — docs and tests
 
@@ -353,8 +537,14 @@ D146's placement and D145's invariant are untouched. **Verification:** `internal
   `internal/cli/run_credentials_env_test.go` (`:65-75`, `:126`),
   `internal/infra/readiness_credentials_test.go`, `internal/infra/credentialsvars_test.go`,
   `internal/infra/installation_test.go`, `internal/infra/spec_test.go`,
-  `internal/infra/managed/marker_test.go` (`:1829`), `internal/localcfg/shared_test.go` (`:493`).
-  **At most 26 Go files**, plus the documents in the table below — and the cap is the list, not a
+  `internal/infra/managed/marker_test.go` (`:1829`), `internal/localcfg/shared_test.go` (`:493`),
+  **`internal/config/providers.go` (`:542`, `ServiceHeldSecretNames`'s own doc: "once an installation
+  opts in AND the job's own account has given its own copy up")** and
+  **`internal/cli/init_coordinator_test.go` (`:113`, `TestTheCoordinatorOptInIsRefusedWhereItCannotBe
+  Confirmed`, whose comment states "the opt-in follows `--provision-credentials` — `--yes` never covers
+  it")** — the last two added by the review, and both are **Go sources with a retired phrase in them**,
+  not documents, which is why they belong in this list rather than in the table below.
+  **At most 28 Go files**, plus the documents in the table below — and the cap is the list, not a
   licence to widen it.
 - **The documents this task moves, and no others.** **This file's own directory is out of scope for
   DON4's document half and is DON5's** (§3 DON5). The documents DON4 moves are the ones that state the
@@ -374,6 +564,7 @@ D146's placement and D145's invariant are untouched. **Verification:** `internal
   | `docs/gcp-live-checklist.md` | the Check 94/95/99 rows (`:767`, `:768`, `:770`) and the Check 94 section (`:7522`, `:7524`, `:7526`, `:7581`, `:7687`, `:7739`, `:8270`, `:8472`) |
   | `docs/secrets-brokering/{reconciliation,implementation-plan,README}.md` | L25, L61, L245-246, L355 (D502), L411, L451; L52, L75, L82, L572; L5 |
   | `docs/bitbucket-credentials/reconciliation.md` | L231 (F13), L503 (D362), L656 |
+  | `docs/bitbucket-credentials/implementation-plan.md` | L95, "`fugaro creds set` and `fugaro update --provision-credentials` are never run by an agent" — the flag half is retired; the `creds set` half **stays true** and the task keeps it, which is why this row is a wording change and not a deletion (added by the review) |
   | `docs/run-without-checkout/{spec,reconciliation}.md` | L80-81; L145, L257, L296 |
   | `docs/stateless-orchestrator/reconciliation.md` | L32 |
   | `docs/c39-review-identity/{README,implementation-plan,reconciliation,spec}.md` | L29; L50; L200; L913 |
@@ -419,30 +610,61 @@ D146's placement and D145's invariant are untouched. **Verification:** `internal
   guard's wording).
 - **Commit:** `docs: the credentials service is deployed for every installation, not opt-in`.
 
-### DON5. The release notes, and the one prompt that remains
+### DON5. The release notes, and an operator section that has exactly one step
 
 **Decisions:** the ruling of 2026-11-05; `CLAUDE.md`'s HARD RULE;
 [docs/releases/README.md](../releases/README.md)'s `### For operators` rule. **Verification:**
 `internal/cli` (`-run Docs`), `website`.
 
+**AMENDED AFTER REVIEW — the first draft's step 2 is struck.** It read "where the bundle holds no GitHub
+App key, `fugaro update` will say so and the one step left is yours: `fugaro creds set github-app-key`".
+Written that way it is **a second command in a release's `### For operators` section**, which is exactly
+what `CLAUDE.md`'s HARD RULE forbids ("a release must not ship an operator step that is another
+command"). `fugaro creds set` is a real thing an owner does — §2.1 keeps it as the bundle's only writer
+— but it is a step of a **capability**, not a repair of the upgrade, and the release notes may not
+present it as something `update` left undone. **What replaces it is not a rewording but a consequence:
+the operator section is step 1 alone, and what happens to the credentials is whatever §5 item 1's answer
+makes it.** The two shapes are below and the task writes the one the answer supports.
+
 - **Files:** `docs/releases/vX.Y.Z.md` (the release this lands in),
   `website/data/release-summaries.yaml` (its one line, no backticks),
   `docs/credentials-service/{README,implementation-plan,runbook,reconciliation}.md`. **6 files.**
-- **Interfaces:** the release's `### For operators` section reads, in full and in this shape:
+- **Interfaces:** the release's `### For operators` section reads, in full and in this shape, **and the
+  number of steps is one under both readings**:
+
+  **Under §5 item 1's reading (a) — the service is deployed everywhere, the switch stays off:**
 
   > ### For operators
   >
   > 1. Run `fugaro update` once per installation. It deploys the credentials service on every
   >    installation now, whether or not you opted in before; there is no second command and nothing to
   >    uninstall.
-  > 2. Where the bundle holds no GitHub App key, `fugaro update` will say so and the one step left is
-  >    yours: `fugaro creds set github-app-key`, at your own terminal. A run that needs an installation
-  >    token is refused until then, and every other part of the service works without it.
+  >
+  > **Note.** Your runs are unchanged by this release: the service is deployed and idle, and nothing
+  > uses it yet. Nothing to do.
 
-  **Step 2 is conditional and must be written as conditional**: an installation with no GitHub App, and
-  a Bitbucket-only one, has no key to write and nothing to do. This is the same shape the current
-  release notes use for a conditional operator step (`docs/releases/v0.10.1.md:14`), and it is the only
-  operator step this ruling adds — **there is no step to opt in and no step to uninstall.**
+  **Under §5 item 1's reading (b) — the drop is auth-aware and `update` migrates the bundle:**
+
+  > ### For operators
+  >
+  > 1. Run `fugaro update` once per installation, **at your own terminal** — it moves the credentials
+  >    this installation already holds into the service's bundle and says what it moved. There is no
+  >    second command and nothing to uninstall.
+
+  **What is common to both, and it is the rule this task is written under:** no step 2, no `creds set`
+  named as a step of the upgrade, and **no step that uninstalls or opts out**. Where the section must
+  still name `fugaro creds set` — and under (a) it may, in the note — it names it as the way to
+  *change* a credential the service already holds, which is what it is, and never as the completion of
+  `fugaro update`. The conditional-step precedent the first draft cited
+  (`docs/releases/v0.10.1.md:14`) is still the right **shape** for a note; it is not a licence for a
+  second step.
+  **Reading (a)'s one open question travels with it into the release notes, and it is not this task's to
+  answer:** if the switch is held off until the bundle is ready, then **something must turn it on**, and
+  the release notes must be able to say what — the next `fugaro update` the owner runs anyway, or a
+  readiness read taken at convergence time. **If the only thing that can turn it on is another
+  `fugaro update`, reading (a) has a second command in it after all** and the section cannot promise
+  what the HARD RULE requires. §5 item 1 states this as part of (a)'s cost, and this task writes the
+  note only once the answer says which.
 - **The documents this task moves are this directory's own**, and it moves them rather than DON4,
   because they are this file's neighbours and because one of them (`README.md`) is where this file is
   linked from. It changes: `README.md`'s status paragraph and its table (the new row for
@@ -459,8 +681,9 @@ D146's placement and D145's invariant are untouched. **Verification:** `internal
   "keep the existing pinned sentences" rule this file is written under).
 - **Red step:** `go test ./internal/cli/ -run Docs` fails once the README gains its row and the runbook
   its new sentences, until the pins move with them.
-- **Mutation to hold it:** write the operator section without the conditional clause → the reviewer sees
-  a Bitbucket-only installation told to run a command it cannot run.
+- **Mutation to hold it:** put a second numbered step back in → the HARD RULE is broken in the one
+  surface a person reads, which is what the review caught; drop the note under reading (a) → an owner
+  reads that their runs changed when they did not.
 - **Reviewer tier:** **B**.
 - **OWNER-RUN:** no.
 - **Depends on:** **DON1** (the flag's removal is what step 1's wording reports) and **DON4** (the
@@ -567,12 +790,12 @@ The rule is [../cloud-senior-review/implementation-plan.md](../cloud-senior-revi
 | `internal/cli/init_credentials_test.go`, `setup_refusals_test.go` | **DON1** | — | — | — |
 | `internal/cli/doctor_brokering.go`, `doctor_brokering_test.go` | **DON7** | — | — | the one line |
 | `internal/cli/init_converge_test.go`, `update_managed_test.go` | — | **DON2** | — | the convergence pair |
-| `internal/infra/tf/managed_cost.go`, `managed_cost_test.go` | — | **DON3** | — | the guard |
 | `internal/infra/tf/testdata/golden/installation-credentials.plan.json` | — | **DON3** | — | regenerated |
 | `deploy/terraform/terraform_test.go` | — | **DON3** | — | the static pin |
 | `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl` | — | **DON3** | — | the credentials image run |
 | `internal/cli/upgrade_cloud.go`, `internal/cli/managed_apply.go`, `managed_apply_test.go` | — | **DON6** | — | the managed case |
-| `internal/cli/doctor.go`, `doctor_test.go`, `validate.go`, `validate_test.go`, `review.go`, `review_test.go`, `run.go`, `creds.go`, `cascade_test.go`, `managed_test.go`(the pin at `:941`), `doctor_secret_readers_test.go`, `run_credentials_env_test.go` | — | — | **DON4** | the code-side pins |
+| `internal/cli/doctor.go`, `doctor_test.go`, `validate.go`, `validate_test.go`, `review.go`, `review_test.go`, `run.go`, `creds.go`, `cascade_test.go`, `managed_test.go`(the pin at `:941`), `doctor_secret_readers_test.go`, `run_credentials_env_test.go`, `init_coordinator_test.go`(`:113`), `internal/config/providers.go`(`:542`) | — | — | **DON4** | the code-side pins, including the two the review added |
+| `internal/infra/tf/managed_cost.go`, `managed_cost_test.go` | — | — | — | **nobody's** — §3 DON3's amendment says why: the managed gate never sees this service's plan |
 | `docs/credentials-service/**` | — | — | **DON5** | this directory's own documents |
 | `docs/releases/vX.Y.Z.md`, `website/data/release-summaries.yaml` | — | — | **DON5** | the release |
 | every other document DON4 moves (§3's table) | — | — | **DON4** | — |
@@ -608,16 +831,20 @@ point: a shared-files table that has never caught one is a table nobody checked.
 ### 4.2 The critical path
 
 ```
-[the verifier account, settled and named — §4.3]  ──▶  DON1  ──┬──▶ DON3 ──▶ DON4 ──▶ (the release)
-                                                              ├──▶ DON2
-                                                              └──▶ DON6
-                          DON7 ‖ DON1                          DON5 ‖ DON4
+[§5 item 1, ANSWERED — the switch]  ─┐
+                                     ├──▶  DON1  ──┬──▶ DON3 ──▶ DON4 ──▶ (the release)
+[the verifier account, named — §4.3] ┘            ├──▶ DON2
+                                                  └──▶ DON6
+                                     DON7 ‖ DON1            DON5 ‖ DON4
 ```
 
-`the verifier account → DON1 → DON3 → DON4 → the release`, and **the longest wait in it is not code**:
-it is the verifier account's name, which is another work stream's Open item (§4.3), plus an owner at a
-terminal for the one step §2.1 keeps. The chain is five links and the last one is a person's, which is
-the same honest shape the cloud senior review's own §6.3 reaches.
+`§5 item 1, answered → the verifier account → DON1 → DON3 → DON4 → the release`, and **two of the
+chain's links are not code**: the owner's answer to the switch (new, and it is first — the review added
+it), and the verifier account's name, which is another work stream's Open item (§4.3), plus an owner at
+a terminal for the one step §2.1 keeps. **The gate is first and it holds the whole chain**, which is the
+honest shape after the review: the plan is not waiting on code, it is waiting on a ruling. The chain is
+six links and the last one is a person's, which is the same shape the cloud senior review's own §6.3
+reaches.
 
 ### 4.3 What must precede what — the verifier account, and CSR10 / CSR12 / CSR13
 
@@ -670,7 +897,73 @@ themselves. The live checks are still the owner's and still the last link.
 
 ## 5. Open items — the owner's, and none of them decided here
 
-**1. An installation with no GitHub App at all.** A Bitbucket-only installation, or one whose
+**Item 1 is BLOCKING and the other five are not:** it decides how the jobs switch to the service, and
+**every task in §3 is held behind it**. Items 2–6 are the ones the ruling itself leaves open, and each
+can be answered independently.
+
+**1. BLOCKING — how the jobs switch to the service, and it is the one item that holds every task in
+§3.** §1.4 verifies the fact this item exists for: **the deploy and the switch are two changes, and the
+switch, as the tree stands, breaks every installation's runs.** Writing the installation root's
+`credentials_service` block triggers `dropModelMounts` on every repository root
+(`internal/infra/spec.go:1177-1178`, `:1314`), the drop is **auth-blind** (`sa.tf:148-151`, and
+`SECURITY.md` states it as a limit of the release), and a run that hands its job
+`FUGARO_CREDENTIALS_SERVICE_URL` opens the GitHub provider **keyless with no fallback**
+(`internal/gitprov/providers/providers.go:93-99`). So an `oauth` or `api-key` job of a converged
+installation declares no model credential while the bundle holds nothing that replaces it. **The owner's
+intent is not in question — the service is deployed for every installation. What this item decides is
+how the second change happens, and the two readings are:**
+
+- **(a) The service is deployed everywhere, and the switch stays off.** The installation root's block
+  lands (DON1); the repository roots' read-back (`repoCredentialsService`, `dropModelMounts`) and the
+  run's URL (`credentialsServiceLaunchEnv`) **stay off** until the bundle holds what that job's auth
+  mode needs. The jobs keep their mounts and every run is unchanged; the service is deployed, serving
+  and admitting nobody (§2.3) on every installation.
+  **Cost, and it is two costs.** *(i)* **The opt-in comes back as a readiness gate.** The ruling existed
+  to remove "per-installation choice"; (a) replaces it with a per-installation *readiness* condition,
+  and an installation whose owner never writes the bundle keeps the old path indefinitely — so the
+  service is on every installation and used by none of them. *(ii)* **Something has to turn the switch
+  on, and the HARD RULE forbids that something being a second command.** If the flip is another
+  `fugaro update`, the release's `### For operators` section has a second step in it after all and
+  DON5 cannot write what this file promised; if the flip is a **readiness read taken at convergence
+  time** — the convergence path asking Secret Manager what the bundle holds, and setting the read-back
+  from the answer — then `fugaro update` (and `fugaro init` for a repository root) gains a cloud read
+  and a new decision in a path that today derives everything from the local config and the policy. **The
+  second is the reading that keeps the HARD RULE; it is also the one that needs a design, and this file
+  does not write it.**
+- **(b) The credential drop becomes auth-aware, and `fugaro update` migrates the existing secrets in the
+  owner's terminal.** The switch lands **with** the deploy: a job's mounts depend on its own
+  `agent.auth`, and the bundle is filled from what the installation already holds, so the first `update`
+  is also the last step.
+  **Cost, and it is four, and three of them are new code.** *(i)* **`is_service_held` becomes
+  per-workflow**, and the Go mirror must move with it in one commit: `sa.tf:135-137`'s expression and
+  `internal/infra/spec.go`'s `dropModelMounts` (`:1177-1178`) and `mountsServiceHeldSecret` (`:1720`)
+  are already held to each other by `TestServiceHeldSecretsMatchTheCredentialsService`, so the pair
+  moves together or the guard fires. *(ii)* **`update` becomes a bundle writer**, which is a class of
+  code the CLI does not have: it reads the project's existing secrets — the model credential, and the
+  App key, which is **already a project-wide secret** (`gcp.ProjectSecretID(lc.Name,
+  config.GitHubAppKeySecret)`, `internal/cli/project_enroll.go:918`, which is what makes this reading
+  feasible rather than a prompt) — and writes them into the one bundle secret, so the CLI holds raw
+  credential values on a path that today never does. Terraform cannot do it: no credential value may
+  reach Terraform or its state (`TestNoSecretVersionsInTerraform`), so the migration is the CLI's or
+  nobody's. *(iii)* **`update` must carry `creds set`'s agent refusal for that half**
+  (`internal/cli/creds.go:118-119`, `agentMarker`/`initflow.AgentRefusal`), or `update` becomes the
+  agent-runnable route to writing every credential in the bundle that the refusal exists to close. That
+  is a change to the one command the Fugaro skill drives and the HARD RULE names. *(iv)* **The App key's
+  own drop is gated behind Check 96.** `config.ServiceHeldSecretNames` is empty today (#907) and the
+  README's status paragraph says the flip waits on the owner's live Check 96 proving the deployed
+  service mints; under (b) that flip is part of this change, so **Check 96 stops being a later
+  confirmation and becomes a precondition.**
+
+**The recommendation on this item, and it is a recommendation and not a decision:** **(b)**, because it is the reading
+that keeps the HARD RULE's "one command" true and because the migration is genuinely available — the
+App key is already a project secret and the model credentials already are — while (a) buys the same
+service on every installation and leaves it unused, with the flip postponed to a design that does not
+exist yet. **The cost of (b) is real and the owner should weigh (iii) in particular:** a `fugaro update`
+that refuses a coding agent's session is a different command from the one the plugin runs today.
+**The owner's, and BLOCKING: no task in §3 may be built until this is answered.** DON3's own *content*
+is the one exception (§3 DON3), and its `Depends on` is not.
+
+**2. An installation with no GitHub App at all.** A Bitbucket-only installation, or one whose
 repositories use a different provider, has no App key to write and never will. §3 DON5 writes the
 operator step as **conditional** for exactly this reason, and §2.3's table says the service works
 without a key. **What is not decided here:** whether such an installation should be *told* anything at
@@ -679,7 +972,7 @@ missing App key on an installation with no GitHub repository, or name it. The re
 silent, because a warning an operator cannot act on is noise, and the read is one the doctor already
 makes (`infra.CredentialsJobAccounts` knows the providers). **The owner's.**
 
-**2. Whether the service should deploy before a key exists.** The ruling says the service deploys for
+**3. Whether the service should deploy before a key exists.** The ruling says the service deploys for
 every installation; it does not say whether the **first** deploy should wait for the bundle to hold the
 App key. The tree's own answer is that it should not — the service is designed to start, serve and admit
 nobody (§2.3), and the loader fails closed — and DON1 follows it. **But it is a decision the owner made
@@ -688,7 +981,7 @@ service only once `creds set github-app-key` has run) would make the service's e
 credential, which is the shape the ruling was taken to remove. **The owner's, and the recommendation is
 to leave the tree's answer standing.**
 
-**3. The cost wording on the website.** §1.3 states the idle cost **accurately rather than rounded**: the
+**4. The cost wording on the website.** §1.3 states the idle cost **accurately rather than rounded**: the
 service is free while idle *once the minimum instance count is pinned*, plus **one active Secret Manager
 version** and **one cached container image**, whose published prices are **not facts this tree holds**.
 `website/content/security.md` and `website/content/subscription-terms.md` are public statements a
@@ -699,12 +992,12 @@ cached image, with the numbers). The recommendation is the narrower one on the *
 owner's framing in the **design** documents, because a design document states an intent and a pricing
 page states a bill. **The owner's.**
 
-**4. The `max_instance_count` value.** §3 DON3 proposes `4` and gives its reasoning; the value is a
+**5. The `max_instance_count` value.** §3 DON3 proposes `4` and gives its reasoning; the value is a
 cost-and-capacity decision rather than a code fact, and the owner may want a different number (or an
 explicit statement that the service is deliberately unbounded above, which would be the first unbounded
 always-on resource this installation deploys). **The owner's.**
 
-**5. Whether DON1's removal of `--provision-credentials` is the right call.** §3 DON1 decides it
+**6. Whether DON1's removal of `--provision-credentials` is the right call.** §3 DON1 decides it
 **removed** rather than kept as a no-op alias, and gives its reason. The decision is cheap to reverse —
 the flag is one `BoolVar` and one gate — and it is listed here because it is a **surface a user types**,
 which is the class of decision this file does not make for the owner. **The owner's.**
