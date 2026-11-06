@@ -26,7 +26,7 @@ import (
 // the store cannot present what it reads, and the value is shown once at mint
 // and never again. That is the second barrier; the first is D935, which moved
 // these records out of the project's database into a store whose IAM names the
-// coordinator's own service account and no other member, because every
+// front door's own account (`mcp_server`) and no other member, because every
 // launcher and operator holds a project-level database grant no rule binds
 // (reconciliation.md F32).
 //

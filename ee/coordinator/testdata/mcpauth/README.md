@@ -14,8 +14,8 @@ like a real key is key material in a repository whatever it is called
 
 **Nothing here is a token, a client secret, or a value any record is written
 from.** The store's own records (M2, D935) live in a store of their own — the
-`mcpauth/` prefix of a bucket whose only member is the coordinator's service
-account — and its tests reach that store through `internal/gcpfake` rather
+`mcpauth/` prefix of a bucket whose only member is the front door's own
+account (`mcp_server`, M4's) — and its tests reach that store through `internal/gcpfake` rather
 than through a fixture: the generation-matched write those tests are about is
 a property of a bucket, and a file in this directory cannot stand in for it.
 

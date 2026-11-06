@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
@@ -292,6 +293,48 @@ func TestRotateRefusesWhatItMust(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestARevokeThatFailsIsCarriedByTheReplay is the theft path where a silent
+// success costs the most. A replay revokes the family, and the whole value of
+// that revoke is that the thief's token stops working: a store that answered
+// "revoked" while its own delete was refused would leave the theft in place
+// and tell the caller only that a replay had happened — the one error a caller
+// cannot act on, because there is nothing left to do about it.
+//
+// So the replay is reported with the revoke's own failure joined to it. The
+// two halves answer different questions (what happened, and whether the store
+// could do anything about it) and the caller needs both.
+func TestARevokeThatFailsIsCarriedByTheReplay(t *testing.T) {
+	ctx := context.Background()
+	s := newFakeStore(t)
+
+	_, refresh, err := Mint(ctx, s, "user:person-1", testClient(), testLimits())
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	if _, _, err := Rotate(ctx, s, refresh); err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+	rec, err := s.LookupByHash(ctx, TokenHash(refresh))
+	if err != nil {
+		t.Fatalf("LookupByHash: %v", err)
+	}
+	s.gcs.DenyWrites(testBucket(), familyPrefix+rec.FamilyID)
+
+	_, _, err = Rotate(ctx, s, refresh)
+	if !errors.Is(err, ErrRefreshReplay) {
+		t.Errorf("Rotate of a token that was rotated away = %v; want ErrRefreshReplay", err)
+	}
+	if !errors.Is(err, blobx.ErrForbidden) {
+		t.Errorf("Rotate = %v; want the revoke's own refusal carried alongside the replay", err)
+	}
+	// The replay is still a replay: the family is where the store left it, and
+	// the caller is told what to do about it (retry the revoke) rather than
+	// that everything is fine.
+	if _, _, err := s.GetFamily(ctx, rec.FamilyID); err != nil {
+		t.Errorf("the family a failed revoke named = %v; want it still there, the delete having been refused", err)
+	}
 }
 
 // valuePrefixes is the value's prefixes a record must not contain. The floor

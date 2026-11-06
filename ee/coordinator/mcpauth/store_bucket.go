@@ -7,11 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"gocloud.dev/gcerrors"
+	"google.golang.org/api/googleapi"
 )
 
 // This file is the one concrete backend of §8's recommendation: the `mcpauth/`
@@ -30,8 +32,11 @@ import (
 // :142) and every operator can act as the deployer (:501), so a store whose
 // name carried that prefix would be readable, rewritable and re-grantable by
 // every operator — F32 again, one resource over. The one binding this store
-// has is M4's, on the coordinator's own service account, and the name is what
-// makes "and nobody else" true rather than nearly true.
+// has is M4's, on the front door's own account `mcp_server` — the account M4
+// creates for a front door (deploy/terraform/gcp/modules/installation/
+// coordinator.tf, `google_service_account.mcp_server`) and never the
+// coordinator's own (`google_service_account.coordinator`, the sweep's) — and
+// the name is what makes "and nobody else" true rather than nearly true.
 //
 // The checks below are therefore about the name and not about politeness: a
 // later edit that pointed the store at the project's database, at the runs
@@ -184,8 +189,28 @@ func (o bucketObjects) delete(ctx context.Context, key string) error {
 	// A missing object is not a failure here: the revoke it carries out is
 	// idempotent by design, so a second revoke of the same family, and a
 	// revoke whose family a rotation already replaced, both succeed.
-	if err := o.b.Delete(ctx, key); err != nil && gcerrors.Code(err) != gcerrors.NotFound {
-		return err
+	//
+	// **The refusal is checked before the fold, and that ordering is the whole
+	// of this function.** gocloud's GCS driver answers an HTTP 403 with
+	// gcerrors.NotFound (gocloud.dev/blob/gcsblob/gcsblob.go, ErrorCode: "So
+	// we have to pick one"), the same fold ReadStrict exists to undo on the
+	// read path — and the unconditional delete has no strict variant to lean
+	// on, so the check is made here. A delete refused by IAM, by a retention
+	// policy or a hold, or by a VPC-SC perimeter folds into "there was nothing
+	// to delete" otherwise, and this is the one write whose silence is a
+	// security failure: the revoke D930 answers a replay with would report
+	// itself as done while the family stayed alive
+	// (TestARevokeTheStoreRefusesIsNotARevoke,
+	// TestARevokeThatFailsIsCarriedByTheReplay).
+	err := o.b.Delete(ctx, key)
+	var ae *googleapi.Error
+	switch {
+	case err == nil:
+		return nil
+	case errors.As(err, &ae) && ae.Code == http.StatusForbidden:
+		return fmt.Errorf("%w: %w", blobx.ErrForbidden, err)
+	case gcerrors.Code(err) == gcerrors.NotFound:
+		return nil
 	}
-	return nil
+	return err
 }

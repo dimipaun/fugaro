@@ -34,6 +34,11 @@ func testBucket() string { return StoreBucketName(testProject) }
 type fakeStore struct {
 	Store
 	bucket *blobx.Bucket
+	// gcs is the fake itself, for the tests that have to change what it
+	// answers mid-test: a store whose grant is taken away after something has
+	// been minted is the one way to hold a family the store can no longer
+	// revoke.
+	gcs *gcpfake.GCS
 }
 
 // newFakeBucket is the bucket the fake serves, for a test that needs the
@@ -49,8 +54,10 @@ func newFakeBucket(t *testing.T) *blobx.Bucket {
 
 func newFakeStore(t *testing.T) *fakeStore {
 	t.Helper()
-	b := newFakeBucket(t)
-	return &fakeStore{Store: newBucketStore(b), bucket: b}
+	g := gcpfake.NewGCS(t)
+	g.AddBucket(testBucket(), 1234, nil)
+	b := g.Bucket(t, testBucket())
+	return &fakeStore{Store: newBucketStore(b), bucket: b, gcs: g}
 }
 
 // objects is every value the store holds, keyed by its own key. It reads

@@ -21,6 +21,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/blobx"
 )
 
 func TestLookupFindsByThePresentedToken(t *testing.T) {
@@ -227,6 +229,66 @@ func TestRotateDoesNotRevokeWhenItLosesTheRace(t *testing.T) {
 	}
 	if _, _, err := RotateAt(ctx, s, refresh, time.Now().UTC()); !errors.Is(err, ErrRefreshReplay) {
 		t.Errorf("the loser presenting the same token again = %v; want ErrRefreshReplay", err)
+	}
+}
+
+// TestARevokeTheStoreRefusesIsNotARevoke is D930's one unconditional write
+// held to the answer the read path already refuses to fold. gocloud's GCS
+// driver reports an HTTP 403 as NotFound — the fold ReadStrict exists to undo
+// — so a delete refused for lack of permission and a delete of an object that
+// is not there arrive here as the same thing. A revoke that read that as
+// "already gone" would report success while the family is still alive, and in
+// the replay path that is the theft revocation failing silently.
+func TestARevokeTheStoreRefusesIsNotARevoke(t *testing.T) {
+	ctx := context.Background()
+	s := newFakeStore(t)
+
+	_, refused, err := Mint(ctx, s, "user:person-1", testClient(), testLimits())
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	_, allowed, err := Mint(ctx, s, "user:person-2", testClient(), testLimits())
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	rec, err := s.LookupByHash(ctx, TokenHash(refused))
+	if err != nil {
+		t.Fatalf("LookupByHash: %v", err)
+	}
+	other, err := s.LookupByHash(ctx, TokenHash(allowed))
+	if err != nil {
+		t.Fatalf("LookupByHash: %v", err)
+	}
+
+	// One family's record is behind a refusal: every write to it is a 403,
+	// which is what a retention policy, a hold, a VPC-SC perimeter or a
+	// mistyped IAM change answers. The other family is not, so the contrast
+	// below is a refusal and not a store that stopped working.
+	s.gcs.DenyWrites(testBucket(), familyPrefix+rec.FamilyID)
+
+	if err := s.RevokeFamily(ctx, rec.FamilyID); err == nil {
+		t.Error("RevokeFamily reported success while the store refused the delete")
+	} else if !errors.Is(err, blobx.ErrForbidden) {
+		t.Errorf("RevokeFamily = %v; want it to carry %v, as the strict read carries a refused read", err, blobx.ErrForbidden)
+	}
+
+	// The family is still there, which is the whole reason the success was a
+	// lie: its tokens keep resolving.
+	if _, _, err := s.GetFamily(ctx, rec.FamilyID); err != nil {
+		t.Errorf("the family a refused revoke reported revoking = %v; want it still there", err)
+	}
+	if _, err := s.LookupByHash(ctx, TokenHash(refused)); err != nil {
+		t.Errorf("a token of the family a refused revoke reported revoking = %v; want it still valid", err)
+	}
+
+	// A family the store is allowed to delete still goes, and a second revoke
+	// of it is still a success: the refusal above is told apart from the
+	// absence, not folded into it.
+	if err := s.RevokeFamily(ctx, other.FamilyID); err != nil {
+		t.Fatalf("RevokeFamily of a family the store may delete: %v", err)
+	}
+	if err := s.RevokeFamily(ctx, other.FamilyID); err != nil {
+		t.Errorf("RevokeFamily of a family already revoked = %v; want nil", err)
 	}
 }
 
