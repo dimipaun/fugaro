@@ -862,12 +862,14 @@ var RolePermissions = map[string][]string{
 // knownCommands are the container command and args the modules set: none for a
 // workflow's job and for the credentials service (whose image's own entrypoint
 // is the service, credentials.tf), the history sweep, the coordinator's
-// aggregation sweep and the image check.
+// aggregation sweep, the image check and the project catalog's check
+// (catalogcheck.tf).
 var knownCommands = [][2][]string{
 	{nil, nil},
 	{{"/usr/local/bin/fugaro"}, {"budget", "history", "--sweep"}},
 	{{"/usr/local/bin/fugaro"}, {"coordinator", "sweep"}},
 	{{"fugaro"}, {"image", "check", "--job"}},
+	{{"fugaro"}, {"image", "check", "--job", "--catalog"}},
 }
 
 // credentialsServiceEnv are the only environment variables the credentials
@@ -2289,6 +2291,38 @@ type checkSpec struct {
 	BaseImages          map[string]string `json:"base_images"`
 }
 
+// catalogCheckSpec is the part of the catalog check job's
+// FUGARO_CATALOG_CHECK_SPEC that points at registries and accounts: the base
+// images its builds start FROM and the account each repository's build runs
+// as. It decodes as the job does (internal/cli's catalogCheckSpec reader; infra.CatalogCheckJobSpec is the writer, with the same tags).
+type catalogCheckSpec struct {
+	BaseImages   map[string]string `json:"base_images"`
+	Repositories []struct {
+		BuildServiceAccount string `json:"build_service_account"`
+	} `json:"repositories"`
+}
+
+// checkCatalogSpec holds the catalog check job's document to what
+// checkSpecs holds a repository check's: every base image in this run's
+// registry and every build account one of this run's Fugaro accounts.
+func (c Cover) checkCatalogSpec(value, proj, prefix string) string {
+	var s catalogCheckSpec
+	if err := json.Unmarshal([]byte(value), &s); err != nil {
+		return "a catalog check spec that is not the JSON the catalog check job reads"
+	}
+	for _, k := range slices.Sorted(maps.Keys(s.BaseImages)) {
+		if ref := s.BaseImages[k]; !c.baseImageOK(ref, proj) {
+			return fmt.Sprintf("a catalog check spec whose base image %s is %q, outside this run's %s", k, ref, prefix)
+		}
+	}
+	for _, r := range s.Repositories {
+		if !c.buildAccount(r.BuildServiceAccount) {
+			return fmt.Sprintf("a catalog check spec whose build service account is %q, not a Fugaro service account of this run", r.BuildServiceAccount)
+		}
+	}
+	return ""
+}
+
 // refChars are the characters an image reference may hold here: the spec's
 // refs reach a Dockerfile FROM line and a build's arguments.
 var refChars = regexp.MustCompile(`^[A-Za-z0-9._:/@-]+$`)
@@ -2466,11 +2500,18 @@ func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string)
 		if unknownAt(unk, append(slices.Clone(ep), "name")...) {
 			return "an environment variable whose name is not known"
 		}
-		if e["name"] != "FUGARO_CHECK_SPEC" {
+		name := str(e["name"])
+		if name != "FUGARO_CHECK_SPEC" && name != "FUGARO_CATALOG_CHECK_SPEC" {
 			continue
 		}
 		if unknownAt(unk, append(slices.Clone(ep), "value")...) {
 			return "a check spec that is not known"
+		}
+		if name == "FUGARO_CATALOG_CHECK_SPEC" {
+			if why := c.checkCatalogSpec(str(e["value"]), proj, prefix); why != "" {
+				return why
+			}
+			continue
 		}
 		var s checkSpec
 		if err := json.Unmarshal([]byte(str(e["value"])), &s); err != nil {

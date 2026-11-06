@@ -386,12 +386,13 @@ func TestAllowedTypesCoverTheModules(tt *testing.T) {
 	}
 	// The attribute values the checks expect are the modules' literals.
 	pins := map[string][]string{
-		"modules/installation/history.tf": {`"/usr/local/bin/fugaro"`, `["budget", "history", "--sweep"]`, `https://run.googleapis.com/v2/projects/${var.project}/locations/`, `service_account_email = google_service_account.scheduler.email`},
-		"modules/repo/check.tf":           {`command = ["fugaro"]`, `["image", "check", "--job"]`, `https://run.googleapis.com/v2/projects/${var.project}/locations/`},
-		"modules/installation/logging.tf": {`destination            = "logging.googleapis.com/${local.log_bucket_path}"`, `projects/${var.project}/`},
-		"modules/installation/bucket.tf":  {`uniform_bucket_level_access = true`, `public_access_prevention    = "enforced"`},
-		"modules/firebase/firebase.tf":    {`identitytoolkit.googleapis.com`, `securetoken.googleapis.com`},
-		"modules/installation/budget.tf":  {`billing_account = var.budget.billing_account`},
+		"modules/installation/history.tf":      {`"/usr/local/bin/fugaro"`, `["budget", "history", "--sweep"]`, `https://run.googleapis.com/v2/projects/${var.project}/locations/`, `service_account_email = google_service_account.scheduler.email`},
+		"modules/installation/catalogcheck.tf": {`command = ["fugaro"]`, `["image", "check", "--job", "--catalog"]`},
+		"modules/repo/check.tf":                {`command = ["fugaro"]`, `["image", "check", "--job"]`, `https://run.googleapis.com/v2/projects/${var.project}/locations/`},
+		"modules/installation/logging.tf":      {`destination            = "logging.googleapis.com/${local.log_bucket_path}"`, `projects/${var.project}/`},
+		"modules/installation/bucket.tf":       {`uniform_bucket_level_access = true`, `public_access_prevention    = "enforced"`},
+		"modules/firebase/firebase.tf":         {`identitytoolkit.googleapis.com`, `securetoken.googleapis.com`},
+		"modules/installation/budget.tf":       {`billing_account = var.budget.billing_account`},
 		// The credentials service's own literals, which its case in cover.go
 		// reads: the IAM setting it requires and the seven environment
 		// variables credentialsServiceEnv allows — the service's whole
@@ -527,6 +528,47 @@ func TestCoverCheckSpecEveryEntry(t *testing.T) {
 	cs["env"] = append(cs["env"].([]any), map[string]any{"name": "FUGARO_CHECK_SPEC", "value": `{"build_service_account":"fugaro-b-acme-webapp-5b8bba58@proj-1.iam.gserviceaccount.com","registry":"evil.example/x"}`})
 	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{j}}, nil); len(got) == 0 {
 		t.Fatal("a second, foreign FUGARO_CHECK_SPEC is covered")
+	}
+}
+
+// The catalog check job runs `fugaro image check --job --catalog` with its own
+// FUGARO_CATALOG_CHECK_SPEC: the plan the installation module writes is
+// covered, and a spec that points its builds at another registry or another
+// account is not.
+func TestCoverCatalogCheckJob(t *testing.T) {
+	const reg = "us-east5-docker.pkg.dev/proj-1/"
+	base := reg + "fugaro-base/x:1"
+	job := func(spec string, args ...string) ResourceChange {
+		a := make([]any, len(args))
+		for i, x := range args {
+			a[i] = x
+		}
+		env := []any{map[string]any{"name": "FUGARO_CATALOG_CHECK_SPEC", "value": spec}}
+		c := map[string]any{"image": base, "command": []any{"fugaro"}, "args": a, "env": env}
+		return rc("google_cloud_run_v2_job", map[string]any{"template": []any{map[string]any{"template": []any{map[string]any{"containers": []any{c}}}}}},
+			map[string]any{}, "create")
+	}
+	spec := func(baseRef, account string) string {
+		out, _ := json.Marshal(map[string]any{"version": 1, "base_images": map[string]string{"base": baseRef},
+			"repositories": []any{map[string]any{"build_service_account": account}}})
+		return string(out)
+	}
+	cmd := []string{"image", "check", "--job", "--catalog"}
+	for name, tc := range map[string]struct {
+		job     ResourceChange
+		covered bool
+	}{
+		"as the module writes it":       {job(spec(base, okBuild), cmd...), true},
+		"a foreign base image":          {job(spec("evil.example/base:1", okBuild), cmd...), false},
+		"a foreign build account":       {job(spec(base, "attacker@evil.iam.gserviceaccount.com"), cmd...), false},
+		"a spec that is not JSON":       {job("registry="+reg, cmd...), false},
+		"the command with another flag": {job(spec(base, okBuild), "image", "check", "--job", "--other"), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{tc.job}}, nil); (len(got) == 0) != tc.covered {
+				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
+			}
+		})
 	}
 }
 
