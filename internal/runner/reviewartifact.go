@@ -385,6 +385,150 @@ func (s ServiceSigner) Sign(ctx context.Context, digest string) (string, error) 
 	return ans.Signature, nil
 }
 
+// ServiceVerifier is the credentials service as the coordinator's verifier:
+// the verify route's own client (C3.9f). It posts the digest, the signature,
+// the run and the repository to the route and reads the ONE refusal bit back.
+//
+// It is the trim of ServiceSigner in the other direction. A sign call presents
+// the run's identity, which the service verified, and frames the message from
+// it; a VERIFIER HOLDS NO RUN IDENTITY (D1068, D1073), so the two fields the
+// frame is built from travel in the body and the account whose key the answer
+// is recomputed under travels beside them -- the account of the review run the
+// artifact belongs to, never the caller's, and never a value the artifact
+// carries (an artifact that could name the key that verifies it would choose
+// its own verifier).
+//
+// It holds no key and compares nothing itself: the frame is the service's own
+// construction from the two identities IT has, and a second spelling of the
+// check here would be a check nobody's key is under.
+type ServiceVerifier struct {
+	URL string
+	// HTTP is the client a test hands in; nil means this code builds one.
+	HTTP *http.Client
+	// IDToken mints the verifier's identity token for the service's own URL.
+	// The identity is the installation's own, and never a person's: the
+	// service refuses to start with an address that is both a person and a
+	// verifier (NewAuthenticator), so the caller is a verifier service account
+	// the launcher impersonates.
+	IDToken func(ctx context.Context) (string, error)
+	// Account is the review run's own Claude account: it selects WHICH key the
+	// service recomputes under and can never make an invalid signature valid
+	// (VerifyRequest's own comment).
+	Account string
+	// Run and Repository are the two frame fields the signature was made over.
+	// They are the review run the caller launched and the repository it is for.
+	Run        string
+	Repository string
+}
+
+var _ SignatureVerifier = ServiceVerifier{}
+
+// Verify asks the service whether signature is its own over digest, framed
+// with this verifier's run and repository and recomputed under this verifier's
+// account. It answers nil only for the route's one accepted bit and refuses
+// everything else -- a call it cannot make, a service it cannot reach, a
+// refusal status, an answer that is not this route's, and a reachable service
+// that answered false. A verifier that read a failure as "nothing to check"
+// would make an unverified verdict a brief.
+//
+// Nothing here can put a value in an error: the identity is never formatted
+// into one, and the service's message beside an error code is its own text --
+// written for an operator's log and not for a run -- so it is dropped rather
+// than relayed, exactly as the sign route's is.
+func (v ServiceVerifier) Verify(ctx context.Context, digest, signature string) error {
+	if v.URL == "" || v.IDToken == nil {
+		return fmt.Errorf("%w: no credentials service is available to verify with, and a signature nothing checks is no signature", ErrReviewSignature)
+	}
+	// The URL is checked before the verifier's identity is sent to it, for the
+	// signer's own reason: an https URL, or http on a loopback address.
+	if err := checkReviewServiceURL(v.URL); err != nil {
+		return err
+	}
+	id, err := v.IDToken(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: the verifier's identity token could not be minted: %v", ErrReviewSignature, err)
+	}
+	if id == "" {
+		return fmt.Errorf("%w: the verifier's identity token is not available, and the verify route admits no caller without one", ErrReviewSignature)
+	}
+	if !printableToken(id) {
+		return fmt.Errorf("%w: an identity token is not one header value", ErrReviewSignature)
+	}
+	if !reviewDigestRE.MatchString(digest) {
+		return fmt.Errorf("%w: the digest is not the 64 lowercase hex characters of a SHA-256", ErrReviewSignature)
+	}
+	if !reviewSignatureRE.MatchString(signature) {
+		return fmt.Errorf("%w: the signature is not the 64 lowercase hex characters the route takes", ErrReviewSignature)
+	}
+	// The three named fields are held to being there before the call: the
+	// service refuses an empty account as a bad CALL rather than answering a
+	// false about an artifact, and an empty run or repository is a frame the
+	// service would build over nothing.
+	if v.Account == "" {
+		return fmt.Errorf("%w: the verify call names no account, and the account is the review run's own (the axis's default is spelled %s)", ErrReviewSignature, config.DefaultClaudeAccount)
+	}
+	if v.Run == "" || v.Repository == "" {
+		return fmt.Errorf("%w: the verify call names no run or no repository, and those two fields are the message the signature covers", ErrReviewSignature)
+	}
+	body, err := json.Marshal(credsvc.VerifyRequest{
+		Account: v.Account, Digest: digest, Signature: signature,
+		Run: v.Run, Repository: v.Repository,
+	})
+	if err != nil {
+		return fmt.Errorf("%w: the verify call's request could not be built", ErrReviewSignature)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimSuffix(v.URL, "/")+credsvc.VerifyPath, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("%w: the verify call's request could not be built", ErrReviewSignature)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+id)
+	resp, err := reviewSignClient(v.HTTP).Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: the credentials service could not be reached", ErrReviewSignature)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxReviewVerifyAnswerBytes+1))
+	if err != nil {
+		return fmt.Errorf("%w: the service's answer could not be read", ErrReviewSignature)
+	}
+	if len(data) > maxReviewVerifyAnswerBytes {
+		return fmt.Errorf("%w: the service's answer is larger than a verify call's", ErrReviewSignature)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%w: the service answered %d%s", ErrReviewSignature, resp.StatusCode, reviewRefusalCode(data))
+	}
+	// The answer is read strictly and for its one bit alone: an unknown field,
+	// a body that is not an object, and an object with no valid field are all
+	// answers this route could not have written, and reading one generously
+	// would be reading a verdict out of a document nobody answered.
+	var ans struct {
+		Valid *bool `json:"valid"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&ans); err != nil || ans.Valid == nil {
+		return fmt.Errorf("%w: the service's answer is not a verify call's", ErrReviewSignature)
+	}
+	// Exactly one object: a second one beside the answer is a body this route
+	// did not write, and a reader that stopped at the first would take the
+	// leading bit of a document that says something else after it.
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("%w: the service's answer is not a verify call's", ErrReviewSignature)
+	}
+	if !*ans.Valid {
+		return fmt.Errorf("%w: the service recomputed the signature under that account's key and it is not this artifact's", ErrReviewSignature)
+	}
+	return nil
+}
+
+// maxReviewVerifyAnswerBytes bounds the verify route's answer, on the sign
+// route's own figure and for the same reason: the answer is one bit, so a body
+// of any size is an answer this route did not write.
+const maxReviewVerifyAnswerBytes = 4 << 10
+
 // reviewSignAlgorithm is the construction the service's answer must name
 // (C3.9e's signAlgorithm). It is spelled here rather than imported because
 // that constant is the service's own and this is the reader's half of the same
@@ -549,6 +693,15 @@ func VerifyReviewArtifact(ctx context.Context, data []byte, signature string, wa
 	}
 	digest := sha256Hex(string(data))
 	if err := v.Verify(ctx, digest, strings.TrimSpace(signature)); err != nil {
+		// A verifier that refuses in the family's own words is not wrapped a
+		// second time: ServiceVerifier's refusals are all ErrReviewSignature,
+		// and re-wrapping spelled the family's sentence twice in front of the
+		// reason. A verifier that answers with an error of its own is still
+		// reported as the signature's, so a caller can tell a refusal from a
+		// pass.
+		if errors.Is(err, ErrReviewSignature) {
+			return ReviewArtifact{}, err
+		}
 		return ReviewArtifact{}, fmt.Errorf("%w: %v", ErrReviewSignature, err)
 	}
 	for _, c := range []ReviewKeyValue{

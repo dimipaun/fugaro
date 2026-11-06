@@ -691,6 +691,43 @@ func wordMacro(m string, depth int) (string, error) {
 	return "", fmt.Errorf("unknown macro %s", m)
 }
 
+// PathMCPAuth is the hosted MCP server's own subtree (docs/mcp-server/spec.md
+// §6 and §8; D922, answered and restated on 2026-11-04): the token records —
+// hashes only, never a value — the client registrations, the redirect URIs,
+// the revocation state and the whole tool-call audit. It is a top-level
+// sibling of `coordinator/` and deliberately not a child of it, so the
+// coordinator's shared view and the token records are not one node.
+//
+// The template carries it with `.read: false` and `.write: false`, written out
+// rather than left to the root's own denial, and deliberately not
+// `coordinator/`'s `.read: "USER"`: D195 has a signed-in person read the
+// coordinator's state, and D922's answer refuses that same person every read
+// of this one. Nothing a client token holds admits it: a rule binds a client
+// token and refuses this node to every one of them. It binds no IAM identity,
+// and the coordinator's account is not the node's only writer — the
+// installation grants roles/firebasedatabase.viewer to every launcher and
+// operator (deploy/terraform/gcp/modules/firebase/iam.tf:44) and
+// roles/firebasedatabase.admin to the admins and budget admins
+// (deploy/terraform/gcp/modules/firebase/iam.tf:53), to the history service
+// account (deploy/terraform/gcp/modules/firebase/iam.tf:81) and to the
+// coordinator's own writer (deploy/terraform/gcp/modules/firebase/iam.tf:141),
+// and every one of those reads and writes every node past these rules — the
+// fact the package comment above states for config/admin and
+// docs/design/roles.md:104 for the database as a whole. So the node is written
+// as a refusal beside the IAM grants rather than as a grant of its own, and the
+// exposure those grants leave is not one a rule here can close: it is an open
+// item on the plan's M3 (docs/mcp-server/implementation-plan.md) for the owner
+// to decide — another store, narrower IAM, or the exposure accepted and the
+// spec corrected. Without the read being false, the client list, the redirect
+// URIs, the revocation state and the audit would be readable by every client
+// the installation admits, and "store only hashes" would protect the token
+// values and nothing else.
+//
+// It sits below the macro table rather than beside PathDevices because a
+// constant added above it would move the lines internal/cli's voice-switch
+// test reads out of this file to resolve a pinned citation.
+const PathMCPAuth = "mcpauth"
+
 // boundedMatch is a non-empty string of at most max characters, every one of
 // them in the pattern's set.
 func boundedMatch(max int, pattern string) string {

@@ -425,7 +425,7 @@ func newImageRefreshCmd() *cobra.Command {
 // with yes, no terminal is required (it may run from CI or a script). There is
 // still no --json or --plan-only.
 func refuseRefreshHere(cmd *cobra.Command, yes bool, g *refreshManaged) error {
-	if m := agentMarker(os.Getenv); m != "" {
+	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
 		if g != nil {
 			return nil
 		}

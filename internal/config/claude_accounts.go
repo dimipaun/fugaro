@@ -201,6 +201,28 @@ func AllowedClaudeAccounts(accounts map[string]ClaudeAccount, repo string) []str
 // move.
 const reservedAccountNameMessage = "this name is reserved: the platform holds another credential under it, so an account spoken by it would leave one name meaning two credentials — pick a different account name"
 
+// ReviewVariantAccount is one entry of ProjectJobAccounts' axis as the
+// review-only variant's names spell it: the policy's own spelling of the
+// account, which writes the default account as DefaultClaudeAccount where the
+// axis writes it as the empty string.
+//
+// The variant's job name and service account are derived over that spelling
+// (ReviewVariantSuffix is appended to it), so this is the one mapping from the
+// axis a profile states to the account segment the variant's names carry. It
+// is defined here beside the axis and the suffix because a second spelling
+// would name a job nobody deployed: the runner recomputes the variant's name
+// to place a review run in it (internal/runner's projectJobCandidates), the
+// deployer builds the job with the same mapping (internal/infra's
+// ReviewVariantAccount is this function) and the credentials service admits
+// its account over the same axis (internal/credsvc's ReviewJobAccountsFor),
+// so the three cannot disagree.
+func ReviewVariantAccount(account string) string {
+	if account == "" {
+		return DefaultClaudeAccount
+	}
+	return account
+}
+
 // ReviewVariantSuffix is the suffix a review-only job variant carries on the
 // account segment of its job name and service account (design
 // docs/cloud-senior-review, CSR7): the variant of the account "team-a" is

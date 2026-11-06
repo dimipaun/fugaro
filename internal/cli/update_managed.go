@@ -280,7 +280,7 @@ func readUpdateGate(e *initEngine, r *initRun) *initGate {
 		// takes no secret on one.
 		Argv:        os.Args[1:],
 		Declined:    "nothing was applied",
-		AgentMarker: agentMarker(os.Getenv),
+		AgentMarker: agentMarker(os.Getenv, r.stdinTerminal()),
 	}
 	gate, err := readManagedGate(ctx, env, facts)
 	if err != nil {
@@ -336,7 +336,7 @@ func (r *initRun) gateStandsIn() bool { return r.gateUnderway() && !r.o.ask }
 // owner's own run has always made it. Leaving it for an owner who is already
 // looking at the screen would be a prompt by another name.
 func (r *initRun) gateLeavesTheIAMCall() bool {
-	return r.gateUnderway() && agentMarker(os.Getenv) != ""
+	return r.gateUnderway() && agentMarker(os.Getenv, r.stdinTerminal()) != ""
 }
 
 // gateProceeded is the line a gate-admitted step prints where its confirmation
@@ -345,7 +345,7 @@ func (r *initRun) gateLeavesTheIAMCall() bool {
 // GateProceeded, which are two sentences because they are addressed to two
 // readers).
 func (r *initRun) gateProceeded() string {
-	return gateSentence(agentMarker(os.Getenv))
+	return gateSentence(agentMarker(os.Getenv, r.stdinTerminal()))
 }
 
 // gateSentence is the same choice for a caller that holds the marker rather
@@ -559,7 +559,7 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 	if err != nil {
 		return true, &initflow.GatedError{Reason: err.Error(), Err: err}
 	}
-	marker := agentMarker(os.Getenv)
+	marker := agentMarker(os.Getenv, s.e.r.stdinTerminal())
 	if !initflow.GateConfirms(class, r.conditions(), mg) {
 		// A Typed class is the one not-admitted answer with a sentence of the
 		// gate's own to give, and it is given here rather than left to the

@@ -128,7 +128,7 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 	// not the settings write path's, so the fence that path carries would
 	// arrive after the value was already gone.
 	command := secretsRmCommand(name)
-	if marker := agentMarker(os.Getenv); marker != "" {
+	if marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); marker != "" {
 		return userErr("refusing to remove %s in a coding agent's session (%s is set): removing it deletes its Secret Manager container and every version in it, which no plan shows and no dry run brings back; run this yourself at your own terminal: %s; nothing was removed",
 			pluginwire.Printable(name), marker, command)
 	}

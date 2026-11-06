@@ -292,7 +292,7 @@ func (p *layerPlan) planDetail() string {
 // publish the object every repository of the project resolves against, and that
 // is a cloud write like any other.
 func (s *layerStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
-	if marker := agentMarker(os.Getenv); marker != "" {
+	if marker := agentMarker(os.Getenv, s.e.r.stdinTerminal()); marker != "" {
 		return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
 	}
 	p, err := s.plan(ctx)

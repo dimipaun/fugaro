@@ -437,7 +437,7 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 	// the same refusal `policy publish` carries, and it comes before the read
 	// and before the ETag, so nothing is written and no cloud write is even
 	// reached.
-	if m := agentMarker(os.Getenv); m != "" {
+	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
 		return userErr("nothing was written: fugaro project repos add and repos rm edit the published allow-list, which is what admits a repository to the project: %s", initflow.AgentRefusal(m))
 	}
 	// openProjectBudget, not openBudget: this writes the published policy node,
@@ -832,7 +832,7 @@ func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
 	// the one thing that is true of every way of running this command: the
 	// write is not its to make. And it comes before the GitHub call, so nothing
 	// of the project leaves the machine either.
-	if m := agentMarker(os.Getenv); m != "" {
+	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
 		return userErr("nothing was written: fugaro project sync adds to the published allow-list, which is what admits a repository to the project, and --github-app-key reads the App's private key with your own credentials to ask GitHub which repositories the App is installed on: %s", initflow.AgentRefusal(m))
 	}
 	lc, db, configPath, err := openProjectBudget(ctx, o.cloud, "nothing was added to the allow-list")

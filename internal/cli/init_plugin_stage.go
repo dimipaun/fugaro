@@ -202,7 +202,7 @@ func (s *pluginStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		fmt.Fprintf(r.w, "note: %s\n", ch.Note)
 	}
 	switch {
-	case r.gateStandsIn() && agentMarker(os.Getenv) == "":
+	case r.gateStandsIn() && agentMarker(os.Getenv, r.stdinTerminal()) == "":
 		// A managed project asks nothing here (the ruling of 2026-11-01): the
 		// diff above is the whole of what the owner reads, and the write is
 		// made. The marker is asked for beside the gate because the two

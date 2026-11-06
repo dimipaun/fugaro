@@ -200,7 +200,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	// terminal, never --json, a pipe or a coding agent's session. A run that
 	// can't take it is refused first, before the local config, the bucket or
 	// anything else in the cloud is touched.
-	conds := initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), JSON: o.asJSON, Agent: agentMarker(os.Getenv)}
+	conds := initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), JSON: o.asJSON, Agent: agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))}
 	if !initflow.CanConfirm(initflow.Typed, conds) {
 		return buildNotConfirmable(conds, o.repo, o.workflow)
 	}
@@ -420,6 +420,7 @@ func confirmBuild(cmd *cobra.Command, project, gcpProject, what string) error {
 	if strings.TrimSpace(line) != project {
 		return userErr("not confirmed (the project's name was not typed); no build was submitted")
 	}
+	noteIDETerminalCmd(cmd, w)
 	return nil
 }
 

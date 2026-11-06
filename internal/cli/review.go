@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -37,6 +39,35 @@ import (
 // seam is set, so the command's other refusals and the launch itself stay
 // covered while E7 is unmet.
 var reviewJobAdmitted = false
+
+// reviewSkipAdmissionCheckEnv is the environment switch the owner's own C3.9
+// live check's step 3 is reached with while reviewJobAdmitted is false: set,
+// the launcher skips its early refusal and starts the review job, which is what
+// that step needs and what nothing else supplies (docs/cloud-senior-review
+// implementation-plan.md, gap 1 of §6's table).
+//
+// It is a convenience and never the boundary — the credentials service still
+// answers 401 to a review caller it does not admit, so this switch lets a
+// launch start and admits nothing (Global Constraint 6) — and every constraint
+// on it is a test: off by default, so an installation that never hears of it
+// refuses exactly as before; read with os.Getenv at the refusal and nowhere
+// else, so no fugaro.yaml, no project layer and no local config can set it;
+// refused in a coding agent's session by the tree's own marker path
+// (agentMarker, initflow.AgentRefusal), which is read before the variable is;
+// one warning line when it is honored; and deleted by the commit that flips the
+// constant, since a switch that outlives the gate it was built for is a hole
+// with no reason left to be open.
+const reviewSkipAdmissionCheckEnv = "FUGARO_REVIEW_SKIP_ADMISSION_CHECK"
+
+// reviewSkipAdmissionNotice is the one line a launch prints when the switch is
+// honored, before it starts anything: what the variable is for, and the
+// boundary it does not cross. The operator who reads it has to be able to tell
+// a launch that skipped a convenience from one that was admitted.
+const reviewSkipAdmissionNotice = "warning: " + reviewSkipAdmissionCheckEnv +
+	" is set, so this launch skips the launcher's early refusal of a review and starts the job anyway: " +
+	"the variable is the owner's own live check's door into a review launch, and it admits nothing — " +
+	"the credentials service's answer to the review's caller is what decides whether the run is served, " +
+	"and this switch changes none of it.\n"
 
 // reviewOnlyRecipe is the catalog recipe a review launch runs: mode: review,
 // exactly one --pr — the same recipe `fugaro run --pr N --recipe review-only`
@@ -136,7 +167,7 @@ func runReviewLaunch(cmd *cobra.Command, o *reviewOptions) error {
 	if err := spec.Validate(); err != nil {
 		return userErr("%v", err)
 	}
-	if err := checkReviewLaunch(ctx, env, repo, slug, o.pr, spec, cmd.ErrOrStderr()); err != nil {
+	if err := checkReviewLaunch(ctx, env, repo, slug, o.pr, spec, cmd.ErrOrStderr(), os.Getenv, stdinIsTerminal(cmd.InOrStdin())); err != nil {
 		return err
 	}
 	res, err := finishLaunch(ctx, env, o2, slug, spec, false, cmd.ErrOrStderr(), false)
@@ -193,11 +224,11 @@ func reviewAccount(spec *task.Spec) string {
 // anything else happens, and not spec.ReviewPRs[0]: the task's own list is the
 // same number (reviewSpec writes it from that flag) and is not read for its
 // length here, so no caller can index an empty slice.
-func checkReviewLaunch(ctx context.Context, env *cloudEnv, repo, slug string, pr int, spec *task.Spec, warn io.Writer) error {
+func checkReviewLaunch(ctx context.Context, env *cloudEnv, repo, slug string, pr int, spec *task.Spec, warn io.Writer, getenv func(string) string, stdinTerminal bool) error {
 	if err := checkReviewService(env); err != nil {
 		return err
 	}
-	if err := checkReviewJobAdmitted(); err != nil {
+	if err := checkReviewJobAdmitted(getenv, stdinTerminal, warn); err != nil {
 		return err
 	}
 	if err := checkReviewAccountState(ctx, env, spec); err != nil {
@@ -214,11 +245,26 @@ func checkReviewLaunch(ctx context.Context, env *cloudEnv, repo, slug string, pr
 // this half has none: no fugaro update reaches it, and the operator who reads
 // "not configured" would spend a while looking for one before concluding that
 // the release they are on cannot launch a review at all.
-func checkReviewJobAdmitted() error {
+//
+// The environment switch above is the one door the owner may open here, and it
+// is opened in this function and nowhere else: the refusal is the one thing it
+// skips, so a launch that skips it is the launch below minus this sentence. The
+// marker is classified before the switch is read and acted on where the switch
+// is honored — an agent's session is refused the variable, and the unset case
+// is the sentence this function has always answered, unchanged.
+func checkReviewJobAdmitted(getenv func(string) string, stdinTerminal bool, warn io.Writer) error {
 	if reviewJobAdmitted {
 		return nil
 	}
-	return userErr("this installation's credentials service does not admit the review job's own caller: the review's account belongs to a project-scoped job, and the service refuses one whole (its admission is built for a repository's own job). A review launched now would fail inside the job with the service's answer instead of this sentence. No fugaro update supplies this half — it is a change to the service's own admission, which this release ships the command, the gate and the review-only job variant ahead of (docs/cloud-senior-review §1). Until it lands, review a pull request in the run's own job with fugaro run --pr N --recipe " + reviewOnlyRecipe)
+	marker := agentMarker(getenv, stdinTerminal)
+	if getenv(reviewSkipAdmissionCheckEnv) == "" {
+		return userErr("this installation's credentials service does not admit the review job's own caller: the review's account belongs to a project-scoped job, and the service refuses one whole (its admission is built for a repository's own job). A review launched now would fail inside the job with the service's answer instead of this sentence. No fugaro update supplies this half — it is a change to the service's own admission, which this release ships the command, the gate and the review-only job variant ahead of (docs/cloud-senior-review §1). Until it lands, review a pull request in the run's own job with fugaro run --pr N --recipe " + reviewOnlyRecipe)
+	}
+	if marker != "" {
+		return userErr("nothing was launched: %s is the owner's own live check's way into a review launch, and a coding agent's session is refused it as it is refused every other door to the owner's installation: %s", reviewSkipAdmissionCheckEnv, initflow.AgentRefusal(marker))
+	}
+	io.WriteString(warn, reviewSkipAdmissionNotice)
+	return nil
 }
 
 // reviewJobFor is the job a review launch runs on: CSR7's review-only variant
@@ -430,28 +476,31 @@ func reviewArtifactUnreadable(run string, err error) error {
 // — bounded, quoted, nonce-delimited, and naming the review run — for the
 // launcher to put in front of the follow-up's own instructions.
 //
-// It reads the review's own artifact, from exactly where fugaro review show
-// reads it, and refuses rather than returning anything a brief could carry
-// when that read or the decode fails: a fix round whose brief does not say
-// what it was launched to fix is worse than no run at all, so an unreadable
-// verdict never becomes a brief (spec §6). The refusal names the review run,
-// which is the one thing its reader has to look at.
-//
 // reviewRun is the reference the launcher passed: <repo-slug>/<run-id>, or a
 // bare run id, read from the repository this fix round is for. A reference
-// that names another repository is refused — the artifact is read from the
-// path the reference names, and a brief carrying a review of somewhere else
-// would be quoting the wrong code.
+// that names another repository is refused, and so is a reference whose path
+// and whose artifact disagree: the artifact is read from exactly where fugaro
+// review show reads it, and its own claims are checked against this launch
+// before any of its text is used, so a brief cannot quote a review of
+// somewhere else nor name a run nobody read. The section that is rendered
+// names the reference this launcher read, never the artifact's claim about
+// itself.
 //
-// The path the reference names is not evidence of what the artifact inside it
-// says, so the artifact's own claims are checked against this launch before any
-// of its text is used: the review run, the repository and the pull request must
-// all be the ones this launch is for. A review of another pull request would
-// otherwise reach the brief under a sentence that calls it "this pull request",
-// and the brief would name a run nobody read. What a mismatch prints is the
-// three values that disagree — never a field of the artifact's own prose — and
-// the section that is rendered names the reference this launcher actually read
-// rather than the artifact's claim about itself.
+// A verdict is a verdict only once its signature is checked (CSR10, D892(a)),
+// so this reader is a VERIFYING one: the sidecar beside the artifact is
+// verified by the installation's credentials service over the artifact's exact
+// stored bytes before the verdict is read at all, and it FAILS CLOSED (spec
+// §6): a read or a decode that fails, and every way the service's answer can
+// be other than yes, refuses the launch — never "nothing to check" — because a
+// brief whose findings nobody verified is worse than no run at all. Every
+// refusal names the review run and quotes no field of the review's own prose
+// (spec §7).
+//
+// The verdict is acted on only when it is the one that asks for a fix: a
+// `fix first` becomes the brief, while a `ship` or a `reject` refuses and
+// points at fugaro review show for the findings (Open item 2's answer,
+// 2026-11-05) — a brief built from a verdict that asked for no fix is a fix
+// round nobody asked for.
 func reviewFindings(ctx context.Context, env *cloudEnv, repo, reviewRun string, pr int) (string, error) {
 	slug, id := "", reviewRun
 	if strings.Contains(reviewRun, "/") {
@@ -472,7 +521,8 @@ func reviewFindings(ctx context.Context, env *cloudEnv, repo, reviewRun string, 
 		return "", userErr("--review-run %s is a review of %s, and this fix round is for %s: a brief carries the findings of its own repository", oneLineCLI(reviewRun), oneLineCLI(slug), oneLineCLI(own))
 	}
 	ref := slug + "/" + id
-	data, err := runstore.Open(env.bucket.Bucket, slug, id).ReadFile(ctx, runstore.ArtifactPrefix+runner.ReviewArtifactName)
+	store := runstore.Open(env.bucket.Bucket, slug, id)
+	data, err := store.ReadFile(ctx, runstore.ArtifactPrefix+runner.ReviewArtifactName)
 	if err != nil {
 		if errors.Is(err, runstore.ErrNotFound) {
 			return "", reviewArtifactUnreadable(ref, err)
@@ -491,8 +541,58 @@ func reviewFindings(ctx context.Context, env *cloudEnv, repo, reviewRun string, 
 	case art.PR != pr:
 		return "", userErr("--review-run %s holds the artifact of a review of pull request #%d, and this fix round is for #%d: a brief carries the findings of the review it names", oneLineCLI(ref), art.PR, pr)
 	}
+	// The sidecar, read from the same prefix the artifact was read from: the
+	// digest the service is asked about is the SHA-256 of the bytes above, so
+	// the signature and the object are the same read.
+	sig, err := store.ReadFile(ctx, runstore.ArtifactPrefix+runner.ReviewSignName)
+	if err != nil {
+		if errors.Is(err, runstore.ErrNotFound) {
+			return "", userErr("%s has no signature beside its review artifact (%s is absent), and an unverified verdict is not one to act on: a fix round is launched only on a review the installation's credentials service signed. See fugaro review show %s", oneLineCLI(ref), runner.ReviewSignName, oneLineCLI(ref))
+		}
+		return "", remote(err)
+	}
+	// The account the verify call names has ONE source: the account of the
+	// review job this launcher resolved, which the review run's own task
+	// carries (the axis's empty account is spelled as no field, so the mapping
+	// is the launch's own rule). The artifact has no account field by design —
+	// an artifact that could name the key that verifies it would choose its own
+	// verifier — and the run's record is deliberately not a source (its
+	// oauth_account is informational and written by the job itself).
+	reviewSpec, err := store.ReadTask(ctx)
+	if err != nil {
+		return "", userErr("%s's own task cannot be read (%s), and the account a verdict is verified under is the review run's own: without it there is no key to ask about, so the brief is refused rather than built on a guess. See fugaro diagnose %s", oneLineCLI(ref), safetext.FieldErr(err), oneLineCLI(ref))
+	}
+	// The head the call demands, from the forge rather than from the artifact:
+	// a validly signed verdict for an earlier head of the same pull request is
+	// a replay, and the artifact's own head_sha is the claim being checked.
+	head, err := reviewHead(ctx, env, repo, pr)
+	if err != nil {
+		return "", err
+	}
+	verifier, err := reviewVerifier(ctx, env, reviewAccount(reviewSpec), id, slug)
+	if err != nil {
+		return "", err
+	}
+	want := runner.ReviewExpectation{ReviewRun: id, Repository: slug, PR: pr, HeadSHA: head}
+	if _, err := runner.VerifyReviewArtifact(ctx, data, string(sig), want, verifier); err != nil {
+		return "", userErr("%s: %s. A fix round carries a review's verdict into its brief only when the installation's credentials service verifies the signature over the artifact's own bytes, so this launch is refused rather than started on a verdict nobody checked. See fugaro review show %s", oneLineCLI(ref), safetext.Field(err.Error()), oneLineCLI(ref))
+	}
+	// The signature said the artifact is the one this launch is for; the
+	// verdict says whether it asks for a fix at all. Only `fix first` does, and
+	// the other two words are refused rather than carried: the findings of a
+	// ship or a reject are one fugaro review show away, while a brief built
+	// from them is a fix round nobody asked for.
+	if art.Verdict != reviewFixFirst {
+		return "", userErr("--review-run %s holds a review whose verdict is %q, and only a review that asks for a fix becomes a fix round's brief: read its findings with fugaro review show %s", oneLineCLI(ref), safetext.Field(art.Verdict), oneLineCLI(ref))
+	}
 	return runner.FixFindings(ref, art.Issues), nil
 }
+
+// reviewFixFirst is the one verdict word that asks for a fix round: the
+// artifact's own closed set is ship, fix first and reject (runner's
+// reviewVerdicts, held by DecodeReviewArtifact), and the launcher acts on the
+// one of them that asks for the work this launch does.
+const reviewFixFirst = "fix first"
 
 // writeObject writes one object's bytes and a closing newline, so two objects
 // printed one after the other stay two: review.json is stored without a
