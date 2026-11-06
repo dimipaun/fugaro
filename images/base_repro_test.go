@@ -181,7 +181,7 @@ func TestBuildBasePinsTheDateAndTheExporter(t *testing.T) {
 		`--build-arg "SOURCE_DATE_EPOCH=$epoch"`,
 		`if [ -z "$epoch" ] || [ "$epoch" = 0 ]; then`,
 		`echo "build-base.sh: SOURCE_DATE_EPOCH is ${epoch:-empty} and this checkout has no commit date to take:`,
-		`--output "type=docker,rewrite-timestamp=true"`,
+		`--output "type=docker,rewrite-timestamp=true,unpack=false"`,
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("build-base.sh lacks %q", want)

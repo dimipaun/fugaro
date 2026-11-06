@@ -49,6 +49,10 @@ epoch=${SOURCE_DATE_EPOCH:-}
   exit 1
 }
 
+# A git-lfs whose postinst no longer writes the system filter (the 0.20.0 build
+# saw none) is given it here, so the section below is built from a real one.
+git config --system --get filter.lfs.clean >/dev/null 2>&1 || git lfs install --system --skip-repo
+
 {
   printf '[filter "lfs"]\n'
   for key in clean smudge process required; do

@@ -85,7 +85,7 @@ func TestBaseReproducibleFixtureBuild(t *testing.T) {
 		build := exec.Command("docker", "buildx", "build", "--progress", "plain",
 			"--platform", testutil.DockerPlatform(t),
 			"--build-arg", "SOURCE_DATE_EPOCH="+reproFixtureEpoch,
-			"--output", "type=docker,rewrite-timestamp=true",
+			"--output", "type=docker,rewrite-timestamp=true,unpack=false",
 			"--tag", tag, "--file", filepath.Join(dir, "Dockerfile"), dir)
 		build.Env = append(os.Environ(), "DOCKER_BUILDKIT=1")
 		if out, err := build.CombinedOutput(); err != nil {
