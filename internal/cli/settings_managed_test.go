@@ -490,6 +490,25 @@ func TestSettingsManagedAllowlistBindsTheSessionAndNotThePerson(t *testing.T) {
 	}
 }
 
+// The floors (review_rounds, adversarial_rounds) bind a coding agent's session,
+// which only raises them: the same document that lowers one is refused with an
+// agent marker and admitted for a person at a real terminal.
+func TestSettingsManagedFloorBindsTheSessionAndNotThePerson(t *testing.T) {
+	r := newSettingsManagedRig(t, settingsMarksManaged)
+	g := &managedGate{env: managedGateEnv{lc: r.managedLocal(t)}}
+	target := settingsManagedLayerTarget(settingsManagedLayerFile(t, minimalAnchored))
+	old := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 6 }\n")
+	lowered := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 4 }\n")
+
+	err := settingsManagedVerdict(context.Background(), g, "claude-code", target, settingsManagedLayerKey, false, "", old, lowered).Refuse()
+	if err == nil || !strings.Contains(err.Error(), "never lowers") {
+		t.Fatalf("a coding agent's session lowered a floor: %v", err)
+	}
+	if err := settingsManagedVerdict(context.Background(), g, "", target, settingsManagedLayerKey, false, "", old, lowered).Refuse(); err != nil {
+		t.Fatalf("a person at a terminal was refused lowering a floor: %v", err)
+	}
+}
+
 // The record follows the write and never precedes it: the gate admits the
 // document, files nothing at all while the command has written nothing, and
 // files the one admission when — and only when — the command asks it to, after
