@@ -693,6 +693,15 @@ func VerifyReviewArtifact(ctx context.Context, data []byte, signature string, wa
 	}
 	digest := sha256Hex(string(data))
 	if err := v.Verify(ctx, digest, strings.TrimSpace(signature)); err != nil {
+		// A verifier that refuses in the family's own words is not wrapped a
+		// second time: ServiceVerifier's refusals are all ErrReviewSignature,
+		// and re-wrapping spelled the family's sentence twice in front of the
+		// reason. A verifier that answers with an error of its own is still
+		// reported as the signature's, so a caller can tell a refusal from a
+		// pass.
+		if errors.Is(err, ErrReviewSignature) {
+			return ReviewArtifact{}, err
+		}
 		return ReviewArtifact{}, fmt.Errorf("%w: %v", ErrReviewSignature, err)
 	}
 	for _, c := range []ReviewKeyValue{
