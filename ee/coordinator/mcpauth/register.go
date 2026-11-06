@@ -120,7 +120,7 @@ func (s *Server) serveRegister(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	name := req.ClientName
-	if name != "" && !printableASCII(name, maxClientNameBytes) {
+	if name != "" && !printableClientName(name, maxClientNameBytes) {
 		writeOAuthError(w, http.StatusBadRequest, oauthError(oidc.ErrInvalidRequest(),
 			fmt.Sprintf("client_name is not a printable name of at most %d bytes", maxClientNameBytes)))
 		return
@@ -226,6 +226,27 @@ func isLoopbackRedirect(u *url.URL) bool {
 		// same name written the way a client's configuration happened to.
 		return strings.EqualFold(host, "localhost")
 	}
+}
+
+// printableClientName reports whether a client's name for itself is at most max
+// bytes of printable ASCII, spaces included.
+//
+// It is deliberately not the package's printableASCII, whose floor is one above
+// the space: that rule is the email fold's, where a space would make an address
+// that is not one, and a client that called itself "an editor" would be refused
+// by it. What is refused here is a control character — the name is rendered
+// into a page a person reads, and html/template escapes the markup while
+// nothing escapes a terminal escape sequence.
+func printableClientName(s string, max int) bool {
+	if s == "" || len(s) > max {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 // readJSONBody decodes one JSON object from the request body under this

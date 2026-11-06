@@ -180,3 +180,74 @@ func resourceMetadataURL(t *testing.T, challenge string) string {
 	}
 	return rest[:j]
 }
+
+// TestNoRecordIsWrittenOutsideTheStore is D935 held as a fact about this
+// package rather than as a rule about it: every write the endpoints make
+// arrives through M2's Store, and none of them opens a database or a bucket of
+// its own.
+//
+// The whole surface is driven — a registration, an authorization, a consent, an
+// exchange, a rotation and a revocation — and what is compared afterwards is
+// the bucket itself against the keys the store the server was handed was asked
+// to write. A record the endpoints wrote by some other route would be a key
+// nothing in that set names, and the store the server holds is the only one it
+// has: a second client to the store's own backend is what this test exists to
+// make impossible to add quietly.
+func TestNoRecordIsWrittenOutsideTheStore(t *testing.T) {
+	ts := newTestServer(t)
+
+	clientID, secret := ts.register(t, "an editor", testClientRedirect)
+	binding := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	code := codeOf(t, ts.consent(t, url.Values{"request_id": {binding}, "decision": {"allow"}}))
+	rec, tokens := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantAuthorizationCode)},
+		"code":          {code},
+		"redirect_uri":  {testClientRedirect},
+		"client_id":     {clientID},
+		"code_verifier": {testVerifier},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the code exchange answered %d (%s)", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	// The two writes that are not creates, so the comparison below covers them
+	// as well: a rotation replaces a family and a revocation deletes one.
+	if rec, _ := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantRefreshToken)},
+		"refresh_token": {tokens.RefreshToken},
+		"client_id":     {clientID},
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("the refresh grant answered %d (%s)", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	if rec := ts.postForm(t, RevokePath, url.Values{
+		"token":         {tokens.AccessToken},
+		"client_id":     {clientID},
+		"client_secret": {secret},
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("the revocation answered %d (%s); RFC 7009 answers 200 to a revocation", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+
+	at := ts.store.objects(t)
+	if len(at) == 0 {
+		t.Fatal("the store holds nothing after a whole flow: the comparison below would pass while writing nowhere at all")
+	}
+	for key := range at {
+		if !ts.counting.keys[key] {
+			t.Errorf("%s is in the store and no call of the Store interface wrote it: every record these endpoints write goes through M2's Store, and nothing here names the bucket or the project's database (D935)", key)
+		}
+	}
+	// And the flow really did reach every kind of record, so the check above is
+	// looking at a store that holds what the endpoints write rather than at one
+	// that happens to hold a client.
+	for _, prefix := range []string{clientPrefix, tokenPrefix, requestPrefix, codePrefix} {
+		found := false
+		for key := range at {
+			if strings.HasPrefix(key, prefix) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("the store holds no record under %q after a whole flow: the endpoint that writes one did not, so this test is not covering it", prefix)
+		}
+	}
+}
