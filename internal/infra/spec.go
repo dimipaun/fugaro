@@ -1124,8 +1124,9 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// carries no stamp passes none of its image's own variables, which is the
 	// fail-closed direction: an image the catalog did not choose is a
 	// repository's own build file, and a job deployed before this variable
-	// existed behaves as it did until its next fugaro update redeploys it
-	// (docs/image-env, reconciliation D1371).
+	// existed behaves as it did until its next `fugaro update --repo .`
+	// redeploys it: the repository stage, which a plain `fugaro update` does
+	// not run (docs/image-env, reconciliation D1371).
 	if entry.Name != "" {
 		ws.Env[ImageEntryEnv] = entry.Name
 	}

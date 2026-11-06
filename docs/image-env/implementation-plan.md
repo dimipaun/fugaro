@@ -34,8 +34,10 @@ not IE1's; **O5 = yes**, the report is **`fugaro doctor --all`** (D1377), which 
 - **a field never changes meaning**: no task reuses or retypes an existing wire field, config key or
   environment name, and the stamp is a new name (D1371);
 - **comments explain why, never what**; no TODO, no section header, no restatement of a name;
-- **`fugaro update` stays the whole upgrade**: nothing here adds an operator step, and a job that
-  predates the stamp converges with the next `update` (D1371, D1382);
+- **`fugaro update` stays the whole upgrade**: nothing here adds a command, and a job that predates
+  the stamp collects it the next time that repository's own resources converge —
+  **`fugaro update --repo .`**, the repository stage a plain `fugaro update` does not run (D1371,
+  D1382);
 - **`.github/workflows/` is never touched** by any task.
 
 ---
@@ -329,8 +331,9 @@ pull request.
 
 **0.20.0, which is O2's answer.** The design note and option 3 land in 0.20.0; the code only if this
 design's review is clean in time (D1382). The slot needs nothing from this plan to be announced — the
-design folder itself is the note — and the release that carries IE1–IE3 adds **no operator step**: the
-stamp converges with the job on the next `fugaro update`, which is the HARD RULE, and an installation
+design folder itself is the note — and the release that carries IE1–IE3 adds **no operator step**: a
+repository's jobs converge through `fugaro update --repo .` already, so the stamp arrives with that
+repository's next re-converge rather than through a command anyone has to learn, and an installation
 that never runs a catalog image behaves exactly as it does today.
 
 **`main` has since tagged 0.20.0 and moved past it** — `docs/releases/v0.20.0.md`, `v0.20.1.md` and
@@ -342,9 +345,9 @@ gates name no release.
 
 **The `### For operators` sentence the release owes, quoted here so it is not invented on release day**
 (it is written by the release, `scripts/release.sh X.Y.Z`, not by any task above): *"Run `fugaro update`.
-Nothing else is needed: the catalog's jobs collect a stamp as they converge, and an image built before
-this release passes nothing to a run until its own job converges. `fugaro doctor --all` names what any
-job still drops."* If the image refresh is asked for during the update, the derived and catalog images
+Nothing else is needed: a catalog image's job collects the stamp the next time that repository's own
+resources converge with `fugaro update --repo .`, and an image built before this release passes
+nothing to a run until then. `fugaro doctor --all` names what any job still drops."* If the image refresh is asked for during the update, the derived and catalog images
 should be refreshed so the stamp and the image agree — the job is what carries the stamp either way.
 
 **Check 291 is not a gate on the release and does not move the slot.** It is the evidence the owner runs

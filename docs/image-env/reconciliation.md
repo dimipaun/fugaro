@@ -275,7 +275,9 @@ settles.
   entry's name, under a new `FUGARO_`-prefixed variable.** *Recommendation.* `internal/infra` writes
   it where `entry.Name` is already in hand (`internal/infra/spec.go:1103-1104`, F6); the runner
   passes image variables **only when it is present**, so a job deployed by an older `fugaro update`
-  passes nothing (fail closed, and it converges on the next `update`, which is the HARD RULE).
+  passes nothing (fail closed, and it converges when the operator next runs **`fugaro update
+  --repo .`** — the repository stage, which a plain `fugaro update` does not run and which is already
+  today's door for a changed job, so nothing new is asked of them).
   *Alternative:* read the image's own config at run time — refused: it needs a registry call and a
   credential inside the job, and it cannot answer for a prebuilt entry (F5). *Cost:* a job whose
   image is a catalog entry built **before** this change passes nothing until it is redeployed; the
@@ -354,8 +356,8 @@ settles.
   option 3 land in 0.20.0; the code only if this design's review is clean in time. *Cost:* 0.20.0
   is also where `docs/repo-image-removal` is slotted (F17) and where the cloud senior review's
   and workspaces designs point — this change is small and independent of all of them, and its
-  `### For operators` entry is "nothing to run: `fugaro update` converges the stamp with the job" if
-  it ships at all. **The answer stands as the answer of 2026-11-05, and `main` has moved past it:**
+  `### For operators` entry names no new command: the stamp arrives with the repository's own
+  `fugaro update --repo .`, which a plain `fugaro update` does not run, if it ships at all. **The answer stands as the answer of 2026-11-05, and `main` has moved past it:**
   0.20.0 is tagged (0.20.2 at `c52d40f9`, this fix round's base) and neither this work nor the
   removal shipped in it, so the slot the answer picked is a number that has passed — which release
   carries the code is the owner's to say, and no task in this plan waits on the number.
