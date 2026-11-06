@@ -53,21 +53,6 @@ func TestImageRenderGenerated(t *testing.T) {
 	}
 }
 
-func TestImageRenderRepositoryDockerfile(t *testing.T) {
-	const df = "ARG FUGARO_BASE\nFROM ${FUGARO_BASE}\nRUN git clone \"$REPO_URL\" /work/repo\n"
-	files := npmFiles()
-	files["fugaro.yaml"] = strings.Replace(cliMinimalYAML, "{ commands:", "{ dockerfile: .fugaro/app.Dockerfile, commands:", 1)
-	files[".fugaro/app.Dockerfile"] = df
-	checkoutWith(t, files)
-	out, stderr, err := execute(t, "image", "render")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != df || !strings.Contains(stderr, "uses the repository Dockerfile .fugaro/app.Dockerfile") {
-		t.Fatalf("stdout %q, stderr %q", out, stderr)
-	}
-}
-
 func TestImageRenderNeedsCheckout(t *testing.T) {
 	testutil.IsolateGit(t)
 	t.Chdir(t.TempDir())

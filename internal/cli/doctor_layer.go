@@ -8,7 +8,6 @@ import (
 	"os"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
@@ -335,36 +334,18 @@ func imageConfigChecks(ctx context.Context, rb *blobx.Bucket, slug string, cfg *
 	return out
 }
 
-// imageLeafKeys are the leaf paths under workflows.<name>. that decide a
-// generated image's content (the fields imagecheck.ImageConfigHash hashes):
-// base is a scalar on its own; the rest are image:'s own leaves.
-// Resolution.SourceOf only ever sees leaves (a bare "workflows.X.image" is
-// never itself a key, since the resolve.go merge records a source only for
-// a scalar or a list, never for a map it recurses into), so asking it for
-// "workflows.X.image" the way an earlier version of this function did
-// always answered SourceDefault, silently never attributing an image
-// override to anything.
-// image.node and image.jdk were removed in 0.7.0 (image.tools replaces
-// them, but as a map it has no one leaf path to ask Resolution.SourceOf for:
-// its own leaves are image.tools.<name>, one per declared tool, so it is
-// left out here rather than named at a path that can never match).
-var imageLeafKeys = []string{"base", "image.apt", "image.setup", "image.skip_build_scripts"}
-
 // imageConfigReason names where a workflow's image-affecting settings come
-// from, for imageConfigChecks' message: base's own source first, then every
-// other distinct non-default source among the rest of imageLeafKeys (at
-// most one more in practice: a workflow has one profile and one repo
-// override, so sources are limited to SourceRepo and one SourceProfile).
+// from, for imageConfigChecks' message.
+//
+// It walked imageLeafKeys — base, image.apt, image.setup and
+// image.skip_build_scripts — and named every distinct source among them. The
+// repository-image removal refuses the last three by name (D1195) and base has
+// been the one Fugaro base since 0.7.0, so there is no second source left for
+// them to differ over and the base's own source is the whole answer.
+// Resolution.SourceOf only ever sees leaves (a bare "workflows.X.image" is
+// never itself a key, since the resolve.go merge records a source only for a
+// scalar or a list, never for a map it recurses into), so the leaf path is
+// what it is asked for.
 func imageConfigReason(res *config.Resolution, name string) string {
-	baseFrom := res.SourceOf("workflows." + name + ".base")
-	others := map[string]bool{}
-	for _, k := range imageLeafKeys[1:] {
-		if s := res.SourceOf("workflows." + name + "." + k); s != config.SourceDefault && s != baseFrom {
-			others[s] = true
-		}
-	}
-	if len(others) == 0 {
-		return fmt.Sprintf("its base comes from %s", baseFrom)
-	}
-	return fmt.Sprintf("its base comes from %s and its image settings from %s", baseFrom, strings.Join(slices.Sorted(maps.Keys(others)), ", "))
+	return fmt.Sprintf("its base comes from %s", res.SourceOf("workflows."+name+".base"))
 }
