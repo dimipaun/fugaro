@@ -1346,9 +1346,10 @@ constant launches a run whose reviewer this task is what gives a model to reach.
     fact and a spoofable one.** The class selects a **credential**: `cascade` is the one auth whose
     upstream is the credentials service, and the service serves a review-class call from the pairing
     account's tier-A credential and from nothing else (`reviewCandidates`,
-    `internal/credsvc/cascade.go:105`). `r.reviewJob()` reads `r.d.Env`
-    (`internal/runner/reviewartifact.go:934`), which is the container's environment — the one input the
-    launcher writes for the execution (`backend.LaunchSpec.Env`, `internal/cli/run.go:3553`) and the one
+    `internal/credsvc/cascade.go:105`). `r.reviewJob()` reads `r.d.Env` — the whole of the function is
+    `envLookup(r.d.Env, EnvReviewJob) != ""` (`internal/runner/reviewartifact.go:934`, the read at `:935`)
+    — which is the container's environment, the one input the launcher writes for the execution
+    (`backend.LaunchSpec.Env`, `internal/cli/run.go:3553`) and the one
     a job definition carries — and CSR8's own rule for the class is the opposite in as many words:
     `r.runClass()` is the **task's mode** (`internal/runner/projectjob.go:82`), "never anything the job's
     environment says, so a container cannot be told which class it is by the name it was started under",
@@ -1462,7 +1463,8 @@ constant launches a run whose reviewer this task is what gives a model to reach.
   mode and never the name (R2-5); skip the allow-list arm along with O2's →
   `TestReviewRunIsStillHeldToTheAllowList` fails; make the class a rewrite of `r.cfg.Agent.Auth` rather
   than an accessor → `TestCodingRunKeepsItsOwnModelPath` fails (and the record's basis and
-  `budget_session.go:407`'s auth would move with it, which is why the accessor and not the field);
+  `internal/runner/budget_session.go:407`'s auth would move with it, which is why the accessor and not
+  the field);
   let the class answer with no service URL → `TestReviewRunUpstreamRefusesWithoutAService` fails; read the
   class's auth through `GatewayOn` without the mode → `TestReviewRunWithTheBudgetOffNeverReachesACredentialOfItsOwn`
   fails, because the run's gateway would be "on" in a mode the gateway is not built for.
@@ -1737,7 +1739,8 @@ seam and the reader that calls it) and **CSR14** (the account it impersonates an
 it). **Before CSR11**: the flip admits a launch whose fix round the launcher cannot start, because its
 verify call is admitted for nobody until this lands.
 
-- **Files:** `internal/cli/reviewverify.go`, `internal/cli/reviewverify_test.go` (new). **2 files.**
+- **Files:** `internal/cli/reviewverify.go` (CSR10's, merged as PR #1764 — this task rewrites its stub),
+  `internal/cli/reviewverify_test.go` (new). **2 files.**
 - **Interfaces:** `reviewVerifierIdentity` stops refusing and mints the token, through the machinery
   `fugaro managed apply` already has for the same call:
   - **Which identity.** The **one** account the installation's published `verifier_accounts` names — the
@@ -1886,7 +1889,7 @@ no two tasks may hold one**. Every file below belongs to exactly one task in exa
 | `internal/cli/run_test.go` | CSR10 | — | — | the `TestFixBrief*` fixtures gain the sidecar a fail-closed reader needs |
 | `internal/cli/review.go`, `internal/cli/review_test.go` | CSR10 | **CSR12** | **CSR11** | the verifying reader, then the switch, then the flip that removes it — **three levels, one writer each** |
 | `internal/cli/reviewverify.go` | CSR10 | **CSR15** | — | the seam and the fail-closed stub (PR #1764), then the impersonation that fills it |
-| `internal/cli/reviewverify_test.go` | — | **CSR15** | — | the impersonation's own tests |
+| `internal/cli/reviewverify_test.go` (new) | — | **CSR15** | — | the impersonation's own tests |
 | `internal/runner/gateway.go`, `internal/runner/gateway_test.go`, `internal/runner/routing.go`, `internal/runner/routing_internal_test.go`, `internal/runner/agentenv.go`, `internal/runner/agentenv_test.go` | **CSR13** | — | — | the class accessor and its five readers — **level 1, and disjoint from CSR8's merged files** |
 | `internal/runner/runner.go` | **CSR13** | — | — | **taken alone, for one call site**: §2's one-writer rule, and the task says so in its pull request |
 | `deploy/terraform/gcp/modules/installation/verifier.tf` (new), `…/iam.tf`, `…/credentials.tf`, `deploy/terraform/gcp/roots/installation/tests/verifier.tftest.hcl` (new) | CSR14 | — | — | the account, its two grants, the `FUGARO_VERIFIER_ACCOUNTS` entry and the address the installation is named by |
