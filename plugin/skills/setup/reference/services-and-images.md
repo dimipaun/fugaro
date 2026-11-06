@@ -48,7 +48,7 @@ project: acme
 git: { provider: github, base_branch: main }
 workflows:
   web:
-    image_name: web-node
+    image_name: web-frontend
     commands:
       build: npm run build
       test: CI=true npm test
