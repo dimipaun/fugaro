@@ -28,18 +28,15 @@ agent:
   # figure, recorded as notional) and which no gateway caps. Both keys are the machine's and not
   # this file's: they live in the local project config, and the account reaches a run only once
   # that config is published into the project's policy node (`fugaro project policy publish`).
-  # Naming an account is the owner's own step, and the evidence for it is the mixed run's smoke
-  # test, Check 290 of docs/gcp-live-checklist.md (owner-run, not yet run); these models stay
-  # DeepSeek until then.
+  # Naming an account is the owner's own step: the local project config names `bmb` (stages.review
+  # .claude_account) and `fugaro update` publishes it. The review stage runs on Opus, direct to
+  # Anthropic and on that account, and the first-line review stays on the DeepSeek reviewer through
+  # the gateway.
   auth: api-key
   max_budget_usd: 500  # Claude Code prices a non-Anthropic model at Sonnet-like rates, about 25 times what the gateway charges for DeepSeek, so this per-stage limit is set high on purpose; the gateway's per-run cap (budget set --repo) is the real hard stop
   models:
     coder: deepseek/deepseek-v4.1-flash
-    reviewer: deepseek/deepseek-v4-pro
-  # deepseek-v4-pro answers at most 16384 tokens a call; the review stage asks for 32000 unless limited,
-  # and the gateway refuses that request.
-  max_output_tokens:
-    reviewer: 16384
+    reviewer: claude-opus-5-5
 
 # Follow-ups (fugaro run --pr N) act on PR comments, which on a public repository anyone can
 # write: only the listed GitHub accounts (numeric IDs) are obeyed, and allow_public is the
