@@ -228,10 +228,9 @@ func TokenHash(value string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// NewValue is a fresh token value: 32 random bytes, base64url. The store
-// never sees it — only its hash — so a caller that loses it has lost the
-// token, which is the "shown once" of D922 stated as a fact rather than as a
-// rule.
+// NewValue is a fresh token value: 32 random bytes, hex. The store never sees
+// it — only its hash — so a caller that loses it has lost the token, which is
+// the "shown once" of D922 stated as a fact rather than as a rule.
 func NewValue() (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
@@ -293,7 +292,7 @@ func (r records) GetClient(ctx context.Context, clientID string) (Client, error)
 	}
 	var c Client
 	if err := r.get(ctx, clientPrefix+clientID, &c); err != nil {
-		if errors.Is(err, ErrFamilyNotFound) {
+		if errors.Is(err, errMissing) {
 			return Client{}, fmt.Errorf("mcpauth: client %q: %w", clientID, ErrClientNotFound)
 		}
 		return Client{}, err
@@ -368,7 +367,7 @@ func (r records) LookupByHash(ctx context.Context, hash string) (TokenRecord, er
 	}
 	var rec TokenRecord
 	if err := r.get(ctx, tokenPrefix+hash, &rec); err != nil {
-		if errors.Is(err, ErrFamilyNotFound) {
+		if errors.Is(err, errMissing) {
 			return TokenRecord{}, fmt.Errorf("mcpauth: hash %s: %w", hash, ErrTokenNotFound)
 		}
 		return TokenRecord{}, err
@@ -396,14 +395,12 @@ func (r records) RevokeFamily(ctx context.Context, familyID string) error {
 	return r.objs.delete(ctx, familyPrefix+familyID)
 }
 
-// get reads and decodes one record, answering ErrFamilyNotFound for a missing
-// object — the same sentinel every "this record is not here" answer uses, so
-// that a caller has one thing to test rather than one per type.
+// get reads and decodes one record, answering the backend's own errMissing for
+// an object that is not there. Each caller names what it was looking for: the
+// same absence is a client that was never registered and a token that was
+// never minted, and only the caller knows which it asked for.
 func (r records) get(ctx context.Context, key string, into any) error {
 	data, _, err := r.objs.read(ctx, key)
-	if errors.Is(err, errMissing) {
-		return ErrFamilyNotFound
-	}
 	if err != nil {
 		return err
 	}
