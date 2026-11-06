@@ -1607,3 +1607,58 @@ func credentialsVarsOnDisk(t *testing.T, r *imagesRig) map[string]any {
 	}
 	return doc
 }
+
+// TestOrdinaryUpdateAdmitsTheVerifierAccountInOneRun is the convergence test
+// CLAUDE.md's HARD RULE requires (CSR14): an installation at the PREVIOUS
+// version, with the credentials service already on, takes ONE ordinary
+// `fugaro update` — the one documented command, with no flag — to the state
+// this release ships, and both halves have to hold at the end of that run.
+//
+// The installation is seeded the way an earlier release left it: the block is
+// in the tfvars and carries no verifier_accounts member at all (the member is
+// this release's), the local config states no verifier and the published node
+// names none. On the tree this test was written against, one ordinary update
+// creates the verifier account and admits it for NOBODY: the module renders
+// the variable null (today's expression is `null ? [] : [...]`), and the
+// policy node the same run publishes names no verifier either — so the
+// launcher's verify call and the owner's own check are both refused until a
+// second run nobody was told to make.
+//
+// Half one is the service's own list, and it is asserted as the state the
+// module's default is FOR: the block the run leaves carries no member, which
+// is what makes the module render the account this same apply creates
+// (verifier.tftest.hcl pins null → the account alone). Half two is the node
+// the same run published, which is what CSR15's reader and the owner's doctor
+// read.
+func TestOrdinaryUpdateAdmitsTheVerifierAccountInOneRun(t *testing.T) {
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	credentialsOutputs(t, r)
+	// The database is this installation's, marked (the ownership check every
+	// policy write is behind), so the run's own policy stage publishes the
+	// node this test reads back.
+	r.db.Set(budget.PathMark, auroraMark())
+	seedCredentialsService(t, r, r.credentialsRef())
+	// The literal, as the module writes it (verifier.tf's account_id) and as
+	// internal/infra spells it (VerifierAccountID): the address is a fact of the
+	// configuration and not of the apply, which is the whole reason one run can
+	// both create the account and name it.
+	want := "fugaro-verifier@" + initProject + ".iam.gserviceaccount.com"
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("one ordinary update from the previous release failed: %v\n%s", err, s)
+	}
+
+	svc := credentialsServiceEntry(t, r)
+	if got, ok := svc["verifier_accounts"]; ok {
+		t.Errorf("credentials_service.verifier_accounts = %v after one ordinary update, want no member at all: the member's absence is the state the module's default is for, and the default is the account this apply creates\n%s", got, s)
+	}
+
+	node, _ := r.db.Value(projectpolicy.PathShared()).(map[string]any)
+	got, _ := node["verifier_accounts"].([]any)
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("the published policy node names verifier_accounts = %v, want [%s]: the service admits the account and the node every reader sees has to name it in the same run, or the launcher's verify call is refused until a second update nobody was told to make\n%s", node["verifier_accounts"], want, s)
+	}
+}
