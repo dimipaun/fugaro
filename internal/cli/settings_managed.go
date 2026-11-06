@@ -331,7 +331,12 @@ func settingsManagedVerdict(ctx context.Context, g *managedGate, marker string, 
 		// anywhere else they would name a check that never ran, for the reason
 		// the stale rule is written into the record only where it ran.
 		judge(settingsProfilesRule, settingsProfilesRefusal(key))
-		judge(settingsFloorRule, settingsFloorRefusal(key, old, newData, target.keyPath))
+		if marker != "" {
+			// The floors bind a coding agent's session, which only raises
+			// them; a person at a real terminal may lower them (the owner's
+			// ruling of 2026-11-06, the same one as the allowlist above).
+			judge(settingsFloorRule, settingsFloorRefusal(key, old, newData, target.keyPath))
+		}
 	}
 	judge(settingsReservedRule, settingsReservedRefusal(key))
 	judge(settingsOwnerOnlyRule, settingsOwnerOnlyRefusal(typed, why))
