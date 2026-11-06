@@ -517,9 +517,10 @@ type initRun struct {
 	// because this run cannot take a typed confirmation (--yes, --json, a pipe
 	// or a coding agent): the run ends needs-you, with the typed route.
 	buildsLeft []string
-	// buildHold is why those builds were not offered at all: the GitHub App's
-	// pre-check failed (its problem and fix, one line); "" when they were
-	// offered and not typed.
+	// buildHold is why those builds were not offered at all, and what clears
+	// it: the GitHub App's pre-check failed (its problem and fix, one line), or
+	// the base branch holds no fugaro.yaml for the build's render step (the
+	// merge to make); "" when they were offered and not typed.
 	buildHold string
 	// appKeyMem is the GitHub App's key the user typed at this run's secrets
 	// stage, held in memory for the pre-check and cleared when the run ends.
@@ -3446,7 +3447,27 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		// for an empty names).
 		var buildCfg *config.Config
 		if len(names) > 0 {
-			if buildCfg, err = resolveForBuild(ctx, root, lc); err != nil {
+			// A build clones the base branch and renders fugaro.yaml from it,
+			// never from this working tree: a file that is only in the
+			// checkout — the usual first onboarding, before /fugaro:setup's
+			// pull request is merged — fails the build's own render step,
+			// after the build was billed. The build is held on that reason
+			// instead, before the confirmation and before the re-resolution
+			// below, and only when this checkout holds the branch's
+			// remote-tracking ref (baseBranchFugaroYAML; a checkout that
+			// cannot answer says nothing).
+			//
+			// Held, not refused: the apply has already landed, so the run
+			// goes on — the repository joins the local config and the stages
+			// after this one (the plugin pin) run — and only the billable
+			// build waits, as it does when the GitHub App's pre-check holds
+			// one (offerBuilds).
+			if has, known := baseBranchFugaroYAML(ctx, root, spec.BaseBranch); known && !has {
+				r.buildsLeft, r.buildHold = append(r.buildsLeft, names...), fmt.Sprintf("fugaro.yaml is not on %s yet: merge it before the first build", spec.BaseBranch)
+				// Nothing is offered from here: offerBuilds returns at once
+				// for an empty names and buildCfg is never read.
+				names = nil
+			} else if buildCfg, err = resolveForBuild(ctx, root, lc); err != nil {
 				return r.retireLeftover(spec, err)
 			}
 		}
@@ -3506,9 +3527,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		// there is no residue left to name here.)
 		left := billableBuildLeft(embedded, r.o.doorName())
 		if r.buildHold != "" {
-			// Not offered: the GitHub App is not ready (appPreCheck), which no
-			// typing fixes.
-			left = initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftConsole, Text: "the first image build waits for the GitHub App: " + r.buildHold + "; then rerun", Commands: []string{selfCommand() + " " + r.o.doorName()}}
+			// Not offered, and no typing fixes it: the build's own reason is
+			// the whole of the text, and it names what clears it — the GitHub
+			// App's pre-check (appPreCheck), or a base branch that does not
+			// hold fugaro.yaml yet.
+			left = initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftConsole, Text: "the first image build waits: " + r.buildHold + "; then rerun", Commands: []string{selfCommand() + " " + r.o.doorName()}}
 			if !embedded {
 				left.Commands = []string{selfCommand() + " " + r.o.doorName() + " --repo"}
 			}

@@ -322,6 +322,46 @@ func TestProjectJobTokenAccount(t *testing.T) {
 	}
 }
 
+// TestProjectJobTokenAccountRefusesTheVariantName: the token axis never answers
+// for a name in the review-only variant's spelling (CSR8). The axis is the
+// coding jobs' — the account segment of a job that mounts a Claude token — and
+// a review job mounts none (O1, D893(c)): its credential is the run's class's,
+// from the credentials service. So team-a-review and default-review, the
+// account segments the variant's names carry, resolve to no account of any
+// profile, and the coding job's account is not reachable by asking for its
+// variant's spelling.
+//
+// The refusal is the axis's, not the profile's: a profile cannot list such a
+// name at all (ValidateClaudeAccounts, the suffix rule), so the case below is
+// the last door — the name arrives here and no account answers for it.
+//
+// Mutation (run, restore): strip ReviewVariantSuffix from an account before
+// looking it up in the profile's list (the variant's name would then answer
+// with the account it is named after, and the token that account holds would be
+// the one a review job is handed).
+func TestProjectJobTokenAccountRefusesTheVariantName(t *testing.T) {
+	both := JobProfile{ClaudeAccounts: []string{"acme-personal", DefaultClaudeAccount}}
+	for _, tc := range []struct {
+		why     string
+		account string
+	}{
+		{"a named account's variant is no account of the profile", "acme-personal" + ReviewVariantSuffix},
+		{"the default account's variant is no account either", DefaultClaudeAccount + ReviewVariantSuffix},
+		{"and the variant of an account the profile does not list is none", "acme-work" + ReviewVariantSuffix},
+	} {
+		if got, serves := ProjectJobTokenAccount(both, tc.account); serves || got != "" {
+			t.Errorf("%s: ProjectJobTokenAccount(%v, %q) = (%q, %v), want (\"\", false): a review job holds no Claude token, so no account answers for the variant's name",
+				tc.why, both.ClaudeAccounts, tc.account, got, serves)
+		}
+	}
+	// The axis still answers for the coding jobs' own names, so the refusal
+	// above is the suffix and not a profile listing nothing.
+	if got, serves := ProjectJobTokenAccount(both, "acme-personal"); !serves || got != "acme-personal" {
+		t.Errorf("ProjectJobTokenAccount(%v, %q) = (%q, %v), want (\"acme-personal\", true)",
+			both.ClaudeAccounts, "acme-personal", got, serves)
+	}
+}
+
 // TestValidateClaudeAccountsRefusesBitbucketToken: the account name
 // "bitbucket-token" is config.BitbucketSecret, the name of the credential a
 // job mounts for upstream git (ReservedSecrets) and the one name the
