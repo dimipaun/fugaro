@@ -380,8 +380,19 @@ func TestDocsMixedCredentialsRecordsWhatShipped(t *testing.T) {
 // reviewer setting exists" — and both now exist: the guard is shipped
 // (`internal/config/levels.go`, D721) and the per-stage account setting is, so
 // a comment that still promises them reads as a tree two releases behind.
-// What the file may not do is make the owner's decision for them: naming a
-// Claude account here is the owner's step, after Check 290 has passed.
+// What the file may not do is make the owner's decision for them: the account
+// is the owner's and lives in the local project config, so this file names the
+// model that account serves and points at Check 290 as where the mix is read
+// back from a real run.
+//
+// The comment is read on its own (fugaroYAMLComment), not out of the whole
+// file: a file-wide pin satisfies itself from the `models:` block, which names
+// both models whatever the prose says, and that is how the comment came to
+// describe an OpenRouter reviewer the stage no longer ran on — #1763 moved the
+// pin to Opus and the sentence written to explain it kept passing. Each pin is
+// read out of the block rather than written here a second time and held to its
+// own role, so the owner moving a pin, or swapping the two, fails this test
+// until the comment moves with it.
 func TestFugaroYAMLStatesTheShippedReviewSettings(t *testing.T) {
 	const path = "fugaro.yaml"
 	doc := readDoc(t, path)
@@ -393,20 +404,71 @@ func TestFugaroYAMLStatesTheShippedReviewSettings(t *testing.T) {
 			t.Errorf("%s still says %q: the guard is shipped and the per-stage account setting exists, so the comment claims the tree is missing what it has", path, gone)
 		}
 	}
-	// The models are the owner's and this comment may not change them: the
-	// claim the comment makes about the pair is only true while it names them.
+	comment := fugaroYAMLComment(doc)
 	for _, want := range []string{
-		"coder: deepseek/deepseek-v4.1-flash",
-		"reviewer: deepseek/deepseek-v4-pro",
 		"D721",
 		"stages.<stage>.claude_account",
 		"docs/design/mixed-credentials.md",
 		"Check 290",
 	} {
-		if !strings.Contains(doc, want) {
-			t.Errorf("%s never says %q: the file's own comment is where the pair, the guard that judges it and the setting that would change it are stated", path, want)
+		if !strings.Contains(comment, want) {
+			t.Errorf("%s's comment never says %q: the file's own prose is where the pair, the guard that judges it, the setting that would change it and the check that reads the mix back are stated", path, want)
 		}
 	}
+	for _, key := range []string{"coder", "reviewer"} {
+		pinned := ""
+		inModels := false
+		for _, raw := range strings.Split(doc, "\n") {
+			line := strings.TrimSpace(raw)
+			if line == "models:" {
+				inModels = true
+				continue
+			}
+			// The block ends at the first line indented less than its members:
+			// `max_output_tokens.reviewer` follows it and is not a model pin.
+			if inModels && line != "" && !strings.HasPrefix(raw, "    ") {
+				inModels = false
+			}
+			if inModels && strings.HasPrefix(line, key+": ") {
+				pinned = strings.TrimSpace(strings.TrimPrefix(line, key+": "))
+			}
+		}
+		if pinned == "" {
+			t.Fatalf("%s pins no %s model: this test reads the block to hold the comment to it", path, key)
+		}
+		// The pin has to be the comment's for that role, not merely in it: a
+		// comment line that names a pinned model has to name the role the pin
+		// belongs to, so a pair swapped in the block — the coder's ID written
+		// under `reviewer:` and the other way round — fails here. A pin that
+		// only asked whether each ID appears somewhere in the comment passed
+		// that swap, while the comment then explained each role with the other
+		// role's model: the drift this test exists for.
+		tied := false
+		for _, line := range strings.Split(comment, "\n") {
+			if strings.Contains(line, pinned) && strings.Contains(line, key) {
+				tied = true
+				break
+			}
+		}
+		if !tied {
+			t.Errorf("%s's comment has no line naming both the %s and the %q the file pins for it: the comment explains each role with its own model, and one naming a pinned model for the wrong role is the drift this test exists for", path, key, pinned)
+		}
+	}
+}
+
+// fugaroYAMLComment is fugaro.yaml's own prose with the YAML left out: each
+// comment line of the file, indentation, `#` and spacing trimmed, one per line.
+func fugaroYAMLComment(doc string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(doc, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "#") {
+			continue
+		}
+		b.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "#")))
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // TestDocsCheck290IsTheMixedRunsSmokeTest: the owner-run check that verifies
