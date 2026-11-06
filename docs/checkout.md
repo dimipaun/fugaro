@@ -28,12 +28,14 @@ Choose `clone` when the repository needs no system package and no service, and h
 
 ### What `clone` refuses
 
-A clone job has no build at all, and a run has no root, so Fugaro cannot install a system package at start-up. `fugaro validate` (and the same checks when a run reads your `fugaro.yaml`) refuses these keys under `checkout: clone`, each message naming `checkout: baked` as the way out:
+A clone job has no build at all, and a run has no root, so Fugaro cannot install a system package at start-up. `fugaro validate` (and the same checks when a run reads your `fugaro.yaml`) refuses the keys that only a build honors under `checkout: clone`, each message naming `checkout: baked` as the way out:
 
-- `image.apt`, `image.tools`, `image.setup`, `image.skip_build_scripts`, `image.key_files`
-- `dockerfile:`
+- `image_name:` — a catalog entry is what a `baked` image is built from (D1142)
+- `needs:`
 
-Move the workflow back to `baked` if it needs any of them.
+Move the workflow back to `baked` if it needs either of them.
+
+The keys that used to be refused here — `image.apt`, `image.tools`, `image.setup`, `image.skip_build_scripts`, `image.key_files`, `dockerfile:` — were **removed in 0.20.0** for every workflow, whatever its `checkout:`. Each is refused by name, wherever it is written, with the sentence that names `fugaro image add` and [project-image-catalog](project-image-catalog/README.md): moving to `baked` does not bring one back, and only a catalog entry replaces what it did. A project layer a release before 0.20.0 published still holding one is rewritten without it by `fugaro update` (see [project-layer.md](project-layer.md)).
 
 ### Switching a workflow to `clone`
 
