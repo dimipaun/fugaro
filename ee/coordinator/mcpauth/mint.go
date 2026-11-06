@@ -5,7 +5,6 @@ package mcpauth
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 )
@@ -34,6 +33,11 @@ import (
 // with ErrConflict and the family stays revoked
 // (TestARotationUnderAConcurrentRevokeLosesNeither). A database transaction
 // gave that away; a bucket has to be asked for it.
+//
+// The swap is the store's own operation (Store.RotateRefresh) rather than a
+// pair of reads composed here, because a legitimate rotation landing between
+// two reads taken here would look exactly like a replay — and a replay
+// revokes the family. See that method for the window this closes.
 
 // AccessTokenTTL is how long an access token lives. D930 answers "short-lived"
 // and names no number, so the number is this mint's own: short enough that a
@@ -104,34 +108,40 @@ func MintAt(ctx context.Context, s Store, identity string, client Client, limits
 // unchanged: rotation extends a family, and nothing a client sends can widen
 // one.
 //
-// An access token is refused here (ErrWrongTokenKind). It is the value an
-// agent leaks, and it must not be the value that extends its own family.
+// An access token is refused (ErrWrongTokenKind). It is the value an agent
+// leaks, and it must not be the value that extends its own family — and the
+// refusal is the store's own rotation's, so it is an answer to the refresh
+// grant rather than a check every caller of the mint has to remember.
 func Rotate(ctx context.Context, s Store, presented string) (access, refresh string, err error) {
 	return RotateAt(ctx, s, presented, time.Now().UTC())
 }
 
 // RotateAt is Rotate at a caller's own instant, for the same reason MintAt is.
+//
+// The token the caller presented is exchanged by one call into the store
+// (Store.RotateRefresh), which is where the replay decision and the family's
+// compare-and-swap have to share a read. What is left here is the arithmetic
+// the mint owns: the new pair, the access record's expiry, and the limits,
+// which are the family's and are carried unchanged.
+//
+// The refresh record is written after the family has already been rotated to
+// its hash, so a process that died in between leaves a family whose refresh
+// token resolves to nothing. The other order — the record first — would leave
+// a token that resolves to a family that has moved past it, which is a replay
+// and a revocation of a family nobody stole. Of the two, the one that makes a
+// client re-authorize is the one to have.
 func RotateAt(ctx context.Context, s Store, presented string, now time.Time) (access, refresh string, err error) {
-	rec, err := s.LookupByHash(ctx, TokenHash(presented))
+	access, err = NewValue()
 	if err != nil {
 		return "", "", err
 	}
-	if rec.Kind != KindRefresh {
-		return "", "", fmt.Errorf("mcpauth: a %s token was presented at the refresh grant: %w", rec.Kind, ErrWrongTokenKind)
-	}
-	fam, gen, err := s.GetFamily(ctx, rec.FamilyID)
+	refresh, err = NewValue()
 	if err != nil {
 		return "", "", err
 	}
-	if TokenHash(presented) != fam.RefreshHash {
-		// The theft signal: this family rotated past the token being
-		// presented. Everything it holds stops working here, and the revoke
-		// is reported alongside the replay when it too fails — a caller has
-		// to see the replay either way.
-		if rerr := s.RevokeFamily(ctx, fam.ID); rerr != nil {
-			return "", "", errors.Join(ErrRefreshReplay, rerr)
-		}
-		return "", "", ErrRefreshReplay
+	fam, err := s.RotateRefresh(ctx, TokenHash(presented), TokenHash(refresh))
+	if err != nil {
+		return "", "", err
 	}
 
 	token := Token{
@@ -141,20 +151,6 @@ func RotateAt(ctx context.Context, s Store, presented string, now time.Time) (ac
 		ExpiresAt: now.Add(AccessTokenTTL),
 	}
 	if err := token.Validate(); err != nil {
-		return "", "", err
-	}
-	access, err = NewValue()
-	if err != nil {
-		return "", "", err
-	}
-	refresh, err = NewValue()
-	if err != nil {
-		return "", "", err
-	}
-
-	next := fam
-	next.RefreshHash = TokenHash(refresh)
-	if err := s.PutFamily(ctx, next, gen); err != nil {
 		return "", "", err
 	}
 	if err := s.PutToken(ctx, accessRecord(fam, access, token)); err != nil {

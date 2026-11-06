@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLookupFindsByThePresentedToken(t *testing.T) {
@@ -132,6 +133,100 @@ func TestARotationUnderAConcurrentRevokeLosesNeither(t *testing.T) {
 	}
 	if _, err := s.LookupByHash(ctx, TokenHash(refresh)); !errors.Is(err, ErrTokenNotFound) {
 		t.Errorf("LookupByHash after the lost rotation = %v; want ErrTokenNotFound", err)
+	}
+}
+
+// racingObjects is a store's backend with one hook: after the chosen key is
+// read, a competing rotation is run to completion before the bytes that read
+// asked for are handed back. It is how the window a rotation has between
+// reading a family and writing it is made deterministic —
+// TestRotateDoesNotRevokeWhenItLosesTheRace is what it is for.
+//
+// The race is an interleave and not two goroutines because the outcome this
+// test relies on is not the same under every schedule: a rotation that
+// completes before the loser *reads* the family is a replay by D930's rule and
+// belongs to the error-path tests, where a rotation landing between the read
+// and the write belongs here. A goroutine test would be red or green
+// depending on the machine rather than on the code.
+type racingObjects struct {
+	objects
+	at    string
+	race  func()
+	fired bool
+}
+
+func (o *racingObjects) read(ctx context.Context, key string) ([]byte, int64, error) {
+	data, gen, err := o.objects.read(ctx, key)
+	if err == nil && key == o.at && !o.fired {
+		o.fired = true
+		o.race()
+	}
+	return data, gen, err
+}
+
+// TestRotateDoesNotRevokeWhenItLosesTheRace is the finding this test was
+// written for: the read that decides a rotation is a replay has to be the read
+// the write is matched against, or a legitimate rotation landing between the
+// two halves of that pair revokes the family of a client nobody stole from.
+//
+// The loser here holds a refresh token that is current when it reads the
+// family and is not current when it writes. It loses the compare-and-swap, and
+// that is all it may do: ErrConflict out, family alive.
+func TestRotateDoesNotRevokeWhenItLosesTheRace(t *testing.T) {
+	ctx := context.Background()
+	b := newFakeBucket(t)
+
+	// The store the competing rotation runs through. Same bucket, so both
+	// rotations are real writes to the same objects and the compare-and-swap
+	// between them is the fake's ifGenerationMatch.
+	inner := newRecords(bucketObjects{b: b})
+	_, refresh, err := Mint(ctx, inner, "user:person-1", testClient(), testLimits())
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	rec, err := inner.LookupByHash(ctx, TokenHash(refresh))
+	if err != nil {
+		t.Fatalf("LookupByHash: %v", err)
+	}
+
+	raced := &racingObjects{objects: bucketObjects{b: b}, at: familyPrefix + rec.FamilyID}
+	raced.race = func() {
+		// The other client, doing nothing wrong: it holds the same refresh
+		// token, it got there first, and it rotates it.
+		if _, _, err := RotateAt(ctx, inner, refresh, time.Now().UTC()); err != nil {
+			t.Errorf("the competing rotation: %v", err)
+		}
+	}
+	s := newRecords(raced)
+
+	if _, _, err := RotateAt(ctx, s, refresh, time.Now().UTC()); !errors.Is(err, ErrConflict) {
+		t.Errorf("RotateAt into a concurrent rotation = %v; want ErrConflict", err)
+	}
+
+	// The family is where the competing rotation left it, and alive: a lost
+	// race is a lost race, and a revoke here would have taken a family from a
+	// client that did nothing but arrive second.
+	fam, _, err := inner.GetFamily(ctx, rec.FamilyID)
+	if err != nil {
+		t.Fatalf("the family of a rotation that lost its race: %v", err)
+	}
+	if fam.RefreshHash == TokenHash(refresh) {
+		t.Error("the family still holds the token the winner rotated away")
+	}
+
+	// Where the boundary is, stated here rather than left to be discovered:
+	// the record of the rotated-away token is kept, so this same request made
+	// again reads the family and finds it has moved past the token it holds —
+	// and that is a replay, and D930's answer to a replay is the family
+	// revoked. The one presentation that was current when it looked is the one
+	// the conflict above protects; presenting it again after being told is
+	// presenting a token known to be rotated away, which no store can tell
+	// from a theft (TestRefreshRotatesAndReplayRevokesTheFamily).
+	if _, err := inner.LookupByHash(ctx, TokenHash(refresh)); err != nil {
+		t.Errorf("the record of the token the loser presented = %v; want it kept: it is what a replay is recognized by", err)
+	}
+	if _, _, err := RotateAt(ctx, s, refresh, time.Now().UTC()); !errors.Is(err, ErrRefreshReplay) {
+		t.Errorf("the loser presenting the same token again = %v; want ErrRefreshReplay", err)
 	}
 }
 

@@ -146,16 +146,29 @@ func (o bucketObjects) create(ctx context.Context, key string, data []byte) (int
 }
 
 func (o bucketObjects) replace(ctx context.Context, key string, data []byte, gen int64) (int64, error) {
-	// internal/blobx matches the generation on GCS and the contents off it,
-	// so the previous bytes are what the write has to match where there is
-	// no generation to match. On GCS the read would be one request thrown
-	// away, and a store runs on GCS.
+	// internal/blobx matches the generation on GCS and the contents off it
+	// (ReplaceIfType), so a backend that has no generation is handed the bytes
+	// the write has to match. GCSName is that driver's own answer to whether
+	// there is a generation here, and this store runs on GCS: the read below
+	// is skipped there, where the generation is the whole precondition.
+	//
+	// The two refusals are the point of reading here rather than letting
+	// ReplaceIf discover the state itself. An object that is gone and an
+	// object this principal may not read both arrive as "no bytes", and
+	// ReplaceIf would then compare the write against that absence: the first
+	// is a conflict the caller has to see, and the second — which only a
+	// lenient read would fold into the first — is a mistake about IAM that
+	// must not be reported as one.
 	var prev []byte
 	if o.b.GCSName == "" {
-		var err error
-		if prev, _, err = o.b.Read(ctx, key); err != nil && !errors.Is(err, blobx.ErrNotExist) {
+		held, _, err := o.b.ReadStrict(ctx, key)
+		switch {
+		case errors.Is(err, blobx.ErrNotExist):
+			return 0, errChanged
+		case err != nil:
 			return 0, err
 		}
+		prev = held
 	}
 	newGen, err := o.b.ReplaceIf(ctx, key, data, gen, prev)
 	switch {

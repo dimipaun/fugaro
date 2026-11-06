@@ -181,10 +181,11 @@ type TokenRecord struct {
 }
 
 // Store is the token records of D935, wherever the owner's answer to §8 puts
-// them. Every method is one object read or one conditional write: there is no
-// transaction here and no query, so a caller that needs two writes to be one
-// act composes them the way Rotate does, around the generation the read
-// returned.
+// them. Every method is one object read, one conditional write, or — for
+// RotateRefresh — a read and a write that have to be one act: there is no
+// transaction here and no query, so an operation whose answer depends on two
+// objects being read at one instant belongs inside this interface rather than
+// in a caller holding two of its methods.
 type Store interface {
 	// PutClient writes a registration, and refuses a client id that is
 	// already there. A client id is issued once.
@@ -211,6 +212,14 @@ type Store interface {
 	// expiry, the kind and the scopes, because the answer to "may this be
 	// used" belongs to the resource server and not to the store.
 	LookupByHash(ctx context.Context, hash string) (TokenRecord, error)
+	// RotateRefresh is D930's rotation: the refresh token whose hash is
+	// presentedHash is exchanged for one whose hash is nextRefreshHash, or the
+	// family is revoked because the token presented was already rotated away.
+	// It is one method of the store and not a caller's composition of a lookup
+	// and a read and a write, because the read that decides has to be the read
+	// the write is matched against — see the implementation for what a caller
+	// composing them gets wrong.
+	RotateRefresh(ctx context.Context, presentedHash, nextRefreshHash string) (Family, error)
 	// RevokeFamily revokes a family: one delete, after which every access
 	// token and every refresh token of it resolves to nothing (D930). It is
 	// idempotent and unconditional — a revoke must not lose a race with the
@@ -362,14 +371,8 @@ func (r records) PutToken(ctx context.Context, rec TokenRecord) error {
 }
 
 func (r records) LookupByHash(ctx context.Context, hash string) (TokenRecord, error) {
-	if err := keySegment(hash); err != nil {
-		return TokenRecord{}, err
-	}
-	var rec TokenRecord
-	if err := r.get(ctx, tokenPrefix+hash, &rec); err != nil {
-		if errors.Is(err, errMissing) {
-			return TokenRecord{}, fmt.Errorf("mcpauth: hash %s: %w", hash, ErrTokenNotFound)
-		}
+	rec, err := r.lookupRecord(ctx, hash)
+	if err != nil {
 		return TokenRecord{}, err
 	}
 	// The family is read for one reason: revocation is a delete of it, so a
@@ -377,6 +380,79 @@ func (r records) LookupByHash(ctx context.Context, hash string) (TokenRecord, er
 	// to read as one that never existed.
 	if _, _, err := r.GetFamily(ctx, rec.FamilyID); err != nil {
 		if errors.Is(err, ErrFamilyNotFound) {
+			return TokenRecord{}, fmt.Errorf("mcpauth: hash %s: %w", hash, ErrTokenNotFound)
+		}
+		return TokenRecord{}, err
+	}
+	return rec, nil
+}
+
+// RotateRefresh is the rotation above as one operation, and it is here rather
+// than in the caller for the read that decides it. A caller that looked the
+// token up, read the family, compared the hashes and then wrote would be
+// deciding on one read of the family and writing against another: a
+// legitimate rotation landing between the two halves of that pair leaves the
+// caller's own read showing the token it holds as a rotated-away one, and the
+// caller revokes the family of a client nobody stole from
+// (TestRotateDoesNotRevokeWhenItLosesTheRace). Here the family is read once,
+// that read is the whole decision, and the write is matched against the
+// generation it returned — so a rotation that lands after the read loses the
+// compare-and-swap instead of being mistaken for a theft, and one that landed
+// before it is the replay D930 says it is.
+//
+// The three outcomes are the three branches: the family rotated and comes
+// back; the token was already rotated away, so the family is revoked and
+// ErrRefreshReplay is returned; or the compare-and-swap lost a race with
+// another writer, so ErrConflict is returned and the family is left exactly as
+// the winner left it. A lost race is never a revocation.
+func (r records) RotateRefresh(ctx context.Context, presentedHash, nextRefreshHash string) (Family, error) {
+	rec, err := r.lookupRecord(ctx, presentedHash)
+	if err != nil {
+		return Family{}, err
+	}
+	if rec.Kind != KindRefresh {
+		return Family{}, fmt.Errorf("mcpauth: a %s token was presented at the refresh grant: %w", rec.Kind, ErrWrongTokenKind)
+	}
+	fam, gen, err := r.GetFamily(ctx, rec.FamilyID)
+	if errors.Is(err, ErrFamilyNotFound) {
+		// The record outlived its family by however long the family's delete
+		// took: a revoked family holds no token at all, so this is the same
+		// absence a lookup reports rather than a family that went missing.
+		return Family{}, fmt.Errorf("mcpauth: hash %s: %w", presentedHash, ErrTokenNotFound)
+	}
+	if err != nil {
+		return Family{}, err
+	}
+	if presentedHash != fam.RefreshHash {
+		// The theft signal: this family rotated past the token being
+		// presented. Everything it holds stops working here, and the revoke is
+		// reported alongside the replay when it too fails — a caller has to
+		// see the replay either way.
+		if rerr := r.RevokeFamily(ctx, fam.ID); rerr != nil {
+			return Family{}, errors.Join(ErrRefreshReplay, rerr)
+		}
+		return Family{}, ErrRefreshReplay
+	}
+	next := fam
+	next.RefreshHash = nextRefreshHash
+	if err := r.PutFamily(ctx, next, gen); err != nil {
+		return Family{}, err
+	}
+	return next, nil
+}
+
+// lookupRecord reads one token record by its hash and nothing else. The family
+// it names is left to whoever needs it: RotateRefresh needs it as the read it
+// decides and writes on, and a lookup taken before that decision would be a
+// second read of the same object, one round trip older than the one the write
+// is matched against.
+func (r records) lookupRecord(ctx context.Context, hash string) (TokenRecord, error) {
+	if err := keySegment(hash); err != nil {
+		return TokenRecord{}, err
+	}
+	var rec TokenRecord
+	if err := r.get(ctx, tokenPrefix+hash, &rec); err != nil {
+		if errors.Is(err, errMissing) {
 			return TokenRecord{}, fmt.Errorf("mcpauth: hash %s: %w", hash, ErrTokenNotFound)
 		}
 		return TokenRecord{}, err

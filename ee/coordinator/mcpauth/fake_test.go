@@ -36,11 +36,20 @@ type fakeStore struct {
 	bucket *blobx.Bucket
 }
 
-func newFakeStore(t *testing.T) *fakeStore {
+// newFakeBucket is the bucket the fake serves, for a test that needs the
+// bucket itself rather than a store over it: the store's own two backends have
+// to be two stores over one bucket before a write by one can be a race the
+// other loses (TestRotateDoesNotRevokeWhenItLosesTheRace).
+func newFakeBucket(t *testing.T) *blobx.Bucket {
 	t.Helper()
 	g := gcpfake.NewGCS(t)
 	g.AddBucket(testBucket(), 1234, nil)
-	b := g.Bucket(t, testBucket())
+	return g.Bucket(t, testBucket())
+}
+
+func newFakeStore(t *testing.T) *fakeStore {
+	t.Helper()
+	b := newFakeBucket(t)
 	return &fakeStore{Store: newBucketStore(b), bucket: b}
 }
 
