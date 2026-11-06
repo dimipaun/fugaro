@@ -238,6 +238,13 @@ type layerAt struct {
 	old    []byte // nil, with exists false: the object is absent
 	gen    int64
 	exists bool
+	// shown is the object as the report is made of it when the caller knows
+	// more about those bytes than they say on their own: the update stage's
+	// removal hands in the same object with the keys a previous release wrote
+	// taken out (never the raw object, which no reader here may parse, diff or
+	// echo). Empty means old is the document to report, which is every other
+	// caller.
+	shown []byte
 }
 
 // layerRecord is where the generation a write landed at is recorded: the local
@@ -267,27 +274,41 @@ func publishLayer(ctx context.Context, w io.Writer, b *blobx.Bucket, l *config.P
 			rerr = blobx.ErrNotExist
 		}
 	}
+	// cmp is what this call reports it replaces: old itself, or the document
+	// the caller stripped a removed key out of (at.shown). The conditional
+	// write below is still made against old, the bytes the object holds.
+	cmp, stripped := old, false
+	if at != nil && len(at.shown) > 0 {
+		cmp, stripped = at.shown, true
+	}
 	var prev *config.ProjectLayer
 	switch {
 	case rerr == nil:
-		// prev is parsed from old (the object as it is in the bucket right
-		// now), never aliased to l (the new layer this call is about to
-		// write): comparing l to itself would always show zero executable
-		// changes and silently defeat the whole --executable-changes gate.
-		op, invalid := config.ParseProjectLayer(old, config.LayerAnchor{})
+		// prev is parsed from cmp (the object as it is in the bucket right
+		// now, minus anything the caller took out of it), never aliased to l
+		// (the new layer this call is about to write): comparing l to itself
+		// would always show zero executable changes and silently defeat the
+		// whole --executable-changes gate.
+		op, invalid := config.ParseProjectLayer(cmp, config.LayerAnchor{})
 		switch {
-		case string(old) == string(l.Raw):
-			fmt.Fprintln(w, "note: the project already has this exact layer; writing it again")
+		case string(cmp) == string(l.Raw):
+			// cmp is the object minus what the caller took out of it, and the
+			// write below still lands the object's own bytes: this layer is
+			// the same one only as a reader sees it, and the caller's own
+			// report says what its write changes.
+			if !stripped {
+				fmt.Fprintln(w, "note: the project already has this exact layer; writing it again")
+			}
 			prev = op
 		case len(invalid) > 0:
 			// The old object is untrusted and unvalidated: never echo it
 			// (it may hold a credential a hand edit put there), and never
 			// diff against it. prev stays nil, so every executable key of
 			// l counts as changed (decision L7's fail-closed default).
-			fmt.Fprintf(w, "replacing the project layer (sha256 %s -> %s): the published layer is invalid (%d problem(s)); every executable key counts as changed\n", config.LayerSum(old), l.SHA256, len(invalid))
+			fmt.Fprintf(w, "replacing the project layer (sha256 %s -> %s): the published layer is invalid (%d problem(s)); every executable key counts as changed\n", config.LayerSum(cmp), l.SHA256, len(invalid))
 		default:
 			prev = op
-			fmt.Fprintf(w, "replacing the project layer (sha256 %s -> %s):\n%s", config.LayerSum(old), l.SHA256, layerDiffText(string(old), string(l.Raw)))
+			fmt.Fprintf(w, "replacing the project layer (sha256 %s -> %s):\n%s", config.LayerSum(cmp), l.SHA256, layerDiffText(string(cmp), string(l.Raw)))
 		}
 	case errors.Is(rerr, blobx.ErrNotExist):
 	case errors.Is(rerr, blobx.ErrTooLarge):

@@ -104,6 +104,14 @@ func validateImage(p string, w Workflow) []Problem {
 // builds an image with now.
 const RemovedImageKeyDoc = "docs/project-image-catalog/README.md"
 
+// RemovedImageKeyMessage is removedImageRefusal's sentence for key, one of
+// RemovedImageKeys' paths ("" for any other, and for a key that is not one of
+// them). The update stage that rewrites a published project layer still holding
+// one says what it took out in the words the key is refused with, so a reader
+// who meets the migration and a writer who meets the refusal are sent to the
+// same command.
+func RemovedImageKeyMessage(key string) string { return removedImageRefusal(key) }
+
 // removedBuildKeyMessage and removedRebuildKeyMessage are the two sentences the
 // removal's refusals are made of. They are templates the caller fills with
 // RemovedImageKeyDoc, the shape legacyBaseMessage already has, so the guide a

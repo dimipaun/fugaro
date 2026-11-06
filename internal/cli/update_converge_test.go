@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,7 +11,9 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -43,6 +46,10 @@ type convergeRig struct {
 	*imagesRig
 	root     string
 	settings string
+	// runs is the bucket's root: where the project layer object and the
+	// repositories' copies live, for a fixture that plants a published layer
+	// of the release behind (bucket_url is file:// on the same directory).
+	runs string
 }
 
 // v4Node is the published node the release before this one leaves behind: the
@@ -135,7 +142,7 @@ func newConvergeRig(t *testing.T, node map[string]any) *convergeRig {
 
 	seedAppSecret(t, r.initRig, "github-app-key")
 	seedAppSecret(t, r.initRig, "claude-oauth-token")
-	return &convergeRig{imagesRig: r, root: root, settings: settings}
+	return &convergeRig{imagesRig: r, root: root, settings: settings, runs: runs}
 }
 
 // seedAppSecret stores acme/app's own container for logical, as a run of
@@ -193,6 +200,101 @@ func TestUpdateConvergesFromThePreviousRelease(t *testing.T) {
 	t.Run("the node one version back", func(t *testing.T) {
 		converge(t, v3Node(nil), []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
 	})
+}
+
+// plantLayer writes a project layer of the release behind into the rig: the
+// published object, this machine's own copy of it, and the generation the
+// config records the file as written from — the state an installation that has
+// published (or seeded) a layer is in, one release ago.
+func plantLayer(t *testing.T, r *convergeRig, text string) {
+	t.Helper()
+	layerRigFile(t, filepath.Join(r.runs, filepath.FromSlash(config.LayerKey)), text)
+	path := localLayerPath(t)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "fugaro", "projects", initProjectName+".yaml")
+	data, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg, append(data, []byte("layer_generation: \"0\"\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestUpdateConvergesTheProjectLayerFromThePreviousRelease: the same door, on
+// the object the previous release left stale in a way no reader survives. Its
+// published project layer holds the keys the repository-image removal refuses,
+// and every reader refuses that document by name (config.ParseProjectLayer,
+// through findLayer and ResolveConfig), so every run of every repository of
+// the project fails until the keys are gone — out of the published object, and
+// out of this machine's copy of it, which is written from the same bytes.
+//
+// `fugaro update` alone is what has to do it: a rewrite of the object in place
+// (never a delete and a publish again, which leaves the project with no layer
+// at all in between), and doctor clean afterwards.
+func TestUpdateConvergesTheProjectLayerFromThePreviousRelease(t *testing.T) {
+	r := newConvergeRig(t, v4Node())
+	currentRelease(t)
+	// The rig hands the rest of this suite a mem:// record bucket whose bytes
+	// are gone the moment it closes, and a layer published into one could not
+	// be read back from it. The layer's own bucket is the file:// directory the
+	// config names, so this run reads and writes that one where the layer is
+	// concerned and leaves every other caller on the rig's fake.
+	rug := openRecordBucket
+	layerURL := "file://" + r.runs
+	openRecordBucket = func(ctx context.Context, url string) (*blobx.Bucket, error) {
+		if url == layerURL {
+			return blobx.Open(ctx, url)
+		}
+		return rug(ctx, url)
+	}
+	t.Cleanup(func() { openRecordBucket = rug })
+	plantLayer(t, r, previousLayer)
+
+	anchor := config.LayerAnchor{Project: initProjectName, GCPProject: initProject}
+	if _, ps := config.ParseProjectLayer([]byte(previousLayer), anchor); len(ps) == 0 {
+		t.Fatal("the fixture's layer is one this Fugaro reads: there is nothing for the run below to converge")
+	}
+	objPath := filepath.Join(r.runs, filepath.FromSlash(config.LayerKey))
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("fugaro update stopped at %s (exit %d), so this installation needs a second command:\n%s\n%s",
+			stoppedStage(out), ExitCode(err), out, errOut)
+	}
+	if !strings.Contains(out+errOut, "repository-image removal") {
+		t.Errorf("the run does not say it took the removed keys out of the project layer:\n%s%s", out, errOut)
+	}
+
+	for _, side := range []struct{ what, path string }{
+		{"the published project layer", objPath},
+		{"the local layer file", localLayerPath(t)},
+	} {
+		data, rerr := os.ReadFile(side.path)
+		if rerr != nil {
+			t.Fatalf("%s is gone after fugaro update: %v", side.what, rerr)
+		}
+		if _, ps := config.ParseProjectLayer(data, anchor); len(ps) > 0 {
+			t.Errorf("%s is still a layer every reader refuses:\n%v", side.what, ps)
+		}
+		if string(data) != migratedLayer {
+			t.Errorf("%s is not the layer without the removed keys:\n%s", side.what, data)
+		}
+	}
+
+	// The object was rewritten, not replaced from the file: the project is
+	// never left with no published layer for a repository to resolve against.
+	after := doctorChecks(t, r.root)
+	for _, c := range after.Checks {
+		if (strings.HasPrefix(c.ID, "project-layer") || c.ID == "local-layer-file") && c.Severity == "warning" {
+			t.Errorf("after fugaro update, doctor's %s check still fires: %s (fix: %s)", c.ID, c.Problem, c.Fix)
+		}
+	}
 }
 
 // converge runs the door once and checks the fixture converged. stale is the
