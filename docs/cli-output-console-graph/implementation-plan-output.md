@@ -37,9 +37,9 @@
 
 **Depends on:** none. **Reviewer:** standard. Sibling packages (`docs/stateless-orchestrator`, `docs/workspaces`, `docs/mcp-server`, `docs/cloud-senior-review`) each have `internal/cli/docs_<name>_test.go`; this docs-only branch adds none because it may touch only `docs/`, so the pin is this first task.
 
-- **Files (1):** `internal/cli/docs_cli_output_console_graph_test.go` (new): every `D13xx` the reconciliation answers is in the owner's block, the status line of the README and both plans reads `plan only; nothing is implemented; no task approved`, and the cited paths exist.
+- **Files (2):** `docs/rigor-modes/reconciliation.md` (the docs-pin census row moves 100 to 101, with its amendment sentence: the new test file is one more pin file), `internal/cli/docs_cli_output_console_graph_test.go` (new): every `D13xx` the reconciliation answers is in the owner's block, the status line of the README and both plans reads `plan only; nothing is implemented; no task approved`, and the cited paths exist.
 - **Tests:** `TestDocsCliOutputConsoleGraphDecisionsAreAnswered`, `TestDocsCliOutputConsoleGraphStatusLines`, `TestDocsCliOutputConsoleGraphCitedPathsExist`.
-- **Command:** `go test ./internal/cli/ -run DocsCliOutputConsoleGraph -count=1`
+- **Command:** `go test ./internal/cli/ -run 'DocsCliOutputConsoleGraph|DocsRigorModes|CensusRow' -count=1` (the census tests turn red the moment a pin file is added without the row)
 - **Red step:** the file does not exist.
 - **Commit:** `internal/cli: pin the CLI output and console graph docs`
 

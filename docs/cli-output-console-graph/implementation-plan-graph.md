@@ -63,10 +63,10 @@
 
 **Decisions:** D1362. **Depends on:** none. **Reviewer:** standard (the sentence is D522's, unchanged).
 
-- **Files (max 3):** `internal/cli/extend.go` (add `graph` to `paidCommandNames`, so a build without the `ee` tag shows `newPaidStub`: "graph is part of Fugaro Subscription Edition; this build does not include it", non-zero), `internal/cli/extend_test.go` (or the existing stub test file, named at launch), `internal/cli/docs_website_cliref_test.go` (only if its pin on the paid names changes; **after CL4**) and `website/content/cli-reference.md` (regenerated if the stub's entry changes the reference; **after CL4**).
+- **Files (max 3):** `internal/cli/extend.go` (add `graph` to `paidCommandNames`, so a build without the `ee` tag shows `newPaidStub`: "graph is part of Fugaro Subscription Edition; this build does not include it", non-zero), `internal/cli/extend_test.go` (or the existing stub test file, named at launch), `internal/cli/docs_website_cliref_test.go` (only if its pin on the paid names changes; **after CL4**) and `website/content/cli-reference.md` (regenerated: the stub is a visible command, so the reference changes; **after CL4**).
 - **Interfaces:** the stub parses no flags, so `fugaro graph --watch --json` reaches the message; the console treats that refusal as "this CLI has no graph" and keeps the plan scope (CG10).
 - **Tests:** `TestUntaggedBuildHasTheGraphStub`, `TestGraphStubRefusesWhateverTheFlags`, and the existing paid-command tests.
-- **Command:** `go test ./internal/cli/ -run 'Paid|Stub|TestCliReferenceNamesEveryCommandAndFlag|TestCliReferenceInventsNothing' -count=1`
+- **Command:** `go test ./internal/cli/ -run 'Paid|Stub|TestCliReferenceNamesEveryCommandAndFlag|TestCliReferenceInventsNothing' -count=1 && go test ./ee/clidoc/ -run TestCliReferenceIsCurrent -count=1` (the stub is a visible command, so `website/content/cli-reference.md` is regenerated in this task unconditionally and that test is the one that goes red without it)
 - **Red step:** an untagged build answers `unknown command "graph"`.
 - **Commit:** `cli: a core stub for fugaro graph in a build without the ee tag`
 
