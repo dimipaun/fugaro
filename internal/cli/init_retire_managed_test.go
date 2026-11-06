@@ -272,6 +272,9 @@ func TestUpdateManagedStopsAtADataHoldingAddress(t *testing.T) {
 		// stop below is this table's decision and nothing else's.
 		{"a bucket", retireOpts{protection: true, keptAsNote: true, bucket: true}, retireBucketAddr, "a bucket holds objects, and an object is data"},
 		{"a secret container", retireOpts{protection: true}, retireKeptAddr, "fugaro never deletes a secret or a secret version"},
+		// A type the allowlist allows, of the installation's root rather than
+		// the repository's: what stops it is the bound, not the type.
+		{"another root's address", retireOpts{protection: true, keptAsNote: true, foreign: true}, retireForeignAddr, "it is not an address of module.repo"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newManagedRetireRig(t, tc.o)

@@ -47,6 +47,10 @@ const (
 	// producing: the data-holding case the ruling names, and the one address
 	// here whose stop is the allowlist's decision alone.
 	retireBucketAddr = `module.repo.google_storage_bucket.this["acme-sandbox-cache"]`
+	// retireForeignAddr is the installation root's own address in the
+	// repository's state, of a type the allowlist allows (an identity): what
+	// stops it is that it is not the repository's, not what it is.
+	retireForeignAddr = `module.installation.google_service_account.deployer`
 )
 
 // retireKeptSecretID is the container's Secret Manager ID as a real state's
@@ -133,6 +137,10 @@ type retireOpts struct {
 	// managed project's own retirement (it is a type the allowlist retained,
 	// not one it left undecided).
 	bucket bool
+	// foreign adds an address of another root -- the installation's -- that
+	// the repository's configuration never produced, of a type the allowlist
+	// allows: the stop it makes is the module bound and the type's.
+	foreign bool
 }
 
 // retireRig is an onboarded repository ready to plan, with the retirement's
@@ -182,6 +190,9 @@ func newRetireRig(t *testing.T, o retireOpts) *retireRig {
 	}
 	if o.bucket {
 		plan = append(plan, retireChange(retireBucketAddr, "google_storage_bucket", "delete"))
+	}
+	if o.foreign {
+		plan = append(plan, retireChange(retireForeignAddr, "google_service_account", "delete"))
 	}
 	b, err := json.Marshal(map[string]any{"format_version": "1.2", "resource_changes": plan})
 	if err != nil {
@@ -273,6 +284,10 @@ func retireStateDoc(t *testing.T, o retireOpts) string {
 	if o.bucket && !o.stateEmpty {
 		root = append(root, map[string]any{"address": retireBucketAddr, "mode": "managed", "type": "google_storage_bucket", "name": "this",
 			"values": map[string]any{"name": "acme-sandbox-cache"}})
+	}
+	if o.foreign && !o.stateEmpty {
+		root = append(root, map[string]any{"address": retireForeignAddr, "mode": "managed", "type": "google_service_account", "name": "deployer",
+			"values": map[string]any{"account_id": "fugaro-deployer"}})
 	}
 	if !o.keptAsNote {
 		root = append(root, map[string]any{"address": retireKeptAddr, "mode": "managed", "type": "google_secret_manager_secret", "name": "this",
