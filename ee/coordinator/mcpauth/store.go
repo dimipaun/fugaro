@@ -53,6 +53,13 @@ const (
 	clientPrefix = PathPrefix + "clients/"
 	familyPrefix = PathPrefix + "families/"
 	tokenPrefix  = PathPrefix + "tokens/"
+	// requestPrefix and codePrefix are the authorization flow's two
+	// short-lived records (M5): the pending authorize request a consent
+	// answers, and the code that consent produces. Both are single-use, and
+	// both are spent by a compare-and-swap rather than by a read and a
+	// delete (consume).
+	requestPrefix = PathPrefix + "requests/"
+	codePrefix    = PathPrefix + "codes/"
 )
 
 // The refusals a caller acts on. Each is a sentinel so that a caller can tell
@@ -86,6 +93,23 @@ var (
 	// than inferred for this: an access token is the value an agent leaks,
 	// and it must not be the value that extends its own family.
 	ErrWrongTokenKind = errors.New("mcpauth: the token is not of the kind the caller asked for")
+	// ErrRequestNotFound is a consent naming a flow that is not pending: one
+	// that was never issued, one that was already answered, or one that is
+	// gone. A consent is answered once, and a second answer to the same
+	// binding is refused rather than honoured (D928's CSRF binding).
+	ErrRequestNotFound = errors.New("mcpauth: no such pending authorize request")
+	// ErrRequestUsed is a consent naming a flow that has already been
+	// answered. It is the single-use half of the binding, and it is separate
+	// from ErrRequestNotFound because the two are different events: one is a
+	// stranger's guess, the other is a replay of a page this server issued.
+	ErrRequestUsed = errors.New("mcpauth: the authorize request was already answered")
+	// ErrCodeNotFound is an authorization code that resolves to nothing: one
+	// that was never issued, or one whose record is gone.
+	ErrCodeNotFound = errors.New("mcpauth: no such authorization code")
+	// ErrCodeUsed is an authorization code presented twice. The code is
+	// single-use (spec.md §3), and the consumption is a compare-and-swap so
+	// that two redemptions of one code cannot both succeed.
+	ErrCodeUsed = errors.New("mcpauth: the authorization code was already redeemed")
 )
 
 // errMissing and errChanged are what a backend hands the record layer instead
@@ -113,6 +137,15 @@ type Client struct {
 	// SecretHash is sha256 of the client secret, hex, empty for a client
 	// that holds none. The secret itself is returned once, at registration.
 	SecretHash string `json:"secret_hash"`
+	// Limits are the limits this client's tokens are held to (D929). They
+	// are empty for a client the registration endpoint wrote — a stranger's
+	// registration chooses no limit and grants none — and they are mandatory
+	// for an unattended caller, which is a client an operator pre-registered
+	// to reach the tools with no person behind it: the token endpoint refuses
+	// the client credentials grant when this is empty, because a token that
+	// can spend the project's budget at whatever mode it likes is the one
+	// token §7 refuses to mint.
+	Limits Limits `json:"limits"`
 	// CreatedAt is when the registration was written, so a registration
 	// record is expirable (spec.md §8, the residual risk of an open
 	// registration endpoint).
@@ -180,6 +213,79 @@ type TokenRecord struct {
 	Token Token `json:"token"`
 }
 
+// Request is one pending authorize request: the flow a consent answers (M5).
+//
+// It exists for the CSRF binding D928 asks for. The authorize request carries
+// the client's `state`, and the consent has to carry the coordinator's own
+// binding between the request and the answer — a binding a stranger cannot
+// guess, because without it an attacker's client can finish a sign-in a person
+// began for another one. The binding is this record's own id: it is random and
+// server-issued, it is written to the page the person reads and to nowhere a
+// stranger can see, and it is spent when the consent is answered
+// (Store.TakeRequest).
+//
+// Everything the consent decides is taken from here and never from the consent
+// itself: the consent carries the binding and the proof of the sign-in, and a
+// consent that could name its own redirect URI would be a consent to send a
+// code somewhere the person was never shown.
+type Request struct {
+	// ID is the flow's own id and the binding the consent must carry.
+	ID string `json:"id"`
+	// ClientID is the registration that asked.
+	ClientID string `json:"client_id"`
+	// RedirectURI is the URI the code will be sent to. It was matched
+	// against the client's registered list when this record was written, and
+	// it is carried here so that the consent does not have to name it.
+	RedirectURI string `json:"redirect_uri"`
+	// Challenge is the PKCE code challenge, verbatim. The method is not
+	// stored: S256 is the only one this server accepts (spec.md §3).
+	Challenge string `json:"code_challenge"`
+	// State is the client's own state, carried here so that it returns on
+	// the redirect unaltered.
+	State string `json:"state"`
+	// Scopes are the scopes the client asked for, already checked against
+	// D927's vocabulary. They become the token's scopes, narrowed against the
+	// project's.
+	Scopes []string `json:"scopes"`
+	// Identity is the identity the sign-in proved (M6's verifier), written
+	// here when the authorize request was answered with an ID token and read
+	// back when the consent is. It is in this record for the same reason the
+	// redirect URI is: the consent carries the binding and nothing else, so
+	// there is nothing in a consent an attacker could substitute to make the
+	// code act for an identity the person did not sign in as.
+	Identity string `json:"identity"`
+	// ExpiresAt is when the flow stops waiting for its consent.
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// Code is one authorization code at rest (M5): the hash of the value that was
+// sent to the client, and what that value stands for.
+//
+// Like every other record here it holds a hash and never the value (D922,
+// D930), so a reader of the store cannot present what it reads. The code is
+// bound to the client, the redirect URI and the code challenge it was issued
+// against, and to the identity the sign-in proved: the token endpoint reads all
+// four out of this record rather than out of the request, so an exchange cannot
+// retarget a code that was issued for somewhere else.
+type Code struct {
+	// Hash is sha256 of the code value, hex: the record's key.
+	Hash string `json:"hash"`
+	// ClientID is the registration the code was issued to.
+	ClientID string `json:"client_id"`
+	// RedirectURI is the URI the code was issued for. The exchange has to
+	// present it again, exactly.
+	RedirectURI string `json:"redirect_uri"`
+	// Challenge is the PKCE code challenge the code was issued against.
+	Challenge string `json:"code_challenge"`
+	// Identity is the exact identity the sign-in proved (M6's verifier), and
+	// what the token will act for.
+	Identity string `json:"identity"`
+	// Scopes are the scopes the code was issued with.
+	Scopes []string `json:"scopes"`
+	// ExpiresAt is when the code stops being redeemable.
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
 // Store is the token records of D935, wherever the owner's answer to §8 puts
 // them. Every method is one object read, one conditional write, or — for
 // RotateRefresh — a read and a write that have to be one act: there is no
@@ -226,6 +332,24 @@ type Store interface {
 	// rotation it is revoking, which is what a generation-matched delete
 	// would let it do.
 	RevokeFamily(ctx context.Context, familyID string) error
+	// PutRequest writes a pending authorize request, and refuses an id that
+	// is already there: the id is the consent's binding and is issued once.
+	PutRequest(ctx context.Context, req Request) error
+	// TakeRequest reads a pending authorize request and spends it in the same
+	// act, so that one binding answers one consent: a second consent carrying
+	// it is refused with ErrRequestUsed rather than answered twice. It is one
+	// method and not a read the caller composes with a write for the same
+	// reason RotateRefresh is — the read that decides has to be the write
+	// that spends it.
+	TakeRequest(ctx context.Context, id string) (Request, error)
+	// PutCode writes an authorization code, and refuses a hash that is
+	// already there. The code value is random, so its hash is written once.
+	PutCode(ctx context.Context, c Code) error
+	// ConsumeCode reads an authorization code and spends it in the same act
+	// (spec.md §3, "single-use"): the second redemption of one code is
+	// refused with ErrCodeUsed, and the compare-and-swap is what makes two
+	// simultaneous redemptions one success rather than two.
+	ConsumeCode(ctx context.Context, hash string) (Code, error)
 }
 
 // TokenHash is sha256 of a token value, hex: what the store keys a record by
@@ -488,6 +612,120 @@ func (r records) RevokeFamily(ctx context.Context, familyID string) error {
 	// never have. The rotation's own generation match is what makes the
 	// revoke win (Rotate).
 	return r.objs.delete(ctx, familyPrefix+familyID)
+}
+
+func (r records) PutRequest(ctx context.Context, req Request) error {
+	if err := keySegment(req.ID); err != nil {
+		return err
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("mcpauth: encoding an authorize request: %w", err)
+	}
+	if _, err := r.objs.create(ctx, requestPrefix+req.ID, data); err != nil {
+		if errors.Is(err, errChanged) {
+			return fmt.Errorf("mcpauth: that authorize request is already pending: %w", ErrConflict)
+		}
+		return err
+	}
+	return nil
+}
+
+func (r records) TakeRequest(ctx context.Context, id string) (Request, error) {
+	if err := keySegment(id); err != nil {
+		return Request{}, err
+	}
+	var req Request
+	switch err := r.consume(ctx, requestPrefix+id, &req); {
+	case errors.Is(err, errMissing):
+		return Request{}, ErrRequestNotFound
+	case errors.Is(err, errConsumed):
+		return Request{}, ErrRequestUsed
+	case err != nil:
+		return Request{}, err
+	}
+	return req, nil
+}
+
+func (r records) PutCode(ctx context.Context, c Code) error {
+	if err := keySegment(c.Hash); err != nil {
+		return err
+	}
+	data, err := json.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("mcpauth: encoding an authorization code: %w", err)
+	}
+	if _, err := r.objs.create(ctx, codePrefix+c.Hash, data); err != nil {
+		if errors.Is(err, errChanged) {
+			return fmt.Errorf("mcpauth: a code record for that hash is already written: %w", ErrConflict)
+		}
+		return err
+	}
+	return nil
+}
+
+func (r records) ConsumeCode(ctx context.Context, hash string) (Code, error) {
+	if err := keySegment(hash); err != nil {
+		return Code{}, err
+	}
+	var c Code
+	switch err := r.consume(ctx, codePrefix+hash, &c); {
+	case errors.Is(err, errMissing):
+		return Code{}, ErrCodeNotFound
+	case errors.Is(err, errConsumed):
+		return Code{}, ErrCodeUsed
+	case err != nil:
+		return Code{}, err
+	}
+	return c, nil
+}
+
+// consumedBytes is what a single-use record is replaced by when it is spent. It
+// is written rather than deleted so that the second presentation of a code or a
+// binding is a refusal that says so, instead of an absence a reader cannot tell
+// from a record that never existed — and so that the spend is one
+// generation-matched write, which is what makes it single-use under two
+// simultaneous callers rather than one write behind a race.
+var consumedBytes = []byte(`{"consumed":true}`)
+
+// errConsumed is the record layer's own answer for a single-use record that was
+// already spent. TakeRequest and ConsumeCode name it for their own callers, the
+// way errMissing is named.
+var errConsumed = errors.New("mcpauth: the record was already spent")
+
+// consume reads one single-use record and spends it in the same act: the read
+// returns the generation the write below is matched against, so a caller that
+// lost a race is answered errConsumed rather than reading a record the winner
+// already spent.
+func (r records) consume(ctx context.Context, key string, into any) error {
+	data, gen, err := r.objs.read(ctx, key)
+	if err != nil {
+		return err
+	}
+	if isConsumed(data) {
+		return errConsumed
+	}
+	if err := decode(data, into); err != nil {
+		return fmt.Errorf("%s: %w", key, err)
+	}
+	if _, err := r.objs.replace(ctx, key, consumedBytes, gen); err != nil {
+		if errors.Is(err, errChanged) {
+			return errConsumed
+		}
+		return err
+	}
+	return nil
+}
+
+// isConsumed reports whether an object is the marker consume leaves. It reads
+// one field and ignores the rest on purpose: the alternative is a decode that
+// has to know which record shape it was looking at, and a spent record is the
+// one thing this store reads without knowing what it used to be.
+func isConsumed(data []byte) bool {
+	var marker struct {
+		Consumed bool `json:"consumed"`
+	}
+	return json.Unmarshal(data, &marker) == nil && marker.Consumed
 }
 
 // get reads and decodes one record, answering the backend's own errMissing for
