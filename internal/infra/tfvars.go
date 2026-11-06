@@ -667,6 +667,40 @@ func SetCredentialsService(vars []byte, svc CredentialsServiceSpec) ([]byte, err
 // who cleared the list has to get `[]`, not the default, or the service admits
 // a caller the published node does not name.
 func CarriedCredentialsService(vars, prev []byte, verifiers []string) ([]byte, error) {
+	return carriedCredentialsService(vars, prev, func(block map[string]any) {
+		if verifiers == nil {
+			delete(block, "verifier_accounts")
+			return
+		}
+		block["verifier_accounts"] = verifiers
+	})
+}
+
+// CarriedCredentialsServiceAsFound is CarriedCredentialsService with the block
+// taken exactly as it is found — verifier_accounts included — for the one
+// caller that has no effective list to write: `fugaro init --print-vars`
+// (init.go), which prints the variables this machine's workdir holds and
+// deliberately reads no cloud, so it cannot know whether the published node
+// names a verifier. It must not pass nil to CarriedCredentialsService
+// instead: on a config that is silent about the list — the ordinary state, and
+// the only one this path can detect — a nil third argument DELETES the member,
+// so the printed document dropped the owner's list the workdir carries while
+// the same machine's `fugaro update` writes it into the block. What the
+// member means to a reader is that the service admits those callers, so a
+// deleted member reads as "the module's default" and the print disagrees with
+// the installation it stands for.
+//
+// The two functions share one body so they cannot drift in what they do to
+// every other member of the block.
+func CarriedCredentialsServiceAsFound(vars, prev []byte) ([]byte, error) {
+	return carriedCredentialsService(vars, prev, nil)
+}
+
+// carriedCredentialsService is the carry the two exported functions are:
+// the previous document's credentials_service entry, taken as it is found,
+// handed to rewrite for the members a caller knows better. rewrite is nil when
+// the caller knows none (CarriedCredentialsServiceAsFound).
+func carriedCredentialsService(vars, prev []byte, rewrite func(block map[string]any)) ([]byte, error) {
 	if prev == nil {
 		return vars, nil // no workdir held one: nothing to carry
 	}
@@ -680,12 +714,8 @@ func CarriedCredentialsService(vars, prev []byte, verifiers []string) ([]byte, e
 	if !ok || svc == nil {
 		return vars, nil
 	}
-	if block, ok := svc.(map[string]any); ok {
-		if verifiers == nil {
-			delete(block, "verifier_accounts")
-		} else {
-			block["verifier_accounts"] = verifiers
-		}
+	if block, ok := svc.(map[string]any); ok && rewrite != nil {
+		rewrite(block)
 	}
 	doc, err := varsDoc(vars)
 	if err != nil {

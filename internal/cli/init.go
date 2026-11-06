@@ -740,7 +740,12 @@ func runInit(r *initRun) error {
 		// about (this path touches no cloud and no Terraform by design).
 		if dir, derr := infra.InstallationWorkdir(os.Getenv, lc.GCPProject); derr == nil {
 			if prev, perr := infra.ReadWorkdirVars(dir, "installation"); perr == nil {
-				if data, err = infra.CarriedCredentialsService(data, prev, lc.VerifierAccountsEffective(nil)); err != nil {
+				// As found, verifier_accounts included: this path reads no
+				// cloud, so it has no effective list to write, and the
+				// alternative — the config's own, which is nil whenever the
+				// config is silent — is a nil that DELETES the member and
+				// prints the owner's list away (CarriedCredentialsServiceAsFound).
+				if data, err = infra.CarriedCredentialsServiceAsFound(data, prev); err != nil {
 					return err
 				}
 				if data, err = infra.CarriedManagedDeployerScoped(data, prev); err != nil {
@@ -2202,7 +2207,11 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	for _, n := range im.Notes {
 		r.warn(n)
 	}
-	backend, err := prepare(wd, spec, im, r.effectiveVerifiers(ctx, lc))
+	verifiers, err := r.effectiveVerifiers(ctx, lc)
+	if err != nil {
+		return outs, false, err
+	}
+	backend, err := prepare(wd, spec, im, verifiers)
 	if err != nil {
 		return outs, false, err
 	}
@@ -2475,21 +2484,43 @@ func nameFromOutputs(lc *localcfg.Config, outs infra.InstallationOutputs) (*loca
 // verifiers": it is the state the module's own default is for, the address of
 // the verifier account the same apply creates (verifier.tf).
 //
-// The node read is TOLERANT, and that is the whole reason this is not the
-// credentials stage's read. That stage is fail-closed — publishedPolicyOf
-// refuses a node an older Fugaro wrote, and the stage stops rather than
-// writing a tfvars from a value it could not read — while this one runs on
-// every ordinary `fugaro update`, including the one that upgrades an
-// installation whose node predates the key. Stopping there would be the
-// operator step CLAUDE.md's HARD RULE forbids; answering with the config's own
-// list, which is what the keep rule answers when nothing is published, is what
-// lets that one run write the account's address and migrate the node itself.
-func (r *initRun) effectiveVerifiers(ctx context.Context, lc *localcfg.Config) []string {
+// The node read is TOLERANT of exactly two states, and that is the whole
+// reason this is not the credentials stage's read. That stage is fail-closed —
+// publishedPolicyOf refuses a node an older Fugaro wrote, and the stage stops
+// rather than writing a tfvars from a value it could not read — while this one
+// runs on every ordinary `fugaro update`, including the one that upgrades an
+// installation whose node predates the key. The two states tolerated are the
+// two in which the node says nothing about a verifier and the config's own
+// list is the whole answer: nothing is published (a config naming no budget
+// backend, which is no error at all), and a node OLDER than this binary, which
+// the same run's policy stage migrates in place (olderPolicyNode). Stopping on
+// the second would be the operator step CLAUDE.md's HARD RULE forbids;
+// answering with the config's own list is what lets that one run write the
+// account's address and migrate the node itself.
+//
+// Every OTHER failure is returned, and that is the same HARD RULE read the
+// other way round. A node a NEWER binary published, a node whose top-level
+// keys this Fugaro does not know, a node that cannot be parsed, one the
+// deployed rules refuse, an outage — none of them says the installation names
+// no verifier, and a read that failed must not be answered as if it had said
+// so. The answer here is not a readonly one: prepare writes the member's
+// value into the installation's tfvars (deleting the owner's list) and
+// writeConfig writes the same address into the local config, which the run's
+// policy stage then publishes over the node — so an error swallowed here
+// replaces the owner's published list, permanently, with the installation's
+// own account, and does it in the run that reports success.
+func (r *initRun) effectiveVerifiers(ctx context.Context, lc *localcfg.Config) ([]string, error) {
 	p, _, err := r.policy.read(ctx, lc)
-	if err != nil || p == nil {
-		return lc.VerifierAccountsEffective(nil)
+	if err != nil {
+		if !olderPolicyNode(err) {
+			return nil, fmt.Errorf("the verifier accounts this installation's document must carry could not be read: %w", policyReadErr(err))
+		}
+		p = nil
 	}
-	return lc.VerifierAccountsEffective(p.VerifierAccounts)
+	if p == nil {
+		return lc.VerifierAccountsEffective(nil), nil
+	}
+	return lc.VerifierAccountsEffective(p.VerifierAccounts), nil
 }
 
 // configOnly writes the local config alone, from the installation's
@@ -2550,7 +2581,11 @@ func (r *initRun) readOutputs(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	if !exists {
 		return infra.InstallationOutputs{}, fmt.Errorf("%w gs://%s", errNoState, spec.StateBucket)
 	}
-	backend, err := prepare(wd, spec, infra.Imports{}, r.effectiveVerifiers(ctx, lc))
+	verifiers, err := r.effectiveVerifiers(ctx, lc)
+	if err != nil {
+		return infra.InstallationOutputs{}, err
+	}
+	backend, err := prepare(wd, spec, infra.Imports{}, verifiers)
 	if err != nil {
 		return infra.InstallationOutputs{}, err
 	}
@@ -2646,7 +2681,24 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	// otherwise an update from a machine whose config merely predates the key
 	// would replace the list another machine set, and an owner's clear would be
 	// undone by the next run.
-	if r.effectiveVerifiers(ctx, lc) == nil {
+	//
+	// It is written on EVERY installation, one that never opted into the
+	// credentials service — whose module creates no such account — included,
+	// and that is deliberate. The state this write must serve is the FIRST
+	// opt-in, and its own run cannot be told apart from the others here: the
+	// installation stage writes this config before the credentials stage
+	// applies anything, so a gate on the service (its block, its outputs)
+	// would leave that run's own apply creating the account while the node
+	// still named nobody — the second run nobody was told to make (CLAUDE.md's
+	// HARD RULE). What the unconditional write costs is a name on an
+	// installation that never opts in: no service reads it and no caller can be
+	// admitted by it while the service does not exist, and the first opt-in
+	// turns it into the account it named all along.
+	verifiers, err := r.effectiveVerifiers(ctx, lc)
+	if err != nil {
+		return err
+	}
+	if verifiers == nil {
 		next.VerifierAccounts = &[]string{infra.VerifierAccountID + "@" + lc.GCPProject + ".iam.gserviceaccount.com"}
 	}
 	if r.mutate != nil {

@@ -93,6 +93,15 @@ func oldCredentialsRef(version string) string {
 // credentials stage writes (infra.Credentials).
 func seedCredentialsService(t *testing.T, r *imagesRig, image string) {
 	t.Helper()
+	seedCredentialsServiceWithVerifiers(t, r, image, nil)
+}
+
+// seedCredentialsServiceWithVerifiers is seedCredentialsService for an
+// installation whose block already carries a verifier list (CSR14) — the state
+// a run of this release leaves behind, and the one a machine whose config is
+// silent about the key reads its list from.
+func seedCredentialsServiceWithVerifiers(t *testing.T, r *imagesRig, image string, verifiers []string) {
+	t.Helper()
 	doc := map[string]any{"credentials_service": map[string]any{
 		"account_id":       infra.CredentialsAccountID,
 		"service":          infra.CredentialsServiceName,
@@ -104,6 +113,9 @@ func seedCredentialsService(t *testing.T, r *imagesRig, image string) {
 			"provider": "bitbucket", "repo": "acme/sandbox", "workflow": "web"}},
 		"url": credentialsServiceURL,
 	}}
+	if verifiers != nil {
+		doc["credentials_service"].(map[string]any)["verifier_accounts"] = verifiers
+	}
 	b, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -1935,4 +1947,103 @@ func sameList(got, want []string) bool {
 		return false
 	}
 	return slices.Equal(got, want)
+}
+
+// TestPrintVarsKeepsTheCarriedVerifierList is --print-vars on an installation
+// whose workdir carries a verifier list and whose local config says nothing
+// about the key: the printed document has to carry the list. It is a
+// read-only look at the installation as it STANDS, so the alternative is not
+// a cloud read (this path makes none by design, which is why it cannot answer
+// with the effective list) but the config's own, which is nil here — and a
+// nil third argument to infra.CarriedCredentialsService DELETES the member,
+// so the printed document named nobody while the same machine's `fugaro
+// update` writes the owner's list into the same block.
+//
+// Mutation (verified, run and restored): pass lc.VerifierAccountsEffective(nil)
+// to CarriedCredentialsService instead of the as-found carry
+// (CarriedCredentialsServiceAsFound): this test fails, the member gone from
+// the printed document.
+func TestPrintVarsKeepsTheCarriedVerifierList(t *testing.T) {
+	owner := "person-1@example.com"
+	r := credentialsStageRig(t)
+	seedCredentialsServiceWithVerifiers(t, r, r.credentialsRef(), []string{owner})
+	if got := verifierListOf(localConfigOf(t, r)); got != nil {
+		t.Fatalf("the rig's local config already names a verifier (%v): this test is about the machine whose config is silent", got)
+	}
+	r.save(t)
+	out, errOut, err := executeStdin(t, "", "setup", "--print-vars")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("--print-vars did not print one JSON object: %v\n%s", err, out)
+	}
+	svc, _ := doc["credentials_service"].(map[string]any)
+	if svc == nil {
+		t.Fatalf("--print-vars dropped the opt-in the workdir carries:\n%s", out)
+	}
+	raw, ok := svc["verifier_accounts"].([]any)
+	if !ok {
+		t.Fatalf("--print-vars printed no verifier_accounts member (credentials_service = %v), want [%s]: an absent member is the module's variable null, so the printed document admits the module's default where the installation names the owner's list\n%s", svc, owner, out)
+	}
+	var got []string
+	for _, v := range raw {
+		s, _ := v.(string)
+		got = append(got, s)
+	}
+	if !sameList(got, []string{owner}) {
+		t.Errorf("--print-vars printed verifier_accounts = %v, want [%s]: the printed variables are the installation as it stands, and the list the block carries is the one its service is admitted by\n%s", got, owner, out)
+	}
+}
+
+// TestAFailedPolicyReadKeepsTheVerifierList is the read that must NOT be
+// swallowed. The published node is one this Fugaro cannot read at all — a
+// version a NEWER binary published, the one skew no stage of this run repairs
+// — and the installation's block carries the owner's list, with the machine's
+// own config silent about the key.
+//
+// Answering that read with "nothing anywhere names a verifier" is not the
+// tolerant path this run needs; it is a WRITE. prepare deletes the block's
+// member (the module's default then admits the installation's own
+// account) and writeConfig writes that address into the local config, which
+// the same run's policy stage publishes over the owner's list: an installation
+// whose node is merely newer than this CLI ends up with its published verifier
+// replaced, permanently, by the installation's own account.
+//
+// So the run stops, and it stops at the read: the sentence names the verifier
+// list it could not read, and the config it would have written is untouched.
+//
+// Mutation (verified, run and restored): swallow the error the way the
+// original tolerance did (`if err != nil || p == nil { return the config's own }`)
+// and this test fails on both assertions — the run goes on to write the
+// address into the local config, and what stops it afterwards is the
+// repository stage's own refusal, which names the node and not the list it
+// silently replaced.
+func TestAFailedPolicyReadKeepsTheVerifierList(t *testing.T) {
+	owner := "person-1@example.com"
+	r := credentialsStageRig(t)
+	r.setPlanAt(t, "installation")
+	credentialsOutputs(t, r)
+	// The node a NEWER Fugaro published: this binary reads the document, sees a
+	// version above its own, and has no sentence for its members.
+	r.db.Set(budget.PathMark, auroraMark())
+	publishedPolicyForTest(t, r, map[string]any{
+		"version":           projectpolicy.Version + 1,
+		"verifier_accounts": []any{owner},
+	})
+	seedCredentialsServiceWithVerifiers(t, r, r.credentialsRef(), []string{owner})
+	r.save(t)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err == nil {
+		t.Fatalf("an update whose policy node is newer than this binary succeeded, want the read refused: the run cannot tell what the node names, so it must not answer for it\n%s", s)
+	}
+	if !strings.Contains(s, "the verifier accounts this installation's document must carry could not be read") {
+		t.Errorf("the run stopped, but not at the verifier read: want a refusal naming the verifier accounts it could not read\n%s", s)
+	}
+	if got := verifierListOf(localConfigOf(t, r)); got != nil {
+		t.Errorf("the local config names verifier_accounts = %v after a run whose policy read failed, want the file as it was (silent): writing the installation's own address here publishes it over the owner's list\n%s", got, readFileString(t, r.cfg))
+	}
 }
