@@ -450,15 +450,43 @@ func TestSettingsManagedVerdictRefusesAnUnjudgedMember(t *testing.T) {
 	judged := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 6 }\n")
 	elsewhere := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 6, auth: vertex }\n")
 
-	if err := settingsManagedVerdict(context.Background(), g, target, settingsManagedLayerKey, false, "", old, judged).Refuse(); err != nil {
+	if err := settingsManagedVerdict(context.Background(), g, "claude-code", target, settingsManagedLayerKey, false, "", old, judged).Refuse(); err != nil {
 		t.Fatalf("the judged key alone was refused: %v", err)
 	}
-	err := settingsManagedVerdict(context.Background(), g, target, settingsManagedLayerKey, false, "", old, elsewhere).Refuse()
+	err := settingsManagedVerdict(context.Background(), g, "claude-code", target, settingsManagedLayerKey, false, "", old, elsewhere).Refuse()
 	if err == nil {
 		t.Fatal("a member no rule of this gate reads changed and the verdict admitted it")
 	}
 	if !strings.Contains(err.Error(), "no rule of this gate judges is unchanged") {
 		t.Errorf("the refusal is not the fail-closed rule over the unjudged members: %v", err)
+	}
+}
+
+// The allowlist (D1027) limits a coding agent's session, not the project's
+// owner: a key off it is refused with an agent marker and admitted for a person
+// at a real terminal (no marker), where every other rule of the verdict still
+// applies. On a managed project the owner at a terminal otherwise could not
+// write an account key that the registry names settings set as the writer of.
+func TestSettingsManagedAllowlistBindsTheSessionAndNotThePerson(t *testing.T) {
+	r := newSettingsManagedRig(t, settingsMarksManaged)
+	g := &managedGate{env: managedGateEnv{lc: r.managedLocal(t)}}
+	target := settingsManagedLayerTarget(settingsManagedLayerFile(t, minimalAnchored))
+	old := []byte(minimalAnchored)
+	judged := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 6 }\n")
+	const offList = "stages.review.claude_account"
+
+	err := settingsManagedVerdict(context.Background(), g, "claude-code", target, offList, false, "", old, judged).Refuse()
+	if err == nil || !strings.Contains(err.Error(), "not a key a coding agent's session writes") {
+		t.Fatalf("a coding agent's session was not refused a key off the allowlist: %v", err)
+	}
+	if err := settingsManagedVerdict(context.Background(), g, "", target, offList, false, "", old, judged).Refuse(); err != nil {
+		t.Fatalf("a person at a terminal was refused a key off the allowlist: %v", err)
+	}
+	// The person's write is still held to the other rules: a member no rule
+	// reads changed alongside is refused for a person too.
+	elsewhere := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 6, auth: vertex }\n")
+	if err := settingsManagedVerdict(context.Background(), g, "", target, offList, false, "", old, elsewhere).Refuse(); err == nil {
+		t.Fatal("a person's write that changed an unjudged member was admitted")
 	}
 }
 
