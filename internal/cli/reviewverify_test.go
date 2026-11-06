@@ -12,9 +12,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"golang.org/x/oauth2"
 
+	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -251,5 +255,194 @@ func TestReviewVerifierIdentityRefusesAnAddressThatIsNotAServiceAccount(t *testi
 				t.Errorf("%d impersonation calls for an address that is not a service account", iam.calls())
 			}
 		})
+	}
+}
+
+// reviewHeadAppID is the GitHub App ID the fixtures' project records for
+// acme/app, and reviewHeadSHA the head their stand-in forge reports. Neither
+// is a credential: the App ID is the number the platform passes to a job as
+// FUGARO_GITHUB_APP_ID, and the SHA is a commit's name.
+const (
+	reviewHeadAppID = "123456"
+	reviewHeadSHA   = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	// reviewHeadPersonToken is what the caller's own Google ID token stands in
+	// as: no test mints a real credential.
+	reviewHeadPersonToken = "fake-" + "caller-identity-token-not-a-real-credential"
+)
+
+// readMintStandIn is a stand-in credentials service's GitHub read mint: it
+// records what each call carried and answers what the case set. It is a
+// stand-in rather than a fake of the client, so the call the launcher makes is
+// the real one -- the path, the body and the identity are the wire's.
+type readMintStandIn struct {
+	url string
+
+	mu     sync.Mutex
+	paths  []string
+	bodies []map[string]string
+	auth   []string
+
+	// token is the value the answer carries, names the repository the answer
+	// names ("" answers the one the call named), and status a refusal of the
+	// mint (0 is an answer).
+	token  string
+	names  string
+	status int
+}
+
+func startReadMintStandIn(t *testing.T) *readMintStandIn {
+	t.Helper()
+	s := &readMintStandIn{token: "fake-" + t.Name() + "-read-token-not-a-real-credential"}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]string
+		_ = json.Unmarshal(raw, &body)
+		s.mu.Lock()
+		s.paths = append(s.paths, r.URL.Path)
+		s.bodies = append(s.bodies, body)
+		s.auth = append(s.auth, r.Header.Get("Authorization"))
+		token, names, status := s.token, s.names, s.status
+		s.mu.Unlock()
+		if status != 0 && status/100 != 2 {
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(`{"error":"unverified_caller","message":"refused"}`))
+			return
+		}
+		if names == "" {
+			names = body["repository"]
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"token":      token,
+			"expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano),
+			"repository": names,
+		})
+	}))
+	t.Cleanup(srv.Close)
+	s.url = srv.URL
+	return s
+}
+
+func (s *readMintStandIn) calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.paths)
+}
+
+// forgeStandIn is a stand-in forge: it answers one pull request's read with the
+// head it was given and records the authorization each read carried.
+type forgeStandIn struct {
+	url string
+
+	mu    sync.Mutex
+	paths []string
+	auth  []string
+	head  string
+}
+
+func startForgeStandIn(t *testing.T, head string) *forgeStandIn {
+	t.Helper()
+	s := &forgeStandIn{head: head}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		s.paths = append(s.paths, r.URL.Path)
+		s.auth = append(s.auth, r.Header.Get("Authorization"))
+		head := s.head
+		s.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"number": 7, "state": "open", "title": "a pull request", "draft": false,
+			"html_url": "https://example.invalid/acme/app/pull/7",
+			"head":     map[string]any{"sha": head, "ref": "fugaro/fix"},
+			"base":     map[string]any{"ref": "main"},
+			"user":     map[string]any{"id": 1, "login": "someone"},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	// The API root override this read already obeyed (providers.FromEnv read
+	// the same variable): the stand-in is what an enterprise root stands in
+	// for, and the value is not a credential.
+	t.Setenv(providers.EnvGitHubAPIURL, srv.URL)
+	s.url = srv.URL
+	return s
+}
+
+func (s *forgeStandIn) calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.paths)
+}
+
+// reviewHeadEnv is a cloudEnv whose project records acme/app as a GitHub
+// repository with the App ID the read mint is signed as, and whose
+// installation publishes the credentials service at url ("" publishes none).
+func reviewHeadEnv(t *testing.T, url string) *cloudEnv {
+	t.Helper()
+	env := &cloudEnv{lc: &localcfg.Config{Repos: map[string]localcfg.Repo{
+		"acme/app": {Provider: gitprov.KindGitHub, BaseBranch: "main", GitHubAppID: reviewHeadAppID},
+	}}}
+	if url != "" {
+		env.lc.CredentialsService = &localcfg.CredentialsService{URL: url}
+	}
+	return env
+}
+
+// setReviewReadIdentity replaces the launcher's own ID token mint with a fixed
+// value: a person's own credential is not a test's to mint, and no test runs
+// gcloud.
+func setReviewReadIdentity(t *testing.T) {
+	t.Helper()
+	prev := reviewReadIdentity
+	reviewReadIdentity = func(context.Context, string) (string, error) { return reviewHeadPersonToken, nil }
+	t.Cleanup(func() { reviewReadIdentity = prev })
+}
+
+// TestReviewHeadReadsThroughTheReadMint is the head read's whole path: the
+// launcher presents its own Google ID token to the installation's credentials
+// service, the service mints a read-only installation token for the ONE
+// repository named and for the project's own App, and the forge's read of the
+// pull request carries that token and no other.
+//
+// The red step: the launcher reads the head with OpenProvider(os.Environ(),
+// nil), so it resolves the App ID and the App key out of its own environment --
+// which a person's machine holds neither of (C2.2, D145) -- and the
+// installation's published service is never asked at all.
+func TestReviewHeadReadsThroughTheReadMint(t *testing.T) {
+	mint := startReadMintStandIn(t)
+	forge := startForgeStandIn(t, reviewHeadSHA)
+	setReviewReadIdentity(t)
+	// The environment carries a job's App ID, and it is not the App the
+	// project's configuration records: the read must name the project's own.
+	t.Setenv(providers.EnvGitHubAppID, "999999999")
+	env := reviewHeadEnv(t, mint.url)
+
+	head, err := reviewHead(t.Context(), env, "acme/app", 7)
+	if err != nil {
+		t.Fatalf("reading a pull request's head through the installation's read mint: %v", err)
+	}
+	if head != reviewHeadSHA {
+		t.Errorf("the head read is %q, want the forge's own %q", head, reviewHeadSHA)
+	}
+	if mint.calls() != 1 {
+		t.Fatalf("%d read mint calls, want 1", mint.calls())
+	}
+	if mint.paths[0] != github.ServiceReadPath {
+		t.Errorf("the mint call went to %s, want %s", mint.paths[0], github.ServiceReadPath)
+	}
+	if got, want := mint.bodies[0]["repository"], "acme/app"; got != want {
+		t.Errorf("the mint call names the repository %q, want %q", got, want)
+	}
+	if got, want := mint.bodies[0]["app_id"], reviewHeadAppID; got != want {
+		t.Errorf("the mint call names the App %q, want the project's own %q", got, want)
+	}
+	if got, want := mint.auth[0], "Bearer "+reviewHeadPersonToken; got != want {
+		t.Errorf("the mint call carried %q, want the caller's own identity token", got)
+	}
+	if forge.calls() != 1 {
+		t.Fatalf("%d forge reads, want 1", forge.calls())
+	}
+	if got, want := forge.paths[0], "/repos/acme/app/pulls/7"; got != want {
+		t.Errorf("the forge was read at %s, want %s", got, want)
+	}
+	if got, want := forge.auth[0], "Bearer "+mint.token; got != want {
+		t.Errorf("the forge read carried %q, want the token the service minted and no other", got)
 	}
 }
