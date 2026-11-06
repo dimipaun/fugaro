@@ -25,7 +25,7 @@ so (D922 was first answered the other way and restated the same day).
 | --- | --- |
 | F1 | **The front door's home is decided**: the coordinator has **its own resident service** — D196 in [../coordinator/reconciliation.md](../coordinator/reconciliation.md) (the row headed D196 says the owner ruled against the recommendation), and [../coordinator/README.md](../coordinator/README.md):26 says P7 and P8 "do not start yet: they wait on the front-door design review". **Exists**, as a decision; **not built** (F24). |
 | F2 | **A Cloud Run *service* is already admissible in the installer's Terraform cover**: `internal/infra/tf/cover.go:33-34` admits `google_cloud_run_v2_service` and `google_cloud_run_v2_service_iam_member`, added for the credentials service. **Exists** — the new resource type needs no cover change. |
-| F3 | **The coordinator's accounts and grants exist, and they are a job's**: `deploy/terraform/gcp/modules/installation/coordinator.tf:55` (its service account), `:76` with `role = "roles/storage.objectViewer"` at `:80` (the runs bucket — read only), `:97` (the app key secret), `:113` (`google_cloud_run_v2_job`), `:259` (the sweep schedule). There is **no** `google_cloud_run_v2_service` for the coordinator, no Cloud Run *launch* grant, and no write grant on the runs bucket. |
+| F3 | **The coordinator's accounts and grants exist, and they are a job's**: `deploy/terraform/gcp/modules/installation/coordinator.tf:71` (its service account), `:92` with `role = "roles/storage.objectViewer"` at `:96` (the runs bucket — read only), `:113` (the app key secret), `:129` (`google_cloud_run_v2_job`), `:275` (the sweep schedule). There is no Cloud Run *launch* grant and no write grant on the runs bucket. **The lines moved and one claim stopped being true after this folder was written**: the M4 task of [implementation-plan.md](implementation-plan.md) landed its first half as #1716, which added `google_service_account.mcp_server` (`:320`) and the `google_cloud_run_v2_service` front door that runs as it, so "there is **no** `google_cloud_run_v2_service` for the coordinator" is no longer a fact about this tree — the service is the front door's and not the sweep's, and the sweep above is unchanged. |
 | F4 | **The coordinator's writer holds the project's database admin**: `deploy/terraform/gcp/modules/firebase/iam.tf:138` grants `roles/firebasedatabase.admin` to the coordinator's writer account. |
 | F5 | **Firebase ID-token verification exists, and it is exact**: `internal/credsvc/auth.go:1069` compares the audience to the **bare project id**, `:1072` builds the issuer as `https://securetoken.google.com/<projectId>`, and `:1373` (`GoogleKeysURL`) is the public signing-key endpoint the owner's spec names. Its refusals name the failed check and never the value; `internal/credsvc/audit.go` writes one structured line per act and per refusal. **Exists** — the design's §4 adds no verification of its own. |
 | F6 | **Identity Platform is initialized with no sign-in providers, and a public sign-up path is refused**: `internal/cli/init_firebase.go:582` records "initialized Identity Platform (no sign-in providers)", `:686` calls `refusePublicSignUp` (`:709`) on a project whose config enables any public sign-up path, and `internal/infra/identityplatform.go:32` is the step's own name. **Exists** — and it is what F26 collides with. |
@@ -171,15 +171,27 @@ approved.**
 what they are.** The **independent SECURITY review of PR #1715's M3** — the rules change that closed
 the `mcpauth` node — found that the closed node cannot do what D922 asked of it, and the reason is a
 fact about the installation rather than about the rule: **F32**. The findings above were read again
-for it, and the owner answered on **2026-11-05**, again as recommended.
+for it, and the owner answered on **2026-11-05**, again as recommended. **The answer carried one
+thing over: which separate store.** The plan's §8 put three candidates to the owner — a second
+Realtime Database instance, Firestore, and a bucket of its own — and **the owner answered that too,
+the same day, again as recommended: the bucket** — `fugaro-mcpauth-<gcp-project>`, the records under
+`mcpauth/`, one IAM binding for the front door's own account `mcp_server` and nobody else. That
+closes the Open item §8 carried, and the one-line why is D935's own ruling read onto the three:
+D935 answered **"a store of their own"**, and the bucket is the only candidate whose IAM can name
+**exactly one account** — the second instance inherits the project-level database grants until four
+sets of people are re-scoped, and Firestore's data roles cannot be narrowed to a database or a
+collection at all. **So M2 and M4 wait on nothing**, and the two corrections the two reviews of this
+work produced are in §6's check 8 and in the plan's §3 (M4).
 
 | D | The answer, 2026-11-05 | Why, in one line |
 | --- | --- | --- |
-| **D935** | **The recommendation: the `mcpauth` records — the client list, the redirect URIs, the token hashes, the tool-call audit and the revocation state — leave the project's shared Realtime Database** for **a store of their own, whose IAM names the coordinator's own service account and no other member**, and **the `mcpauth` node stays in the rules as a defence in depth**, with `.read: false` and `.write: false`. **Which store is left open**: the plan's §8 compares a second Realtime Database instance, Firestore and a bucket of its own, recommends the bucket, and carries the choice as an Open item. | Every launcher and operator holds `roles/firebasedatabase.viewer` on the whole project and every budget admin and the history account holds `roles/firebasedatabase.admin` (F32), so **no rule can keep them out of the project's database** — the records have to leave it, and the store that holds them has to be one whose IAM can name exactly one account. |
+| **D935** | **The recommendation: the `mcpauth` records — the client list, the redirect URIs, the token hashes, the tool-call audit and the revocation state — leave the project's shared Realtime Database** for **a store of their own, whose IAM names the front door's own account `mcp_server` and no other member**, and **the `mcpauth` node stays in the rules as a defence in depth**, with `.read: false` and `.write: false`. **Which store was left open, and the owner answered it the same day**: the plan's §8 compares a second Realtime Database instance, Firestore and a bucket of its own, and **the answer of 2026-11-05 is the bucket** — the recommendation, `fugaro-mcpauth-<gcp-project>` with the records under `mcpauth/` — because it is the only candidate whose IAM can name exactly one account (the §4 note below, and §6's check 8). | Every launcher and operator holds `roles/firebasedatabase.viewer` on the whole project and every budget admin and the history account holds `roles/firebasedatabase.admin` (F32), so **no rule can keep them out of the project's database** — the records have to leave it, and the store that holds them has to be one whose IAM can name exactly one account. |
 
 **What it moves, and what it does not.** [implementation-plan.md](implementation-plan.md) is written
 to it: M2's store, M3's node and the comment it carries, M4's store and its single grant, M5's writes
-and M10's audit record and revocation. **Nothing else moves.** D922's rule stands — only hashes, shown
+and M10's audit record and revocation. **The store's own choice moves two more sentences and no
+task**: M2's backend file is the bucket, and M4 creates it — see the plan's §8, whose Open item this
+answer closes. **Nothing else moves.** D922's rule stands — only hashes, shown
 once at mint, never again — D930's rotation and its one-delete revocation stand, and D933's operator
 read of the audit record stands, because a tool serves it and no node does. **spec.md is not edited**:
 §6 and §8 there still describe the records as living in the `mcpauth` subtree, because that file
@@ -202,9 +214,28 @@ while every operator holds `roles/iam.serviceAccountTokenCreator` on the deploye
 operator and by every managed apply: **F32 again, one resource over**, found by this work's own
 review rather than by the installation. The store's name is therefore outside every conditioned
 prefix, and the owner's `fugaro update` — which runs with the owner's own rights — is what creates it.
-The one identity besides the store's own member that reaches it is the project Owner, which reaches
-every bucket in the project; that is the floor under every candidate of §8, and what D935 buys is that
-the store names **nobody else**.
+
+**And the floor under every candidate is wider than "the project Owner" (corrected 2026-11-05, the
+second correction this work's review produced).** The sentence above said, and §8's table used to
+say, that the project Owner is the one identity besides the store's own member that reaches a bucket
+of its own. `SECURITY.md:88` says otherwise in the installation's own words: **"Project Owners,
+Editors and anyone with a project-level storage role bypass the bucket's own policy regardless,
+hardened or not"**, and `docs/design/bucket-iam.md:47` gives the second half — GCS attaches
+**convenience bindings** to a new bucket, `projectOwner:`/`projectEditor:` as
+`roles/storage.legacyBucketOwner` and `projectViewer:` as `roles/storage.legacyBucketReader` plus
+`roles/storage.legacyObjectReader` (`internal/gcpfake/gcs.go` models them, `ConvenienceBindings`),
+so **a basic project Viewer reads the bucket until somebody strips those bindings** — which is
+exactly what `fugaro init` does to the state bucket (`internal/infra/statebucket.go:140`,
+`RemoveProjectViewers`, from `CreateStateBucket`). **The floor is therefore: Owners and Editors and
+any project-level storage role, plus the Viewers' convenience grant until it is removed.** It is a
+floor under every candidate of §8 — a second database instance and Firestore are reached by the
+project-level grants instead — and what D935 buys is unchanged: the store names **nobody else**, and
+every member a bucket brings with it that Terraform did not put there is M4's to remove or refuse.
+**UNVERIFIED, and it is M4's to close with the owner's live check: whether GCS still attaches these
+bindings to a bucket created by Terraform rather than by the `fugaro init` API call above.** What is
+verified is that the design assumes it does (`internal/gcpfake/gcs.go`, `docs/design/bucket-iam.md`)
+and that M4's check reads the created bucket's policy as a basic project Viewer rather than trusting
+the assumption.
 
 ## 5. The number block, and why it stays D920
 
@@ -270,8 +301,9 @@ code task starts:
    review reads, and **no task in [implementation-plan.md](implementation-plan.md) starts before it
    has been read and its findings answered.** [README.md](README.md) records who runs it and what it
    covers. **Its first finding has already landed** (F32, the review of PR #1715's M3), and the owner
-   answered it on 2026-11-05 (**D935**); the rest of §8 is still to be read, and M2 and M4 carry a gate
-   of their own until §8 of the plan answers the store question.
+   answered it on 2026-11-05 (**D935**); the rest of §8 is still to be read, and that review is M4's
+   only remaining gate — **the third gate that stood in front of M2 and M4, the store question itself,
+   was answered the same day rather than left standing** (§8 of the plan holds the answer: the bucket).
 8. **The store's IAM is what D935 says it is, and only a live project can show it.** No hermetic test
    stands in for this one: the plan's own test reads the plan, and the plan is not the project's
    policy. With the owner's own credentials, once M4 has been applied by `fugaro update`: **read and
@@ -281,13 +313,19 @@ code task starts:
    gives every operator, `deploy/terraform/gcp/modules/installation/deployer.tf:501`), and see a
    refusal too** — the reading the correction of 2026-11-05 adds, and the one that proves the store's
    name is outside the deployer's conditioned prefix rather than merely written to be; **read one
-   record as the coordinator's own service account, and see it work**; and **confirm the store's
+   record as the front door's own account `mcp_server` — the store's single member, the account M4
+   creates (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`), never the sweep's — and
+   see it work**; **read the same record as a basic project Viewer and see a refusal**, which is the
+   second correction of 2026-11-05: a new bucket carries GCS's convenience bindings for
+   `projectViewer:` until M4 removes them, so the check reads the created policy rather than assuming
+   it is clean (`SECURITY.md:88`, `docs/design/bucket-iam.md:47`,
+   `internal/infra/statebucket.go:140`); and **confirm the store's
    bucket is not the runs bucket**, which is the one placement a prefix of an existing bucket would
    have made readable by both lists. It is
    check 2's shape for a second resource: the claim is about who reaches something, and only the
-   project can answer it. **Which store** it is checked against is the plan's Open item — the plan
-   recommends a bucket of its own, and the check's wording moves with the answer rather than this
-   check's purpose.
+   project can answer it. **Which store** it is checked against is no longer open: the plan's §8
+   records the owner's answer of 2026-11-05 — the bucket `fugaro-mcpauth-<gcp-project>` — so this
+   check is written to it, and M4 creates the bucket it names.
 
 ## 7. What `main` had overtaken, and what was fixed in place
 
