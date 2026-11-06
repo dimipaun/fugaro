@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Set the current repository up for Fugaro with the user — investigate it, write fugaro.yaml with the image settings or a Dockerfile, decide each topic with the user, and loop on fugaro validate --json and the local image build until both pass. Use when setting Fugaro up for a repository, or fixing a fugaro.yaml or a failing local image build.
+description: Set the current repository up for Fugaro with the user — investigate it, write fugaro.yaml with each workflow's image, decide each topic with the user, and loop on fugaro validate --json and the local image build until both pass. Use when setting Fugaro up for a repository, or fixing a fugaro.yaml or a failing local image build.
 ---
 
 <!-- fugaro-skill name=setup fugaro-version=0.19.0 -->
@@ -81,14 +81,14 @@ Tell the user in a few lines what you found and what you couldn't.
 
 ## 3. Choose workflows, services and the image
 
-One workflow per buildable unit, all on the one Fugaro base. Write the runtimes into the root `mise.toml` (or respect the one there), and the image's extras in `image:`. `reference/services-and-images.md` has the details. In short:
-- **Services.** A test that needs Postgres, Redis or the Firebase emulators starts them with `fugaro-services start` as the first step of `commands.test`. Anything else is `image.apt` or `image.setup` plus a start line in the test command.
+One workflow per buildable unit, all on the one Fugaro base. Write the runtimes into the root `mise.toml` (or respect the one there), and name the image: `image_name:` or `needs:`. `reference/services-and-images.md` has the details. In short:
+- **Services.** The Postgres, Redis or Firebase emulator a test needs starts with `fugaro-services start` as the first step of `commands.test`. Anything else is a tag the entry's image carries, plus a start line in the test command.
 - **No Docker daemon.** A Cloud Run job has none. Tests needing Docker, docker-compose or Testcontainers can't run there: use a local-services mode of the repository, cover only the suites that don't need Docker, or have the user run them elsewhere. Say this; never work around it.
-- **The Dockerfile rule.** Use `image:` by default. Only when the evidence needs something it can't express, run `fugaro image render --workflow <name>`, save it as `.fugaro/<workflow>.Dockerfile`, make the minimal edits, and set `dockerfile:`. Never start from a blank Dockerfile or write one at the repository root (the application's).
+- **The image.** From `fugaro image ls --json`: an entry (`image_name:`), the tags the tests need (`needs:`), or neither, and the project's default entry runs. Only when no entry covers the need, run `fugaro image render --workflow <name>`, save it as `.fugaro/<entry>.Dockerfile`, and edit it minimally (step 7). Never start from a blank Dockerfile, or one at the repository root (the application's).
 
-## 4. Draft `fugaro.yaml` and the Dockerfile as one decision
+## 4. Draft `fugaro.yaml` and the entry's Dockerfile as one decision
 
-`commands.build`, `commands.test`, `resources`, `image:` or `dockerfile:`, `secrets` and the service start line are one decision; `mise.toml` is part of it. Write them together, then run
+`commands.build`, `commands.test`, `resources`, `image_name:` or `needs:`, `secrets` and the service start line are one decision; `mise.toml` is part of it. Write them together, then run
 `fugaro validate --json`: fix each problem at its `path`; warnings don't fail but tell the user.
 
 ## 5. Decisions, one topic at a time
@@ -103,14 +103,13 @@ Ask, with your evidence and a recommended answer for each, **one topic at a time
 7. `resources` (machine size): its own question, from the CI configuration, the test footprint and the language defaults.
 8. `agent.review_rounds`: its own question, from how risky or critical the repository is. Never ask 7 and 8 together or bundle their options.
 9. `agent.recipe`: its own question, after review rounds: which task loop runs after implement. Open with the 0.5.0 requirement: every CLI, CI pin and job image older than 0.5.0 refuses the key: tell the user before it goes into the file. Then recommend `default` (no key). Offer `standard` or `solo` only if asked; never write `agent.recipe` without their explicit decision, and never guess a recipe from the repository's domain or language.
-10. `rebuild`: usually the defaults.
-11. Workflow names, when there are several, and anything the user wants kept off Fugaro.
-12. `checkout`: **it is shipped** (fugaro 0.9.0), so offer it on the evidence: `clone` is for a workflow that needs no per-repository image, and only when the evidence rules out everything a build gives it (the keys `fugaro validate` refuses under clone, and a service arrives through one of those). It is the user's decision (`reference/decisions.md`; [docs/checkout.md](https://github.com/dimipaun/fugaro/blob/main/docs/checkout.md)).
+10. Workflow names, when there are several, and anything the user wants kept off Fugaro.
+11. `checkout`: **it is shipped** (fugaro 0.9.0), so offer it on the evidence: `clone` is for a workflow that runs no catalog entry, and only when the evidence rules out everything the project's entries give it (the keys `fugaro validate` refuses under clone, and a service arrives through one of those). It is the user's decision (`reference/decisions.md`; [docs/checkout.md](https://github.com/dimipaun/fugaro/blob/main/docs/checkout.md)).
 
 ## 6. Show what will execute, then get the go-ahead
 
 Before the first local build, and again before any rebuild after a change, show the user every line that will run, and why:
-- every `image.setup` step and `image.apt` package, and the build and test commands
+- every line the image's Dockerfile adds, and the build and test commands
 - `mise.toml`'s tools, each a download; if the repository has its own mise config (`mise.toml`, `.tool-versions`, a `mise/conf.d` fragment), show its **whole content**, not a tools summary: `mise install` reads it as a shell and can run arbitrary code (`[env]` `_.source`, a template's `exec()`, `[hooks]`), like any other file you run
 - a new Dockerfile: the whole file or the diff against the rendered one; a **fix of an existing** `.fugaro/*.Dockerfile` or `fugaro.yaml`: all of its executed lines, not only the ones you changed: an existing line is repository data too
 - the content of any repository script those lines call (`make` targets, `scripts/*`, a `postinstall`), or an explicit statement that you did not read it, and the repository's `.npmrc` and `.yarnrc.yml` (`yarnPath` and plugins run code)
@@ -150,9 +149,9 @@ Minting a *second* account's token, when this terminal holds one, is not yet ver
 ## 9. Hand off
 
 1. Run `fugaro update --repo --plan-only` (read-only; on a GitHub repository add `--github-app-id <id>` with the ID from step 5, topic 1) and show what update would apply. It uses the user's own credentials and may refuse without a terminal or an installation: a refusal is normal, and the user then runs it and reads you the plan.
-2. Offer a pull request; make one only when the user says so. It holds `fugaro.yaml`, `mise.toml` if you wrote or changed one, each `.fugaro/<workflow>.Dockerfile`, the `agent.instructions` file if there is one,
+2. Offer a pull request; make one only when the user says so. It holds `fugaro.yaml`, `mise.toml` if you wrote or changed one, each `.fugaro/<entry>.Dockerfile`, the `agent.instructions` file if there is one,
 and the `.claude/settings.json` change the installation step already made (the plugin pin), if it is still uncommitted. Tell the user to put nothing else in it.
-3. Summarize: the workflows with their commands and report globs (each with its file), the image settings with their evidence and what you could not express or verify, the `project:` you wrote (the base branch must carry it before runs work), the decisions the user made, any `rebuild.paths`, and the secrets still missing.
+3. Summarize: the workflows with their commands and report globs (each with its file), the image each one runs and its evidence with what you could not verify, the `project:` you wrote (the base branch must carry it before runs work), the decisions the user made, and the secrets still missing.
 4. Tell the user the next step: merge it, then run setup from the merged checkout. That adds this repository's job, first image build and schedule, and prompts for the secrets. The user runs it in their own terminal window, not through the agent:
 
 ```bash user-runs

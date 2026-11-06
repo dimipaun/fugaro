@@ -17,7 +17,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/image"
 )
 
 // setupFiles returns every file of the setup skill, SKILL.md first.
@@ -141,8 +140,14 @@ func TestSetupSkillNeverApplies(t *testing.T) {
 
 // TestSetupSkillExamplesValidate: every fugaro.yaml example in the skill
 // parses and validates with the repository's own loader, and the examples
-// cover both ways of naming runtimes (image.tools and a repository
-// mise.toml) and both ways of building an image (image: and dockerfile:).
+// cover both ways of naming the image a workflow runs (a catalog entry by
+// name, `image_name:`, and one by tags, `needs:`) and a workflow that names
+// neither, which runs the project's default entry off the repository's
+// mise.toml. A workflow that names an image no longer carries the settings
+// it used to: the repository-image removal refuses `image:` (with
+// `image.apt`, `image.setup`, `image.tools`, `image.key_files` and
+// `image.skip_build_scripts`), `dockerfile:` and `rebuild:` by name (D1195),
+// and an entry's image carries a package or a runtime instead.
 // "Every workflow builds on the one Fugaro base" has no separate check here:
 // config.Parse (above) already refuses any workflow with a non-empty base:
 // (legacyBaseMessage, internal/config/validate.go), returning a nil *Config
@@ -152,7 +157,7 @@ func TestSetupSkillNeverApplies(t *testing.T) {
 // ran on a Config that can only ever reach this point with Base == "" for
 // every workflow, can never fail either way and was dead weight.
 func TestSetupSkillExamplesValidate(t *testing.T) {
-	var tools, plain, dockerfile bool
+	var named, tags, plain bool
 	n := 0
 	for name, text := range setupFiles(t) {
 		for _, ex := range yamlExamples(text) {
@@ -166,49 +171,46 @@ func TestSetupSkillExamplesValidate(t *testing.T) {
 			checkExample(t, fmt.Sprintf("%s:%d", name, ex.line), c, mise)
 			for wfName, w := range c.Workflows {
 				switch {
-				case len(w.Image.Tools) > 0:
-					tools = true
-				case w.Dockerfile == "":
-					// An example with neither image.tools nor dockerfile:
-					// relies on a repository mise.toml, so it must actually
-					// have one: a missing fence here is a silent "it just
-					// works" example with nothing pinning its runtime, not
-					// one of the two ways of naming them.
+				case w.ImageName != "":
+					named = true
+				case len(w.Needs) > 0:
+					tags = true
+				default:
+					// An example that names neither an entry nor a tag runs
+					// the project's default entry, so the repository's own
+					// mise.toml is what pins its runtime: a missing fence
+					// here is a silent "it just works" example with nothing
+					// pinning it.
 					if mise == "" {
-						t.Errorf("%s:%d: workflow %s has no image.tools and no preceding ```toml mise.toml``` block: nothing pins its runtime", name, ex.line, wfName)
+						t.Errorf("%s:%d: workflow %s names no image_name: and no needs: and has no preceding ```toml mise.toml``` block: nothing pins its runtime", name, ex.line, wfName)
 					} else {
 						plain = true
 					}
 				}
-				dockerfile = dockerfile || w.Dockerfile != ""
 			}
 		}
 	}
 	if n == 0 {
 		t.Fatal("the setup skill has no fugaro.yaml example")
 	}
-	if !tools {
-		t.Error("no fugaro.yaml example sets image.tools")
+	if !named {
+		t.Error("no fugaro.yaml example names a catalog entry (image_name:)")
+	}
+	if !tags {
+		t.Error("no fugaro.yaml example asks for an image by tags (needs:)")
 	}
 	if !plain {
-		t.Error("no fugaro.yaml example relies on a repository mise.toml instead of image.tools")
-	}
-	if !dockerfile {
-		t.Error("no fugaro.yaml example sets dockerfile:")
+		t.Error("no fugaro.yaml example relies on the project's default entry and a repository mise.toml")
 	}
 }
 
-var dockerfilePathRE = regexp.MustCompile(`^\.fugaro/[a-z0-9][a-z0-9-]*\.Dockerfile$`)
-
 // checkExample runs the validator's repository checks (config.Check) on an
 // example against a scratch checkout holding what the example refers to: the
-// ./scripts its commands run, a package.json and lockfile when the example
-// sets image.skip_build_scripts (config.Check's checkBaseWorkflow refuses it
-// without a Node package manager to detect), the example's mise.toml (the
-// fenced ```toml mise.toml``` block immediately before this yaml example, if
-// any), and a Dockerfile rendered from the template for a dockerfile:
-// workflow. The path rule of the skill (.fugaro/<workflow>.Dockerfile) is not
-// the validator's, so it is checked here.
+// ./scripts its commands run and the example's mise.toml (the fenced
+// ```toml mise.toml``` block immediately before this yaml example, if any).
+// No example carries a file only a removed key pointed at any more: a
+// workflow's image is a catalog entry, so nothing in `fugaro.yaml` names a
+// Dockerfile or a package manager setting (D1195).
 func checkExample(t *testing.T, at string, c *config.Config, mise string) {
 	t.Helper()
 	root := t.TempDir()
@@ -230,20 +232,6 @@ func checkExample(t *testing.T, at string, c *config.Config, mise string) {
 			if f := strings.Fields(cmd); len(f) > 0 && strings.HasPrefix(f[0], "./") {
 				write(f[0], "#!/bin/sh\n")
 			}
-		}
-		if w.Image.SkipBuildScripts {
-			write("package.json", "{}")
-			write("package-lock.json", "{}")
-		}
-		if w.Dockerfile != "" {
-			if !dockerfilePathRE.MatchString(w.Dockerfile) {
-				t.Errorf("%s: workflow %s: dockerfile %q is not .fugaro/<workflow>.Dockerfile", at, name, w.Dockerfile)
-			}
-			df, err := image.Render(image.RenderInput{Workflow: name, Base: config.BaseKind, Version: "1.0.0"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			write(w.Dockerfile, string(df))
 		}
 	}
 	if problems := config.Check(c, root); len(problems) > 0 {
@@ -355,13 +343,13 @@ func TestSetupSkillContent(t *testing.T) {
 	for file, wants := range map[string][]string{
 		"skills/setup/SKILL.md": {
 			"fugaro doctor --json", "fugaro secrets ls --repo --json", "fugaro image render", "fugaro image build --local --json",
-			"fugaro validate --json", "fugaro update --repo --plan-only", ".fugaro/<workflow>.Dockerfile", "blank Dockerfile",
+			"fugaro validate --json", "fugaro update --repo --plan-only", ".fugaro/<entry>.Dockerfile", "blank Dockerfile",
 			".github/workflows", "Docker daemon", "`fugaro_yaml`", "WSL2", "agent.instructions",
 			"whole content", "_.source", "[hooks]",
 			"https://github.com/dimipaun/fugaro/blob/main/docs/base-image-migration.md",
 		},
 		"skills/setup/reference/services-and-images.md": {
-			"fugaro-services start", "mise.toml", "mise install", "image.tools", "apt-get install", "image.setup", "save the output as `.fugaro/<workflow>.Dockerfile`", "Pin every download by version and checksum", "Never start from a blank Dockerfile", "does **not** enforce", "illustrative", "Docker daemon", "--platform linux/arm64", "FUGARO_SERVICES",
+			"fugaro-services start", "mise.toml", "mise install", "apt-get install", "image_name:", "needs:", "fugaro image ls --json", "save the output as `.fugaro/<entry>.Dockerfile`", "Pin every download by version and checksum", "Never start from a blank Dockerfile", "does **not** enforce", "illustrative", "Docker daemon", "--platform linux/arm64", "FUGARO_SERVICES",
 			"**Never** `apt-get install <language>` or a `curl | sh` installer for a runtime",
 			"https://github.com/dimipaun/fugaro/blob/main/docs/base-image-migration.md",
 		},
@@ -464,7 +452,7 @@ func TestSetupSkillAsksRecipe(t *testing.T) {
 	if !(at(skill, "3. `agent.models`") < at(skill, "8. `agent.review_rounds`") && at(skill, "8. `agent.review_rounds`") < at(skill, "9. `agent.recipe`")) {
 		t.Error("SKILL.md does not order topics 3, 8, 9")
 	}
-	if !(at(dec, "## 3. `agent.models`") < at(dec, "## 8. `agent.review_rounds`") && at(dec, "## 8. `agent.review_rounds`") < at(dec, "## 9. `agent.recipe`") && at(dec, "## 9. `agent.recipe`") < at(dec, "## 10. `rebuild`")) {
+	if !(at(dec, "## 3. `agent.models`") < at(dec, "## 8. `agent.review_rounds`") && at(dec, "## 8. `agent.review_rounds`") < at(dec, "## 9. `agent.recipe`") && at(dec, "## 9. `agent.recipe`") < at(dec, "## 10. Workflow names")) {
 		t.Error("decisions.md does not order sections 3, 8, 9, 10")
 	}
 	for name, doc := range map[string]string{"SKILL.md": skill[at(skill, "9. `agent.recipe`"):], "decisions.md": dec[at(dec, "## 9. `agent.recipe`"):]} {
@@ -776,7 +764,7 @@ func TestSetupSkillOffersClone(t *testing.T) {
 	for _, want := range []string{
 		"`checkout: clone`",
 		"`checkout: baked`",
-		"needs no system package and no Dockerfile",
+		"needs no entry and no tags",
 		"the default is `baked`",
 		"the user's decision",
 	} {

@@ -10,6 +10,7 @@ package plugin_test
 // or replaces in it.
 
 import (
+	"fmt"
 	"io/fs"
 	"maps"
 	"os"
@@ -200,6 +201,211 @@ func checkNoRuntimeApt(t *testing.T, at, wf string, w config.Workflow) {
 	}
 }
 
+// aptGetInstallRE finds an apt(-get) install invocation in a Dockerfile line.
+var aptGetInstallRE = regexp.MustCompile(`\bapt(-get)?\s+install\b`)
+
+// joinShellContinuations collapses lines ending in a trailing `\` into their
+// logical line: the project's own idiomatic multi-line
+// `apt-get install -y --no-install-recommends \` style (images/base/Dockerfile
+// lists its packages across several continuation lines), which scanning one
+// physical line at a time would never see past the first.
+func joinShellContinuations(text string) []string {
+	var out []string
+	var cur string
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimRight(line, " \t")
+		if strings.HasSuffix(trimmed, `\`) {
+			cur += strings.TrimSuffix(trimmed, `\`) + " "
+			continue
+		}
+		cur += line
+		out = append(out, cur)
+		cur = ""
+	}
+	if cur != "" {
+		out = append(out, cur)
+	}
+	return out
+}
+
+// aptPackages returns the package names one logical Dockerfile line installs
+// with apt: the words between the install verb and the first shell operator
+// that ends the install, with apt's own flags (-y, --no-install-recommends)
+// dropped.
+func aptPackages(line string) []string {
+	m := aptGetInstallRE.FindStringIndex(line)
+	if m == nil {
+		return nil
+	}
+	rest := line[m[1]:]
+	for _, sep := range []string{"&&", ";", "|"} {
+		if i := strings.Index(rest, sep); i >= 0 {
+			rest = rest[:i]
+		}
+	}
+	var out []string
+	for _, f := range strings.Fields(rest) {
+		if f = strings.Trim(f, "\\\"'`"); f == "" || strings.HasPrefix(f, "-") {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// addedLinesInstallARuntime reports a package name a block of added
+// Dockerfile lines apt-get installs that is a language runtime (see
+// runtimeAptPackageRE): the one place a hand-written Dockerfile — the file the
+// skill tells the agent to write now that no repository derives one — could
+// smuggle a `base:`-style runtime install in. Lines are joined across `\`
+// continuations first, so a package named on a continuation line is seen too.
+func addedLinesInstallARuntime(text string) (pkg string, found bool) {
+	for _, line := range joinShellContinuations(text) {
+		for _, f := range aptPackages(line) {
+			if runtimeAptPackageRE.MatchString(f) {
+				return f, true
+			}
+		}
+	}
+	return "", false
+}
+
+// shellPipeRE matches a download piped into a shell, the other way a
+// hand-written Dockerfile smuggles in a runtime the base never installed.
+var shellPipeRE = regexp.MustCompile(`\|\s*(sudo\s+)?(ba|z)?sh\b`)
+
+// dockerfileFences returns the body of every ```dockerfile fence in the text:
+// the Dockerfiles a skill file shows the agent to write.
+func dockerfileFences(text string) []string {
+	var out []string
+	var cur []string
+	open := false
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case !open && strings.HasPrefix(trimmed, "```dockerfile"):
+			open, cur = true, nil
+		case open && trimmed == "```":
+			open = false
+			out = append(out, strings.Join(cur, "\n"))
+		case open:
+			cur = append(cur, line)
+		}
+	}
+	return out
+}
+
+// entryDockerfiles returns every ```dockerfile fence the skill files show,
+// keyed by the file and the fence's index in it.
+func entryDockerfiles(t *testing.T) map[string][]string {
+	t.Helper()
+	out := map[string][]string{}
+	for name, text := range setupFiles(t) {
+		if fences := dockerfileFences(text); len(fences) > 0 {
+			out[name] = fences
+		}
+	}
+	return out
+}
+
+// baseAptPackages returns the Debian package names images/base/Dockerfile's
+// apt-get install line bakes into the base, read from the Dockerfile itself
+// so a change to it is what this test tracks, not a copy that can drift.
+func baseAptPackages(t *testing.T) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "images", "base", "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, line := range joinShellContinuations(string(data)) {
+		out = append(out, aptPackages(line)...)
+	}
+	if len(out) == 0 {
+		t.Fatal("images/base/Dockerfile has no apt-get install block this reads packages from")
+	}
+	return out
+}
+
+// TestEntryDockerfilesTheSkillShows: the Dockerfile a skill file shows the
+// agent to write — the entry's own, built FROM the base with the packages the
+// repository needs — carries no language runtime and pipes nothing into a
+// shell. This is where the guard that used to ride the removed dockerfile: key
+// lives now: no repository derives an image of its own, and the hand-written
+// entry Dockerfile is what the skill tells the agent to produce.
+func TestEntryDockerfilesTheSkillShows(t *testing.T) {
+	fences := entryDockerfiles(t)
+	if len(fences) == 0 {
+		t.Fatal("no skill file shows a Dockerfile: the skill tells the agent to write one, so one of its examples is the shape a reader copies")
+	}
+	for name, bodies := range fences {
+		for i, body := range bodies {
+			at := fmt.Sprintf("%s fence %d", name, i+1)
+			if !strings.Contains(body, "FROM ${FUGARO_BASE}") || !strings.Contains(body, "ARG FUGARO_BASE") {
+				t.Errorf("%s: the example does not start FROM ${FUGARO_BASE} with the argument declared, the contract every entry keeps", at)
+			}
+			if !strings.Contains(body, "USER root") || len(aptPackages(body)) == 0 {
+				t.Errorf("%s: the example installs no package in a root block, so it shows nothing of the shape a repository copies:\n%s", at, body)
+			}
+			if pkg, found := addedLinesInstallARuntime(body); found {
+				t.Errorf("%s: the example apt-get installs %s, a language runtime; mise.toml is the only way to install one:\n%s", at, pkg, body)
+			}
+			if shellPipeRE.MatchString(body) {
+				t.Errorf("%s: the example pipes a download into a shell:\n%s", at, body)
+			}
+		}
+	}
+}
+
+// TestEntryDockerfilePackagesAreNotOnTheBase: a package the skill shows the
+// agent adding is not one images/base/Dockerfile already bakes, where the line
+// would install nothing. This compares Debian package names against Debian
+// package names: tools.tsv's Name column is the command a presence check runs
+// (rg, fd, dig), which very often differs from the Debian package that
+// provides it (ripgrep, fd-find, bind9-dnsutils), so a comparison against
+// tools.tsv would miss most real redundant apt entries.
+func TestEntryDockerfilePackagesAreNotOnTheBase(t *testing.T) {
+	base := baseAptPackages(t)
+	for name, bodies := range entryDockerfiles(t) {
+		for i, body := range bodies {
+			for _, p := range aptPackages(body) {
+				if slices.Contains(base, p) {
+					t.Errorf("%s fence %d adds %s, which the base already carries", name, i+1, p)
+				}
+			}
+		}
+	}
+}
+
+// TestAddedLinesInstallARuntime: the guard itself, on the shapes a hand-edited
+// Dockerfile takes — a package on the install line, one on a `\` continuation
+// line (which is how the project's own Dockerfiles list packages), a benign
+// package, and a runtime named somewhere other than an apt install.
+func TestAddedLinesInstallARuntime(t *testing.T) {
+	for _, tc := range []struct {
+		what, text, want string
+	}{
+		{"on the install line", "RUN apt-get install -y --no-install-recommends nodejs", "nodejs"},
+		{"on a continuation line", "RUN apt-get install -y --no-install-recommends \\\n      libvips-dev \\\n      openjdk-17-jdk-headless", "openjdk-17-jdk-headless"},
+		{"a bare install", "RUN apt install python3-pip", "python3-pip"},
+		{"a system library", "RUN apt-get install -y --no-install-recommends libvips-dev", ""},
+		{"no apt at all", "RUN mise install && npm ci", ""},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			got, found := addedLinesInstallARuntime(tc.text)
+			if tc.want == "" {
+				if found {
+					t.Fatalf("addedLinesInstallARuntime(%q) = %q, want nothing", tc.text, got)
+				}
+				return
+			}
+			if !found || got != tc.want {
+				t.Fatalf("addedLinesInstallARuntime(%q) = %q, %v; want %q", tc.text, got, found, tc.want)
+			}
+		})
+	}
+}
+
 func equalMaps(a, b map[string]string) bool {
 	if len(a) != len(b) {
 		return false
@@ -379,12 +585,12 @@ func TestSetupFixtureTablesMatchTheSkill(t *testing.T) {
 	files := setupFiles(t)
 	discovery := files["skills/setup/reference/discovery.md"]
 	services := files["skills/setup/reference/services-and-images.md"]
-	for _, want := range []string{"`package.json` with a lockfile", "`gradlew`", "`go.mod`", "`.nvmrc`", "`mise.toml`", "`image.apt`", "`cd <dir> &&`"} {
+	for _, want := range []string{"`package.json` with a lockfile", "`gradlew`", "`go.mod`", "`.nvmrc`", "`mise.toml`", "`apt-get install`", "`cd <dir> &&`"} {
 		if !strings.Contains(discovery, want) {
 			t.Errorf("discovery.md lost %s, which the fixtures rely on", want)
 		}
 	}
-	for _, want := range []string{"fugaro-services start", "Postgres (PostGIS, pgvector), Redis, Firebase emulators", ".fugaro/<workflow>.Dockerfile"} {
+	for _, want := range []string{"fugaro-services start", "Postgres (PostGIS, pgvector), Redis, Firebase emulators", ".fugaro/<entry>.Dockerfile"} {
 		if !strings.Contains(services, want) {
 			t.Errorf("services-and-images.md lost %q, which the fixtures rely on", want)
 		}
