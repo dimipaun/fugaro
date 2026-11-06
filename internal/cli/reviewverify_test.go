@@ -229,3 +229,27 @@ func TestFixBriefVerifiesWithTheImpersonatedIdentity(t *testing.T) {
 	}
 	var _ runner.SignatureVerifier = v
 }
+
+// The published address goes into a URL path: one that is not a service account
+// address, or carries a byte that could change the path, is refused before any
+// call. Mutation (run, restored): drop the suffix and byte check and these fail.
+func TestReviewVerifierIdentityRefusesAnAddressThatIsNotAServiceAccount(t *testing.T) {
+	for _, bad := range []string{
+		"x@y.iam.gserviceaccount.com/../..",
+		"a%2Fb@y.iam.gserviceaccount.com",
+		"person@example.com",
+		"a?b@y.iam.gserviceaccount.com",
+	} {
+		t.Run(bad, func(t *testing.T) {
+			iam := startIAMStandIn(t, http.StatusOK, bad)
+			env := verifierEnv(t, policyNaming(bad))
+			_, err := reviewVerifierIdentity(t.Context(), env, verifierService)
+			if err == nil || !strings.Contains(err.Error(), "is not a service account address") {
+				t.Fatalf("err = %v, want the not-a-service-account refusal", err)
+			}
+			if iam.calls() != 0 {
+				t.Errorf("%d impersonation calls for an address that is not a service account", iam.calls())
+			}
+		})
+	}
+}

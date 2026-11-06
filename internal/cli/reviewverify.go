@@ -118,7 +118,7 @@ func reviewVerifierIdentity(ctx context.Context, env *cloudEnv, serviceURL strin
 	if err != nil {
 		return "", fmt.Errorf("assuming the verifier account %s: %w", safetext.Field(account), safetext.FieldErr(err))
 	}
-	if email != account {
+	if !strings.EqualFold(email, account) {
 		return "", fmt.Errorf("the token is for %s, not for the verifier account %s: a token for another identity is never used as a credential", safetext.Field(email), safetext.Field(account))
 	}
 	return tok.Token, nil
@@ -145,7 +145,7 @@ func reviewVerifierAccount(ctx context.Context, env *cloudEnv) (string, error) {
 		return "", userErr("this installation names no verifier (verifier_accounts is empty in its published policy), and a fix round is not launched on a verdict nobody verified: run fugaro update, which names the installation's verifier service account")
 	case 1:
 	default:
-		return "", userErr("this installation names %d verifier accounts, and the launcher's verify call is one caller: a launcher that chose one would be choosing which identity verifies a verdict, which is the owner's to say, so a fix round is not launched", len(accounts))
+		return "", userErr("this installation names %d verifier accounts, and the launcher's verify call is one caller: a launcher that chose one would be choosing which identity verifies a verdict, which is the owner's to say, so a fix round is not launched (trim verifier_accounts to the one verifier service account and run fugaro update)", len(accounts))
 	}
 	if !strings.HasSuffix(accounts[0], ".iam.gserviceaccount.com") || strings.ContainsAny(accounts[0], "/?#% \t\n") {
 		return "", userErr("the published verifier %s is not a service account address, so the launcher cannot impersonate it", safetext.Field(accounts[0]))
