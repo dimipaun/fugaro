@@ -6,8 +6,13 @@ import (
 	"strings"
 	"testing"
 
+	"gocloud.dev/blob"
+
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The account-choice keys of the accounts design (docs/accounts-add/spec.md
@@ -425,6 +430,53 @@ func TestRunLandsAMixedRunOnTheMixsAccount(t *testing.T) {
 				t.Fatalf("OAuthToken = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestRunRetryLaunchesAMixedRunOnTheMixsAccount: --retry replays a stored task
+// as it stands, and a mixed run's task is the shape this launcher itself
+// writes — a named account under agent.auth: api-key. That is exactly the name
+// claudeAccountAllowed refuses outright, so a retry of a mixed run was refused
+// for the name the same binary had just written, with a sentence ("only
+// applies to a workflow whose agent.auth is oauth") that is false about it.
+// retrySpec asks the whole resolver instead (claudeAccountFor), the way the
+// repeated --run-id path does, and the stored token stays what the launch
+// carries: it starts on the account's own job variant, which is the only job
+// that mounts the token its review stages read.
+//
+// Mutation (retrySpec back to claudeAccountAllowed): the retry is refused and
+// no execution starts.
+func TestRunRetryLaunchesAMixedRunOnTheMixsAccount(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, defaultClaudeAccountConfig+mixRouteConfig+mixEnforce)
+	recipeCheckout(t, f, "  models: { coder: "+mixCoderModel+", reviewer: "+claudeReviewer+", background: "+mixCoderModel+" }\n", nil)
+	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	variant := gcp.WorkflowVariant("svc", "acme-overflow")
+	f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
+	// The task a mixed launch of this repository stores, never started —
+	// --retry's own case.
+	runID := wallRunIDAt(0, "100000", "a3c1")
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/other", Ref: "develop", Workflow: "svc", Task: "x",
+		RequestedBy: "someone@example.com", OAuthToken: "acme-overflow"}
+	if err := runstore.Open(b, otherSlug, runID).CreateTask(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+	var got gcpfake.RunCall
+	f.run.OnRun = func(c gcpfake.RunCall) { got = c }
+	if _, _, err := execute(t, "run", "--retry", runID); err != nil {
+		t.Fatal(err)
+	}
+	if want := gcp.JobName(otherSlug, variant); got.Job != want {
+		t.Fatalf("launched job = %q, want %q", got.Job, want)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want 1", n)
 	}
 }
 

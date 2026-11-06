@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"cmp"
 	"context"
 	crand "crypto/rand"
 	"encoding/json"
@@ -1776,9 +1775,9 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // 2026-11-04 conservative reading): the stage asked for is one of the mix's
 // two, its own model is an Anthropic one, the coder is served by a route this
 // repository may use, and the mode the run resolves is enforce (mixedStageAccount
-// is the whole rule). Elsewhere it is not a rung at all: such a run's own
-// account stays the unsuffixed default, and its coder stays on the provider key
-// the gateway holds. Rung 4 is never a way to a coder's stage, and never a
+// is the whole rule). Elsewhere it is not a rung for a stage at all, and such
+// a run's coder stays on the provider key the gateway holds whatever its own
+// account resolves to. Rung 4 is never a way to a coder's stage, and never a
 // second account: the run holds one Claude account, which rung 2 names when it
 // names one (mixedStageAccount refuses a project default that disagrees).
 //
@@ -3030,7 +3029,21 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	// but whether this repository may still use that account was never
 	// re-checked here, the one place --retry resolves what it is about to
 	// launch, before any build-record read or the launch itself.
-	if err := claudeAccountAllowed(env, spec.Repo, cmp.Or(spec.OAuthToken, config.DefaultClaudeAccount), checkoutAgentAuth(checkout())); err != nil {
+	//
+	// It is the whole resolver a fresh launch's account goes through
+	// (claudeAccountFor) and not the allow-list check alone, exactly as the
+	// repeated --run-id path asks it (storedFollowUp): a mixed run's stored
+	// task names its account under agent.auth: api-key — the shape this
+	// launcher itself writes for one — and that is a name
+	// claudeAccountAllowed refuses outright while the mix admits it
+	// (mixedRunAccount). Nothing but that name is admitted here either: the
+	// resolver's own refusals still stand, the allow-list among them. What it
+	// resolves is deliberately not written back: --retry launches the stored
+	// task as it stands (createTask does not run for one), and task.json is
+	// what the runner places itself in the job by (matchJobName), so a task
+	// carrying no account is a run of the plain job the resolver's answer
+	// must not silently disagree with.
+	if _, err := claudeAccountFor(ctx, env, spec.Repo, spec.OAuthToken, "", spec.Ref, checkout()); err != nil {
 		return "", nil, err
 	}
 	// A report run is refused, the way a follow-up carrying one is
