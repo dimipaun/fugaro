@@ -38,9 +38,9 @@ The chain, end to end, because the whole design turns on where the image's `ENV`
    os.Environ()`) and `:191` (`Env: env`) are the runner's own environment, which becomes `r.d.Env`.
 3. **`BuildEnv` narrows it** to `baseEnv` ∩ the runner's environment, plus the auth variables
    (`internal/agent/env.go:137-186`), plus `spec.Secrets` (the workflow's declared secret names,
-   `:187-203`), then `maps.Copy(out, spec.Set)` (`:204`), then `GatewayVars` — **"Last, so nothing
-   declared or inherited can override the routing"** (`:205-216`), then the compression override,
-   then `PathPrepend` (`:217-227`).
+   `:187-203`), then `maps.Copy(out, spec.Set)` (`:216`), then `GatewayVars` — **"Last, so nothing
+   declared or inherited can override the routing"** (`:218-223`), then the compression override,
+   then `PathPrepend` (`:231`).
 4. **One more arm exists and is the precedent for a second one**: `DOCKER_HOST` is added only when
    `EnvSpec.Docker` is true, and the comment says why it is gated on the *run's own ask* and not on
    the variable being present (`internal/agent/env.go:99-116`). The design's passthrough is the same
@@ -183,7 +183,7 @@ prints its environment: D1376 and O3.
 **F12. The gateway's credential cannot be reached through this path, and never was in the
 environment.** The agent gets `ANTHROPIC_BASE_URL` and the gateway's per-run token as
 `ANTHROPIC_API_KEY` (`internal/agent/env.go:302-344`); both names are reserved, so an image cannot
-set, shadow or redirect them, and `GatewayVars` is copied **last** (`:205-216`). The real key is in
+set, shadow or redirect them, and `GatewayVars` is copied **last** (`:218-223`). The real key is in
 the runner and is registered for redaction only (`internal/agent/env.go:148-163`; the gateway
 attaches it upstream, `internal/gateway/forward.go:1128-1136`).
 
@@ -204,7 +204,7 @@ Fugaro's), so it belongs where measurements already print — D1377.
 reader of a deployed job's whole environment is the converge, `upgrade_cloud.go:278`
 (`JobFullEnv`, `internal/backend/gcp/run.go:377`); `doctor_launcher.go:83-99` lists jobs for names
 and IAM and reads no container. So option 3's command needs one new read (D1377) — and that read is
-`Jobs.Get`, the call `doctor` already makes per job for another check.
+`Jobs.Get`, which `doctor` does not make today (it lists jobs and reads their IAM); the launcher role already holds `run.jobs.get`.
 
 **F15. One stale comment, noted and not taken.** `internal/backend/backend.go:131` says "No launcher
 sets an entry here today", and two do: `internal/cli/run.go:3553`
@@ -297,8 +297,8 @@ settles.
   which is the rule `docs/design/agent-env.md` §2 already states.
 - **D1374. Order: the image's values are written before the auth variables, the declared secrets,
   `spec.Set` and `GatewayVars`.** *Recommendation.* O1's ruling, and it is already the code's shape —
-  `maps.Copy(out, spec.Set)` at `internal/agent/env.go:204` and `GatewayVars` "last, so nothing
-  declared or inherited can override the routing" (`:205-216`). *Cost:* none; the constant is that
+  `maps.Copy(out, spec.Set)` at `internal/agent/env.go:216` and `GatewayVars` "last, so nothing
+  declared or inherited can override the routing" (`:218-223`). *Cost:* none; the constant is that
   the new write happens at one place, and a test holds it (IE1's mutation).
 - **D1375. Names are reported and logged; values are not.** *Recommendation.* No log line, reason,
   transcript field or report carries a value the passthrough carried. *Cost:* an operator debugging
@@ -312,8 +312,8 @@ settles.
   wherever they appear, which is a product change the owner should own.
 - **D1377. The report is `fugaro doctor --all` (and `--json`), not the default screen.** 
   *Recommendation (put to the owner as O5).* Doctor is the one command that reads the installation
-  and already calls `Jobs.Get` per job (`internal/cli/doctor_launcher.go:83-99`); the names it would
-  print need one more read, `JobFullEnv` (`internal/backend/gcp/run.go:377`), which the converge
+  and already lists jobs and reads their IAM (`internal/cli/doctor_launcher.go:83-99`); the names it would
+  print need one more read, a `Jobs.Get` per job, `JobFullEnv` (`internal/backend/gcp/run.go:377`), which the converge
   already uses (`upgrade_cloud.go:278`). It prints, per job whose image is catalog-owned, the names
   that will not reach runs — **names only**, in the shape `--all` already uses. *Alternatives:*
   (a) the default screen — refused: 25 lines are pinned by `TestDoctorDefaultIsOneScreen` and an
@@ -373,7 +373,7 @@ settles.
 - **Option 1 extended to per-repository images.** *Declined by the owner (O1).* The trust argument
   in the issue is real but it stops at the wrong place: SECURITY.md trusts the repository **as an
   agent-driver**, not as the author of the job's environment, and a repository-authored Dockerfile
-  is repository text that decides what the run executes (`SECURITY.md:192`) — the passthrough would
+  is repository text that decides what the run executes — the passthrough would
   turn a build file into a channel for the toolchain hooks in §4 with no operator in the loop. F17
   is the second answer: that path is being removed.
 - **Reading the image's config at run time** (registry `Config.Env`), as the honest alternative to

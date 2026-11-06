@@ -9,7 +9,7 @@ the slot is the owner's to re-take, and no task waits on it) — and everything 
 [implementation-plan.md](implementation-plan.md) starts before the owner approves it**.
 
 **Asked by:** issue **#1755** ("runs: an image's ENV variables never reach a run (allowlist); pass
-them through the secrets denylist, or add a plain env map", opened by **@paulkore**, 2026-11-05,
+them through the secrets denylist, or add a plain env map", opened by the issue's reporter, 2026-11-05,
 labelled `enhancement`, still open), reproduced verbatim in [spec.md](spec.md). The issue is a
 failed run: a project catalog image is operator-owned, it is where a team configures its toolchain,
 and its `ENV NEXUS_BASEURL=…` was silently empty in the run, so Maven resolved

@@ -53,7 +53,7 @@ the report and the rule (D1383) and is never worse than the tree it replaces.
 | File | Tasks | Note |
 | --- | --- | --- |
 | `internal/infra/spec.go` | IE1 | the job spec's env, where `CatalogEntry` is already in hand (`:1103-1104`) and the two other marks are written (`:1127-1135`). One writer; no other task here touches it |
-| `internal/runner/provision.go` | IE2 | where `CheckoutEnv` (`:29`) and `RemoteEnv` (`:57`) live, and `internal/infra/spec.go:79`/`:88` alias both. The stamp's constant goes beside them for the same reason: one spelling, two readers |
+| `internal/runner/provision.go` | IE1 (the stamp's constant), IE2 only if O4 changes the denylist | where `CheckoutEnv` (`:29`) and `RemoteEnv` (`:57`) live, and `internal/infra/spec.go:79`/`:88` alias both. The stamp's constant goes beside them for the same reason: one spelling, two readers |
 | `internal/runner/agentenv.go` | IE2 | `parentEnv()` and the env plumbing the subtraction belongs with |
 | `internal/runner/runner.go` | IE2 | **reserved: one writer across work streams.** IE2 takes it for exactly one call site (`:2294-2312`) and says so in its pull request; if the subtraction turns out to need a second site, IE2 takes the file alone and reports it rather than editing it silently |
 | `internal/cli/doctor.go`, `doctor_render.go`, `doctor_launcher.go` | IE3 | the report's command, its renderer and the job read it needs. No other task here touches `internal/cli` |
@@ -78,8 +78,8 @@ which is the read IE3 adds — if the read needs nothing, Terraform is untouched
 
 **Decisions:** D1371, D1378. **Findings:** F5, F6, F7, F9. **Depends on:** nothing.
 
-- **Files:** `internal/infra/spec.go`, `internal/infra/spec_test.go`, `internal/runner/provision.go`.
-  **3 files.**
+- **Files:** `internal/infra/spec.go`, `internal/infra/spec_test.go`, `internal/runner/provision.go`, and the new pure function that spells the subtraction once (the names a run drops: a job's env names minus the reserved, platform, launch, stamp and declared-secret names) with its test, in `internal/runner` (new, `imageenv_names.go`, beside `ImageEntryEnv`; nothing calls it yet). IE2's `imageEnv` and IE3's report both call it, which is why it is IE1's and not either's: IE3 therefore depends on IE1 alone, as D1383 says.
+  **5 files.**
 - **Interfaces:** produces `runner.ImageEntryEnv = "FUGARO_IMAGE_ENTRY"` beside `CheckoutEnv` and
   `RemoteEnv`, aliased as `infra.ImageEntryEnv = runner.ImageEntryEnv` the way those two are
   (`internal/infra/spec.go:79`, `:88`), and one assignment in `repoCtx.workflowSpec` where
@@ -128,10 +128,10 @@ F12, F16, F18. **Depends on:** IE1, **and open items O3 and O4 — the answers c
   runner's environment **minus** every name `config.ReservedEnv` refuses (D1372, re-applied inside
   `BuildEnv` too, so the filter sits next to the allow-list it protects whatever a caller passes),
   minus the platform and launch names (`internal/backend/launchenv.go:32-54`), and minus every name in
-  `FUGARO_SECRET_ENVS` this run did not declare (`r.secretList()`, `internal/runner/runner.go:927-932`;
+  `FUGARO_SECRET_ENVS` this run did not declare (the declared names are `secretEnvs`, built at `internal/runner/runner.go:2192-2196` before the `BuildEnv` call; `r.secretList()` returns redaction values and is not the set;
   F8 — those reach the agent through the existing declared-secret path alone). **The write goes after
   the allow-list copy and the `DOCKER_HOST` arm (`internal/agent/env.go:85-116`) and before the auth switch
-  (`:137`)**, which is what makes `maps.Copy(out, spec.Set)` (`:204`) and `GatewayVars` (`:205-216`,
+  (`:137`)**, which is what makes `maps.Copy(out, spec.Set)` (`:216`) and `GatewayVars` (`:218-223`,
   *"Last, so nothing declared or inherited can override the routing"*) the last word, as D1374 requires
   and O1 ruled. **The `DOCKER_HOST` arm is not a hole in that order**: `DOCKER_` is already a
   `ReservedEnvPrefixes` entry (`internal/config/validate.go:65`), so an image's `DOCKER_HOST` — like
@@ -187,7 +187,7 @@ standard, with the doctor pins run in the same pull request.
   subtraction is IE2's and this is the reader that has to agree with it —
   `internal/cli/doctor_imageenv.go` plus its test. **6 files.**
 - **Interfaces:** consumes the job's container env (`JobFullEnv`,
-  `internal/backend/gcp/run.go:377` — **one `Jobs.Get` per job, and the launcher role already carries
+  `internal/backend/gcp/run.go:377` — **one `Jobs.Get` per job (a new read: doctor lists jobs and reads their IAM, it never gets one), and the launcher role already carries
   `run.jobs.get`**, `deploy/terraform/gcp/modules/installation/iam.tf:9-10`) and produces, per job, the
   names that will not reach runs: the job's own env names minus the reserved names (D1372) minus the
   platform, launch and stamp names minus the names in the job's own `FUGARO_SECRET_ENVS`. **The
