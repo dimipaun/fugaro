@@ -826,8 +826,8 @@ func TestSettingsGenericKeyIsSpec44sAllowlist(t *testing.T) {
 		"budget.mode", "budget.per_day_usd",
 		// D1161: the wildcard blocks this design manages, in the registry's
 		// spelling — the pattern, not a concrete spelling of it.
-		"workflows.*.commands.test", "workflows.*.image.apt", "workflows.*.secrets",
-		"layer.profiles.*.image.apt", "layer.profiles.*.cache.*.key", "layer.ab.rate",
+		"workflows.*.commands.test", "workflows.*.timeouts.total", "workflows.*.secrets",
+		"layer.profiles.*.timeouts.total", "layer.profiles.*.cache.*.key", "layer.ab.rate",
 	}
 	for _, key := range allowed {
 		if !settingsGenericKey(key) {
@@ -847,6 +847,25 @@ func TestSettingsGenericKeyIsSpec44sAllowlist(t *testing.T) {
 	for _, key := range refused {
 		if settingsGenericKey(key) {
 			t.Errorf("settingsGenericKey(%q) = true, and no decision hands it to the generic path", key)
+		}
+	}
+}
+
+// TestSettingsGenericAllowlistNamesOnlyRegistryRows: the allowlist and the
+// registry are two halves of one surface — a registry row is what makes a key
+// settable, and an allowlist entry is what decides the generic path may write
+// it — so an entry the registry no longer has a row for is a spelling nothing
+// can reach, and one that lists a removed key is where a reader is told the
+// key still works. The 0.20.0 removal took the removed keys' twenty-one rows;
+// this is what holds the two lists equal afterwards.
+func TestSettingsGenericAllowlistNamesOnlyRegistryRows(t *testing.T) {
+	rows := map[string]bool{}
+	for _, r := range settings.Rows() {
+		rows[r.Key] = true
+	}
+	for key := range settingsGenericKeys {
+		if !rows[key] {
+			t.Errorf("settingsGenericKeys names %q and the registry has no row for it: nothing can resolve the key, so the entry is dead", key)
 		}
 	}
 }
