@@ -62,20 +62,23 @@ func reviewVerifier(ctx context.Context, env *cloudEnv, account, run, repository
 // reviewVerifierIdentity mints the launcher's Google ID token for the verify
 // route's audience, which is the service's own URL (C1.14).
 //
-// WHICH identity the launcher impersonates is Open item 5 of
-// docs/cloud-senior-review/implementation-plan.md §6.6, and the owner has not
-// settled it. The one identity it may NOT be is the launcher person's own
-// address: every `user:` operator is already a person account to the service,
-// and NewAuthenticator refuses to start an installation whose verifier list
-// names one (internal/credsvc/auth.go) — so the caller is a verifier service
-// account the installation holds, which is the launcher-side twin of the job's
+// WHICH identity the launcher impersonates was Open item 5 of
+// docs/cloud-senior-review/implementation-plan.md §6.6, and the owner settled
+// it on 2026-11-05: a dedicated verifier service account the installation root
+// creates and names in credentials_service.verifier_accounts, which this
+// launcher impersonates. That answer is also the one identity it may NOT be,
+// the launcher person's own address: every `user:` operator is already a
+// person account to the service, and NewAuthenticator refuses to start an
+// installation whose verifier list names one (internal/credsvc/auth.go), so
+// the caller is that service account — the launcher-side twin of the job's
 // metadata identity.
 //
-// Until that identity exists there is none to mint from, and the refusal is
-// the fail-closed direction: a fix round is not launched on a verdict nobody
-// verified. The seam above is what the tests reach the reader with.
+// Neither the account nor the published field it is named through exists yet:
+// both are CSR14/CSR15 of the same document, so the stub below stays as it is
+// — fail-closed, and not a temporary state to relax — until they do. The seam
+// above is what the tests reach the reader with meanwhile.
 func reviewVerifierIdentity(context.Context, string) (string, error) {
-	return "", fmt.Errorf("the launcher has no verifier identity to call the credentials service's verify route as: which identity may verify a verdict is the owner's to settle (docs/cloud-senior-review/implementation-plan.md §6.6, Open item 5), and no fix round is launched on a verdict nobody verified")
+	return "", fmt.Errorf("the launcher has no verifier identity to call the credentials service's verify route as: the installation root creates a dedicated verifier service account and names it in credentials_service.verifier_accounts, which this launcher impersonates once that account is real (docs/cloud-senior-review/implementation-plan.md CSR14/CSR15: neither exists yet). No fix round is launched on a verdict nobody verified")
 }
 
 // reviewPRHeadSeam, when a test sets it, is what reviewHead answers instead of

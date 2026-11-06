@@ -441,8 +441,17 @@ const fixBriefHead = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 // host.
 func setFixBriefHead(t *testing.T) {
 	t.Helper()
+	setFixBriefHeadAt(t, fixBriefHead)
+}
+
+// setFixBriefHeadAt points the launcher's forge read at one head, for the test
+// whose subject is the head itself. It is called after fixBriefSeed, which has
+// already set the fixture's: the two cleanups stack in assignment order, so the
+// seam is back where each of them found it either way.
+func setFixBriefHeadAt(t *testing.T, sha string) {
+	t.Helper()
 	prev := reviewPRHeadSeam
-	reviewPRHeadSeam = func(context.Context, *cloudEnv, string, int) (string, error) { return fixBriefHead, nil }
+	reviewPRHeadSeam = func(context.Context, *cloudEnv, string, int) (string, error) { return sha, nil }
 	t.Cleanup(func() { reviewPRHeadSeam = prev })
 }
 
@@ -507,7 +516,13 @@ func TestFixBriefRefusesASignatureTheServiceDoesNotOwn(t *testing.T) {
 		[]byte(strings.Repeat("c", 64)+"\n"))
 
 	before := len(svc.recorded())
-	wantFixBriefRefused(t, f, reviewID, "signature")
+	err := wantFixBriefRefused(t, f, reviewID, runner.ErrReviewSignature.Error())
+	// The verifier's refusal is already the signature family's own sentence, so
+	// the reader does not wrap it a second time: it is spelled once, with the
+	// reason behind it and not in front of a copy of itself.
+	if n := strings.Count(err.Error(), runner.ErrReviewSignature.Error()); n != 1 {
+		t.Errorf("the refusal spells %q %d times, want once: %v", runner.ErrReviewSignature.Error(), n, err)
+	}
 	// The service answered about the artifact this launcher actually read: a
 	// reader that asked it about some other bytes would be refused by a service
 	// answering correctly — the same refusal for the wrong reason — so the
@@ -542,6 +557,40 @@ func TestFixBriefRefusesWhenTheServiceIsUnreachable(t *testing.T) {
 	setFixBriefVerifierAt(t, deadURL)
 
 	wantFixBriefRefused(t, f, reviewID, "could not be reached")
+}
+
+// TestFixBriefRefusesAnEarlierHead is the replay guard's own test: the
+// signature is the service's over these bytes, the review run, the repository
+// and the pull request all agree, and the only thing wrong is the head — the
+// pull request has moved past the commit the review read. A validly signed
+// verdict about an earlier head is a replay (spec §6, §8's window), so the
+// brief is refused and no run starts.
+//
+// The head it is checked against has to be the FORGE's read, and that is what
+// this test pins: built from the artifact's own head_sha instead, the check
+// compares the claim against itself and every replay passes.
+func TestFixBriefRefusesAnEarlierHead(t *testing.T) {
+	f, reviewID := fixBriefSeed(t)
+	data := putReviewObject(t, f, reviewID, fixFirstArtifact(reviewID))
+	putReviewTask(t, f, reviewID, "acme-personal")
+	svc := setFixBriefVerifier(t)
+	putReviewSignature(t, f, reviewID, appSlug, reviewID, data)
+	// The forge answers with a commit the artifact does not name, of the same
+	// length so nothing but the value tells the two apart.
+	moved := strings.Repeat("b", len(fixBriefHead))
+	if moved == fixBriefHead {
+		t.Fatal("the moved head is the artifact's own, so this test cannot tell the two apart")
+	}
+	setFixBriefHeadAt(t, moved)
+
+	before := len(svc.recorded())
+	wantFixBriefRefused(t, f, reviewID, "head_sha")
+	// The service verified the signature first, so the refusal is the head's
+	// and not an earlier reader's: a launch that never reached the service
+	// would be red for the wrong reason.
+	if calls := svc.recorded()[before:]; len(calls) != 1 {
+		t.Errorf("the verify route was called %d times before the head was refused, want 1", len(calls))
+	}
 }
 
 // TestFixBriefVerifiesTheBytesItReads: the digest the service is asked about is

@@ -909,6 +909,44 @@ func TestVerifyRefusesAReplayedArtifact(t *testing.T) {
 	}
 }
 
+// TestVerifyWrapsAVerifierRefusalOnce: a verifier that refuses in the
+// signature family's own words is not wrapped a second time. Every
+// ServiceVerifier refusal is ErrReviewSignature, and the launcher prints this
+// error verbatim in the sentence that refuses a brief, so a second wrap spelled
+// the family's sentence twice in front of the reason. An error of the
+// verifier's own is still reported as the signature's, so a caller can tell a
+// refusal from a pass.
+func TestVerifyWrapsAVerifierRefusalOnce(t *testing.T) {
+	ctx := context.Background()
+	svc := newReviewService(t)
+	data, sig := signedReviewArtifact(t, svc, reviewArtifactFixture(t))
+
+	// The verify route's own false bit, through the client whose refusals are
+	// the family's: the shape the launcher meets.
+	no := newVerifyService(t, http.StatusOK, `{"valid":false}`)
+	v := ServiceVerifier{
+		URL: no.srv.URL, IDToken: func(context.Context) (string, error) { return "verifier-id-token", nil },
+		Account: "acme-personal", Run: svcRunID, Repository: svcSlug,
+	}
+	_, err := VerifyReviewArtifact(ctx, data, sig, reviewWant(), v)
+	if err == nil {
+		t.Fatal("the route's false bit verified the artifact")
+	}
+	if n := strings.Count(err.Error(), ErrReviewSignature.Error()); n != 1 {
+		t.Errorf("the refusal spells %q %d times, want once: %v", ErrReviewSignature.Error(), n, err)
+	}
+	if !errors.Is(err, ErrReviewSignature) {
+		t.Errorf("the refusal is not the signature family's: %v", err)
+	}
+
+	// A verifier that answers with an error of its own: still the family's at
+	// the caller, which is what the wrap is for.
+	other := newReviewService(t)
+	if _, err := VerifyReviewArtifact(ctx, data, sig, reviewWant(), other.verifier()); err == nil || !errors.Is(err, ErrReviewSignature) {
+		t.Errorf("a verifier's own error did not reach the caller as the signature family's: %v", err)
+	}
+}
+
 // The artifact's brief asks for the artifact's own severity vocabulary, never
 // the in-run one: the artifact's reader is strict about severity
 // (ReviewArtifactSchema closes it at three words), so a job asked for the
