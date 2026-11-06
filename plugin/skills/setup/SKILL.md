@@ -84,7 +84,7 @@ Tell the user in a few lines what you found and what you couldn't.
 One workflow per buildable unit, all on the one Fugaro base. Write the runtimes into the root `mise.toml` (or respect the one there), and name the image: `image_name:` or `needs:`. `reference/services-and-images.md` has the details. In short:
 - **Services.** The Postgres, Redis or Firebase emulator a test needs starts with `fugaro-services start` as the first step of `commands.test`. Anything else is a tag the entry's image carries, plus a start line in the test command.
 - **No Docker daemon.** A Cloud Run job has none. Tests needing Docker, docker-compose or Testcontainers can't run there: use a local-services mode of the repository, cover only the suites that don't need Docker, or have the user run them elsewhere. Say this; never work around it.
-- **The image.** From `fugaro image ls --json`: an entry (`image_name:`), the tags the tests need (`needs:`), or neither, and the project's default entry runs. Only when no entry covers the need, run `fugaro image render --workflow <name>`, save it as `.fugaro/<entry>.Dockerfile`, and edit it minimally (step 7). Never start from a blank Dockerfile, or one at the repository root (the application's).
+- **The image.** From `fugaro image ls --json`: an entry (`image_name:`), the tags the tests need (`needs:`), or neither, and the project's default entry runs. Only when no entry covers the need, run `fugaro image render --workflow <name>`, save it as `.fugaro/<entry>.Dockerfile`, and edit it minimally (the reference's step 2). Never start from a blank Dockerfile, or one at the repository root (the application's).
 
 ## 4. Draft `fugaro.yaml` and the entry's Dockerfile as one decision
 
