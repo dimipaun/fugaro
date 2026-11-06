@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1842,6 +1843,7 @@ func TestSettingsSetAddEntrySecretsMemberIsATypedWidening(t *testing.T) {
 
 	for _, marker := range agentMarkers {
 		t.Run(marker, func(t *testing.T) {
+			noTerminal(t) // every one of the six is an agent's session with no terminal
 			t.Setenv(marker, "1")
 			out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo", "--yes")
 			if err == nil {
@@ -2340,6 +2342,7 @@ func TestSettingsSetTheNewTypedRowsAreRefusedInAnAgentSession(t *testing.T) {
 	tokens := "agent:\n  max_run_tokens: 300000\n"
 	for _, marker := range agentenv.Markers {
 		t.Run(marker, func(t *testing.T) {
+			noTerminal(t) // every one of the six is an agent's session with no terminal
 			for _, c := range []struct {
 				name string
 				args []string
@@ -2594,5 +2597,30 @@ func TestSettingsSetTypesAWriteThatRemovesACap(t *testing.T) {
 				t.Errorf("the confirmed write did not land:\n%s", got)
 			}
 		})
+	}
+}
+
+// With several project configs on the machine, a command run inside a checkout
+// is aimed at the project that checkout's fugaro.yaml names (localcfg.Select's
+// step 3), for the write and the read alike: the refusal "several project
+// configs and nothing selects one" tells a person to run from such a checkout,
+// so these commands must read it.
+func TestSettingsSelectionReadsTheCheckoutsProject(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	writeProject(t, "aurora", "proj-1")
+	writeProject(t, "borealis", "proj-2")
+	t.Chdir(gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: borealis\n"))
+
+	sel, lc, err := settingsSelection()
+	if err != nil || lc == nil || lc.Name != "borealis" || sel.From != "checkout" {
+		t.Fatalf("settingsSelection in a checkout of borealis: %+v, %+v, %v", sel, lc, err)
+	}
+	r, err := readSettings(context.Background(), settingsOptions{}, time.Now())
+	if err != nil || r.local == nil || r.local.Name != "borealis" {
+		t.Fatalf("readSettings in a checkout of borealis: %+v, %v", r, err)
+	}
+	t.Chdir(t.TempDir())
+	if _, _, err := settingsSelection(); err == nil || !strings.Contains(err.Error(), "several project configs") {
+		t.Fatalf("outside a checkout nothing selects one of two project configs, got %v", err)
 	}
 }

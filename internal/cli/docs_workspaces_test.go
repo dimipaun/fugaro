@@ -112,21 +112,31 @@ func TestDocsWorkspacesIsWritten(t *testing.T) {
 var wsDecisionRE = regexp.MustCompile(`\bD(?:129[0-9]|130[0-9])\b`)
 
 // TestDocsWorkspacesAnswersAreTheOnesInForce: the answers of 2026-11-04 are in
-// reconciliation.md §4, every one of them is the recommendation, and the two
-// questions this round reported instead of deciding are in §8.
+// reconciliation.md §4, every one of them took the recommendation when it was
+// answered, and the two questions this round reported instead of deciding are in
+// §8 -- answered there on 2026-11-04, after the design merged and its security
+// review ran.
 //
 // §8 is the section the design's own text points at four times -- twice in
 // spec.md §5, twice in §10 -- for the two questions a security review raised
 // that no task may settle. A reference to a section that does not exist is the
 // silent failure this pins: the prose would read as if the trade had been
 // recorded somewhere, and the reader would stop looking.
+//
+// The post-merge security review of 2026-11-04 amended three of the sixteen
+// answers (D1299, D1300 and D1301), and D1301's amendment is the one deviation
+// this folder records: the owner crossed to the option the reconciliation had
+// NOT recommended. So the "every one as recommended" pin below is about the
+// answers as they were given, and the amendment is pinned separately -- an
+// amendment that went missing would leave the folder claiming a basis its own
+// sections no longer describe.
 func TestDocsWorkspacesAnswersAreTheOnesInForce(t *testing.T) {
 	rec := readDoc(t, wsReconciled)
 	if !strings.Contains(rec, "## 4. The decisions") {
 		t.Fatalf("%s does not carry the decisions section: the sixteen decisions were answered on 2026-11-04 and the record of that is the section a reader looks for first", wsReconciled)
 	}
-	if !strings.Contains(rec, "## 8. Owner decisions this round did not take") {
-		t.Fatalf("%s does not carry §8: spec.md §5 and §10 point at it four times for the two questions this round reported rather than decided, so a missing section leaves four references pointing at nothing", wsReconciled)
+	if !strings.Contains(rec, "## 8. Owner decisions this round reported, and the answers of 2026-11-04") {
+		t.Fatalf("%s does not carry §8: spec.md §5 and §10 point at it four times for the two questions this round reported rather than decided and the owner answered on 2026-11-04, so a missing section leaves four references pointing at nothing", wsReconciled)
 	}
 
 	// Every decision is written in §4 as its own bullet, question and answer
@@ -155,12 +165,37 @@ func TestDocsWorkspacesAnswersAreTheOnesInForce(t *testing.T) {
 		}
 	}
 
-	// The answers in force are all the recommendation.
+	// No answer is marked with the old "not the recommendation" marker: every
+	// answer of 2026-11-04 took the recommendation when it was given, and the one
+	// deviation is an amendment made afterwards and written as such.
 	for _, path := range wsDocs() {
 		doc := readDoc(t, path)
 		if strings.Contains(doc, "Not the recommendation") {
-			t.Errorf("%s still marks an answer as not the recommendation: every answer of 2026-11-04 took it", path)
+			t.Errorf("%s still marks an answer as not the recommendation: every answer of 2026-11-04 took it, and the one later deviation is D1301's amendment rather than an answer", path)
 		}
+	}
+
+	// The amendment itself, in every file that has to carry it. Three decisions
+	// were amended by the post-merge security review's answers, and the one thing
+	// a reader must not be able to miss is that D1301's amendment is the folder's
+	// single deviation -- the owner crossed to the option the reconciliation had
+	// not recommended -- and that it moved no decision number.
+	for _, path := range []string{wsReadme, wsSpec, wsReconciled, wsPlan} {
+		flat := flattenDoc(readDoc(t, path))
+		for _, want := range []string{
+			"amended 2026-11-04",
+			"D1301",
+		} {
+			if !strings.Contains(flat, want) {
+				t.Errorf("%s does not carry %q: the post-merge security review's answers amended D1299, D1300 and D1301, and a file that dropped the amendment would read as a design still written to the old basis", path, want)
+			}
+		}
+	}
+	if flat := flattenDoc(readDoc(t, wsReconciled)); !strings.Contains(flat, "F33") {
+		t.Errorf("%s does not carry F33: the post-merge security review's seven findings and the owner's answers are recorded there, and a folder whose findings have no entry is a folder whose review reads as not having happened", wsReconciled)
+	}
+	if flat := flattenDoc(readDoc(t, wsReconciled)); !strings.Contains(flat, "**D1306–D1309 stay reserved and unused**") {
+		t.Errorf("%s does not say D1306-D1309 stay reserved: the post-merge answers took no new decision number, and a reader who found otherwise would think the block had grown", wsReconciled)
 	}
 
 	// §8 names both questions, and the design's own text points at it rather
@@ -235,6 +270,11 @@ func TestDocsWorkspacesNamesWhatItDesigns(t *testing.T) {
 	// The corrected security statements, in the words the correction uses.
 	spec := flattenDoc(readDoc(t, wsSpec))
 	for _, want := range []string{
+		// The withdrawn claim, quoted as withdrawn: the design used to say the
+		// service's database write could lift a member's cap, and the owner's answer
+		// of 2026-11-04 (O1) dropped the write. It is pinned so no file can bring
+		// the exposure back as a live statement, and the sentence around it is the
+		// reason the write is gone.
 		"**the workspace service's grant can lift a member's cap**",
 		"which IAM can't enforce",
 		"IAM bypasses them",
@@ -263,6 +303,28 @@ func TestDocsWorkspacesNamesWhatItDesigns(t *testing.T) {
 		"Google's published Firebase signing keys",
 		"**Removal takes both sides, like membership itself, and the member's side is the one that",
 		"every value in it comes from the workspace owner's config",
+		// Round 5, the post-merge security review of 2026-11-04 and the owner's
+		// answers to its seven findings. Each is a statement a reader acts on, and
+		// the folder had the other version: a member that accepted the workspace's
+		// Firebase token itself, an exchange at a token endpoint, a claim that the
+		// service held no grant on a member's policy, a cap rolled up after the
+		// spend, a cross-check a member's own image defeats, a database URL the
+		// owner declares, and a residual risk narrower than the truth.
+		"**The provider pin**",
+		"**refuses `custom` and `anonymous`**",
+		"**The exchange happens at the member's `/oauth/authorize`, as the sign-in proof**",
+		"**its `jti` is single-use**",
+		"**its `aud` is that one member's exchange URL**",
+		"**the workspace's assertion-signing key**",
+		"**The service meters each call it pays for, and that is the amendment**",
+		"reserves** before it makes a call and **settles** on the response's usage",
+		"**The rollup becomes a reconciliation alarm**",
+		"**The overshoot is bounded by the reservation, and the bound is stated.**",
+		"**A settle that fails refuses**",
+		"**The service's second grant, on each member's runs bucket, is gone**",
+		"**What that read reaches, stated node by node, and what the write would have reached**",
+		"`config/caps/global`",
+		"it is **derived from the Firebase project the",
 	} {
 		if !strings.Contains(spec, want) {
 			t.Errorf("%s does not state %q: the review of 2026-11-04 corrected this, and the wrong version is the one a reader would otherwise act on", wsSpec, want)
@@ -276,7 +338,8 @@ func TestDocsWorkspacesNamesWhatItDesigns(t *testing.T) {
 	for _, want := range []string{
 		"**Membership takes both sides.**",
 		"TestExchangeVerifiesTheMembersPinnedIssuerNotTheRecords",
-		"TestMemberUpdateBindsTheWorkspaceGrantsToThePinnedAccount",
+		"TestMemberUpdateBindsTheWorkspaceGrantToThePinnedAccount",
+		"TestMemberUpdateBindsNoWriteOnTheMembersDatabase",
 		"TestWorkspaceServiceRefusesAMembersPersonTheWorkspaceWideRead",
 		// W6 is the task that owns the class, so the pin is stated there too and
 		// not only in the spec: a refusal no task states is a refusal no test holds.
@@ -288,7 +351,7 @@ func TestDocsWorkspacesNamesWhatItDesigns(t *testing.T) {
 		"TestRecordRefusesAnIdentityOrServiceAccountField",
 		"TestPinRefusesAnIssuerThatIsNotTheProjectsSecuretokenIssuer",
 		"TestExchangeRefusesWhenTheMemberPinsNoWorkspace",
-		"TestRollupRecordsAnUnboundMemberAsStale",
+		"TestReconciliationAlarmReportsAnUnboundMember",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s does not carry %q: the pin and the member-side grants are design statements until a task owns them, and this is where a task is named", wsPlan, want)

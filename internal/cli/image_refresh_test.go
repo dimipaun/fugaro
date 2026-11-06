@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"cloud.google.com/go/storage"
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -436,9 +437,15 @@ func fakeSteps(t *testing.T, fail string, err error) *[]string {
 // refreshPreflight in runImageRefresh, or drop it, and this test fails (the
 // agent marker is ignored and preflight's own refusal, that this directory
 // is not a checkout, is returned instead).
+//
+// The markers are the five a coding agent's own processes set: the sixth,
+// CLAUDE_CODE_SSE_PORT, is the IDE extension's, and alone, at the real
+// terminal this test runs the command at, it is a person's terminal rather
+// than an agent's session (the ruling of 2026-11-05; TestIDETerminalTyped-
+// Confirmation drives that case end to end).
 func TestRefreshRefusedInAgentSession(t *testing.T) {
 	for _, yes := range []bool{false, true} {
-		for _, marker := range agentMarkers {
+		for _, marker := range agentenv.AgentMarkers {
 			t.Run(fmt.Sprintf("yes=%v/%s", yes, marker), func(t *testing.T) {
 				for _, k := range agentMarkers {
 					t.Setenv(k, "")

@@ -24,8 +24,9 @@ merged before the independent SECURITY review of [spec.md](spec.md) §8 that the
 require, and that review ran on **2026-11-04**.
 Its findings and the owner's answers to them are **§4a**; every one of them is written into the
 decision it names as a **dated amendment note beside the original answer** — the original stays, the
-note says what moved and why — and the two that are decisions of their own rather than amendments
-take the **next free numbers in this folder's block, D935 and D936** (§5). **One amendment is
+note says what moved and why — and the one that is a decision of its own rather than an amendment
+takes the **next free number in this folder's block, D936** (§5), while the other decision-shaped
+finding, **H3**, is the **D935** the owner answered on 2026-11-05 (§4). **One amendment is
 explicitly not the recommendation**: H1, where the owner **accepted and documented** the residual
 risk instead. The rest keep the recommendation, or defer a recommendation the owner judged not yet
 safe to build.
@@ -36,7 +37,7 @@ safe to build.
 | --- | --- |
 | F1 | **The front door's home is decided**: the coordinator has **its own resident service** — D196 in [../coordinator/reconciliation.md](../coordinator/reconciliation.md) (the row headed D196 says the owner ruled against the recommendation), and [../coordinator/README.md](../coordinator/README.md):26 says P7 and P8 "do not start yet: they wait on the front-door design review". **Exists**, as a decision; **not built** (F24). |
 | F2 | **A Cloud Run *service* is already admissible in the installer's Terraform cover**: `internal/infra/tf/cover.go:33-34` admits `google_cloud_run_v2_service` and `google_cloud_run_v2_service_iam_member`, added for the credentials service. **Exists** — the new resource type needs no cover change. |
-| F3 | **The coordinator's accounts and grants exist, and they are a job's**: `deploy/terraform/gcp/modules/installation/coordinator.tf:55` (its service account), `:76` with `role = "roles/storage.objectViewer"` at `:80` (the runs bucket — read only), `:97` (the app key secret), `:113` (`google_cloud_run_v2_job`), `:259` (the sweep schedule). There is **no** `google_cloud_run_v2_service` for the coordinator, no Cloud Run *launch* grant, and no write grant on the runs bucket. |
+| F3 | **The coordinator's accounts and grants exist, and they are a job's**: `deploy/terraform/gcp/modules/installation/coordinator.tf:71` (its service account), `:92` with `role = "roles/storage.objectViewer"` at `:96` (the runs bucket — read only), `:113` (the app key secret), `:129` (`google_cloud_run_v2_job`), `:275` (the sweep schedule). There is no Cloud Run *launch* grant and no write grant on the runs bucket. **The lines moved and one claim stopped being true after this folder was written**: the M4 task of [implementation-plan.md](implementation-plan.md) landed its first half as #1716, which added `google_service_account.mcp_server` (`:320`) and the `google_cloud_run_v2_service` front door that runs as it, so "there is **no** `google_cloud_run_v2_service` for the coordinator" is no longer a fact about this tree — the service is the front door's and not the sweep's, and the sweep above is unchanged. |
 | F4 | **The coordinator's writer holds the project's database admin**: `deploy/terraform/gcp/modules/firebase/iam.tf:138` grants `roles/firebasedatabase.admin` to the coordinator's writer account. |
 | F5 | **Firebase ID-token verification exists, and it is exact**: `internal/credsvc/auth.go:1069` compares the audience to the **bare project id**, `:1072` builds the issuer as `https://securetoken.google.com/<projectId>`, and `:1373` (`GoogleKeysURL`) is the public signing-key endpoint the owner's spec names. Its refusals name the failed check and never the value; `internal/credsvc/audit.go` writes one structured line per act and per refusal. **Exists** — the design's §4 adds no verification of its own. |
 | F6 | **Identity Platform is initialized with no sign-in providers, and a public sign-up path is refused**: `internal/cli/init_firebase.go:582` records "initialized Identity Platform (no sign-in providers)", `:686` calls `refusePublicSignUp` (`:709`) on a project whose config enables any public sign-up path, and `internal/infra/identityplatform.go:32` is the step's own name. **Exists** — and it is what F26 collides with. |
@@ -75,6 +76,7 @@ safe to build.
 | F29 | **The coordinator's spec §4 says "whoever can reach the project's coordinator is in the project; no extra permission model in v1"** (`docs/coordinator/spec.md:25`), and that sentence is true while reaching the coordinator means holding `roles/run.invoker`. D920 removes exactly that, so the sentence stops describing anything and an authorization rule has to replace it. **→ D933.** |
 | F30 | **The console's graph write is blocked on "the front door (coordinator P8, not started)"** — `docs/console-dependency-graph/reconciliation.md:330`, with GV3.1 and GV3.2 blocked in `docs/console-dependency-graph/implementation-plan.md:457-489,511,528`. A front door that authenticates a person *could* carry the write, which is why the design has to say whether it does. **→ D927.** |
 | F31 | **The coordinator's spec §7 wants MCP tools that overlap the owner's, with different names** (`docs/coordinator/spec.md:46-53`: `report_intent`, `check_conflicts`, `get_project_state`, `record_override`). Two tool sets on one endpoint is a naming decision the implementation cannot leave open: a client sees one `tools/list`. **→ D931's note.** |
+| F32 | **A closed subtree in the project's database is still reachable by everyone the installation lists.** The database grants are **project-level**, so every instance and every node in the project inherits them and the rules do not bind their holders: `deploy/terraform/gcp/modules/firebase/iam.tf:44` gives `roles/firebasedatabase.viewer` to every launcher and operator, `deploy/terraform/gcp/modules/firebase/iam.tf:53` gives `roles/firebasedatabase.admin` to every admin and budget admin, and `deploy/terraform/gcp/modules/firebase/iam.tf:81` gives it to the history account (`docs/design/roles.md:104`: "Any confidential thing placed in RTDB is readable by everyone on either list"). F26's conflict was answered by closing the subtree (D922), and **closing it is not enough**: the conflict stands against any node in this database, whoever writes the rule. **→ D935**, found by the independent review of PR #1715's M3. |
 
 ## 4. The decisions
 
@@ -96,7 +98,7 @@ design is now written to them.
 | **D928** | Who owns the redirect-URI allowlist? | **The project's own configuration**, with loopback always allowed for native clients; the coordinator holds no vendor URL as a constant. Validated at registration **and** at authorize, exact match, no wildcards, no prefix matching, no custom schemes. | **Hard-code the known client callbacks** the owner's spec names as examples. A vendor's callback URL baked into a self-hosted product goes stale in somebody else's release cycle, and it refuses every MCP client the owner has not heard of. Cost of the recommendation: an operator who wants a hosted client allowlisted writes one configuration line, and there is no zero-config path for a hosted client. | DCR (D928's own scope) and the code path of D923. |
 | **D929** | What is an unattended caller? | **A pre-registered confidential client** using the client credentials grant, with limits that are **mandatory**: no rigor window and no spend limit means no token. | **The owner's option B** (exchange a project API key for a token). It contradicts the owner's own non-goal that the keys are not replaced: every place a key is stored grows the whole token lifecycle, and revoking "the key" stops being one act. Cost of the recommendation: a script that already holds a key needs a client id and a secret instead, which is a change to that script, and the owner's spec lists the keys as a deliberate fallback. | The unattended half of spec.md §7. | **Amended 2026-11-04** (M-f) — see §4a |
 | **D930** | Lifetimes, rotation, revocation. | **Short-lived access tokens; refresh tokens that rotate on every use with reuse detection, a replayed one revoking the family; revocation as one delete**, reachable from the API and from a person's own surface. | **Long-lived access tokens with no rotation** — what most simple servers do: a stolen token lives its whole life and nothing distinguishes theft from use. Cost of the recommendation: a client that loses a rotated refresh token must sign in again, and the family revocation on a false positive logs a legitimately-working client out. | Every call. | **Amended 2026-11-04** (M-d) — see §4a |
-| **D931** | How does `submit_task` start a run, and what does the coordinator see besides the six tools? | **Through the same seam `fugaro run` uses** (`internal/backend`), with the token's ceiling of D924 attached to that execution, and the coordinator's service account gaining the launch role on the project's own job — a **new grant**, flagged for independent review. The coordinator's own tool set (F31) is **served on the same endpoint under its existing names**, so one `tools/list` shows both, and its tools keep their meanings. | **Write a pending-task node and let the coordinator's scheduled sweep launch it** (the pattern P5 already uses): a launch delayed by the sweep interval, a second writer racing the first, and a run that can silently never start while the caller sees success. Cost of the recommendation: a new IAM grant on a public-facing service, which is the one new privilege this design asks for. | `submit_task`, `cancel_task`, and the coordinator's own tool set. | **Amended 2026-11-04** (H2) — see §4a and **D935** |
+| **D931** | How does `submit_task` start a run, and what does the coordinator see besides the six tools? | **Through the same seam `fugaro run` uses** (`internal/backend`), with the token's ceiling of D924 attached to that execution, and the coordinator's service account gaining the launch role on the project's own job — a **new grant**, flagged for independent review. The coordinator's own tool set (F31) is **served on the same endpoint under its existing names**, so one `tools/list` shows both, and its tools keep their meanings. | **Write a pending-task node and let the coordinator's scheduled sweep launch it** (the pattern P5 already uses): a launch delayed by the sweep interval, a second writer racing the first, and a run that can silently never start while the caller sees success. Cost of the recommendation: a new IAM grant on a public-facing service, which is the one new privilege this design asks for. | `submit_task`, `cancel_task`, and the coordinator's own tool set. | **Amended 2026-11-04** (H2) — see §4a and **D936** |
 | **D932** | Where does `stream_logs` read from? | **The run's own recorded artefacts in the runs bucket** (F14), which the coordinator may already read (F3): the answer is the same material the console and `get_result` draw on, it needs no new grant, and it cannot read a log line outside the run. | **Stream Cloud Logging live** (F13): one more grant, this one able to read **every log line in the project**, mitigated only by a filter — the widest privilege in the design, for a tail that `fugaro logs` already serves a person. Cost of the recommendation: the tail lags the run, and a caller that wants live output waits for the next recorded stage rather than watching characters arrive. | `stream_logs`; the coordinator's grant list. | **Amended 2026-11-04** (M-g) — see §4a |
 | **D933** | Who is a person, once reaching the endpoint no longer means holding a Google identity? | **The project's own two lists** (F8): a launcher may call the task tools, an operator may also read the audit record. **F29's sentence in the coordinator's spec is replaced by this**, and the audit record of F22 becomes the operator's. | **Any signed-in identity of the project.** It is what F29 says today, and it was defensible only while the platform did the filtering; with a public endpoint it means every Firebase user of the project is a launcher, and the two lists `fugaro user` maintains would govern nothing. **Or: a new permission model** — a role per scope, a table, an admin surface: a second model beside the lists the project already has, for one front door. Cost of the recommendation: an identity that is signed in but on neither list gets a clear refusal, and a project that admits nobody with `fugaro user` has a coordinator nobody can use. | D920's premise; the whole authorization story. | **Amended 2026-11-04** (M-f) — see §4a |
 | **D934** | Is the front door **on** for every installation that has a coordinator, or does the owner turn it on? | **Off until the owner turns it on, on the coordinator's own opt-in.** An installation that never opted into the coordinator has no service for anything to reach; one that did gets the endpoint **off** until a person turns it on, and a request to a front door that is off is refused before the handler reads a token. | **On wherever the coordinator is.** An installation that opted in for a *read-only aggregator* would acquire a **public write endpoint** — `submit_task` spends money — as a side effect of an upgrade, which is exactly the surprise the repository's rule about `fugaro update` exists to prevent. Cost of the recommendation: one more switch, one more state on the live checklist, and a client that reaches an installation which has not turned it on is refused rather than redirected. | M4, and the operator story. | **Amended 2026-11-04** (M-e) — see §4a |
@@ -124,7 +126,7 @@ note under the table says what moved.
 | **D928** | **The recommendation**, tightened by the owner: the redirect-URI allowlist is the **project's own configuration**, with loopback always allowed and validated at registration and at authorize, exact match — and **registration refuses a non-loopback URI that is not on the allowlist**, **the consent page shows the redirect host**, and **the flow is CSRF-bound** | A vendor's callback URL baked into a self-hosted product goes stale in somebody else's release cycle and refuses every client the owner has not heard of. The three tightenings are the owner's: refusing at registration is the earlier door, a person consents to a host they were shown rather than to a client id, and a flow with no CSRF binding lets an attacker's client finish a sign-in the person started for another. |
 | **D929** | **The recommendation** — a pre-registered confidential client using the client credentials grant, with **mandatory** limits | The owner's option B would make every stored API key an OAuth client by another name, and revocation would stop being one act — against the owner's own non-goal that the keys are not replaced. | **Amended 2026-11-04** (M-f) — see §4a |
 | **D930** | **The recommendation** — **short-lived access tokens and refresh tokens that rotate on every use**, with reuse detection, a replayed token revoking the family, and revocation as one delete | Rotation is what makes a theft detectable rather than merely survivable: a long-lived token that is stolen lives its whole life and nothing distinguishes theft from use. | **Amended 2026-11-04** (M-d) — see §4a |
-| **D931** | **The recommendation**, with the owner's three tightenings: the tool is **`spawn_task`** (the owner's name for the `submit_task` of §0), it starts the run through the same seam `fugaro run` uses (`internal/backend`), the coordinator gains one **new launch grant**, and both tool sets are served on one endpoint under their existing names — and **there is a single launch path**: concurrency, rate, idempotency and the kill switch all go through the **same pre-launch code as `fugaro run`** (`budget.Precheck`, `internal/budget/precheck.go:58`, and the launch claim, `internal/runstore/launch.go:112`) | The sweep alternative delays a launch by the sweep interval, races a second writer, and can leave a caller seeing success for a run that never starts. A second pre-launch path beside `fugaro run`'s is the one that drifts: a front door that skipped the kill switch or the claim would spend money a person's launch could not, and would let one submit become two runs. | **Amended 2026-11-04** (H2) — see §4a and **D935** |
+| **D931** | **The recommendation**, with the owner's three tightenings: the tool is **`spawn_task`** (the owner's name for the `submit_task` of §0), it starts the run through the same seam `fugaro run` uses (`internal/backend`), the coordinator gains one **new launch grant**, and both tool sets are served on one endpoint under their existing names — and **there is a single launch path**: concurrency, rate, idempotency and the kill switch all go through the **same pre-launch code as `fugaro run`** (`budget.Precheck`, `internal/budget/precheck.go:58`, and the launch claim, `internal/runstore/launch.go:112`) | The sweep alternative delays a launch by the sweep interval, races a second writer, and can leave a caller seeing success for a run that never starts. A second pre-launch path beside `fugaro run`'s is the one that drifts: a front door that skipped the kill switch or the claim would spend money a person's launch could not, and would let one submit become two runs. | **Amended 2026-11-04** (H2) — see §4a and **D936** |
 | **D932** | **The recommendation** — `stream_logs` reads the run's own recorded artefacts in the runs bucket | The coordinator may already read them (F3, F14), the answer is the same material the console and `get_result` draw on, and it cannot read a log line outside the run — where streaming Cloud Logging live needs a grant that reaches every log line in the project. | **Amended 2026-11-04** (M-g) — see §4a |
 | **D933** | **The recommendation** — **only the project's launcher and operator lists may call the front door**: a launcher may call the task tools, an operator may also read the audit record — and the entries those lists admit are D923's answer, **exact `user:` entries only** | With a public endpoint, "any signed-in identity of the project" (F29's sentence) would make every Firebase user of the project a launcher, and the two lists `fugaro user` maintains would govern nothing. Admitting only `user:` entries is the same rule `fugaro user` already applies at its own door, so the front door cannot be the way a `domain:` entry gets in. | **Amended 2026-11-04** (M-f) — see §4a |
 | **D934** | **The recommendation** — the front door is **OFF** on every installation until a person turns it on, on the coordinator's own opt-in | An installation that opted into the coordinator for its read-only aggregator must not acquire a **public write endpoint** — `spawn_task` spends money — as a side effect of an upgrade. | **Amended 2026-11-04** (M-e) — see §4a |
@@ -171,12 +173,85 @@ load-bearing:
   a CSRF-bound flow — are in §3's registration rules, §3's flow and §8's redirect-URI paragraph.
 
 **D921's licence, unconfirmed when the answers were given,** added the first owner check in §6 and a
-build gate in the plan — **the review of the same day confirmed Apache-2.0**, and §4a records what
-still stands behind that check (counsel's clearance of the transitive dependencies, and the gate file
-the owner creates). The
+build gate in the plan, and §4a records what still stands behind that check: **the owner or counsel
+confirms the licence — the transitive dependencies included — and the gate file that closes it is the
+owner's to create**. The
 **status of the whole folder** moved from "design only, nothing approved" to the line every file now
 carries — **design answered by the owner 2026-11-04; plan only; nothing implemented; no task
 approved.**
+
+### The answer of 2026-11-05
+
+**One question was put to the owner after that day, and it moves where the records live rather than
+what they are.** The **independent SECURITY review of PR #1715's M3** — the rules change that closed
+the `mcpauth` node — found that the closed node cannot do what D922 asked of it, and the reason is a
+fact about the installation rather than about the rule: **F32**. The findings above were read again
+for it, and the owner answered on **2026-11-05**, again as recommended. **The answer carried one
+thing over: which separate store.** The plan's §8 put three candidates to the owner — a second
+Realtime Database instance, Firestore, and a bucket of its own — and **the owner answered that too,
+the same day, again as recommended: the bucket** — `fugaro-mcpauth-<gcp-project>`, the records under
+`mcpauth/`, one IAM binding for the front door's own account `mcp_server` and nobody else. That
+closes the Open item §8 carried, and the one-line why is D935's own ruling read onto the three:
+D935 answered **"a store of their own"**, and the bucket is the only candidate whose IAM can name
+**exactly one account** — the second instance inherits the project-level database grants until four
+sets of people are re-scoped, and Firestore's data roles cannot be narrowed to a database or a
+collection at all. **So M2 and M4 wait on nothing**, and the two corrections the two reviews of this
+work produced are in §6's check 8 and in the plan's §3 (M4).
+
+| D | The answer, 2026-11-05 | Why, in one line |
+| --- | --- | --- |
+| **D935** | **The recommendation: the `mcpauth` records — the client list, the redirect URIs, the token hashes, the tool-call audit and the revocation state — leave the project's shared Realtime Database** for **a store of their own, whose IAM names the front door's own account `mcp_server` and no other member**, and **the `mcpauth` node stays in the rules as a defence in depth**, with `.read: false` and `.write: false`. **Which store was left open, and the owner answered it the same day**: the plan's §8 compares a second Realtime Database instance, Firestore and a bucket of its own, and **the answer of 2026-11-05 is the bucket** — the recommendation, `fugaro-mcpauth-<gcp-project>` with the records under `mcpauth/` — because it is the only candidate whose IAM can name exactly one account (the §4 note below, and §6's check 8). | Every launcher and operator holds `roles/firebasedatabase.viewer` on the whole project and every budget admin and the history account holds `roles/firebasedatabase.admin` (F32), so **no rule can keep them out of the project's database** — the records have to leave it, and the store that holds them has to be one whose IAM can name exactly one account. |
+
+**What it moves, and what it does not.** [implementation-plan.md](implementation-plan.md) is written
+to it: M2's store, M3's node and the comment it carries, M4's store and its single grant, M5's writes
+and M10's audit record and revocation. **The store's own choice moves two more sentences and no
+task**: M2's backend file is the bucket, and M4 creates it — see the plan's §8, whose Open item this
+answer closes. **Nothing else moves.** D922's rule stands — only hashes, shown
+once at mint, never again — D930's rotation and its one-delete revocation stand, and D933's operator
+read of the audit record stands, because a tool serves it and no node does. **spec.md is not edited**:
+§6 and §8 there still describe the records as living in the `mcpauth` subtree, because that file
+carries the owner's spec and the answers of 2026-11-04, and the plan wins where the two disagree.
+
+**Why it is not a contradiction of D922, which answers the same question.** D922 answered *where the
+records live* and its answer was the closed subtree; D935 answers it again, one day and one review
+later, because the premise D922's answer rested on — that a closed subtree is reachable by the
+coordinator's account and by nobody else — is false in the project's database. The two rows differ in
+exactly one thing: **the store**. D922's other half, `.read: false` and `.write: false` on the node, is
+kept by D935 as the second barrier rather than as the barrier, and the record of the 2026-11-04 answer
+above is left standing rather than rewritten, so a reader can see what moved and why.
+
+**And the same finding caught the recommendation once (corrected 2026-11-05).** The plan's §8 first
+named the recommended bucket under the managed prefix `fmgd-`, so that the managed deployer's
+conditioned storage role would reach it — and that role is a **project-level** binding
+(`deploy/terraform/gcp/modules/installation/deployer.tf:379`, conditioned on the prefix at `:142`),
+while every operator holds `roles/iam.serviceAccountTokenCreator` on the deployer's own account
+(`deployer.tf:501`). A bucket so named would have been readable, rewritable and re-grantable by every
+operator and by every managed apply: **F32 again, one resource over**, found by this work's own
+review rather than by the installation. The store's name is therefore outside every conditioned
+prefix, and the owner's `fugaro update` — which runs with the owner's own rights — is what creates it.
+
+**And the floor under every candidate is wider than "the project Owner" (corrected 2026-11-05, the
+second correction this work's review produced).** The sentence above said, and §8's table used to
+say, that the project Owner is the one identity besides the store's own member that reaches a bucket
+of its own. `SECURITY.md:88` says otherwise in the installation's own words: **"Project Owners,
+Editors and anyone with a project-level storage role bypass the bucket's own policy regardless,
+hardened or not"**, and `docs/design/bucket-iam.md:47` gives the second half — GCS attaches
+**convenience bindings** to a new bucket, `projectOwner:`/`projectEditor:` as
+`roles/storage.legacyBucketOwner` and `projectViewer:` as `roles/storage.legacyBucketReader` plus
+`roles/storage.legacyObjectReader` (`internal/gcpfake/gcs.go` models them, `ConvenienceBindings`),
+so **a basic project Viewer reads the bucket until somebody strips those bindings** — which is
+exactly what `fugaro setup` does to the state bucket (`internal/infra/statebucket.go:140`,
+`RemoveProjectViewers`, from `CreateStateBucket`). **The floor is therefore: Owners and Editors and
+any project-level storage role, plus the Viewers' convenience grant until it is removed.** It is a
+floor under every candidate of §8 — a second database instance and Firestore are reached by the
+project-level grants instead — and what D935 buys is unchanged: the store names **nobody else**, and
+every member a bucket brings with it that Terraform did not put there is M4's to remove or refuse.
+**UNVERIFIED, and it is M4's to close with the owner's live check: whether GCS still attaches these
+bindings to a bucket created by Terraform rather than by the `fugaro setup` call above.** What is
+verified is that the design assumes it does (`internal/gcpfake/gcs.go`, `docs/design/bucket-iam.md`)
+and that M4's check reads the created bucket's policy as a basic project Viewer rather than trusting
+the assumption.
+
 
 ## 4a. The independent security review of 2026-11-04, and the owner's answers
 
@@ -186,23 +261,25 @@ review [README.md](README.md) and §6 record as the precondition of every task i
 **SEC**-marked task of the plan, and the one new privilege the design asks for. The owner answered
 its findings the same day, and **each answer is written beside the decision it names as a dated
 amendment note** — the original answer stays in the table above, unedited, because **a decision's
-number is never reused for a new meaning**. Two findings are decisions in their own right and take
-the **next free numbers in this folder's block, D935 and D936**; three are low, and they land in the
-tasks rather than in a decision.
+number is never reused for a new meaning**. One finding is a decision in its own right and takes the
+**next free number in this folder's block, D936**; another, **H3**, is the finding **D935** already
+answers — §4's answer of 2026-11-05 (F32), reached from the installation's own grants by the
+independent review of PR #1715's M3 and from **§8** by this review; and three are low, and they land
+in the tasks rather than in a decision.
 
 **One answer is not the recommendation.** **H1** — the paired-device approval against a launcher who
 can mint a device token — is **ACCEPT AND DOCUMENT**. The review's recommendation (a device-held
 signing key) is **not taken, not built and in no task**, and what stands in its place is a stated
 **accepted residual risk** with its consequences and with the change that would close it. Every other
 answer takes the recommendation, or defers a recommendation the owner judged not yet safe to build
-(H2, D935).
+(H2, D936).
 
 **What the amendment moves, in one line each.** D920 gains the per-route rule an `allUsers` service
-needs; D921 gains the library's confirmed licence and four constraints its defaults would otherwise
-reverse; D922 gains the store's marks and loses the assumption that a closed rules node is closed to
-IAM; D923 gains an accepted residual risk and a hardened device approval; D924 gains an atomic
+needs; D921 gains four constraints its defaults would otherwise reverse, with its licence still
+**UNCONFIRMED**; D922 gains the records' marks — keyed hashes, a MAC over each — and loses the
+assumption that a closed rules node is closed to IAM; D923 gains an accepted residual risk and a hardened device approval; D924 gains an atomic
 family reservation; D929 gains a switch, off until it has an owner; D930 gains an ETag-conditioned
-rotation; D931 loses `spawn_task` to D935; D932 gains redaction; D933 gains the lists' source;
+rotation; D931 loses `spawn_task` to D936; D932 gains redaction; D933 gains the lists' source;
 D934 gains the meaning of "off".
 
 ### D920 — amended (finding M-e)
@@ -226,10 +303,11 @@ M4 and M7 carry the rules; §8 states the risk.
 
 ### D921 — amended (finding M-c)
 
-**The licence is confirmed Apache-2.0 by the review**, which closes the half of the answer this
-container could not check. Two things stay open and are recorded as such: **counsel still clears the
-transitive dependencies**, and **the M5 gate file is the owner's to create**, so the build gate is a
-file a person writes rather than something this folder can assert is settled.
+**The licence is still UNCONFIRMED.** The library's Apache 2.0 claim is the library's own and nothing
+in this container can check it, so **the owner or counsel confirms it — the transitive dependencies
+included — before any build**, and **the M5 gate file is the owner's to create**: the build gate is a
+file a person writes rather than something this folder can assert is settled. The review settles the
+library's *behaviour* against this design, which is the paragraph below, and not its licence.
 
 The review also found that **the library's defaults are the opposite of this design's rules**, and
 named them: PKCE is **optional** (`op/token_request.go` line 168) and an empty challenge method reads
@@ -267,9 +345,12 @@ several accounts, and a public service holding `firebasedatabase.admin` would ho
 - **Token records store HMAC-keyed hashes with a pepper held in Secret Manager**, and **every
   record's identity, its limits and its revocation state are MAC'd**, so a reader who is not the
   coordinator learns nothing and cannot forge a record even where IAM lets them write one.
-- **The public service holds no `firebasedatabase.admin`**; it holds **viewer only**, for the
-  pre-check it runs before minting (§6).
-- **The records do not live in the main database at all** — **D936** says where and why.
+- **The public service holds no `firebasedatabase.admin` over anything**: the store's IAM names it,
+  and of the project's database grants it holds only the **viewer** the mint pre-check needs and
+  never the admin grant that would carry the whole database (M4, D935).
+- **The records do not live in the main database at all** — **D935** says where and why (§4's answer
+  of 2026-11-05: the bucket `fugaro-mcpauth-<gcp-project>`, whose only member is the front door's own
+  account `mcp_server`).
 - **The `mcpauth` node the rules name and deny stays** (M3, unchanged): with the records elsewhere it
   is a **tripwire**, not a store — an MCP record written into the main database is a failing test
   rather than a quiet widening, which is exactly what M3's red step asserts.
@@ -327,7 +408,7 @@ which M2 and M9 build:
 - **for a `client_credentials` token the family is the client**, which is the only family such a
   caller has (D929, amended).
 
-M9 is **deferred** (D935), so the reservation lands with it; the counter's shape lands in M2.
+M9 is **deferred** (D936), so the reservation lands with it; the counter's shape lands in M2.
 
 ### D929 — amended (finding M-f)
 
@@ -352,18 +433,19 @@ Rotation is a **check-then-write race**: two requests presenting the same refres
 as live and both rotate, so a genuine double-submit looks like theft and a theft looks like a
 double-submit. The amended answer, built by M2:
 
-- **condition the rotation on the ETag of the same read** (`internal/rtdb/client.go:178`), so exactly
-  one rotation wins;
+- **condition the rotation on the generation of the same read**, so exactly one rotation wins — the
+  store D935 moved the records to is a bucket, and `internal/blobx` gives it the generation-matched
+  replace an `ETag` condition gave a store in the database (`internal/blobx/blobx.go:1`, M2);
 - keep a **small grace window** in which the loser of that race is answered with the same new pair
   rather than read as a replayed token, so a client on a slow link is not logged out by its own
   retry;
 - a replayed token **outside** the window still revokes the family, exactly as the original answer
   said.
 
-### D931 — amended (finding H2) — see D935
+### D931 — amended (finding H2) — see D936
 
 The original answer stands as the **shape `spawn_task` must take when it is built**, and the
-finding is that it must not be built in the first slice. **D935** records the deferral and what a
+finding is that it must not be built in the first slice. **D936** records the deferral and what a
 later design item has to answer. **M9 is out of the first slice**, M6's
 `TestTheCoordinatorMintsNoCustomToken` keeps its meaning, and no task in
 [implementation-plan.md](implementation-plan.md) starts a run.
@@ -404,9 +486,14 @@ and its convergence test must **expect the typed confirmation** rather than a si
 They are recorded here and land in the tasks they name:
 
 - **M1's `SpendUSD` could not tell unset from zero.** A `float64` limit of *no limit* and a limit of
-  *zero* are the same value, and the difference is the whole of D924's "only narrows". M1 stores an
-  **optional integer in micros** instead, and **refuses an unknown rigor-mode string** rather than
-  ignoring it.
+  *zero* are the same value, and the difference is the whole of D924's "only narrows". **The fix is
+  M9's**, and the review of 2026-11-05 found the same defect from the other end: `tighterSpend`
+  (`ee/coordinator/mcpauth/limits.go:298`) treats `+Inf` as a value, so a token minted with
+  `spend_usd: +Inf` under a project policy naming no cap resolves to an unbounded ceiling. M9 refuses
+  a spend limit that is not a finite, non-negative number where a limit is read and where the run's
+  ceiling is resolved; **the optional integer in micros this finding asked for is the alternative**,
+  and whether the type itself moves is that fix's decision rather than a second one. An unknown
+  rigor-mode string is **refused** rather than ignored.
 - **A dynamically registered client has a name the client chose.** M5's consent page shows it
   **marked unverified**, beside the redirect host it already shows (D928), so a client that names
   itself after the product is not thereby trusted.
@@ -431,22 +518,26 @@ the sentences above restate what the review reported rather than quoting a line 
 
 ### What the running tasks do
 
-- **M1 and M3 may continue**, and neither is cancelled. M1 takes the `SpendUSD` change above; M3 is
-  unchanged, and its tripwire red step is what the amendment relies on.
+- **M1 and M3 may continue**, and neither is cancelled. M1's spend-type finding is **M9's to close**
+  (the paragraph above); M3 is unchanged, and its tripwire red step is what the amendment relies
+  on.
 - **M4 and M6 were cancelled** and **will be rerun from this amended plan**: M4's draft predates the
   D934 and M-e answers (the cover rule and the meaning of "off"), and M6's predates M-a and H1.
 - **Nothing else started.**
 
-## 4b. The two new decisions
+## 4b. The decision the amendment added
 
-**D935 and D936 are D920–D934's own block continued**, taken from the numbers this folder reserved
-(D935–D939, §5), and they are the two findings that are decisions rather than amendments.
+**D936 is D920–D934's own block continued**, taken from the numbers this folder reserved (D935–D939,
+§5), and it is the one finding of the security review that is a decision rather than an amendment.
+**The other decision-shaped finding, H3, is D935** — §4's answer of 2026-11-05, which the independent
+review of PR #1715's M3 reached from the installation's own IAM and this folder's review from §8, and
+whose store is the one every document here now names.
 
-### D935 — What is the first MCP slice, and what happens to `spawn_task`?
+### D936 — What is the first MCP slice, and what happens to `spawn_task`?
 
 | D | The question | The answer, 2026-11-04 | Why |
 | --- | --- | --- | --- |
-| **D935** | Is `spawn_task` in the first MCP slice? | **No — deferred out of it.** The first slice is **the authorization server plus the read tools**: `get_task_status`, `stream_logs`, `get_result`, `list_tasks`, and `cancel_task` if it can be built without the launch path. **`spawn_task` is its own later design item**, and no task in [implementation-plan.md](implementation-plan.md) starts a run (H2, owner's answer of 2026-11-04 — **DEFER**, not the review's recommendation) | `spawn_task` needs **three privileges, not one**, and the review found the design had priced only the third: `signJwt` to mint the run's custom token; **write to the runs bucket**, which the coordinator does not hold (F3 is `roles/storage.objectViewer`); and **`run.jobs.runWithOverrides`**, which can override **container args** — the base image's entrypoint is `tini --` (`images/base_test.go:59`), so an override can run **any command beside the job's mounted git and model credentials**. That contradicts the answer's own "the coordinator mints nothing" (D923) and M6's `TestTheCoordinatorMintsNoCustomToken`. The first slice keeps that sentence true by not needing `spawn_task` at all. |
+| **D936** | Is `spawn_task` in the first MCP slice? | **No — deferred out of it.** The first slice is **the authorization server plus the read tools**: `get_task_status`, `stream_logs`, `get_result`, `list_tasks`, and `cancel_task` if it can be built without the launch path. **`spawn_task` is its own later design item**, and no task in [implementation-plan.md](implementation-plan.md) starts a run (H2, owner's answer of 2026-11-04 — **DEFER**, not the review's recommendation) | `spawn_task` needs **three privileges, not one**, and the review found the design had priced only the third: `signJwt` to mint the run's custom token; **write to the runs bucket**, which the coordinator does not hold (F3 is `roles/storage.objectViewer`); and **`run.jobs.runWithOverrides`**, which can override **container args** — the base image's entrypoint is `tini --` (`images/base_test.go:59`), so an override can run **any command beside the job's mounted git and model credentials**. That contradicts the answer's own "the coordinator mints nothing" (D923) and M6's `TestTheCoordinatorMintsNoCustomToken`. The first slice keeps that sentence true by not needing `spawn_task` at all. |
 
 **What a later `spawn_task` design item has to answer**, written here so the deferral is a plan and
 not a shrug:
@@ -464,26 +555,20 @@ not a shrug:
 table (§4 of the plan) and the release slot (§5) are re-cut; and **the plan's own statement of the
 tool set is narrower** — the first slice serves the read tools and no run starts from the front door.
 
-### D936 — Where do the token records live, now that IAM bypasses the rules?
+### The store: D935's answer, and what this folder's review adds to it
 
-| D | The question | The answer, 2026-11-04 | Why |
-| --- | --- | --- | --- |
-| **D936** | Where are the token records, given that IAM reads and writes bypass the database rules? | **Outside the main database.** The records — client registrations, token hashes, revocation state and the audit record — live in a store **the public service alone reaches**, under an **IAM condition** that admits the coordinator's service account and nothing else; the main database keeps only the **named-and-denied `mcpauth` node** as a tripwire (D922, amended). **The public service holds `roles/firebasedatabase.viewer` and no admin grant.** Records are **HMAC-keyed hashes with a pepper in Secret Manager**, and identity, limits and revocation state are **MAC'd** | The review's finding is that the rules are not the perimeter: `roles/firebasedatabase.viewer` (`deploy/terraform/gcp/modules/firebase/iam.tf:44-50`) is an IAM read every launcher and operator holds, and `roles/firebasedatabase.admin` (`:53-58`) is a write two further groups hold — so a record the rules close is still readable by every launcher. Keyed hashes make that read useless, the MAC makes a forged record detectable, and moving the records out of the main database removes the IAM reader altogether; the tripwire keeps the *next* record from quietly landing back in it. |
-
-**Which store, and why.** The design takes the review's first suggestion — **a named database inside
-the project's own Firestore, reached under an IAM condition** — because it is the only option that
-needs **no new service, no new vendor and no new resident process**: it is the same project, the same
-account, the same `fugaro update`, and it is testable hermetically through the repository's fake
-harness. Its cost is stated rather than hidden: a second storage system in the design, a second
-emulator story for the tests, and a **`fugaro update` step** that creates it — which is why M2
-carries it and M4's operator block names it.
-
-**UNVERIFIED.** Two things could not be checked here and are marked rather than asserted: **whether
-an IAM condition on a named Firestore database can express exactly "this service account and no
-other"** on the permissions the API offers, and **whether `fugaro update` can create the named
-database idempotently** on an installation that already has the default one. Both are M2's first
-step and an owner check in §6; if either fails, the fallback is the store M2 finds simplest that
-keeps the records out of the main database and out of every viewer's reach.
+**The records' store is D935's**, and it is written in §4 above: the bucket
+`fugaro-mcpauth-<gcp-project>`, with the records under `mcpauth/`, whose IAM names one account — the
+front door's own `mcp_server` — and nobody else. **H3 is that finding seen from §8**: the rules are
+not the perimeter, because `roles/firebasedatabase.viewer`
+(`deploy/terraform/gcp/modules/firebase/iam.tf:44-50`) is an IAM read every launcher and operator
+holds and `roles/firebasedatabase.admin` (`:53-58`) is a write two further groups hold, so a record
+the rules close is still readable by every launcher. **What this folder's review adds to D935, and
+what D922's amendment above states**: **keyed hashes with a pepper held in Secret Manager**, a **MAC
+over each record's identity, its limits and its revocation state**, and **no `firebasedatabase.admin`
+on the public service** — so a reader who is not the store's one member learns nothing, and a record
+somebody else wrote is detectable rather than trusted. **Where the records are at rest, and who
+reaches them, is D935's answer**, and this section adds the marks rather than a second store.
 
 ## 5. The number block, and why it stays D920
 
@@ -500,18 +585,19 @@ moved a long way in three days and a block that was free at launch is not free b
   removal design), **D1220–D1259** to the stateless-orchestrator work, **D1260–D1289** to the #1678
   design, and **D1290–D1309** are #1492's new block.
 
-**This work keeps D920–D934**, the fifteen decisions above, and **uses D935 and D936** for the two
-the security review's findings made decisions of their own (§4b): **D935** (the first MCP slice, and
-`spawn_task` deferred) and **D936** (the token records' store). **D937–D939 stay reserved and
-unused**; the amendment notes of §4a take **no** number, because they amend a decision rather than
-replace it — a number here is never reused for a new meaning, so an amended answer keeps its own
-number and gains a dated note beside it. They do not collide: on `main` the strings "D920" and
-"D934" appear only as *other works' inventories of this pull request's block*
-(`docs/managed-agent-converge/reconciliation.md:248`, `docs/run-limit-carry-over/README.md:54`),
-never as a decision of their own — and none of D935–D936 appears on `main` at all, which is what the
-reading above establishes for the whole reserved range. A later task that needs a number takes
-**D1310** — the first number above every allocation listed here — and re-checks this section's facts
-rather than its conclusion.
+**This work keeps D920–D934**, the fifteen decisions above, **and D935** — the answer of 2026-11-05,
+which this work's own reservation had left free and which its review asked for, and which says where
+the token records live — **and D936**, the one decision the security review's own findings made
+(§4b): the first MCP slice, with `spawn_task` deferred out of it. **D937–D939 stay reserved
+and unused**; the amendment notes of §4a take **no** number, because they amend a decision rather
+than replace it — a number here is never reused for a new meaning, so an amended answer keeps its own
+number and gains a dated note beside it. They do not collide: on `main` the strings "D920", "D934"
+and "D935" appear only as *other works' inventories of this pull request's block*
+(`docs/managed-agent-converge/reconciliation.md`:248, `docs/run-limit-carry-over/README.md`:54),
+never as a decision of their own — D935 was checked against `main` again before it was written rather
+than assumed free, the only files that name it are this folder's own, and D936 is named nowhere else
+at all. A later task that needs a number takes **D1310** — the first number above every allocation
+listed here — and re-checks this section's facts rather than its conclusion.
 
 `grep -rhoE 'D[0-9]{3,4}' docs` also returns `D1000`, which is a package-lock integrity fragment and
 not a decision; it is recorded here because a reader running the same grep will meet it.
@@ -523,13 +609,16 @@ verify hermetically, and they belong on the live checklist, in the owner's hands
 code task starts:
 
 0. **The launch-override fence is decided and built before M9 or D931.** Spec §8 states the owner's requirement (the runner ignores the override environment except an allowlist) as NOT BUILT: the runner reads its ceiling and wiring from variables `runWithOverrides` can rewrite today, so the mechanism that lets it read non-allowlisted configuration from something an override cannot set is an open owner decision.
-1. **`zitadel/oidc`'s licence, and the gate file that closes it.** D921 was answered with the
-   licence **UNCONFIRMED**; the **independent security review confirmed Apache-2.0 on 2026-11-04**
-   (finding M-c), which closes the "nothing in this container can check it" half. Two things still
-   stand, and they are why this is still a check rather than a done item: **counsel clears the
-   transitive dependencies**, and **the M5 gate file is the owner's to create** — M5 does not start
-   until a person has written it. A licence that turns out to be unusable sends D921 back to its
-   alternatives rather than to a workaround.
+1. **`zitadel/oidc`'s licence is confirmed — by the owner or by counsel — before any build**, and
+   **the M5 gate file is the owner's to create.** D921 was answered with the licence
+   **UNCONFIRMED**: the library's Apache 2.0 claim is the library's own and nothing in this
+   container can check it, and a dependency a self-hosted product cannot ship is a dependency the
+   whole design rests on by mistake. **The independent security review of 2026-11-04 did not settle
+   it either** — what it read is the library's behaviour against this design and not its licence —
+   so **the owner or counsel confirms the licence, the transitive dependencies included**. **This is
+   a gate, not a note:** M5 does not start until the licence is settled and a person has written the
+   gate file, and a licence that turns out to be unusable sends D921 back to its alternatives rather
+   than to a workaround.
 2. **The endpoint really is reachable from the public internet** once D920's answer says so: a
    request from outside the project reaches the handler and gets the 401, rather than being refused
    by the platform. spec.md §8 says what follows if it is not.
@@ -552,21 +641,43 @@ code task starts:
    until it has its own owner**, and pre-registration is refused inside a coding agent's session —
    so this check is about a mechanism the first slice does **not** turn on, and it is here so the
    day somebody turns it on they know what could not be tested hermetically.
-7. **The independent SECURITY review of spec.md §8** — **it ran on 2026-11-04** and its findings are
-   answered in **§4a**, which is the section every document in this folder is now written to. It was
-   **run by the coordinator**, not by this folder's authors, and it read the threat model, every
-   **SEC**-marked task and the one new privilege. **It ran after the design merged rather than
-   before**, which is why the answers are amendments rather than answers; the two decisions they made
-   of their own are **D935** and **D936**. What remains an owner check is the **re-verification**:
-   the review read `zitadel/oidc` 3.51.17 outside this container, so its library citations are
-   marked **UNVERIFIED** in §4a and M5 re-reads them against the version it pins. [README.md](README.md)
-   records who ran it and what it covered.
-8. **The store D936 chooses is creatable and lockable.** Two halves, both M2's first step and both
-   marked **UNVERIFIED** in §4b: that an **IAM condition** on a named Firestore database can express
-   exactly "the coordinator's service account and no other", and that **`fugaro update` can create
-   the named database idempotently** on an installation that already has the default one. If either
-   fails, the fallback is the store M2 finds simplest that keeps the records out of the main database
-   and out of every viewer's reach.
+7. **The independent SECURITY review of spec.md §8** — the owner's brief requires it, and it is
+   **run by the coordinator**, not by this folder's authors: the threat model is the section the
+   review reads, and **no task in [implementation-plan.md](implementation-plan.md) starts before it
+   has been read and its findings answered.** [README.md](README.md) records who runs it and what it
+   covers. **It ran on 2026-11-04**, after the design merged, and **its findings and the owner's
+   answers are §4a**, which is the section every document in this folder is now written to: **its
+   first finding had already landed** (F32, the review of PR #1715's M3), and the owner answered it on
+   2026-11-05 (**D935**). Because it ran after the merge rather than before, its answers are
+   amendments to decisions rather than answers, and the one decision they made of their own is
+   **D936**. What remains an owner check is the **re-verification**: the review read `zitadel/oidc`
+   3.51.17 outside this container, so its library citations are marked **UNVERIFIED** in §4a and M5
+   re-reads them against the version it pins. The review is M4's only remaining gate — **the third
+   gate that stood in front of M2 and M4, the store question itself, was answered the same day rather
+   than left standing** (§8 of the plan holds the answer: the bucket).
+8. **The store's IAM is what D935 says it is, and only a live project can show it.** No hermetic test
+   stands in for this one: the plan's own test reads the plan, and the plan is not the project's
+   policy. With the owner's own credentials, once M4 has been applied by `fugaro update`: **read and
+   list the store's prefix as a launcher and as a budget admin, and see a refusal** — the two classes
+   F32 found the rules cannot exclude from the database; **impersonate the deployer as an operator
+   (`gcloud storage ls` under the deployer's account, or with the token-creator grant the installation
+   gives every operator, `deploy/terraform/gcp/modules/installation/deployer.tf:501`), and see a
+   refusal too** — the reading the correction of 2026-11-05 adds, and the one that proves the store's
+   name is outside the deployer's conditioned prefix rather than merely written to be; **read one
+   record as the front door's own account `mcp_server` — the store's single member, the account M4
+   creates (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`), never the sweep's — and
+   see it work**; **read the same record as a basic project Viewer and see a refusal**, which is the
+   second correction of 2026-11-05: a new bucket carries GCS's convenience bindings for
+   `projectViewer:` until M4 removes them, so the check reads the created policy rather than assuming
+   it is clean (`SECURITY.md:88`, `docs/design/bucket-iam.md:47`,
+   `internal/infra/statebucket.go:140`); and **confirm the store's
+   bucket is not the runs bucket**, which is the one placement a prefix of an existing bucket would
+   have made readable by both lists. It is
+   check 2's shape for a second resource: the claim is about who reaches something, and only the
+   project can answer it. **Which store** it is checked against is no longer open: the plan's §8
+   records the owner's answer of 2026-11-05 — the bucket `fugaro-mcpauth-<gcp-project>` — so this
+   check is written to it, and M4 creates the bucket it names.
+
 9. **The workspaces dependency is settled in both directions.** The parallel workspaces work requires
    a member-bound assertion and an exchange at `/oauth/authorize` that keeps the paired-device
    approval (spec.md §10), and **this container cannot read that folder's amendment**: the two
@@ -608,10 +719,12 @@ discover:
 5. **`fugaro upgrade` still exists** (`internal/cli/upgrade.go`), and no finding here assumed
    otherwise: M4's operator path is `fugaro update` for the reason CLAUDE.md's HARD RULE gives, and
    `upgrade` is not part of it.
-6. **0.18.0 "Ocelot" has shipped** (`docs/release-streams.yaml`'s cli stream: `current: "0.18.0"`,
-   `next: Panda`), which is what §5 of the plan is re-slotted against — see
-   [implementation-plan.md](implementation-plan.md) §5. 0.17.0 "Narwhal" was the version at this
-   section's first reading, on the same day; 0.18.0 landed before the amendment round's own read.
+6. **The CLI stream has moved twice since the findings were written.** It was at
+   `current: "0.14.1"`, `next: Koala` against `3d6ed04d` on 2026-11-01 and at `current: "0.17.0"`,
+   `next: Ocelot` at the re-read of 2026-11-04 — and it stands at `current: "0.20.3"`, `next: Rhino`
+   now, with 0.18.0 "Ocelot", 0.19.0 "Panda" and the 0.20.x "Quokka" patches shipped in between.
+   This is what §5 of the plan is re-slotted against, and the target there is **0.21.0 "Rhino" or
+   later** — see [implementation-plan.md](implementation-plan.md) §5.
 7. **`internal/runner/stray.go` (#1476) is on `main`.** Finalize now refuses to commit a binary the
    run left untracked (`internal/runner/stray.go:29`, `strayArtifacts`). Nothing in this design
    reads the run's leftovers, so no finding moves; it is recorded because a reader of F14's "a run's

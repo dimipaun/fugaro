@@ -398,6 +398,36 @@ variable "coordinator" {
   }
 }
 
+variable "mcp_server" {
+  description = "The coordinator's front door: its own service account, its public Cloud Run service, the one endpoint a standard MCP client reaches without a Google identity (D920), and the resource the coordinator's OAuth endpoints answer on (D931's tools, M5's authorization server). OFF by default (null) — the whole switch D934 asks for: an installation that has not asked for a front door plans exactly what it planned before, one that opted into the coordinator for its read-only view included, and a public write endpoint (spawn_task spends money) is never a side effect of an upgrade. account_id is the front door's own service account, which is deliberately not the coordinator's: the sweep's account holds the App key and the whole database, and an identity holding either behind a public endpoint is what spec.md §8's 'there is no credential to reach' forbids. service is the Cloud Run service's own name; image is the coordinator's image, which the module reads out of var.coordinator (one CLI binary serves the sweep and the front door). The account's one grant is the runs bucket's read (D932); what a front door may read in the coordinator's own store is D935, which the owner has not answered, so no binding on one is planned here. No environment variable and no secret is declared here: the process reads Cloud Run's own PORT, and M5's endpoints and M7's resource handler bring their configuration with them."
+  type = object({
+    account_id = string
+    service    = string
+    image      = string
+  })
+  default = null
+
+  validation {
+    condition = var.mcp_server == null ? true : (
+      can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.mcp_server.account_id)) &&
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.mcp_server.service)) &&
+      length(var.mcp_server.image) > 0
+    )
+    error_message = "mcp_server needs a service account ID, a Cloud Run service name (lower-case letters, digits and dashes) and the image it runs."
+  }
+
+  # The front door is the coordinator's own service, so it needs the
+  # coordinator: there is no state for it to answer about on an installation
+  # without one. Reading the other variable here is deliberate (Terraform 1.9's
+  # cross-variable validation): the alternative is an opt-in that plans nothing
+  # and says nothing, which is how an owner ends up believing a front door
+  # exists.
+  validation {
+    condition     = var.mcp_server == null || var.coordinator != null
+    error_message = "mcp_server needs var.coordinator: the front door is the coordinator's own service, and an installation that has not opted into the coordinator has no state for one to serve."
+  }
+}
+
 variable "project_secrets" {
   description = "Project-wide secret containers: logical name -> secret ID (gcp.ProjectSecretID), fugaro update creates/adopts each; values are never set by Terraform."
   type        = map(string)
@@ -406,7 +436,7 @@ variable "project_secrets" {
 }
 
 variable "credentials_service" {
-  description = "The credentials service (D146, D147): the installation's own Cloud Run service that alone holds the model credentials. OFF by default (null) — with it off this module creates nothing, every job keeps its model-secret accessors and no run reaches a service. image is the released service image, pinned BY DIGEST and never by tag (C1.20's init stage fills the verified digest, as it fills history.image; the validation below refuses a tag, because the account this service runs as reads every credential in the bundle and an operator may push a tag to the installation's own registry); bundle_secret is the Secret Manager ID of the one bundle container the service reads — the project-wide container of the logical name \"creds-bundle\" (internal/backend/gcp's ProjectSecretID, CredsBundleSecretID once the loader of C1.11 declares it), which C1.20's stage fills from that one function so the container created here and the name the loader reads cannot drift. It is created here and written only by the owner-run fugaro creds set (C1.25). firebase_project, rtdb_url and job_accounts are the rest of what the process is configured with (C1.14's serve, whose whole environment is this module's env blocks): the Firebase project a run's identity is verified against and the database it reads, and the installation's per-repository jobs as {provider, repo, workflow} triples, from which the service derives the job service accounts it binds a run to. url is the service's OWN URL — the audience its callers' Google ID tokens are minted for — and it is optional because Cloud Run assigns it: no expression in this file can read google_cloud_run_v2_service.credentials[0].uri from inside that resource (a self-referential block), so the first apply creates the revision with credentials.tf's unassigned placeholder (an .invalid host no ID token is ever minted for: the revision starts, is healthy and admits nobody) until the apply that carries the URL the output reads back (C1.20's stage fills it, the same way history.deploy_job and its rtdb_url are filled on a later apply). Both unset states are the fail-closed direction: a service that guessed its own audience would accept a token minted for another service, and one that refused to start would fail the very apply that produced the URL it needs. verifier_accounts are the identities that may ask the verify route whether a verdict's signature is this service's (C3.9g1, D1068), each a bare address the Google ID token's email claim carries; it is optional and its environment entry is rendered only when it is set, so an installation that names no verifier deploys the same seven names it always did, while the process reads the eighth as an optional value whose absence is an empty verifier list rather than a refused start."
+  description = "The credentials service (D146, D147): the installation's own Cloud Run service that alone holds the model credentials. OFF by default (null) — with it off this module creates nothing, every job keeps its model-secret accessors and no run reaches a service. image is the released service image, pinned BY DIGEST and never by tag (C1.20's init stage fills the verified digest, as it fills history.image; the validation below refuses a tag, because the account this service runs as reads every credential in the bundle and an operator may push a tag to the installation's own registry); bundle_secret is the Secret Manager ID of the one bundle container the service reads — the project-wide container of the logical name \"creds-bundle\" (internal/backend/gcp's ProjectSecretID, CredsBundleSecretID once the loader of C1.11 declares it), which C1.20's stage fills from that one function so the container created here and the name the loader reads cannot drift. It is created here and written only by the owner-run fugaro creds set (C1.25). firebase_project, rtdb_url and job_accounts are the rest of what the process is configured with (C1.14's serve, whose whole environment is this module's env blocks): the Firebase project a run's identity is verified against and the database it reads, and the installation's per-repository jobs as {provider, repo, workflow} triples, from which the service derives the job service accounts it binds a run to. url is the service's OWN URL — the audience its callers' Google ID tokens are minted for — and it is optional because Cloud Run assigns it: no expression in this file can read google_cloud_run_v2_service.credentials[0].uri from inside that resource (a self-referential block), so the first apply creates the revision with credentials.tf's unassigned placeholder (an .invalid host no ID token is ever minted for: the revision starts, is healthy and admits nobody) until the apply that carries the URL the output reads back (C1.20's stage fills it, the same way history.deploy_job and its rtdb_url are filled on a later apply). Both unset states are the fail-closed direction: a service that guessed its own audience would accept a token minted for another service, and one that refused to start would fail the very apply that produced the URL it needs. verifier_accounts are the identities that may ask the verify route whether a verdict's signature is this service's (C3.9g1, D1068), each a bare address the Google ID token's email claim carries; it is optional, its environment entry is always rendered, and the three states are the whole of the rule: unset means the installation's own verifier account — the one this module creates, and the default an installation gets without naming anything — an explicit [] means nobody (the owner's clear), and a written list is rendered exactly as it is, with the account never added to it. The process reads the entry as an optional value, so a service whose list is empty starts with an empty verifier list rather than refusing to bind a port."
   type = object({
     account_id       = string
     service          = string

@@ -1,16 +1,17 @@
 # The project workflow secret: a workflow's own secret stored once for the project, behind an operator-local allow-list
 
-**Status: a design, and nothing is built.** This folder answers **issue #1678**, which the owner
+**Status: a design, and the build has landed.** This folder answers **issue #1678**, which the owner
 opened on 2026-11-04 and which is reproduced **verbatim** in [spec.md](spec.md). The owner answered
 **all eighteen questions (D1260–D1277) on 2026-11-04, all as recommended** — **D1260**
 (`workflow_secrets`), **D1266** (refuse) and **D1267** (untouched) by name, and D1261–D1265 and
-D1268–D1277 as [reconciliation.md](reconciliation.md) recommended — so **the build may start, at
-0.19.0 (D1277)**. [reconciliation.md](reconciliation.md) §4 carries all eighteen, each with its
-recommendation, its answer and the cost of every alternative, and the build
+D1268–D1277 as [reconciliation.md](reconciliation.md) recommended — so **the build is the 0.19.0 theme
+(D1277)**: the tasks **W0–W6 are on `main`**, and W7 is this status line.
+[reconciliation.md](reconciliation.md) §4 carries all eighteen, each with its recommendation, its
+answer and the cost of every alternative, and the build
 [implementation-plan.md](implementation-plan.md) prices is written to those answers.
 
-**This is a design pull request; it writes four documents and one test.** No code, no Terraform, no
-schema, no `go.mod`.
+**The design was four documents and one test — no code, no Terraform, no schema, no `go.mod` — and
+the build followed in 0.19.0, whose tasks are the ones the status line above records.**
 
 | File | Role |
 | --- | --- |
@@ -74,10 +75,10 @@ The block is taken **above every `D<number>` on `main` and in every open work st
 
 ## What this design does not do
 
-- **It does not build anything.** The owner has answered every decision, so the build may start, and
-  this pull request still contains no code. Six of the eight tasks carry a **SEC** flag; the build is
-  security-sensitive and its slot is **0.19.0** (D1277), deliberately not the 0.18.0 release that
-  carries the managed-agent-converge theme.
+- **It is not the build.** This folder is the design — four documents and one test, and no code at
+  all — and the build is the tasks W0–W6, whose slot is **0.19.0** (D1277), deliberately not the
+  0.18.0 release that carries the managed-agent-converge theme. Six of the eight tasks carry a
+  **SEC** flag; the build is security-sensitive.
 - **It does not weaken the reserved names' block.** `project_secrets`' key rule, D2's sweep,
   `PerRepositorySecret`, the provider convention, the two harness OAuth namespaces and the
   `creds-bundle` refusal are read by this design and amended by none of it.

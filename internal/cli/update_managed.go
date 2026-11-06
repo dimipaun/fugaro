@@ -105,43 +105,108 @@ var gatedStages = map[string]bool{
 // readManagedGate per command followed by an admit per judged document, and
 // because the marks of a project that is being revoked mid-run are re-read
 // there (D1024) — where the write is, which is the interval that matters. A
-// gate nobody read is the zero value: not managed, which is every step's
-// confirmation kept exactly as it is today.
+// run that never read has a nil gate (gateUnderway, managedStage): not
+// managed, which is every step's confirmation kept exactly as it is today.
 type initGate struct {
 	g managedGate
-	// read is whether this run asked at all. It is what keeps a project that
-	// is not managed — and a mark that could not be read — from being asked
-	// about once per stage: the answer cannot change within a run's own read
-	// of it, and the re-read before a write is the helper's, not this field's.
-	read bool
 	// managed is what the read answered: both marks there, which is the only
-	// answer that lets a stage through to the loop.
+	// answer that lets a stage through to the loop. A read that answered "not
+	// managed" is this value false, and the two are the same answer to every
+	// caller — which is why nothing here counts the reads: the answer cannot
+	// change within a run's own read of it, and a re-read before a write is the
+	// helper's, not this struct's.
 	managed bool
 }
 
+// underway is whether this run's gate is open now: the marks were read, they
+// said the project is managed, and no admit since has found that it is not.
+//
+// The second half is asked of the helper (managedGate.revoked) rather than
+// copied into managed at each call of admit, because a revocation is detected
+// in one place — the helper's own second read, immediately before a write
+// (D1024) — and every reader of this answer has to close at the same instant:
+// the run's one confirmation, the plugin wiring's y/N, the two IAM removals,
+// and the admission of whatever stage comes next. A copy taken at the three
+// call sites of this package's gateSteps is a copy the fourth one would not
+// take, and the run would be back to applying a step under the gate's sentence
+// for a project the last read said is not managed.
+func (g *initGate) underway() bool { return g != nil && g.managed && !g.g.revoked }
+
+// gateRun reads the managed project's marks for this run, once, before the
+// loop's first stage (update_managed.go's one read per command, D1015).
+//
+// It is called by the converge beside gateEarly and not lazily by the first
+// stage that needs the answer, because the answer is needed by steps that are
+// not stages at all: the run's one confirmation (init_review.go's runCovers)
+// and the plugin wiring's y/N are reached by a run whose gated stages all have
+// nothing to do, and a read made by the first gated stage that applies would
+// never happen there.
+//
+// The read is not made for a run that cannot act on the answer. --plan-only
+// applies nothing by its own definition, and a shaped run's own arguments are
+// what the gate must never judge, so both pay for no read at all — the same
+// property their stages keep, and the reason the plan-only review's closing
+// line is written to be true either way (init_review.go).
+//
+// --ask is decided here, once, right after the read and before the loop: the
+// line the flag prints, or the refusal that stops the run. It is the flag's
+// only entry point on this door, so there is one place to read what it does
+// (managed_ask.go holds the rule and the reasons). A run the gate never covers
+// gets its own line instead of a read: --ask has no confirmation to restore in
+// a run that applies nothing the gate stands in for, and saying so is truer
+// than reading marks to announce that nothing changed.
+func (e *initEngine) gateRun(ctx context.Context) error {
+	r := e.r
+	if r.o.ask && !r.gateable() {
+		fmt.Fprintln(r.w, initflow.AskNoGate())
+		return nil
+	}
+	if r.gate == nil && r.gateable() {
+		r.gate = readUpdateGate(e, r)
+	}
+	// The refusal is the user's to read and the run's to stop: it is returned
+	// whole (a user error, exit 1), and nothing after it runs — no stage, no
+	// write, no record.
+	return askDecide(r.w, askFlags{ask: r.o.ask, yes: r.o.yes}, r.gateUnderway(), r.conditions())
+}
+
+// gateable is whether this door has a gate for this run at all. A run whose own
+// arguments shape the installation rather than converge it as it is
+// (shapesTheInstallation) keeps today's confirmations whole and pays for no
+// read: what the gate would judge is a document that argument just wrote, which
+// is the one thing it must never do. --plan-only is the same answer for the
+// same kind of reason: it applies nothing, so there is nothing for the marks
+// to decide.
+func (r *initRun) gateable() bool {
+	return r.o.door == updateDoor.name && !r.o.planOnly && !r.shapesTheInstallation()
+}
+
 // managedStage is initflow.Options.ManagedGate: whether the stage named runs
-// under the gate in this session (D1016). The loop asks it only in a coding
-// agent's session, and everything that is not a yes is today's refusal — an
-// unreadable mark, a project that is not managed, a stage this door does not
-// gate, and a run whose own arguments shape the installation rather than
-// converge it as it is.
+// under the gate in this session (D1016). The loop asks it in a coding agent's
+// session and for the owner at their own terminal, and everything that is not
+// a yes is today's refusal — an unreadable mark, a project that is not
+// managed, a project whose marks a step's admit has since found gone
+// (initGate.underway: the stages after that one are a project that is not
+// managed's, and they keep the coding agent's refusal the whole time), a stage
+// this door does not gate, and a run whose own arguments shape the installation
+// rather than converge it as it is.
 func (e *initEngine) managedStage(name string) bool {
 	r := e.r
 	// --plan-only applies nothing by its own definition, and the loop asks this
 	// before it has looked at the flag: a gate that opened a stage under it
-	// would be the one way an agent's plan-only run writes. The flag is asked
-	// FIRST, beside the door, so no read of a mark is paid for a run that
-	// cannot act on the answer.
-	if r.o.door != updateDoor.name || r.o.planOnly || !gatedStages[name] || r.shapesTheInstallation() {
+	// would be the one way a plan-only run writes. The flag is asked FIRST,
+	// beside the door, so no stage is ever handed to the loop's apply path by
+	// a run that may not apply.
+	if !gatedStages[name] || r.o.planOnly || !r.gateable() {
 		return false
 	}
 	if r.gate == nil {
-		r.gate = &initGate{}
-	}
-	if !r.gate.read {
+		// The converge reads this once for the whole run (gateRun). This is
+		// the same read for a caller that reached a stage without it — the
+		// helpers of a test, or an engine that drives the loop itself.
 		r.gate = readUpdateGate(e, r)
 	}
-	return r.gate.managed
+	return r.gate.underway()
 }
 
 // shapesTheInstallation reports whether this run's own arguments shape the
@@ -187,7 +252,10 @@ func (r *initRun) shapesTheInstallation() bool {
 // this program cannot prove the project is managed, and an unproven project
 // keeps every confirmation it has.
 func readUpdateGate(e *initEngine, r *initRun) *initGate {
-	g := &initGate{read: true}
+	// A gate that was returned at all is a gate that was read: the callers ask
+	// r.gate == nil for "this run never read", so every path out of here hands
+	// back the struct, with managed left false where the marks said nothing.
+	g := &initGate{}
 	ctx := r.ctx()
 	// The clients alone, and not setup's whole readiness: this read is made
 	// BEFORE the run has decided to do anything, and a run whose project turns
@@ -212,7 +280,7 @@ func readUpdateGate(e *initEngine, r *initRun) *initGate {
 		// takes no secret on one.
 		Argv:        os.Args[1:],
 		Declined:    "nothing was applied",
-		AgentMarker: agentMarker(os.Getenv),
+		AgentMarker: agentMarker(os.Getenv, r.stdinTerminal()),
 	}
 	gate, err := readManagedGate(ctx, env, facts)
 	if err != nil {
@@ -222,20 +290,78 @@ func readUpdateGate(e *initEngine, r *initRun) *initGate {
 	return g
 }
 
-// gateUnderway is whether this run has the managed gate open, which is the one
-// condition under which a step of this command writes in a coding agent's
-// session at all.
+// gateUnderway is whether this run has the managed gate open: the marks were
+// read and they say the project is managed, and no step's admit has since found
+// the marks gone (initGate.underway — a project revoked mid-run is a project
+// whose confirmations come back at once). It is what a step asks when what it
+// needs is not a verdict about its own document but the fact that this run is a
+// managed project's — the run's one confirmation (init_review.go), the plugin
+// wiring's y/N (init_plugin_stage.go), and the two IAM removals below.
 //
-// It is asked by the three steps whose write is NOT a saved plan: removing
+// It is not a permission of its own: a step that writes a document the gate
+// judges goes through gateStep, and gateUnderway says nothing about any
+// document. What it does say is that a prompt this project's owner asked not to
+// see (the ruling of 2026-11-01) is replaced here — which is why every caller
+// of it is a step whose confirmation the gate does not judge, and never a step
+// the gate refused.
+func (r *initRun) gateUnderway() bool { return r.gate.underway() }
+
+// gateStandsIn is whether the gate stands in for the confirmations it does NOT
+// judge document by document — the run's one confirmation (init_review.go's
+// runCovers and the ordinary steps it covers), the plugin wiring's y/N
+// (init_plugin_stage.go) and the lines the review prints about them. It is
+// gateUnderway with --ask struck out, and it is the whole of what the flag does
+// to this door beyond its own line: the steps whose documents the gate judges
+// ask the same question through initflow.GateConfirms (gateStep), which
+// Conditions.Ask answers false to, and the gate's own read, admit and record
+// are untouched either way.
+//
+// A run with no gate is not this case (r.gate == nil), and neither is one whose
+// marks said the project is not managed: both keep every confirmation they
+// have, exactly as they did before the managed case existed.
+func (r *initRun) gateStandsIn() bool { return r.gateUnderway() && !r.o.ask }
+
+// gateLeavesTheIAMCall is whether the one write of these stages that the gate
+// has no document for is left to the owner rather than made here: removing
 // project Viewers' read access to the state bucket and to the runs bucket is a
-// Storage IAM call of its own (infra.RemoveProjectViewers), so D1016's gate —
-// a verdict about a document a session may be admitted to — has nothing to
-// judge for it. A session that is admitted to the plan of a stage is therefore
-// not admitted to the IAM call beside it, and the call waits for the owner,
-// who makes it with their own run and the confirmation they always had. This
-// is the gate narrowing and never widening: nothing this run does in a managed
-// project is a write the gate did not read.
-func (r *initRun) gateUnderway() bool { return r.gate != nil && r.gate.managed }
+// Storage IAM call of its own (infra.RemoveProjectViewers), so D1016's gate — a
+// verdict about a document a session may be admitted to — has nothing to judge
+// for it, and a session the gate admitted to a plan is not admitted to the call
+// beside it.
+//
+// True only in a coding agent's session, and the terminal is the whole of the
+// difference: the owner at their own terminal in a managed project gets no
+// prompt for it either (runCovers, the gate's own read of the marks), so the
+// call is made there with the line the ordinary path prints, exactly as the
+// owner's own run has always made it. Leaving it for an owner who is already
+// looking at the screen would be a prompt by another name.
+func (r *initRun) gateLeavesTheIAMCall() bool {
+	return r.gateUnderway() && agentMarker(os.Getenv, r.stdinTerminal()) != ""
+}
+
+// gateProceeded is the line a gate-admitted step prints where its confirmation
+// would have been: the agent's own sentence in a coding agent's session, and
+// the owner's in their own terminal (initflow's AgentProceeded and
+// GateProceeded, which are two sentences because they are addressed to two
+// readers).
+func (r *initRun) gateProceeded() string {
+	return gateSentence(agentMarker(os.Getenv, r.stdinTerminal()))
+}
+
+// gateSentence is the same choice for a caller that holds the marker rather
+// than the run: the settings write's reader is a surface of its own (it is
+// handed initflow.Conditions, not an initRun), and a second copy of the rule
+// here would be the copy that drifts. An empty marker is the owner's own
+// terminal, which reads GateProceeded — the sentence that says a verdict was
+// taken, not GateOrdinary's, which says a step was announced and no rule read
+// anything. A step that reaches a sentence at all has a verdict behind it: the
+// gate's answer is what the caller passed.
+func gateSentence(marker string) string {
+	if marker != "" {
+		return initflow.AgentProceeded(marker)
+	}
+	return initflow.GateProceeded()
+}
 
 // gateNamesAnIAMCall is the one sentence such a step leaves behind: what is
 // still there, why nothing removed it here, and the door the owner's own run
@@ -323,14 +449,15 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	if err != nil {
 		return true, &initflow.GatedError{Reason: err.Error(), Err: err}
 	}
-	// D55's one rule, asked with this run's conditions (a coding agent's
-	// marker is set, which is the only way this code is reached) and the
-	// verdict M6's helper just built: a gate that admitted this document
-	// removes the session's refusal for this step, and anything else keeps it.
-	if !initflow.CanConfirmManaged(class, r.conditions(), m) {
+	// D55's one rule, asked with this run's conditions — a coding agent's
+	// session or the owner's own terminal, which is the whole of who may
+	// reach this code — and the verdict M6's helper just built: a gate that
+	// admitted this document replaces the confirmation for this step, and
+	// anything else keeps it.
+	if !initflow.GateConfirms(class, r.conditions(), m) {
 		return false, nil
 	}
-	fmt.Fprintf(r.w, "  %s\n", initflow.AgentProceeded(agentMarker(os.Getenv)))
+	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
 	return true, nil
 }
 
@@ -368,10 +495,10 @@ func (s *rulesStage) gateStep(ctx context.Context) (bool, error) {
 	if err != nil {
 		return true, &initflow.GatedError{Reason: err.Error(), Err: err}
 	}
-	if !initflow.CanConfirmManaged(class, r.conditions(), m) {
+	if !initflow.GateConfirms(class, r.conditions(), m) {
 		return false, nil
 	}
-	fmt.Fprintf(r.w, "  %s\n", initflow.AgentProceeded(agentMarker(os.Getenv)))
+	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
 	return true, nil
 }
 
@@ -432,8 +559,8 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 	if err != nil {
 		return true, &initflow.GatedError{Reason: err.Error(), Err: err}
 	}
-	marker := agentMarker(os.Getenv)
-	if !initflow.CanConfirmManaged(class, r.conditions(), mg) {
+	marker := agentMarker(os.Getenv, s.e.r.stdinTerminal())
+	if !initflow.GateConfirms(class, r.conditions(), mg) {
 		// A Typed class is the one not-admitted answer with a sentence of the
 		// gate's own to give, and it is given here rather than left to the
 		// caller's coding-agent refusal: this step's document WAS admitted by
@@ -461,7 +588,7 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 		}
 		return false, nil
 	}
-	fmt.Fprintf(r.w, "  %s\n", initflow.AgentProceeded(marker))
+	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
 	return true, nil
 }
 

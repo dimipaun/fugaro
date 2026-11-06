@@ -481,3 +481,185 @@ func TestCatalogUnfetchableJudgesOnlyAProviderWithoutAReader(t *testing.T) {
 		t.Errorf("the refusal = %q, want the one the build gives (%q)", err, want)
 	}
 }
+
+// catalogOnDisk reads back the project config the fixture's commands write.
+func catalogOnDisk(t *testing.T, path string) *localcfg.Config {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Parse(data)
+	if err != nil {
+		t.Fatalf("the config after the write: %v\n%s", err, data)
+	}
+	return lc
+}
+
+// TestImageAddPrebuiltWritesASourceImage: --image writes a prebuilt entry — a
+// config.SourceImage — exactly as --dockerfile writes a built one, so the one
+// source kind a selection and a run already consume is one a command can
+// create (D1174; F10: a prebuilt entry was creatable only by a hand edit of a
+// document `fugaro image ls` reads).
+func TestImageAddPrebuiltWritesASourceImage(t *testing.T) {
+	catalogFixture(t)
+	path := os.Getenv("FUGARO_CONFIG")
+	out, _, err := execute(t, "image", "add", "legacy", "--tags", "node,postgres",
+		"--image", "ghcr.io/acme/legacy:1.2", "--description", "what the old pipeline pushed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "legacy") {
+		t.Errorf("image add printed %q, want the entry it wrote", out)
+	}
+	lc := catalogOnDisk(t, path)
+	if lc.ImageCatalog == nil || len(lc.ImageCatalog.Entries) != 3 {
+		t.Fatalf("ImageCatalog = %+v, want the two entries and the new one", lc.ImageCatalog)
+	}
+	added := lc.ImageCatalog.Entries[2]
+	if added.Name != "legacy" {
+		t.Fatalf("the written entry = %+v", added)
+	}
+	if added.Source.Kind != config.SourceImage || added.Source.Image != "ghcr.io/acme/legacy:1.2" {
+		t.Errorf("the written source = %+v, want the prebuilt reference", added.Source)
+	}
+	// No member of the other two kinds is written beside it: an entry holding
+	// two definitions would leave which one a run reads unstated, which is the
+	// rule the catalog's own validation carries for this kind.
+	if added.Source.Repo != "" || added.Source.Path != "" || added.Source.Branch != "" || added.Source.Inline != "" {
+		t.Errorf("a prebuilt source carries more than the reference: %+v", added.Source)
+	}
+	if strings.Join(added.Tags, ",") != "node,postgres" {
+		t.Errorf("tags = %v", added.Tags)
+	}
+	// The two entries the file already had are still there.
+	names := []string{lc.ImageCatalog.Entries[0].Name, lc.ImageCatalog.Entries[1].Name}
+	if strings.Join(names, ",") != "base,tools" {
+		t.Errorf("the existing entries are %v", names)
+	}
+
+	// A reference the catalog's own grammar refuses is refused before anything
+	// is written: a value a registry would not serve is not an entry, and the
+	// refusal is the validator's, not one this flag invents.
+	for _, ref := range []string{"Example.COM/App:1", "ghcr.io/acme/legacy@sha256:" + strings.Repeat("a", 10)} {
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, err = execute(t, "image", "add", "bad", "--image", ref)
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "container image reference") {
+			t.Errorf("--image %q: exit %d, err %v, want it refused as a container image reference", ref, ExitCode(err), err)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != string(before) {
+			t.Errorf("--image %q wrote the config", ref)
+		}
+	}
+}
+
+// TestImageAddRefusesImageWithDockerfile: the three sources are one entry's
+// alternatives, and --image is refused together with --dockerfile, with
+// --inline and with --branch rather than resolving one of them (D1174: two
+// flags "mutually exclusive by meaning, which the command has to refuse
+// together rather than resolve").
+func TestImageAddRefusesImageWithDockerfile(t *testing.T) {
+	catalogFixture(t)
+	path := os.Getenv("FUGARO_CONFIG")
+	df := filepath.Join(t.TempDir(), "extra.Dockerfile")
+	if err := os.WriteFile(df, []byte("FROM scratch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"--image with --dockerfile",
+			[]string{"--image", "ghcr.io/acme/legacy:1.2", "--dockerfile", "acme/app:.fugaro/app.Dockerfile"},
+			[]string{"--image", "--dockerfile"}},
+		{"--image with --inline",
+			[]string{"--image", "ghcr.io/acme/legacy:1.2", "--inline", df},
+			[]string{"--image", "--inline"}},
+		{"--image with --branch",
+			[]string{"--image", "ghcr.io/acme/legacy:1.2", "--branch", "release-1.0"},
+			[]string{"--image", "--branch"}},
+	} {
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, err = execute(t, append([]string{"image", "add", "bad"}, c.args...)...)
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("%s: exit %d, err %v, want a user error", c.name, ExitCode(err), err)
+		}
+		for _, want := range c.want {
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: err %v, want the refusal to name %s", c.name, err, want)
+			}
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != string(before) {
+			t.Errorf("%s wrote the config", c.name)
+		}
+	}
+}
+
+// TestImageLsShowsThePrebuiltEntry: the entry the flag writes is an entry
+// `fugaro image ls` shows like any other, with its reference as the source
+// line — the listing and the writer agree, which is what F10's hand edit could
+// not promise.
+func TestImageLsShowsThePrebuiltEntry(t *testing.T) {
+	catalogFixture(t)
+	if _, _, err := execute(t, "image", "add", "legacy", "--tags", "node",
+		"--image", "ghcr.io/acme/legacy:1.2", "--description", "what the old pipeline pushed"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "image", "ls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"legacy", "node", "image ghcr.io/acme/legacy:1.2", "what the old pipeline pushed"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("image ls lacks %q:\n%s", want, out)
+		}
+	}
+	// The default marker is on the entry the catalog marks and not on this one:
+	// a prebuilt entry does not take the default by existing.
+	var marked []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "legacy") {
+			marked = append(marked, line)
+		}
+	}
+	if len(marked) != 1 || strings.Contains(marked[0], "default") {
+		t.Errorf("the prebuilt entry is not listed once, unmarked:\n%s", out)
+	}
+	// The JSON document carries the same source line, so the console's own
+	// reader sees what the terminal does.
+	jsonOut, _, err := execute(t, "image", "ls", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc catalogLsOut
+	if err := json.Unmarshal([]byte(jsonOut), &doc); err != nil {
+		t.Fatalf("image ls --json: %v\n%s", err, jsonOut)
+	}
+	var found bool
+	for _, e := range doc.Entries {
+		if e.Name == "legacy" {
+			found = true
+			if e.Source != "image ghcr.io/acme/legacy:1.2" {
+				t.Errorf("the prebuilt entry's source = %q", e.Source)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("image ls --json lacks the prebuilt entry:\n%s", jsonOut)
+	}
+}

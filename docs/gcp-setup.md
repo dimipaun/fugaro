@@ -41,7 +41,7 @@ Five things an installation needs sooner or later, one page each:
 - [Budgets on and off](how-to/budgets.md) — the monthly billing alert, and the model budget's caps and kill switches.
 - [Registry cleanup](how-to/registry-cleanup.md) — audit the dry run, then let Artifact Registry delete old image versions.
 - [Offboarding a repository](how-to/offboarding.md) — lower the jobs' deletion protection, keep the secrets, destroy the rest.
-- [Retiring a workflow or an account](how-to/retiring-a-workflow.md) — `fugaro update --repo --retire`.
+- [Retiring a workflow or an account](how-to/retiring-a-workflow.md) — plain `fugaro update` on a managed project, else `--repo --retire`.
 - [Teammates: no setup](how-to/teammates.md) — a launcher or an operator runs the CLI with no local config.
 
 <a id="not-an-owner"></a>

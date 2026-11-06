@@ -1,0 +1,12 @@
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "alg": "RS256",
+      "use": "sig",
+      "kid": "published-key-1",
+      "n": "placeholder!not-a-key-the-test-puts-a-modulus-here",
+      "e": "AQAB"
+    }
+  ]
+}

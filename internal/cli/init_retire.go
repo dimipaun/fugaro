@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
 )
 
 // This file is the retirement: the one flow in fugaro that deletes a cloud
@@ -357,8 +358,10 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 
 	// 1. The prediction, confirmed. Nothing has left the state yet, so this
 	//    banner is the only place the kept secrets and the job delete are
-	//    named before they happen.
-	if err := r.retireConfirm(rets, spec, "nothing was removed from Terraform's state and nothing was deleted"); err != nil {
+	//    named before they happen. (A managed project's own retirement has no
+	//    confession to ask for at this point: what it consents to is a plan,
+	//    and no plan exists until step 2 has run.)
+	if err := r.retireConsent(ctx, t, rets, spec, "nothing was removed from Terraform's state and nothing was deleted", false, nil, nil); err != nil {
 		return err
 	}
 
@@ -409,11 +412,11 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 		// The confirmation's own banner says what remains, and here there is
 		// no apply left to do: the delete is all of it (I-C).
 		r.retireClean = true
-		if err := r.retireConfirm(rets, spec, retireUndone("nothing was applied and no job was deleted", removed)); err != nil {
+		if err := r.retireConsent(ctx, t, rets, spec, retireUndone("nothing was applied and no job was deleted", removed), true, nil, nil); err != nil {
 			return leftover(err)
 		}
 		r.retireApplied = true
-		return nil
+		return r.retireRecorded(ctx)
 	}
 	plan, err := t.Show(ctx, infra.PlanFile)
 	if err != nil {
@@ -430,7 +433,7 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 	}
 	fmt.Fprintf(r.w, "the plan above is the retirement's: %s. Deleting:\n", counts.String())
 	fmt.Fprint(r.w, deleteList(plan))
-	if err := r.retireConfirm(rets, spec, retireUndone("the plan was not applied and no job was deleted", removed)); err != nil {
+	if err := r.retireConsent(ctx, t, rets, spec, retireUndone("the plan was not applied and no job was deleted", removed), true, plan, im.Keys()); err != nil {
 		return leftover(err)
 	}
 	if err := t.Apply(ctx, infra.PlanFile); err != nil {
@@ -438,7 +441,174 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 	}
 	r.res.Applied = true
 	r.retireApplied = true
+	return r.retireRecorded(ctx)
+}
+
+// retireManaged is plain `fugaro update`'s own retirement of the derived
+// resources the configuration stopped producing, on a managed project (issue
+// #1794, the owner's ruling of 2026-11-06, and the HARD RULE of CLAUDE.md: the
+// one documented command is the whole upgrade, with no second command and no
+// step the user has to know about).
+//
+// It answers whether the retirement was made HERE, and every reason it answers
+// false is a reason a person is still needed; each of them keeps today's
+// behaviour exactly, which for a plain run is the refusal that names --retire:
+//
+//   - the run is not a managed project's (the marks were never read, or a step
+//     before this one found them gone): an unmanaged project is unchanged.
+//   - the run cannot carry a confirmation the gate stands in for -- a coding
+//     agent's session, --ask, --json, --non-interactive, a pipe. A retirement
+//     --yes can confirm is one design §4.2 forbids, and an agent's session is
+//     never retired by itself whatever the plan says.
+//   - any address in the set is not derived (infra.RetireStops): a bucket, a
+//     secret container, a registry, a database, an address of the
+//     installation's or one this program cannot classify. It is named, in the
+//     type's own words, and the run stops where it has always stopped. The
+//     allowlist is what decides this, never the plan: a plan that deletes
+//     something nobody decided on is not evidence that it may.
+//
+// The flow it runs is the retirement's own, unchanged (retirePlan): the
+// blockers first, the protected addresses out of the state, the plan that
+// could not run before, the guard bounded to the retirement's own addresses,
+// the apply, and the API delete at the run's last step. What differs is the
+// two typed confirmations in the middle of it, which are the managed gate's
+// admission in their place (retireConsent), on a set this function has already
+// decided is derived and of this repository only.
+func (r *initRun) retireManaged(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.RepoSpec, rets []infra.Retirement, opts infra.RepoRootOptions, im infra.Imports) (bool, error) {
+	// --plan-only writes nothing, and a retirement writes: the ordinary
+	// plan-only path runs instead, which is the one that removes nothing and
+	// deletes nothing (the rule gateStep follows for the same reason).
+	if !r.gateUnderway() || r.o.planOnly {
+		return false, nil
+	}
+	if stopped := infra.RetireStops(rets); len(stopped) > 0 {
+		r.warn(retireManagedStops(stopped))
+		return false, nil
+	}
+	// D55's one rule, asked with this run's conditions exactly as a gate step
+	// asks it (update_managed.go's gateStep): the verdict a managed project's
+	// gate would stand in for a confirmation here is the one this run's
+	// session can be given it in. It is asked BEFORE the state removal, so a
+	// session that cannot have it is refused with a state that is still whole
+	// -- the same refusal it reads today, and no residue to clean up.
+	if !initflow.ConfirmsByGate(initflow.YesOrTyped, r.conditions(), initflow.Managed{Managed: true, Admitted: true}) {
+		return false, nil
+	}
+	r.retireAuto = true
+	if err := r.retirePlan(ctx, c, t, wd, spec, rets, opts, im); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+// retireConsent is the retirement's permission step, at each of the three
+// places the flow asks for one: before anything leaves the state (plan=false:
+// no plan exists yet, so there is no document to judge), after a plan that
+// changes nothing, and after the plan that does.
+//
+// The ordinary flow is the two typed confirmations of design §4.2, and a
+// managed project's plain update has the gate's admission in their place: the
+// decision that this set may be retired by itself was taken in retireManaged,
+// before the state removal, and what is left here is the document the gate
+// judges and the record of it.
+func (r *initRun) retireConsent(ctx context.Context, t *tf.TF, rets []infra.Retirement, spec infra.RepoSpec, undone string, plan bool, pl *tf.Plan, imports []tf.ImportKey) error {
+	if !r.retireAuto {
+		return r.retireConfirm(rets, spec, undone)
+	}
+	if !plan {
+		fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
+		return nil
+	}
+	return r.retireAdmit(ctx, t, rets, spec, undone, pl, imports)
+}
+
+// retireAdmit is the gate's admission in place of the retirement's second
+// typed confirmation, in the shape gateStep uses for an ordinary stage: the
+// document is read, the verdict is built from the rules the retirement itself
+// ran, the gate is asked for it, and the confirmation comes back if the answer
+// is not one that stands in for it.
+//
+// The document is the saved plan of this branch, which is the plan that
+// followed the state removal: the counts and the delete list the confirmation
+// would have shown were printed from those bytes, and the digest in the record
+// is of them.
+func (r *initRun) retireAdmit(ctx context.Context, t *tf.TF, rets []infra.Retirement, spec infra.RepoSpec, undone string, pl *tf.Plan, imports []tf.ImportKey) error {
+	// The retirement's own deletes are what this step admits by itself; every
+	// other change in the same plan is judged by the cover an ordinary step
+	// is, and one it does not admit asks the typed confirmation: a plan that
+	// happens to carry a retirement must not carry a loosening in with it.
+	if pl != nil {
+		if why := r.notCovered(withoutDeletes(pl, retireAllowDelete(pl, rets, nil)), imports); why != "" {
+			fmt.Fprintf(r.w, "  %s\n", why)
+			return r.retireConfirm(rets, spec, undone)
+		}
+	}
+	g := r.gate
+	if g == nil {
+		// Unreachable: retireManaged read the gate before it removed anything
+		// from the state. The refusing direction is the confirmation the
+		// ordinary flow asks, not a silent admission.
+		return r.retireConfirm(rets, spec, undone)
+	}
+	doc, err := t.ShowJSON(ctx, infra.PlanFile)
+	if err != nil {
+		// A plan nobody can read is a document no rule judged (D1012), which
+		// is the shape gateStep reads as gateUnreadable: nothing is applied.
+		return &initflow.GatedError{Reason: gateUnreadable, Err: err}
+	}
+	conv := managedmode.ConvergeAdmitted(doc, gateClass(), retireAdmittedRules)
+	m, err := g.g.admit(ctx, gateClass(), conv)
+	if err != nil {
+		return err
+	}
+	// D1024's second read has the last word: a project that stopped being
+	// managed between the two reads keeps the confirmation it has always had,
+	// and here that is the typed one -- the session this run is in is one that
+	// can be asked (retireManaged said so before the state removal).
+	if !initflow.GateConfirms(gateClass(), r.conditions(), m) {
+		return r.retireConfirm(rets, spec, undone)
+	}
+	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
 	return nil
+}
+
+// retireRecorded writes the audit record of a step the managed gate admitted
+// (M6's recorded call, which gateStep's callers make after their write). It is
+// the run's own last word about the retirement: nothing at all for the ordinary
+// flow, which admitted nothing here, and nothing either when the second read of
+// the marks took the admission back (the gate has nothing judged to record).
+func (r *initRun) retireRecorded(ctx context.Context) error {
+	if !r.retireAuto || r.gate == nil {
+		return nil
+	}
+	return r.gate.g.recorded(ctx)
+}
+
+// retireAdmittedRules is what the record says admitted the retirement: the
+// rules it ran, in the order it ran them. The cover of the embedded roots is
+// deliberately not among them -- a retirement's own plan deletes addresses by
+// design, and tf.NotCovered refuses every delete, so a plan this command
+// applies can never be one that cover admits. What admits a retirement is
+// narrower than a cover and it is these two.
+var retireAdmittedRules = []string{
+	"every address going away is one of this repository's own derived resources: the state removal took out only the addresses no apply can delete, the plan's own deletes are the retirement's addresses alone (the guard's allow-list), and no address of the set holds data (tf.RetirableTypes)",
+	"nothing data-holding and nothing undecided is in the set: no bucket, no secret container, no image registry, no database, and no resource type this program has not decided on",
+}
+
+// retireManagedStops is what a managed project's plain update prints when it
+// will not make the retirement by itself: the addresses that stopped it, one
+// line each with the reason in the type's own words, so an owner reads what
+// this is rather than a run that quietly stopped. It names no flag: the
+// command that retires the rest is the one the summary above already named.
+func retireManagedStops(stopped []infra.RetireStop) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "note: a managed project's own update retires the derived resources it created and no others, and %d %s of this retirement %s not among them: nothing was removed from Terraform's state and nothing was deleted here, and this retirement keeps the confirmations it has always had:\n",
+		len(stopped), plural(len(stopped), "address", "addresses"), plural(len(stopped), "is", "are"))
+	for _, s := range stopped {
+		fmt.Fprintf(&b, "  %s — %s\n", s.Address, s.Why)
+	}
+	fmt.Fprintf(&b, "The command above is the one that retires it, with the plan and the confirmations it has always asked for.")
+	return b.String()
 }
 
 // retireUndone is what a confirmation that was declined, or could not be
@@ -565,7 +735,7 @@ func (r *initRun) retireConfirm(rets []infra.Retirement, spec infra.RepoSpec, un
 		return err
 	}
 	if !reachable {
-		if m := agentMarker(os.Getenv); m != "" {
+		if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 			return &initflow.AgentError{Marker: m}
 		}
 		return userErr("%s; %s", retireUnaskable(r.conditions()), undone)
@@ -1025,4 +1195,22 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+// withoutDeletes is the plan with the changes at addrs left out: the
+// retirement's own deletes, which the cover refuses by design (it admits no
+// delete) and which retireStop and the guard have already judged.
+func withoutDeletes(p *tf.Plan, addrs []string) *tf.Plan {
+	skip := make(map[string]bool, len(addrs))
+	for _, a := range addrs {
+		skip[a] = true
+	}
+	out := *p
+	out.ResourceChanges = nil
+	for _, rc := range p.ResourceChanges {
+		if !skip[rc.Address] {
+			out.ResourceChanges = append(out.ResourceChanges, rc)
+		}
+	}
+	return &out
 }

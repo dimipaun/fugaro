@@ -3641,7 +3641,7 @@ func TestVerifierAccountsDriftNamesTheMember(t *testing.T) {
 	node := &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}}
 	lc := &localcfg.Config{
 		Budget:           &localcfg.Budget{Mode: "enforce", PerRunUSD: 5},
-		VerifierAccounts: []string{"person-1@example.com"},
+		VerifierAccounts: &[]string{"person-1@example.com"},
 	}
 	var got []string
 	for _, d := range policyConfigDrift(lc, node) {

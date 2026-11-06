@@ -1549,7 +1549,30 @@ var (
 	// repository root reads it — the member of the actAs that root makes on its
 	// own build account, which is why it is a variable there and not a
 	// reference: the repository root never sees the installation module.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator)\[0\]\.member|google_service_account\.catalog_check\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
+	// google_service_account.mcp_server[0] is the coordinator's front door
+	// (M4): the account D920's public endpoint runs as, whose own grant list is
+	// one row long — the runs bucket's read (D932, modules/installation/
+	// coordinator.tf).
+	// google_service_account.fugaro_verifier[0] is the installation's verifier
+	// (CSR14, D1068): the one account the credentials service's verify route
+	// admits, and the only grant that names it is roles/run.invoker on that
+	// service (iam.tf). Its own reach is that row and the operators'
+	// token-creator grant on the account, which is what makes it a member
+	// expression worth admitting by name here rather than by shape.
+	//
+	// "allUsers" is deliberately NOT on this list, and the absence is the
+	// point: D920's public invoker binding is one resource in one file, and a
+	// member expression admitted here is admitted for every IAM resource of
+	// every module and root — a `member = "allUsers"` on the runs bucket's
+	// reader, on the credentials service or on a project binding would have
+	// passed this whole suite while it was written that way. The one resource
+	// that may carry it is named in publicMemberPath/publicMemberBlock, and
+	// memberAllowed is what every IAM block is held to
+	// (TestAllUsersIsRefusedOnEveryOtherResource is its own mutation proof).
+	// The narrowing is not what makes the plan covered either:
+	// internal/infra/tf's grant rules do NOT accept an allUsers member, so the
+	// update whose plan carries this grant asks its own typed confirmation.
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier)\[0\]\.member|google_service_account\.catalog_check\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
 
 	// A custom role of one of this run's projects, spelled as the literal path
 	// "projects/${var.<project>}/roles/<id>" rather than read from the role
@@ -1573,6 +1596,28 @@ var (
 	// Functions). Only the Firebase module may grant the first group.
 	backendRoleRE = regexp.MustCompile(`^roles/(firebase[A-Za-z.]*|datastore\.[A-Za-z]+|identitytoolkit\.[A-Za-z]+|serviceusage\.[A-Za-z]+|apikeys\.[A-Za-z]+|owner|editor|viewer|resourcemanager\.[A-Za-z]+|iam\.(admin|roleAdmin|securityAdmin|securityReviewer|serviceAccount[A-Za-z]*|workloadIdentity[A-Za-z]*|organizationRoleAdmin|denyAdmin)|run\.(admin|developer)|cloudfunctions\.[A-Za-z]+|aiplatform\.admin|cloudbuild\.[A-Za-z.]+|appengine\.[A-Za-z]+|compute\.[A-Za-z]*[aA]dmin|logging\.admin|secretmanager\.admin)$`)
 )
+
+// publicMemberPath and publicMemberBlock are the ONE resource in this tree an
+// allUsers member is reviewed on: D920's public invoker binding, which the
+// owner decided on 2026-11-04 — the endpoint is public, the handler is the
+// gate, and a standard MCP client reaches it with no Google identity. It is a
+// literal in the module because it must be readable in the plan, and it is
+// named here by path AND block so that neither copying the resource under
+// another name nor writing the same member into another file can pass: the
+// member is admitted for exactly one grant.
+const (
+	publicMemberPath  = "gcp/modules/installation/coordinator.tf"
+	publicMemberBlock = "google_cloud_run_v2_service_iam_member.coordinator_front_door_public"
+)
+
+// memberAllowed is allowedMemberExprs plus the one exception above, and it is
+// the single decision every IAM block of this tree is held to.
+func memberAllowed(path, name, member string) bool {
+	if member == `"allUsers"` {
+		return path == publicMemberPath && name == publicMemberBlock
+	}
+	return member != "" && allowedMemberExprs.MatchString(member)
+}
 
 // projectRoles are the roles (literal or by reference) a block grants.
 func projectRoles(body string) []string {
@@ -1618,7 +1663,10 @@ func TestIAMResourcesUseKnownExpressions(t *testing.T) {
 			case !allowedRoleExprs.MatchString(role):
 				t.Errorf("%s: %s: role expression %s is not on the allowlist (route it through a reviewed reference)", path, blk.name, role)
 			}
-			if member == "" || !allowedMemberExprs.MatchString(member) {
+			switch {
+			case member == `"allUsers"` && !memberAllowed(path, blk.name, member):
+				t.Errorf("%s: %s: an allUsers member is reviewed on %s's %s and nowhere else (D920): a public member is admitted for one resource, and this is another", path, blk.name, publicMemberPath, publicMemberBlock)
+			case !memberAllowed(path, blk.name, member):
 				t.Errorf("%s: %s: member expression %q is not on the allowlist", path, blk.name, member)
 			}
 			for _, r := range quotedRoleRE.FindAllStringSubmatch(blk.body, -1) {
@@ -1665,6 +1713,114 @@ func firstAttr(body, name string) string {
 	return m[1]
 }
 
+// withPublicMember returns src with the member attribute of one block rewritten
+// to allUsers: the edit a person makes by hand, applied to the file as it is
+// rather than written out beside it, so a fixture below cannot go on passing
+// after the block it names has been renamed or deleted.
+func withPublicMember(t *testing.T, path, src, block string) string {
+	t.Helper()
+	typ, name, ok := strings.Cut(block, ".")
+	if !ok {
+		t.Fatalf("%s is not a type.name block reference", block)
+	}
+	header := `resource "` + typ + `" "` + name + `"`
+	i := strings.Index(src, header)
+	if i < 0 {
+		t.Fatalf("%s declares no %s: this fixture is not reading the block it means to mutate", path, block)
+	}
+	rest := src[i:]
+	if j := strings.Index(rest, "\nresource "); j >= 0 {
+		rest = rest[:j]
+	}
+	line := attrRE("member").FindString(rest)
+	if line == "" {
+		t.Fatalf("%s: %s sets no member, so there is nothing to mutate", path, block)
+	}
+	return src[:i] + strings.Replace(rest, line, `member = "allUsers"`, 1) + src[i+len(rest):]
+}
+
+// TestAllUsersIsRefusedOnEveryOtherResource is finding 2's mutation proof, and
+// it exists because the allowlist used to carry a bare "allUsers": that
+// admitted the member for every IAM resource of every module and root, and a
+// `member = "allUsers"` on the runs bucket's reader — a public read of every
+// run's artefacts — passed this package's whole suite.
+//
+// Every fixture is the tree's OWN file with exactly that edit, read back
+// through the same parser the scan uses, and each must be refused; the last one
+// proves the other half of the rule, that the resource name alone is not enough
+// (the same binding under another path is another resource's grant).
+func TestAllUsersIsRefusedOnEveryOtherResource(t *testing.T) {
+	// Non-vacuity first: the binding D920 decided is admitted exactly where it
+	// is, or every fixture below would pass on a rule that refuses allUsers
+	// everywhere.
+	frontDoor, err := fs.ReadFile(FS, publicMemberPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawPublic bool
+	for _, blk := range allResourceBlocks(t, publicMemberPath, frontDoor) {
+		if blk.name != publicMemberBlock {
+			continue
+		}
+		sawPublic = true
+		if member := firstAttr(blk.body, "member"); member != `"allUsers"` {
+			t.Fatalf("%s: %s sets member = %s, want the literal allUsers this exception is for", publicMemberPath, publicMemberBlock, member)
+		}
+	}
+	if !sawPublic {
+		t.Fatalf("%s declares no %s: this test read the wrong file", publicMemberPath, publicMemberBlock)
+	}
+	if !memberAllowed(publicMemberPath, publicMemberBlock, `"allUsers"`) {
+		t.Fatalf("D920's public invoker binding is refused, so the exception this rule carries no longer admits the grant the owner decided on")
+	}
+
+	for name, m := range map[string]struct {
+		file  string // the file read and mutated
+		path  string // the path the scan is told it is — not the file's, for one fixture
+		block string
+	}{
+		// The review's own mutation: the runs bucket's reader, a public read of
+		// every run's artefacts.
+		"the coordinator's runs-bucket reader": {"gcp/modules/installation/coordinator.tf", "gcp/modules/installation/coordinator.tf", "google_storage_bucket_iam_member.coordinator_runs_reader"},
+		// The front door's own account's one grant, made public one line away
+		// from the account whose reach this rule exists to bound.
+		"the front door account's runs-bucket read": {"gcp/modules/installation/coordinator.tf", "gcp/modules/installation/coordinator.tf", "google_storage_bucket_iam_member.mcp_server_runs_reader"},
+		// Another module: a run account's write grant on the runs bucket.
+		"a run account's runs-bucket grant": {"gcp/modules/workflow/sa.tf", "gcp/modules/workflow/sa.tf", "google_storage_bucket_iam_member.job"},
+		// The credentials bundle, which is every model credential the
+		// installation holds.
+		"the credentials bundle's reader": {"gcp/modules/installation/credentials.tf", "gcp/modules/installation/credentials.tf", "google_secret_manager_secret_iam_member.credentials_bundle"},
+		// And the resource NAME is not the rule: the same binding, read as a
+		// path another file's, is refused.
+		"the public binding under another path": {publicMemberPath, "gcp/modules/installation/iam.tf", publicMemberBlock},
+	} {
+		t.Run(name, func(t *testing.T) {
+			src, err := fs.ReadFile(FS, m.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutated := withPublicMember(t, m.path, string(src), m.block)
+			var hit bool
+			for _, blk := range allResourceBlocks(t, m.path, []byte(mutated)) {
+				if blk.name != m.block {
+					continue
+				}
+				hit = true
+				member := firstAttr(blk.body, "member")
+				if member != `"allUsers"` {
+					t.Fatalf("the mutation did not take: %s.%s reads member = %s", m.path, m.block, member)
+				}
+				if memberAllowed(m.path, blk.name, member) {
+					t.Errorf("%s: %s admits member = \"allUsers\": a public member is reviewed on %s's %s and nowhere else, and this grant reaches what that binding never does", m.path, m.block, publicMemberPath, publicMemberBlock)
+				}
+			}
+			if !hit {
+				t.Fatalf("the mutated file no longer declares %s, so this fixture asserts nothing", m.block)
+			}
+		})
+	}
+}
+
 // TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant pins the
 // claim D75 makes in prose — serviceAccountTokenCreator is "one grant on that
 // account, for var.operators" — as a property of the whole tree, because the
@@ -1673,58 +1829,97 @@ func firstAttr(body, name string) string {
 // the deployer's impersonation grant is allowed at all, and an exemption
 // cannot tell an operator impersonating the deployer from the same role on a
 // job account, which is a credential that runs as that account. A literal
-// token-creator grant is therefore allowed in exactly one place, and it is the
-// deployer's own block: the deployer account, written as a literal path, for
-// var.operators.
+// token-creator grant is therefore allowed in exactly two places, and they are
+// the two impersonations this installation deliberately has (CSR14): the
+// deployer's own block — the deployer account, written as a literal path, for
+// var.operators — and the verifier account's, iam.tf, the same shape on the
+// installation's own verifier account, which is the one caller the credentials
+// service's verify route admits. Each is written the way the other is: a
+// literal account path of this project, for var.operators, member = each.value.
 //
 // Its members are people on the review screen (internal/infra/tf's grantRules)
 // and the plan itself is screened again by Cover.deployerTokenCreator, so what
-// this test is the file-level half of is: no second block anywhere grants the
-// role, and the one that does is the one D75 describes.
+// this test is the file-level half of is: no third block anywhere grants the
+// role, none of the two reads its account from a resource, and each is the one
+// its site describes.
 func TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant(t *testing.T) {
-	const (
-		role = "roles/iam.serviceAccountTokenCreator"
-		// The install module's deployer account, as deployer.tf writes it.
-		account = `"projects/${var.project}/serviceAccounts/fugaro-deployer@${var.project}.iam.gserviceaccount.com"`
-		file    = "gcp/modules/installation/deployer.tf"
-		block   = "google_service_account_iam_member.fugaro_deployer_token_creator"
-	)
-	var sites []string
+	const role = "roles/iam.serviceAccountTokenCreator"
+	// The two sites, in walk order. The verifier's grant is gated on the
+	// credentials service: with the service off the account is not created,
+	// and a grant on an account that does not exist would be a plan of its
+	// own.
+	sites := []struct {
+		file    string
+		block   string
+		account string
+		forEach string
+	}{
+		{
+			file:    "gcp/modules/installation/deployer.tf",
+			block:   "google_service_account_iam_member.fugaro_deployer_token_creator",
+			account: `"projects/${var.project}/serviceAccounts/fugaro-deployer@${var.project}.iam.gserviceaccount.com"`,
+			forEach: "toset(var.operators)",
+		},
+		{
+			file:    "gcp/modules/installation/iam.tf",
+			block:   "google_service_account_iam_member.fugaro_verifier_token_creator",
+			account: `"projects/${var.project}/serviceAccounts/fugaro-verifier@${var.project}.iam.gserviceaccount.com"`,
+			forEach: "local.credentials_service_on ? toset(var.operators) : toset([])",
+		},
+	}
+	want := make([]string, 0, len(sites))
+	for _, s := range sites {
+		want = append(want, s.file)
+	}
+
+	var found []string
 	walk(t, func(path string, b []byte) {
+		// The tests beside the roots are not sites of the role: a tftest
+		// asserts what a plan HOLDS, and every one of them names the roles its
+		// runs read — installation.tftest.hcl names half a dozen, and
+		// verifier.tftest.hcl names this one, in the assertion that reads the
+		// verifier account's grant. What this walk counts is the
+		// configuration's grants, so the assertions are skipped by directory
+		// rather than by loosening the role itself.
+		if strings.Contains(path, "/tests/") {
+			return
+		}
 		code := stripComments(string(b))
 		for _, m := range quotedRoleRE.FindAllStringSubmatch(code, -1) {
 			if m[1] == role {
-				sites = append(sites, path)
+				found = append(found, path)
 			}
 		}
 	})
-	if len(sites) != 1 || sites[0] != file {
-		t.Errorf("the literal %s appears in %v; want once, in %s (D75's impersonation grant, and nothing else in the tree)", role, sites, file)
+	if !slices.Equal(found, want) {
+		t.Errorf("the literal %s appears in %v; want exactly %v — the deployer's impersonation (D75) and the verifier account's (CSR14), and nothing else in the tree", role, found, want)
 	}
 
-	var found bool
-	walk(t, func(path string, b []byte) {
-		if path != file {
-			return
+	for _, s := range sites {
+		blocks := 0
+		walk(t, func(path string, b []byte) {
+			if path != s.file {
+				return
+			}
+			for _, blk := range allResourceBlocks(t, path, b) {
+				if blk.name != s.block {
+					continue
+				}
+				blocks++
+				if !hasAttr(blk.body, "service_account_id", s.account) {
+					t.Errorf("%s: %s does not name its account as the literal %s: a grant whose account is computed is a grant nobody can check, and this is an account an operator is impersonating", path, blk.name, s.account)
+				}
+				if !hasAttr(blk.body, "for_each", s.forEach) {
+					t.Errorf("%s: %s is not for %s, the people the owner names at setup", path, blk.name, s.forEach)
+				}
+				if !hasAttr(blk.body, "member", "each.value") {
+					t.Errorf("%s: %s does not grant the role to each.value", path, blk.name)
+				}
+			}
+		})
+		if blocks != 1 {
+			t.Errorf("%s has %d %s blocks; want one", s.file, blocks, s.block)
 		}
-		for _, blk := range allResourceBlocks(t, path, b) {
-			if blk.name != block {
-				continue
-			}
-			found = true
-			if !hasAttr(blk.body, "service_account_id", account) {
-				t.Errorf("%s: %s does not name the deployer account as the literal %s: a grant whose account is computed is a grant nobody can check, and this is the account an operator is impersonating", path, blk.name, account)
-			}
-			if !hasAttr(blk.body, "for_each", "toset(var.operators)") {
-				t.Errorf("%s: %s is not for var.operators, the people the owner names at setup", path, blk.name)
-			}
-			if !hasAttr(blk.body, "member", "each.value") {
-				t.Errorf("%s: %s does not grant the role to each.value", path, blk.name)
-			}
-		}
-	})
-	if !found {
-		t.Fatalf("%s has no %s", file, block)
 	}
 }
 

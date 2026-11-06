@@ -184,6 +184,17 @@ type Config struct {
 	// can collide with a ReservedSecrets key in the first place, so
 	// ValidateProjectSecrets checks membership in ReservedSecrets only.
 	ProjectSecrets map[string]config.ProjectSecret `yaml:"project_secrets,omitempty"`
+	// WorkflowSecrets are the repositories' own application secrets the owner
+	// has opted into project-wide storage for, by allow-listed repository
+	// (design docs/project-workflow-secrets, D1260). A key is any secret name
+	// no existing reservation claims — a repository's workflows.<w>.secrets
+	// name, which is why it cannot live in project_secrets, whose keys are the
+	// reserved names. Only the owner sets them, here, never in fugaro.yaml,
+	// and like ProjectSecrets the block is operator-local: Shared drops it and
+	// the shared-config reader refuses it, because each entry's allow_data_to
+	// is what makes the value mountable, and a launcher who could publish one
+	// would be widening the grant.
+	WorkflowSecrets map[string]config.ProjectSecret `yaml:"workflow_secrets,omitempty"`
 	// BitbucketAPIRoots are the Bitbucket API roots the owner allow-lists
 	// (D474), for an installation that sends its Bitbucket token to a root of
 	// its own rather than to Bitbucket's: a cloud run refuses any
@@ -209,14 +220,15 @@ type Config struct {
 	// member spelling the launcher and operator lists are written with, which
 	// is what the shape check below refuses.
 	//
-	// It travels to the policy node, the way bitbucket_api_roots does and for
-	// the same reason: the node is written only by the owner and the runner
-	// fails closed on it, while the shared config in the runs bucket is
-	// writable by any launcher — and a launcher who could write this list could
-	// admit its own address to the verify route, so Shared nils it and
-	// ParseShared refuses the key. Only the owner sets it, here, never in
-	// fugaro.yaml.
-	VerifierAccounts []string `yaml:"verifier_accounts,omitempty"`
+	// A pointer, not a slice: the empty list is a value, and omitempty would
+	// turn the owner's clear into a file that says nothing about the list.
+	// It travels to the policy node, the way bitbucket_api_roots does, for the
+	// same reason: the runs bucket is writable by any launcher, and one who
+	// could write this list could admit its own address to the verify route —
+	// so Shared nils it and ParseShared refuses the key, and the node,
+	// owner-written with the runner failing closed on it, is where it belongs,
+	// never in fugaro.yaml.
+	VerifierAccounts *[]string `yaml:"verifier_accounts,omitempty"`
 	// ImageCatalog is the project's image catalog (D1140): the named images
 	// the project's jobs are built from, each a Dockerfile definition or a
 	// reference to a prebuilt image, and the one a repository names with
@@ -1390,7 +1402,7 @@ func (c *Config) ReviewFloorPolicy() (map[rigor.Mode][]policy.Level, error) {
 // nothing about the list at all.
 func (c *Config) VerifierAccountsEffective(published []string) []string {
 	if c.VerifierAccounts != nil {
-		return c.VerifierAccounts
+		return *c.VerifierAccounts
 	}
 	return published
 }
@@ -1585,17 +1597,25 @@ func (c *Config) validate() error {
 	// A name this file does not define is refused too (choiceRefProblem): the
 	// key would otherwise name an account no run can use.
 	//
-	// The stage SEGMENT is not validated here: this package holds no closed
-	// vocabulary of run stages, so `stages.<anything>.claude_account` is
-	// accepted whatever the segment is and only the account reference above is
-	// judged. Refusing a segment that names no stage needs that vocabulary to
-	// exist first, and it does not.
+	// The stage SEGMENT is held to config.RunStages, the run's own stage names
+	// for the stages that spend a model call: `stages.<anything>.claude_account`
+	// would otherwise be accepted whatever the segment is and silently never
+	// apply, which is the state the design refuses rather than the one it
+	// admits (docs/accounts-add/spec.md §11.1). What the segment may *name* is
+	// the auth's business and not this file's: under an api-key run only the
+	// senior review and the adversarial review take an account
+	// (config.CheckStageAccountMix), and this loader holds no repository and so
+	// no auth. That rule fires at the launch and in `fugaro validate`, where
+	// the auth is known.
 	if c.DefaultClaudeAccount != "" {
 		if msg := c.choiceRefProblem(c.DefaultClaudeAccount); msg != "" {
 			bad("default_claude_account: %s", msg)
 		}
 	}
 	for _, stage := range slices.Sorted(maps.Keys(c.ClaudeAccountStages)) {
+		for _, p := range config.CheckStageSegment(stage, "stages") {
+			bad("%s: %s", p.Path, p.Message)
+		}
 		if ref := c.ClaudeAccountStages[stage].ClaudeAccount; ref != "" {
 			if msg := c.choiceRefProblem(ref); msg != "" {
 				bad("stages.%s.claude_account: %s", pluginwire.Printable(stage), msg)
@@ -1604,6 +1624,28 @@ func (c *Config) validate() error {
 	}
 	for _, p := range config.ValidateProjectSecrets(c.ProjectSecrets) {
 		bad("%s: %s", p.Path, p.Message)
+	}
+	// workflow_secrets' name-only rules are config.ValidateWorkflowSecrets';
+	// the two that read the operator's providers can only be asked here, where
+	// lc.Providers is in hand (D1261). They are CheckWorkflowProviderSecrets'
+	// two collisions and its order, restated for this block rather than worded
+	// anew: a key that is a configured provider's own secret:, then the
+	// conventional <entry>-api-key ReservedProviderSecret reserves whatever the
+	// entry's .secret says. Both refuse a key that would mount the owner's
+	// provider credential as a repository's own workflow variable, and the
+	// refusal names the entry and never a value.
+	for _, p := range config.ValidateWorkflowSecrets(c.WorkflowSecrets) {
+		bad("%s: %s", p.Path, p.Message)
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.WorkflowSecrets)) {
+		at := "workflow_secrets." + pluginwire.Printable(name)
+		if provider, ok := config.ProviderBySecret(c.Providers, name); ok {
+			bad("%s: %s is the secret of model provider %s in this local config: a provider's key is the owner's, stored and mounted by that config alone (fugaro secrets set stores it there and nowhere else), so storing a workflow secret under it would mount the owner's provider credential into a job as a repository's own variable. Name the workflow secret something else", at, pluginwire.Printable(name), pluginwire.Printable(provider))
+			continue
+		}
+		if provider, ok := config.ReservedProviderSecret(c.Providers, name); ok {
+			bad("%s: %s is reserved for model provider %s's key: the convention names a provider's key after its entry in the local config (%s), and that name belongs to that provider whatever its .secret says today, so a value stored under it would become the provider's credential the day the key is renamed to the convention. Name the workflow secret something else", at, pluginwire.Printable(name), pluginwire.Printable(provider), pluginwire.Printable(config.ProviderSecretConvention(provider)))
+		}
 	}
 	if w := c.Watch; w != nil && w.BurnAlertUSDPerHour != nil {
 		if _, err := pricing.FromUSD(*w.BurnAlertUSDPerHour); err != nil {
@@ -1714,8 +1756,10 @@ func (c *Config) validate() error {
 	// address an ID token's email claim carries — would be a list the operator
 	// believes names a verifier and that admits nobody. The publish holds the
 	// node to the same function, so the file and the node cannot disagree.
-	if err := policy.ValidVerifierAccounts(c.VerifierAccounts); err != nil {
-		bad("%v", err)
+	if c.VerifierAccounts != nil {
+		if err := policy.ValidVerifierAccounts(*c.VerifierAccounts); err != nil {
+			bad("%v", err)
+		}
 	}
 	// The image catalog is held to the node's own rule here, the way the
 	// verifier list and the floor are: it is copied into the policy node, and

@@ -68,12 +68,17 @@ const (
 // service-account shapes (gcp.ProjectJobName, gcp.ProjectServiceAccountID),
 // with this on the account segment.
 //
-// It is here, and the two functions below with it, because the service and the
-// deployer must spell the variant's names the same way: the accounts this
-// service admits are the accounts internal/infra/projectjobs.go creates
-// (CSR7), and a second spelling would be a service that admits an account
-// nobody deployed or, worse, refuses the one that exists.
-const ReviewVariantSuffix = "-review"
+// The two functions below are here because the service and the deployer must
+// spell the variant's names the same way: the accounts this service admits are
+// the accounts internal/infra/projectjobs.go creates (CSR7), and a second
+// spelling would be a service that admits an account nobody deployed or, worse,
+// refuses the one that exists.
+//
+// The suffix itself is config.ReviewVariantSuffix's, which the account-name
+// rule needs (config refuses an account whose own name ends in it, because it
+// would derive the same job name and service account as another account's
+// variant): one value, named once, and this is the service's name for it.
+const ReviewVariantSuffix = config.ReviewVariantSuffix
 
 // ReviewJobName is the review-only variant's Cloud Run job name for one
 // (profile, provider, account) of the published policy's profiles. It is

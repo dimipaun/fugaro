@@ -80,6 +80,9 @@ func TestGrantRulesMatrix(t *testing.T) {
 	// and every other cell of the table refuses it (the ledger finding #903 —
 	// while it was one of FugaroAccounts, every account row accepted it).
 	const credentials = "serviceAccount:" + CredentialsAccountID + "@proj-1.iam.gserviceaccount.com"
+	// The verifier account is a fifth (CSR14): its one row is the credentials
+	// service's invoker, and every other cell refuses it.
+	const verifier = "serviceAccount:" + VerifierAccountID + "@proj-1.iam.gserviceaccount.com"
 	const coordinator = "serviceAccount:" + CoordinatorAccountID + "@proj-1.iam.gserviceaccount.com"
 	all := map[string]bool{}
 	for _, row := range grantRules {
@@ -93,7 +96,7 @@ func TestGrantRulesMatrix(t *testing.T) {
 	for typ, row := range grantRules {
 		for key := range all {
 			role := grantRoleString(key)
-			for kind, member := range map[who]string{toPeople: person, toAccounts: account, toDeployer: "serviceAccount:" + DeployerAccount("proj-1"), toCredentials: credentials, toCoordinator: coordinator} {
+			for kind, member := range map[who]string{toPeople: person, toAccounts: account, toDeployer: "serviceAccount:" + DeployerAccount("proj-1"), toCredentials: credentials, toCoordinator: coordinator, toVerifier: verifier} {
 				want := row[key]&kind != 0
 				after := map[string]any{"member": member, "role": role, "bucket": "fugaro-runs-proj-1"}
 				if acct := deployerGrantAccountFor(typ, role); acct != "" {
@@ -191,7 +194,7 @@ func TestGrantRulesNameOnlyKnownTypesAndRoles(t *testing.T) {
 			t.Errorf("%s has no roles", typ)
 		}
 		for key, w := range row {
-			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toCatalogCheck) != 0 {
+			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck) != 0 {
 				t.Errorf("%s %s: bad principal kinds %d", typ, key, w)
 			}
 			if id, ok := strings.CutPrefix(key, customKey); ok {

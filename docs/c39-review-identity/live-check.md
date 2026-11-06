@@ -69,7 +69,19 @@ fixed here rather than worked out at merge.
    shows **no** secret mounted — not the account's Claude token, never the App key — and the variant's
    service account holds **no** `secretAccessor` on the App key, on the bundle or on anything else.
 3. **A review launches and runs.** `fugaro review --pr <N>` on the sandbox completes, and its log names
-   **no** token value, read by eye.
+   **no** token value, read by eye. **This is the one step reached with `FUGARO_REVIEW_SKIP_ADMISSION_CHECK`
+   set**, and it is the only reason that switch exists: the launcher's early refusal of a review launch is
+   a convenience — failing before a job is started — and not the boundary, so while the credentials service
+   admits no review caller (gap 1 of [implementation-plan.md](../cloud-senior-review/implementation-plan.md)
+   §6) the variable is what lets this launch start at all, which is the owner's answer of 2026-11-05 to
+   that section's Open item 1 and is why the step reads `FUGARO_REVIEW_SKIP_ADMISSION_CHECK=1 fugaro review
+   --pr <N>`. The launch prints **one warning line** saying so before it does anything else. The variable
+   is **off by default**, is read from the environment and from nothing else (no `fugaro.yaml`, no project
+   layer, no local config can set it), **a coding agent's session is refused it** by the same marker check
+   that refuses `fugaro creds set`, and **it admits nothing**: the credentials service's answer to the
+   review's caller is what decides whether the run is served, so a launch that starts under the switch and
+   is refused there has shown gap 1 rather than passed this step. The commit that enables the service's
+   review admission removes the variable, and **a run of this check after that flip sets none**.
 4. **The token is read-only and it is one repository's.** A minted token's push is refused by GitHub
    (403), and a hand-made call naming a different repository the account is admitted for is refused by
    the **service**.
@@ -84,11 +96,18 @@ fixed here rather than worked out at merge.
    stored object) → the signature no longer verifies; a valid signature pasted under a different review
    run → `{"valid":false}` from the service itself, before any coordinator check; an artifact with no
    sidecar → refused.
-8. **The verify route's caller class, and what its line carries.** With the owner's identity in the
-   verifier list, a hand-made `POST /v1/review/verify` with the owner's ID token answers `{"valid":true}`
-   for the real pair and `{"valid":false}` for the tampered one, and the same call without a token is a
-   **typed refusal**; the log shows the **verifier's email as its caller field** and the **signing key's
-   entry name as its credential**, with no run and no job.
+8. **The verify route's caller class, and what its line carries.** With the **verifier service account**
+   of [implementation-plan.md](../cloud-senior-review/implementation-plan.md) §6.6's **Open item 5** in
+   `credentials_service.verifier_accounts` — an identity the installation's root creates, **never the
+   owner's own address**, which the service refuses to start with because a person account that is also a
+   verifier would be one caller in two classes (`internal/credsvc/auth.go:574`) — a hand-made
+   `POST /v1/review/verify` with an ID token minted by impersonating **that** account
+   (`gcloud auth print-identity-token --impersonate-service-account=…`) answers `{"valid":true}` for the
+   real pair and `{"valid":false}` for the tampered one, and the same call without a token is a **typed
+   refusal**; the log shows the **verifier's email as its caller field** and the **signing key's entry
+   name as its credential**, with no run and no job. **Open item 5 is open**, so which account that is, and
+   who may impersonate it, is the owner's to settle: until a name is published nothing admits this call,
+   the launcher's own reader refuses every brief, and this step cannot pass as it stands.
 9. **A subprocess inside the container can reach nothing — U7, re-observed after the route exists**
    (D1074). From inside a mutant subprocess of the mutation check, both a `POST /v1/review/sign` and a
    request to the **instance metadata server** fail.

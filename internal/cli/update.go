@@ -56,7 +56,12 @@ not lift the refusal (docs/design/managed-projects.md §10.2, "Rolling back").
 
 Everything else is setup's help word for word, because it is the same
 converge: the review screen and the one typed project name in a project Fugaro
-owns; the steps that keep their own typed confirmation — a project's creation
+owns — and in a managed project (fugaro managed flag) the gate's own read of
+the project's marks stands in for that name and for the steps the gate judges,
+at your own terminal exactly as in a coding agent's session: every plan is
+still printed exactly as it applies and every verdict is still recorded, and
+only a step that is money, permanence or a secret still asks for your own word
+(D1026). The steps that keep their own typed confirmation — a project's creation
 and the billing link are setup's, and here they cannot arise at all, and a
 secret is a value, typed in a hidden prompt, which --yes cannot supply — against
 the steps --yes covers, which by D12's answer of 2026-10-20 is every ordinary

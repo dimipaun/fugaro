@@ -14,14 +14,15 @@ design proposes, and the one name that moved is the tool §0 calls `submit_task`
 **#1487** before the SECURITY review of §8 that this folder's own rules require; that review ran on
 **2026-11-04** and the owner answered its findings the same day. Every answer is recorded as a
 **dated amendment note beside the decision it names** in [reconciliation.md](reconciliation.md) §4a,
-with the original answer kept and no number reused, and the two findings that are decisions of their
-own are **D935** and **D936** ([reconciliation.md](reconciliation.md) §4b). **This section is written
+with the original answer kept and no number reused, and the one finding that is a decision of its own
+is **D936** ([reconciliation.md](reconciliation.md) §4b) — the other decision-shaped finding, **H3**,
+is the **D935** the owner answered on 2026-11-05: the store the records move to. **This section is written
 to the amended answers.** Where a paragraph below carries an amendment it says so and points at the
 finding that made it; **the one amendment that is not the recommendation is H1** — an **accepted
 residual risk** with its consequences stated (§3 step 5, §8) and the change that would close it
 (§11), not a fix and not a task. The two findings that change this design's shape most are **H2**
-(`spawn_task` is **out of the first slice**, §5, D935) and **H3** (the token records **leave the main
-database**, §6, D936).
+(`spawn_task` is **out of the first slice**, §5, D936) and **H3** (the token records **leave the main
+database**, §6, D935).
 
 Repository names in this folder are placeholders (`owner/repo-a`, `owner/repo-b`), people are
 `person-1`, and a workspace is `workspace-a`; [README.md](README.md) says which names in §0 are the
@@ -158,11 +159,12 @@ The service is `ee/coordinator`'s, on the licence boundary the repository alread
 coordinator is the subscription half of the product. This design adds **no** licence notice to any
 file and no licence text anywhere, because the folder it is written in is core documentation and the
 repository's own rule for a documentation folder says so. **The one licence this folder does turn
-on is a dependency's**: D921 was answered with `zitadel/oidc`'s licence **UNCONFIRMED**, and **the
-independent security review confirmed Apache-2.0 on 2026-11-04** (finding M-c,
-[reconciliation.md](reconciliation.md) §4a). Two parts of the check still stand, which is why it is
-still a gate rather than a closed item: **counsel clears the transitive dependencies**, and **the M5
-gate file is the owner's to create** — M5 does not start until a person has written it
+on is a dependency's**: D921 was answered with `zitadel/oidc`'s licence **UNCONFIRMED**, and
+**nothing the independent security review of 2026-11-04 read could settle it** (finding M-c,
+[reconciliation.md](reconciliation.md) §4a) — the library's Apache 2.0 claim is the library's own.
+What stands is the check itself, which is why it is a gate rather than a closed item: **the owner or
+counsel confirms the licence, counsel's clearance of the transitive dependencies included, and the
+M5 gate file is the owner's to create** — M5 does not start until a person has written it
 ([reconciliation.md](reconciliation.md) §6, check 1).
 
 ## 2. The front door: transport, endpoint, and who may reach it
@@ -244,9 +246,10 @@ coordinator's own URL — so a client's standard check works.
 server is built on **zitadel/oidc** — the first option the owner listed, and the owner's answer —
 with the coordinator supplying two things the library does not: the storage over the project's own
 store (§6), and Dynamic Client Registration, which the owner's spec already expects to be a few
-hundred hand-written lines. **The library's licence is now confirmed Apache-2.0 by the independent
-security review**; **counsel still clears the transitive dependencies** and **the M5 gate file is the
-owner's to create**, so the gate stands until a person has written it
+hundred hand-written lines. **The library's licence is still UNCONFIRMED** — the review settles the
+library's *behaviour* against this design and not its licence; **the owner or counsel confirms it,
+counsel's clearance of the transitive dependencies included**, and **the M5 gate file is the owner's
+to create**, so the gate stands until a person has written it
 ([reconciliation.md](reconciliation.md) §6, check 1). M5 does not start until it is settled, and a
 licence that turns out to be unusable sends D921 back to its alternatives rather than to a
 workaround. The alternatives and their costs stay in the reconciliation; the short version is that
@@ -441,7 +444,7 @@ and are enforced in one place, ahead of every handler:
 
 | Tool | Scope | What it does | What it must not do |
 | --- | --- | --- | --- |
-| `spawn_task` | `tasks:write` | **DEFERRED — not in the first slice** (D935, finding H2). When it is built: starts a run on a repository with a prompt, a recipe and a rigor mode (D931) | Must not widen the run's ceiling, must not pass a model credential, must not launch anything but the project's own job, must not reach the job except through the launch path below |
+| `spawn_task` | `tasks:write` | **DEFERRED — not in the first slice** (D936, finding H2). When it is built: starts a run on a repository with a prompt, a recipe and a rigor mode (D931) | Must not widen the run's ceiling, must not pass a model credential, must not launch anything but the project's own job, must not reach the job except through the launch path below |
 | `get_task_status` | `tasks:read` | The run's state, from the run record | Must not read the runs bucket outside the project's own prefix |
 | `stream_logs` | `tasks:read` | The run's recorded progress (D932) | Must not stream the project's whole log |
 | `get_result` | `tasks:read` | The outcome, the diff or the pull request link | Must not return a body from the forge that carries a token |
@@ -454,7 +457,7 @@ and are enforced in one place, ahead of every handler:
 verbatim; there is no second tool.
 
 **The first slice is the authorization server and the read tools, and `spawn_task` is not in it**
-(**D935**, the owner's answer of 2026-11-04 to finding H2 — **DEFER**). The review found that
+(**D936**, the owner's answer of 2026-11-04 to finding H2 — **DEFER**). The review found that
 `spawn_task` needs **three privileges, not one**, and that the design had priced only the last:
 `signJwt` to mint the run's custom token; **write to the runs bucket**, which the coordinator does
 not hold (F3 is `roles/storage.objectViewer`); and **`run.jobs.runWithOverrides`**, which can
@@ -465,7 +468,7 @@ model credentials**. That contradicts D923's own "the coordinator mints nothing"
 `get_task_status`, `stream_logs`, `get_result`, `list_tasks` — and `cancel_task` if it can be built
 without the launch path.** No task in [implementation-plan.md](implementation-plan.md) starts a run.
 **What a later `spawn_task` design item has to answer** is written in
-[reconciliation.md](reconciliation.md) §4b (D935): no `runWithOverrides`, per-run input under a
+[reconciliation.md](reconciliation.md) §4b (D936): no `runWithOverrides`, per-run input under a
 bucket prefix only the coordinator writes, run-token minting moved out of the public service, and an
 **argument allowlist** — no `--no-budget-check` (`internal/cli/run.go:301`), no `--token` (`:292`),
 no free-form `--run-id`, and `mode = max(requested, the token's minimum)`.
@@ -531,7 +534,7 @@ control in the design trivially optional.
 **And the family counter is reserved, not merely read** (finding M-b, the amendment of 2026-11-04).
 Read-then-spend is a race: two runs started from one family would each read the same remaining figure
 and each be allowed it, so the limit would hold for one run at a time and not across concurrent ones.
-The amended answer, built by M2 and M9 (**M9 is deferred** — D935 — so the reservation ships with
+The amended answer, built by M2 and M9 (**M9 is deferred** — D936 — so the reservation ships with
 it, and M2 carries the counter's shape):
 
 - **At spawn, reserve `min(the job's cap, the family's remaining)` atomically against the family
@@ -550,7 +553,7 @@ the whole of "only narrows" (D924). An **unknown rigor-mode string is refused**,
 token whose window names a mode this build does not know is refused rather than read as unset.
 
 **What is stored, and where** (D922, answered 2026-11-04 — **the recommendation**, **amended the
-same day** by findings H3 and M-c; D936). Only **hashes** — never a token value, never a refresh
+same day** by findings H3 and M-c; D935). Only **hashes** — never a token value, never a refresh
 token, never a client secret — and the record lives in a **separate top-level subtree of the
 project's database, not under `coordinator/`**: the **`mcpauth`** node. The node carries
 **`.read: false`** and **`.write: false`**, and **only the coordinator's own account writes it** —
@@ -565,12 +568,14 @@ database rules**: every launcher and operator holds `roles/firebasedatabase.view
 rules close is therefore still **readable by every launcher** and writable by several accounts. The
 amended answer has four parts, and the rules clause above is only the first:
 
-1. **The records do not live in the main database at all** (**D936**). They live in a store the
-   **public service alone reaches**, under an **IAM condition** that admits the coordinator's service
-   account and nothing else — the design takes the review's first suggestion, **a named database
-   inside the project's own Firestore**, because it needs no new service, no new vendor and no new
-   resident process, and the costs it does carry (a second storage system, a second emulator story,
-   a `fugaro update` step) are stated rather than hidden. **The `mcpauth` node stays named and
+1. **The records do not live in the main database at all** (**D935**). They live in a store the
+   **public service alone reaches**, whose **IAM names exactly one account** — **the bucket
+   `fugaro-mcpauth-<gcp-project>` of
+   [implementation-plan.md](implementation-plan.md) §8, whose one member is the front door's own
+   `mcp_server`**, the answer the owner gave on 2026-11-05 to the one thing D935 had left open. It
+   is a bucket rather than a second database or a second vendor because it needs no new service and
+   no new bill, and the costs it does carry (a second storage system, a second emulator story, a
+   `fugaro update` step) are stated rather than hidden. **The `mcpauth` node stays named and
    denied** in the main database's rules as a **tripwire**: with the records elsewhere, an MCP record
    written there is a failing test rather than a quiet widening.
 2. **What is stored is keyed, not merely hashed.** Token records hold **HMAC-keyed hashes with a
@@ -583,12 +588,12 @@ amended answer has four parts, and the rules clause above is only the first:
    answers strangers.
 4. **The value is shown once, at mint, and never again** (§8).
 
-**Two halves of D936 are UNVERIFIED**, and they are M2's first step and an owner check
-([reconciliation.md](reconciliation.md) §6, check 8): whether an **IAM condition** on a named
-Firestore database can express exactly "this service account and no other", and whether **`fugaro
-update` can create the named database idempotently** on an installation that already has the default
-one. If either fails, the fallback is the store that keeps the records out of the main database and
-out of every viewer's reach.
+**One half of D935 stays UNVERIFIED**, and it is an owner check
+([reconciliation.md](reconciliation.md) §6, check 8): whether **GCS still attaches its convenience
+bindings to a Terraform-created bucket**, so that a basic project Viewer reads the store until M4
+strips or refuses those members (`SECURITY.md:88`, and what `internal/infra/statebucket.go:140` does
+for the state bucket). A live project is the only thing that can show it; the plan's M4 owns
+stripping or refusing them either way.
 
 **The node is closed on both sides, and after the amendment it holds nothing to argue about.** **No
 client reads it and no client writes it**, and the template's root denies by default:
@@ -755,7 +760,7 @@ nothing that a person did not start**.
 
 **Token storage.** Only hashes, in a separate subtree of the project's database — **`mcpauth`** —
 that is **not readable by any client and writable by no client** (D922, answered 2026-11-04 — **the
-recommendation**, **amended the same day** — finding H3; D936). **The amendment is that the rules
+recommendation**, **amended the same day** — finding H3; D935). **The amendment is that the rules
 are not the perimeter, and the paragraph that used to say "no reader at all" was wrong about IAM.**
 Every launcher and operator holds `roles/firebasedatabase.viewer`
 (`deploy/terraform/gcp/modules/firebase/iam.tf:44-50`), admins and budget admins hold
@@ -764,10 +769,11 @@ the rules close is **still readable by every launcher** and writable by several 
 public service holding `firebasedatabase.admin` would hold it over the **whole** database. What the
 design says now, and what §6 states in full:
 
-- **The records do not live in the main database at all** (**D936**): they live in a store the public
-  service alone reaches, under an **IAM condition** admitting the coordinator's service account and
-  nothing else. **The `mcpauth` node stays named and denied as a tripwire**, so an MCP record written
-  back into the main database is a failing test rather than a quiet widening.
+- **The records do not live in the main database at all** (**D935**): they live in the store whose
+  IAM names exactly one account — **the bucket `fugaro-mcpauth-<gcp-project>`, whose one member is
+  the front door's own `mcp_server`** — which is what the bucket buys over the other candidates.
+  **The `mcpauth` node stays named and denied as a tripwire**, so an MCP record written back into the
+  main database is a failing test rather than a quiet widening.
 - **The records are keyed and marked**: **HMAC-keyed hashes with a pepper in Secret Manager**, and a
   **MAC over each record's identity, limits and revocation state**, so a reader cannot reverse a
   hash and a writer the rules do not bind cannot forge a record.
@@ -782,9 +788,9 @@ the coordinator's own account still holds `roles/firebasedatabase.admin`
 (`deploy/terraform/gcp/modules/firebase/iam.tf:138`) for the main database it does write. §6 states
 the rule; [reconciliation.md](reconciliation.md) §4 records the answer, the earlier one it replaced,
 and the amendment.
-**Two halves are UNVERIFIED** ([reconciliation.md](reconciliation.md) §6, check 8): that an IAM
-condition on a named Firestore database can express exactly "this service account and no other", and
-that `fugaro update` can create that database idempotently.
+**One half is UNVERIFIED** ([reconciliation.md](reconciliation.md) §6, check 8): whether GCS still
+attaches its convenience bindings to a Terraform-created bucket, so that a basic project Viewer reads
+the store until M4 strips or refuses those members.
 
 **Redirect-URI abuse.** The registration endpoint is open, so an attacker can register a client with
 a redirect URI it controls — and gains nothing, because a code is delivered to that URI only after a
@@ -829,7 +835,7 @@ remaining honest statement is that a compromised agent with `tasks:write` can sp
 limit and start runs, on the repositories its token admits, at the review rigor its token allows.
 That is what the limit is for.
 
-**Spend.** **`spawn_task` is out of the first slice (D935, finding H2), so the first slice spends
+**Spend.** **`spawn_task` is out of the first slice (D936, finding H2), so the first slice spends
 nothing** — `get_task_status`, `stream_logs`, `get_result` and `list_tasks` read. When it is built,
 it is the tool with the least slack: the token's limit, the repository's cap, the installation's cap
 and the run's own ceiling all apply, and the gateway is the enforcer, exactly as it is for every
@@ -856,7 +862,7 @@ command or a path without validation against the project's own lists, and that t
 caller supplies is resolved through the project's own run list rather than used as a key.
 
 **A compromised coordinator, and the launch override.** **The first slice does not launch**, which is
-part of what the deferral of `spawn_task` (D935, finding H2) buys: the service that answers strangers
+part of what the deferral of `spawn_task` (D936, finding H2) buys: the service that answers strangers
 holds no launch grant, no signer and no write on the runs bucket, so this whole paragraph is about
 **the later slice** rather than about what ships first. When the coordinator is the launcher (D931),
 it holds the one thing a launcher has that no token does: **the ability to set a run's environment
@@ -936,7 +942,7 @@ that folder's new text, so the sentences above restate what the review reported
 
 ## 11. What this design leaves open
 
-- **`spawn_task`, and the whole write half of the front door** (**D935**, the owner's answer of
+- **`spawn_task`, and the whole write half of the front door** (**D936**, the owner's answer of
   2026-11-04 to finding H2). The tool is **deferred out of the first slice** — which is the
   authorization server and the read tools — because it needs three privileges the coordinator does
   not have and contradicts D923's "the coordinator mints nothing". **What a later design item has to
@@ -951,10 +957,11 @@ that folder's new text, so the sentences above restate what the review reported
   built**, because the owner chose to document the risk rather than fix it in this slice; the
   decision to build it is a later one, and it is the only thing that makes the approval mean what §3
   step 5 says it means.
-- **Where the token records' store actually lands** (**D936**), and **two halves of it are
-  UNVERIFIED** (§6, [reconciliation.md](reconciliation.md) §6 check 8): whether an IAM condition on
-  a named Firestore database can express "this service account and no other", and whether
-  `fugaro update` can create that database idempotently.
+- **Where the token records' store actually lands** (**D935**): the bucket
+  `fugaro-mcpauth-<gcp-project>`, answered by the owner on 2026-11-05 — and **one half of it is
+  UNVERIFIED** (§6, [reconciliation.md](reconciliation.md) §6 check 8): whether GCS still attaches
+  its convenience bindings to a Terraform-created bucket, so that a basic project Viewer reads the
+  store until M4 strips or refuses those members.
 - **The library's citations, and the version they were read at.** The review read `zitadel/oidc`
   3.51.17 **outside this container**, so §3's constraint layer rests on findings this folder could
   not re-check; M5 re-reads them against the version it pins.
@@ -964,9 +971,9 @@ that folder's new text, so the sentences above restate what the review reported
   ([reconciliation.md](reconciliation.md) §6, check 9).
 - **The override fence is unbuilt and its mechanism is undecided** (§8): how the runner reads non-allowlisted configuration from something `runWithOverrides` cannot set. It gates M9 and D931; the owner decides the mechanism before either is built.
 - The three open items of the owner's spec are answered or narrowed: the library is **zitadel/oidc**
-  (§3, D921, answered 2026-11-04 with its licence unconfirmed **and confirmed Apache-2.0 by the
-  review on 2026-11-04** — counsel still clears the transitive dependencies and **the gate file is
-  the owner's to create**); the standalone-server option is not taken; and
+  (§3, D921, answered 2026-11-04 with its licence still **UNCONFIRMED** — the owner or counsel
+  confirms it, **counsel's clearance of the transitive dependencies included**, and **the gate file
+  is the owner's to create**); the standalone-server option is not taken; and
   re-verification against the live MCP specification and the project's Identity Platform features is
   an owner check before implementation ([reconciliation.md](reconciliation.md) §6). **The
   re-verification could not be done here**: the public specification is not reachable from this
@@ -974,8 +981,10 @@ that folder's new text, so the sentences above restate what the review reported
   design stays written to the **2026-07-28** revision the owner named.
 - **Which of the seventeen decisions the owner answers differently later.** Fifteen were answered
   on 2026-11-04 and the design is written to those answers — **every one of them the recommendation
-  at the time** — and **two more, D935 and D936, were decided the same day from the security review's
-  findings**, one of them (D935) **not the recommendation**. Every alternative stays priced in the
+  at the time** — and **two more, D935 and D936, carry the security review's findings**: D935 is the
+  store the owner answered on 2026-11-05, and D936 defers `spawn_task` out of the first slice. **The
+  one amendment that is not the recommendation is H1's** (D923), accepted and documented rather than
+  fixed. Every alternative stays priced in the
   reconciliation, so a later change of mind is a priced edit
   rather than a rewrite, except for D920 and D923, where it is a different document. **D922 is the
   one decision that was answered twice**: the first answer was read, written into §6 and §8 and

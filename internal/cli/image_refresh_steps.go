@@ -217,13 +217,30 @@ func builtSoFar(err error, built []string) error {
 // so (initflow.AgentProceeded, the one sentence for it). A zero Managed is
 // every session this command has ever had: the refusal above is what
 // CanConfirmManaged answers for one.
+//
+// The owner's own terminal is the second session the gate answers here
+// (2026-11-01: a managed project asks nothing). g is the gate's answer about
+// THIS build and it is non-nil in a person's run only where that run was going
+// to be asked — the marks are read by openRefreshManaged exactly then — so the
+// typed confirmation is replaced by the verdict, the cost line and the
+// admission the gate recorded. Nothing else moves: a project that is not
+// managed and a mark that did not answer arrive here as the zero value, which
+// is the typed question this command has always asked. A build the gate refused
+// does not arrive here at all: admitBuild returns that refusal and the loop
+// stops on it before this call (refreshBuilds, builtSoFar), so the zero value
+// above is never a refused document being asked again.
 func (r *initRun) askBuild(what string, g initflow.Managed) (confirmed, reachable bool, err error) {
-	if marker := agentMarker(os.Getenv); marker != "" {
+	if marker := agentMarker(os.Getenv, r.stdinTerminal()); marker != "" {
 		if !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, g) {
 			return false, false, &initflow.AgentError{Marker: marker}
 		}
 		fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 		fmt.Fprintf(r.w, "  %s\n", initflow.AgentProceeded(marker))
+		return true, true, nil
+	}
+	if initflow.ConfirmsByGate(initflow.YesOrTyped, r.conditions(), g) {
+		fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+		fmt.Fprintf(r.w, "  %s\n", initflow.GateProceeded())
 		return true, true, nil
 	}
 	if r.o.yes {

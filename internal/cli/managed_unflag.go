@@ -118,7 +118,7 @@ func managedUnflag(cmd *cobra.Command, o cloudOptions, id string) error {
 	// mark, whatever its arguments. It holds the operator's credentials and
 	// could do this itself, so this is a mitigation and not a barrier — but it
 	// is the property D1020's answer is built on, and it carries a test.
-	if m := agentMarker(os.Getenv); m != "" {
+	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
 		return userErr("nothing was removed: fugaro managed unflag takes the owner's own marks off a GCP project with the operator's credentials, so it is run by a person: %s", initflow.AgentRefusal(m))
 	}
 	// And a run's own process, whatever its agent's markers, through the same

@@ -47,7 +47,7 @@ func (r *initRun) newMachineConfig(ctx context.Context, e *initEngine) error {
 	if _, err := os.Lstat(e.path); err == nil {
 		return userErr("%s already exists: a new machine's run writes only a new local config and never overwrites one; use fugaro update --config-only to update it", e.path)
 	}
-	outs, err := r.readOutputs(ctx, e.c, e.t, e.wd, e.spec)
+	outs, err := r.readOutputs(ctx, e.c, e.t, e.wd, e.lc, e.spec)
 	if err != nil {
 		return initErr(err)
 	}

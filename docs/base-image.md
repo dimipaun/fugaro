@@ -4,6 +4,17 @@ Every workflow's image is built on one base, `ghcr.io/dimipaun/fugaro-base` (for
 
 **Published from 0.7.0.** `ghcr.io/dimipaun/fugaro-base` is built and published by the `images` workflow (`fugaro-base (amd64|arm64)` and `publish-base`) from the first release tag that carries it, 0.7.0; a development build or an earlier release has no released image to resolve, so `fugaro update --base base` and `fugaro image refresh` refuse with a clear error there; [Bring your own](#bring-your-own) below (your own build of `images/base/`) works with any build.
 
+## The published tags, and what the nightly does
+
+A release tag publishes the base under `:<version>` (with `:<version>-amd64` and `:<version>-arm64` beside it, and a moving `:<major>`), and writes `:<version>-pinned` at the same digest **only after** verifying the signature over that digest. The `images` workflow also runs on a nightly schedule; it rebuilds the latest release tag's tree, so a night can genuinely produce a different image — the build installs Debian's current security fixes, and it fetches the harnesses at build time — but a night where those upstream bytes have not moved rebuilds the same image byte for byte, because the build is reproducible for identical inputs. **On such a night the nightly leaves the tags where they are**: it compares what it just built with what `:<version>-<arch>` already names — the image's config digest, and, when the digests differ, the pins the build recorded, the tree's own `fugaro` binary and the installed package list — and when they agree it pushes nothing, so the tags do not move and nothing is signed. A night that does find different bytes publishes them, and the tags move as they always could. **This change is staged, not yet in `.github/workflows/`** (issue #1745, `docs/pending-workflows/images.yml`): until the owner copies it in on the branch a release is tagged from, every nightly republishes what it rebuilt.
+
+**What that changes for an installation.** The daily image check's "the base moved" rule reads the base reference your config pins and the digest that reference resolves to, and rebuilds a repository's image when that digest differs from the one its last build recorded — the same read `fugaro image refresh` makes when it decides a workflow is `current`. Two consequences:
+
+- An installation pinned at `base_images.base` (a digest through your own registry's remote repository) is unaffected by any of this: a digest cannot move, which is what the pin is for.
+- An installation still pointing at a tag no longer sees the tag move on a quiet night, because nothing is pushed then. It can still move on a night that picks up an upstream change, so the check can still fire for a real reason.
+
+**Installations still pin `-pinned`, and the reason is the signature, not the moving tag.** `fugaro update` and `fugaro image refresh` resolve `:<version>-pinned` (the tag written by the release's own signed push, never by the nightly), verify the cosign signature over that digest, read it back through your remote repository and record *that digest* in the config; jobs then pull a digest, so no tag — quiet or moved — changes what a run uses. The nightly's skip is hygiene: it keeps a quiet night from re-publishing an image nobody asked to change, and from moving a major tag that installations and the catalog check read. It is not what makes a job's base trustworthy.
+
 ## What is in it
 
 - **Debian 13 (trixie) slim**, pinned by digest, with Debian's current security fixes at every rebuild.

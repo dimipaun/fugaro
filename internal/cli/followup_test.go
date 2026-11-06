@@ -791,6 +791,28 @@ func TestRunPRRepeatRunIDLaunchesUnlaunched(t *testing.T) {
 	}
 }
 
+// TestRunPRRefusesAMixTheConfigCannotDeclare (review of B1, PR 1725): a
+// follow-up reuses a previous run's stored account as it is, and that path is
+// held to the whole rule every other launch is — the allow-list, the auth
+// clause and the mix a config may not declare (claudeAccountFor, which
+// storedFollowUp asks rather than the allow-list check alone). A config that
+// names two stage accounts is one account too many for the one provider key an
+// api-key run holds, and run --pr refuses it exactly as a fresh launch does.
+func TestRunPRRefusesAMixTheConfigCannotDeclare(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, "claude_accounts:\n  acme-overflow:\n    allow_data_to: [\"acme/app\"]\n  acme-personal:\n    allow_data_to: [\"acme/app\"]\n"+
+		stagesBlock("review", "acme-overflow", "adversarial", "acme-personal"))
+	appCheckoutAuth(t, "api-key") // a checkout of acme/app whose agent.auth is api-key
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "also rename x")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "one provider key and one Claude account") {
+		t.Fatalf("err = %v, want the mix refusal", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
 func TestRetryFollowUp(t *testing.T) {
 	f := newCloudFixture(t)
 	t.Chdir(t.TempDir())

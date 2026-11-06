@@ -645,6 +645,7 @@ var localRows = []Row{
 	loc("project_secrets.*.proxy", "none", "secrets", docSetup),
 
 	loc("workflow_secrets.*.allow_data_to", "nobody", "secrets", docSetup),
+	loc("workflow_secrets.*.proxy", "none: refused, D1275", "secrets", docSetup),
 
 	loc("job_profiles.*.provider", "none", "project", docSetup),
 	loc("job_profiles.*.cpu", "the workflow's own", "project", docSetup),
@@ -683,7 +684,12 @@ var localRows = []Row{
 
 	loc("review_floor", "none: no floor is added", "rigor floor", docRigor),
 
-	loc("verifier_accounts", "none: nobody may ask the credentials service to verify a signature", "secrets", docSetup),
+	// Unset is not "nobody" on an installation that has opted into the
+	// credentials service: the module answers an absent list with its own
+	// verifier account, the identity the installation's runs verify as (CSR14,
+	// verifier.tf), so the row says both states rather than the one that is
+	// only true while the service is off.
+	loc("verifier_accounts", "nobody may ask the credentials service to verify a signature, except on an installation whose credentials service is deployed, where the installation's own verifier account may", "secrets", docSetup),
 
 	// The image catalog decides which image a run's job executes in, so it is
 	// the operator's own list in the local file like the verifier list above,
